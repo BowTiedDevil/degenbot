@@ -347,6 +347,11 @@ def _view(
     settlement_endpoints: list[str] | None = None,
 ) -> types.SimpleNamespace:
     """A readiness view stand-in with the settled-block arm on by default."""
+    active_backrun_facets: list[str] = []
+    if mevblocker_backrun_active:
+        active_backrun_facets.append("mevblocker_backrun")
+    if txpool_backrun_active:
+        active_backrun_facets.append("txpool_backrun")
     return types.SimpleNamespace(
         settlement_active=settlement_active,
         mevblocker_backrun_active=mevblocker_backrun_active,
@@ -354,4 +359,5 @@ def _view(
         settlement_endpoints=[] if settlement_endpoints is None else settlement_endpoints,
         mevblocker_backrun_endpoints=[],
         txpool_backrun_endpoints=[],
+        active_backrun_facets=active_backrun_facets,
     )

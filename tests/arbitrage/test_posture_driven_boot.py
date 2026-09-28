@@ -79,23 +79,14 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
     await session.run()
 
     readiness = validate_strategy_readiness()
-    expected_facets = [
-        facet
-        for facet, active in (
-            ("mevblocker_backrun", readiness.mevblocker_backrun_active),
-            ("txpool_backrun", readiness.txpool_backrun_active),
-        )
-        if active
-    ]
+    expected_facets = list(readiness.active_backrun_facets)
     assert session.engine_registry.engine.resume_facets == expected_facets, (
         "resume() must receive the active hosted arms"
     )
     records = dict((name, state) for name, state, _halt in session.engine_registry.engine.strategies())
-    for facet, active in (
-        ("mevblocker_backrun", readiness.mevblocker_backrun_active),
-        ("txpool_backrun", readiness.txpool_backrun_active),
-    ):
-        assert records[facet] == ("enabled" if active else "registered"), (
+    active_facets = set(expected_facets)
+    for facet in ("mevblocker_backrun", "txpool_backrun"):
+        assert records[facet] == ("enabled" if facet in active_facets else "registered"), (
             f"{facet}: admission must follow strategy.{facet}.active"
         )
     # The settlement arm's engine state is advisory for its pump arm; it is

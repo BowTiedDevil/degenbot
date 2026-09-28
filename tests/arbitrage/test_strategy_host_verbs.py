@@ -37,13 +37,10 @@ def _active_facet(engine: ArbitrageEngine) -> str:
     would poison the walk under test).
     """
     readiness = validate_strategy_readiness()
-    for facet, key in (
-        ("settlement", readiness.settlement_active),
-        ("mevblocker_backrun", readiness.mevblocker_backrun_active),
-        ("txpool_backrun", readiness.txpool_backrun_active),
-    ):
-        if not key:
-            continue
+    candidates = list(readiness.active_backrun_facets)
+    if readiness.settlement_active:
+        candidates.insert(0, "settlement")
+    for facet in candidates:
         probe = ArbitrageEngine(py_bot=Bot(1))
         try:
             probe.enable_strategy(facet)

@@ -103,18 +103,11 @@ def test_fake_and_real_agree_on_enable_disable_vocabulary() -> None:
     real = ArbitrageEngine(py_bot=Bot(1))
     fake = FakeEngine()
 
-    facet = next(
-        (
-            name
-            for name, key in (
-                ("settlement", readiness().settlement_active),
-                ("mevblocker_backrun", readiness().mevblocker_backrun_active),
-                ("txpool_backrun", readiness().txpool_backrun_active),
-            )
-            if key
-        ),
-        None,
-    )
+    view = readiness()
+    candidates = list(view.active_backrun_facets)
+    if view.settlement_active:
+        candidates.insert(0, "settlement")
+    facet = next(iter(candidates), None)
     if facet is None:
         pytest.skip(
             "the ambient config activates no facet; the real engine's "

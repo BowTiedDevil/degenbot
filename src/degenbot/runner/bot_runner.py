@@ -725,14 +725,7 @@ class BotRunner:
         if not self._settlement_active:
             view = self._readiness
             assert view is not None, "start() resolved the readiness before run()"
-            facets = [
-                facet
-                for facet, active in (
-                    ("mevblocker_backrun", view.mevblocker_backrun_active),
-                    ("txpool_backrun", view.txpool_backrun_active),
-                )
-                if active
-            ]
+            facets = list(view.active_backrun_facets)
             bot_logger.info(
                 f"[host-arms] settlement facet inactive — hosted arms: "
                 f"{', '.join(facets) if facets else 'NONE'}"

@@ -41,12 +41,13 @@ class TestAdmissionIsHostOwned:
         facet must admit it exactly as a defaulted one refuses."""
         engine = ArbitrageEngine(py_bot=Bot(1))
         readiness = validate_strategy_readiness()
-        for facet, active in (
-            ("mevblocker_backrun", readiness.mevblocker_backrun_active),
-            ("txpool_backrun", readiness.txpool_backrun_active),
-        ):
-            if active:
-                engine.enable_strategy(facet)
+        # The registered fleet is the engine's own vocabulary; the view's data
+        # says which backrun arm is admitted, so the test restates no facet.
+        registered = [name for name, _state, _halt in engine.strategies()]
+        active_facets = set(readiness.active_backrun_facets)
+        for facet in (name for name in registered if name != "settlement"):
+            if facet in active_facets:
+                assert engine.enable_strategy(facet) == "enabled"
             else:
                 with pytest.raises(UnconfiguredStrategyError):
                     engine.enable_strategy(facet)

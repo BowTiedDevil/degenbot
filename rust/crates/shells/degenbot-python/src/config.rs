@@ -59,6 +59,11 @@ pub struct StrategyReadinessView {
     pub txpool_backrun_active: bool,
     #[pyo3(get)]
     pub txpool_backrun_endpoints: Vec<String>,
+    /// The active backrun arms' facet names, in canonical order. The driver's
+    /// hosted-enable set is this read, so Python never restates the host's
+    /// admission vocabulary.
+    #[pyo3(get)]
+    pub active_backrun_facets: Vec<String>,
 }
 
 impl StrategyReadinessView {
@@ -74,6 +79,19 @@ impl StrategyReadinessView {
         let (mevblocker_backrun_active, mevblocker_backrun_endpoints) =
             arm(&readiness.mevblocker_backrun);
         let (txpool_backrun_active, txpool_backrun_endpoints) = arm(&readiness.txpool_backrun);
+        // The facet-name spelling's one home is `StrategyName::as_str`
+        // (degenbot-strategy/src/strategy_plane.rs), the host's registration
+        // vocabulary. degenbot-strategy is an optional `submission`-gated
+        // dependency, and this view module is unconditional (it compiles
+        // without that feature), so the names are restated here rather than
+        // reached through the crate.
+        let mut active_backrun_facets = Vec::new();
+        if mevblocker_backrun_active {
+            active_backrun_facets.push(String::from("mevblocker_backrun"));
+        }
+        if txpool_backrun_active {
+            active_backrun_facets.push(String::from("txpool_backrun"));
+        }
         Self {
             settlement_active,
             settlement_endpoints,
@@ -81,6 +99,7 @@ impl StrategyReadinessView {
             mevblocker_backrun_endpoints,
             txpool_backrun_active,
             txpool_backrun_endpoints,
+            active_backrun_facets,
         }
     }
 }
@@ -743,13 +762,15 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
-    use ::degenbot_config::{BotConfig, BotConfigLoader, MapEnv, NodeScope, Source, StrategyArm};
+    use ::degenbot_config::{
+        BotConfig, BotConfigLoader, MapEnv, NodeScope, Source, StrategyArm, StrategyReadiness,
+    };
     use ::degenbot_strategy::Settlement;
 
     use super::{
         chain_id_in, database_path_in, declared_database_path_of, entry_provenance_by_env,
         node_uri_in, provenance_by_path, settlement_broadcast_endpoints_in, values_by_path,
-        ResolvedConfig,
+        ResolvedConfig, StrategyReadinessView,
     };
 
     /// The layers a `MapEnv` supplies, with no file layer and no process
@@ -1073,6 +1094,45 @@ mod tests {
                 .to_string()
                 .contains("this hosted runner IS the settlement arm"),
             "the refusal must name the settlement-arm remedy, got: {error}"
+        );
+    }
+
+    /// The view projects the active backrun arms' facet names as data: the
+    /// driver's enable set is a read, never a Python restatement of the host's
+    /// admission vocabulary.
+    #[test]
+    fn active_backrun_facets_project_in_canonical_order() {
+        fn active(url: &str) -> StrategyArm {
+            StrategyArm::Active(vec![url.to_string()])
+        }
+        let facets = |mevblocker: StrategyArm, txpool: StrategyArm| {
+            StrategyReadinessView::from_readiness(&StrategyReadiness {
+                settlement: StrategyArm::Inactive,
+                mevblocker_backrun: mevblocker,
+                txpool_backrun: txpool,
+            })
+            .active_backrun_facets
+        };
+
+        assert_eq!(
+            facets(active("ws://mevblocker"), active("http://txpool")),
+            vec![
+                String::from("mevblocker_backrun"),
+                String::from("txpool_backrun")
+            ],
+            "both active arms project in canonical order"
+        );
+        assert_eq!(
+            facets(active("ws://mevblocker"), StrategyArm::Inactive),
+            vec![String::from("mevblocker_backrun")],
+        );
+        assert_eq!(
+            facets(StrategyArm::Inactive, active("http://txpool")),
+            vec![String::from("txpool_backrun")],
+        );
+        assert!(
+            facets(StrategyArm::Inactive, StrategyArm::Inactive).is_empty(),
+            "no active arm projects no facet"
         );
     }
 }

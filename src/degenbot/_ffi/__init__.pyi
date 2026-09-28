@@ -196,6 +196,7 @@ class StrategyReadinessView:
     mevblocker_backrun_endpoints: list[str]
     txpool_backrun_active: bool
     txpool_backrun_endpoints: list[str]
+    active_backrun_facets: list[str]
 
 class RetryPolicyDefaults:
     """Self-describing verification-retry policy defaults.
