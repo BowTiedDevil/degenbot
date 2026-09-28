@@ -42,6 +42,13 @@ from degenbot.constants import (
     MIN_UINT256,
 )
 
+# Property tests below assert value round-trips only. The Rust FFI boundary has
+# variable per-call cost (first-touch extension init, GC pauses, scheduler
+# jitter), so Hypothesis's wall-clock per-example deadline asserts nothing the
+# properties claim and fails spuriously under load. Same policy as
+# executor/tests/test_v3_library_fuzz.py.
+_no_deadline = hypothesis.settings(deadline=None)
+
 
 class TestBasicTypes:
     """Test decoding of basic static types."""
@@ -333,6 +340,7 @@ class TestEthAbiCompatibility:
 class TestHypothesisStaticTypes:
     """Property-based tests for static types using Hypothesis."""
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_UINT8, max_value=MAX_UINT8))
     def test_uint8_hypothesis(self, value: int) -> None:
         """Test uint8 decoding with random values."""
@@ -340,6 +348,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("uint8", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_UINT16, max_value=MAX_UINT16))
     def test_uint16_hypothesis(self, value: int) -> None:
         """Test uint16 decoding with random values."""
@@ -347,6 +356,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("uint16", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_UINT24, max_value=MAX_UINT24))
     def test_uint24_hypothesis(self, value: int) -> None:
         """Test uint24 decoding with random values."""
@@ -354,6 +364,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("uint24", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_UINT128, max_value=MAX_UINT128))
     def test_uint128_hypothesis(self, value: int) -> None:
         """Test uint128 decoding with random values."""
@@ -361,6 +372,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("uint128", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_UINT256, max_value=MAX_UINT256))
     def test_uint256_hypothesis(self, value: int) -> None:
         """Test uint256 decoding with random values."""
@@ -368,6 +380,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("uint256", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_INT16, max_value=MAX_INT16))
     def test_int16_hypothesis(self, value: int) -> None:
         """Test int16 decoding with random values."""
@@ -375,6 +388,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("int16", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_INT24, max_value=MAX_INT24))
     def test_int24_hypothesis(self, value: int) -> None:
         """Test int24 decoding with random values."""
@@ -382,6 +396,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("int24", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_INT32, max_value=MAX_INT32))
     def test_int32_hypothesis(self, value: int) -> None:
         """Test int32 decoding with random values."""
@@ -389,6 +404,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("int32", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_INT64, max_value=MAX_INT64))
     def test_int64_hypothesis(self, value: int) -> None:
         """Test int64 decoding with random values."""
@@ -396,6 +412,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("int64", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_INT128, max_value=MAX_INT128))
     def test_int128_hypothesis(self, value: int) -> None:
         """Test int128 decoding with random values."""
@@ -403,6 +420,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("int128", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_INT256, max_value=MAX_INT256))
     def test_int256_hypothesis(self, value: int) -> None:
         """Test int256 decoding with random values."""
@@ -410,6 +428,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("int256", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_UINT32, max_value=MAX_UINT32))
     def test_uint32_hypothesis(self, value: int) -> None:
         """Test uint32 decoding with random values."""
@@ -417,6 +436,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("uint32", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(value=st.integers(min_value=MIN_UINT64, max_value=MAX_UINT64))
     def test_uint64_hypothesis(self, value: int) -> None:
         """Test uint64 decoding with random values."""
@@ -424,6 +444,7 @@ class TestHypothesisStaticTypes:
         rust_result = decode_single_rs("uint64", data)
         assert rust_result == value
 
+    @_no_deadline
     @hypothesis.given(address_bytes=st.binary(min_size=20, max_size=20))
     def test_address_hypothesis(self, address_bytes: bytes) -> None:
         """Test address decoding with random values."""
@@ -439,6 +460,7 @@ class TestHypothesisStaticTypes:
             rust_result = decode_single_rs("bool", data)
             assert rust_result is value
 
+    @_no_deadline
     @hypothesis.given(value=st.binary(min_size=32, max_size=32))
     def test_bytes32_hypothesis(self, value: bytes) -> None:
         """Test bytes32 decoding with random values."""
