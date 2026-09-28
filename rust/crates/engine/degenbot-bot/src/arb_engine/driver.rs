@@ -1560,6 +1560,21 @@ mod tests {
     }
 
     #[test]
+    fn wait_session_end_delivers_the_pump_finished_fact() {
+        let driver = driver_for_test();
+        let runtime = degenbot_core::runtime::get_runtime();
+        let completion_tx = driver.pump_finished_tx.lock().take();
+        let handle = runtime.spawn(async move {
+            let _completion_tx = completion_tx;
+        });
+        *driver.pump_handle.lock() = Some(handle);
+        assert_eq!(
+            runtime.block_on(driver.wait_session_end()),
+            crate::arb_engine::session_end::SessionEndCause::PumpFinished
+        );
+    }
+
+    #[test]
     fn wait_pump_finished_stays_pending_until_the_armed_pump_ends() {
         let driver = driver_for_test();
         let runtime = degenbot_core::runtime::get_runtime();

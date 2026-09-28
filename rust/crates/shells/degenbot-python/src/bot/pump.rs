@@ -96,20 +96,25 @@ pub(crate) fn stop(driver: &Arc<EngineDriver>) -> PyResult<()> {
     driver.stop().map_err(map_driver_err)
 }
 
-/// Awaitable pump-completion surface (the `PyO3` bridge
-/// over [`EngineDriver::wait_pump_finished`]).
+/// Awaitable session-end DETECTION FACT over [`EngineDriver::wait_session_end`].
+///
+/// Resolves the core [`SessionEndCause`](degenbot_bot::arb_engine::session_end::SessionEndCause)
+/// name once the pump task finishes — cooperative timed exit
+/// (`HOTPATH_SHUTDOWN_MS`), WS stream end, abort, or panic. A consumer that
+/// awaits it AFTER the pump already ended still resolves (the completion is a
+/// retained broadcast, not a one-shot signal consumed at creation).
 ///
 /// # Errors
 /// Only if the `PyO3` bridge itself fails to create the future.
-pub(crate) fn pump_finished_future<'py>(
+pub(crate) fn session_end_future<'py>(
     py: Python<'py>,
     driver: &Arc<EngineDriver>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let driver = Arc::clone(driver);
-    crate::ambient_runtime::future_into_py(py, async move {
-        driver.wait_pump_finished().await;
-        Ok(())
-    })
+    crate::ambient_runtime::future_into_py(
+        py,
+        async move { Ok(driver.wait_session_end().await.name()) },
+    )
 }
 
 /// Run a V3 pool's core-owned registration verify-lifecycle end-to-end.

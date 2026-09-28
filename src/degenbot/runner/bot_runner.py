@@ -1049,7 +1049,7 @@ class BotRunner:
         )
 
     async def _pump_finished_watchdog(self) -> None:
-        """Await the Rust pump's completion event, then cancel the consumer.
+        """Await the core session-end detection fact, then cancel the consumer.
 
         The hotpath timed exit (``HOTPATH_SHUTDOWN_MS``) makes the pump return
         normally after writing its report. Without this watcher the runner's
@@ -1060,19 +1060,21 @@ class BotRunner:
         the channel's only sender; unwinding drops it), so this doubles as a
         panic fail-safe.
 
-        The await is the real Rust-backed completion future for every engine —
+        The await is the real Rust-backed detection fact for every engine —
         there is no injected-engine/no-surface bypass: test doubles satisfy the
         same awaitable contract (a fake pump that never finishes parks here
-        forever, which is exactly the pre-finish consumer shape).
+        forever, which is exactly the pre-finish consumer shape). The driver
+        only reads the core fact and cancels the consumer; the verdict ranking
+        stays with the session watch.
 
         Returns once the pump finished; the consumer was cancelled here, so the
         session watch observes the pump end as ``WatchdogTripped``.
         """
         registry = self.engine_registry
         assert registry is not None
-        await registry.engine.pump_finished_future()
+        cause = await registry.engine.session_end_future()
         bot_logger.warning(
-            "[shutdown] pump task completed outside stop() — "
+            f"[shutdown] core session-end fact {cause} outside stop() — "
             "cancelling the consumer for a graceful teardown"
         )
         main_task = self._result_consumer_task

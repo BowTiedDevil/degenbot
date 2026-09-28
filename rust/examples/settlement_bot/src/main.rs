@@ -29,7 +29,7 @@
 //! driver-side . Gap G4  adds the driver-side
 //! `consume`/`dispatch`/`submission` modules mirroring rows
 //! 15–18. Gap G5  adds `session_watch` (the typed end-state
-//! verdict + heartbeat/stall watchdog over the consume loop) and
+//! verdict ranking over the core session-end detection facts) and
 //! `operator_channel` (the `--operator-socket` JSON-lines channel; row 19/20).
 //! The live handshake is gated behind `SMOKE_RPC_URL` so the example
 //! stays CI-runnable; without it (or with `--smoke-offline`) it stops after the
@@ -398,7 +398,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("16-sim-fanout-submitter", "REACHABLE", "degenbot::submission::SimSubmitPipeline (degenbot-submission::sim_pipeline): bounded Semaphore cap + single ordered FIFO submitter + fail-loud raise_if_failed; the driver injects max_simulate_concurrent as a plain cap; consume.rs consumes the EngineDriver result stream (row 7)"),
         ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
         ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
-        ("19-session-watch", "DRIVER-POLICY", "session_watch.rs: typed SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} + Heartbeat/stall_watchdog observing the live consume loop (watch-as-observer, no core lift)"),
+        ("19-session-watch", "DRIVER-POLICY", "session_watch.rs ranks the core detection facts (degenbot::session_end::{SessionEndCause,SessionEndFacts,SessionEndDetection} over EngineDriver::wait_session_end + the heartbeat stall watchdog) into SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} (watch-as-observer; ranking + teardown stay driver)"),
         ("20-operator-channel", "DRIVER-POLICY", "operator_channel.rs: tokio UnixListener JSON-lines add_path/discover/set+get_fleet_posture; fleet posture through degenbot::workers::posture::process (reachable via the umbrella)"),
     ];
     for (row, status, note) in rows {
@@ -777,7 +777,7 @@ fn run() -> Result<(), String> {
         // so its pending `recv()` sees end-of-stream exactly once (ADR-050 D6).
         // G5 : the consumer beats a session-watch heartbeat per
         // batch and the watch aborts it (`WatchdogTripped`) if the loop stalls.
-        let heartbeat = session_watch::Heartbeat::new();
+        let heartbeat = degenbot::session_end::Heartbeat::new();
         // RSP-10: the shared progress view the run-loop heartbeat reads.
         let progress = consume::SessionProgress::new();
         let consumer = tokio::spawn(consume::run_result_consumer_watched(

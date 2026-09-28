@@ -35,8 +35,8 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "path_count",
     "pool_id_for_pool",
     "pool_id_for_v4_pool",
-    "pump_finished_future",
     "reconcile_hosted_head",
+    "session_end_future",
     "register_and_solve_path",
     "release_all_v3_v4_quarantined",
     "resume",
@@ -64,6 +64,7 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
 #: A double must never define one again.
 RETIRED_ENGINE_MEMBERS: tuple[str, ...] = (
     "backfill_from_snapshot",
+    "pump_finished_future",
     "load_v3_snapshot_from_py",
     "load_v4_snapshot_from_py",
 )
@@ -130,7 +131,7 @@ class EngineSeam(Protocol):
     def v3_pool_count(self) -> int: ...
     def v4_pool_count(self) -> int: ...
     def path_count(self) -> int: ...
-    def pump_finished_future(self) -> Any: ...
+    def session_end_future(self) -> Any: ...
     def resume(self, facets: list[str]) -> None: ...
     def stop(self) -> None: ...
     def reconcile_hosted_head(
@@ -222,8 +223,9 @@ class FakeEngine:
         if self.stop_raises is not None:
             raise self.stop_raises
 
-    async def pump_finished_future(self) -> None:
+    async def session_end_future(self) -> str:
         await self._pump_finished.wait()
+        return "PumpFinished"
 
     def last_processed_block(self) -> int | None:
         return self._last_processed_block

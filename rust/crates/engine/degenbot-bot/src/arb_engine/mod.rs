@@ -85,6 +85,9 @@ pub mod engine_stages;
 // consumer can run the subscribe→resume(+auto-backfill)→stop ritual.
 pub mod driver;
 pub(crate) mod executor;
+
+// The engine-session end DETECTION facts: the cause vocabulary, the heartbeat
+// stall watchdog, and the once-only delivery channel shared by both drivers.
 pub mod fleet_intake;
 mod fleet_registration_executor;
 mod fleet_sim_executor;
@@ -94,6 +97,7 @@ pub mod inline_sim;
 pub mod lifecycle;
 pub mod path_info;
 mod path_lifecycle;
+pub mod session_end;
 // ADR-045: the path-identity registry (`PathRegistry`) —
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;

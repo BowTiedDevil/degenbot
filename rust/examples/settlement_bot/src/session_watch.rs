@@ -1,29 +1,23 @@
 //! Session watch: the driver-side judgement of how a pump session ended —
 //! parity-ledger row 19 (Gap G5).
 //!
-//! Mirrors `src/degenbot/runner/_session_watch.py`:
 //! [`SessionEndVerdict`] is the typed analogue of the Python verdict set
-//! (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`, byte-for-byte),
-//! and [`SessionWatch`] is the single owner of a session's end-state: the
-//! watch-set ({consumer} + a pump/stall watchdog + optional {registration}),
-//! the same-batch ranking (a fail-fast registration outranks a watchdog trip),
-//! and the cancel duties (it cancels the CONSUMER on a watchdog trip — it never
-//! owns or exits the process, the *watch-as-observer* discipline).
+//! (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`), and [`SessionWatch`]
+//! is the single owner of a session's end-state: the watch-set ({consumer} + an
+//! optional detection fact channel + optional {registration}), the same-batch
+//! ranking (a fail-fast registration outranks a detection fact), and the cancel
+//! duties (it aborts the CONSUMER on a watchdog trip — it never owns or exits
+//! the process, the *watch-as-observer* discipline).
 //!
-//! The Python watchdog awaits `engine.pump_finished_future()`; the Rust driver's
-//! watchdog is a *heartbeat/stall* probe over the batch-consumption loop: the
-//! consumer beats a [`Heartbeat`] per `ResultBatch`, and [`stall_watchdog`]
-//! resolves `true` when no beat arrives within the stall window. A watchdog
-//! future that resolves `false` (no probe surface, the injected-engine case)
-//! is DROPPED from the watch-set rather than misread as a pump end — exactly
-//! the Python rule.
+//! *Why* the session ended is the core's ([`degenbot::session_end`]): the pump
+//! completion surface resolves [`SessionEndCause::PumpFinished`] and the
+//! heartbeat stall watchdog publishes [`SessionEndCause::StallWatchdogTripped`]
+//! through [`SessionEndFacts`], once. This watch reads that fact and applies its
+//! own ranking; it builds no detection of its own.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
+use degenbot::session_end::{Heartbeat, SessionEndDetection, SessionEndFacts};
 use tokio::task::JoinHandle;
 
 /// How a pump session's main loop ended (the *session watch* verdict).
@@ -38,7 +32,7 @@ use tokio::task::JoinHandle;
 ///   was surfaced through the cross-task fail-fast channel; the consumer was
 ///   cancelled and the error stored on the watch. In a same-batch race this
 ///   verdict OUTRANKS [`SessionEndVerdict::WatchdogTripped`].
-/// - [`SessionEndVerdict::WatchdogTripped`]: the watchdog fired (the pump
+/// - [`SessionEndVerdict::WatchdogTripped`]: the detection fact fired (the pump
 ///   ended / the consume loop stalled outside `stop()`); it already cancelled
 ///   the consumer and the session leaves via the normal graceful teardown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,67 +45,6 @@ pub enum SessionEndVerdict {
     WatchdogTripped,
 }
 
-/// A monotonic heartbeat counter the consumer beats per consumed batch.
-#[derive(Clone, Debug, Default)]
-pub struct Heartbeat {
-    seq: Arc<AtomicU64>,
-}
-
-impl Heartbeat {
-    /// A fresh heartbeat at sequence 0.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            seq: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    /// Record one beat (one consumed batch).
-    pub fn beat(&self) {
-        self.seq.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// The current beat sequence.
-    #[must_use]
-    pub fn seq(&self) -> u64 {
-        self.seq.load(Ordering::Relaxed)
-    }
-}
-
-/// Whether a heartbeat window is stalled: no beat since the last observation.
-///
-/// Extracted as a pure predicate so the stall decision is unit-testable
-/// without any clock.
-#[must_use]
-pub const fn stalled(last_seq: u64, now_seq: u64) -> bool {
-    now_seq == last_seq
-}
-
-/// A watchdog future resolving `true` when no heartbeat arrives within
-/// `stall_after` (a stalled consume loop).
-///
-/// The watchdog is an *observer*: it returns the verdict and [`SessionWatch`]
-/// performs the cancellation, mirroring the Python `watchdog_factory` shape.
-pub async fn stall_watchdog(heartbeat: Heartbeat, stall_after: Duration) -> bool {
-    let mut last = heartbeat.seq();
-    loop {
-        tokio::time::sleep(stall_after).await;
-        let now = heartbeat.seq();
-        if stalled(last, now) {
-            return true;
-        }
-        last = now;
-    }
-}
-
-/// A boxed watchdog future (the Python `watchdog_factory()` coroutine).
-pub type WatchdogFuture = Pin<Box<dyn Future<Output = bool> + Send>>;
-
-/// A factory producing a fresh watchdog future per [`SessionWatch::wait`] call
-/// (Python re-creates the coroutine each wait; the same factory shape keeps a
-/// re-armed wait safe).
-type WatchdogFactory = Box<dyn FnMut() -> WatchdogFuture + Send>;
-
 /// One owner of a pump session's end-state: watch-set, verdict, teardown.
 ///
 /// Generic over the consumer's successful output `T` so the live arm can hand
@@ -119,7 +52,7 @@ type WatchdogFactory = Box<dyn FnMut() -> WatchdogFuture + Send>;
 pub struct SessionWatch<T> {
     consumer: Option<JoinHandle<T>>,
     registration: Option<JoinHandle<Result<(), String>>>,
-    watchdog_factory: Option<WatchdogFactory>,
+    facts: Option<SessionEndFacts>,
     registration_error: Option<String>,
     consumer_output: Option<Result<T, String>>,
     verdict: Option<SessionEndVerdict>,
@@ -130,7 +63,7 @@ impl<T> std::fmt::Debug for SessionWatch<T> {
         f.debug_struct("SessionWatch")
             .field("consumer", &self.consumer.is_some())
             .field("registration", &self.registration.is_some())
-            .field("watchdog_factory", &self.watchdog_factory.is_some())
+            .field("facts", &self.facts.is_some())
             .field("registration_error", &self.registration_error)
             .field(
                 "consumer_output",
@@ -154,7 +87,7 @@ impl<T> SessionWatch<T> {
         Self {
             consumer: None,
             registration: None,
-            watchdog_factory: None,
+            facts: None,
             registration_error: None,
             consumer_output: None,
             verdict: None,
@@ -173,19 +106,9 @@ impl<T> SessionWatch<T> {
         self.registration = Some(registration);
     }
 
-    /// Attach the pump/stall watchdog factory (Python's `watchdog_factory`).
-    pub fn attach_watchdog_factory<F>(&mut self, factory: F)
-    where
-        F: FnMut() -> WatchdogFuture + Send + 'static,
-    {
-        self.watchdog_factory = Some(Box::new(factory));
-    }
-
-    /// Attach a heartbeat/stall watchdog over `heartbeat`.
-    pub fn attach_stall_watchdog(&mut self, heartbeat: Heartbeat, stall_after: Duration) {
-        self.attach_watchdog_factory(move || {
-            Box::pin(stall_watchdog(heartbeat.clone(), stall_after))
-        });
+    /// Attach the core's once-only detection fact channel.
+    pub fn attach_session_end_facts(&mut self, facts: SessionEndFacts) {
+        self.facts = Some(facts);
     }
 
     /// The fatal registration error behind the `RegistrationFailed` verdict
@@ -210,10 +133,9 @@ impl<T> SessionWatch<T> {
     /// Watch the session's task set until the session ends; return the verdict.
     ///
     /// The same-batch ranking mirrors Python: a fatal registration error
-    /// outranks a watchdog trip in the same wait batch (a watchdog future that
-    /// resolves `false` is dropped, not misread). On the fail-fast path the
-    /// consumer is aborted; on the watchdog path it is aborted too. The watch
-    /// never exits the process — it reports, and the caller decides.
+    /// outranks a detection fact in the same wait batch. On the fail-fast path
+    /// the consumer is aborted; on the detection path it is aborted too. The
+    /// watch never exits the process — it reports, and the caller decides.
     ///
     /// # Errors
     ///
@@ -228,8 +150,7 @@ impl<T> SessionWatch<T> {
             return Err("session watch has no consumer attached".to_string());
         };
         let mut registration = self.registration.take();
-        let mut watchdog = self.watchdog_factory.as_mut().map(|factory| factory());
-        let mut watchdog_active = watchdog.is_some();
+        let facts = self.facts.clone();
         let mut pump_ended = false;
         let mut consumer_output: Option<Result<T, String>> = None;
 
@@ -238,11 +159,11 @@ impl<T> SessionWatch<T> {
                 break;
             }
             let reg_enabled = registration.is_some();
-            let wd_enabled = watchdog_active;
+            let facts_enabled = facts.is_some();
             tokio::select! {
                 // Deterministic ranking (mirrors the Python done-set check
                 // order): registration is polled first, so a same-batch
-                // registration failure outranks a watchdog trip.
+                // registration failure outranks a detection fact.
                 biased;
                 res = &mut consumer => {
                     consumer_output = Some(res.map_err(|e| e.to_string()));
@@ -255,7 +176,7 @@ impl<T> SessionWatch<T> {
                     }
                 }, if reg_enabled => {
                     // Fail-fast outranks everything: a fatal registration error
-                    // is surfaced even when the watchdog fired in the same batch.
+                    // is surfaced even when detection fired in the same batch.
                     if let Ok(Err(error)) = reg_res {
                         consumer.abort();
                         let _ = consumer.await;
@@ -263,43 +184,38 @@ impl<T> SessionWatch<T> {
                         self.verdict = Some(SessionEndVerdict::RegistrationFailed);
                         return Ok(SessionEndVerdict::RegistrationFailed);
                     }
-                    // A clean completion stops watching it, keeps {consumer, watchdog}.
+                    // A clean completion stops watching it, keeps {consumer, detection}.
                     registration = None;
                 }
-                finished = async {
-                    match watchdog.as_mut() {
-                        Some(fut) => fut.as_mut().await,
+                _cause = async {
+                    match facts.as_ref() {
+                        Some(facts) => facts.wait().await,
                         None => std::future::pending().await,
                     }
-                }, if wd_enabled => {
-                    if finished {
-                        // Same-batch ranking (mirrors the Python done-set
-                        // check order): a registration that already finished
-                        // with a fatal error OUTRANKS the watchdog trip, even
-                        // if the watchdog was polled first.
-                        if let Some(reg) = registration.take() {
-                            if reg.is_finished() {
-                                if let Ok(Err(error)) = reg.await {
-                                    consumer.abort();
-                                    let _ = consumer.await;
-                                    self.registration_error = Some(error);
-                                    self.verdict =
-                                        Some(SessionEndVerdict::RegistrationFailed);
-                                    return Ok(SessionEndVerdict::RegistrationFailed);
-                                }
-                            } else {
-                                reg.abort();
+                }, if facts_enabled => {
+                    // Same-batch ranking (mirrors the Python done-set
+                    // check order): a registration that already finished
+                    // with a fatal error OUTRANKS the detection fact, even
+                    // if the fact was polled first.
+                    if let Some(reg) = registration.take() {
+                        if reg.is_finished() {
+                            if let Ok(Err(error)) = reg.await {
+                                consumer.abort();
+                                let _ = consumer.await;
+                                self.registration_error = Some(error);
+                                self.verdict =
+                                    Some(SessionEndVerdict::RegistrationFailed);
+                                return Ok(SessionEndVerdict::RegistrationFailed);
                             }
+                        } else {
+                            reg.abort();
                         }
-                        // The pump ended / stalled: the watch cancels the
-                        // consumer (observer discipline) and leaves via the
-                        // normal teardown.
-                        pump_ended = true;
-                        break;
                     }
-                    // No pump-finished surface: drop it instead of misreading
-                    // instant completion as a pump end.
-                    watchdog_active = false;
+                    // The pump ended / stalled: the watch cancels the
+                    // consumer (observer discipline) and leaves via the
+                    // normal teardown.
+                    pump_ended = true;
+                    break;
                 }
             }
         }
@@ -311,6 +227,7 @@ impl<T> SessionWatch<T> {
             self.verdict = Some(SessionEndVerdict::WatchdogTripped);
             return Ok(SessionEndVerdict::WatchdogTripped);
         }
+
         self.consumer_output = consumer_output;
         self.verdict = Some(SessionEndVerdict::PumpEnded);
         Ok(SessionEndVerdict::PumpEnded)
@@ -325,11 +242,11 @@ impl<T> SessionWatch<T> {
         }
     }
 
-    /// The idempotent end-of-session teardown: registration drain + watchdog
+    /// The idempotent end-of-session teardown: registration drain + detection
     /// drop + consumer cancel (mirrors Python `SessionWatch.teardown`).
     pub fn teardown(&mut self) {
         self.teardown_registration();
-        self.watchdog_factory = None;
+        self.facts = None;
         if let Some(handle) = self.consumer.take() {
             if !handle.is_finished() {
                 handle.abort();
@@ -349,19 +266,22 @@ pub struct SessionWatchOutcome<T> {
     pub consumer: Option<Result<T, String>>,
 }
 
-/// Spawn-friendly supervisor: own a consumer task + a stall watchdog and report
-/// the [`SessionWatchOutcome`] once the session ends.
+/// Spawn-friendly supervisor: own a consumer task + the core's stall detection
+/// and report the [`SessionWatchOutcome`] once the session ends.
 ///
 /// This is the live-arm wiring: the consumer beats `heartbeat` per batch and
-/// the watch aborts it on a stall, reporting `WatchdogTripped`.
+/// the watch aborts it on a stall, reporting `WatchdogTripped`. The detection
+/// itself is the core's [`SessionEndDetection`]; this function only owns its
+/// lifetime and the ranking.
 pub async fn supervise_consumer<T: Send + 'static>(
     consumer: JoinHandle<T>,
     heartbeat: Heartbeat,
     stall_after: Duration,
 ) -> SessionWatchOutcome<T> {
+    let detection = SessionEndDetection::stall(heartbeat, stall_after);
     let mut watch = SessionWatch::new();
     watch.attach_consumer(consumer);
-    watch.attach_stall_watchdog(heartbeat, stall_after);
+    watch.attach_session_end_facts(detection.facts().clone());
     let verdict = watch
         .wait()
         .await
@@ -377,7 +297,13 @@ pub async fn supervise_consumer<T: Send + 'static>(
 #[expect(clippy::unwrap_used, reason = "tests assert on known-valid inputs")]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use degenbot::session_end::SessionEndCause;
+
+    fn stalled_facts() -> (degenbot::session_end::SessionEndPublisher, SessionEndFacts) {
+        let (publisher, facts) = SessionEndFacts::channel();
+        publisher.publish(SessionEndCause::StallWatchdogTripped);
+        (publisher, facts)
+    }
 
     #[test]
     fn the_verdict_set_matches_the_python_spelling() {
@@ -393,39 +319,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn stall_decision_is_a_pure_predicate() {
-        assert!(stalled(3, 3));
-        assert!(!stalled(3, 4));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn stall_watchdog_trips_after_a_stall() {
-        let heartbeat = Heartbeat::new();
-        let handle = tokio::spawn(stall_watchdog(heartbeat, Duration::from_secs(1)));
-        tokio::time::advance(Duration::from_millis(1_100)).await;
-        assert!(handle.await.unwrap());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn stall_watchdog_is_reset_by_heartbeats() {
-        let heartbeat = Heartbeat::new();
-        let handle = tokio::spawn(stall_watchdog(heartbeat.clone(), Duration::from_secs(1)));
-        for _ in 0..5 {
-            tokio::time::advance(Duration::from_millis(500)).await;
-            heartbeat.beat();
-            tokio::task::yield_now().await;
-        }
-        assert!(!handle.is_finished(), "beats must reset the stall clock");
-        tokio::time::advance(Duration::from_millis(1_100)).await;
-        assert!(handle.await.unwrap());
-    }
-
     #[tokio::test]
     async fn consumer_completion_is_pump_ended() {
         let mut watch: SessionWatch<u64> = SessionWatch::new();
         watch.attach_consumer(tokio::spawn(async { 7_u64 }));
-        watch.attach_watchdog_factory(|| Box::pin(std::future::pending()));
         assert_eq!(watch.wait().await.unwrap(), SessionEndVerdict::PumpEnded);
         assert_eq!(watch.consumer_output().unwrap().as_ref().unwrap(), &7);
     }
@@ -436,7 +333,6 @@ mod tests {
         watch.attach_consumer(tokio::spawn(async {
             Err::<(), String>("boom".to_string())
         }));
-        watch.attach_watchdog_factory(|| Box::pin(std::future::pending()));
         // `wait` returns the verdict; the consumer's own error lives in the
         // output as the inner `Err` (the outer layer is the join result).
         assert_eq!(watch.wait().await.unwrap(), SessionEndVerdict::PumpEnded);
@@ -447,7 +343,8 @@ mod tests {
     async fn watchdog_trip_cancels_the_consumer() {
         let mut watch: SessionWatch<()> = SessionWatch::new();
         watch.attach_consumer(tokio::spawn(std::future::pending::<()>()));
-        watch.attach_watchdog_factory(|| Box::pin(async { true }));
+        let (_publisher, facts) = stalled_facts();
+        watch.attach_session_end_facts(facts);
         assert_eq!(
             watch.wait().await.unwrap(),
             SessionEndVerdict::WatchdogTripped
@@ -465,7 +362,8 @@ mod tests {
         // members are in the same wait batch.
         tokio::task::yield_now().await;
         // Both resolve in the same wait batch: the registration verdict wins.
-        watch.attach_watchdog_factory(|| Box::pin(async { true }));
+        let (_publisher, facts) = stalled_facts();
+        watch.attach_session_end_facts(facts);
         assert_eq!(
             watch.wait().await.unwrap(),
             SessionEndVerdict::RegistrationFailed
@@ -478,20 +376,19 @@ mod tests {
         let mut watch: SessionWatch<u64> = SessionWatch::new();
         watch.attach_consumer(tokio::spawn(async { 3_u64 }));
         watch.attach_registration(tokio::spawn(async { Ok::<(), String>(()) }));
-        watch.attach_watchdog_factory(|| Box::pin(std::future::pending()));
         assert_eq!(watch.wait().await.unwrap(), SessionEndVerdict::PumpEnded);
     }
 
-    #[tokio::test]
-    async fn a_false_watchdog_is_dropped_not_read_as_a_pump_end() {
-        let mut watch: SessionWatch<u64> = SessionWatch::new();
-        // Consumer completes only after the watchdog already resolved false.
-        watch.attach_consumer(tokio::spawn(async {
-            tokio::task::yield_now().await;
-            11_u64
-        }));
-        watch.attach_watchdog_factory(|| Box::pin(async { false }));
-        assert_eq!(watch.wait().await.unwrap(), SessionEndVerdict::PumpEnded);
-        assert_eq!(watch.consumer_output().unwrap().as_ref().unwrap(), &11);
+    #[tokio::test(start_paused = true)]
+    async fn core_stall_detection_trips_the_watch_and_cancels_the_consumer() {
+        let detection = SessionEndDetection::stall(Heartbeat::new(), Duration::from_secs(1));
+        let mut watch: SessionWatch<()> = SessionWatch::new();
+        watch.attach_consumer(tokio::spawn(std::future::pending::<()>()));
+        watch.attach_session_end_facts(detection.facts().clone());
+        tokio::time::advance(Duration::from_millis(1_100)).await;
+        assert_eq!(
+            watch.wait().await.unwrap(),
+            SessionEndVerdict::WatchdogTripped
+        );
     }
 }

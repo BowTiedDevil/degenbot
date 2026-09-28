@@ -1683,7 +1683,7 @@ class TestPumpFinishedWatchdog:
 
     The watchdog awaits the engine's real completion future — no poll, no
     injected-engine bypass. Test doubles satisfy the same awaitable contract:
-    ``_FakeEngine.pump_finished_future`` never resolves (a live fake pump),
+    ``_FakeEngine.session_end_future`` never resolves (a live fake pump),
     while a finishing/panicking engine resolves it.
     """
 
@@ -1695,8 +1695,9 @@ class TestPumpFinishedWatchdog:
                 super().__init__()
                 self.pump_ended = asyncio.Event()
 
-            async def pump_finished_future(self) -> None:
+            async def session_end_future(self) -> str:
                 await self.pump_ended.wait()
+                return "PumpFinished"
 
         finishing = _FinishingEngine()
         engine_registry.engine = finishing
@@ -1746,11 +1747,12 @@ class TestPumpFinishedWatchdog:
         engine_registry = _FakeEngineRegistry()
 
         class _PanickedEngine(_FakeEngine):
-            async def pump_finished_future(self) -> None:
+            async def session_end_future(self) -> str:
                 # A panicked pump task drops its completion sender; a real
                 # awaitable resolves after a beat (it does not raise).
                 for _ in range(3):
                     await asyncio.sleep(0)
+                return "PumpFinished"
 
         engine_registry.engine = _PanickedEngine()
 

@@ -203,7 +203,7 @@ pub async fn consume_result_batches(
 /// A sink that beats the session-watch heartbeat for each consumed batch
 /// (G5 session watch,) while counting nothing else.
 struct HeartbeatSink {
-    heartbeat: Option<crate::session_watch::Heartbeat>,
+    heartbeat: Option<degenbot::session_end::Heartbeat>,
     progress: Option<SessionProgress>,
 }
 
@@ -234,7 +234,7 @@ impl BatchSink for HeartbeatSink {
 /// Returns [`ConsumerError`] if the sink fails.
 pub async fn run_result_consumer_watched(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<ResultBatch>,
-    heartbeat: Option<crate::session_watch::Heartbeat>,
+    heartbeat: Option<degenbot::session_end::Heartbeat>,
     progress: Option<SessionProgress>,
 ) -> Result<(ConsumerReport, BlockClock), ConsumerError> {
     let sink = HeartbeatSink {

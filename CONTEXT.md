@@ -260,9 +260,13 @@ current block, provider, credentials).
 _Avoid_: "session dict", "cockpit config".
 
 **Session watch**:
-The cockpit's one owner of a session's end-state: the typed watch-set transitions
-(``_WatchSet`` / ``on_task_done``), the end-verdict ranking, and teardown.
-_Avoid_: "await loop", "fail-fast wrapper".
+The cockpit's one owner of a session's end-state RANKING: the typed watch-set
+transitions (``_WatchSet`` / ``on_task_done``), the end-verdict ranking, and teardown.
+Detection of *why* the session ended is core-owned
+(``degenbot_bot::arb_engine::session_end``: ``SessionEndCause`` delivered once via
+``SessionEndFacts`` over ``EngineDriver::wait_session_end`` / the heartbeat stall
+watchdog); the watch reads that fact and applies its own ranking.
+_Avoid_: "await loop", "fail-fast wrapper", "detection owner".
 
 ## Pool registration lifecycle
 

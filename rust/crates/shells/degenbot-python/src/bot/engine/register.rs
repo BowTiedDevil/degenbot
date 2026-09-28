@@ -317,15 +317,16 @@ impl PyArbEngine {
         crate::bot::pump::stop(&self.driver)
     }
 
-    /// Awaitable pump-completion surface: resolves once the spawned pump task
-    /// finishes — cooperative timed exit (`HOTPATH_SHUTDOWN_MS`), WS stream
-    /// end, abort, or panic. The Python runner awaits this instead of polling,
-    /// so a completed pump triggers the ordinary graceful shutdown within one
-    /// event-loop turn. A consumer that awaits it AFTER the pump already ended
-    /// still resolves (the completion is a retained broadcast, not a one-shot
-    /// signal consumed at creation).
-    fn pump_finished_future<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        crate::bot::pump::pump_finished_future(py, &self.driver)
+    /// Awaitable session-end DETECTION FACT: resolves the core
+    /// `SessionEndCause` name once the spawned pump task finishes — cooperative
+    /// timed exit (`HOTPATH_SHUTDOWN_MS`), WS stream end, abort, or panic. The
+    /// Python runner awaits this instead of polling, so a completed pump
+    /// triggers the ordinary graceful shutdown within one event-loop turn. A
+    /// consumer that awaits it AFTER the pump already ended still resolves (the
+    /// completion is a retained broadcast, not a one-shot signal consumed at
+    /// creation).
+    fn session_end_future<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        crate::bot::pump::session_end_future(py, &self.driver)
     }
 }
 
