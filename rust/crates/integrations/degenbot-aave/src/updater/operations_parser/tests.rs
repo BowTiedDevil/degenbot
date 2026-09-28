@@ -197,7 +197,7 @@ fn scaled_event(
 /// Variant of `scaled_event` for a Transfer whose `target_address` is NOT
 /// the ZERO address — i.e. a collateral movement to a liquidator (not the
 /// burn-side pair ERC20 Transfer-to-ZERO). Used by `collect_collateral_events`
-/// tests to assert the EIWEPM filter distinguishes the two cases.
+/// tests to assert the pair-Transfer filter distinguishes the two cases.
 fn transfer_to_event(
     log_idx: u64,
     event_type: ScaledTokenEventType,
@@ -481,7 +481,7 @@ fn collect_collateral_events_burn_vs_transfers_split() {
     );
 }
 
-/// TYS5MS regression guard — `collect_collateral_events` MUST skip
+/// Regression guard — `collect_collateral_events` MUST skip
 /// `Erc20CollateralTransfer` to a NON-ZERO recipient in LC ops (the
 /// Aave V3 treasury protocol-fee Transfer shape). Aave V3 `LiquidationCall`
 /// transfers the protocol-fee portion from the liquidated user to the
@@ -515,7 +515,7 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
     );
     // Standard ERC20 Transfer(user→treasury, fee_underlying) emitted
     // alongside `LiquidationCall` by `transferOnLiquidation`. Without the
-    // TYS5MS skip-guard, this would be DOUBLE-APPLIED (once here as the
+    // skip-guard, this would be DOUBLE-APPLIED (once here as the
     // fee_underlying amount, AND once via the paired BT.value below),
     // over-debiting the user + over-crediting the treasury by exactly
     // the fee_underlying amount.
@@ -529,7 +529,7 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
         fee_underlying_amount,
     );
     // Paired Aave V3 BalanceTransfer(user→treasury, fee_scaled, index) —
-    // the SCALED-balance move that Python (and Rust post-TYS5MS) applies.
+    // the SCALED-balance move that Python (and Rust) applies.
     // value × index / RAY ≈ erc20_fee_transfer.amount (within tiny
     // ray-floor rounding). Modeled here via the CollateralTransfer variant
     // (index is non-None, indicating a BalanceTransfer event_type).
@@ -566,7 +566,7 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
     );
     // The skipped ERC20 fee Transfer MUST be marked assigned so the
     // standalone Step-4e Transfer path doesn't re-collect it (which
-    // would re-instate the double-application the TYS5MS fix prevents).
+    // would re-instate the double-application the skip-guard prevents).
     assert!(
         assigned.contains(&11),
         "TYS5MS: the skipped Erc20CollateralTransfer to treasury IS marked \
@@ -577,7 +577,7 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
     // (the caller writes assigned.insert for collected items elsewhere).
 }
 
-/// `collect_collateral_events` EIWEPM filter (per the orchestrator's
+/// `collect_collateral_events` pair-Transfer filter (per the orchestrator's
 /// fix directive): a burn-side pair ERC20 Transfer-to-ZERO (the Burn
 /// event's operational companion) MUST be excluded from
 /// `collateral_transfers` so the Liquidation path doesn't double-debit

@@ -6,7 +6,7 @@
 //! Repay/Withdraw/MintToTreasury/Deficit) to their constituent `ScaledToken`
 //! events (aToken/vToken Mint/Burn/Transfer + plain ERC20 Transfer) by user +
 //! amount +/- a pool-revision ray-flooring tolerance (`_amounts_match`), then
-//! emits typed [`Operation`] objects the apply dispatch glue (HQF5NQ-C) consumes
+//! emits typed [`Operation`] objects the apply dispatch glue consumes
 //! to construct `AaveChunkEvent` variants and dispatch via
 //! [`crate::run::apply_aave_chunk_writes_on_conn`].
 //!
@@ -57,9 +57,9 @@ pub enum OperationType {
     /// `Repay` (useATokens=true) → `DebtBurn` + `CollateralBurn`.
     RepayWithAtokens,
     /// `LiquidationCall` → `DebtBurn` + `CollateralBurn` (+ the multi-burn
-    /// pattern detection). The body of the liquidation builder is HQF5NQ-B;
-    /// this variant is defined here so the `OperationType` enum is the full
-    /// contract surface B can pattern-match against.
+    /// pattern detection). The liquidation-builder body lives in the apply
+    /// dispatch glue; this variant is defined here so the `OperationType`
+    /// enum is the full contract surface it can pattern-match against.
     Liquidation,
     /// GHO `Borrow` → `GhoDebtMint`.
     GhoBorrow,
@@ -108,8 +108,8 @@ pub enum TokenType {
 /// applies when classifying the net effect of a `Mint` emitted on a
 /// repayment/withdrawal path where interest exceeded the principal).
 ///
-/// Per HQF5NQ (ecfb5c-flag-3-resolution): this enum lives in the **parser**
-/// crate (not the **decoder** crate). The decoder emits raw
+/// This enum lives in the **parser** crate (not the **decoder** crate).
+/// The decoder emits raw
 /// `Address`/`U256` fields; the parser classifies the event by the emitter
 /// `Address` (aToken vs vToken vs GHO-vToken vs GHO-discount-token) + the
 /// operation context (interest-exceeds-principal → derived interest variant).
@@ -321,7 +321,7 @@ pub struct Operation<'a> {
     pub minted_to_treasury_amount: Option<U256>,
     /// For Liquidation: the `LiquidationCall` `debtToCover` field (surfaces
     /// the burn-amount's accuracy edge — the Burn `amount + balance_increase`
-    /// is off by 1 wei). HQF5NQ-B's concern.
+    /// is off by 1 wei; the liquidation builder consumes it.
     pub debt_to_cover: Option<U256>,
     /// Validation errors filled by the `_validate_*` fns (`operations_parser.py`).
     pub validation_errors: Vec<String>,
@@ -382,9 +382,9 @@ fn pool_ev_idx(log: &Log) -> u64 {
 
 // ── the liquidation-pattern stubs (pattern_types.py) ──────────────────────
 //
-// The full body lives in HQF5NQ-B; the type definitions land here so B can
-// extend them and so the parser's `parse()` scaffold (which builds but does
-// not exercise the pattern context) is wired.
+// The type definitions land here so the apply dispatch glue can extend them
+// and so the parser's `parse()` scaffold (which builds but does not exercise
+// the pattern context) is wired.
 
 /// Mirrors `aave/pattern_types.py::LiquidationPattern`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

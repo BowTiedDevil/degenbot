@@ -25,7 +25,7 @@ pub(crate) fn log_idx_value(log: &Log) -> u64 {
 /// MUST be consistent across both
 /// paths: the `SQLite` columns use BINARY collation (case-sensitive), so a
 /// lowercase lookup against a checksummed-seeded row would miss + create a
-/// duplicate (the RCDJPH §4.2 byte-divergence — duplicate lowercase users).
+/// duplicate (the §4.2 byte-divergence — duplicate lowercase users).
 pub(crate) fn addr_to_hex(addr: Address) -> String {
     address_to_checksum_string(&addr)
 }

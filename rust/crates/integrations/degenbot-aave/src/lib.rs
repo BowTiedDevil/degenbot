@@ -39,7 +39,7 @@
 //!
 //! # Why this design (the two-writer hazard it fixes)
 //!
-//! The earlier per-`#[pyfunction]` `PyO3` seam (the 2QPBUJ `db_get_or_create_*` /
+//! The earlier per-`#[pyfunction]` `PyO3` seam (the `db_get_or_create_*` /
 //! `db_apply_*` pyfunctions in `degenbot-python/src/db/aave.rs`) opened
 //! `DegenbotDb::open_for_writes(database_path)` PER CALL + committed
 //! immediately on its OWN connection. That was a SECOND writer on the `SQLite`

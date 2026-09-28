@@ -1,5 +1,5 @@
 //! Aave V3 GHO debt processor — the GHO scaled-balance math with discount
-//! handling (EPDX35 — GHOPROC).
+//! handling.
 //!
 //! Verbatim port of the Python
 //! `src/degenbot/aave/processors/processor.py::UnifiedGhoProcessor` (the
@@ -18,7 +18,7 @@
 //! a discount on their interest, modeled by the `previous_discount` /
 //! `should_refresh_discount` / `accrue_debt_on_action` /
 //! `get_discounted_balance` machinery. The GHO processor is the SCALEAPPLY-
-//! sibling that owns this — C3 (the GHO apply dispatch, `CYPYEL`) consumes it
+//! sibling that owns this — the GHO apply dispatch consumes it
 //! via the `process_gho_debt_mint` / `process_gho_debt_burn` fns.
 //!
 //! # π (zero DB, zero RPC)
@@ -1120,7 +1120,7 @@ mod tests {
     /// Python oracle produces. Captured 2026-07-05 from
     /// `src/degenbot/aave/processors/processor.py::UnifiedGhoProcessor` (the
     /// `.process_mint_event` / `.process_burn_event` fns). This is the §4.2
-    /// zero-drift surface for the GHO processor — U5YIBG's final arbiter.
+    /// zero-drift surface for the GHO processor — the final arbiter.
 
     #[test]
     fn parity_mint_borrow_v1_v2_v4_v5() {

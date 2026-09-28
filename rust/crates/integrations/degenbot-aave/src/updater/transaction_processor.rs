@@ -1,4 +1,4 @@
-//! The per-tx apply dispatch glue (HQF5NQ-C). Mirrors
+//! The per-tx apply dispatch glue. Mirrors
 //! `src/degenbot/cli/aave/transaction_processor.py::_process_transaction` +
 //! `_process_operation` — the bridge from parsed `Operation`s to substrate
 //! [`AaveChunkEvent`] variants the orchestrator batches +
@@ -72,17 +72,17 @@ pub enum ProcessTxError {
     #[error("processor error: {0}")]
     Processor(#[from] ProcessorError),
     /// A `UnifiedGhoProcessor` failure (ray-math / percentage-math overflow /
-    /// delta overflow). C3 (CYPYEL).
+    /// delta overflow).
     #[error("GHO processor error: {0}")]
     GhoProcessor(#[from] GhoProcessorError),
     /// A ray-math failure from the enrichment's `ray_div`.
     #[error("ray-math error: {0}")]
     RayMath(#[from] crate::WadRayError),
-    /// A deferred path (HQF5NQ-C2 — the liquidation apply / GHO discount
+    /// A deferred path (the liquidation apply / GHO discount
     /// machinery / `DeficitCoverage` / `MintToTreasury`). The orchestrator may
     /// split these into sub-tasks rather than rush the edge-branch
     /// verification.
-    #[error("deferred (HQF5NQ-C2): {0}")]
+    #[error("deferred: {0}")]
     Deferred(String),
 }
 
@@ -1955,7 +1955,7 @@ fn resolve_position_id(
         conn,
         market_id,
         &user_addr_str,
-        0, // gho_discount — the GHO-discount-lookup machinery is C2 / RYKCC4
+        0, // gho_discount — effective discount resolution lives in the GHO-discount context
     )?;
     let position_id = match position {
         ScaledTokenPosition::Collateral => {

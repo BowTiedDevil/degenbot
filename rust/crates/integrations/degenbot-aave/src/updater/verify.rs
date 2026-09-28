@@ -15,8 +15,7 @@
 //! Mirrors `src/degenbot/cli/aave/verification.py` +
 //! `src/degenbot/cli/aave/db_verification.py`. The `DEAD_ADDRESS` /
 //! `ZERO_ADDRESS` skip is preserved. Uses `AlloyProvider::eth_call`
-//! (per-position calls) — multicall3 batching is the natural extension
-//! (BE474R-full, post-HLYWI6).
+//! (per-position calls) — multicall3 batching is the natural extension.
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
@@ -239,7 +238,7 @@ const ZERO_ADDRESS: Address = Address::ZERO;
 /// is the win; the per-chunk touched-set path is a wash but harmless.
 ///
 /// Returns the divergence list (empty = GREEN). Each row carries the
-/// human-readable fields needed by the JGQHBX harness to emit a NAMED,
+/// human-readable fields needed by the drive harness to emit a NAMED,
 /// bisect-able divergence (`user_address`, `token_address`, `position_id`,
 /// expected vs actual `balance`/`last_index` at `block_number`).
 ///
@@ -600,7 +599,7 @@ pub async fn verify_gho_discount_amounts_on_conn(
 ///
 /// When `user_addresses` is `None`, verifies ALL positions/users in the market
 /// (the post-run `--verify-all` path). When `Some`, verifies only the
-/// specified users (the JGQHBX per-chunk path).
+/// specified users (the per-chunk path).
 ///
 /// # Errors
 ///

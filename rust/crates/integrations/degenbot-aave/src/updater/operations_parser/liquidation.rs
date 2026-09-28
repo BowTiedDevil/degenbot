@@ -214,7 +214,7 @@ impl<'a> TransactionOperationsParser<'a> {
     ///
     /// Returns `(collateral_burn, collateral_transfers)`.
     ///
-    /// # EIWEPM bug class — the burn-side / mint-side pair ERC20 Transfer
+    /// # The burn-side / mint-side pair ERC20 Transfer bug class
     ///
     /// By Aave V3 protocol, the aToken emits the `Burn` event AND the paired
     /// ERC20 `Transfer user→0x0` (the burn-side companion) as ONE operational
@@ -300,7 +300,7 @@ impl<'a> TransactionOperationsParser<'a> {
                     assigned_indices.insert(ev.log_index);
                     continue;
                 }
-                // EIWEPM: skip the burn-side pair ERC20 Transfer to ZERO (the
+                // Skip the burn-side pair ERC20 Transfer to ZERO (the
                 // Burn event itself is the sole operational debit), and the
                 // mint-side pair ERC20 Transfer from ZERO (the Mint event is
                 // the sole operational credit). Matches the standalone Transfer

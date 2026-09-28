@@ -1,12 +1,11 @@
 //! Aave V3 scaled-token processors — the revision-aware `balance_delta`
-//! computation for aToken/vToken Mint/Burn events (5Z3QQ2 — SCALEAPPLY).
+//! computation for aToken/vToken Mint/Burn events.
 //!
 //! Port of the Python `src/degenbot/aave/processors/processor.py` (the
 //! `UnifiedCollateralProcessor` + `UnifiedDebtProcessor`) and the
 //! `src/degenbot/aave/processors/strategies.py` module (the `RoundingStrategy`
 //! struct + the per-revision `COLLATERAL_STRATEGIES` / `DEBT_STRATEGIES`
-//! dicts). The GHO processor (`UnifiedGhoProcessor`) is sibling `RYKCC4`
-//! (SPECIALAPPLY)'s scope — NOT ported here.
+//! dicts). The GHO processor (`UnifiedGhoProcessor`) is NOT ported here.
 //!
 //! # The two-layer split (mirrors the Python architecture)
 //!

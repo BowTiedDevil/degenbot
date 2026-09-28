@@ -72,14 +72,14 @@ pub struct AaveChunkProgress {
     /// `true` iff this is the run's final chunk (`chunk_end >= last_block` or
     /// `max_chunks` hit). Reported POST-commit; the Python shell uses it to
     /// fire the completion-time backup. The Rust completion full-verify
-    /// (YWEUIR) computes finality inline.
+    /// computes finality inline.
     pub is_final: bool,
     /// The user addresses touched by ANY log in this chunk (topics[1]/[2]
     /// extracted as addresses). A programmatic [`ProgressSink`] consumer can
     /// drive the per-chunk value-correctness gate from this list via
     /// [`crate::verify::verify_touched_positions_on_conn`] against cand.db
     /// after the commit (small-set per-position RPC verification — multicall3
-    /// batching for the market-wide verify is BE474R-full).
+    /// batching is the market-wide extension).
     pub touched_user_addresses: Vec<Address>,
 }
 
@@ -190,7 +190,7 @@ pub enum RunError {
 ///    `(block_number, log_index)`.
 /// 2. `group_logs_by_tx` returns the per-tx groups (mirrors `_build_transaction_contexts`).
 /// 3. Open ONE `Transaction`. For each tx group, re-resolve the GHO vToken
-///    revision (GJQGKN per-tx, sees prior txs' `Upgraded` writes), build the
+///    revision (per-tx, sees prior txs' `Upgraded` writes), build the
 ///    discount snapshot (RPC + the DB-cache path), dispatch the config events
 ///    (RPC for revisions and metadata plus the substrate lookups), apply THAT
 ///    tx's config events to `conn` (so the ops parser sees them), run
@@ -373,7 +373,7 @@ async fn run_aave_update_driver(
     bootstrap_pool_contracts(&db, &provider, &fetcher, market_id, from_block).await?;
 
     // Build the fetch spec + the GHO asset (chain-unique). The per-chunk
-    // loop's GJXURV refresh re-reads `scaled_token_addresses` +
+    // loop's refresh re-reads `scaled_token_addresses` +
     // `stk_aave_address` from the DB at the START of each chunk, so the
     // frozen run-start snapshot here is just the seed for chunk 1.
     let (mut spec, _gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
@@ -402,7 +402,7 @@ async fn run_aave_update_driver(
         // 1. RPC fetch the chunk's logs (GIL-free, async, sorted by
         //    (block_number, log_index)).
         //
-        // (a) W2S3WH: refresh the scaled-token address set from the DB at the
+        // (a) Refresh the scaled-token address set from the DB at the
         //     START of each chunk — matches the Python's per-chunk
         //     `_get_all_scaled_token_addresses` (commands.py:1153). The frozen
         //     run-start set (build_fetch_spec above) misses assets created in
@@ -415,8 +415,8 @@ async fn run_aave_update_driver(
             .into_iter()
             .filter_map(|s| s.parse::<Address>().ok())
             .collect();
-        // (a)' GJXURV: refresh `spec.stk_aave_address` from the DB at the
-        //     START of each chunk — the W2S3WH sibling of
+        // (a)' Refresh `spec.stk_aave_address` from the DB at the
+        //     START of each chunk — the sibling of
         //     `spec.scaled_token_addresses` above. The frozen run-start set
         //     (`build_fetch_spec` above) captures `v_gho_discount_token` from
         //     the cold-boot DB; on cold-boot states where `v_gho_discount_token
@@ -435,7 +435,7 @@ async fn run_aave_update_driver(
             .and_then(|g| g.v_gho_discount_token.as_deref())
             .and_then(|s| s.parse().ok());
         let mut logs = fetch_aave_chunk_logs(&spec, &fetcher, working_start, chunk_end).await?;
-        // (b) W2S3WH same-chunk staleness: an asset created mid-chunk (a
+        // (b) Same-chunk staleness: an asset created mid-chunk (a
         //     `ReserveInitialized` in tx N + the first `Supply`/`Borrow` on
         //     it in tx N+M, same chunk) has its aToken/vToken NOT in the
         //     (just-refreshed) spec set — the asset doesn't exist until the
@@ -446,7 +446,7 @@ async fn run_aave_update_driver(
         //     (block_number, log_index)). `process_chunk_on_conn` is
         //     UNCHANGED — the per-tx config-dispatch → ops interleave is
         //     preserved, so the `v_token_revision` conn reads stay per-tx-
-        //     correct per I2RHGP Fix 2c (no rev-boundary regression — the
+        //     correct per the intra-dispatch apply (no rev-boundary regression — the
         //     rejected Option A two-pass split would have made tx N's ops see
         //     a later tx's `Upgraded`).
         let known: HashSet<Address> = spec.scaled_token_addresses.iter().copied().collect();
@@ -488,7 +488,7 @@ async fn run_aave_update_driver(
                 sort_logs_by_block_and_index(&mut logs);
             }
         }
-        // (c) GJXURV same-chunk staleness for the discount token: a
+        // (c) Same-chunk staleness for the discount token: a
         //     `DiscountTokenUpdated` event in tx N sets the new
         //     `v_gho_discount_token` mid-chunk — but `spec.stk_aave_address`
         //     was resolved from committed DB state BEFORE the chunk's dispatch
@@ -673,7 +673,7 @@ async fn run_aave_update_driver(
         report.chunks_committed += 1;
         report.total_events_applied += chunk_report.events_applied;
 
-        // Operator-facing progress (Q5IKHX: the Rust core owns CLI progress —
+        // Operator-facing progress (the Rust core owns CLI progress —
         // no per-chunk FFI hop). Time-throttled so a long backfill's console
         // stays readable; the run's final chunk always logs so completion is
         // observable even when the last chunks land inside one throttle window.

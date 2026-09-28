@@ -68,7 +68,7 @@ pub(super) fn group_logs_by_tx(logs: &[Log]) -> Vec<TxGroup<'_>> {
 /// body). Per tx group: re-resolve the GHO vToken revision, run the discount
 /// pre-pass + the config-event dispatch + C3's `process_transaction`, then
 /// apply THAT tx's events to `conn` via [`apply_chunk_events_on_conn`] BEFORE
-/// the next tx's reads (GJQGKN per-tx apply — fixes the config-revision +
+/// the next tx's reads (per-tx apply — fixes the config-revision +
 /// ops-balance staleness surfaces; matches Python's per-tx ORM session apply).
 /// The `last_update_block` stamp is the LAST write (end-of-chunk). Held
 /// inside the caller's `Transaction`; on `Err` the caller drops the tx
@@ -88,7 +88,7 @@ pub(super) async fn process_chunk_on_conn(
     tx_groups: &[TxGroup<'_>],
     chunk_end: u64,
 ) -> Result<ChunkCoreReport, RunError> {
-    // GJQGKN: per-tx apply within `conn`. Two staleness surfaces fixed —
+    // Per-tx apply within `conn`. Two staleness surfaces fixed —
     //   (1) config: `vtoken_revision` is now re-resolved per-tx from `conn`
     //       (read-your-own-writes sees the prior tx's `Upgraded` write),
     //       instead of the chunk-start snapshot that masked an in-chunk bump.
@@ -185,7 +185,7 @@ pub(super) async fn process_chunk_on_conn(
         )
         .await?;
 
-        // (d) The config events were applied INTRA-dispatch (I2RHGP Fix 2c:
+        // (d) The config events were applied INTRA-dispatch:
         //     `dispatch_config_events` applies each event to `conn` as it's
         //     dispatched, so a later config event's dispatch sees an earlier
         //     event's apply — e.g. `CollateralConfigurationChanged` sees the
@@ -364,10 +364,10 @@ pub(super) struct ChunkCoreReport {
     pub(super) events_applied: usize,
     /// User addresses touched by ANY event in the chunk (topics[1]/[2] of every
     /// log extracted as addresses — cheap `O(num_logs * 2)` scan). Drives the
-    /// JGQHBX drive harness's per-chunk value-correctness gate (the verify fn
+    /// drive harness's per-chunk value-correctness gate (the verify fn
     /// accepts a touched-users filter; verifying only touched users per chunk
     /// keeps the per-chunk RPC count bounded — multicall3 batching is the
-    /// market-wide extension, BE474R-full).
+    /// market-wide extension).
     pub(super) touched_user_addresses: HashSet<Address>,
 }
 

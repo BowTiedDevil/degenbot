@@ -210,7 +210,7 @@ pub fn dispatch_asset_source_updated(
     let Some(asset) =
         DegenbotDb::lookup_asset_by_underlying_address_on_conn(conn, market_id, &asset_str)?
     else {
-        // I2RHGP Fix 2b (tolerance): on a fresh-market cold-boot, the
+        // Cold-boot tolerance: on a fresh-market cold-boot, the
         // `AssetSourceUpdated` for a not-yet-initialized reserve can precede
         // its `ReserveInitialized` within the same tx (mainnet block
         // 16496792: `AssetSourceUpdated` at logIdx 409, `ReserveInitialized`
@@ -343,7 +343,7 @@ pub fn dispatch_discount_percent_updated(
 ///   (`process_transaction`); only the stkAAVE discount token is this fn's
 ///   scope (matches the Python `assert contract_address == discount_token`).
 ///
-/// YMWN5V retirement (crash #3): the prior design dedupe-skipped the zero-leg
+/// Crash #3: the prior design dedupe-skipped the zero-leg
 /// here + processed the paired `Staked`/`Redeem` semantic events via separate
 /// dispatch fns. That required an empirically-falsified invariant — every
 /// zero-leg Transfer must pair with a semantic event. Some actions emit ONLY
@@ -379,7 +379,7 @@ pub fn dispatch_stk_aave_transfer(
     if decoded.from == decoded.to {
         return Ok(None);
     }
-    // Half-event handling for the zero-leg (YMWN5V retirement): skip the
+    // Half-event handling for the zero-leg: skip the
     // ZERO_ADDRESS side, always resolve + mutate the real user. Mirrors
     // `process_stk_aave_transfer_event` — the Python skips ZERO_ADDRESS
     // entirely (`from_user=None`/`to_user=None` collapses to a no-op on that
@@ -423,11 +423,11 @@ pub fn dispatch_stk_aave_transfer(
 /// [`dispatch_stk_aave_transfer`] wrapper that re-resolves the GHO asset
 /// FRESH from `conn` AND pre-apply backfills each side's `stk_aave_balance`
 /// from on-chain `balanceOf(user)` at `block_number - 1` when the column is
-/// `NULL`. GJXURV (crash #4): the per-tx `gho_asset` snapshot is taken once
+/// `NULL`. Crash #4: the per-tx `gho_asset` snapshot is taken once
 /// before `dispatch_config_events`'s per-event loop; a same-tx
 /// `DiscountTokenUpdated` at an earlier logIndex bumps `v_gho_discount_token`
 /// AFTER the snapshot, so a stale `None` snapshot would make dispatch skip the
-/// matched transfer (the W2S3WH-sibling per-chunk refresh of
+/// matched transfer (the sibling per-chunk refresh of
 /// `spec.stk_aave_address` handles cross-chunk staleness from the cold-boot
 /// `NULL`; this handles same-tx staleness). The pre-apply backfill mirrors
 /// Python's `get_or_init_stk_aave_balance` (stkaave.py:116-122): without it,
@@ -581,7 +581,7 @@ pub fn dispatch_discount_token_updated(
 ///
 /// Same emitter-validation guard as [`dispatch_discount_token_updated`] — see
 /// its docs; the chain-wide fetch + the Python's `event["address"]` guard
-/// apply identically (ULDUAC / divergence #2).
+/// apply identically (divergence #2).
 pub fn dispatch_discount_rate_strategy_updated(
     gho_asset: &AaveGhoAsset,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
@@ -787,10 +787,10 @@ pub async fn resolve_reserve_initialized(
         v_token_id,
         v_token_revision: discount_to_i64(v_token_revision),
         price_source,
-        // 5. GHO-vToken-FK link (2QGL6G / divergence #8): mirror the Python's
+        // 5. GHO-vToken-FK link (divergence #8): mirror the Python's
         //    `if asset_address == gho_asset.token.address: gho_token_entry
         //    .v_token_id = v_token.id` (event_handlers.py:689-698). The FK is
-        //    the precondition for the ULDUAC emitter guard (which compares
+        //    the precondition for the discount-event emitter guard (which compares
         //    against `gho_asset.v_token_address`, resolved via the FK).
         gho_link_token_id: gho_asset
             .filter(|g| g.gho_token_address.as_deref() == Some(underlying_str.as_str()))
@@ -925,7 +925,7 @@ pub async fn dispatch_config_events(
         )
         .await?
         {
-            // I2RHGP Fix 2c (intra-dispatch apply): apply each config event
+            // Intra-dispatch apply: apply each config event
             // to `conn` AS it's dispatched (in logIndex order), so a later
             // config event's dispatch sees an earlier event's apply — e.g.
             // `CollateralConfigurationChanged` (logIdx 419) sees the asset
@@ -940,7 +940,7 @@ pub async fn dispatch_config_events(
 }
 
 /// Resolve the `PRICE_ORACLE` contract address for `ReserveInitialized`
-/// dispatch (I2RHGP Fix 1b). The spec's `cached` `oracle_address` is
+/// dispatch. The spec's `cached` `oracle_address` is
 /// captured once before the chunk loop (`build_fetch_spec`) + can be `None`
 /// when the `PRICE_ORACLE` row is registered mid-loop via a
 /// `PriceOracleUpdated` event (mainnet: block 16291126, chunk 1) — AFTER
@@ -1056,7 +1056,7 @@ async fn dispatch_single_config_event(
             )
         }
         // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
-        // dispatch. YMWN5V-retired (crash #3): the prior design processed
+        // dispatch. Crash #3: the prior design processed
         // these as proxies for the zero-leg Transfers; the Python never
         // did (Staked/Redeem are fetched only for classification in
         // `fetch_stk_aave_events`). The decoders stay (harmless, available
@@ -1972,7 +1972,7 @@ mod tests {
         assert!(dispatch_reserve_data_updated(1, 100, &ev, &conn).is_err());
     }
 
-    /// I2RHGP Fix 2b: a fresh-market cold-boot can see `AssetSourceUpdated`
+    /// A fresh-market cold-boot can see `AssetSourceUpdated`
     /// for a not-yet-initialized reserve (it precedes `ReserveInitialized`
     /// within the same tx on mainnet block 16496792). The handler must SKIP
     /// (return `Ok(None)`) rather than error — the later `ReserveInitialized`
@@ -2243,7 +2243,7 @@ mod tests {
         assert_eq!(decode_dynamic_string(&ret), None);
     }
 
-    // ── ULDUAC: discount-event emitter-validation guard (divergence #2) ────────
+    // ── Discount-event emitter-validation guard (divergence #2) ────────
     // The dispatch returns Ok(None) when (a) the GHO asset has no vToken FK
     // (the Python's `gho_asset.v_token is None` guard) or (b) the decoded
     // emitter (log.address) doesn't match gho_asset.v_token_address (the
@@ -2261,7 +2261,7 @@ mod tests {
         }
     }
 
-    /// Discount-config gap (fork A, post-WCRWL3): the per-tx `gho_asset`
+    /// Discount-config gap (fork A): the per-tx `gho_asset`
     /// snapshot is taken BEFORE the same-tx `ReserveInitialized` (which links
     /// `v_token_id`) applies. The `dispatch_discount_token_updated` guard
     /// checks `v_token_address` (resolved from the FK) — with the stale

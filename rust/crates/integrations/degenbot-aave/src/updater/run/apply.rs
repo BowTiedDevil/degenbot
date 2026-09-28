@@ -92,7 +92,7 @@ pub enum AaveChunkEvent {
     },
     /// `ReserveDataUpdated(reserve, liquidityRate, stableBorrowRate,
     /// variableBorrowRate, liquidityIndex, variableBorrowIndex)` — update the
-    /// `aave_v3_assets` row's indices/rates (UR7QNL — one of the only two Pool
+    /// `aave_v3_assets` row's indices/rates (one of the only two Pool
     /// events that write DB rows directly). `stableBorrowRate` is deprecated on
     /// Aave V3 + dropped (mirrors the Python handler). Stored raw (27-decimal
     /// ray as decimal `VARCHAR(78)`); no ray-math in the apply path.
@@ -105,7 +105,7 @@ pub enum AaveChunkEvent {
         block_number: u64,
     },
     /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken,
-    /// interestRateStrategyAddress)` — seed the `aave_v3_assets` row (UR7QNL —
+    /// interestRateStrategyAddress)` — seed the `aave_v3_assets` row (the
     /// the other direct Pool-event DB writer). The orchestrator
     /// pre-resolves the erc20 token ids + the `ATOKEN_REVISION()` /
     /// `DEBT_TOKEN_REVISION()` (via the EIP-1967 implementation slot) + the
@@ -124,13 +124,13 @@ pub enum AaveChunkEvent {
         /// When the new asset's underlying IS the GHO token, the Python's
         /// `_process_reserve_initialized_event` links the GHO token row to the
         /// new vToken: `aave_gho_tokens.v_token_id = v_token.id` (the FK the
-        /// ULDUAC emitter guard resolves via `gho_asset.v_token_address`).
-        /// `Some(gho_token_row_id)` when the link should fire; `None` for a
-        /// regular reserve (2QGL6G / divergence #8).
+        /// discount-event emitter guard resolves via
+        /// `gho_asset.v_token_address`). `Some(gho_token_row_id)` when the link
+        /// should fire; `None` for a regular reserve (divergence #8).
         gho_link_token_id: Option<i64>,
     },
-    /// `ScaledTokenMint(from, to, value)` — aToken/vToken Mint event (5Z3QQ2 —
-    /// SCALEAPPLY). Carries the PRE-COMPUTED signed `balance_delta` (the
+    /// `ScaledTokenMint(from, to, value)` — aToken/vToken Mint event. Carries
+    /// the PRE-COMPUTED signed `balance_delta` (the
     /// orchestrator/parser ran [`ScaledTokenProcessor::process_collateral_mint`]
     /// / [`ScaledTokenProcessor::process_debt_mint`] BEFORE constructing this
     /// variant — mirrors design decision #1: the apply core is pure
@@ -150,7 +150,7 @@ pub enum AaveChunkEvent {
         /// max-with-prev).
         new_index: alloy::primitives::U256,
     },
-    /// `ScaledTokenBurn(from, to, value)` — aToken/vToken Burn event (5Z3QQ2).
+    /// `ScaledTokenBurn(from, to, value)` — aToken/vToken Burn event.
     /// Carries the PRE-COMPUTED signed `balance_delta` (always negative — the
     /// processor's `process_collateral_burn` / `process_debt_burn` returned
     /// it).
@@ -179,7 +179,7 @@ pub enum AaveChunkEvent {
         position_id: i64,
     },
     /// `BalanceTransfer(from, to, value)` — aToken transfer between users
-    /// (5Z3QQ2). Carries the resolved `from_position_id` + `to_position_id`
+    /// Carries the resolved `from_position_id` + `to_position_id`
     /// (both collateral — `BalanceTransfer` is aToken-only) + the scaled
     /// amount + the transfer's index. The apply fn debits `from`, credits
     /// `to`, + reconciles both positions' `last_index`.
@@ -189,7 +189,7 @@ pub enum AaveChunkEvent {
         scaled_amount: alloy::primitives::U256,
         transfer_index: alloy::primitives::U256,
     },
-    // ── RYKCC4 (SPECIALAPPLY): GHO + stkAAVE + Rewards events ─────────────
+    // ── GHO + stkAAVE + Rewards events ─────────────
     /// GHO `DiscountPercentUpdated(user, oldPercent, newPercent)` — sets the
     /// user's `gho_discount` (an `i64` percentage; the Aave protocol caps at
     /// 100%). Port of `event_handlers._process_discount_percent_updated_event`.
@@ -227,7 +227,7 @@ pub enum AaveChunkEvent {
     /// corresponding address is `ZERO_ADDRESS`, and the apply fn skips `None`
     /// + mutates the other.
     ///
-    /// YMWN5V retirement (crash #3): the prior design shipped separate
+    /// Crash #3: the prior design shipped separate
     /// `StkAaveStaked`/`StkAaveRedeem` variants as proxies for the zero-leg
     /// Transfers (and dedupe-skipped the zero legs here). That required a now
     /// empirically-falsified invariant — every zero-leg Transfer must pair
@@ -366,11 +366,11 @@ pub struct AaveChunkWriteReport {
     /// the two direct-write Pool events.
     pub reserve_data_updated: usize,
     pub reserve_initialized: usize,
-    /// 5Z3QQ2 — the three `ScaledToken` (aToken/vToken) events.
+    /// The three `ScaledToken` (aToken/vToken) events.
     pub scaled_token_mint: usize,
     pub scaled_token_burn: usize,
     pub scaled_token_transfer: usize,
-    /// RYKCC4 (SPECIALAPPLY) — the GHO + stkAAVE + Rewards events.
+    /// The GHO + stkAAVE + Rewards events.
     pub gho_discount_percent_updated: usize,
     pub gho_discount_rate_strategy_updated: usize,
     pub gho_discount_token_updated: usize,
@@ -378,11 +378,11 @@ pub struct AaveChunkWriteReport {
     /// post-apply pass consumes them (`balanceOf` + recompute `gho_discount`).
     pub gho_refresh_discount: usize,
     /// stkAAVE `Transfer(from, to, value)` — the canonical balance-mutation
-    /// channel (YMWN5V retirement, crash #3): covers the zero-leg arms + the
+    /// channel (crash #3): covers the zero-leg arms + the
     /// neither-zero case. `Staked`/`Redeem` semantic dispatchers were retired
     /// (their effect is now covered by the zero-leg Transfers).
     pub stk_aave_transfer: usize,
-    /// RYKCC4 no-op variant — the count is tracked for accounting even though
+    /// No-op variant — the count is tracked for accounting even though
     /// the apply writes nothing.
     pub rewards_claimed: usize,
     /// The bad-debt liquidation reset count (C3 — `DebtPositionReset`).
@@ -409,8 +409,8 @@ pub struct AaveChunkWriteReport {
 /// caller owns the stamp (per-tx apply in [`process_chunk_on_conn`], or the
 /// batched [`apply_aave_chunk_writes_on_conn`]).
 ///
-/// GJQGKN: extracted from `apply_aave_chunk_writes_on_conn` so the per-tx
-/// apply loop can write each tx's events to `conn` BEFORE the next tx's
+/// Written per-tx: the apply loop writes each tx's events to `conn` BEFORE
+/// the next tx's
 /// dispatch/parse reads — fixing the two staleness surfaces (the prior tx's
 /// `Upgraded` revision + scaled-token balances are visible via
 /// read-your-own-writes within the `SQLite` txn, matching Python's per-tx ORM
@@ -1459,7 +1459,7 @@ mod tests {
         }
     }
 
-    // ── 5Z3QQ2: ScaledToken (aToken/vToken) apply fns ────────────────────
+    // ── ScaledToken (aToken/vToken) apply fns ────────────────────
 
     use crate::RAY;
     use alloy::primitives::{I256, U256};
@@ -1822,7 +1822,7 @@ mod tests {
         assert_eq!(balance, "0", "rolled-back chunk's mint must not be durable");
     }
 
-    // ── RYKCC4 (SPECIALAPPLY): GHO + stkAAVE + Rewards apply fns ──────────
+    // ── GHO + stkAAVE + Rewards apply fns ──────────
 
     /// Seed a bare `aave_v3_users` row at `user_id` (in market 1) with the
     /// Aave-writer seeding defaults (`e_mode=0`, `gho_discount=0`, `stk_aave_balance=NULL`).
@@ -1960,11 +1960,11 @@ mod tests {
         assert_eq!(discount_token, None, "discount token cleared to NULL");
     }
 
-    /// YMWN5V retirement — every zero-leg `Transfer(0→X)` mint + `Transfer(X→0)`
+    /// Every zero-leg `Transfer(0→X)` mint + `Transfer(X→0)`
     /// burn must be processed as a half-event (decrement `from` for the
     /// burn, increment `to` for the mint), mirroring Python's
     /// `process_stk_aave_transfer_event` (which only skips the `ZERO_ADDRESS`
-    /// side + always mutates the real user). The YMWN5V-era dispatch skipped
+    /// side + always mutates the real user). The prior dispatch skipped
     /// both legs and relied on a paired `Staked`/`Redeem` semantic event that
     /// empirically does NOT always fire — leaving senders' `stk_aave_balance`
     /// stuck at the pre-burn cache value. Crash #3 root cause.
@@ -2184,7 +2184,7 @@ mod tests {
 
         // Paired with a StkAaveTransfer (mint-from-zero leg — to_user_id=Some(1))
         // to verify the rollback is all-or-nothing. The StkAaveStaked variant
-        // was retired in the YMWN5V retirement; the mint arm is now a zero-leg
+        // was retired; the mint arm is now a zero-leg
         // StkAaveTransfer with to_user_id=Some.
         let events = vec![
             AaveChunkEvent::StkAaveTransfer {

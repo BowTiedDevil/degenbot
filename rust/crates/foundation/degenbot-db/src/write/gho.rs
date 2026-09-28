@@ -322,11 +322,9 @@ impl DegenbotDb {
         )
     }
 
-    // ── HQF5NQ-A substrate lookups (the parser's address→id resolution) ──
+    // ── Substrate lookups (the parser's address→id resolution) ──
     //
-    // Four lookups the parser needs (each verified non-existent via
-    // `grep "pub fn get_or_create\|pub fn lookup" write.rs` before being
-    // added — Finding 2 of HQF5NQ's BLOCKED-FOR-SPLIT-DECISION). Each mirrors
+    // Four lookups the parser needs. Each mirrors
     // the Python `operations_parser.py::_get_*` helpers in shape — `&Connection`
     // for the chunk-tx §3.4 invariant (one `Transaction` per chunk).
 
