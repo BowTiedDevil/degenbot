@@ -7,7 +7,9 @@
     reason = "test fixtures fail loudly on an unconstructible prerequisite"
 )]
 
-use degenbot_config::readiness::{strategy_readiness, Arm};
+use degenbot_config::readiness::{
+    strategy_readiness, validate_hosted_strategy_readiness, Arm, StrategyReadinessError,
+};
 use degenbot_config::{
     BotConfig, BotConfigLoader, MapEnv, DEFAULT_BACKRUN_STREAM_URL, DEFAULT_TXPOOL_BACKRUN_RELAYS,
     SETTLEMENT_DEFAULT_ENDPOINTS,
@@ -215,6 +217,34 @@ fn mevblocker_bid_mode_requires_key_and_private_url() {
 fn observe_only_mevblocker_needs_no_key_or_private_url() {
     let cfg = activated("mevblocker_backrun", Some(DEFAULT_BACKRUN_STREAM_URL));
     let readiness = strategy_readiness(&cfg).expect("observe-only activation is ready");
+    assert!(matches!(readiness.mevblocker_backrun, Arm::Active(_)));
+}
+
+#[test]
+fn hosted_validation_refuses_an_all_inactive_fleet_while_readiness_stays_permissive() {
+    let cfg = BotConfig::default();
+
+    // The console surface stays permissive so it can display an unconfigured
+    // fleet; the hosted gate is the refusal.
+    let readiness = strategy_readiness(&cfg).expect("an all-inactive config is displayable");
+    assert_eq!(readiness.settlement, Arm::Inactive);
+    assert_eq!(readiness.mevblocker_backrun, Arm::Inactive);
+    assert_eq!(readiness.txpool_backrun, Arm::Inactive);
+
+    let error = validate_hosted_strategy_readiness(&cfg)
+        .expect_err("a hosted runner with no active facet must refuse");
+    assert_eq!(error, StrategyReadinessError::NoActiveFacet);
+    assert!(
+        error.to_string().contains("degenbot strategy activate"),
+        "the refusal names the activate remedy: {error}"
+    );
+}
+
+#[test]
+fn hosted_validation_passes_when_a_backrun_arm_is_active() {
+    let cfg = activated("mevblocker_backrun", Some(DEFAULT_BACKRUN_STREAM_URL));
+    let readiness =
+        validate_hosted_strategy_readiness(&cfg).expect("one active facet is a hosted fleet");
     assert!(matches!(readiness.mevblocker_backrun, Arm::Active(_)));
 }
 

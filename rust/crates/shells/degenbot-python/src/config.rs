@@ -449,10 +449,10 @@ impl ResolvedConfig {
     ///
     /// `ValueError` carrying the typed refusal's remediation message (e.g. the
     /// activation/endpoint remedies from the console verbs) — a live boot that
-    /// cannot settle STRATEGY endpoints refuses instead of degrading to the
-    /// public mempool.
+    /// cannot settle STRATEGY endpoints, or that has no active facet at all,
+    /// refuses instead of degrading to the public mempool.
     fn strategy_readiness(&self) -> PyResult<StrategyReadinessView> {
-        ::degenbot_config::strategy_readiness(&self.verdict.layers.config)
+        ::degenbot_config::validate_hosted_strategy_readiness(&self.verdict.layers.config)
             .map(|readiness| StrategyReadinessView::from_readiness(&readiness))
             .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }

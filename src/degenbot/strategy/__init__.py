@@ -6,10 +6,11 @@ activation gate reads the same facet postures the console read (ADR-062 D7).
 
 Both REFUSE rather than degrade, and a refusal is the contract callers depend
 on: an activated facet with an unsettled endpoint set raises ``ValueError``
-naming the ``degenbot strategy activate`` remedies, and a hosted runner with no
-active settlement arm is refused too. That is why they are functions and not
-verdict getters -- a getter that could raise would make the verdict
-unconstructible in exactly the processes that need it.
+naming the ``degenbot strategy activate`` remedies, and a hosted runner whose
+fleet has no active facet is refused too -- the readiness resolution is the
+hosted validation, so an empty fleet never reaches a posture resolver. That is
+why they are functions and not verdict getters -- a getter that could raise
+would make the verdict unconstructible in exactly the processes that need it.
 """
 
 from degenbot._ffi import StrategyReadinessView
@@ -28,6 +29,10 @@ def validate_strategy_readiness() -> StrategyReadinessView:
     The per-arm activity and settled endpoint posture, read through the same
     ``degenbot-config`` authority the ``degenbot strategy`` verbs and the
     backrun driver boot use.
+
+    Raises ``ValueError`` when an activated facet's endpoint set is unsettled,
+    or when the hosted fleet has no active facet at all (the remediation names
+    the ``degenbot strategy activate`` verbs).
 
     Returns:
         The readiness view.

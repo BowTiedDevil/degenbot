@@ -391,7 +391,8 @@ class ResolvedConfig:
         Raises:
             ValueError: a typed refusal carrying the remediation message
                 (an activated facet with an unsettled endpoint set names
-                both the ``degenbot strategy activate`` remedies).
+                both the ``degenbot strategy activate`` remedies; a hosted
+                fleet with no active facet names the activate remedy too).
 
         """
 

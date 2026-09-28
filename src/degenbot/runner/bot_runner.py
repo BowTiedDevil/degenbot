@@ -576,20 +576,17 @@ class BotRunner:
     def _boot_relay_posture(self, *, live: bool) -> RelayPosture | None:
         """The session's settlement broadcast posture for this boot.
 
-        The endpoint set and its refusal are the Rust settlement
-        composition's: ``settlement_broadcast_endpoints`` resolves them, so
-        the settled-endpoint rule has one home and a refused arm surfaces
-        here as :class:`ActivationGateRefused`. A backrun-only boot
-        (settlement inactive, a backrun facet active) runs no settlement
-        seam and mints no posture; an empty fleet reaches the resolver, which
-        refuses. Only a live, settlement-active boot mints the posture — a
-        dry-run boot signs nothing.
+        The gate already refused an empty fleet and an unsettled arm, so this
+        reads the resolved readiness as DATA: settlement active mints the
+        endpoints the Rust settlement composition resolved; settlement
+        inactive (the gate guarantees a backrun arm is active) is a
+        backrun-only boot that runs no settlement seam and mints no posture.
+        Only a live, settlement-active boot mints the posture — a dry-run boot
+        signs nothing.
         """
         readiness = self._readiness
         assert readiness is not None, "start() resolved the readiness before the posture"
-        if not readiness.settlement_active and (
-            readiness.mevblocker_backrun_active or readiness.txpool_backrun_active
-        ):
+        if not readiness.settlement_active:
             return None
         from degenbot.strategy import settlement_broadcast_endpoints
 

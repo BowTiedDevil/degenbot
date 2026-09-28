@@ -264,21 +264,26 @@ class TestBootGate:
     async def test_an_empty_fleet_boot_refuses_in_both_stances(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No activated facet, no work: the empty fleet reaches the Rust
-        settlement resolver, whose refusal aborts the boot in dry-run exactly
-        as it refuses live."""
+        """No activated facet, no work: the Rust hosted gate refuses the empty
+        fleet at the readiness resolution, so the boot aborts before the
+        settlement resolver is ever consulted, in dry-run exactly as live."""
         monkeypatch.setattr(
             _strategy_home,
             "validate_strategy_readiness",
-            lambda: _view(settlement_active=False),
+            lambda: _raise(
+                ValueError(
+                    "no strategy facet is active: activate one with "
+                    "`degenbot strategy activate settlement --endpoints-default`"
+                )
+            ),
         )
         monkeypatch.setattr(
             _strategy_home,
             "settlement_broadcast_endpoints",
-            _raise_endpoints,
+            lambda: pytest.fail("an empty-fleet boot consulted the settlement endpoints"),
         )
         for dry_run in (False, True):
-            with pytest.raises(ActivationGateRefused, match="settlement is not active"):
+            with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
                 await _runner(dry_run=dry_run).start()
 
     async def test_a_settled_live_boot_mints_the_posture(
@@ -339,14 +344,6 @@ class TestBootGate:
 def _raise(refusal: ValueError) -> None:
     raise refusal
 
-
-def _raise_endpoints() -> list[str]:
-    """The Rust settlement resolver's refusal for an inactive/empty arm."""
-    msg = (
-        "strategy settlement is not active: this hosted runner IS the "
-        "settlement arm; activate it first"
-    )
-    raise ValueError(msg)
 
 
 def _view(

@@ -93,6 +93,8 @@ pub enum StrategyReadinessError {
         /// Why: the allowlist gate, the channel shape, or the peer shape.
         reason: EndpointRefusal,
     },
+    /// Every strategy arm is inactive: a hosted runner has nothing to host.
+    NoActiveFacet,
 }
 
 impl std::fmt::Display for StrategyReadinessError {
@@ -113,6 +115,12 @@ impl std::fmt::Display for StrategyReadinessError {
                 f,
                 "endpoint {url} for strategy \"{facet}\" refused: {reason}; the closed \
                  allowlist is pinned in docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md"
+            ),
+            Self::NoActiveFacet => write!(
+                f,
+                "no strategy facet is active: a hosted runner hosts at least one, so activate \
+                 one with `degenbot strategy activate settlement --endpoints-default` (or \
+                 `mevblocker_backrun` / `txpool_backrun`)"
             ),
         }
     }
@@ -247,4 +255,28 @@ pub fn strategy_readiness(cfg: &BotConfig) -> Result<StrategyReadiness, Strategy
             peer_relay_refusal,
         )?,
     })
+}
+
+/// Resolve a HOSTED runner's readiness: at least one arm must be active.
+///
+/// [`strategy_readiness`] stays permissive so the console can display an
+/// arbitrary fleet, empty included; a live hosted runner has nothing to host
+/// when every arm is inactive, so this is the gate that refuses that state.
+///
+/// # Errors
+///
+/// The same typed refusals as [`strategy_readiness`], plus
+/// [`StrategyReadinessError::NoActiveFacet`] when every arm is inactive.
+pub fn validate_hosted_strategy_readiness(
+    cfg: &BotConfig,
+) -> Result<StrategyReadiness, StrategyReadinessError> {
+    let readiness = strategy_readiness(cfg)?;
+    let any_active = matches!(readiness.settlement, Arm::Active(_))
+        || matches!(readiness.mevblocker_backrun, Arm::Active(_))
+        || matches!(readiness.txpool_backrun, Arm::Active(_));
+    if any_active {
+        Ok(readiness)
+    } else {
+        Err(StrategyReadinessError::NoActiveFacet)
+    }
 }
