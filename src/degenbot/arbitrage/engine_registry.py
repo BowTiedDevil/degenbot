@@ -212,11 +212,9 @@ class EngineRegistry:
         # subscribe(ws) -> verify-config(http, view), consumer-safe (it stops
         # before `resume()`, so nothing emits yet). `S` is already on the shared
         # `BotState` above; the driver reads it internally while subscribing.
-        backfill_target = self.engine.start(node_http, node_ws, verify_state_view)
-
         # Intentionally NOT calling resume() — the caller attaches its
         # consumer next, then calls resume() as the single batch-flow gate.
-        return backfill_target
+        return self.engine.start(node_http, node_ws, verify_state_view)
 
     @staticmethod
     def register_v2_pool(pool: UniswapV2Pool) -> int:
