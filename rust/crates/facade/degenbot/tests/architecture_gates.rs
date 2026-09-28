@@ -31,6 +31,26 @@ fn manifest_flag() -> PathBuf {
     workspace_root().join("Cargo.toml")
 }
 
+/// One `cargo tree` spawn covering every named member, resolved at the
+/// workspace manifest.
+fn batched_cargo_tree(members: &[String]) -> String {
+    let mut command = Command::new("cargo");
+    command
+        .arg("tree")
+        .arg("--manifest-path")
+        .arg(manifest_flag());
+    for member in members {
+        command.arg("-p").arg(member);
+    }
+    let out = command.output().expect("cargo tree spawn");
+    assert!(
+        out.status.success(),
+        "cargo tree for {members:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).expect("cargo tree output is utf8")
+}
+
 /// `cargo tree` of `member` resolved at the workspace manifest (default features).
 fn cargo_tree_of(member: &str) -> String {
     let out = Command::new("cargo")
@@ -295,19 +315,29 @@ fn core_crates_are_pyo3_free_under_default_features() {
     // ONLY member that
     // may touch pyo3 — it is the PyO3 wrapper layer.
     let mut violations = Vec::new();
-    let members = core_member_names();
+    let members: Vec<String> = core_member_names()
+        .into_iter()
+        .filter(|name| name != "degenbot_rs") // the PyO3 binding layer, pyo3 by construction
+        .collect();
     assert!(
         members.len() >= 20,
         "member census drifted suspiciously low: {} members",
         members.len()
     );
-    for member in members {
-        if member == "degenbot_rs" {
-            continue; // the PyO3 binding layer, pyo3 by construction
-        }
-        let tree = cargo_tree_of(&member);
-        if tree.lines().any(|l| l.contains("pyo3 v")) {
-            violations.push(member);
+    // One spawn settles a clean census: feature unification across the
+    // selected members can only ADD edges, so a batch without a `pyo3 v` line
+    // proves every member's default-features closure pyo3-free. A dirty batch
+    // pays the per-member attribution loop — the only exact semantics, since
+    // any workspace-wide resolution (metadata included) false-flags everyone:
+    // the binding layer enables a `pyo3` feature on every core crate.
+    if batched_cargo_tree(&members)
+        .lines()
+        .any(|l| l.contains("pyo3 v"))
+    {
+        for member in &members {
+            if cargo_tree_of(member).lines().any(|l| l.contains("pyo3 v")) {
+                violations.push(member.clone());
+            }
         }
     }
     assert!(

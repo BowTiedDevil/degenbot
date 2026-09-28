@@ -474,11 +474,31 @@ mod tests {
     use super::*;
     use degenbot_bot::strategy_host::{DriverExit, DriverPose};
 
+    /// Point the boot's database layer at an absent path, so the engine boot
+    /// skips the operator's real connector roster. The boot loads the whole
+    /// roster from the ambient DB (~380 MB here) on every construction, and
+    /// nextest's process-per-test model pays that once per boot test — the
+    /// whole cost of these tests. The wiring these tests assert (facet table,
+    /// spawn factories, head lanes) is identical for the empty registry an
+    /// absent DB mints, so the roster scan buys them nothing.
+    ///
+    /// The single `Once` write keeps the env mutation to one event, issued
+    /// before any test boots an engine.
+    fn hermetic_db_layer() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let absent = std::env::temp_dir().join("degenbot-boot-test-absent.db");
+            let _ = std::fs::remove_file(&absent);
+            std::env::set_var(degenbot_config::DB_PATH_ENV, absent);
+        });
+    }
+
     /// The engine's start flow boots a driver that registered a factory and
     /// folds its terminal exit into the FSM, so a self-halt is a queryable
     /// tombstone carried by `strategies()`.
     #[test]
     fn the_start_flow_boots_a_registered_factory_and_folds_its_exit() {
+        hermetic_db_layer();
         // The facet's start flow needs an active settlement facet: the boot's
         // facet table reads `strategy.settlement.active` for every strategy,
         // so a defaulted (inactive) holder refuses the enable like any other
@@ -559,6 +579,7 @@ mod tests {
     /// reconcile guard closed, so a settlement-only boot pays no per-head work.
     #[test]
     fn the_boot_installs_head_lanes_and_starts_with_the_guard_closed() {
+        hermetic_db_layer();
         Python::attach(|py| {
             let engine = PyArbEngine::new(py, None);
             assert!(
@@ -593,6 +614,7 @@ mod tests {
     /// independently in the same process.
     #[test]
     fn the_boot_hosts_both_backrun_facets_independently() {
+        hermetic_db_layer();
         Python::attach(|py| {
             let engine = PyArbEngine::new(py, None);
             let names: Vec<String> = engine
