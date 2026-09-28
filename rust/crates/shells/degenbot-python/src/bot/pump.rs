@@ -213,13 +213,17 @@ pub(crate) fn run_v4_registration_lifecycle_blocking(
 
 /// Map a core [`DriverError`] to a Python exception.
 pub(crate) fn map_driver_err(err: DriverError) -> PyErr {
-    // Every non-lifecycle variant (phase/session/subscribe/resume/registration)
-    // surfaces as the legacy `RuntimeError` with the driver's message; the
-    // registration lifecycles route their verify errors through the typed
-    // `map_driver_lifecycle_err` instead.
-    let message = err.to_string();
-    drop(err);
-    PyRuntimeError::new_err(message)
+    match err {
+        // The typed receiver refusal carries no payload; Display is the single
+        // source of the remediation text, so the Python `RuntimeError` string
+        // stays byte-identical to the pre-typing refusal.
+        DriverError::NoResultReceiver => PyRuntimeError::new_err(err.to_string()),
+        // Every other non-lifecycle variant (phase/session/subscribe/resume/
+        // registration) surfaces as the legacy `RuntimeError` with the driver's
+        // message; the registration lifecycles route their verify errors
+        // through the typed `map_driver_lifecycle_err` instead.
+        other => PyRuntimeError::new_err(other.to_string()),
+    }
 }
 
 /// Map a lifecycle [`DriverError`] to the typed Python exception the verify

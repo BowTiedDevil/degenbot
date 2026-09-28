@@ -166,6 +166,9 @@ pub enum DriverError {
     /// A pump-session precondition failed (already started/subscribed, not
     /// subscribed, already resumed, or the terminal stopped latch).
     SessionState(String),
+    /// The `resume()` consumer-before-resume gate: no result receiver was
+    /// taken, so the unbounded result channel would have no consumer.
+    NoResultReceiver,
     /// The WS subscribe/handshake failed.
     Subscribe(String),
     /// A resume-time failure (currently only a missing WS stream).
@@ -183,6 +186,9 @@ impl std::fmt::Display for DriverError {
         match self {
             Self::Phase(e) => write!(f, "{e}"),
             Self::SessionState(m) | Self::Subscribe(m) | Self::Resume(m) => f.write_str(m),
+            Self::NoResultReceiver => f.write_str(
+                "Cannot resume: the result receiver has not been taken. Call take_result_receiver() before resume() so the unbounded result channel has a consumer attached.",
+            ),
             Self::Registration(e) => write!(f, "{e}"),
             Self::Verify(e) => write!(f, "{e}"),
         }
@@ -623,8 +629,9 @@ impl EngineDriver {
     ///
     /// - [`DriverError::Phase`] when the phase is below `SnapshotLoaded`.
     /// - [`DriverError::SessionState`] when already `Resumed`, when no
-    ///   subscribe state is pending, when the result receiver has not been
-    ///   taken, or when the driver is stopped.
+    ///   subscribe state is pending, or when the driver is stopped.
+    /// - [`DriverError::NoResultReceiver`] when the result receiver has not
+    ///   been taken.
     /// - [`DriverError::Resume`] when the pending state carries no WS stream.
     pub async fn resume(&self) -> Result<(), DriverError> {
         if self.is_stopped() {
@@ -651,10 +658,7 @@ impl EngineDriver {
         // This check runs before the subscribe state is consumed, so a refused
         // resume leaves the pending state intact for a corrected retry.
         if !self.result_receiver_taken.load(Ordering::SeqCst) {
-            return Err(DriverError::SessionState(
-                "Cannot resume: the result receiver has not been taken. Call take_result_receiver() before resume() so the unbounded result channel has a consumer attached."
-                    .to_string(),
-            ));
+            return Err(DriverError::NoResultReceiver);
         }
         let state = self.subscribe_state.lock().take().ok_or_else(|| {
             DriverError::SessionState(
@@ -1290,7 +1294,7 @@ mod tests {
         let err = degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
             .unwrap_err();
-        assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
+        assert!(matches!(err, DriverError::NoResultReceiver), "got {err:?}");
         assert!(
             format!("{err}").contains("result receiver"),
             "the refusal names the missing consumer: {err}"
