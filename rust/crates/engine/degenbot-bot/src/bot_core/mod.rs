@@ -67,6 +67,9 @@ pub mod tick_assembly;
 /// (claim-if-absent / wait-if-present / release-on-settlement).
 pub mod verify_claims;
 
+/// The bounded retry dance for transient registration-verify failures.
+pub mod verification_retry;
+
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
 pub use ::degenbot_pools::aerodrome_v2_state::{

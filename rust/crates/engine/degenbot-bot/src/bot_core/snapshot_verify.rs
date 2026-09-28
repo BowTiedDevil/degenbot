@@ -61,9 +61,9 @@ pub enum SnapshotLoadError {
 ///
 /// `Rpc` and `Provider` both surface as `VerificationRpcError` but are kept
 /// distinct here so the *orchestrator* (`run_cl_verification`) preserves the
-/// per-call-transport category through the pure layer (a future retry/backoff
-/// policy can branch on it). The Python seam folds both into the same
-/// retryable exception type.
+/// per-call-transport category through the pure layer. The bounded retry
+/// dance (`crate::bot_core::verification_retry`) branches on this split, and
+/// the Python seam folds both into the same retryable exception type.
 #[derive(Debug)]
 pub enum VerifyError {
     /// `insert()` was called with no snapshot stream in progress.
@@ -89,6 +89,22 @@ pub enum VerifyError {
     /// (`set_verify_rpc_url()` / `set_verify_state_view()`).
     NotConfigured(String),
 }
+
+impl std::fmt::Display for VerifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoSnapshotStream => {
+                write!(f, "insert() called with no snapshot stream in progress")
+            }
+            Self::Snapshot(message) => write!(f, "snapshot verify mismatch: {message}"),
+            Self::Provider(message) => write!(f, "verify provider failure: {message}"),
+            Self::Rpc(message) => write!(f, "verify RPC failure: {message}"),
+            Self::NotConfigured(message) => write!(f, "verify not configured: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for VerifyError {}
 
 /// The minimal on-chain RPC surface the two-phase CL verification needs
 /// (ADR-006 slice-5 candidate-2 completion).

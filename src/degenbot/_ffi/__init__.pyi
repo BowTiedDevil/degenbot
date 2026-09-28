@@ -1747,6 +1747,25 @@ class ArbitrageEngine:
         pool_id_hex: str,
         snapshot_block: int | None,
     ) -> None: ...
+    def run_v3_registration_lifecycle_with_retry_sync(
+        self,
+        address: str,
+        snapshot_block: int | None,
+        max_attempts: int,
+        base_delay: float,
+        max_delay: float,
+        jitter: float,
+    ) -> None: ...
+    def run_v4_registration_lifecycle_with_retry_sync(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        snapshot_block: int | None,
+        max_attempts: int,
+        base_delay: float,
+        max_delay: float,
+        jitter: float,
+    ) -> None: ...
     def set_verify_rpc_url(self, rpc_url: str) -> None: ...
     def set_verify_state_view(self, state_view_address: str) -> None: ...
     def verify_v3_pool(

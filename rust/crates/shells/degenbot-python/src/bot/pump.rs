@@ -13,6 +13,8 @@
 
 use degenbot_bot::arb_engine::{DriverError, EngineDriver};
 use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
+use degenbot_bot::bot_core::snapshot_verify::VerifyError;
+use degenbot_bot::bot_core::verification_retry::RetryPolicy;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::Bound;
@@ -209,6 +211,104 @@ pub(crate) fn run_v4_registration_lifecycle_blocking(
             .run_v4_registration_lifecycle_sync(pool_manager, pool_id, snapshot_block)
             .map_err(map_driver_lifecycle_err)
     })
+}
+
+/// Blocking (GIL-detached) V3 verify-lifecycle under the bounded retry dance.
+///
+/// The retry classification is core-owned (`VerifyError`); the caller (the
+/// driver shell) resolves the four policy knobs and injects them here.
+///
+/// # Errors
+///
+/// `VerificationMismatchError` for a fatal snapshot mismatch,
+/// `VerificationRpcError` for the last transient failure after exhausting the
+/// policy, and `PyRuntimeError` for any other lifecycle failure.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the four policy knobs mirror the core policy shape"
+)]
+pub(crate) fn run_v3_registration_lifecycle_with_retry_blocking(
+    py: Python<'_>,
+    driver: &Arc<EngineDriver>,
+    address: &str,
+    snapshot_block: Option<u64>,
+    max_attempts: u32,
+    base_delay: f64,
+    max_delay: f64,
+    jitter: f64,
+) -> PyResult<()> {
+    let pool_addr: alloy::primitives::Address = address
+        .parse()
+        .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))?;
+    let driver = Arc::clone(driver);
+    let policy = RetryPolicy {
+        max_attempts,
+        base_delay,
+        max_delay,
+        jitter,
+    };
+    py.detach(move || {
+        driver
+            .run_v3_registration_lifecycle_with_retry_sync(pool_addr, snapshot_block, &policy)
+            .map_err(map_verify_lifecycle_error)
+    })
+}
+
+/// Blocking (GIL-detached) V4 verify-lifecycle under the bounded retry dance.
+///
+/// # Errors
+///
+/// As the V3 twin.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the four policy knobs mirror the core policy shape"
+)]
+pub(crate) fn run_v4_registration_lifecycle_with_retry_blocking(
+    py: Python<'_>,
+    driver: &Arc<EngineDriver>,
+    pool_manager_address: &str,
+    pool_id_hex: &str,
+    snapshot_block: Option<u64>,
+    max_attempts: u32,
+    base_delay: f64,
+    max_delay: f64,
+    jitter: f64,
+) -> PyResult<()> {
+    let pool_manager: alloy::primitives::Address = pool_manager_address
+        .parse()
+        .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager: {e}")))?;
+    let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)
+        .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
+    let driver = Arc::clone(driver);
+    let policy = RetryPolicy {
+        max_attempts,
+        base_delay,
+        max_delay,
+        jitter,
+    };
+    py.detach(move || {
+        driver
+            .run_v4_registration_lifecycle_with_retry_sync(
+                pool_manager,
+                pool_id,
+                snapshot_block,
+                &policy,
+            )
+            .map_err(map_verify_lifecycle_error)
+    })
+}
+
+/// Map a classified [`VerifyError`] from a retry-wrapped lifecycle to the typed
+/// Python exception the verify surface has always raised.
+pub(crate) fn map_verify_lifecycle_error(err: VerifyError) -> PyErr {
+    use crate::bot::engine::{VerificationMismatchError, VerificationRpcError};
+    match err {
+        VerifyError::Snapshot(message) => VerificationMismatchError::new_err(message),
+        VerifyError::Provider(message) | VerifyError::Rpc(message) => {
+            VerificationRpcError::new_err(message)
+        }
+        other => PyRuntimeError::new_err(other.to_string()),
+    }
 }
 
 /// Map a core [`DriverError`] to a Python exception.

@@ -25,11 +25,10 @@ use degenbot::pathfinding::PoolKind;
 
 use crate::discovery::{BuiltGraph, DiscoveryParams, PoolNode, NATIVE_CURRENCY};
 use crate::policy::{HopView, PathPolicy};
-use crate::retry::RetryPolicy;
-use crate::retry::{VerificationError, VerifyErrorKind};
 use degenbot::bot::bot_core::registration_ledger::{
     HopSignature, RegistrationLedger, RegistrationOutcome,
 };
+use degenbot::bot_core::verification_retry::RetryPolicy;
 
 /// The registration unit outcome (mirrors `RegistrationUnitOutcome`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -451,18 +450,6 @@ pub async fn run_offline(
     report
 }
 
-/// Convenience: a `VerificationError` constructor for a mismatch (fatal).
-#[must_use]
-pub fn mismatch_error(message: impl Into<String>) -> VerificationError {
-    VerificationError::new(VerifyErrorKind::Mismatch, message)
-}
-
-/// Convenience: a `VerificationError` constructor for a transient RPC failure.
-#[must_use]
-pub fn rpc_error(message: impl Into<String>) -> VerificationError {
-    VerificationError::new(VerifyErrorKind::Rpc, message)
-}
-
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
@@ -473,7 +460,6 @@ mod tests {
     use super::*;
     use crate::discovery::{build_graph, DiscoveryParams, V4_POOL_ID_OFFSET};
     use crate::policy::PathPolicy;
-    use crate::retry::RetryPolicy;
     use degenbot::pathfinding::PoolKind;
     use std::path::Path;
 

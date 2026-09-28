@@ -6,15 +6,17 @@ used to be encoded in three places (the config factory, its parse helpers, and
 the policy dataclass), and only the dataclass agreed with the core.
 
 ``build_paths`` reads the resolved policy off ``cfg.verification_retry_policy``
-and retries a transient ``VerificationRpcError`` per registration instead of
-crashing on the first blip.
+and injects it into the core-owned bounded retry dance, which retries a
+transient ``VerificationRpcError`` instead of crashing on the first blip.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from degenbot.arbitrage.verification_retry import _DEFAULTS
+from degenbot.arbitrage.engine_registry import EngineRegistry
+from degenbot.runner.config import _DEFAULTS, VerificationRetryPolicy
+from degenbot.runner.identity import UNISWAP_V4_POOL_MANAGER_ADDRESS
 from tests.helpers import verdict_probe as probe
 
 #: The four policy fields, as the config names them.
@@ -99,3 +101,60 @@ verify_retry_jitter = 0.2
         """
         with pytest.raises(ValueError, match="max_attempts"):
             probe.build_config(env={"VERIFICATION_RETRY_MAX_ATTEMPTS": "0"})
+
+
+def test_the_engine_registry_injects_the_parsed_policy() -> None:
+    """The registry forwards every resolved knob to the retry-wrapped lifecycle.
+
+    The retry dance lives in the core; the driver shell only injects the
+    policy values, so this pins the adapter's forwarding and the stashed
+    snapshot block.
+    """
+    class _Recorder:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def run_v4_registration_lifecycle_with_retry_sync(
+            self,
+            pool_manager: str,
+            pool_id_hex: str,
+            snapshot_block: int | None,
+            max_attempts: int,
+            base_delay: float,
+            max_delay: float,
+            jitter: float,
+        ) -> None:
+            self.calls.append(
+                {
+                    "pool_manager": pool_manager,
+                    "pool_id_hex": pool_id_hex,
+                    "snapshot_block": snapshot_block,
+                    "max_attempts": max_attempts,
+                    "base_delay": base_delay,
+                    "max_delay": max_delay,
+                    "jitter": jitter,
+                }
+            )
+
+    engine = _Recorder()
+    registry = EngineRegistry(engine=engine)  # type: ignore[arg-type]
+    registry._verify_snapshot_block = 18_000_050
+    policy = VerificationRetryPolicy(
+        max_attempts=6, base_delay=0.25, max_delay=8.0, jitter=0.3
+    )
+
+    registry.run_v4_verify_lifecycle_sync_with_retry(
+        UNISWAP_V4_POOL_MANAGER_ADDRESS, "0x" + "ab" * 32, policy
+    )
+
+    assert engine.calls == [
+        {
+            "pool_manager": UNISWAP_V4_POOL_MANAGER_ADDRESS,
+            "pool_id_hex": "0x" + "ab" * 32,
+            "snapshot_block": 18_000_050,
+            "max_attempts": 6,
+            "base_delay": 0.25,
+            "max_delay": 8.0,
+            "jitter": 0.3,
+        }
+    ]

@@ -47,7 +47,7 @@ use tokio::task::JoinHandle;
 use crate::discovery::{build_graph, BatchedPathFinder, BuiltGraph, DiscoveryParams, PoolNode};
 use crate::pipeline::RegistrationPipeline;
 use crate::policy::PathPolicy;
-use crate::retry::RetryPolicy;
+use degenbot::bot_core::verification_retry::RetryPolicy;
 
 /// Default per-request read timeout (mirrors `OperatorServer`'s
 /// `request_timeout` default).

@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
+from degenbot.arbitrage import verification_retry_policy_defaults
 from degenbot.config import resolve_rpc_uris, resolved_config
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.runner.diag import DiagConfig
@@ -35,6 +35,57 @@ from degenbot.runner.identity import (
     _PLACEHOLDER_OPERATOR_PRIVATE_KEYS,
     _checksum_or_empty,
 )
+
+
+#: The core's retry-policy defaults, read once through the FFI so the
+#: dataclass and the schema share one declaration site.
+_DEFAULTS = verification_retry_policy_defaults()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class VerificationRetryPolicy:
+    """Bounded retry-with-backoff policy for transient verification failures.
+
+    The retry dance itself is core-owned; this value carries the four
+    driver-resolved knobs (S8) across the FFI. The core classifies a per-call
+    RPC transport or provider-construction failure as transient, and a genuine
+    on-chain mismatch as fatal (never retried). Frozen so a policy can be
+    shared across registration calls without risk of mutation.
+
+    Defaults mirror the core ``RetryPolicy::verification_default`` (read
+    through the FFI, not restated): up to four attempts, ~0.5s base delay,
+    capped at 4s, jittered. Override via the constructor or ``ArbitrageConfig``
+    (``VERIFICATION_RETRY_*`` env vars).
+    """
+
+    max_attempts: int = _DEFAULTS.max_attempts
+    base_delay: float = _DEFAULTS.base_delay
+    max_delay: float = _DEFAULTS.max_delay
+    jitter: float = _DEFAULTS.jitter
+
+    def __post_init__(self) -> None:
+        """Validate the policy's bounds at construction (fail fast).
+
+        Raises:
+            ValueError: If any field is out of its valid range
+                (``max_attempts < 1``, ``base_delay``/``max_delay`` negative,
+                ``jitter`` outside ``[0, 1]``, or ``base_delay > max_delay``).
+        """
+        if self.max_attempts < 1:
+            msg = f"max_attempts must be >= 1, got {self.max_attempts}"
+            raise ValueError(msg)
+        if self.base_delay < 0:
+            msg = f"base_delay must be >= 0, got {self.base_delay}"
+            raise ValueError(msg)
+        if self.max_delay < 0:
+            msg = f"max_delay must be >= 0, got {self.max_delay}"
+            raise ValueError(msg)
+        if not 0 <= self.jitter <= 1:
+            msg = f"jitter must be in [0, 1], got {self.jitter}"
+            raise ValueError(msg)
+        if self.base_delay > self.max_delay and self.max_delay > 0:
+            msg = f"base_delay ({self.base_delay}) must be <= max_delay ({self.max_delay})"
+            raise ValueError(msg)
 
 
 def _declared(values: Mapping[str, Any] | None, path: str) -> Any:

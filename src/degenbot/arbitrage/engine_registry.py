@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+    from degenbot.runner.config import VerificationRetryPolicy
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
     from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
@@ -432,6 +433,45 @@ class EngineRegistry:
             pool_manager,
             pool_id_hex,
             self._verify_snapshot_block,
+        )
+
+    def run_v3_verify_lifecycle_sync_with_retry(
+        self,
+        address: str,
+        policy: VerificationRetryPolicy,
+    ) -> None:
+        """V3 seat-thread verify under the core-owned bounded retry dance.
+
+        The retry classification (transient RPC/provider vs fatal mismatch) and
+        the backoff dance are the core's; this adapter injects the driver's
+        resolved policy and passes the stashed snapshot seed block. A transient
+        failure releases the lifecycle claim, so a retry re-runs the whole
+        choreography.
+        """
+        self.engine.run_v3_registration_lifecycle_with_retry_sync(
+            address,
+            self._verify_snapshot_block,
+            policy.max_attempts,
+            policy.base_delay,
+            policy.max_delay,
+            policy.jitter,
+        )
+
+    def run_v4_verify_lifecycle_sync_with_retry(
+        self,
+        pool_manager: str,
+        pool_id_hex: str,
+        policy: VerificationRetryPolicy,
+    ) -> None:
+        """V4 twin of :meth:`run_v3_verify_lifecycle_sync_with_retry`."""
+        self.engine.run_v4_registration_lifecycle_with_retry_sync(
+            pool_manager,
+            pool_id_hex,
+            self._verify_snapshot_block,
+            policy.max_attempts,
+            policy.base_delay,
+            policy.max_delay,
+            policy.jitter,
         )
 
     def register_crawl_path(

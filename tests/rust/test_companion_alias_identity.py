@@ -163,12 +163,11 @@ def test_dispatch_all_pins_public_surface() -> None:
 def test_rust_raised_exception_is_caught_by_companion_alias() -> None:
     """An instance the Rust pyclass raises is catchable by the companion name.
 
-    ``verification_retry.py`` catches ``VerificationRpcError`` from the
-    companion package, while Rust code raises the
-    ``degenbot._ffi.VerificationRpcError`` pyclass. The alias makes those
-    the same type so ``except`` matches; the raise here goes through the
-    FFI symbol and the catch through the companion symbol to pin the
-    cross-module contract.
+    The core retry classification raises ``VerificationRpcError`` through the
+    ``degenbot._ffi.VerificationRpcError`` pyclass, while the driver shell
+    catches the companion name. The alias makes those the same type so
+    ``except`` matches; the raise here goes through the FFI symbol and the
+    catch through the companion symbol to pin the cross-module contract.
     """
     from degenbot._ffi import VerificationRpcError as FfiVerificationRpcError
     from degenbot.exceptions import VerificationRpcError

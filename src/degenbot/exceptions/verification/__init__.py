@@ -12,7 +12,7 @@ handlers still catch them):
 - :class:`VerificationRpcError` — a per-call RPC transport failure
   (``eth_call`` / ``getTickBitmap`` / ``getTickLiquidity`` could not reach
   the node) or a verify-provider construction failure. Transient; a
-  retry/backoff candidate (see :mod:`degenbot.arbitrage.verification_retry`).
+  retry/backoff candidate in the core-owned registration verify retry.
 
 .. note::
 

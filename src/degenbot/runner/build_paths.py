@@ -22,10 +22,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool, get_checksum_address
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.arbitrage.verification_retry import (
-    VerificationRetryPolicy,
-    retry_verification_call,
-)
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
@@ -41,6 +37,7 @@ from degenbot.runner._registration_ledger import (
     RegistrationLedger,
     RegistrationOutcome,
 )
+from degenbot.runner.config import VerificationRetryPolicy
 from degenbot.runner.identity import (
     PANCAKESWAP_V3_MAINNET_FACTORY,
     SUSHISWAP_V3_MAINNET_FACTORY,
@@ -675,7 +672,7 @@ class PathRegistrationPipeline:
         v3_key = f"v3:{pool.address}"
         if self._ledger.pool_verified(v3_key):
             return
-        reg.run_v3_verify_lifecycle_sync(pool.address)
+        reg.run_v3_verify_lifecycle_sync_with_retry(pool.address, self.retry_policy_obj)
         self._ledger.memoize_verified_pool(v3_key)
 
     def _verify_v4_pool(self, pool: UniswapV4Pool, reg: EngineRegistry) -> None:
@@ -689,11 +686,10 @@ class PathRegistrationPipeline:
         v4_key = f"v4:{to_0x_hex(pool.pool_id)}"
         if self._ledger.pool_verified(v4_key):
             return
-        retry_verification_call(
-            self.retry_policy_obj,
-            reg.run_v4_verify_lifecycle_sync,
+        reg.run_v4_verify_lifecycle_sync_with_retry(
             UNISWAP_V4_POOL_MANAGER_ADDRESS,
             to_0x_hex(pool.pool_id),
+            self.retry_policy_obj,
         )
         self._ledger.memoize_verified_pool(v4_key)
 
@@ -1107,8 +1103,8 @@ async def build_paths(
     ``bot.build_managed_pool()``. V4 pool admission (amount-modifying hooks /
     dynamic fees) is enforced by the Rust core at registration time, surfacing
     as typed HookedPoolRejectedError / DynamicFeePoolRejectedError. Each
-    ``register_vN_pool`` call is wrapped in ``retry_verification_call`` with a
-    bounded retry-with-backoff policy (transient ``VerificationRpcError`` is
+    per-pool verify lifecycle runs through the core-owned bounded retry dance
+    with the resolved policy injected (transient ``VerificationRpcError`` is
     retried; ``VerificationMismatchError`` is never retried and crashes loudly).
 
     Discovery is a single pass over the DB subgraph driven through a reusable

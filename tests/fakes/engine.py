@@ -42,8 +42,10 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "resume",
     "run_v3_registration_lifecycle",
     "run_v3_registration_lifecycle_sync",
+    "run_v3_registration_lifecycle_with_retry_sync",
     "run_v4_registration_lifecycle",
     "run_v4_registration_lifecycle_sync",
+    "run_v4_registration_lifecycle_with_retry_sync",
     "set_path_cap",
     "set_verify_rpc_url",
     "set_verify_state_view",
@@ -93,6 +95,25 @@ class EngineSeam(Protocol):
     ) -> None: ...
     def run_v4_registration_lifecycle_sync(
         self, pool_manager_address: str, pool_id_hex: str, snapshot_block: int | None
+    ) -> None: ...
+    def run_v3_registration_lifecycle_with_retry_sync(
+        self,
+        address: str,
+        snapshot_block: int | None,
+        max_attempts: int,
+        base_delay: float,
+        max_delay: float,
+        jitter: float,
+    ) -> None: ...
+    def run_v4_registration_lifecycle_with_retry_sync(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        snapshot_block: int | None,
+        max_attempts: int,
+        base_delay: float,
+        max_delay: float,
+        jitter: float,
     ) -> None: ...
     def register_and_solve_path(
         self, pool_refs: list[tuple[int, bool]]
@@ -355,6 +376,50 @@ class FakeEngine:
                 "address": pool_manager_address,
                 "pool_id": pool_id_hex,
                 "snapshot_block": snapshot_block,
+            }
+        )
+
+    def run_v3_registration_lifecycle_with_retry_sync(
+        self,
+        address: str,
+        snapshot_block: int | None,
+        max_attempts: int,
+        base_delay: float,
+        max_delay: float,
+        jitter: float,
+    ) -> None:
+        self.run_calls.append(
+            {
+                "family": "v3-sync-with-retry",
+                "address": address,
+                "snapshot_block": snapshot_block,
+                "max_attempts": max_attempts,
+                "base_delay": base_delay,
+                "max_delay": max_delay,
+                "jitter": jitter,
+            }
+        )
+
+    def run_v4_registration_lifecycle_with_retry_sync(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        snapshot_block: int | None,
+        max_attempts: int,
+        base_delay: float,
+        max_delay: float,
+        jitter: float,
+    ) -> None:
+        self.run_calls.append(
+            {
+                "family": "v4-sync-with-retry",
+                "address": pool_manager_address,
+                "pool_id": pool_id_hex,
+                "snapshot_block": snapshot_block,
+                "max_attempts": max_attempts,
+                "base_delay": base_delay,
+                "max_delay": max_delay,
+                "jitter": jitter,
             }
         )
 

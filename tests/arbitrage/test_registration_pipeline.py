@@ -373,6 +373,11 @@ class _RecordingRegistry:
     def run_v3_verify_lifecycle_sync(self, address: str) -> None:
         self.verifies.append(address)
 
+    def run_v3_verify_lifecycle_sync_with_retry(
+        self, address: str, policy: object
+    ) -> None:
+        self.verifies.append(address)
+
     def register_crawl_path(self, engine_hops: list) -> tuple[int, bool]:
         self.registrations.append(list(engine_hops))
         self._next_path_id += 1

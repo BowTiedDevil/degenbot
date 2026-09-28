@@ -22,7 +22,6 @@ use crate::pipeline::{
     CandidateOutcome, PipelineReport, PrepareOutcome, PreparedCandidate, RegistrationPipeline,
 };
 use crate::progress::{progress_line, ProgressCadence};
-use crate::retry::{VerificationError, VerifyErrorKind};
 use alloy::primitives::Address;
 use degenbot::bot::bot_core::registration_ledger::{
     BuildFailure, RegistrationLedger, RegistrationOutcome,
@@ -396,10 +395,6 @@ fn fold_already_registered<T, E: std::fmt::Debug>(
 }
 
 /// Run one hop's verify lifecycle under the claim table + retry dance.
-#[expect(
-    clippy::redundant_locals,
-    reason = "Copy captures must be re-bound before `async move` inside the retry closure"
-)]
 async fn verify_one(
     driver: &EngineDriver,
     pipeline: &mut RegistrationPipeline,
@@ -418,21 +413,13 @@ async fn verify_one(
             let address = r.pool.address;
             let block = ctx.block;
             let policy = pipeline.retry_policy;
-            // The at-most-once claim is the DRIVER's, keyed by pool identity
-            // (`EngineDriver::run_v3_registration_lifecycle`); this layer owns
-            // only the bounded retry dance over a released window.
-            let result = crate::retry::retry_verification_call(&policy, |_attempt| {
-                let driver = driver;
-                let address = address;
-                let block = block;
-                async move {
-                    driver
-                        .run_v3_registration_lifecycle(address, block)
-                        .await
-                        .map_err(|e| map_driver_error(&e))
-                }
-            })
-            .await;
+            // The at-most-once claim and the retry classification are the
+            // DRIVER's (`EngineDriver::run_v3_registration_lifecycle_with_retry`):
+            // a transient failure releases the claim and the dance re-enters the
+            // lifecycle.
+            let result = driver
+                .run_v3_registration_lifecycle_with_retry(address, block, &policy)
+                .await;
             match result {
                 Ok(()) => {
                     pipeline.ledger.memoize_verified_pool(key);
@@ -453,21 +440,11 @@ async fn verify_one(
             pool_id.copy_from_slice(r.pool_hash.as_slice());
             let block = ctx.block;
             let policy = pipeline.retry_policy;
-            // The V4 twin: the claim is the driver's, keyed by the
-            // `(PoolManager, pool_id)` pair.
-            let result = crate::retry::retry_verification_call(&policy, |_attempt| {
-                let driver = driver;
-                let manager = manager;
-                let pool_id = pool_id;
-                let block = block;
-                async move {
-                    driver
-                        .run_v4_registration_lifecycle(manager, pool_id, block)
-                        .await
-                        .map_err(|e| map_driver_error(&e))
-                }
-            })
-            .await;
+            // The V4 twin: the claim and the retry classification are the
+            // driver's, keyed by the `(PoolManager, pool_id)` pair.
+            let result = driver
+                .run_v4_registration_lifecycle_with_retry(manager, pool_id, block, &policy)
+                .await;
             match result {
                 Ok(()) => {
                     pipeline.ledger.memoize_verified_pool(key);
@@ -564,20 +541,6 @@ pub(crate) fn emit_register_failure_sample(detail: &str) {
     if guard.len() < REG_DEBUG_MAX_DISTINCT {
         guard.insert(detail.to_string(), 1);
         println!("[reg-debug] tag=register-fail detail={detail}");
-    }
-}
-
-/// Map a `DriverError` from a lifecycle call to the typed verify failure.
-#[must_use]
-pub fn map_driver_error(err: &degenbot::DriverError) -> VerificationError {
-    match err {
-        degenbot::DriverError::Verify(degenbot::RegistrationLifecycleError::Verify(
-            degenbot::bot_core::liquidity_verifier::LiquidityVerifyError::Mismatch(_),
-        )) => VerificationError::new(VerifyErrorKind::Mismatch, err.to_string()),
-        degenbot::DriverError::Verify(degenbot::RegistrationLifecycleError::Verify(
-            degenbot::bot_core::liquidity_verifier::LiquidityVerifyError::Rpc { .. },
-        )) => VerificationError::new(VerifyErrorKind::Rpc, err.to_string()),
-        _ => VerificationError::new(VerifyErrorKind::Other, err.to_string()),
     }
 }
 

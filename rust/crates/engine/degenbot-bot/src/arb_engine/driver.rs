@@ -64,10 +64,13 @@ use crate::arb_engine::{
     BlockNotification, EngineRetune, EngineStages, InlineSimulator, PumpPhase, ResultBatch,
 };
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
+use crate::bot_core::liquidity_verifier::LiquidityVerifyError;
 use crate::bot_core::registration_lifecycle::RegistrationLifecycleError;
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::session_registry::PoolIdentity;
+use crate::bot_core::snapshot_verify::VerifyError;
 use crate::bot_core::state_lock::{LockSite, StateLock};
+use crate::bot_core::verification_retry::{retry_verification_call, RetryPolicy};
 use crate::bot_core::verify_claims::PoolVerifications;
 use crate::bot_core::{Bot, BotState, PumpControl, StageHandlers};
 use crate::strategy_host::HostHub;
@@ -293,6 +296,30 @@ fn install_session_path_owner(bot: &Bot, stages: &EngineStages) {
             rejected_owner_paths = refused.path_count(),
             "a session already has a path-identity owner; this engine's paths are unreachable from the session and the session answers with the first engine's path ids"
         );
+    }
+}
+
+/// Classify a `DriverError` from a registration lifecycle into the core
+/// verify taxonomy the retry dance reads.
+///
+/// Only the verify arm is representable; every other driver failure is
+/// unreachable at a lifecycle call site and maps to the fatal
+/// [`VerifyError::NotConfigured`] so the retry never re-attempts it.
+fn verify_error_from_driver(err: DriverError) -> VerifyError {
+    match err {
+        DriverError::Verify(RegistrationLifecycleError::Verify(
+            LiquidityVerifyError::Mismatch(mismatch),
+        )) => VerifyError::Snapshot(mismatch.message),
+        DriverError::Verify(RegistrationLifecycleError::Verify(LiquidityVerifyError::Rpc {
+            message,
+        })) => VerifyError::Rpc(message),
+        DriverError::Verify(RegistrationLifecycleError::MissingProvider) => {
+            VerifyError::Provider(RegistrationLifecycleError::MissingProvider.to_string())
+        }
+        DriverError::Verify(RegistrationLifecycleError::MissingTickSpacing) => {
+            VerifyError::NotConfigured(RegistrationLifecycleError::MissingTickSpacing.to_string())
+        }
+        other => VerifyError::NotConfigured(other.to_string()),
     }
 }
 
@@ -984,6 +1011,99 @@ impl EngineDriver {
             pool_id,
             snapshot_block,
         ))
+    }
+
+    /// Run a V3 pool's registration verify lifecycle under the bounded retry
+    /// dance.
+    ///
+    /// A transient [`VerifyError::Rpc`] / [`VerifyError::Provider`] failure
+    /// releases the claim (the plain lifecycle owns that), so the next attempt
+    /// re-runs the whole lifecycle; a [`VerifyError::Snapshot`] mismatch is
+    /// fatal and is never retried. Returns the classified failure once the
+    /// policy is exhausted.
+    ///
+    /// # Errors
+    ///
+    /// Returns the last transient [`VerifyError`] after exhausting `policy`,
+    /// or the first fatal one.
+    pub async fn run_v3_registration_lifecycle_with_retry(
+        &self,
+        address: Address,
+        snapshot_block: Option<u64>,
+        policy: &RetryPolicy,
+    ) -> Result<(), VerifyError> {
+        retry_verification_call(policy, |_attempt| async move {
+            self.run_v3_registration_lifecycle(address, snapshot_block)
+                .await
+                .map_err(verify_error_from_driver)
+        })
+        .await
+    }
+
+    /// V4 twin of [`Self::run_v3_registration_lifecycle_with_retry`].
+    ///
+    /// # Errors
+    ///
+    /// As the V3 twin.
+    pub async fn run_v4_registration_lifecycle_with_retry(
+        &self,
+        pool_manager: Address,
+        pool_id: V4PoolId,
+        snapshot_block: Option<u64>,
+        policy: &RetryPolicy,
+    ) -> Result<(), VerifyError> {
+        retry_verification_call(policy, |_attempt| async move {
+            self.run_v4_registration_lifecycle(pool_manager, pool_id, snapshot_block)
+                .await
+                .map_err(verify_error_from_driver)
+        })
+        .await
+    }
+
+    /// Blocking V3 with-retry twin (the seat-thread shape).
+    ///
+    /// # Errors
+    ///
+    /// As the async twin.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called from within a Tokio runtime.
+    pub fn run_v3_registration_lifecycle_with_retry_sync(
+        &self,
+        address: Address,
+        snapshot_block: Option<u64>,
+        policy: &RetryPolicy,
+    ) -> Result<(), VerifyError> {
+        degenbot_core::runtime::get_runtime().block_on(
+            self.run_v3_registration_lifecycle_with_retry(address, snapshot_block, policy),
+        )
+    }
+
+    /// Blocking V4 with-retry twin (the seat-thread shape).
+    ///
+    /// # Errors
+    ///
+    /// As the async twin.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called from within a Tokio runtime.
+    pub fn run_v4_registration_lifecycle_with_retry_sync(
+        &self,
+        pool_manager: Address,
+        pool_id: V4PoolId,
+        snapshot_block: Option<u64>,
+        policy: &RetryPolicy,
+    ) -> Result<(), VerifyError> {
+        degenbot_core::runtime::get_runtime().block_on(
+            self.run_v4_registration_lifecycle_with_retry(
+                pool_manager,
+                pool_id,
+                snapshot_block,
+                policy,
+            ),
+        )
     }
 
     /// Register a mixed path (DELEGATION, ADR-050 D4).

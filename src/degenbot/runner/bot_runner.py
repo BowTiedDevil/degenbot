@@ -41,9 +41,7 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from degenbot import Bot
 from degenbot.arbitrage import session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.arbitrage.verification_retry import (
-    VerificationRetryPolicy,
-)
+from degenbot.runner.config import VerificationRetryPolicy
 from degenbot.dispatch import Dispatcher, SimulateContext, fetch_fee_history
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider

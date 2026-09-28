@@ -297,8 +297,13 @@ log of the next block. A registration's state application may not advance past i
 
 **Verify lifecycle**:
 The per-pool choreography — quarantine, seed verification, drain, post-drain
-verification, live — plus its block-resolution and config-gating policy, owned by the
-Rust core.
+verification, live — plus its block-resolution and config-gating policy and a bounded
+retry for transient failures, owned by the Rust core. A per-call RPC or
+provider-construction failure is retried under the core's backoff with the
+driver-injected policy; an on-chain snapshot mismatch is fatal and never retried.
+
+_Avoid_: a driver-side retry loop over the lifecycle; the dance and its failure
+classification belong to the core.
 
 **State tripwire**:
 The verification failure raised as the terminal gate so `Live` is unreachable while
