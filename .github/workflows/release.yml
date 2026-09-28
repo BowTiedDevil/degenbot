@@ -183,7 +183,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.98.1
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Cache Cargo
         uses: actions/cache@v6
