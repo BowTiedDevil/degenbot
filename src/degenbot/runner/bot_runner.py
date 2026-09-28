@@ -502,8 +502,9 @@ class BotRunner:
             current_block = backfill_target
             dispatcher.advance_block(backfill_target)
 
-        # The activation gate resolves ONCE here; the arms and run() consume
-        # the resolved value.
+        # The activation gate resolves ONCE here and caches the value; the
+        # arms and run() consume that data rather than re-reading the verdict,
+        # while the refusal rule stays with the Rust config validation.
         self._readiness = self._gate_readiness()
 
         # ── THE session: real from here on — the one owner of the
@@ -561,10 +562,13 @@ class BotRunner:
     def _gate_readiness() -> StrategyReadinessView:
         """Resolve the activation gate; a typed readiness refusal is a boot refusal.
 
-        The one place this driver reads the process verdict for strategy
-        posture. A caller that needs HOW a cascade would resolve an input uses
-        the hypothetical seam instead; the resolved view is the value the arms
-        consume.
+        The refusal rule itself (empty fleet, unsettled endpoints) is owned by
+        the Rust config validation this call reaches through
+        ``validate_strategy_readiness``; note there is no second rule here.
+        The one thing this method adds is the single read: the resolved view is
+        data the arms and the main loop consume, never a per-call re-decide. A
+        caller that needs HOW a cascade would resolve an input uses the
+        hypothetical seam instead.
         """
         from degenbot.strategy import validate_strategy_readiness
 
@@ -633,6 +637,14 @@ class BotRunner:
         # without it stance=1 carries no payloads (harmless but inert).
         # Cheap Arc-clone wiring; the engine only calls the hook under the
         # stance, so installing it unconditionally is a no-op when off.
+        # The object installed is the PyO3 adapter, not engine policy: it
+        # wraps this session's `PySimulateContext` and the Python escalation
+        # port, so only this binding layer can build it. That is the permanent
+        # reason the install stays here — the core owns the simulator contract
+        # and the stance-gated call, and this adapter is its thin bridge. The
+        # before-resume placement is structural rather than a separate rule:
+        # it is the point where the session's sim context and the engine both
+        # exist.
         engine_registry.engine.install_inline_simulator(
             sim_ctx,
             erc6909_profit=cfg.erc6909_profit,
@@ -1196,6 +1208,11 @@ class BotRunner:
         next ``__anext__`` raises ``StopAsyncIteration`` → the consumer task
         ends cleanly, and the awaited consumer task returns without needing the
         ``CancelledError`` path in the common case.
+
+        The seam between the two halves is permanent. Stopping the pump is
+        engine-owned — one latch/abort/join contract shared by every driver —
+        while cancelling an asyncio task is host-side by nature, so neither
+        half can absorb the other and their ordering lives at this call site.
         """
         await self.shutdown()
         self._restore_sigint_handler()
