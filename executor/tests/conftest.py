@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from eth_utils.address import to_checksum_address
+from hypothesis import settings
 from .conftest_shared import WETH_DEPLOYMENT_WRAP_AMOUNT, enc_preamble, make_config
 from ape.api.accounts import TestAccountAPI
 from ape.contracts.base import ContractInstance
@@ -35,6 +36,13 @@ if _xdist_worker.startswith("gw"):
     os.environ.setdefault(
         "APE_FOUNDRY_HOST", f"http://127.0.0.1:{8550 + int(_xdist_worker[2:])}"
     )
+
+# Hypothesis policy: no per-example wall-clock deadline. Fuzz tests here assert
+# math properties, not timing; the 200ms default only fails spuriously under
+# load. A test that someday asserts a real timing property opts back in with an
+# explicit @settings(deadline=...), which overrides this profile.
+settings.register_profile("default", deadline=None)
+settings.load_profile("default")
 
 NATIVE_ADDRESS = to_checksum_address("0x0000000000000000000000000000000000000000")
 ZERO_ADDRESS = to_checksum_address("0x0000000000000000000000000000000000000000")

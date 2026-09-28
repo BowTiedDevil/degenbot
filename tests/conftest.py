@@ -8,6 +8,7 @@ import dotenv
 import pytest
 from _pytest.config import Config, Parser
 from _pytest.nodes import Item
+from hypothesis import settings
 
 # The Rust FFI module init installs the process-wide typed BotConfig at import
 # (env > $XDG_CONFIG_HOME/$HOME/.config/degenbot/config.toml), and the runner's
@@ -37,6 +38,14 @@ from tests.standalone_anvil import seed as seed_catalog
 # the Rust `auto_heal_matrix` tests own the heal-at-open behavior. (A test that
 # needs the heal can still override the var explicitly.)
 os.environ.setdefault("DEGENBOT_DB_AUTO_HEAL", "0")
+
+# Hypothesis policy: no per-example wall-clock deadline. Fuzz tests here assert
+# math/round-trip properties, not timing; the 200ms default only fails
+# spuriously under load (FFI first-call cost, GC pauses, scheduler jitter). A
+# test that someday asserts a real timing property opts back in with an
+# explicit @settings(deadline=...), which overrides this profile.
+settings.register_profile("default", deadline=None)
+settings.load_profile("default")
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
