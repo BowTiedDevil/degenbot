@@ -35,7 +35,7 @@ type _SimOutcome = DispatchOutcome | MergedOutcome
 
 
 def _hop_display_addr(hop: dict[str, Any]) -> str:
-    """Return a short display address for logging (WEFVGE: plain-dict hop)."""
+    """Return a short display address for logging (plain-dict hop)."""
 
     family = hop["family"]
 
@@ -49,7 +49,7 @@ def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) 
     """One-line summary of hop input→output tokens for sim-fail diagnostics.
 
 
-    WEFVGE: reads plain dicts (the ``outcome.path_infos`` render shape).
+    Reads plain dicts (the ``outcome.path_infos`` render shape).
 
     """
 
@@ -170,7 +170,7 @@ def _dump_failure_fixture(
     path_info: dict[str, Any] | None,
     current_block: int,
 ) -> None:
-    """Dump the full hop detail for a failing candidate — the W2UWZO trap."""
+    """Dump the full hop detail for a failing candidate — the sim-failure trap."""
 
     path_id = rec["path_id"]
 
@@ -242,7 +242,7 @@ def _render_sim_failures(
     exit_ignore_buckets: str,
 ) -> None:
     """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted / failed
-    candidate (D3 + AM5AJW). Capped at :data:`_SIM_FAIL_RENDER_CAP` records.
+    candidate (D3). Capped at :data:`_SIM_FAIL_RENDER_CAP` records.
 
     ``sim_exit_on_fail`` and ``exit_ignore_buckets`` are the resolved
     ``simulation.*`` values the caller threads down: the tripwire never reads

@@ -289,7 +289,7 @@ class ConstructionContext:
 
 
 class PathRegistrationPipeline:
-    """Reusable, pump-concurrent registration pipeline (NWTUM3 / D1c).
+    """Reusable, pump-concurrent registration pipeline (D1c).
 
     Owns the per-path registration work that ``build_paths`` previously ran
     inline: construction (through the retained ``ConstructionContext`` — the
@@ -345,7 +345,7 @@ class PathRegistrationPipeline:
         # async iterator without reading the process verdict.
         self.discovery_batch_size = max(1, discovery_batch_size)
 
-        # PRG-5 hard cutover (IRUMXD): the crawl shell (the bounded
+        # PRG-5 hard cutover: the crawl shell (the bounded
         # producer/consumer queue + the bounded offload executor) retired.
         # The construction home is the fleet's duty-counted `PoolStateUpdater`
         # intake (census row fleet_pool_state_updater_slots; Deferrable
@@ -365,9 +365,9 @@ class PathRegistrationPipeline:
                 "table for fleet_pool_state_updater_slots."
             )
             raise RuntimeError(msg)
-        # The seat-thread at-most-once verify-claims table (the DMZ3DD twin
-        # for units running concurrently on seats — the loop-bound asyncio
-        # claims in EngineRegistry serve the operator surface only).
+        # The at-most-once verify-claims table for units running concurrently
+        # on seats (the seat-side twin of EngineRegistry's loop-bound asyncio
+        # claims, which serve the operator surface only).
 
         # Configured discovery inputs (set by the driver before discovery runs).
         self.pool_types: list[PoolKind] = []
@@ -411,7 +411,7 @@ class PathRegistrationPipeline:
         # failure is never memoized (a raced build or blip stays retryable).
         # See _registration_ledger.
         self._ledger = RegistrationLedger()
-        # INN6TK observability: reason-tagged skip breakdown + time-throttled
+        # Observability: reason-tagged skip breakdown + time-throttled
         # progress emission. The legacy `[build_paths] Progress` line only fires
         # when `path_count` crosses each 1000-boundary; a discovery-heavy crawl
         # that registers few paths never prints it, hiding the skip/dup/reject
@@ -780,7 +780,7 @@ class PathRegistrationPipeline:
         PRG-2: the skip ALSO lands in the Rust `degenbot.registration.skips`
         metric family (closed-set labels — the per-error-class detail stays
         here in logs, first few occurrences only so a skip-flood cannot
-        resurrect the 2CBDPR motive). The former fatal-memo gate is retired:
+        resurrect the log-flood hazard). The former fatal-memo gate is retired:
         immutable V4 admission verdicts are refused pre-RPC by the core
         registration gate, and raced duplicates self-heal in the build path.
         """
@@ -837,7 +837,7 @@ class PathRegistrationPipeline:
         that replaced the retired executor-drain: all cloned
         ``Arc<SnapshotDb>`` handles acquired inside units are dropped before
         ``build_paths`` returns, keeping the close_snapshot_tx()
-        Arc::try_unwrap canary quiet — EZOKDR).
+        Arc::try_unwrap canary quiet).
 
         Raises:
             The unit's fatal exception (VerificationMismatchError /
@@ -891,7 +891,7 @@ class PathRegistrationPipeline:
         path_steps: Any,
         directions: list[bool] | None = None,
     ) -> None:
-        """Add ONE specific path at any time (NWTUM3 / D1c operator surface)."""
+        """Add ONE specific path at any time (D1c operator surface)."""
         await self._consume(path_steps, directions=directions)
 
     def _graph_edition(self) -> tuple[int, int, int, int] | None:
@@ -910,7 +910,7 @@ class PathRegistrationPipeline:
             return None
 
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
-        """Trigger a bounded one-shot discovery sweep (NWTUM3 / D1c).
+        """Trigger a bounded one-shot discovery sweep (D1c).
 
         A sweep that runs to NATURAL completion (not bound-truncated, not
         capped) latches the structural graph edition; a later trigger over
@@ -926,7 +926,7 @@ class PathRegistrationPipeline:
 
         count = 0
         truncated = False
-        # 4IOEVT: close the sweep deterministically on the bound-truncation
+        # Close the sweep deterministically on the bound-truncation
         # break so the Rust batch iterator is dropped (releasing a mid-DFS
         # search via its cooperative cancel flag) with no zombie threads.
         sweep = self.discovery_sweep()
@@ -990,8 +990,8 @@ class PathRegistrationPipeline:
         (``enqueue_path`` / ``trigger_discovery``) funnel through — the
         per-path body itself is `_registration_unit` (a seat-thread unit);
         this coroutine is the thin submission + counter-fold seam, which is
-        also what keeps the operator surface a "thin Rust submission"
-        (NWTUM3): the work happens in Rust-coordinated fleet seats, not on
+        also what keeps the operator surface a "thin Rust submission" —
+        the work happens in Rust-coordinated fleet seats, not on
         the event loop.
 
         Raises:
@@ -1154,7 +1154,7 @@ async def build_paths(
     # PRG-5: the cap is no longer an unwind exception (the queue that carried
     # `DiscoveryCrawlComplete` retired) — run_registration returns normally
     # and the pipeline's `capped` flag carries the benign-stop witness.
-    # 4IOEVT: close the async discovery generator deterministically when the
+    # Close the async discovery generator deterministically when the
     # crawl breaks on the path cap (or aborts on a fatal receipt) so the Rust
     # batch iterator is dropped (releasing a mid-DFS search) instead of
     # leaving the search running.
@@ -1171,7 +1171,7 @@ async def build_paths(
             "candidates discarded post-cap)"
         )
 
-    # INN6TK observability: always emit the skip-reason breakdown at completion,
+    # Observability: always emit the skip-reason breakdown at completion,
     # even if the time-throttled cadence fell on a throttled tick.
     pipeline.emit_registration_progress(force=True)
 
@@ -1198,5 +1198,5 @@ async def build_paths(
         f"{engine_registry.engine.path_count()} engine paths",
     )
 
-    # DFQYM5 orphan sweep: release Tracked pools whose path was skipped.
+    # Orphan sweep: release Tracked pools whose path was skipped.
     engine_registry.engine.release_all_v3_v4_quarantined()

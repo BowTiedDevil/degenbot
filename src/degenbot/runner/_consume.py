@@ -39,7 +39,7 @@ async def consume_result_batches(
 ) -> None:
     """Consume the block stream (clock) + result batches (dispatch) in parallel.
 
-    Epic 6W35AI: the block clock comes from the forwarded ``newHeads`` stream
+    The block clock comes from the forwarded ``newHeads`` stream
     (``bot.block_stream()``), NOT from ``ResultBatch.solve_block``. The
     result batch's ``solve_block`` lagged by the send debounce + only advanced
     when a batch was actually sent, so the bot's ``[block: N]`` froze behind
@@ -56,7 +56,7 @@ async def consume_result_batches(
     pipeline = session.sim_submit_pipeline
     if pipeline is None:
         pipeline = session.pipeline_factory(session)
-        # FJA2Z7: the remote attach rides the owner's mutator — attribute
+        # The remote attach rides the owner's mutator — attribute
         # pokes on the session are forbidden downstream of bot_runner.
         session.attach_pipeline(pipeline)
 
@@ -154,7 +154,7 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
         parent_gas_limit=gas_limit,
     )
 
-    # 7UIYJ6: ``eth_feeHistory`` + hex-decode + ``record_priority_fees`` now
+    # ``eth_feeHistory`` + hex-decode + ``record_priority_fees`` now
     # happen in the Rust submit leaf (``fetch_fee_history``). No-op on failure.
     async_alloy = async_w3.as_async_alloy()
     if async_alloy is not None:
@@ -194,7 +194,7 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
             )
 
     dispatcher.advance_block(block_number)
-    # FJA2Z7: the block clock advances through the owner's mutator (the
+    # The block clock advances through the owner's mutator (the
     # runner-side frozen mirror is gone — every reader consults the session).
     session.advance_block(block_number)
 

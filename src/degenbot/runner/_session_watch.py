@@ -236,7 +236,7 @@ class SessionWatch:
                 await registration_task
 
     async def teardown(self) -> None:
-        """The idempotent end-of-session teardown (MJJUXL).
+        """The idempotent end-of-session teardown.
 
         Folds the cancel/teardown duties the ``run()`` finally and
         ``__aexit__`` hand-rolled: the registration drain (a no-op once
