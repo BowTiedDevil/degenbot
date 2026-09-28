@@ -1,4 +1,4 @@
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from degenbot._ffi.provider import AsyncAlloyProvider
@@ -141,6 +141,33 @@ class SubmitCandidate:
     @property
     def execute_calldata(self) -> bytes: ...
 
+class SimSubmitPipeline:
+    """Bounded concurrent sim fan-out with a single ordered submit lane.
+
+    Constructed with two Python async callables — ``sim(work)`` returns the
+    outcome (an opaque Python object) or ``None`` when nothing is dispatchable,
+    ``submit(work, outcome)`` renders + submits one outcome — plus the in-flight
+    sim cap. ``enqueue`` backgrounds the batch's sim (bounded) and registers it
+    in the FIFO submit queue; the lane awaits each batch's own sim before
+    submitting, so submission order is arrival order.
+    """
+
+    def __init__(
+        self,
+        sim: Callable[[object], Coroutine[Any, Any, object | None]],
+        submit: Callable[[object, object], Coroutine[Any, Any, None]],
+        concurrency: int,
+    ) -> None: ...
+    def enqueue(self, work: object) -> None: ...
+    @property
+    def concurrency(self) -> int: ...
+    @property
+    def enqueued(self) -> int: ...
+    @property
+    def submitted(self) -> int: ...
+    def raise_if_failed(self) -> None: ...
+    def shutdown(self) -> Coroutine[Any, Any, None]: ...
+
 def dispatch_and_submit_py(
     candidates: list[SubmitCandidate],
     dispatcher: Dispatcher,
@@ -168,6 +195,7 @@ def finalize_fees(
 __all__ = [
     "Dispatcher",
     "DivergentPool",
+    "SimSubmitPipeline",
     "SubmitCandidate",
     "TxParams",
     "TxSigner",

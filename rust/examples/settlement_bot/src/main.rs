@@ -27,7 +27,7 @@
 //! `EngineDriver::start` → `take_result_receiver` → `resume` (the driver owns
 //! the `S+1..W` auto-backfill) → `stop`. The G3 registration pipeline lands
 //! driver-side . Gap G4  adds the driver-side
-//! `consume`/`dispatch`/`sim_submit`/`submission` modules mirroring rows
+//! `consume`/`dispatch`/`submission` modules mirroring rows
 //! 15–18. Gap G5  adds `session_watch` (the typed end-state
 //! verdict + heartbeat/stall watchdog over the consume loop) and
 //! `operator_channel` (the `--operator-socket` JSON-lines channel; row 19/20).
@@ -69,7 +69,6 @@ mod policy;
 mod progress;
 mod run_loop;
 mod session_watch;
-mod sim_submit;
 mod submission;
 mod telemetry;
 
@@ -396,7 +395,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation); discovery admits every token as an intermediate hop"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
         ("15-dispatch-selection", "REACHABLE", "degenbot::arbitrage::{dispatch_profitable_results,filter_thin_margin_results} + driver dispatch.rs plan_batch typed decisions (skip/suppressed/thin-margin/sim)"),
-        ("16-sim-fanout-submitter", "DRIVER-POLICY", "sim_submit.rs: tokio Semaphore(max_simulate_concurrent) + single ordered FIFO submitter; consume.rs consumes the EngineDriver result stream (row 7); no core lift"),
+        ("16-sim-fanout-submitter", "REACHABLE", "degenbot::submission::SimSubmitPipeline (degenbot-submission::sim_pipeline): bounded Semaphore cap + single ordered FIFO submitter + fail-loud raise_if_failed; the driver injects max_simulate_concurrent as a plain cap; consume.rs consumes the EngineDriver result stream (row 7)"),
         ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
         ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
         ("19-session-watch", "DRIVER-POLICY", "session_watch.rs: typed SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} + Heartbeat/stall_watchdog observing the live consume loop (watch-as-observer, no core lift)"),

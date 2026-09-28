@@ -75,6 +75,7 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     # dicts into the typed records of degenbot.dispatch.records (behavior is
     # pinned by tests/dispatch/test_submit_records.py).
     (_DISPATCH, "Dispatcher", _SUBMIT, "Dispatcher"),
+    (_DISPATCH, "SimSubmitPipeline", _SUBMIT, "SimSubmitPipeline"),
     (_DISPATCH, "TxSigner", _SUBMIT, "TxSigner"),
     (_DISPATCH, "fetch_fee_history", _SUBMIT, "fetch_fee_history_py"),
     # degenbot.updater
@@ -141,6 +142,7 @@ def test_dispatch_all_pins_public_surface() -> None:
         "Dispatcher",
         "PayloadOutcome",
         "PayloadVerdict",
+        "SimSubmitPipeline",
         "SimulateContext",
         "SkippedRecord",
         "SubmitCandidate",

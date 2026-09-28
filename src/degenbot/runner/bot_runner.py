@@ -41,22 +41,21 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from degenbot import Bot
 from degenbot.arbitrage import session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.runner.config import VerificationRetryPolicy
-from degenbot.dispatch import Dispatcher, SimulateContext, fetch_fee_history
+from degenbot.dispatch import Dispatcher, SimSubmitPipeline, SimulateContext, fetch_fee_history
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner._dispatch import SubmissionSmoke, _load_executor_runtime_bytecode
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
-from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
+from degenbot.runner._sim_submit import build_sim_submit_pipeline
 from degenbot.runner.build_paths import (
     BuildPathsOptions,
     ConstructionContext,
     PathRegistrationPipeline,
     build_paths,
 )
-from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.config import ArbitrageConfig, VerificationRetryPolicy
 from degenbot.runner.diag import arm_diagnostics
 from degenbot.runner.identity import (
     MULTICALL3_ADDRESS,
@@ -195,13 +194,13 @@ class _SessionState:
     #: post-registration trim; the engine keeps its own Bot ref.
     bot: Bot | None = None
     #: The concurrent sim fan-out + single ordered submitter (attached at
-    #: consumer start via :meth:`attach_pipeline`); ``None`` runs the
-    #: serial leaf.
+    #: consumer start via :meth:`attach_pipeline`); ``None`` means the consumer
+    #: lazily builds it through the session's ``pipeline_factory``.
     sim_submit_pipeline: SimSubmitPipeline | None = None
     #: Factory for the lazily-built sim/submit pipeline. The default builds
     #: the production pipeline; a test double supplied here observes the
     #: consumer's attach without touching the Rust sim seam.
-    pipeline_factory: Callable[[_SessionState], SimSubmitPipeline] = SimSubmitPipeline
+    pipeline_factory: Callable[[_SessionState], SimSubmitPipeline] = build_sim_submit_pipeline
     #: The head-tick ``eth_feeHistory`` leaf (Rust owns the decode +
     #: ``record_priority_fees``). Injected so a provider double can drive the
     #: reconcile path; the default is the production FFI leaf.
@@ -535,7 +534,7 @@ class BotRunner:
             pipeline_factory=(
                 self._injected_pipeline_factory
                 if self._injected_pipeline_factory is not None
-                else SimSubmitPipeline
+                else build_sim_submit_pipeline
             ),
             relay_posture=(
                 self._injected_relay_posture

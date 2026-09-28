@@ -15,11 +15,13 @@
 pub mod dispatcher;
 pub mod params;
 pub mod signer;
+pub mod sim_pipeline;
 pub mod submit;
 
 pub use dispatcher::{PyDispatcher, PyDivergentPool};
 pub use params::PyTxParams;
 pub use signer::PyTxSigner;
+pub use sim_pipeline::PySimSubmitPipeline;
 pub use submit::PySubmitCandidate;
 
 use pyo3::prelude::*;
@@ -38,6 +40,7 @@ pub fn add_submission_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_class::<PyTxSigner>()?;
     submod.add_class::<PyTxParams>()?;
     submod.add_class::<PySubmitCandidate>()?;
+    submod.add_class::<PySimSubmitPipeline>()?;
     submod.add_function(wrap_pyfunction!(
         crate::submission::params::finalize_fees_py,
         &submod

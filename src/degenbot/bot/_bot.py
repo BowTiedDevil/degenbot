@@ -221,8 +221,7 @@ class Bot(AccountQueryMixin):
           with the resolved chain and the ``node`` override; the factory hands
           the chain to the core, which enforces the match itself.
 
-        ``py_bot``/``io``/``erc20_builder`` are DI seams (the
-        runner-pipeline ``SimSubmitPipeline`` constructor-seam pattern):
+        ``py_bot``/``io``/``erc20_builder`` are DI constructor seams:
         tests inject doubles at construction instead of patching module
         privates or assigning ``bot._*`` attributes; omitted kwargs keep
         the production bindings. An injected object skips the

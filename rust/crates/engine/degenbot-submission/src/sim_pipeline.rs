@@ -1,16 +1,28 @@
-//! Concurrent-sim + ordered-submit pipeline — parity-ledger row 16 (ergo
-//! `L4E7RI`, Gap G4).
+//! Bounded concurrent sim fan-out + a single ordered submit lane.
 //!
-//! Mirrors `src/degenbot/runner/_sim_submit_pipeline.py` (SIMPIPE option A):
-//! every batch's simulate work spawns as its own task, bounded by a
-//! semaphore sized `max_simulate_concurrent` (config default 50); ONE
-//! submitter task pops batch descriptors in ARRIVAL (FIFO) order, awaits that
-//! batch's own sim, then submits — byte-identical submission ordering to the
-//! serial loop, only the sims overlap.
+//! Three behaviors that only mean anything together:
 //!
-//! Loud-abort contract: a sim or submit failure is stored and re-raised from
-//! the consumer via [`SimSubmitPipeline::raise_if_failed`] (the Python
-//! `SimSubmitPipelineLeafFailure`, incident 2026-08-20).
+//! - **Bounded concurrency**: every batch's simulate work spawns as its own
+//!   task, bounded by a semaphore sized by a plain `usize` cap.
+//! - **Ordered submit lane**: ONE submitter drains the batches in ARRIVAL
+//!   (FIFO) order, awaits each batch's own sim, then submits. Submission
+//!   order is therefore nonce order, and the single lane is what lets a
+//!   driver fetch one nonce per submit at the moment of submit.
+//! - **Loud abort**: a sim or submit leaf failure is stored and re-raised in
+//!   the caller's frame ([`SimSubmitPipeline::raise_if_failed`]) — no silent
+//!   pump death.
+//!
+//! The concurrency bound and the ordered lane are deliberately one module:
+//! split apart they leave two shallow halves every driver must re-compose.
+//!
+//! The in-flight cap is injected as a value. The posture authority that
+//! derives a cap (a fleet's cordon floor, an operator knob) stays with the
+//! driver, so this core module never reads an env var or a process verdict.
+//!
+//! The pipeline is generic over the work payload `W` and the sim outcome `O`
+//! and drives injected [`SimLeaf`]/[`SubmitLeaf`] implementations; the sim
+//! leaf owns the encode/simulate reduction, the submit leaf the render/submit
+//! step.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -19,56 +31,28 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, Semaphore};
 
-use crate::dispatch::RawResult;
-
 /// The background sim handle for one in-flight batch.
-type SimTask = tokio::task::JoinHandle<Result<Option<SimBatchOutcome>, String>>;
-
-/// The FIFO queue's item type (one in-flight batch slot).
-type SlotSender = mpsc::UnboundedSender<Arc<WorkSlot>>;
-
-/// One streamed solver batch traversing the pipeline.
-#[derive(Clone, Debug)]
-pub struct BatchWork {
-    /// The batch's raw engine rows, in stream order.
-    pub results: Vec<RawResult>,
-    /// The current block's timestamp (`session.dispatcher.block_timestamp_for`).
-    pub block_timestamp: u64,
-    /// The next-block base fee (`next_base_fee`).
-    pub base_fee_next: u128,
-    /// The current block at enqueue time.
-    pub current_block: u64,
-}
-
-/// The sim leaf's per-batch result (a driver-side reduction of the core
-/// `DispatchOutcome`; the submit leaf consumes it).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SimBatchOutcome {
-    /// The path ids that reached the submit stage, in profit-descending order.
-    pub path_ids: Vec<u64>,
-}
+type SimTask<O> = tokio::task::JoinHandle<Result<Option<O>, String>>;
 
 /// The boxed future a sim leaf returns.
-pub type SimFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<SimBatchOutcome>, String>> + Send + 'a>>;
+pub type SimFuture<'a, O> = Pin<Box<dyn Future<Output = Result<Option<O>, String>> + Send + 'a>>;
 
 /// The boxed future a submit leaf returns.
 pub type SubmitFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
-/// The simulate leaf for one batch (GIL-free across the RPC part in the
-/// Python driver; here the injected seam keeps the pipeline offline-testable).
-pub trait SimLeaf: Send + Sync {
-    /// Simulate one batch. `Ok(None)` = nothing dispatchable.
-    fn simulate<'a>(&'a self, work: &'a BatchWork) -> SimFuture<'a>;
+/// The simulate leaf for one batch. `Ok(None)` = nothing dispatchable.
+pub trait SimLeaf<W, O>: Send + Sync {
+    /// Simulate one batch.
+    fn simulate<'a>(&'a self, work: &'a W) -> SimFuture<'a, O>;
 }
 
 /// The submit leaf for one completed batch outcome.
-pub trait SubmitLeaf: Send + Sync {
+pub trait SubmitLeaf<W, O>: Send + Sync {
     /// Render + submit one completed batch outcome.
-    fn submit<'a>(&'a self, work: &'a BatchWork, outcome: &'a SimBatchOutcome) -> SubmitFuture<'a>;
+    fn submit<'a>(&'a self, work: &'a W, outcome: &'a O) -> SubmitFuture<'a>;
 }
 
-/// A pipeline leaf failure (stored, then re-raised in the consumer's frame).
+/// A pipeline leaf failure (stored, then re-raised in the caller's frame).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PipelineFailure {
     /// The failure detail.
@@ -76,38 +60,48 @@ pub struct PipelineFailure {
 }
 
 /// One in-flight batch: the work + its background sim handle.
-struct WorkSlot {
-    work: BatchWork,
-    sim_task: Mutex<Option<SimTask>>,
+struct WorkSlot<W, O> {
+    work: W,
+    sim_task: Mutex<Option<SimTask<O>>>,
 }
 
+/// The FIFO queue's item type (one in-flight batch slot).
+type SlotSender<W, O> = mpsc::UnboundedSender<Arc<WorkSlot<W, O>>>;
+
 /// The bounded fan-out + ordered submitter.
-pub struct SimSubmitPipeline {
+pub struct SimSubmitPipeline<W, O> {
     concurrency: usize,
     sem: Arc<Semaphore>,
-    tx: Mutex<Option<SlotSender>>,
+    tx: Mutex<Option<SlotSender<W, O>>>,
     submitter: Mutex<Option<tokio::task::JoinHandle<()>>>,
     failure: Arc<Mutex<Option<String>>>,
-    sim: Arc<dyn SimLeaf>,
-    submit: Arc<dyn SubmitLeaf>,
+    sim: Arc<dyn SimLeaf<W, O>>,
     enqueued: Arc<AtomicU64>,
     submitted: Arc<AtomicU64>,
 }
 
-impl SimSubmitPipeline {
+impl<W, O> SimSubmitPipeline<W, O>
+where
+    W: Clone + Send + Sync + 'static,
+    O: Send + Sync + 'static,
+{
     /// Build a pipeline with the given in-flight sim bound (floor 1).
     #[must_use]
-    pub fn new(concurrency: usize, sim: Arc<dyn SimLeaf>, submit: Arc<dyn SubmitLeaf>) -> Self {
+    pub fn new(
+        concurrency: usize,
+        sim: Arc<dyn SimLeaf<W, O>>,
+        submit: Arc<dyn SubmitLeaf<W, O>>,
+    ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         let sem = Arc::new(Semaphore::new(concurrency.max(1)));
         let failure: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let enqueued = Arc::new(AtomicU64::new(0));
-        let submitted_count = Arc::new(AtomicU64::new(0));
+        let submitted = Arc::new(AtomicU64::new(0));
         let submit_handle = tokio::spawn(submit_loop(
             rx,
             Arc::clone(&failure),
-            Arc::clone(&submitted_count),
-            Arc::clone(&submit),
+            Arc::clone(&submitted),
+            submit,
         ));
         Self {
             concurrency: concurrency.max(1),
@@ -116,9 +110,8 @@ impl SimSubmitPipeline {
             submitter: Mutex::new(Some(submit_handle)),
             failure,
             sim,
-            submit,
             enqueued,
-            submitted: submitted_count,
+            submitted,
         }
     }
 
@@ -142,9 +135,9 @@ impl SimSubmitPipeline {
     }
 
     /// Enqueue one batch: spawn its sim (bounded by the semaphore) and
-    /// register it in the FIFO submit queue. Returns immediately (the
-    /// consumer keeps advancing) — mirrors Python `enqueue`.
-    pub fn enqueue(&self, work: BatchWork) {
+    /// register it in the FIFO submit queue. Returns immediately — the caller
+    /// keeps advancing.
+    pub fn enqueue(&self, work: W) {
         self.enqueued.fetch_add(1, Ordering::SeqCst);
         let sem = Arc::clone(&self.sem);
         let sim = Arc::clone(&self.sim);
@@ -184,7 +177,6 @@ impl SimSubmitPipeline {
     ///
     /// Returns the first stored leaf failure, if any.
     pub async fn shutdown(&self) -> Result<(), PipelineFailure> {
-        // Drop the pipeline's sender so `recv()` drains then returns `None`.
         drop(
             self.tx
                 .lock()
@@ -221,12 +213,15 @@ impl SimSubmitPipeline {
 
 /// The single ordered submitter: pop in arrival (FIFO) order, await that
 /// batch's sim, then submit. A leaf failure is stored + stops the loop.
-async fn submit_loop(
-    mut rx: mpsc::UnboundedReceiver<Arc<WorkSlot>>,
+async fn submit_loop<W, O>(
+    mut rx: mpsc::UnboundedReceiver<Arc<WorkSlot<W, O>>>,
     failure: Arc<Mutex<Option<String>>>,
     submitted: Arc<AtomicU64>,
-    submit: Arc<dyn SubmitLeaf>,
-) {
+    submit: Arc<dyn SubmitLeaf<W, O>>,
+) where
+    W: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+{
     while let Some(slot) = rx.recv().await {
         let handle = {
             slot.sim_task
@@ -268,93 +263,88 @@ mod tests {
 
     use super::*;
 
+    /// One test batch: an id + a per-batch sleep so completion order can be
+    /// made to disagree with arrival order.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct TestWork {
+        id: u64,
+        sleep_ms: u64,
+    }
+
     struct MockSim {
         in_flight: Arc<AtomicUsize>,
         max_in_flight: Arc<AtomicUsize>,
-        sleep_ms: u64,
-        fail_path: Option<u64>,
+        fail_id: Option<u64>,
     }
 
-    impl SimLeaf for MockSim {
-        fn simulate<'a>(&'a self, work: &'a BatchWork) -> SimFuture<'a> {
+    impl SimLeaf<TestWork, u64> for MockSim {
+        fn simulate<'a>(&'a self, work: &'a TestWork) -> SimFuture<'a, u64> {
             let in_flight = Arc::clone(&self.in_flight);
             let max_in_flight = Arc::clone(&self.max_in_flight);
-            let sleep_ms = self.sleep_ms;
-            let fail_path = self.fail_path;
+            let fail_id = self.fail_id;
             Box::pin(async move {
                 let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                 max_in_flight.fetch_max(now, Ordering::SeqCst);
-                tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                tokio::time::sleep(Duration::from_millis(work.sleep_ms)).await;
                 in_flight.fetch_sub(1, Ordering::SeqCst);
-                if let Some(p) = fail_path {
-                    if work.results.iter().any(|r| r.path_id == p) {
-                        return Err(format!("sim failed for {p}"));
-                    }
+                if fail_id == Some(work.id) {
+                    return Err(format!("sim failed for {}", work.id));
                 }
-                Ok(Some(SimBatchOutcome {
-                    path_ids: work.results.iter().map(|r| r.path_id).collect(),
-                }))
+                Ok(Some(work.id))
             })
         }
     }
 
-    #[derive(Default)]
+    /// A submit leaf that records arrival order and can fail on one id.
     struct RecordingSubmit {
         order: Arc<Mutex<Vec<u64>>>,
+        fail_id: Option<u64>,
     }
 
-    impl SubmitLeaf for RecordingSubmit {
-        fn submit<'a>(
-            &'a self,
-            _work: &'a BatchWork,
-            outcome: &'a SimBatchOutcome,
-        ) -> SubmitFuture<'a> {
+    impl SubmitLeaf<TestWork, u64> for RecordingSubmit {
+        fn submit<'a>(&'a self, _work: &'a TestWork, outcome: &'a u64) -> SubmitFuture<'a> {
             let order = Arc::clone(&self.order);
+            let fail_id = self.fail_id;
+            let id = *outcome;
             Box::pin(async move {
-                order
-                    .lock()
-                    .unwrap()
-                    .extend(outcome.path_ids.iter().copied());
+                if fail_id == Some(id) {
+                    return Err(format!("submit failed for {id}"));
+                }
+                order.lock().unwrap().push(id);
                 Ok(())
             })
         }
     }
 
-    fn work(ids: &[u64], sleep_hint: u64) -> BatchWork {
-        BatchWork {
-            results: ids
-                .iter()
-                .map(|id| RawResult {
-                    path_id: *id,
-                    optimal_input: 1_000,
-                    profit: 10,
-                    hop_outputs: vec![10],
-                    consumed_inputs: vec![1_000],
-                    solve_block: sleep_hint,
-                    state_nonces: vec![0],
-                })
-                .collect(),
-            block_timestamp: 0,
-            base_fee_next: 0,
-            current_block: 0,
-        }
+    fn counters() -> (Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)))
+    }
+
+    fn mock(fail_id: Option<u64>) -> Arc<MockSim> {
+        let (in_flight, max_in_flight) = counters();
+        Arc::new(MockSim {
+            in_flight,
+            max_in_flight,
+            fail_id,
+        })
     }
 
     #[tokio::test]
     async fn sim_fanout_is_bounded_by_concurrency() {
-        let in_flight = Arc::new(AtomicUsize::new(0));
-        let max_in_flight = Arc::new(AtomicUsize::new(0));
+        let (in_flight, max_in_flight) = counters();
         let sim = Arc::new(MockSim {
             in_flight: Arc::clone(&in_flight),
             max_in_flight: Arc::clone(&max_in_flight),
-            sleep_ms: 20,
-            fail_path: None,
+            fail_id: None,
         });
-        let submit = Arc::new(RecordingSubmit::default());
+        let submit = Arc::new(RecordingSubmit {
+            order: Arc::new(Mutex::new(Vec::new())),
+            fail_id: None,
+        });
         let pipeline = SimSubmitPipeline::new(2, sim, submit);
         assert_eq!(pipeline.concurrency(), 2);
-        for i in 0..5_u64 {
-            pipeline.enqueue(work(&[i], 0));
+        for id in 0..5_u64 {
+            pipeline.enqueue(TestWork { id, sleep_ms: 20 });
         }
         pipeline.shutdown().await.unwrap();
         assert_eq!(pipeline.enqueued(), 5);
@@ -367,41 +357,89 @@ mod tests {
     #[tokio::test]
     async fn submitter_preserves_arrival_order_despite_sim_completion_order() {
         let order = Arc::new(Mutex::new(Vec::new()));
-        let sim = Arc::new(MockSim {
-            in_flight: Arc::new(AtomicUsize::new(0)),
-            max_in_flight: Arc::new(AtomicUsize::new(0)),
-            sleep_ms: 5,
-            fail_path: None,
-        });
+        let sim = mock(None);
         let submit = Arc::new(RecordingSubmit {
             order: Arc::clone(&order),
+            fail_id: None,
         });
         let pipeline = SimSubmitPipeline::new(4, sim, submit);
-        // Enqueue in an order whose later batches sleep longer (in-flight IV
-        // varies); FIFO must still hold.
-        for id in [10_u64, 11, 12, 13] {
-            pipeline.enqueue(work(&[id], 0));
+        // Later batches sleep longer, so sim completion order disagrees with
+        // arrival order; FIFO must still hold.
+        for (id, sleep_ms) in [(10_u64, 1), (11, 5), (12, 10), (13, 20)] {
+            pipeline.enqueue(TestWork { id, sleep_ms });
         }
         pipeline.shutdown().await.unwrap();
         assert_eq!(*order.lock().unwrap(), vec![10, 11, 12, 13]);
     }
 
     #[tokio::test]
-    async fn leaf_failure_aborts_loudly() {
-        let sim = Arc::new(MockSim {
-            in_flight: Arc::new(AtomicUsize::new(0)),
-            max_in_flight: Arc::new(AtomicUsize::new(0)),
-            sleep_ms: 1,
-            fail_path: Some(1),
+    async fn sim_failure_aborts_loudly() {
+        let sim = mock(Some(1));
+        let submit = Arc::new(RecordingSubmit {
+            order: Arc::new(Mutex::new(Vec::new())),
+            fail_id: None,
         });
-        let submit = Arc::new(RecordingSubmit::default());
         let pipeline = SimSubmitPipeline::new(2, sim, submit);
-        pipeline.enqueue(work(&[0], 0));
-        pipeline.enqueue(work(&[1], 0));
-        pipeline.enqueue(work(&[2], 0));
+        for id in 0..3_u64 {
+            pipeline.enqueue(TestWork { id, sleep_ms: 1 });
+        }
         let err = pipeline.shutdown().await.unwrap_err();
         assert_eq!(err.detail, "sim failed for 1");
         // The stored failure is drained exactly once.
         assert!(pipeline.raise_if_failed().is_ok());
+    }
+
+    #[tokio::test]
+    async fn submit_failure_aborts_loudly() {
+        let sim = mock(None);
+        let submit = Arc::new(RecordingSubmit {
+            order: Arc::new(Mutex::new(Vec::new())),
+            fail_id: Some(7),
+        });
+        let pipeline = SimSubmitPipeline::new(2, sim, submit);
+        pipeline.enqueue(TestWork { id: 7, sleep_ms: 0 });
+        let err = pipeline.shutdown().await.unwrap_err();
+        assert_eq!(err.detail, "submit failed for 7");
+    }
+
+    #[tokio::test]
+    async fn counters_track_enqueued_and_submitted() {
+        let sim = mock(None);
+        let submit = Arc::new(RecordingSubmit {
+            order: Arc::new(Mutex::new(Vec::new())),
+            fail_id: None,
+        });
+        let pipeline = SimSubmitPipeline::new(1, sim, submit);
+        assert_eq!(pipeline.enqueued(), 0);
+        assert_eq!(pipeline.submitted(), 0);
+        for id in [1_u64, 2, 3] {
+            pipeline.enqueue(TestWork { id, sleep_ms: 0 });
+        }
+        pipeline.shutdown().await.unwrap();
+        assert_eq!(pipeline.enqueued(), 3);
+        assert_eq!(pipeline.submitted(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_none_outcome_is_skipped_but_still_counted() {
+        struct NoneSim;
+        impl SimLeaf<TestWork, u64> for NoneSim {
+            fn simulate<'a>(&'a self, _work: &'a TestWork) -> SimFuture<'a, u64> {
+                Box::pin(async { Ok(None) })
+            }
+        }
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let pipeline = SimSubmitPipeline::new(
+            1,
+            Arc::new(NoneSim),
+            Arc::new(RecordingSubmit {
+                order: Arc::clone(&order),
+                fail_id: None,
+            }),
+        );
+        pipeline.enqueue(TestWork { id: 1, sleep_ms: 0 });
+        pipeline.shutdown().await.unwrap();
+        assert!(order.lock().unwrap().is_empty());
+        assert_eq!(pipeline.submitted(), 1);
     }
 }

@@ -150,6 +150,17 @@ submission or a revoked lease, re-evaluate at the decide stage on a stale one, r
 a landed one.
 _Avoid_: "retry policy", "rebroadcast policy".
 
+**Ordered sim-submit pipeline**:
+The one core owner of a block's concurrent simulate fan-out plus its submit lane: every
+batch's simulate work runs bounded by an injected in-flight cap, and a single submitter
+drains batches in arrival order, awaiting each batch's own sim before submitting.
+Submission order is therefore nonce order, and the loud-abort contract re-raises the
+first leaf failure in the caller's frame. The cap VALUE stays driver-side; the pipeline
+accepts a plain count.
+_Avoid_: "sim queue", "submit queue" (one shared arrival-ordered lane, not a queue per
+concern); "task pool" (the bound is a cap the driver injects, not a pool the pipeline
+sizes).
+
 ## Session objects
 
 The vocabulary for the per-session entity layer. Design record:

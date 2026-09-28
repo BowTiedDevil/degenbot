@@ -5,8 +5,7 @@ constructor parameter or a public method: no mock/``patch`` of module
 privates, no assignment to ``bot._*`` attributes.
 
 Seams used here (all additive to ``Bot.__init__``; omitted kwargs resolve from
-the installed typed config, matching the runner's
-``SimSubmitPipeline`` candidate_builder/simulator/renderer/submitter and
+the installed typed config, matching the runner's injectable actors and the
 ``_submit_batch_records`` submitter/relay_providers precedents):
 
 - ``Bot(chain_id=..., database=..., provider=...)`` — the explicit override

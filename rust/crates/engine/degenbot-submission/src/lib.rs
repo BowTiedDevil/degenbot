@@ -73,6 +73,7 @@ pub mod monitor;
 pub mod params;
 pub mod relay;
 pub mod signer;
+pub mod sim_pipeline;
 pub mod submission_ledger;
 pub mod submit;
 
@@ -90,6 +91,9 @@ pub use dispatcher::{
 pub use monitor::{
     monitor_pending_transaction, monitor_pending_transaction_default, MonitorOutcome, ReceiptProbe,
     SubmittedTx, BLOCKS_BEFORE_NONCE_EXPIRES,
+};
+pub use sim_pipeline::{
+    PipelineFailure, SimFuture, SimLeaf, SimSubmitPipeline, SubmitFuture, SubmitLeaf,
 };
 pub use submission_ledger::{
     HeadPolicy, LedgerDecline, NonceLane, Notification, NotificationKind, PolicyAction,

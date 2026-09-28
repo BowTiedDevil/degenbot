@@ -54,7 +54,7 @@
       "13-path-policy": "DRIVER-POLICY",
       "14-in-process-sim": "REACHABLE",
       "15-dispatch-selection": "REACHABLE",
-      "16-sim-fanout-submitter": "DRIVER-POLICY",
+      "16-sim-fanout-submitter": "REACHABLE",
       "17-fee-determination": "REACHABLE",
       "18-live-submission": "REACHABLE",
       "19-session-watch": "DRIVER-POLICY",

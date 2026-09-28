@@ -56,7 +56,7 @@ from degenbot._ffi.simulation import (
 from degenbot._ffi.simulation import assemble_dispatch_candidates_py as assemble_dispatch_candidates
 from degenbot._ffi.simulation import dispatch_profitable_py as dispatch_profitable
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
-from degenbot._ffi.submission import Dispatcher, SubmitCandidate, TxSigner
+from degenbot._ffi.submission import Dispatcher, SimSubmitPipeline, SubmitCandidate, TxSigner
 from degenbot._ffi.submission import dispatch_and_submit_py as _dispatch_and_submit_py
 from degenbot._ffi.submission import fetch_fee_history_py as fetch_fee_history
 from degenbot.dispatch.records import (
@@ -134,6 +134,7 @@ __all__ = [
     "Dispatcher",
     "PayloadOutcome",
     "PayloadVerdict",
+    "SimSubmitPipeline",
     "SimulateContext",
     "SkippedRecord",
     "SubmitCandidate",

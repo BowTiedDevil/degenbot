@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING, Any, cast
 from degenbot.arbitrage import fee_percentiles
 from degenbot.calculations import next_base_fee
 from degenbot.diagnostics import mark_progress
+from degenbot.dispatch import SimSubmitPipeline
 from degenbot.logging import logger as bot_logger
-from degenbot.runner._dispatch import BatchContext, _dispatch_profitable
-from degenbot.runner._sim_submit_pipeline import SimSubmitPipeline
+from degenbot.runner._sim_submit import BatchWork
 
 if TYPE_CHECKING:
     from degenbot.runner.bot_runner import _SessionState
@@ -82,7 +82,7 @@ async def consume_result_batches(
                 await _apply_block_if_ready(fut, session)
             elif fut is result_fut:
                 result_fut, result_ended = _reprime(result_iter, fut, "result stream")
-                await _apply_result_if_ready(fut, session, pipeline)
+                _apply_result_if_ready(fut, session, pipeline)
         # SIMPIPE loud-abort: a failed sim/submit leaf surfaces here (the
         # same kernel the consumer loop already brings down the run with).
         if pipeline is not None:
@@ -199,18 +199,16 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
     session.advance_block(block_number)
 
 
-async def _apply_result_if_ready(
+def _apply_result_if_ready(
     fut: asyncio.Task[dict[str, object]],
     session: _SessionState,
     pipeline: SimSubmitPipeline | None = None,
 ) -> None:
     """Dispatch profitable results from a solver result batch if fut resolved.
 
-    SIMPIPE option A: with a pipeline attached, the batch's sim work is
-    backgrounded K-way concurrent and submission happens on the SINGLE ordered
-    submitter (FIFO in batch arrival order - the nonce-serialization contract
-    the serial loop had). Without a pipeline (legacy A/B arm), the serial leaf
-    awaits inline exactly as before.
+    The batch's sim work is backgrounded K-way concurrent on the Rust-owned
+    pipeline; submission happens on its SINGLE ordered submit lane, FIFO in
+    batch arrival order - the nonce-serialization contract.
     """
     if fut.cancelled() or fut.exception() is not None:
         return
@@ -256,32 +254,17 @@ async def _apply_result_if_ready(
     }
 
     if results:
-        if pipeline is not None:
-            await pipeline.enqueue(
-                results,
+        assert pipeline is not None, "the consumer always builds a pipeline"
+        pipeline.enqueue(
+            BatchWork(
+                results=results,
                 block_timestamp=session.dispatcher.block_timestamp_for(current_block) or 0,
                 base_fee_next=next_base_fee(
                     parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
                     parent_gas_used=int(cast("Any", batch["gas_used"])),
                     parent_gas_limit=int(cast("Any", batch["gas_limit"])),
                 ),
+                current_block=current_block,
                 payloads=payloads,
             )
-        else:
-            operator_nonce = await session.async_w3.get_transaction_count(
-                session.cfg.operator_address
-            )
-            await _dispatch_profitable(
-                session,
-                results,
-                context=BatchContext(
-                    block_timestamp=session.dispatcher.block_timestamp_for(current_block) or 0,
-                    base_fee_next=next_base_fee(
-                        parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
-                        parent_gas_used=int(cast("Any", batch["gas_used"])),
-                        parent_gas_limit=int(cast("Any", batch["gas_limit"])),
-                    ),
-                ),
-                operator_nonce=operator_nonce,
-                payloads=payloads,
-            )
+        )

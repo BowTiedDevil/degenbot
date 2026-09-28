@@ -132,8 +132,8 @@ async def _dispatch_profitable(
 ) -> None:
     """Encode - simulate - submit one batch of profitable results serially.
 
-    The serial composition; production drives
-    :mod:`degenbot.runner._sim_submit_pipeline` (K-way concurrent sims over
+    The serial composition; production drives the Rust-owned
+    :mod:`degenbot.runner._sim_submit` pipeline (K-way concurrent sims over
     the same seam contracts, ordered submit fan-in). All session coordination
     state is read from the single ``session`` owner (CONTEXT.md: *session
     state*), never re-passed.
@@ -173,7 +173,7 @@ def _build_dispatch_candidates(
     """Shape a batch of raw engine results into Rust-seam candidates.
 
     Shared by the serial leaf (:func:`_dispatch_profitable`) and the concurrent
-    pipeline (``_sim_submit_pipeline``). The whole batch is assembled by the
+    pipeline (``_sim_submit``). The whole batch is assembled by the
     Rust seam in one call: path resolution, per-row field construction, the
     empty-hop skip, and the payload-served skip all run in the core. Only the
     display-only ``[sim-none]`` log and the operator policy bools stay Python.
