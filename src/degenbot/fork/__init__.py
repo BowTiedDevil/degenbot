@@ -2,7 +2,7 @@
 
 A thin companion shell (ADR-005 three-layer Python layer) over the rust core
 `degenbot._ffi.AnvilFork` PyO3 seam (`degenbot_fork::AnvilFork`). The rust
-core (added in epic `NXYVYU` FF2/FF3) owns the spawned anvil subprocess
+core owns the spawned anvil subprocess
 (via `alloy::node_bindings::Anvil`) + a connected alloy `DynProvider`
 (over IPC) + the 12 anvil dev-RPC methods. This Python shell:
 
@@ -23,7 +23,7 @@ management).
 
 `PyAnvilFork` exposes the IPC path the rust core resolved for the spawned
 anvil process. Former callers using `fork.w3.eth.X` are migrated to
-`fork.provider.X` (FF5 / `ECKJE2`, done) — the legacy attribute is gone.
+`fork.provider.X` — the legacy attribute is gone.
 """
 
 from __future__ import annotations
@@ -121,8 +121,7 @@ class AnvilFork:
     the `AlloyProvider` pyclass at :attr:`provider` (replacing the legacy
     `self.w3` Web3 handle
     — that handle is gone; all callers now use
-    ``fork.provider.get_block_number()`` etc.; the migration shipped in
-    task `ECKJE2`).
+    ``fork.provider.get_block_number()`` etc.).
 
     The rust core (`degenbot_fork::AnvilFork`) owns:
 

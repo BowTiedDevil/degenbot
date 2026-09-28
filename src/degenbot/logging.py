@@ -185,7 +185,7 @@ RUST_BRIDGE_LOGGER_NAMES = (
 #: from the ``degenbot`` package logger — a SIBLING of ``degenbot.logging``
 #: (which has ``propagate = False``), not an ancestor — so without configuring
 #: the ``degenbot`` root here their INFO records fall through to the stdlib
-#: root (WARNING, no handler) and are dropped. S2 (GTOD23-PB24RX) surfaced this:
+#: root (WARNING, no handler) and are dropped. This failure was observed live:
 #: the recurring verifier ran and detected drift but its ``[verify] (recurring)``
 #: lines never reached stdout, and 0 ``(recurring)`` hits appeared across all 27
 #: permutation runs. Configuring the ``degenbot`` package root with the same

@@ -8,7 +8,7 @@ imports these directly; the ``_ffi`` module is an internal detail.
 - ``DyCalculationInputs`` — a mutable builder snapshot the companion fills
   (mirrors the pure ``DyCalculationInputs`` core dataclass).
 - ``calculate_dy`` / ``calculate_dy_underlying`` — the Rust pure-calc entry
-  points (task ``CNEP47``, epic ``TV72EG``).
+  points.
 """
 
 from degenbot._ffi.curve_dy import DyCalculationInputs, calculate_dy, calculate_dy_underlying

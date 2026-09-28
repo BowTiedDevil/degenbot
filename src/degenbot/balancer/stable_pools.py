@@ -306,7 +306,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
     def rate_provider(self) -> BalancerRateProvider | None:
         """The rate provider for per-block rate resolution, if available.
 
-        With the sealed seam (ADR-005 MBWSGP) the provider is the stored Rust
+        With the sealed seam (ADR-005) the provider is the stored Rust
         I/O trait object, queried via the handle. This property returns
         ``None`` when the stored provider is static (the no-I/O fallback).
         """

@@ -33,7 +33,7 @@ from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.arbitrage import ArbitrageEngine
 from degenbot.logging import logger as bot_logger
 
-# XEANMB: the `load_*_from_py` ingestion surface + `_v3_snapshot_to_py_dict`
+# The `load_*_from_py` ingestion surface + `_v3_snapshot_to_py_dict`
 # / `_v4_snapshot_to_py_dict` converters are retired (the in-memory
 # SnapshotStore is gone). Per-pool tick data is read via the Db arm (held tx) or
 # the Chain arm (RPC) at registration; `start()` only sets the snapshot seed
@@ -105,12 +105,12 @@ class EngineRegistry:
             raise ValueError(msg)
         else:
             self.engine = ArbitrageEngine(py_bot=bot._py_bot)  # ruff:ignore[private-member-access]
-        # NXM2BF: the Python `PathInfo` relay is retired. `register_path`
+        # The Python `PathInfo` relay is retired. `register_path`
         # returns the Rust `path_id`; `DispatchCandidate` resolves the
         # encoder's `composers::PathInfo` from that `path_id` via
         # `PyArbitrageEngine.path_info_for_core`. The `[profit]` hop-detail
         # render reads `outcome.path_infos` (Rust→Py), not a stored Python copy.
-        # ADR-006 D4 + D7KMQO: a pluggable path-composition predicate enforces
+        # ADR-006 D4: a pluggable path-composition predicate enforces
         # deployment policy (token denylist/allowlist, hop-count bounds,
         # min-liquidity, duplicate-pool guard) BEFORE hop building + engine
         # dispatch. Distinct from the Rust core's pool-admission floor
@@ -150,9 +150,9 @@ class EngineRegistry:
         after which the pump emits one ResultBatch per block into the
         fire-and-forget channel — attaching the consumer after resume risks
         unbounded backlog and stale-batch dispatch; `resume()` also runs the
-        auto-backfill that closes the snapshot→WS gap, J3FMDO).
+        auto-backfill that closes the snapshot→WS gap).
 
-        DB snapshot (JUCFCB, Shape 2): the V3+V4 DB snapshot is eagerly loaded
+        DB snapshot (Shape 2): the V3+V4 DB snapshot is eagerly loaded
         into the core ``BotState`` at ``Bot.__init__`` time via
         ``Bot.load_snapshot_from_db`` — so the DB path needs NO snapshot
         kwargs here. The snapshot seed block ``S`` stays on the shared
@@ -164,7 +164,7 @@ class EngineRegistry:
         Non-DB snapshots (file/memory): pass ``v3_snapshot``/``v4_snapshot``
         kwargs; each is converted to a single Python dict and handed to the
         engine via ``load_v3_snapshot_from_py`` / ``load_v4_snapshot_from_py``
-        (ONE PyO3 crossing per family — DADWUP retired the per-pool
+        (ONE PyO3 crossing per family — the per-pool
         ``insert_*_pool_snapshot`` crossings), then
         ``snapshot_block = min(s.newest_block)`` stashes the per-pool step-1
         verify seed. These two kwargs are non-DB-only — the DB path constructs
@@ -178,18 +178,18 @@ class EngineRegistry:
         # Compute the snapshot seed block `S` BEFORE `subscribe()` so the
         # core's `after_subscribe` phase transition sees `core_has_snapshot =
         # true` and advances the engine phase to `SnapshotLoaded` (required by
-        # `resume()`). XEANMB: the non-DB path no longer fills a
+        # `resume()`). The non-DB path no longer fills a
         # `SnapshotStore` via `load_*_from_py` (retired); per-pool tick
         # data is read through the Db arm (held tx) or the Chain arm (RPC) at
         # registration. `S` is the only thing stashed here — it drives the
-        # core auto-backfill inside `resume()` (J3FMDO) that closes the
+        # core auto-backfill inside `resume()` that closes the
         # snapshot→WS gap (the pyo3 `backfill_from_snapshot` is retired; the
         # non-DB path sets S via the `snapshot_seed_block` property setter —
         # the DB path's `load_snapshot_from_db` already set S).
         if v3_snapshot is not None or v4_snapshot is not None:
             # Non-DB (file/memory) path — `S = min(newest_block)` across the
             # supplied snapshots. The tick-data dicts themselves are NOT
-            # ingested here (the Store is retired, epic XEANMB); per-pool tick
+            # ingested here (the Store is retired); per-pool tick
             # data is fetched via the Chain arm (RPC) at registration.
             snapshot_block = min(
                 s.newest_block for s in (v3_snapshot, v4_snapshot) if s is not None
@@ -201,8 +201,8 @@ class EngineRegistry:
 
         # Only set when a snapshot was supplied (else there's no seed).
         self._verify_snapshot_block = snapshot_block
-        # 2SM4Y7: record S on the shared BotState so the core auto-backfill
-        # inside `resume()` (J3FMDO) closes the snapshot→WS gap (the pyo3
+        # Record S on the shared BotState so the core auto-backfill
+        # inside `resume()` closes the snapshot→WS gap (the pyo3
         # `backfill_from_snapshot` is retired; the non-DB path sets S via the
         # `snapshot_seed_block` property setter — the DB path's
         # `load_snapshot_from_db` already set S).
@@ -477,7 +477,7 @@ class EngineRegistry:
         The seat-thread pathRegistration used by the crawl units: unlike
         :meth:`register_path` it takes ALREADY-RESOLVED ``(pool_id,
         zero_for_one)`` hops (the unit gets the ids off the build handles).
-        The D7KMQO path predicate is evaluated by the caller over the concrete
+        The path-composition predicate is evaluated by the caller over the concrete
         pools BEFORE hop building. Returns ``(path_id, created)`` with the
         same semantics as :meth:`register_path` (dedup by construction in the
         engine, PRG-4; the cap refusal surfaces as typed
@@ -501,7 +501,7 @@ class EngineRegistry:
         ``(PoolManager, pool_id)`` pair) and dispatched as a
         ``(key, zero_for_one)`` tuple to the engine's
         ``register_and_solve_path`` (eager solve — the path is immediately
-        included in the next result batch). NXM2BF: the Python ``PathInfo``
+        included in the next result batch). The Python ``PathInfo``
         relay is retired — ``DispatchCandidate`` resolves the encoder's
         ``composers::PathInfo`` from the returned ``path_id`` via
         ``PyArbitrageEngine.path_info_for_core`` (no Python hop build, no
@@ -525,7 +525,7 @@ class EngineRegistry:
         (``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``).
 
         """
-        # D7KMQO: enforce deployment policy before any work. A rejection
+        # Enforce deployment policy before any work. A rejection
         # raises a PathRejectedError subtype and never reaches the engine —
         # mirrors how V4 admission (HookedPoolRejectedError) is typed.
         self.path_predicate.evaluate(pools_and_zfos)

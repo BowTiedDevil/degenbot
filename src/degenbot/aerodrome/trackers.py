@@ -122,8 +122,8 @@ class AerodromeV2PoolTracker(
             pool_implementation_address = deployment.implementation_address
         else:
             # Non-JSON Aerodrome/V2 fork: the Rust resolver gives the factory
-            # deployer + the Uniswap V2 mainnet fallback init hash (Fork A,
-            # NSAZ4X). The EIP-1167 implementation address has no fallback —
+            # deployer + the Uniswap V2 mainnet fallback init hash (Fork A).
+            # The EIP-1167 implementation address has no fallback —
             # only JSON-registered Aerodrome factories carry it (a non-JSON
             # Aerodrome fork must be added to deployments.json to derive
             # clone addresses).

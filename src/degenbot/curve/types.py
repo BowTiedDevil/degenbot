@@ -124,7 +124,7 @@ class LendingRateStyle(Enum):
 class BasePoolPort(Protocol):
     """The slice of the base-pool surface the metapool ``DyCalculator`` needs.
 
-    Names the *real* interface behind the lazy go-between (ADR-005 BQM2OA): a
+    Names the *real* interface behind the lazy go-between (ADR-005): a
     metapool's calc paths call exactly these six members on its base pool —
     ``tokens`` / ``balances`` / ``fee`` for metadata, and
     ``calc_token_amount`` / ``get_dy`` / ``calc_withdraw_one_coin`` for

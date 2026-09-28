@@ -1,4 +1,4 @@
-"""Path-composition rejection predicates (Plan 102 follow-up, D7KMQO).
+"""Path-composition rejection predicates.
 
 A :class:`~degenbot.arbitrage.EngineRegistry` can refuse an
 :func:`~degenbot.arbitrage.EngineRegistry.register_path` candidate by

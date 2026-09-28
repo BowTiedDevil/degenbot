@@ -96,7 +96,7 @@ def _update_pool(
 ) -> bool:
     """Fetch the current chain state and push an update to a V2/V3/V4 pool.
 
-    T4 / 4GQWZ4 (builder-deletion blocker): the per-family refresh that
+    The per-family refresh that
     previously lived on the `V2PoolBuilder` / `V3PoolBuilder` /
     `V4PoolBuilder` `update()` methods now lives in this single dispatcher in
     the `Bot` delegating shell — all I/O flows through the `BotIo` Rust seam
@@ -111,8 +111,8 @@ def _update_pool(
     Raises:
         TypeError: If ``pool`` is not a V2/V3/V4 pool (callers dispatch only
             those families here; Aerodrome/Curve/Balancer refresh permanently
-            through their Python builders' `update()` — SSSXG6 delegated the
-            build path only).
+            through their Python builders' `update()` — only the build path
+            was delegated).
 
     """
     if not isinstance(pool, (UniswapV2Pool, UniswapV3Pool, UniswapV4Pool)):
@@ -270,7 +270,7 @@ class Bot(AccountQueryMixin):
         if py_bot is None:
             self._py_bot = _Engine(self._chain_id)
 
-            # JUCFCB (epic P73ER6): eagerly load the V3+V4 DB snapshot into the
+            # Eagerly load the V3+V4 DB snapshot into the
             # core ``BotState`` at construction time (Shape 2). This makes the DB
             # a construction-time property of the Bot — correct use is structural:
             # the Bot is born with its snapshot or born cold-start, nothing in
@@ -397,7 +397,7 @@ class Bot(AccountQueryMixin):
         lifecycles + path registration) ride the fleet's duty-counted
         ``PoolStateUpdater`` seats through this seam (PRG-5).
 
-        FF-T1 (BPHR6F): on a host whose fleet boot was refused (detected
+        On a host whose fleet boot was refused (detected
         CPU budget below the pinned-role floor, or a boot invariant), this
         submit — and every submit after it — raises the typed, sticky
         ``BootRefused`` from the FFI seam: the library never aborts the host
@@ -643,7 +643,7 @@ class Bot(AccountQueryMixin):
         # Look up the concrete pool class from the registry
         pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
 
-        # V2/V3 families delegate to the Rust `PoolBuilder` (T4 / 4GQWZ4 full
+        # V2/V3 families delegate to the Rust `PoolBuilder` (full
         # delegation): the core builder owns ALL the io choreography (immutables,
         # reserves/state, DEX resolve incl. Camelot, CREATE2 verify, V3
         # tick-map DB-first) and registers directly into `BotState`. The Python
@@ -657,9 +657,9 @@ class Bot(AccountQueryMixin):
         # the retired builder's attached fetcher.
         #
         # Aerodrome V2 and both Balancer families delegate through the Rust
-        # PoolBuilder (their own PoolEntry families) per SSSXG6 (done);
+        # PoolBuilder (their own PoolEntry families);
         # Curve keeps its Python builder. Python `update()` refresh for these
-        # families stays on the builders — update() was out of SSSXG6's
+        # families stays on the builders — update() was out of the
         # build-delegation scope, so this split is the permanent design.
         if issubclass(
             pool_class,
@@ -693,7 +693,7 @@ class Bot(AccountQueryMixin):
     ) -> Callable[[int, int], FetchedTickData | None]:
         """Create the V3 tick-data backfill fetcher for a pool address.
 
-        T4 / 4GQWZ4: the legacy web3-sync fetcher factory formerly on the
+        The legacy web3-sync fetcher factory formerly on the
         retired `V3PoolBuilder`, relocated into this delegating shell. The
         returned fetcher lazily pulls neighbouring tick words during swap
         boundary-crossing (ADR-005 sparse-map parity), attached to the
@@ -731,7 +731,7 @@ class Bot(AccountQueryMixin):
     ) -> Callable[[int, int], FetchedTickData | None]:
         """Create the V4 tick-data backfill fetcher for a managed pool.
 
-        T4 / 4GQWZ4: the legacy web3-sync fetcher factory formerly on the
+        The legacy web3-sync fetcher factory formerly on the
         retired `V4PoolBuilder`, relocated into this delegating shell. The
         returned fetcher lazily pulls neighbouring tick words during swap
         boundary-crossing via the state-view (`getTickBitmap` /
@@ -831,7 +831,7 @@ class Bot(AccountQueryMixin):
             msg = f"build_pool: register returned pool_id {pool_id} with no handle"
             raise DegenbotValueError(message=msg)
 
-        # TF7RZB-S1 return-surface parity: the builder returns the Rust core's
+        # Return-surface parity: the builder returns the Rust core's
         # own token0/token1 identity; it must equal what the registered handle
         # exposes (a divergence is a genuine core/driver seam bug — assert
         # loudly rather than silently re-deriving).
@@ -870,7 +870,7 @@ class Bot(AccountQueryMixin):
         # to `type[Any]` so the call is type-checkable + the union of the five
         # delegated families stays branch-free here.
         pool = cast("type[Any]", pool_class)._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
-        # Idempotent register (35NMBX Guard 1): a concurrent registration worker
+        # Idempotent register: a concurrent registration worker
         # may have built this same shared pool first; use the canonical instance
         # so THIS path still registers instead of being lossily skipped. (pool_id
         # is None on this delegated path, so get_or_add returns an
@@ -905,9 +905,9 @@ class Bot(AccountQueryMixin):
         """
         if issubclass(pool_class, UniswapV3Pool):
             # The legacy web3-sync fetcher factory, relocated off the retired
-            # V3 builder (4GQWZ4 deletion).
+            # V3 builder.
             fetcher = self._make_v3_tick_data_fetcher(address, chain_id)
-            # CL slot layout (VERIFY2 T4 / W32CAU): the PancakeSwap V3 fork
+            # CL slot layout: the PancakeSwap V3 fork
             # has a divergent storage layout — pass the family explicitly so
             # the engine's slot-index consumers (divergence probe, sim-anchor
             # projection) never misread a fork pool.
@@ -922,14 +922,14 @@ class Bot(AccountQueryMixin):
             return b_res[0], b_res
 
         if issubclass(pool_class, AerodromeV2Pool):
-            # SSSXG6: Aerodrome V2 (shared volatile/stable factory) is a
+            # Aerodrome V2 (shared volatile/stable factory) is a
             # distinct structural family from V2 — the Rust `build_aerodrome_v2`
             # reads `stable()`+`getFee()` and registers into PoolEntry::AerodromeV2.
             pool_id = self._py_bot.build_aerodrome_v2_pool(address, block=block)
             return pool_id, None
 
         if issubclass(pool_class, BalancerV2Pool):
-            # SSSXG6: Balancer weighted — reads getPoolId + Vault getPoolTokens
+            # Balancer weighted — reads getPoolId + Vault getPoolTokens
             # + getSwapFeePercentage + getNormalizedWeights + bytecode PowVersion
             # + decimals() scaling factors; registers into PoolEntry::BalancerWeighted.
             pool_id = self._py_bot.build_balancer_weighted_pool(
@@ -938,7 +938,7 @@ class Bot(AccountQueryMixin):
             return pool_id, None
 
         if issubclass(pool_class, BalancerV2StablePool):
-            # SSSXG6: Balancer stable — reads getPoolId + Vault getPoolTokens +
+            # Balancer stable — reads getPoolId + Vault getPoolTokens +
             # getSwapFeePercentage + getAmplificationParameter + BPT-detect +
             # rate-provider/rate + scaling factors + invariant_version;
             # registers into PoolEntry::BalancerStable.
@@ -972,7 +972,7 @@ class Bot(AccountQueryMixin):
 
         """
         if issubclass(pool_class, (BalancerV2Pool, BalancerV2StablePool)):
-            # SSSXG6: preserve the broken-pool guard from the retired
+            # Preserve the broken-pool guard from the retired
             # `BalancerBuilder.build` (BrokenPool) so known-bad pools fail fast.
             if address in BROKEN_BALANCER_V2_POOLS:
                 raise BrokenPool
@@ -1049,7 +1049,7 @@ class Bot(AccountQueryMixin):
         chain_id: ChainId,
         request: BuildManagedPoolRequest,
     ) -> UniswapV4Pool:
-        """Build a V4 managed pool via the Rust `PoolBuilder` (T4 / 4GQWZ4).
+        """Build a V4 managed pool via the Rust `PoolBuilder`.
 
         The thin delegating shell formerly `V4PoolBuilder.build()`: resolves
         the caller-supplied V4 identity (DB two-step, else request overrides),
@@ -1071,7 +1071,7 @@ class Bot(AccountQueryMixin):
         state_block = (
             request.state_block if request.state_block is not None else self._io.get_block_number()
         )
-        # The FRESH PRICE read block (two-stamp OB7UNY): the cheap slot0/price
+        # The FRESH PRICE read block (two-stamp): the cheap slot0/price
         # read stamps `update_block` at the live head, while the liquidity
         # clock + assembled tick map anchor at `state_block`. When the request
         # pins `state_block`, price = that same block (no split).
@@ -1131,7 +1131,7 @@ class Bot(AccountQueryMixin):
     ) -> _V4ResolvedIdentity:
         """Resolve a V4 managed pool's identity core-side.
 
-        TF7RZB-S3: the Rust `resolve_v4_identity` performs the DB two-step
+        The Rust `resolve_v4_identity` performs the DB two-step
         (manager → v4 row → per-FK tokens) first, else the request's
         caller-supplied overrides, and returns the resolved identity
         (currency0/1, fee, tick_spacing, hook_flags, state_view). The driver
@@ -1194,7 +1194,7 @@ class Bot(AccountQueryMixin):
     ) -> tuple[Erc20Token, Erc20Token]:
         """Build the pool's two tokens in ONE batched metadata read.
 
-        CDJEPJ-2: build_many collapses the two per-token
+        ``build_many`` collapses the two per-token
         fetch_erc20_metadata round-trips into a single Multicall3 aggregate3
         eth_call for network-missing metadata.
 
@@ -1229,11 +1229,11 @@ class Bot(AccountQueryMixin):
             ``(py_pool_handle, protocol_fee_flags, lp_fee)`` — the fee
             overrides ride back from the SAME head-stamped slot0 read, so the
             companion no longer issues a second fetch_v4_slot0_liquidity per
-            pool (CDJEPJ-1).
+            pool.
 
         Raises:
             DegenbotValueError: If the builder-echoed identity diverges from
-                the core-resolved identity (a real seam bug — TF7RZB-S2/S3).
+                the core-resolved identity (a real seam bug).
 
         """
         (
@@ -1255,7 +1255,7 @@ class Bot(AccountQueryMixin):
             currency1=identity.currency1_address,
             fee=identity.fee,
             tick_spacing=identity.tick_spacing,
-            # The REAL hook address (pool-ID mismatch regression, MTMPQB): the
+            # The REAL hook address (pool-ID mismatch regression): the
             # core registers it in the pool key so the identity round-trips
             # keccak(abi.encode(pool_key)). The flag mask is derived core-side.
             hook_address=identity.hook_address,
@@ -1269,7 +1269,7 @@ class Bot(AccountQueryMixin):
                 chain_id,
             ),
         )
-        # TF7RZB-S2/S3 return-surface parity: the identity the builder echoes
+        # Return-surface parity: the identity the builder echoes
         # back must match what the core resolver produced (a divergence is a
         # real seam bug), and the pool_id must round-trip the requested hash.
         # hook flags are derived from the same hook address on both sides.
@@ -1326,10 +1326,10 @@ class Bot(AccountQueryMixin):
             else block_number
         )
         io = self._io
-        # T4 / 4GQWZ4: V2/V3/V4 refresh lives in the delegating shell
+        # V2/V3/V4 refresh lives in the delegating shell
         # (`_update_pool`), no longer on the retired builders. Aerodrome /
         # Curve / Balancer refresh stays on their Python builders'
-        # `update()` — update() was out of SSSXG6's (done) build-delegation
+        # `update()` — update() was out of the build-delegation
         # scope, so this split is the permanent design.
         if isinstance(pool, (UniswapV2Pool, UniswapV3Pool, UniswapV4Pool)):
             return _update_pool(

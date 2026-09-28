@@ -6,9 +6,9 @@ Delegating shells over the Rust ``compute_aerodrome_v2_pool_address`` /
 ``compute_aerodrome_v3_address`` leaves, re-exported through the
 ``degenbot.aerodrome.address`` barrier per ADR-013). These address helpers
 were routed through the Rust seam and their pure-Python ``eip_1167_clone_address``
-/ ``keccak256`` / ``encode_packed`` / ``abi_encode`` bodies deleted (ergo
-S5SJXF / WLJD2Y — the Python functions are now thin pass-throughs; the Rust
-``#[cfg(test)]`` corpus is the §4.2 regression set).
+/ ``keccak256`` / ``encode_packed`` / ``abi_encode`` bodies deleted — the
+Python functions are now thin pass-throughs, and the Rust ``#[cfg(test)]``
+corpus is the §4.2 regression set.
 """
 
 from __future__ import annotations

@@ -45,11 +45,11 @@ if TYPE_CHECKING:
 class _HandleCurveDataProviderAdapter:
     """Adapts a ``Pool`` handle as a stored ``CurveDataProvider``.
 
-    The (BQM2OA) companion holds no Python data-provider object — the
-    provider is the stored Rust trait object (ADR-005 JFGCHJ). This shim
+    The companion holds no Python data-provider object — the
+    provider is the stored Rust trait object (ADR-005). This shim
     exposes the 13-method ``CurveDataProvider`` read interface by delegating
     each call to the handle's stored provider, mirroring the Balancer
-    ``_HandleRateProviderAdapter`` (MBWSGP). ``MissingCurveData`` is raised on
+    ``_HandleRateProviderAdapter``. ``MissingCurveData`` is raised on
     a missing provider / fetch miss so the calc path's existing error
     handling applies unchanged.
     """
@@ -264,7 +264,7 @@ class CurveStableswapPool(
     def _from_py_pool(cls, py_pool: Pool) -> Self:
         """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
-        Single-arg seam (ADR-005 BQM2OA): reads *every* identity field + the
+        Single-arg seam (ADR-005): reads *every* identity field + the
         stored data-provider trait object off the handle. The cross-pool
         references (base pool companion + underlying/LP tokens) are recovered
         from the handle too — the base pool via the Rust go-between
@@ -581,7 +581,7 @@ class CurveStableswapPool(
 
         """
         block_number = self._resolve_block_number(block_identifier)
-        # Rust-owned (task `WKKMJM`): D computation + LP-total-supply I/O + the
+        # Rust-owned: D computation + LP-total-supply I/O + the
         # deposit/reduction scaling all run in the Rust core on this pool's
         # current balances.
         return self._py_pool.curve_calc_token_amount(list(amounts), deposit, block_number)
@@ -599,7 +599,7 @@ class CurveStableswapPool(
 
         """
         block_number = self._resolve_block_number(block_identifier)
-        # Rust-owned (task `WKKMJM`): D + get_y_d + the LP-total-supply I/O all
+        # Rust-owned: D + get_y_d + the LP-total-supply I/O all
         # run in the Rust core. The companion's extra tuple fields (`dy_0 - dy`,
         # `total_supply`) are not consumed by any caller, so only `dy` is
         # returned.
@@ -624,9 +624,9 @@ class CurveStableswapPool(
 
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
 
-        Delegates to the Rust-owned `Pool.curve_get_dy` (task
-        `V5X2YP`): the I/O orchestration (amp/rates/xp + provider fetches) and
-        the pure dy math both run in the Rust core, so this is a single handle
+        Delegates to the Rust-owned `Pool.curve_get_dy`: the I/O orchestration
+        (amp/rates/xp + provider fetches) and the pure dy math both run in the
+        Rust core, so this is a single handle
         call with no Python provider / cache / calculator on the swap path.
 
         Returns:
@@ -653,9 +653,9 @@ class CurveStableswapPool(
     ) -> int:
         """Metapool underlying `dy` — Rust-owned base-pool delegation.
 
-        Delegates to `Pool.curve_get_dy_underlying` (task
-        `V5X2YP`): the metapool snapshot + the base-pool `calc_token_amount` /
-        `get_dy` / `calc_withdraw_one_coin` ops run through the Rust
+        Delegates to `Pool.curve_get_dy_underlying`: the metapool snapshot +
+        the base-pool `calc_token_amount` / `get_dy` /
+        `calc_withdraw_one_coin` ops run through the Rust
         `BotCurveBasePoolPort`, retiring the Python `_LazyBasePool` go-between
         for the swap path.
 
@@ -827,7 +827,7 @@ class _LazyBasePool:
     Python registry lookup) and memoises the base companion on first use.
     Defers construction so a metapool that never takes the base swap path
     pays zero base-pool cost, and at most one companion across a full calc
-    (ADR-005 BQM2OA). Satisfies the ``BasePoolPort`` surface — the six
+    (ADR-005). Satisfies the ``BasePoolPort`` surface — the six
     members the ``DyCalculator`` actually calls.
 
     Defined after ``CurveStableswapPool`` (forward reference); resolved as a

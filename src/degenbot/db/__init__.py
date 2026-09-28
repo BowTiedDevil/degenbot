@@ -6,7 +6,7 @@ submodule. Importers should use::
     from degenbot.db import db_backup_database
 
     (the pool-updater row-input/event types now live exclusively in
-    ``degenbot.updater`` — I4H7EH)
+    ``degenbot.updater``)
 
 rather than reaching into ``degenbot._ffi`` directly — this path is stable
 across future Rust reshuffles, and lets the Rust crate structure

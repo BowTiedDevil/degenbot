@@ -1,4 +1,4 @@
-"""Operator command channel: JSON-lines over a Unix domain socket (NWTUM3).
+"""Operator command channel: JSON-lines over a Unix domain socket.
 
 Lets an operator steer a live bot without touching its process. The host bot
 runs an :class:`OperatorServer` (an asyncio task) bound to a Unix domain
@@ -43,8 +43,8 @@ into a response dict; the server guards the wire (JSON decode, op dispatch,
 exception -> ``{"ok": false}``) so a malformed or failing command never crashes
 the host.
 
-The fleet-posture ops (`set_fleet_posture` / `get_fleet_posture`,
-JCI2FW Part B) re-tune the LIVE cordon thresholds of the process posture
+The fleet-posture ops (`set_fleet_posture` / `get_fleet_posture`)
+re-tune the LIVE cordon thresholds of the process posture
 owner through the `degenbot.fleet` mirror home; :func:`handle_fleet_posture_op`
 is the host-side helper both the runner's handler and the tests route them
 through. Validation of the six values lives ONCE in the Rust core
@@ -251,7 +251,7 @@ def _decode_request(line: bytes) -> tuple[str, dict[str, Any]]:
 
 
 class OperatorServer:
-    """A Unix-domain-socket command server for a live bot (NWTUM3).
+    """A Unix-domain-socket command server for a live bot.
 
     Run :meth:`serve` as an asyncio task (e.g. a background task on the
     registration loop). It accepts one or more concurrent client connections,

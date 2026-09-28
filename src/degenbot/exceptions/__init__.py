@@ -11,7 +11,7 @@ exact same class object. The identity contract is pinned by
 """
 
 from degenbot._ffi import (
-    # FF-T1 (BPHR6F): the typed fleet boot refusal — the library never
+    # The typed fleet boot refusal — the library never
     # aborts the host process on the boot-refusal arm; the binary maps
     # this exception to its loud named fail-fast exit.
     BootRefused,

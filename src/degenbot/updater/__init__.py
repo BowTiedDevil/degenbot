@@ -14,9 +14,8 @@ Everything a driver needs from the Rust pool-updater machinery:
 The re-exports are **direct aliases** of the ``degenbot._ffi`` pyclasses and
 functions — never Python subclasses: the Rust engine constructs and consumes
 these pyclasses directly, so subclassing would break type identity at the FFI
-boundary. (I4H7EH: this package is the single home — the previously misleadingly
-named pool-mirror package was deleted, and ``degenbot.db`` no longer claims
-the row-input/event types.)
+boundary. This package is the single home — ``degenbot.db`` no longer claims
+the row-input/event types.
 """
 
 from degenbot._ffi.cancel import CancelHandle

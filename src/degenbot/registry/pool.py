@@ -118,7 +118,7 @@ class ManagedPoolRegistry:
         """Idempotently register a V4 pool, returning the stored instance.
 
         If a concurrent registration worker already built this pool, return the
-        canonical stored instance instead of raising (35NMBX Guard 1) — a
+        canonical stored instance instead of raising — a
         distinct path sharing this pool is not lossily skipped.
 
         Returns:
@@ -295,7 +295,7 @@ class PoolRegistry:
     ) -> AbstractLiquidityPool | ConcentratedLiquidityPool:
         """Idempotently register a pool, returning the stored instance.
 
-        Used by the concurrent registration build path (35NMBX Guard 1): if
+        Used by the concurrent registration build path: if
         another worker already built this pool, return the canonical stored
         instance instead of raising, so a distinct path sharing the pool is not
         lossily skipped. Mirrors :meth:`add`'s managed/V4 dispatch.

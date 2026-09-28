@@ -1,6 +1,6 @@
 """Fleet posture — the stable mirror home for the operator re-tune channel.
 
-The JCI2FW Part B channel: an operator re-tunes the LIVE fleet cordon
+The operator re-tune channel (Part B): an operator re-tunes the LIVE fleet cordon
 thresholds (the six typed `DEGENBOT_FLEET_CORDON_*` keys) on a running bot
 without touching its process. This home is the ADR-013 Pydantic barrier for
 the `degenbot._ffi.fleet` seam — the FIRST Python consumer mints the home,

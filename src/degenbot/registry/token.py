@@ -79,7 +79,7 @@ class TokenRegistry:
         """Idempotently register a token, returning the stored instance.
 
         If a concurrent registration worker already built this token, return the
-        canonical stored instance instead of raising (35NMBX Guard 1) — a
+        canonical stored instance instead of raising — a
         distinct path sharing this token is not lossily skipped.
 
         Returns:

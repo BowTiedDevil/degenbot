@@ -98,7 +98,7 @@ def _build_descriptor_from_seam_rows(
     pool_kind: str,
     exchange_factory: str,
 ) -> PoolTypeDescriptor:
-    """Map Rust-seam rows to a `PoolTypeDescriptor` (QVMWQC).
+    """Map Rust-seam rows to a `PoolTypeDescriptor`.
 
     Takes the two fields the builder reads (`pool.kind` + `pool.exchange.factory`)
     fetched via `BotIo.fetch_pool_row` / `fetch_exchange`.
@@ -302,7 +302,7 @@ def resolve_pool_type(
 
     """
     # Step 1: DB lookup — the `kind` column is the most direct signal.
-    # Route through the Rust `BotIo` seam (QVMWQC): `fetch_pool_row`
+    # Route through the Rust `BotIo` seam: `fetch_pool_row`
     # carries `kind` + `exchange_id`; `fetch_exchange` hydrates the factory.
     # The `contextlib.suppress` makes a missing/empty DB a skip, not an error.
     # Only the fetches are suppressed: a present-but-unrecognized `kind`

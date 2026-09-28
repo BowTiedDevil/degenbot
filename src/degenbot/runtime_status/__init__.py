@@ -1,4 +1,4 @@
-"""FF-T5 (NT7HJC): the runtime fleet status - budget, plan, census.
+"""The runtime fleet status - budget, plan, census.
 
 "degenbot.runtime_status()" answers the operator's first three questions
 about a live process: what did the fleet boot as (the plan: binding,

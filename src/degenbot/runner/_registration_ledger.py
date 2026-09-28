@@ -18,7 +18,7 @@ What stays here is only the translation Python owns:
   those onto the core's typed inputs is the adapter's job — the core decides
   the outcome, stability, and skip accounting that follow.
 
-Four memos (the cold-soak negative-memoization set, W73FVY follow-up):
+Four memos (the cold-soak negative-memoization set):
 
 - registered paths: hop signatures already answered by a completed
   registration — the dup fast-path in front of the verify choreography.
@@ -27,7 +27,7 @@ Four memos (the cold-soak negative-memoization set, W73FVY follow-up):
 - unregistrable pools: STABLE typed build refusals (a pool fact — no
   candidate path containing the pool can register); consulted at O(hops)
   before any build/verify.
-- rejected paths: the D7KMQO policy gate deny / engine path-predicate deny,
+- rejected paths: the path-composition policy gate deny / engine path-predicate deny,
   deterministic per hop signature.
 
 TRANSIENT build/register failures are deliberately never memoized (a raced

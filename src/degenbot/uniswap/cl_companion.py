@@ -1,4 +1,4 @@
-"""Shared concentrated-liquidity (CL) companion surface (T2 FBJTUM, epic OU4SYZ).
+"""Shared concentrated-liquidity (CL) companion surface.
 
 ``UniswapV3Pool`` and ``UniswapV4Pool`` carried duplicated copies of the
 same CL write-back surface — the tick-map reads, the 3-format
@@ -256,7 +256,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         """
         state_block = update.block_number
 
-        # Unified sparse-word backfill gate (T2 FBJTUM): Rust `coverage` is
+        # Unified sparse-word backfill gate: Rust `coverage` is
         # the fact (the twin's double-tracked sparseness flags are retired).
         # For each boundary tick, a word ABSENT from the derived bitmap is
         # non-deterministic (Sparse semantics) → backfill it via the

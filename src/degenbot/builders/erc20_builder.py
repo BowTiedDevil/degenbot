@@ -61,14 +61,13 @@ class Erc20Builder:
         """Construct an ERC-20 token, delegating metadata resolution to the Rust core.
 
         The DB-first + on-chain resolution, write-back and `BotState`
-        registration are Rust-owned (VK3YDM-S2): `Bot.build_erc20_token`
+        registration are Rust-owned: `Bot.build_erc20_token`
         runs `build_erc20_metadata` over the attached `ConstructionIo`. This
         Python shell keeps only the *companion* concerns: the `TokenRegistry`
-        idempotent short-circuit (35NMBX Guard 1), the `EtherPlaceholder`
+        idempotent short-circuit, the `EtherPlaceholder`
         special case, and the `Erc20Token._from_py_token` display wrapper.
         The `io` argument is a retained compat shim (ignored — the Bot owns
-        the `ConstructionIo`); it is stripped when `BotIo` retires
-        (VK3YDM-S5).
+        the `ConstructionIo`); it is stripped when `BotIo` retires.
 
         Returns:
             The computed value.
@@ -116,7 +115,7 @@ class Erc20Builder:
                 logger.info(f"• {token.symbol} ({token.name})")
             return token
 
-        # DB-first + on-chain + write-back + register: Rust-owned (VK3YDM-S2).
+        # DB-first + on-chain + write-back + register: Rust-owned.
         # `Bot.build_erc20_token` resolves name/symbol/decimals (DB row -> on-
         # chain batched read -> alternate-prototype fallback -> UNKNOWN, with a
         # blank-row write-back) and registers into the shared Rust
@@ -134,7 +133,7 @@ class Erc20Builder:
             ) from exc
         token = Erc20Token._from_py_token(py_token)  # ruff:ignore[private-member-access]
 
-        # Register idempotently (35NMBX Guard 1): a concurrent worker may have
+        # Register idempotently: a concurrent worker may have
         # built + registered this same token first; use the canonical instance
         # so a path sharing it is not lossily skipped.
         token = self._tokens.get_or_add(token_address=token.address, chain_id=chain_id, token=token)
@@ -155,7 +154,7 @@ class Erc20Builder:
         """Register a token in the Rust BotState + Python registry from metadata.
 
         Returns:
-            The canonical token instance (35NMBX Guard 1 ``get_or_add`` path).
+            The canonical token instance (the ``get_or_add`` path).
 
         """
         py_token = self._py_bot.register_token(
@@ -177,7 +176,7 @@ class Erc20Builder:
     ) -> list[Erc20Token]:
         """Build MANY tokens, batching metadata reads into ONE Multicall3 read.
 
-        CDJEPJ-2: preserves :meth:`build`'s per-token semantics — registry fast
+        Preserves :meth:`build`'s per-token semantics — registry fast
         path, Ether placeholder, DB lookup, alternate-prototype fallback — but
         when 2+ tokens need a network metadata fetch it issues ONE
         ``io.fetch_erc20_metadata_batch([...])`` instead of N separate

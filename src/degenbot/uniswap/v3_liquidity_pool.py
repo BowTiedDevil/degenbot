@@ -167,7 +167,7 @@ class UniswapV3Pool(
         ``self._py_pool``.
 
         The sparse-tick fetcher is stored Rust-side on ``V3PoolState``
-        (ADR-006 I/O trait object, task MLJT4V) — not a constructor arg.
+        (ADR-006 I/O trait object) — not a constructor arg.
         Checked words (bitmap words the caller has verified) live in Rust
         ``known_bitmap_words``; ``tick_bitmap_snapshot()`` surfaces them, so
         there is no client-side bitmap shadow.
@@ -211,7 +211,7 @@ class UniswapV3Pool(
         self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
         self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
 
-        # Deployer / init-hash: read off the Rust handle (Fork A, P62DKO).
+        # Deployer / init-hash: read off the Rust handle (Fork A).
         # The builder resolved the JSON-sourced deployer (effective deployer,
         # covering PancakeSwap V3's separate-deployer case) + init_hash at
         # registration; the companion reads them here instead of the retired
@@ -228,10 +228,10 @@ class UniswapV3Pool(
             f"{100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"
         )
 
-        # The sparse-map fact is Rust-side (coverage — T2 FBJTUM: the
+        # The sparse-map fact is Rust-side (coverage — the
         # double-tracked companion flags are retired) and the sparse-word
         # fetcher is stored Rust-side on the V3 state (ADR-006 I/O trait
-        # object, task MLJT4V).
+        # object).
         return self
 
     def __repr__(self) -> str:  # pragma: no cover

@@ -1,4 +1,4 @@
-"""Operator control surface for a live bot (NWTUM3).
+"""Operator control surface for a live bot.
 
 A Unix-domain-socket command channel (":mod:`degenbot.operator.operator_channel`")
 that lets an operator steer a running bot — add a specific path or trigger a

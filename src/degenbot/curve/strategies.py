@@ -5,7 +5,7 @@ Python companion only carries the resolved enum discriminants (``swap_style``,
 ``d_variant`` / ``y_variant`` / ``yd_variant``, lending + metapool rate styles)
 so it can pass them to the Rust handle / builders. The former Python
 ``DyCalculator`` classes (``degenbot.curve.calculators``) were retired once the
-swap path became Rust-owned (epic ``TV72EG``, task ``WKKMJM``) — nothing in the
+swap path became Rust-owned — nothing in the
 runtime constructs or consumes a Python calculator anymore.
 """
 

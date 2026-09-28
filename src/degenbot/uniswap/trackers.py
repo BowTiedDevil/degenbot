@@ -66,7 +66,7 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
             pool_init_hash = deployment.pool_init_hash
         else:
             # Non-JSON V2: the Rust resolver gives the factory deployer + the
-            # Uniswap V2 mainnet fallback init hash (Fork A, NSAZ4X).
+            # Uniswap V2 mainnet fallback init hash (Fork A).
             deployer_address = resolve_deployer(chain_id, factory_address)
             pool_init_hash = resolve_v2_init_hash(chain_id, factory_address)
 
@@ -226,7 +226,7 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
             pool_init_hash = deployment.pool_init_hash
         else:
             # Non-JSON V3: the Rust resolver gives the factory deployer + the
-            # Uniswap V3 mainnet fallback init hash (Fork A, P62DKO — the
+            # Uniswap V3 mainnet fallback init hash (Fork A — the
             # retired ClassVar's semantics, now in Rust).
             deployer_address = resolve_deployer(chain_id, factory_address)
             pool_init_hash = resolve_v3_init_hash(chain_id, factory_address)

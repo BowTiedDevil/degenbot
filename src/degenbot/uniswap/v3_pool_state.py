@@ -62,7 +62,7 @@ class V3PoolState:
     def sparse_liquidity_map(self) -> bool:
         """Determine sparse liquidity map.
 
-        Rust ``coverage`` is the fact (T2 FBJTUM: the double-tracked Python
+        Rust ``coverage`` is the fact (the double-tracked Python
         flag is retired; the V3/V4 state owns the read).
 
         """

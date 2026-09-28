@@ -7,7 +7,7 @@ ints.
 Key naming: Block/transaction dicts use snake_case (produced by the typed Rust converters). Log
 dicts use camelCase (matching the web3.py convention, as produced by ``log_to_py_dict``).
 
-C1 (YMDOZL): the ``web3.types`` imports (``BlockIdentifier``, ``BlockData``, ``FilterParams``,
+The ``web3.types`` imports (``BlockIdentifier``, ``BlockData``, ``FilterParams``,
 ``LogReceipt``, ``RPCEndpoint``, ``RPCResponse``, ``TxParams``) are reproduced here natively
 so the codebase carries zero web3 type imports (no ``web3.types.*`` anywhere). The shapes are
 deliberately loose (``total=False`` TypedDicts with the fields actually

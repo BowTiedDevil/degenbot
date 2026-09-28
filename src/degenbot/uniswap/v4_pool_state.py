@@ -28,7 +28,7 @@ class V4PoolState:
     - _token0, _token1: the paired ERC-20 tokens
     - _pool_id: the pool identifier (bytes)
     - _pool_key: the V4 PoolKey struct
-    (sparseness is no longer stored here — Rust coverage is the fact, T2 FBJTUM)
+    (sparseness is no longer stored here — Rust coverage is the fact)
     """
 
     # Immutable — set once at construction
@@ -52,7 +52,7 @@ class V4PoolState:
     def sparse_liquidity_map(self) -> bool:
         """Determine sparse liquidity map.
 
-        Rust ``coverage`` is the fact (T2 FBJTUM: the double-tracked Python
+        Rust ``coverage`` is the fact (the double-tracked Python
         flag is retired; the V3/V4 state owns the read).
 
         """
