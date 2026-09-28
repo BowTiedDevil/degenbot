@@ -84,9 +84,16 @@ def boot_runner(
     *,
     path_builder=None,
     settlement_arm: bool = False,
+    readiness=None,
+    settlement_endpoints=None,
     install_sigint: bool = True,
 ) -> BotRunner:
-    """A real ``BotRunner`` on the fake actor trio, with the boot posture gate live."""
+    """A real ``BotRunner`` on the fake actor trio, with the boot posture gate live.
+
+    ``readiness`` / ``settlement_endpoints`` are the activation-gate DI
+    factories (``None`` = the real ``degenbot.strategy`` resolvers); a test
+    injects a resolving factory or a raising refusal.
+    """
 
     return BotRunner(
         cfg,
@@ -98,6 +105,8 @@ def boot_runner(
             path_builder=path_builder if path_builder is not None else (lambda **kw: None),
             consumer=lambda **kw: noop_coro(),
             settlement_arm=settlement_arm,
+            readiness=readiness,
+            settlement_endpoints=settlement_endpoints,
         ),
         install_sigint=install_sigint,
     )

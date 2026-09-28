@@ -33,7 +33,13 @@ def _restore_sigint() -> None:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
-def _runner(path_builder, *, settlement_arm: bool = False) -> BotRunner:
+def _runner(
+    path_builder,
+    *,
+    settlement_arm: bool = False,
+    readiness=None,
+    settlement_endpoints=None,
+) -> BotRunner:
     with identity_env(
         {
             "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
@@ -42,7 +48,13 @@ def _runner(path_builder, *, settlement_arm: bool = False) -> BotRunner:
         }
     ):
         cfg = ArbitrageConfig.build(live=True, permutation=None)
-    return boot_runner(cfg, path_builder=path_builder, settlement_arm=settlement_arm)
+    return boot_runner(
+        cfg,
+        path_builder=path_builder,
+        settlement_arm=settlement_arm,
+        readiness=readiness,
+        settlement_endpoints=settlement_endpoints,
+    )
 
 
 async def test_a_backrun_only_boot_never_builds_paths() -> None:
@@ -94,21 +106,16 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
     assert records["settlement"] == "registered"
 
 
-async def test_a_settlement_active_boot_hosts_no_backrun_arms(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
     """A settlement-active boot passes NO hosted arms to resume, even when a
     backrun facet is also active: the settlement pump arm is this runner's arm,
     so the enabled-facet set is empty under that disposition."""
-    monkeypatch.setattr(
-        "degenbot.strategy.validate_strategy_readiness",
-        lambda: types.SimpleNamespace(settlement_active=True),
+    session = _runner(
+        lambda **kw: noop_coro(),
+        settlement_arm=True,
+        readiness=lambda: types.SimpleNamespace(settlement_active=True),
+        settlement_endpoints=lambda: ["http://relay-a"],
     )
-    monkeypatch.setattr(
-        "degenbot.strategy.settlement_broadcast_endpoints",
-        lambda: ["http://relay-a"],
-    )
-    session = _runner(lambda **kw: noop_coro(), settlement_arm=True)
     await session.start()
     await session.run()
 

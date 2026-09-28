@@ -68,6 +68,7 @@ from degenbot.runner.identity import (
 
 if TYPE_CHECKING:
     from degenbot.strategy import StrategyReadinessView
+from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -258,6 +259,14 @@ class InjectedActors:
     #: start(): settlement off -> no path registration, no python-state trim,
     #: the active hosted arms (backrun drivers) enable around resume().
     settlement_arm: bool | None = None
+    #: Factory for the activation-gate readiness resolution (None = the real
+    #: ``validate_strategy_readiness``). A factory rather than a value so a
+    #: test can express both the resolving gate and a raising refusal.
+    readiness: Callable[[], StrategyReadinessView] | None = None
+    #: Factory for the settlement broadcast endpoints (None = the real
+    #: ``settlement_broadcast_endpoints``). The refusal rides the same
+    #: ``ActivationGateRefused`` routing as the readiness gate.
+    settlement_endpoints: Callable[[], list[str]] | None = None
 
 
 class BotRunner:
@@ -339,6 +348,8 @@ class BotRunner:
         self._injected_pipeline_factory = injected.pipeline_factory
         self._injected_relay_posture = injected.relay_posture
         self._injected_settlement_arm = injected.settlement_arm
+        self._injected_readiness = injected.readiness
+        self._injected_settlement_endpoints = injected.settlement_endpoints
         self._background_registration: bool | None = background_registration
         # The registration-owned construction context (built in run() for
         # the real build_paths; None for injected builders and until run()).
@@ -563,22 +574,24 @@ class BotRunner:
         engine_registry = self._injected_engine_registry or EngineRegistry(bot=bot)
         return bot, async_w3, engine_registry
 
-    @staticmethod
-    def _gate_readiness() -> StrategyReadinessView:
+    def _gate_readiness(self) -> StrategyReadinessView:
         """Resolve the activation gate; a typed readiness refusal is a boot refusal.
 
         The refusal rule itself (empty fleet, unsettled endpoints) is owned by
         the Rust config validation this call reaches through
-        ``validate_strategy_readiness``; note there is no second rule here.
-        The one thing this method adds is the single read: the resolved view is
-        data the arms and the main loop consume, never a per-call re-decide. A
-        caller that needs HOW a cascade would resolve an input uses the
-        hypothetical seam instead.
+        ``validate_strategy_readiness`` (or the injected readiness factory);
+        note there is no second rule here. The one thing this method adds is
+        the single read: the resolved view is data the arms and the main loop
+        consume, never a per-call re-decide. A caller that needs HOW a cascade
+        would resolve an input uses the hypothetical seam instead.
         """
-        from degenbot.strategy import validate_strategy_readiness
-
+        resolver = (
+            self._injected_readiness
+            if self._injected_readiness is not None
+            else validate_strategy_readiness
+        )
         try:
-            return validate_strategy_readiness()
+            return resolver()
         except ValueError as refusal:
             raise ActivationGateRefused(refusal) from refusal
 
@@ -595,10 +608,13 @@ class BotRunner:
         """
         if not self._settlement_active:
             return None
-        from degenbot.strategy import settlement_broadcast_endpoints
-
+        resolver = (
+            self._injected_settlement_endpoints
+            if self._injected_settlement_endpoints is not None
+            else settlement_broadcast_endpoints
+        )
         try:
-            endpoints = settlement_broadcast_endpoints()
+            endpoints = resolver()
         except ValueError as refusal:
             raise ActivationGateRefused(refusal) from refusal
         return RelayPosture(relay_urls=endpoints) if live else None

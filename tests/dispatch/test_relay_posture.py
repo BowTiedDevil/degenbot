@@ -19,7 +19,6 @@ from typing import Any
 
 import pytest
 
-import degenbot.strategy as _strategy_home
 from degenbot.runner._dispatch import SubmissionSmoke, _submit_batch_records
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import (
@@ -57,11 +56,24 @@ def _cfg(*, dry_run: bool) -> ArbitrageConfig:
         return ArbitrageConfig.build(live=not dry_run, permutation=None)
 
 
-def _runner(*, dry_run: bool, settlement_arm: bool = False) -> BotRunner:
-    """A real ``BotRunner`` on fake actors, with the boot posture gate live."""
+def _runner(
+    *,
+    dry_run: bool,
+    settlement_arm: bool = False,
+    readiness=None,
+    settlement_endpoints=None,
+) -> BotRunner:
+    """A real ``BotRunner`` on fake actors, with the boot posture gate live.
+
+    ``readiness`` / ``settlement_endpoints`` are the activation-gate DI
+    factories (``None`` = the real ``degenbot.strategy`` resolvers); a test
+    injects a resolving factory or a raising refusal.
+    """
     return boot_runner(
         _cfg(dry_run=dry_run),
         settlement_arm=settlement_arm,
+        readiness=readiness,
+        settlement_endpoints=settlement_endpoints,
         install_sigint=False,
     )
 
@@ -206,137 +218,108 @@ class TestBootGate:
     the retired private posture mirror.
     """
 
-    async def test_a_backrun_only_boot_mints_no_settlement_posture(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_a_backrun_only_boot_mints_no_settlement_posture(self) -> None:
         """Posture-driven boot (case B): settlement inactive + a backrun facet
         active boots with no settlement posture in either stance, and never
         consults the settlement endpoint resolver."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _view(settlement_active=False, mevblocker_backrun_active=True),
-        )
-        monkeypatch.setattr(
-            _strategy_home,
-            "settlement_broadcast_endpoints",
-            lambda: pytest.fail("a backrun-only boot consulted the settlement endpoints"),
-        )
+
+        def readiness() -> Any:
+            return _view(settlement_active=False, mevblocker_backrun_active=True)
+
+        def settlement_endpoints() -> list[str]:
+            pytest.fail("a backrun-only boot consulted the settlement endpoints")
+
         for dry_run in (False, True):
-            runner = _runner(dry_run=dry_run)
+            runner = _runner(
+                dry_run=dry_run,
+                readiness=readiness,
+                settlement_endpoints=settlement_endpoints,
+            )
             await runner.start()
             assert runner._session is not None
             assert runner._session.relay_posture is None, (
                 "a settlement-deactivated boot carries no settlement posture"
             )
 
-    async def test_an_empty_fleet_boot_refuses_in_both_stances(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_an_empty_fleet_boot_refuses_in_both_stances(self) -> None:
         """No activated facet, no work: the Rust hosted gate refuses the empty
         fleet at the readiness resolution, so the boot aborts before the
         settlement resolver is ever consulted, in dry-run exactly as live."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _raise(
-                ValueError(
-                    "no strategy facet is active: activate one with "
-                    "`degenbot strategy activate settlement --endpoints-default`"
-                )
-            ),
-        )
-        monkeypatch.setattr(
-            _strategy_home,
-            "settlement_broadcast_endpoints",
-            lambda: pytest.fail("an empty-fleet boot consulted the settlement endpoints"),
-        )
+
+        def readiness() -> Any:
+            raise ValueError(
+                "no strategy facet is active: activate one with "
+                "`degenbot strategy activate settlement --endpoints-default`"
+            )
+
+        def settlement_endpoints() -> list[str]:
+            pytest.fail("an empty-fleet boot consulted the settlement endpoints")
+
         for dry_run in (False, True):
             with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
-                await _runner(dry_run=dry_run).start()
+                await _runner(
+                    dry_run=dry_run,
+                    readiness=readiness,
+                    settlement_endpoints=settlement_endpoints,
+                ).start()
 
-    async def test_a_settled_live_boot_mints_the_posture(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_a_settled_live_boot_mints_the_posture(self) -> None:
         """A live, settlement-active boot carries the Rust-resolved endpoints."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _view(settlement_active=True),
+        runner = _runner(
+            dry_run=False,
+            settlement_arm=True,
+            readiness=lambda: _view(settlement_active=True),
+            settlement_endpoints=lambda: ["http://relay-a"],
         )
-        monkeypatch.setattr(
-            _strategy_home,
-            "settlement_broadcast_endpoints",
-            lambda: ["http://relay-a"],
-        )
-        runner = _runner(dry_run=False, settlement_arm=True)
         await runner.start()
         assert runner._session is not None
         posture = runner._session.relay_posture
         assert posture is not None
         assert posture.relay_urls == ["http://relay-a"]
 
-    async def test_a_settled_dry_run_boot_carries_no_posture(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_a_settled_dry_run_boot_carries_no_posture(self) -> None:
         """A settled dry-run boot has no signing surface, so no posture is
         minted even though the Rust resolver settles the endpoints."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _view(settlement_active=True),
+        runner = _runner(
+            dry_run=True,
+            settlement_arm=True,
+            readiness=lambda: _view(settlement_active=True),
+            settlement_endpoints=lambda: ["http://relay-a"],
         )
-        monkeypatch.setattr(
-            _strategy_home,
-            "settlement_broadcast_endpoints",
-            lambda: ["http://relay-a"],
-        )
-        runner = _runner(dry_run=True, settlement_arm=True)
         await runner.start()
         assert runner._session is not None
         assert runner._session.relay_posture is None
 
-    def test_a_readiness_refusal_is_an_activation_refusal(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_readiness_refusal_is_an_activation_refusal(self) -> None:
         """A Rust readiness refusal aborts the boot the same way: the runner
         never enters run() on an unreadiness activation."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _raise(ValueError("facet unreadiness: degenbot strategy activate")),
-        )
-        with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
-            BotRunner._gate_readiness()
 
-    async def test_an_injected_arm_off_beats_a_settlement_active_view(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+        def readiness() -> Any:
+            raise ValueError("facet unreadiness: degenbot strategy activate")
+
+        runner = _runner(dry_run=False, readiness=readiness)
+        with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
+            runner._gate_readiness()
+
+    async def test_an_injected_arm_off_beats_a_settlement_active_view(self) -> None:
         """The injected settlement arm is the session's ONE fact. A DI seam
         that pins the arm off produces a backrun-only boot even when the
         readiness view reports the settlement facet active, so the posture
         minter never consults the endpoint resolver."""
-        monkeypatch.setattr(
-            _strategy_home,
-            "validate_strategy_readiness",
-            lambda: _view(settlement_active=True, mevblocker_backrun_active=True),
+
+        def settlement_endpoints() -> list[str]:
+            pytest.fail("the resolved arm was off, not the raw view")
+
+        runner = _runner(
+            dry_run=False,
+            readiness=lambda: _view(settlement_active=True, mevblocker_backrun_active=True),
+            settlement_endpoints=settlement_endpoints,
         )
-        monkeypatch.setattr(
-            _strategy_home,
-            "settlement_broadcast_endpoints",
-            lambda: pytest.fail("the resolved arm was off, not the raw view"),
-        )
-        runner = _runner(dry_run=False)
         await runner.start()
         assert runner._session is not None
         assert runner._session.relay_posture is None, (
             "a settlement-deactivated arm carries no settlement posture"
         )
-
-
-def _raise(refusal: ValueError) -> None:
-    raise refusal
-
 
 
 def _view(
