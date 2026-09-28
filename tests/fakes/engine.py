@@ -22,6 +22,7 @@ from degenbot.exceptions import VerificationMismatchError
 
 if TYPE_CHECKING:
     from degenbot._ffi import AsyncAlloyProvider
+    from degenbot.arbitrage import RetryPolicy
 
 
 #: The engine interface the Python driver shell depends on. The parity test
@@ -101,20 +102,14 @@ class EngineSeam(Protocol):
         self,
         address: str,
         snapshot_block: int | None,
-        max_attempts: int,
-        base_delay: float,
-        max_delay: float,
-        jitter: float,
+        policy: RetryPolicy,
     ) -> None: ...
     def run_v4_registration_lifecycle_with_retry_sync(
         self,
         pool_manager_address: str,
         pool_id_hex: str,
         snapshot_block: int | None,
-        max_attempts: int,
-        base_delay: float,
-        max_delay: float,
-        jitter: float,
+        policy: RetryPolicy,
     ) -> None: ...
     def register_and_solve_path(
         self, pool_refs: list[tuple[int, bool]]
@@ -385,20 +380,14 @@ class FakeEngine:
         self,
         address: str,
         snapshot_block: int | None,
-        max_attempts: int,
-        base_delay: float,
-        max_delay: float,
-        jitter: float,
+        policy: RetryPolicy,
     ) -> None:
         self.run_calls.append(
             {
                 "family": "v3-sync-with-retry",
                 "address": address,
                 "snapshot_block": snapshot_block,
-                "max_attempts": max_attempts,
-                "base_delay": base_delay,
-                "max_delay": max_delay,
-                "jitter": jitter,
+                "policy": policy,
             }
         )
 
@@ -407,10 +396,7 @@ class FakeEngine:
         pool_manager_address: str,
         pool_id_hex: str,
         snapshot_block: int | None,
-        max_attempts: int,
-        base_delay: float,
-        max_delay: float,
-        jitter: float,
+        policy: RetryPolicy,
     ) -> None:
         self.run_calls.append(
             {
@@ -418,10 +404,7 @@ class FakeEngine:
                 "address": pool_manager_address,
                 "pool_id": pool_id_hex,
                 "snapshot_block": snapshot_block,
-                "max_attempts": max_attempts,
-                "base_delay": base_delay,
-                "max_delay": max_delay,
-                "jitter": jitter,
+                "policy": policy,
             }
         )
 

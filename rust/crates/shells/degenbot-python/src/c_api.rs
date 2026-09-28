@@ -59,6 +59,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::config::ResolvedConfig>()?;
     m.add_class::<crate::config::StrategyReadinessView>()?;
     m.add_class::<crate::config::RetryPolicyDefaults>()?;
+    m.add_class::<crate::config::RetryPolicy>()?;
     m.add_class::<crate::config::ResolvedNodeUri>()?;
     m.add_class::<crate::config::ResolvedChainId>()?;
     m.add_class::<crate::config::ResolvedDatabasePath>()?;

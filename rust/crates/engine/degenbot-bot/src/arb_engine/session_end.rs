@@ -200,8 +200,8 @@ impl Drop for SessionEndDetection {
 }
 
 impl EngineDriver {
-    /// Await the session's end as the core detection fact — the typed wrapper
-    /// over [`EngineDriver::wait_pump_finished`].
+    /// Await the session's end as the core detection fact — the public typed
+    /// wrapper over the driver's internal pump-completion wait.
     pub async fn wait_session_end(&self) -> SessionEndCause {
         self.wait_pump_finished().await;
         SessionEndCause::PumpFinished

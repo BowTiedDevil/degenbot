@@ -26,8 +26,7 @@ use crate::prelude::*;
 /// value — a positional 4-tuple would silently mis-assign on a Rust-side
 /// field reorder.
 ///
-/// The Python `VerificationRetryPolicy` dataclass reads these instead of
-/// carrying its own literal set, so the Rust `RetryPolicy` is the one
+/// The numbers come from the core `RetryPolicy::verification_default`, the one
 /// declaration site for both the driver shell and the pure-Rust example.
 #[pyclass(frozen, get_all, module = "degenbot._ffi")]
 pub struct RetryPolicyDefaults {
@@ -35,6 +34,66 @@ pub struct RetryPolicyDefaults {
     pub base_delay: f64,
     pub max_delay: f64,
     pub jitter: f64,
+}
+
+/// The verification-retry policy as it crosses the FFI seam — ONE value type
+/// from the driver shell to the core-owned retry dance.
+///
+/// The constructor validates through the core `RetryPolicy::validate` and
+/// raises `ValueError` with the core's message, so the driver shell cannot
+/// carry bounds the core would reject. Unset knobs default to the core's
+/// `verification_default`, so there is one home for the numbers.
+#[pyclass(frozen, get_all, module = "degenbot._ffi")]
+pub struct RetryPolicy {
+    pub max_attempts: u32,
+    pub base_delay: f64,
+    pub max_delay: f64,
+    pub jitter: f64,
+}
+
+impl RetryPolicy {
+    /// The core policy this seam value carries.
+    pub(crate) fn to_core(&self) -> ::degenbot_core::retry::RetryPolicy {
+        ::degenbot_core::retry::RetryPolicy {
+            max_attempts: self.max_attempts,
+            base_delay: self.base_delay,
+            max_delay: self.max_delay,
+            jitter: self.jitter,
+        }
+    }
+}
+
+#[pymethods]
+impl RetryPolicy {
+    #[new]
+    #[pyo3(signature = (max_attempts=None, base_delay=None, max_delay=None, jitter=None))]
+    fn new(
+        max_attempts: Option<u32>,
+        base_delay: Option<f64>,
+        max_delay: Option<f64>,
+        jitter: Option<f64>,
+    ) -> PyResult<Self> {
+        let core = ::degenbot_core::retry::RetryPolicy::verification_default();
+        let policy = Self {
+            max_attempts: max_attempts.unwrap_or(core.max_attempts),
+            base_delay: base_delay.unwrap_or(core.base_delay),
+            max_delay: max_delay.unwrap_or(core.max_delay),
+            jitter: jitter.unwrap_or(core.jitter),
+        };
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    /// Validate the policy's field bounds against the core's rules.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` carrying the core validator's message.
+    fn validate(&self) -> PyResult<()> {
+        self.to_core()
+            .validate()
+            .map_err(::pyo3::exceptions::PyValueError::new_err)
+    }
 }
 
 /// The resolved strategy readiness, exposed as a self-describing Python

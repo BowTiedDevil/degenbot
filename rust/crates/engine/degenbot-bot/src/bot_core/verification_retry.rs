@@ -170,6 +170,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn other_verify_failures_are_fatal_and_never_retried() {
+        let policy = zero_policy(3);
+        let attempts = Arc::new(AtomicU32::new(0));
+        let result = retry_verification_call(&policy, |_n| {
+            let attempts = Arc::clone(&attempts);
+            async move {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Err(VerifyError::Other("driver failure".to_string()))
+            }
+        })
+        .await;
+        assert!(matches!(result, Err(VerifyError::Other(m)) if m == "driver failure"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn rpc_exhaustion_returns_the_last_error() {
         let policy = zero_policy(2);
         let attempts = Arc::new(AtomicU32::new(0));

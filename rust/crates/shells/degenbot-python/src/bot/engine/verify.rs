@@ -88,53 +88,36 @@ impl PyArbEngine {
 
     /// Blocking V3 verify-lifecycle under the core-owned bounded retry dance.
     ///
-    /// The four policy knobs are injected by the driver shell (S8); the retry
+    /// The policy is injected by the driver shell (S8); the retry
     /// classification (transient RPC/provider vs fatal mismatch) is core-owned.
     /// A transient failure releases the lifecycle claim, so a retry re-runs the
     /// whole choreography.
-    #[pyo3(signature = (address, snapshot_block, max_attempts, base_delay, max_delay, jitter))]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the four policy knobs mirror the core policy shape"
-    )]
+    #[pyo3(signature = (address, snapshot_block, policy))]
     fn run_v3_registration_lifecycle_with_retry_sync(
         &self,
         py: Python<'_>,
         address: &str,
         snapshot_block: Option<u64>,
-        max_attempts: u32,
-        base_delay: f64,
-        max_delay: f64,
-        jitter: f64,
+        policy: &crate::config::RetryPolicy,
     ) -> PyResult<()> {
         crate::bot::pump::run_v3_registration_lifecycle_with_retry_blocking(
             py,
             &self.driver,
             address,
             snapshot_block,
-            max_attempts,
-            base_delay,
-            max_delay,
-            jitter,
+            policy,
         )
     }
 
     /// Blocking V4 verify-lifecycle under the core-owned bounded retry dance.
-    #[pyo3(signature = (pool_manager_address, pool_id_hex, snapshot_block, max_attempts, base_delay, max_delay, jitter))]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the four policy knobs mirror the core policy shape"
-    )]
+    #[pyo3(signature = (pool_manager_address, pool_id_hex, snapshot_block, policy))]
     fn run_v4_registration_lifecycle_with_retry_sync(
         &self,
         py: Python<'_>,
         pool_manager_address: &str,
         pool_id_hex: &str,
         snapshot_block: Option<u64>,
-        max_attempts: u32,
-        base_delay: f64,
-        max_delay: f64,
-        jitter: f64,
+        policy: &crate::config::RetryPolicy,
     ) -> PyResult<()> {
         crate::bot::pump::run_v4_registration_lifecycle_with_retry_blocking(
             py,
@@ -142,10 +125,7 @@ impl PyArbEngine {
             pool_manager_address,
             pool_id_hex,
             snapshot_block,
-            max_attempts,
-            base_delay,
-            max_delay,
-            jitter,
+            policy,
         )
     }
 

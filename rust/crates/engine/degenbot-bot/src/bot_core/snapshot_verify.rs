@@ -58,6 +58,7 @@ pub enum SnapshotLoadError {
 /// - `Provider` → `VerificationRpcError` (verify-provider construction failure)
 /// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure — VP42BP)
 /// - `NoSnapshotStream` → `PyRuntimeError` (programmer error)
+/// - `Other` → `PyRuntimeError` (any other fatal classification failure)
 ///
 /// `Rpc` and `Provider` both surface as `VerificationRpcError` but are kept
 /// distinct here so the *orchestrator* (`run_cl_verification`) preserves the
@@ -88,6 +89,11 @@ pub enum VerifyError {
     /// legacy silent `Ok(())` skip. The message names the missing call
     /// (`set_verify_rpc_url()` / `set_verify_state_view()`).
     NotConfigured(String),
+    /// A fatal verify-pipeline failure outside the specific categories above
+    /// (a driver failure surfacing through a lifecycle call site). Distinct
+    /// from `Rpc`/`Provider` — which are transient — so the retry dance never
+    /// re-attempts it.
+    Other(String),
 }
 
 impl std::fmt::Display for VerifyError {
@@ -100,6 +106,7 @@ impl std::fmt::Display for VerifyError {
             Self::Provider(message) => write!(f, "verify provider failure: {message}"),
             Self::Rpc(message) => write!(f, "verify RPC failure: {message}"),
             Self::NotConfigured(message) => write!(f, "verify not configured: {message}"),
+            Self::Other(message) => write!(f, "{message}"),
         }
     }
 }
@@ -457,6 +464,7 @@ mod tests {
             VerifyError::Provider(m) => VerifyError::Provider(m.clone()),
             VerifyError::Rpc(m) => VerifyError::Rpc(m.clone()),
             VerifyError::NotConfigured(m) => VerifyError::NotConfigured(m.clone()),
+            VerifyError::Other(m) => VerifyError::Other(m.clone()),
         }
     }
 

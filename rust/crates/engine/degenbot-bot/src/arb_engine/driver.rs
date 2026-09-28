@@ -304,7 +304,7 @@ fn install_session_path_owner(bot: &Bot, stages: &EngineStages) {
 ///
 /// Only the verify arm is representable; every other driver failure is
 /// unreachable at a lifecycle call site and maps to the fatal
-/// [`VerifyError::NotConfigured`] so the retry never re-attempts it.
+/// [`VerifyError::Other`] so the retry never re-attempts it.
 fn verify_error_from_driver(err: DriverError) -> VerifyError {
     match err {
         DriverError::Verify(RegistrationLifecycleError::Verify(
@@ -319,7 +319,7 @@ fn verify_error_from_driver(err: DriverError) -> VerifyError {
         DriverError::Verify(RegistrationLifecycleError::MissingTickSpacing) => {
             VerifyError::NotConfigured(RegistrationLifecycleError::MissingTickSpacing.to_string())
         }
-        other => VerifyError::NotConfigured(other.to_string()),
+        other => VerifyError::Other(other.to_string()),
     }
 }
 
@@ -452,7 +452,7 @@ impl EngineDriver {
     /// the channel, which `changed()` reports as end-of-stream.
     ///
     /// Multiple waiters are supported; each clones the shared receiver.
-    pub async fn wait_pump_finished(&self) {
+    pub(crate) async fn wait_pump_finished(&self) {
         let mut rx = self.pump_finished_rx.clone();
         loop {
             if *rx.borrow_and_update() {
@@ -1557,6 +1557,19 @@ mod tests {
         // sender outright (closed channel = terminal completion).
         drop(driver.pump_finished_tx.lock().take());
         runtime.block_on(driver.wait_pump_finished());
+    }
+
+    #[test]
+    fn a_non_verify_driver_error_classifies_as_fatal_other() {
+        let classified = verify_error_from_driver(DriverError::NoResultReceiver);
+        assert!(
+            matches!(&classified, VerifyError::Other(_)),
+            "a non-verify driver failure must classify as Other, got {classified:?}"
+        );
+        assert!(
+            !crate::bot_core::verification_retry::is_retryable(&classified),
+            "a non-verify driver failure is fatal, never retried"
+        );
     }
 
     #[test]

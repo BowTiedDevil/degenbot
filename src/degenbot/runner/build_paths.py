@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool, get_checksum_address
+from degenbot.arbitrage import RetryPolicy
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.db import db_fetch_graph_edition
@@ -37,7 +38,6 @@ from degenbot.runner._registration_ledger import (
     RegistrationLedger,
     RegistrationOutcome,
 )
-from degenbot.runner.config import VerificationRetryPolicy
 from degenbot.runner.identity import (
     PANCAKESWAP_V3_MAINNET_FACTORY,
     SUSHISWAP_V3_MAINNET_FACTORY,
@@ -325,7 +325,7 @@ class PathRegistrationPipeline:
         *,
         context: ConstructionContext,
         engine_registry: EngineRegistry,
-        retry_policy: VerificationRetryPolicy | None = None,
+        retry_policy: RetryPolicy | None = None,
         max_paths: int,
         discovery_batch_size: int,
         progress_interval_secs: float | None = None,
@@ -339,7 +339,7 @@ class PathRegistrationPipeline:
         self.pancakeswap_v3_tracker = context.pancakeswap_v3_tracker
         self.weth = context.weth
         self.engine_registry = engine_registry
-        self.retry_policy_obj = retry_policy or VerificationRetryPolicy()
+        self.retry_policy_obj = retry_policy or RetryPolicy()
         # The resolved discovery delivery batch size, positive-clamped at the
         # construction boundary; the sweep forwards it to the Rust batched
         # async iterator without reading the process verdict.
@@ -1085,7 +1085,7 @@ class BuildPathsOptions:
     discovery_batch_size: int
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None
-    retry_policy: VerificationRetryPolicy | None = None
+    retry_policy: RetryPolicy | None = None
     context: ConstructionContext | None = None
     pipeline: PathRegistrationPipeline | None = None
     permutation_filter: frozenset[str] | None = None

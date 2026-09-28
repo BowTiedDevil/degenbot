@@ -39,7 +39,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot import Bot
-from degenbot.arbitrage import session_phase_next
+from degenbot.arbitrage import RetryPolicy, session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.dispatch import Dispatcher, SimSubmitPipeline, SimulateContext, fetch_fee_history
 from degenbot.logging import logger as bot_logger
@@ -55,7 +55,7 @@ from degenbot.runner.build_paths import (
     PathRegistrationPipeline,
     build_paths,
 )
-from degenbot.runner.config import ArbitrageConfig, VerificationRetryPolicy
+from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.diag import arm_diagnostics
 from degenbot.runner.identity import (
     MULTICALL3_ADDRESS,
@@ -919,7 +919,7 @@ class BotRunner:
         *,
         path_builder: Callable[..., Awaitable[None]],
         registration_context: ConstructionContext | None,
-        retry_policy: VerificationRetryPolicy | None,
+        retry_policy: RetryPolicy | None,
         pipeline: Any = None,
     ) -> None:
         """Run ``build_paths`` + the post-completion trim as the background task.

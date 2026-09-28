@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from degenbot.arbitrage import verification_retry_policy_defaults
+from degenbot.arbitrage import RetryPolicy
 from degenbot.config import resolve_rpc_uris, resolved_config
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.runner.diag import DiagConfig
@@ -35,57 +35,6 @@ from degenbot.runner.identity import (
     _PLACEHOLDER_OPERATOR_PRIVATE_KEYS,
     _checksum_or_empty,
 )
-
-
-#: The core's retry-policy defaults, read once through the FFI so the
-#: dataclass and the schema share one declaration site.
-_DEFAULTS = verification_retry_policy_defaults()
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class VerificationRetryPolicy:
-    """Bounded retry-with-backoff policy for transient verification failures.
-
-    The retry dance itself is core-owned; this value carries the four
-    driver-resolved knobs (S8) across the FFI. The core classifies a per-call
-    RPC transport or provider-construction failure as transient, and a genuine
-    on-chain mismatch as fatal (never retried). Frozen so a policy can be
-    shared across registration calls without risk of mutation.
-
-    Defaults mirror the core ``RetryPolicy::verification_default`` (read
-    through the FFI, not restated): up to four attempts, ~0.5s base delay,
-    capped at 4s, jittered. Override via the constructor or ``ArbitrageConfig``
-    (``VERIFICATION_RETRY_*`` env vars).
-    """
-
-    max_attempts: int = _DEFAULTS.max_attempts
-    base_delay: float = _DEFAULTS.base_delay
-    max_delay: float = _DEFAULTS.max_delay
-    jitter: float = _DEFAULTS.jitter
-
-    def __post_init__(self) -> None:
-        """Validate the policy's bounds at construction (fail fast).
-
-        Raises:
-            ValueError: If any field is out of its valid range
-                (``max_attempts < 1``, ``base_delay``/``max_delay`` negative,
-                ``jitter`` outside ``[0, 1]``, or ``base_delay > max_delay``).
-        """
-        if self.max_attempts < 1:
-            msg = f"max_attempts must be >= 1, got {self.max_attempts}"
-            raise ValueError(msg)
-        if self.base_delay < 0:
-            msg = f"base_delay must be >= 0, got {self.base_delay}"
-            raise ValueError(msg)
-        if self.max_delay < 0:
-            msg = f"max_delay must be >= 0, got {self.max_delay}"
-            raise ValueError(msg)
-        if not 0 <= self.jitter <= 1:
-            msg = f"jitter must be in [0, 1], got {self.jitter}"
-            raise ValueError(msg)
-        if self.base_delay > self.max_delay and self.max_delay > 0:
-            msg = f"base_delay ({self.base_delay}) must be <= max_delay ({self.max_delay})"
-            raise ValueError(msg)
 
 
 def _declared(values: Mapping[str, Any] | None, path: str) -> Any:
@@ -114,21 +63,23 @@ def _declared(values: Mapping[str, Any] | None, path: str) -> Any:
 
 def _verification_retry_policy(
     values: Mapping[str, Any] | None,
-) -> VerificationRetryPolicy:
+) -> RetryPolicy:
     """The bounded verification retry policy, from the resolved verdict.
 
     The four ``verify.verify_retry_*`` keys are declared in the core schema
     (``VERIFICATION_RETRY_*`` in the env layer), so the operator file and the
     environment reach them through the one cascade and the declared default is
-    the only fallback left. A value the schema cannot parse is refused by the
-    loader at boot rather than here, which is the same fail-loud outcome at an
-    earlier point.
+    the only fallback left. The FFI ``RetryPolicy`` constructor validates the
+    parsed knobs against the core's own bounds, so a misconfigured budget is
+    refused while the config is built. A value the schema cannot parse is
+    refused by the loader at boot rather than here, which is the same
+    fail-loud outcome at an earlier point.
 
     Returns:
-        The resolved :class:`VerificationRetryPolicy`.
+        The resolved :class:`~degenbot.arbitrage.RetryPolicy`.
 
     """
-    return VerificationRetryPolicy(
+    return RetryPolicy(
         max_attempts=int(_declared(values, "verify.verify_retry_max_attempts")),
         base_delay=float(_declared(values, "verify.verify_retry_base_delay")),
         max_delay=float(_declared(values, "verify.verify_retry_max_delay")),
@@ -258,7 +209,7 @@ class ArbitrageConfig:
     permutation_filter: frozenset[str] | None
     # Bounded retry-with-backoff for transient verification RPC failures
     # (per-call transport / provider-init). Mismatch stays fatal.
-    verification_retry_policy: VerificationRetryPolicy
+    verification_retry_policy: RetryPolicy
     # The declared driver stances (the `dispatch.*` and `pathfinding.*` keys).
     # Each arrives from the resolved verdict, so the operator file and the
     # environment reach them through the one cascade `degenbot-config` owns.

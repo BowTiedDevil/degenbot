@@ -8,7 +8,7 @@ Python package.
 """
 
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from typing import Any, final, overload
+from typing import Any, Self, final, overload
 
 from degenbot.types.chain import HexAddress
 
@@ -206,7 +206,7 @@ class RetryPolicyDefaults:
 
     Seconds for the float fields; read from
     ``degenbot_core::retry::RetryPolicy`` — the one declaration site the
-    Python ``VerificationRetryPolicy`` dataclass seeds itself from.
+    FFI ``RetryPolicy`` takes its unset-knob defaults from.
     """
 
     @property
@@ -217,6 +217,31 @@ class RetryPolicyDefaults:
     def max_delay(self) -> float: ...
     @property
     def jitter(self) -> float: ...
+
+class RetryPolicy:
+    """The verification-retry policy crossing the FFI seam.
+
+    The constructor validates through ``degenbot_core::retry::RetryPolicy``
+    and raises ``ValueError`` with the core's message. Unset knobs default to
+    the core's ``verification_default``.
+    """
+
+    def __new__(
+        cls,
+        max_attempts: int | None = None,
+        base_delay: float | None = None,
+        max_delay: float | None = None,
+        jitter: float | None = None,
+    ) -> Self: ...
+    @property
+    def max_attempts(self) -> int: ...
+    @property
+    def base_delay(self) -> float: ...
+    @property
+    def max_delay(self) -> float: ...
+    @property
+    def jitter(self) -> float: ...
+    def validate(self) -> None: ...
 
 # frozen pyclass (pyo3): the runtime forbids subclassing.
 @final
@@ -1752,20 +1777,14 @@ class ArbitrageEngine:
         self,
         address: str,
         snapshot_block: int | None,
-        max_attempts: int,
-        base_delay: float,
-        max_delay: float,
-        jitter: float,
+        policy: RetryPolicy,
     ) -> None: ...
     def run_v4_registration_lifecycle_with_retry_sync(
         self,
         pool_manager_address: str,
         pool_id_hex: str,
         snapshot_block: int | None,
-        max_attempts: int,
-        base_delay: float,
-        max_delay: float,
-        jitter: float,
+        policy: RetryPolicy,
     ) -> None: ...
     def set_verify_rpc_url(self, rpc_url: str) -> None: ...
     def set_verify_state_view(self, state_view_address: str) -> None: ...
@@ -2202,6 +2221,7 @@ __all__ = [
     "ResolvedConfig",
     "ResolvedDatabasePath",
     "ResolvedNodeUri",
+    "RetryPolicy",
     "RetryPolicyDefaults",
     "SessionObject",
     "SpecViolationError",

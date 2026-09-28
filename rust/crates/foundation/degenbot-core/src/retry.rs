@@ -24,8 +24,8 @@ use std::time::Duration;
 /// Bounded exponential-backoff policy.
 ///
 /// Fields are public to keep the type a plain value object at construction
-/// sites (the Python `VerificationRetryPolicy` dataclass mirrors this shape);
-/// call [`RetryPolicy::validate`] before consuming a policy built from
+/// sites (a driver shell's own policy value carries this shape across its
+/// seam); call [`RetryPolicy::validate`] before consuming a policy built from
 /// untrusted input.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RetryPolicy {
@@ -74,9 +74,10 @@ impl RetryPolicy {
         }
     }
 
-    /// Validate the field bounds (fail fast). The message text matches the
-    /// Python `VerificationRetryPolicy.__post_init__` `ValueError` text so the
-    /// driver shell and the Rust example surface the same wording.
+    /// Validate the field bounds (fail fast). The message text is surfaced
+    /// verbatim by the FFI `RetryPolicy` constructor's `ValueError` and by the
+    /// example's env parse, so the driver shell and the Rust example report the
+    /// same wording.
     ///
     /// # Errors
     ///

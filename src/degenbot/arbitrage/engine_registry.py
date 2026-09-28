@@ -46,8 +46,8 @@ from .policy import NoOpPathPredicate, PathCompositionPredicate
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from degenbot.arbitrage import RetryPolicy
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-    from degenbot.runner.config import VerificationRetryPolicy
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
     from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
@@ -438,7 +438,7 @@ class EngineRegistry:
     def run_v3_verify_lifecycle_sync_with_retry(
         self,
         address: str,
-        policy: VerificationRetryPolicy,
+        policy: RetryPolicy,
     ) -> None:
         """V3 seat-thread verify under the core-owned bounded retry dance.
 
@@ -451,27 +451,21 @@ class EngineRegistry:
         self.engine.run_v3_registration_lifecycle_with_retry_sync(
             address,
             self._verify_snapshot_block,
-            policy.max_attempts,
-            policy.base_delay,
-            policy.max_delay,
-            policy.jitter,
+            policy,
         )
 
     def run_v4_verify_lifecycle_sync_with_retry(
         self,
         pool_manager: str,
         pool_id_hex: str,
-        policy: VerificationRetryPolicy,
+        policy: RetryPolicy,
     ) -> None:
         """V4 twin of :meth:`run_v3_verify_lifecycle_sync_with_retry`."""
         self.engine.run_v4_registration_lifecycle_with_retry_sync(
             pool_manager,
             pool_id_hex,
             self._verify_snapshot_block,
-            policy.max_attempts,
-            policy.base_delay,
-            policy.max_delay,
-            policy.jitter,
+            policy,
         )
 
     def register_crawl_path(

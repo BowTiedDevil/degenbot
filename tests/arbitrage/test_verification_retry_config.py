@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
+from degenbot.arbitrage import RetryPolicy
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.runner.config import _DEFAULTS, VerificationRetryPolicy
 from degenbot.runner.identity import UNISWAP_V4_POOL_MANAGER_ADDRESS
 from tests.helpers import verdict_probe as probe
 
@@ -31,18 +31,19 @@ class TestVerificationRetryConfig:
 
     def test_the_declared_defaults_match_the_core_policy(self) -> None:
         """The schema declaration and the core default must be one number.
-        The dataclass keeps reading the core through the FFI module function
-        and the schema declares the same four values; a test that compares them
-        is what stops a second copy from drifting.
+        The FFI policy's no-argument defaults come from the core, and the
+        schema declares the same four values; a test that compares them is
+        what stops a second copy from drifting.
         """
+        defaults = RetryPolicy()
         values = probe.config_values(_POLICY_FIELDS)
 
-        assert values["verification_retry_policy.max_attempts"] == _DEFAULTS.max_attempts
+        assert values["verification_retry_policy.max_attempts"] == defaults.max_attempts
         assert values["verification_retry_policy.base_delay"] == pytest.approx(
-            _DEFAULTS.base_delay
+            defaults.base_delay
         )
-        assert values["verification_retry_policy.max_delay"] == pytest.approx(_DEFAULTS.max_delay)
-        assert values["verification_retry_policy.jitter"] == pytest.approx(_DEFAULTS.jitter)
+        assert values["verification_retry_policy.max_delay"] == pytest.approx(defaults.max_delay)
+        assert values["verification_retry_policy.jitter"] == pytest.approx(defaults.jitter)
 
     def test_the_env_layer_overrides_each_knob(self) -> None:
         values = probe.config_values(
@@ -119,29 +120,21 @@ def test_the_engine_registry_injects_the_parsed_policy() -> None:
             pool_manager: str,
             pool_id_hex: str,
             snapshot_block: int | None,
-            max_attempts: int,
-            base_delay: float,
-            max_delay: float,
-            jitter: float,
+            policy: RetryPolicy,
         ) -> None:
             self.calls.append(
                 {
                     "pool_manager": pool_manager,
                     "pool_id_hex": pool_id_hex,
                     "snapshot_block": snapshot_block,
-                    "max_attempts": max_attempts,
-                    "base_delay": base_delay,
-                    "max_delay": max_delay,
-                    "jitter": jitter,
+                    "policy": policy,
                 }
             )
 
     engine = _Recorder()
     registry = EngineRegistry(engine=engine)  # type: ignore[arg-type]
     registry._verify_snapshot_block = 18_000_050
-    policy = VerificationRetryPolicy(
-        max_attempts=6, base_delay=0.25, max_delay=8.0, jitter=0.3
-    )
+    policy = RetryPolicy(max_attempts=6, base_delay=0.25, max_delay=8.0, jitter=0.3)
 
     registry.run_v4_verify_lifecycle_sync_with_retry(
         UNISWAP_V4_POOL_MANAGER_ADDRESS, "0x" + "ab" * 32, policy
@@ -152,9 +145,6 @@ def test_the_engine_registry_injects_the_parsed_policy() -> None:
             "pool_manager": UNISWAP_V4_POOL_MANAGER_ADDRESS,
             "pool_id_hex": "0x" + "ab" * 32,
             "snapshot_block": 18_000_050,
-            "max_attempts": 6,
-            "base_delay": 0.25,
-            "max_delay": 8.0,
-            "jitter": 0.3,
+            "policy": policy,
         }
     ]

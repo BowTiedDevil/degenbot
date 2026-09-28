@@ -1,5 +1,5 @@
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, Self
 
 from degenbot._ffi.provider import AsyncAlloyProvider
 
@@ -152,12 +152,12 @@ class SimSubmitPipeline:
     submitting, so submission order is arrival order.
     """
 
-    def __init__(
-        self,
-        sim: Callable[[object], Coroutine[Any, Any, object | None]],
-        submit: Callable[[object, object], Coroutine[Any, Any, None]],
+    def __new__(
+        cls,
+        sim: Callable[[Any], Coroutine[Any, Any, object | None]],
+        submit: Callable[[Any, Any], Coroutine[Any, Any, None]],
         concurrency: int,
-    ) -> None: ...
+    ) -> Self: ...
     def enqueue(self, work: object) -> None: ...
     @property
     def concurrency(self) -> int: ...
