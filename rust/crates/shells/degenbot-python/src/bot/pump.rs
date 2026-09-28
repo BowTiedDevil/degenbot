@@ -36,6 +36,40 @@ pub(crate) fn subscribe(
         .map_err(map_driver_err)
 }
 
+/// Run the pre-pump startup ritual: `subscribe(ws)` then verify-config
+/// (`http`, optional `view`) — the one-call `EngineDriver::start` detached
+/// from the GIL.
+///
+/// The snapshot seed `S` must already be on the shared `BotState`; the driver
+/// reads it while subscribing, so `after_subscribe` can advance the phase to
+/// `SnapshotLoaded`.
+///
+/// # Errors
+/// `PyRuntimeError` if the phase is wrong, the pump is already
+/// started/subscribed, the driver is stopped, or the WS subscribe fails.
+pub(crate) fn start(
+    py: Python<'_>,
+    driver: &Arc<EngineDriver>,
+    node_http: &str,
+    node_ws: &str,
+    verify_state_view: Option<&str>,
+) -> PyResult<u64> {
+    let driver = Arc::clone(driver);
+    let node_http = node_http.to_string();
+    let node_ws = node_ws.to_string();
+    let verify_state_view = verify_state_view.map(str::to_string);
+    // GIL-release across the WS handshake `block_on`: the handshake future
+    // (WS subscribe + header polling + provider build) does NOT need the GIL.
+    py.detach(move || {
+        degenbot_core::runtime::get_runtime().block_on(driver.start(
+            &node_http,
+            &node_ws,
+            verify_state_view.as_deref(),
+        ))
+    })
+    .map_err(map_driver_err)
+}
+
 /// Resume the pump — begin normal WS processing (drives the driver, which
 /// owns the synchronous `S+1..W` auto-backfill before spawning the live
 /// loop).

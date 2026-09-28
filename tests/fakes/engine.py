@@ -48,6 +48,7 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "set_verify_rpc_url",
     "set_verify_state_view",
     "snapshot_seed_block",
+    "start",
     "stop",
     "strategies",
     "subscribe",
@@ -76,6 +77,9 @@ class EngineSeam(Protocol):
     snapshot_seed_block: int | None
 
     def subscribe(self, rpc_url: str) -> int: ...
+    def start(
+        self, node_http: str, node_ws: str, verify_state_view: str | None = None
+    ) -> int: ...
     def set_verify_rpc_url(self, rpc_url: str) -> None: ...
     def set_verify_state_view(self, address: str) -> None: ...
     def run_v3_registration_lifecycle(
@@ -142,6 +146,8 @@ class FakeEngine:
         self._snapshot_seed_block: int | None = None
         self.seed_args: list[int | None] = []
         self.subscribe_calls: list[str] = []
+        self.start_calls: list[tuple[str, str, str | None]] = []
+        self._started = False
         self.run_calls: list[dict[str, Any]] = []
         self.register_calls: list[list[tuple[int, bool]]] = []
         self.reconcile_calls: list[dict[str, Any]] = []
@@ -268,6 +274,30 @@ class FakeEngine:
         self.subscribe_calls.append(rpc_url)
         self._record("subscribe")
         return self._backfill_target
+
+    def start(
+        self,
+        node_http: str,
+        node_ws: str,
+        verify_state_view: str | None = None,
+    ) -> int:
+        """The one-call startup ritual (the Rust ``EngineDriver::start`` mirror):
+
+        ``subscribe(ws)`` then verify-config, stopping before ``resume()``. The
+        granular recorders below are invoked so the observed call order is the
+        driver's; a re-entry is refused exactly as the driver refuses a second
+        subscribe.
+        """
+        if self._started:
+            msg = "Cannot subscribe: already subscribed. Call resume() first."
+            raise RuntimeError(msg)
+        self._started = True
+        self.start_calls.append((node_http, node_ws, verify_state_view))
+        target = self.subscribe(node_ws)
+        self.set_verify_rpc_url(node_http)
+        if verify_state_view is not None:
+            self.set_verify_state_view(verify_state_view)
+        return target
 
     def set_verify_rpc_url(self, rpc_url: str) -> None:
         self._record("set_verify_rpc_url")

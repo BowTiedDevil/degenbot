@@ -246,6 +246,35 @@ impl PyArbEngine {
         crate::bot::pump::subscribe(py, &self.driver, &rpc_url)
     }
 
+    /// Pre-pump startup ritual: `subscribe(ws)` → verify-config
+    /// (`node_http`, optional `verify_state_view`).
+    ///
+    /// The one-call sibling of `subscribe` / `set_verify_rpc_url` /
+    /// `set_verify_state_view`, delegating to the shared `EngineDriver::start`
+    /// so the boot ordering is authored once. Stops before `resume()`; the
+    /// snapshot seed `S` must already be on the shared `BotState` (the driver
+    /// reads it while subscribing).
+    ///
+    /// Raises `RuntimeError` if the phase is past the subscribe window, the
+    /// pump is already started/subscribed, or the WS subscribe fails.
+    #[expect(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (node_http, node_ws, verify_state_view=None))]
+    fn start(
+        &self,
+        py: Python<'_>,
+        node_http: String,
+        node_ws: String,
+        verify_state_view: Option<String>,
+    ) -> PyResult<u64> {
+        crate::bot::pump::start(
+            py,
+            &self.driver,
+            &node_http,
+            &node_ws,
+            verify_state_view.as_deref(),
+        )
+    }
+
     /// Resume phase: begin normal pump processing.
     ///
     /// Must be called after `subscribe()`. Takes the WS stream from the

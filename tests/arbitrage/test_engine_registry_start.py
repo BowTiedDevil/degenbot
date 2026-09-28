@@ -10,6 +10,8 @@ risk of unbounded backlog or stale-batch dispatch.
 
 from __future__ import annotations
 
+import pytest
+
 import degenbot.arbitrage.engine_registry as runner
 from tests.fakes.engine import FakeEngine
 
@@ -207,3 +209,38 @@ def test_start_stashes_None_blocks_when_no_snapshots() -> None:
 
     assert registry._verify_snapshot_block is None
     assert not hasattr(registry, "_verify_backfill_block")
+
+
+def test_start_delegates_the_ritual_to_one_engine_call() -> None:
+    """EngineRegistry.start authors the subscribe -> verify ordering exactly
+    once, through the engine's one-call ``start`` (the Rust
+    ``EngineDriver::start`` mirror) — not three separate FFI crossings.
+    """
+    fake = FakeEngine(backfill_target=18_000_000)
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+    state_view = "0x0000000000000000000000000000000000000abc"
+
+    target = registry.start(
+        "http://localhost:8545",
+        "ws://localhost:8546",
+        verify_state_view=state_view,
+    )
+
+    assert fake.start_calls == [
+        ("http://localhost:8545", "ws://localhost:8546", state_view),
+    ]
+    assert target == 18_000_000
+    assert "resume" not in fake.calls
+
+
+def test_start_propagates_driver_session_error_on_double_start() -> None:
+    """A re-entry surfaces the shared driver's typed session refusal (the
+    engine owns the phase gate) rather than the registry re-authoring the
+    three-call sequence.
+    """
+    fake = FakeEngine(backfill_target=18_000_000)
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+    registry.start("http://localhost:8545", "ws://localhost:8546")
+
+    with pytest.raises(RuntimeError, match="already subscribed"):
+        registry.start("http://localhost:8545", "ws://localhost:8546")

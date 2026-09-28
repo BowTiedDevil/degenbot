@@ -140,7 +140,10 @@ class EngineRegistry:
     ) -> int:
         """Run the pre-pump startup ritual and stop BEFORE resume().
 
-        Sequences: subscribe(ws) → load snapshots → verify config.
+        Delegates the core ordering to the engine's one-call startup ritual
+        (the Rust ``EngineDriver::start`` mirror — ``subscribe(ws)`` then
+        verify-config); the Python side keeps only the snapshot seed ``S``
+        resolution and the non-DB ``set_snapshot_seed_block`` call.
         Stops at the snapshot-loaded phase so the caller can attach its result
         consumer before batches begin to flow (`resume()` is the single gate
         after which the pump emits one ResultBatch per block into the
@@ -205,12 +208,11 @@ class EngineRegistry:
         if snapshot_block is not None:
             self.engine.snapshot_seed_block = snapshot_block
 
-        backfill_target = self.engine.subscribe(node_ws)
-
-        # Verify config (consumer-safe: nothing emits yet).
-        self.engine.set_verify_rpc_url(node_http)
-        if verify_state_view is not None:
-            self.engine.set_verify_state_view(verify_state_view)
+        # The one-call startup ritual (the Rust `EngineDriver::start` mirror):
+        # subscribe(ws) -> verify-config(http, view), consumer-safe (it stops
+        # before `resume()`, so nothing emits yet). `S` is already on the shared
+        # `BotState` above; the driver reads it internally while subscribing.
+        backfill_target = self.engine.start(node_http, node_ws, verify_state_view)
 
         # Intentionally NOT calling resume() — the caller attaches its
         # consumer next, then calls resume() as the single batch-flow gate.
