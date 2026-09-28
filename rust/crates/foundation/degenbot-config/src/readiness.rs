@@ -44,7 +44,7 @@ pub const DEFAULT_TXPOOL_BACKRUN_RELAYS: &[&str] = &[
 
 /// One strategy arm's settled endpoint posture.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Arm {
+pub enum StrategyArm {
     /// The facet is not activated; no requirement applies.
     Inactive,
     /// The facet is activated with its settled endpoint URLs (the persisted
@@ -58,11 +58,11 @@ pub enum Arm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrategyReadiness {
     /// The settled-block arm (settlement).
-    pub settlement: Arm,
+    pub settlement: StrategyArm,
     /// The MEVBlocker-ecosystem pending-transaction arm.
-    pub mevblocker_backrun: Arm,
+    pub mevblocker_backrun: StrategyArm,
     /// The public-mempool pending-transaction arm.
-    pub txpool_backrun: Arm,
+    pub txpool_backrun: StrategyArm,
 }
 
 /// A refused readiness. Every refusal names a remediation in its
@@ -170,9 +170,9 @@ fn settle_arm(
     active: bool,
     endpoints: Option<&str>,
     validate: impl Fn(&str) -> Option<EndpointRefusal>,
-) -> Result<Arm, StrategyReadinessError> {
+) -> Result<StrategyArm, StrategyReadinessError> {
     if !active {
-        return Ok(Arm::Inactive);
+        return Ok(StrategyArm::Inactive);
     }
     let Some(urls) = split_endpoints(endpoints) else {
         return Err(StrategyReadinessError::UnsetEndpoints { facet });
@@ -186,7 +186,7 @@ fn settle_arm(
             });
         }
     }
-    Ok(Arm::Active(urls))
+    Ok(StrategyArm::Active(urls))
 }
 
 /// Validate an explicit settlement endpoint against the closed allowlist.
@@ -226,7 +226,7 @@ pub fn strategy_readiness(cfg: &BotConfig) -> Result<StrategyReadiness, Strategy
     )?;
     // Bid mode needs signing material and the private endpoint: an
     // activated observe-only facet is allowed to lack both.
-    if matches!(mevblocker_arm, Arm::Active(_)) && mevblocker.bid_mode {
+    if matches!(mevblocker_arm, StrategyArm::Active(_)) && mevblocker.bid_mode {
         if mevblocker.key_file.is_none() {
             return Err(StrategyReadinessError::MissingRequiredKey {
                 facet: "mevblocker_backrun",
@@ -271,9 +271,9 @@ pub fn validate_hosted_strategy_readiness(
     cfg: &BotConfig,
 ) -> Result<StrategyReadiness, StrategyReadinessError> {
     let readiness = strategy_readiness(cfg)?;
-    let any_active = matches!(readiness.settlement, Arm::Active(_))
-        || matches!(readiness.mevblocker_backrun, Arm::Active(_))
-        || matches!(readiness.txpool_backrun, Arm::Active(_));
+    let any_active = matches!(readiness.settlement, StrategyArm::Active(_))
+        || matches!(readiness.mevblocker_backrun, StrategyArm::Active(_))
+        || matches!(readiness.txpool_backrun, StrategyArm::Active(_));
     if any_active {
         Ok(readiness)
     } else {

@@ -8,7 +8,7 @@
 )]
 
 use degenbot_config::readiness::{
-    strategy_readiness, validate_hosted_strategy_readiness, Arm, StrategyReadinessError,
+    strategy_readiness, validate_hosted_strategy_readiness, StrategyArm, StrategyReadinessError,
 };
 use degenbot_config::{
     BotConfig, BotConfigLoader, MapEnv, DEFAULT_BACKRUN_STREAM_URL, DEFAULT_TXPOOL_BACKRUN_RELAYS,
@@ -33,9 +33,9 @@ fn activated(facet: &str, endpoints: Option<&str>) -> BotConfig {
 #[test]
 fn inactive_facets_have_no_endpoint_requirement() {
     let readiness = strategy_readiness(&BotConfig::default()).expect("inactive config is ready");
-    assert_eq!(readiness.settlement, Arm::Inactive);
-    assert_eq!(readiness.mevblocker_backrun, Arm::Inactive);
-    assert_eq!(readiness.txpool_backrun, Arm::Inactive);
+    assert_eq!(readiness.settlement, StrategyArm::Inactive);
+    assert_eq!(readiness.mevblocker_backrun, StrategyArm::Inactive);
+    assert_eq!(readiness.txpool_backrun, StrategyArm::Inactive);
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn settlement_explicit_endpoints_resolve() {
     let readiness = strategy_readiness(&cfg).expect("ready");
     assert_eq!(
         readiness.settlement,
-        Arm::Active(vec![
+        StrategyArm::Active(vec![
             "https://rpc.flashbots.net?hint=hash".to_string(),
             "https://rpc.mevblocker.io/fullprivacy".to_string(),
         ])
@@ -61,7 +61,7 @@ fn the_pinned_allowlist_resolves_when_stamped_as_endpoints() {
     let readiness = strategy_readiness(&cfg).expect("ready");
     assert_eq!(
         readiness.settlement,
-        Arm::Active(
+        StrategyArm::Active(
             SETTLEMENT_DEFAULT_ENDPOINTS
                 .iter()
                 .map(|url| (*url).to_string())
@@ -76,7 +76,7 @@ fn the_mevblocker_default_channel_resolves_when_stamped_as_endpoints() {
     let readiness = strategy_readiness(&cfg).expect("ready");
     assert_eq!(
         readiness.mevblocker_backrun,
-        Arm::Active(vec![DEFAULT_BACKRUN_STREAM_URL.to_string()])
+        StrategyArm::Active(vec![DEFAULT_BACKRUN_STREAM_URL.to_string()])
     );
 }
 
@@ -87,7 +87,7 @@ fn the_peer_default_relays_resolve_when_stamped_as_endpoints() {
     let readiness = strategy_readiness(&cfg).expect("ready");
     assert_eq!(
         readiness.txpool_backrun,
-        Arm::Active(
+        StrategyArm::Active(
             DEFAULT_TXPOOL_BACKRUN_RELAYS
                 .iter()
                 .map(|url| (*url).to_string())
@@ -102,7 +102,7 @@ fn mevblocker_explicit_endpoint_resolves() {
     let readiness = strategy_readiness(&cfg).expect("ready");
     assert_eq!(
         readiness.mevblocker_backrun,
-        Arm::Active(vec!["wss://searchers.example/x".to_string()])
+        StrategyArm::Active(vec!["wss://searchers.example/x".to_string()])
     );
 }
 
@@ -115,7 +115,7 @@ fn peer_explicit_endpoints_resolve() {
     let readiness = strategy_readiness(&cfg).expect("ready");
     assert_eq!(
         readiness.txpool_backrun,
-        Arm::Active(vec![
+        StrategyArm::Active(vec![
             "https://relay.one".to_string(),
             "https://relay.two".to_string(),
         ])
@@ -210,14 +210,20 @@ fn mevblocker_bid_mode_requires_key_and_private_url() {
     )
     .expect("private url");
     let readiness = strategy_readiness(&cfg).expect("bid mode with key and url is ready");
-    assert!(matches!(readiness.mevblocker_backrun, Arm::Active(_)));
+    assert!(matches!(
+        readiness.mevblocker_backrun,
+        StrategyArm::Active(_)
+    ));
 }
 
 #[test]
 fn observe_only_mevblocker_needs_no_key_or_private_url() {
     let cfg = activated("mevblocker_backrun", Some(DEFAULT_BACKRUN_STREAM_URL));
     let readiness = strategy_readiness(&cfg).expect("observe-only activation is ready");
-    assert!(matches!(readiness.mevblocker_backrun, Arm::Active(_)));
+    assert!(matches!(
+        readiness.mevblocker_backrun,
+        StrategyArm::Active(_)
+    ));
 }
 
 #[test]
@@ -227,9 +233,9 @@ fn hosted_validation_refuses_an_all_inactive_fleet_while_readiness_stays_permiss
     // The console surface stays permissive so it can display an unconfigured
     // fleet; the hosted gate is the refusal.
     let readiness = strategy_readiness(&cfg).expect("an all-inactive config is displayable");
-    assert_eq!(readiness.settlement, Arm::Inactive);
-    assert_eq!(readiness.mevblocker_backrun, Arm::Inactive);
-    assert_eq!(readiness.txpool_backrun, Arm::Inactive);
+    assert_eq!(readiness.settlement, StrategyArm::Inactive);
+    assert_eq!(readiness.mevblocker_backrun, StrategyArm::Inactive);
+    assert_eq!(readiness.txpool_backrun, StrategyArm::Inactive);
 
     let error = validate_hosted_strategy_readiness(&cfg)
         .expect_err("a hosted runner with no active facet must refuse");
@@ -245,7 +251,10 @@ fn hosted_validation_passes_when_a_backrun_arm_is_active() {
     let cfg = activated("mevblocker_backrun", Some(DEFAULT_BACKRUN_STREAM_URL));
     let readiness =
         validate_hosted_strategy_readiness(&cfg).expect("one active facet is a hosted fleet");
-    assert!(matches!(readiness.mevblocker_backrun, Arm::Active(_)));
+    assert!(matches!(
+        readiness.mevblocker_backrun,
+        StrategyArm::Active(_)
+    ));
 }
 
 #[test]

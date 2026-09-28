@@ -87,7 +87,7 @@ pub use loader::{
     EntryProvenance, EnvVars, LoadedConfig, MapEnv, ProcessEnv, Source,
 };
 pub use readiness::{
-    strategy_readiness, validate_hosted_strategy_readiness, Arm, StrategyReadiness,
+    strategy_readiness, validate_hosted_strategy_readiness, StrategyArm, StrategyReadiness,
     StrategyReadinessError, DEFAULT_BACKRUN_STREAM_URL, DEFAULT_TXPOOL_BACKRUN_RELAYS,
     SETTLEMENT_DEFAULT_ENDPOINTS,
 };

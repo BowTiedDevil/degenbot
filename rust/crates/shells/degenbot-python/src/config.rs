@@ -64,10 +64,10 @@ pub struct StrategyReadinessView {
 impl StrategyReadinessView {
     /// Build from the resolved arms (activity + resolved URLs).
     fn from_readiness(readiness: &::degenbot_config::StrategyReadiness) -> Self {
-        fn arm(arm: &::degenbot_config::Arm) -> (bool, Vec<String>) {
+        fn arm(arm: &::degenbot_config::StrategyArm) -> (bool, Vec<String>) {
             match arm {
-                ::degenbot_config::Arm::Inactive => (false, Vec::new()),
-                ::degenbot_config::Arm::Active(urls) => (true, urls.clone()),
+                ::degenbot_config::StrategyArm::Inactive => (false, Vec::new()),
+                ::degenbot_config::StrategyArm::Active(urls) => (true, urls.clone()),
             }
         }
         let (settlement_active, settlement_endpoints) = arm(&readiness.settlement);
@@ -486,8 +486,8 @@ fn settlement_broadcast_endpoints_in(
     let readiness = ::degenbot_config::strategy_readiness(config)
         .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
     match readiness.settlement {
-        ::degenbot_config::Arm::Active(urls) => Ok(urls),
-        ::degenbot_config::Arm::Inactive => Err(::pyo3::exceptions::PyValueError::new_err(
+        ::degenbot_config::StrategyArm::Active(urls) => Ok(urls),
+        ::degenbot_config::StrategyArm::Inactive => Err(::pyo3::exceptions::PyValueError::new_err(
             "strategy settlement is not active: this hosted runner IS the settlement arm; \
              activate it first (degenbot strategy activate settlement --endpoints-default)",
         )),
@@ -743,7 +743,7 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
-    use ::degenbot_config::{Arm, BotConfig, BotConfigLoader, MapEnv, NodeScope, Source};
+    use ::degenbot_config::{BotConfig, BotConfigLoader, MapEnv, NodeScope, Source, StrategyArm};
     use ::degenbot_strategy::Settlement;
 
     use super::{
@@ -986,8 +986,8 @@ mod tests {
     fn readiness_settlement_endpoints(cfg: &BotConfig) -> Option<Vec<String>> {
         match ::degenbot_config::strategy_readiness(cfg) {
             Ok(readiness) => match readiness.settlement {
-                Arm::Active(urls) => Some(urls),
-                Arm::Inactive => None,
+                StrategyArm::Active(urls) => Some(urls),
+                StrategyArm::Inactive => None,
             },
             Err(_) => None,
         }

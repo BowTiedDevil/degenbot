@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use degenbot_config::readiness::Arm;
+use degenbot_config::readiness::StrategyArm;
 use degenbot_config::writer::{write_key_with_env, WriteOutcome};
 use degenbot_config::{strategy_readiness, SCHEMA};
 
@@ -375,7 +375,7 @@ fn endpoint_summary(
                 StrategyFacet::TxpoolBackrun => &readiness.txpool_backrun,
             };
             match arm {
-                Arm::Active(urls) => {
+                StrategyArm::Active(urls) => {
                     // Report provenance: an endpoints list that equals the
                     // pinned default set reads as "pinned default",
                     // anything else as the operator's own set.
@@ -385,7 +385,7 @@ fn endpoint_summary(
                         EndpointSummary::Explicit(urls.clone())
                     }
                 }
-                Arm::Inactive => EndpointSummary::Unset,
+                StrategyArm::Inactive => EndpointSummary::Unset,
             }
         }
         Err(_) => EndpointSummary::Unset,
@@ -451,7 +451,7 @@ fn activate(
         StrategyFacet::MevblockerBackrun => &readiness.mevblocker_backrun,
         StrategyFacet::TxpoolBackrun => &readiness.txpool_backrun,
     };
-    let Arm::Active(urls) = arm else {
+    let StrategyArm::Active(urls) = arm else {
         return Err(CliError::InvalidArgument(format!(
             "strategy {} did not settle to an active arm: this is a CLI bug",
             facet.as_str()
