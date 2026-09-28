@@ -506,6 +506,10 @@ class BotRunner:
         # arms and run() consume that data rather than re-reading the verdict,
         # while the refusal rule stays with the Rust config validation.
         self._readiness = self._gate_readiness()
+        # The settlement arm resolves before the session exists: the posture
+        # minter and run()'s dispositions read this ONE resolved fact, so the
+        # session can never carry a posture the arm disagrees with.
+        self._resolve_settlement_arm()
 
         # ── THE session: real from here on — the one owner of the
         # coordination state. The runner keeps no stored copies (its
@@ -530,17 +534,18 @@ class BotRunner:
                 else self._boot_relay_posture(live=not cfg.dry_run)
             ),
         )
-        self._resolve_settlement_arm()
         self._install_sigint_handler()
         self._phase = next_phase
         return self
 
     def _resolve_settlement_arm(self) -> None:
-        """Resolve the settlement-arm posture once, before run() reads it.
+        """Resolve the settlement arm once, before the session and run() read it.
 
         The injected flag (test/probe DI) wins; otherwise the readiness view
         the posture gate already walked owns the answer — the same facet
         activation the gate used, so the arm never disagrees with the fleet.
+        This is the one resolved fact the posture minter and run()'s
+        dispositions consume.
         """
         if self._injected_settlement_arm is not None:
             self._settlement_active = self._injected_settlement_arm
@@ -581,16 +586,14 @@ class BotRunner:
         """The session's settlement broadcast posture for this boot.
 
         The gate already refused an empty fleet and an unsettled arm, so this
-        reads the resolved readiness as DATA: settlement active mints the
-        endpoints the Rust settlement composition resolved; settlement
-        inactive (the gate guarantees a backrun arm is active) is a
-        backrun-only boot that runs no settlement seam and mints no posture.
-        Only a live, settlement-active boot mints the posture — a dry-run boot
-        signs nothing.
+        reads the resolved settlement arm as DATA: an active arm mints the
+        endpoints the Rust settlement composition resolved; an inactive arm
+        (the gate guarantees a backrun arm is active) is a backrun-only boot
+        that runs no settlement seam and mints no posture. Only a live,
+        settlement-active boot mints the posture — a dry-run boot signs
+        nothing.
         """
-        readiness = self._readiness
-        assert readiness is not None, "start() resolved the readiness before the posture"
-        if not readiness.settlement_active:
+        if not self._settlement_active:
             return None
         from degenbot.strategy import settlement_broadcast_endpoints
 

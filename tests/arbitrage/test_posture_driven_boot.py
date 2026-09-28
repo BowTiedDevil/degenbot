@@ -10,6 +10,7 @@ python state. An all-inactive fleet refuses at the posture gate.
 from __future__ import annotations
 
 import signal
+import types
 
 import pytest
 
@@ -164,10 +165,20 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
     assert records["settlement"] == "registered"
 
 
-async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
+async def test_a_settlement_active_boot_hosts_no_backrun_arms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A settlement-active boot passes NO hosted arms to resume, even when a
     backrun facet is also active: the settlement pump arm is this runner's arm,
     so the enabled-facet set is empty under that disposition."""
+    monkeypatch.setattr(
+        "degenbot.strategy.validate_strategy_readiness",
+        lambda: types.SimpleNamespace(settlement_active=True),
+    )
+    monkeypatch.setattr(
+        "degenbot.strategy.settlement_broadcast_endpoints",
+        lambda: ["http://relay-a"],
+    )
     session = _runner(lambda **kw: _noop_coro(), settlement_arm=True)
     await session.start()
     await session.run()

@@ -80,7 +80,7 @@ class _BootAsyncW3:
         return None
 
 
-def _runner(*, dry_run: bool) -> BotRunner:
+def _runner(*, dry_run: bool, settlement_arm: bool = False) -> BotRunner:
     """A real ``BotRunner`` on fake actors, with the boot posture gate live."""
     return BotRunner(
         _cfg(dry_run=dry_run),
@@ -91,7 +91,7 @@ def _runner(*, dry_run: bool) -> BotRunner:
             snapshots=(None, None, None, None),
             path_builder=lambda **kw: None,
             consumer=lambda **kw: None,
-            settlement_arm=False,
+            settlement_arm=settlement_arm,
         ),
         install_sigint=False,
     )
@@ -300,7 +300,7 @@ class TestBootGate:
             "settlement_broadcast_endpoints",
             lambda: ["http://relay-a"],
         )
-        runner = _runner(dry_run=False)
+        runner = _runner(dry_run=False, settlement_arm=True)
         await runner.start()
         assert runner._session is not None
         posture = runner._session.relay_posture
@@ -322,7 +322,7 @@ class TestBootGate:
             "settlement_broadcast_endpoints",
             lambda: ["http://relay-a"],
         )
-        runner = _runner(dry_run=True)
+        runner = _runner(dry_run=True, settlement_arm=True)
         await runner.start()
         assert runner._session is not None
         assert runner._session.relay_posture is None
@@ -339,6 +339,30 @@ class TestBootGate:
         )
         with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
             BotRunner._gate_readiness()
+
+    async def test_an_injected_arm_off_beats_a_settlement_active_view(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The injected settlement arm is the session's ONE fact. A DI seam
+        that pins the arm off produces a backrun-only boot even when the
+        readiness view reports the settlement facet active, so the posture
+        minter never consults the endpoint resolver."""
+        monkeypatch.setattr(
+            _strategy_home,
+            "validate_strategy_readiness",
+            lambda: _view(settlement_active=True, mevblocker_backrun_active=True),
+        )
+        monkeypatch.setattr(
+            _strategy_home,
+            "settlement_broadcast_endpoints",
+            lambda: pytest.fail("the resolved arm was off, not the raw view"),
+        )
+        runner = _runner(dry_run=False)
+        await runner.start()
+        assert runner._session is not None
+        assert runner._session.relay_posture is None, (
+            "a settlement-deactivated arm carries no settlement posture"
+        )
 
 
 def _raise(refusal: ValueError) -> None:
