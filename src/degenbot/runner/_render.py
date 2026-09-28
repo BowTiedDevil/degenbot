@@ -464,7 +464,7 @@ def format_sim_diag_line(
     """Render one always-on ``[sim-diag]`` JSON line per reverted candidate.
 
 
-    Ergo epic 63I7WJ (task AM5AJW): re-pointed at the inspector's captured
+    Compares the inspector's captured
 
     swap amounts (the ACTUAL amounts the in-process EVM emitted) vs the
 

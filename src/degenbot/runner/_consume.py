@@ -1,7 +1,7 @@
 """Block-stream + result-batch consumption for the settlement-arbitrage ``BotRunner``.
 
-Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN, task
-CXWQDI). Owns the permanent main loop: :func:`consume_result_batches` awaits
+Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py``.
+Owns the permanent main loop: :func:`consume_result_batches` awaits
 the block clock (``bot.block_stream()``) and the result batches
 (``engine``) concurrently, driving the dispatcher's block clock and dispatching
 profitable results through the Rust seam.
@@ -87,7 +87,7 @@ async def consume_result_batches(
         # same kernel the consumer loop already brings down the run with).
         if pipeline is not None:
             pipeline.raise_if_failed()
-        # ergo 66H3KJ: mark main-loop forward progress for the Rust stuck-
+        # Mark main-loop forward progress for the Rust stuck-
         # watchdog (start_gil_probe). A stale timestamp here means the loop
         # is parked mid-`_apply_result_if_ready` (the dispatch deadlock site).
         mark_progress()

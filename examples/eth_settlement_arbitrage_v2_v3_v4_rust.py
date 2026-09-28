@@ -1,7 +1,7 @@
 """Ethereum mainnet settlement-arbitrage bot: Uniswap V2/V3/V4 arbitrage using the Rust engine.
 
 A thin Python entrypoint over the Rust-owned ArbitrageEngine and the
-``degenbot.runner`` driver (epic 5TSYKN). The runtime driver — config,
+``degenbot.runner`` driver. The runtime driver — config,
 path registration, result consumption, dispatch — lives in the
 ``degenbot.runner`` package; this file is an ``argv → BotRunner`` entrypoint
 that owns only the CLI policy (argparse, SIGINT wrapper). Operator identity
@@ -19,7 +19,7 @@ Startup sequence (owned by :class:`~degenbot.runner.BotRunner`):
 
 The old driver code that lived here (``BackrunSession``→``BotRunner``,
 ``build_paths``, ``consume_result_batches``, the dispatch/render helpers, and
-the shared constants) has moved to ``degenbot.runner`` (epic 5TSYKN).
+the shared constants) has moved to ``degenbot.runner``.
 """
 
 import asyncio
@@ -42,7 +42,7 @@ async def main() -> None:
     args = parser.parse_args()
     dry_run = not args.live
 
-    # ergo 66H3KJ: start the GIL-acquire-latency probe + main-loop stuck-
+    # Start the GIL-acquire-latency probe + main-loop stuck-
     # watchdog BEFORE any other work. The probe runs on its own std::thread
     # and never needs the GIL to make progress.
     start_gil_probe(interval_ms=50, threshold_ms=100, stuck_ms=30_000)

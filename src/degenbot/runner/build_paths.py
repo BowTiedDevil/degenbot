@@ -1,7 +1,7 @@
 """Path discovery + registration for the settlement-arbitrage ``BotRunner``.
 
-Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN, task
-JKYVST). Owns ``build_paths`` and its registration machinery:
+Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py``.
+Owns ``build_paths`` and its registration machinery:
 :class:`ConstructionContext` (registration-owned construction resources kept
 out of the main-loop trim), :class:`PathRegistrationPipeline` (the reusable,
 pump-concurrent per-path registration / verify / dedup), and the bounded

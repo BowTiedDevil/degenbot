@@ -1,6 +1,6 @@
 """Settlement-arbitrage bot CLI (argparse) building — stable package home.
 
-The ``argv -> BotRunner`` entrypoint's argument parser (epic 5TSYKN). The
+The ``argv -> BotRunner`` entrypoint's argument parser. The
 example ``examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`` is a thin wrapper that calls
 :func:`build_arbitrage_arg_parser`; keeping the parser in the package makes the
 CLI surface (notably the ``--node`` cascade override)

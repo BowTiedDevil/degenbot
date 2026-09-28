@@ -6,13 +6,3 @@
 #     grep -E '^[^ :]+:[0-9]+:' | cut -d: -f1 | sort -u
 # A waiver means "this file still carries pre-rule citations" — remove the
 # entry in the same commit that strips the file's citations.
-examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-src/degenbot/runner/__init__.py
-src/degenbot/runner/_consume.py
-src/degenbot/runner/_dispatch.py
-src/degenbot/runner/_render.py
-src/degenbot/runner/_session_watch.py
-src/degenbot/runner/bot_runner.py
-src/degenbot/runner/build_paths.py
-src/degenbot/runner/cli.py
-src/degenbot/runner/config.py

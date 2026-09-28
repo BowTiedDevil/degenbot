@@ -1,4 +1,4 @@
-"""One session watch behind the cockpit's end-state (ergo MJJUXL).
+"""One session watch behind the cockpit's end-state.
 
 The cockpit's single owner of a pump session's end-state (the CONTEXT.md
 *session watch* term): the watch-set assembly ({consumer} + optional

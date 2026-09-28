@@ -1,7 +1,7 @@
 """Settlement-arbitrage runtime driver (``BotRunner``) companion package.
 
-Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` / ``eth_backrun_helpers.py``
-(epic 5TSYKN). This is the Python-companion ``stays-python`` cockpit over the
+Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` / ``eth_backrun_helpers.py``.
+This is the Python-companion ``stays-python`` cockpit over the
 Rust-owned engine: it owns config, discovery/registration, result consumption,
 and dispatch orchestration — never pool/engine state (ADR-003: ``Bot`` is the
 single Rust state owner; ADR-006: ``Bot`` is the per-chain orchestrator, this
