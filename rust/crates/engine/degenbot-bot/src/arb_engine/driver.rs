@@ -253,6 +253,10 @@ pub struct EngineDriver {
     /// The terminal stopped latch (ADR-050 D5) — `PumpPhase` cannot express
     /// teardown, so the driver owns it.
     stopped: AtomicBool,
+    /// The once-only result-receiver hand-off latch. `resume()` refuses until
+    /// a consumer owns the unbounded result channel's receiver; otherwise the
+    /// engine would pump batches into a channel with no reader.
+    result_receiver_taken: AtomicBool,
 }
 
 /// Bind the session's path-identity owner to the engine this driver drives.
@@ -360,6 +364,7 @@ impl EngineDriver {
             verifications: PoolVerifications::new(),
             hub,
             stopped: AtomicBool::new(false),
+            result_receiver_taken: AtomicBool::new(false),
         }
     }
 
@@ -442,13 +447,21 @@ impl EngineDriver {
     /// The receiver is the hub-held consumer end of the engine's result
     /// source channel — the counting hand-off so hub-side growth
     /// (`Hub::named_pending`) reflects live depth instead of reading zero.
+    ///
+    /// A successful take latches the hand-off that `resume()` requires; a
+    /// resume with no consumer attached is refused so the unbounded channel
+    /// never backs up behind a pump no one drains.
     #[must_use]
     pub fn take_result_receiver(&self) -> Option<degenbot_eventhub::NamedReceiver<ResultBatch>> {
         match self
             .hub
             .take_named_counting_receiver::<ResultBatch>(RESULT_CHANNEL_NAME)
         {
-            Ok(rx) => rx,
+            Ok(Some(rx)) => {
+                self.result_receiver_taken.store(true, Ordering::SeqCst);
+                Some(rx)
+            }
+            Ok(None) => None,
             Err(e) => {
                 op_error!(
                     domain = pump,
@@ -610,7 +623,8 @@ impl EngineDriver {
     ///
     /// - [`DriverError::Phase`] when the phase is below `SnapshotLoaded`.
     /// - [`DriverError::SessionState`] when already `Resumed`, when no
-    ///   subscribe state is pending, or when the driver is stopped.
+    ///   subscribe state is pending, when the result receiver has not been
+    ///   taken, or when the driver is stopped.
     /// - [`DriverError::Resume`] when the pending state carries no WS stream.
     pub async fn resume(&self) -> Result<(), DriverError> {
         if self.is_stopped() {
@@ -630,6 +644,16 @@ impl EngineDriver {
         if phase == PumpPhase::Resumed {
             return Err(DriverError::SessionState(
                 "Cannot resume: engine is already in Resumed phase.".to_string(),
+            ));
+        }
+        // Consumer-before-resume gate. The result channel is unbounded, so a
+        // pump with no receiver attached accumulates batches no one drains.
+        // This check runs before the subscribe state is consumed, so a refused
+        // resume leaves the pending state intact for a corrected retry.
+        if !self.result_receiver_taken.load(Ordering::SeqCst) {
+            return Err(DriverError::SessionState(
+                "Cannot resume: the result receiver has not been taken. Call take_result_receiver() before resume() so the unbounded result channel has a consumer attached."
+                    .to_string(),
             ));
         }
         let state = self.subscribe_state.lock().take().ok_or_else(|| {
@@ -1234,11 +1258,51 @@ mod tests {
     #[test]
     fn resume_without_pending_subscribe_state_is_rejected() {
         let driver = driver_for_test();
+        let _result_rx = driver.take_result_receiver();
         driver.set_phase(PumpPhase::SnapshotLoaded);
         let err = degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
             .unwrap_err();
         assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn resume_without_result_receiver_is_rejected() {
+        let driver = driver_for_test();
+        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
+        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
+        let control: Arc<dyn PumpControl> = driver.stages().clone();
+        let pump = BlockPump::for_test(
+            Arc::clone(driver.bot()),
+            stages_handlers,
+            control,
+            reorg,
+            mock_provider(),
+            Arc::clone(&driver.shutdown),
+        );
+        driver.install_subscribe_state_for_test(DriverSubscribeState {
+            pump,
+            first_block: 100,
+            combined_stream: futures_util::stream::empty().boxed(),
+        });
+        driver.set_phase(PumpPhase::SnapshotLoaded);
+
+        let err = degenbot_core::runtime::get_runtime()
+            .block_on(driver.resume())
+            .unwrap_err();
+        assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
+        assert!(
+            format!("{err}").contains("result receiver"),
+            "the refusal names the missing consumer: {err}"
+        );
+        assert!(
+            !driver.pump_handle_armed(),
+            "a refused resume must not spawn the live loop"
+        );
+        assert!(
+            driver.take_result_receiver().is_some(),
+            "the receiver is still takeable after the refusal"
+        );
     }
 
     #[test]
@@ -1294,6 +1358,8 @@ mod tests {
     #[test]
     fn resume_owns_the_backfill_and_spawns_the_live_loop() {
         let driver = driver_for_test();
+        // The engine gate requires a consumer to own the result receiver.
+        let _result_rx = driver.take_result_receiver();
         let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
         let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
         let control: Arc<dyn PumpControl> = driver.stages().clone();

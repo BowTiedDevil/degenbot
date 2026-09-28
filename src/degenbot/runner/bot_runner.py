@@ -659,11 +659,18 @@ class BotRunner:
         """Attach the consumer, resume the pump, build paths, release, then run the main loop.
 
         Ordering (the invariant this session enforces):
-        1. create the consumer task (BEFORE resume — closes the stale-backlog window)
+        1. create the consumer task (BEFORE resume so batches drain as they arrive)
         2. ``engine_registry.engine.resume()`` (the single gate after which batches flow)
         3. ``await build_paths(...)`` (rolling start: eager solves dispatch as fresh blocks roll in)
         4. ``bot.release_python_state()`` + drop the bot (hot loop keeps only engine + async_w3)
         5. await the session watch over the main loop (indefinite)
+
+        The Rust driver owns the once-only result-receiver hand-off: ``resume()``
+        is refused unless a consumer has taken the receiver. The PyO3 adapter
+        takes it at engine construction, so the engine-owned gate is already
+        satisfied before this method runs. Creating the consumer TASK below
+        before ``resume()`` is the residual asyncio-side ordering: batches
+        arrive over the unbounded channel and must be drained as they land.
         """
         self._phase = self._phase.on_run()
         # The session's construction answers the actor asserts: the actors
@@ -684,7 +691,11 @@ class BotRunner:
         # raises RuntimeError("block_stream() can only be called once").
         block_stream = session.bot.block_stream()
 
-        # Attach the consumer BEFORE resume (consumer-safety invariant).
+        # Attach the consumer BEFORE resume. The engine-owned receiver gate is
+        # already satisfied (the PyO3 adapter takes the receiver at engine
+        # construction), so this ordering is the asyncio-side concern: the
+        # consumer task must exist to drain batches as they arrive over the
+        # unbounded channel.
         self._result_consumer_task = asyncio.create_task(
             consumer(session=session, block_stream=block_stream),
             name="result-consumer",
