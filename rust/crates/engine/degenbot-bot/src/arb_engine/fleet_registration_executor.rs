@@ -137,8 +137,8 @@ mod tests {
             .or_else(|| err.downcast_ref::<&str>().copied())
             .expect("panic payload is the expect message");
         assert!(
-            msg.contains("mixed-boot rides are ILLEGAL"),
-            "the expect must name the task: {msg}"
+            msg.contains("fleet registration boot stamp missing"),
+            "the expect must name the loud construction abort: {msg}"
         );
     }
     use super::FleetRegistrationExecutor;
@@ -155,13 +155,15 @@ mod tests {
         )))
     }
     /// FF-T1: a refused fleet boot is a TYPED, STICKY error at
-    /// the process materializer — never a process abort. A sub-floor
-    /// stamp (quota 2.0, the CI 4-vCPU shape shrunk one step further) is
-    /// installed directly; the FIRST materialization surfaces the typed
-    /// `BootError`, the SECOND re-surfaces the SAME refusal (the sticky
-    /// `OnceLock` — “at every submit”), and the test process is alive
-    /// throughout (reaching the asserts IS the survival proof). Skips if
-    /// another test already installed the stamp (the F1 race discipline).
+    /// the process materializer — never a process abort. A below-host-floor
+    /// stamp (quota 1.0: today's typed boot refusal — the FF-T2/FF-T4 tier
+    /// work turned the old pinned-floor refusal into serial placement or a
+    /// marked-oversubscribed boot) is installed directly; the FIRST
+    /// materialization surfaces the typed `BootError`, the SECOND
+    /// re-surfaces the SAME refusal (the sticky `OnceLock` — “at every
+    /// submit”), and the test process is alive throughout (reaching the
+    /// asserts IS the survival proof). Skips if another test already
+    /// installed the stamp (the F1 race discipline).
     #[expect(
         clippy::print_stderr,
         reason = "the self-skip channel when a parallel test won the stamp race (the documented F1 skip semantics)"
@@ -177,7 +179,7 @@ mod tests {
         }
         let stamp = crate::arb_engine::boot_stamp::BootStamp::of(FleetBoot {
             profile: degenbot_config::FleetProfile::Auto,
-            quota_cpus: 2.0,
+            quota_cpus: 1.0,
             overrides: BudgetOverrides::default(),
             posture: PosturePolicy::doc_defaults(),
             owner: None,
@@ -185,15 +187,15 @@ mod tests {
         slot.set_boot_for_test(stamp);
         let first = slot.global_executor(FleetRegistrationExecutor::boot);
         let Err(err) = first else {
-            panic!("a sub-floor boot must refuse, typed")
+            panic!("a below-host-floor boot must refuse, typed")
         };
         assert!(
             matches!(
                 &err,
-                BootError::Budget(BudgetError::QuotaTooSmallForPinnedRoles { quota, required })
-                    if (*quota - 2.0).abs() < f64::EPSILON && *required == 6
+                BootError::Budget(BudgetError::BelowHostFloor { quota })
+                    if (*quota - 1.0).abs() < f64::EPSILON
             ),
-            "the refusal must be the pinned-role floor family (budget + floor), got {err:?}"
+            "the refusal must be the typed budget family (below the 2-core host floor), got {err:?}"
         );
         // Sticky: the second call re-surfaces the SAME typed refusal —
         // every later submit sees it, no retry loop, no abort.

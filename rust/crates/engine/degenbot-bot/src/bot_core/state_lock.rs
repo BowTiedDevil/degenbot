@@ -213,9 +213,20 @@ fn now_ms() -> u64 {
 
 /// Pure verdict: which of `records` exceed `threshold_ms` of hold time at
 /// `now_ms`, excluding ones already warned. Marks them warned.
-fn flag_aged_records(records: &mut [HoldRecord], now_ms: u64, threshold_ms: u64) -> Vec<SlowHold> {
+fn flag_aged_records(
+    records: &mut [HoldRecord],
+    now_ms: u64,
+    threshold_ms: u64,
+    skip_seq: u64,
+) -> Vec<SlowHold> {
     let mut out = Vec::new();
     for rec in records.iter_mut() {
+        // The just-registered hold cannot be aged by its own acquire check:
+        // a scheduler pause between registration and this check would burn
+        // the warn-once flag and permanently suppress the drop-time report.
+        if rec.seq == skip_seq {
+            continue;
+        }
         let held = now_ms.saturating_sub(rec.acquired_ms);
         if held >= threshold_ms && !rec.warned {
             rec.warned = true;
@@ -501,7 +512,7 @@ impl<T> StateLock<T> {
         let mut map = ACTIVE_READS.lock();
         let aged = map
             .get_mut(&key)
-            .map(|records| flag_aged_records(records, now_ms(), threshold))
+            .map(|records| flag_aged_records(records, now_ms(), threshold, seq))
             .unwrap_or_default();
         drop(map);
         log_slow_holds(key, &aged);
@@ -752,13 +763,33 @@ mod tests {
                 backtrace: None,
             },
         ];
-        let flagged = flag_aged_records(&mut records, 6_000, 500);
+        let flagged = flag_aged_records(&mut records, 6_000, 500, 0);
         assert_eq!(flagged.len(), 1, "only the aged, never-warned hold fires");
         assert_eq!(flagged[0].seq, 1);
         assert_eq!(flagged[0].held_ms, 5_000);
         assert_eq!(flagged[0].location, loc1.to_string());
         // Second pass must be silent (warn-once).
-        assert!(flag_aged_records(&mut records, 6_000, 500).is_empty());
+        assert!(flag_aged_records(&mut records, 6_000, 500, 0).is_empty());
+    }
+
+    #[test]
+    fn acquire_check_never_ages_the_just_registered_hold() {
+        let loc = Location::caller();
+        let mut records = vec![HoldRecord {
+            seq: 9,
+            thread: "t".into(),
+            location: loc, // any site: value irrelevant to the verdict
+            acquired_ms: 3_999,
+            warned: false,
+            backtrace: None,
+        }];
+        // Even with a 1ms threshold and a clock that has moved since
+        // registration, the just-registered hold (seq 9) must not be flagged:
+        // flagging it would burn warn-once and suppress the drop-time report.
+        assert!(flag_aged_records(&mut records, 4_000, 1, 9).is_empty());
+        assert!(!records[0].warned);
+        // A DIFFERENT aged hold is still flagged normally.
+        assert_eq!(flag_aged_records(&mut records, 4_000, 1, 8).len(), 1);
     }
 
     // ---- telemetry taxonomy --------------------------------------
@@ -800,7 +831,7 @@ mod tests {
             warned: false,
             backtrace: None,
         }];
-        assert_eq!(flag_aged_records(&mut records, 4_000, 1).len(), 1);
+        assert_eq!(flag_aged_records(&mut records, 4_000, 1, 0).len(), 1);
     }
 
     // ---- registry lifecycle --------------------------------------------------
@@ -877,6 +908,10 @@ mod tests {
 
     #[test]
     fn write_hold_slow_verdict_is_diag_and_threshold_gated() {
+        // The diag/threshold statics are process-wide: this test may not
+        // flip them while an ungated parallel test's guard registration is
+        // in flight (the warn-once drop report would silently vanish).
+        let _serial = test_serial();
         set_warn_threshold_ms(500);
         set_diag_enabled_for_tests(false);
         assert!(!write_hold_slow(600_000));
@@ -988,6 +1023,11 @@ mod tests {
         let _serial = test_serial();
         set_diag_enabled_for_tests(true);
         set_warn_threshold_ms(1);
+        // The synthetic aging needs now_ms() > 3_100: a fast process can
+        // reach this test inside the first millisecond of START, where
+        // saturating_sub would clamp the age to 0 and the drop report would
+        // never fire (advance, don't sleep).
+        advance_clock_ms(60_000);
         clear_recent_slow_read_drops();
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();

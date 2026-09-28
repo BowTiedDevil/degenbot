@@ -580,6 +580,23 @@ mod fleet_sim_stance_tests {
             solver_pool_states: Vec::new(),
         }
     }
+    /// Make the process's sim boot stamp exist WITHOUT racing the real
+    /// construction install: derive the same `FleetBoot` an engine booting
+    /// this process's config would install, so an equal-cfg ride stays legal
+    /// (the mixed-boot ledger panics only on divergent cfg hashes). Without
+    /// this, the stance tests' outcome depends on whether a concurrently
+    /// running engine-construction test happened to construct first.
+    fn ensure_sim_boot_installed() {
+        let slot = crate::arb_engine::seat_host::FleetBootRegistry::process().sim();
+        if !slot.boot_installed() {
+            slot.install(crate::arb_engine::boot_stamp::BootStamp::of(
+                degenbot_workers::dispatcher::FleetBoot::from_config(
+                    crate::bot_core::stance::config(),
+                ),
+            ));
+        }
+    }
+
     /// Schedule ONE sim through the production scheduler (`PipelinedSims::
     /// schedule_one`, stance-routed) and join its receipt.
     fn schedule_and_join(
@@ -609,6 +626,7 @@ mod fleet_sim_stance_tests {
     /// the failure-payload contract is exercised end to end.
     #[test]
     fn fleet_sims_honor_the_request_contract_on_capture_corpus() {
+        ensure_sim_boot_installed();
         let items = strided_corpus(PARITY_REQUESTS);
         let pool_refs = pool_refs_for(&items);
         let sim = CorpusSim::new();
@@ -650,6 +668,7 @@ mod fleet_sim_stance_tests {
     )]
     #[test]
     fn fleet_sims_run_on_simdriver_seats_with_the_census_row() {
+        ensure_sim_boot_installed();
         // Host-tier gate (FF-T2): the identity contract under test is the
         // PINNED binding's topology (pooled `work-fleet-sim-{n}` SimDriver
         // seats + the census row). On a 2-5-core host the auto profile
