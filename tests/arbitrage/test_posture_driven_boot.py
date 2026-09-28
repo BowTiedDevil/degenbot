@@ -15,11 +15,10 @@ import types
 import pytest
 
 from degenbot.runner import BotRunner
-from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
-from tests.helpers.identity_env import identity_env
 from degenbot.strategy import validate_strategy_readiness
-from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
+from tests.helpers.boot_actors import boot_runner, noop_coro
+from tests.helpers.identity_env import identity_env
 
 
 @pytest.fixture(autouse=True)
@@ -34,56 +33,6 @@ def _restore_sigint() -> None:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
-def _noop_coro():
-    async def _n() -> None:
-        pass
-
-    return _n()
-
-
-class _FakeBot:
-    def __init__(self) -> None:
-        self.chain_id = 1
-        self.released = False
-        self.block_stream_calls = 0
-
-    def release_python_state(self) -> None:
-        self.released = True
-
-    def block_stream(self):
-        self.block_stream_calls += 1
-        return iter(())  # immediately exhausted
-
-
-class _FakeEth:
-    async def get_block(self, block_identifier: str):
-        return {"number": 12_345, "baseFeePerGas": 10**9, "gasUsed": 0, "gasLimit": 30_000_000}
-
-    async def get_transaction_count(self, address: str):
-        return 7
-
-
-class _FakeAsyncW3:
-    def __init__(self) -> None:
-        self.eth = _FakeEth()
-
-    async def get_block(self, block_identifier: str):
-        return await self.eth.get_block(block_identifier)
-
-    async def get_transaction_count(self, address: str):
-        return await self.eth.get_transaction_count(address)
-
-    async def make_request(self, method: str, params: list):
-        return {}
-
-    @property
-    def rpc_url(self) -> str:
-        return "http://fake:8545"
-
-    def as_async_alloy(self) -> None:
-        return None
-
-
 def _runner(path_builder, *, settlement_arm: bool = False) -> BotRunner:
     with identity_env(
         {
@@ -93,18 +42,7 @@ def _runner(path_builder, *, settlement_arm: bool = False) -> BotRunner:
         }
     ):
         cfg = ArbitrageConfig.build(live=True, permutation=None)
-    return BotRunner(
-        cfg,
-        actors=InjectedActors(
-            bot=_FakeBot(),
-            engine_registry=_FakeEngineRegistry(backfill_target=12_000),
-            async_w3=_FakeAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=path_builder,
-            consumer=lambda **kw: _noop_coro(),
-            settlement_arm=settlement_arm,
-        ),
-    )
+    return boot_runner(cfg, path_builder=path_builder, settlement_arm=settlement_arm)
 
 
 async def test_a_backrun_only_boot_never_builds_paths() -> None:
@@ -179,7 +117,7 @@ async def test_a_settlement_active_boot_hosts_no_backrun_arms(
         "degenbot.strategy.settlement_broadcast_endpoints",
         lambda: ["http://relay-a"],
     )
-    session = _runner(lambda **kw: _noop_coro(), settlement_arm=True)
+    session = _runner(lambda **kw: noop_coro(), settlement_arm=True)
     await session.start()
     await session.run()
 

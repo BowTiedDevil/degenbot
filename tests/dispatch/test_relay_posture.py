@@ -25,10 +25,9 @@ from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import (
     ActivationGateRefused,
     BotRunner,
-    InjectedActors,
 )
 from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.engine import FakeEngineRegistry
+from tests.helpers.boot_actors import boot_runner
 from tests.helpers.identity_env import identity_env
 
 
@@ -58,41 +57,11 @@ def _cfg(*, dry_run: bool) -> ArbitrageConfig:
         return ArbitrageConfig.build(live=not dry_run, permutation=None)
 
 
-class _BootBot:
-    """The boot-path bot double: only the snapshot-trim surface is read."""
-
-    chain_id = 1
-
-    def release_python_state(self) -> None:
-        pass
-
-    def block_stream(self):  # pragma: no cover - the boot never iterates it
-        return None
-
-
-class _BootAsyncW3:
-    """The boot-path provider double (non-Alloy, so no sim context is built)."""
-
-    async def get_block(self, block_identifier: str):
-        return {"number": 12_345}
-
-    def as_async_alloy(self) -> None:
-        return None
-
-
 def _runner(*, dry_run: bool, settlement_arm: bool = False) -> BotRunner:
     """A real ``BotRunner`` on fake actors, with the boot posture gate live."""
-    return BotRunner(
+    return boot_runner(
         _cfg(dry_run=dry_run),
-        actors=InjectedActors(
-            bot=_BootBot(),
-            engine_registry=FakeEngineRegistry(backfill_target=12_000),
-            async_w3=_BootAsyncW3(),
-            snapshots=(None, None, None, None),
-            path_builder=lambda **kw: None,
-            consumer=lambda **kw: None,
-            settlement_arm=settlement_arm,
-        ),
+        settlement_arm=settlement_arm,
         install_sigint=False,
     )
 
