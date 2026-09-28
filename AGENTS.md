@@ -51,6 +51,22 @@ the extension explicitly with
 maturin is already pinned to that crate's manifest. Commands intended to cover
 every member must retain an explicit `--workspace` selector.
 
+### One `degenbot` console, two invocation paths
+
+Two executables named `degenbot` exist, and they are one console by construction.
+The native path is `cargo run --locked --manifest-path rust/Cargo.toml -p
+degenbot-cli -- <args>` (or the built `rust/target/debug/degenbot`); the Python
+path is `uv run --no-sync degenbot`, the venv shim from `[project.scripts]`
+(`degenbot = "degenbot._cli:main"`). Both are thin callers of the single
+composition root `degenbot_cli::run_args` over the one clap tree, so identical
+output and exit codes are structural, not a convention held by hand. maturin's
+`manifest-path` points only at the cdylib crate, so the wheel never installs the
+binary — the venv name can only ever be the shim. Pick the native path for a
+fast standalone CLI invocation; pick the shim when the call must start from
+installed Python state, because its module init has already installed the typed
+config and the Rust→Python log forwarder, while the native path installs both
+via `sinks::boot()`. Both are supported; neither is deprecated.
+
 ## Rust build profiles
 
 Local development uses the workspace `[profile.dev]` intentionally: `opt-level = 1`,

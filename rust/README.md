@@ -372,6 +372,27 @@ CI-identical, non-mutating alias of it; `just lint-rust-fix` is the opt-in
 gate. The feature lanes above must remain separate so an exhaustive diagnostic
 cannot hide a default or release regression.
 
+### One `degenbot` console, two invocation paths
+
+Two executables named `degenbot` exist, and they are one console by construction.
+`cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-cli -- <args>`
+runs the native binary; `uv run --no-sync degenbot` runs the venv shim installed
+from `[project.scripts]` (`degenbot = "degenbot._cli:main"`). Both are thin
+callers of the single composition root `degenbot_cli::run_args` over the one
+clap tree (`degenbot-cli-core`) and one renderer (`degenbot_cli::render`), so
+identical output and exit codes are structural, not a convention held by hand.
+The wheel carries only the cdylib — maturin's `manifest-path` points at
+`rust/crates/shells/degenbot-python/Cargo.toml` — so no binary is ever installed
+into the venv and the shim is the only `degenbot` there. They differ in
+preinstalled state: arriving through Python, the `#[pymodule]` init has already
+installed the typed config and the Rust→Python log forwarder; the native path
+installs both via `sinks::boot()`. Startup differs for the same reason:
+`module-name = "degenbot._ffi"` makes the extension a child of the `degenbot`
+package, so the shim imports the full driver package before reaching the
+console. Pick the native path for fast CLI invocations; pick the shim when the
+invocation must begin from installed Python state. Both are supported; neither
+is deprecated.
+
 ## Python extension freshness
 
 After a Rust source change, do not trust a fast or cached maturin/uv build by
