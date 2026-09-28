@@ -25,7 +25,11 @@ from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import (
     ActivationGateRefused,
     BotRunner,
+    InjectedActors,
 )
+from degenbot.runner.config import ArbitrageConfig
+from tests.fakes.engine import FakeEngineRegistry
+from tests.helpers.identity_env import identity_env
 
 
 class _RecordingSubmitter:
@@ -43,6 +47,54 @@ def _opaque_rust_provider() -> Any:
     # The injected fakes are opaque at the submit seam: the only access is
     # as_async_alloy() producing the Rust-pyclass provider.
     return object()
+
+
+def _cfg(*, dry_run: bool) -> ArbitrageConfig:
+    with identity_env({
+        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+        "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
+        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+    }):
+        return ArbitrageConfig.build(live=not dry_run, permutation=None)
+
+
+class _BootBot:
+    """The boot-path bot double: only the snapshot-trim surface is read."""
+
+    chain_id = 1
+
+    def release_python_state(self) -> None:
+        pass
+
+    def block_stream(self):  # pragma: no cover - the boot never iterates it
+        return None
+
+
+class _BootAsyncW3:
+    """The boot-path provider double (non-Alloy, so no sim context is built)."""
+
+    async def get_block(self, block_identifier: str):
+        return {"number": 12_345}
+
+    def as_async_alloy(self) -> None:
+        return None
+
+
+def _runner(*, dry_run: bool) -> BotRunner:
+    """A real ``BotRunner`` on fake actors, with the boot posture gate live."""
+    return BotRunner(
+        _cfg(dry_run=dry_run),
+        actors=InjectedActors(
+            bot=_BootBot(),
+            engine_registry=FakeEngineRegistry(backfill_target=12_000),
+            async_w3=_BootAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **kw: None,
+            consumer=lambda **kw: None,
+            settlement_arm=False,
+        ),
+        install_sigint=False,
+    )
 
 
 def _session(relay_posture: RelayPosture | None) -> Any:
@@ -177,35 +229,104 @@ class TestNoRelayPosture:
 
 
 class TestBootGate:
-    """The runner's live-mode activation gate over the ambient unset config."""
+    """The boot gate's posture contract, driven through the public ``start()``.
 
-    def test_a_backrun_only_boot_builds_no_settlement_posture(self) -> None:
-        """Posture-driven boot (case B): with the settlement facet inactive and
-        a backrun facet active, the hosted session boots an arm whose submit
-        seam is NOT settlement — so no settlement posture exists in either
-        stance, and nothing refuses."""
-        readiness = _view(settlement_active=False, mevblocker_backrun_active=True)
-        for stance in (True, False):
-            try:
-                outcome = BotRunner._resolve_relay_posture(readiness=readiness, live=stance)
-            except RuntimeError as refusal:
-                outcome = refusal
-            assert outcome is None, (
-                "a settlement-deactivated boot carries no settlement posture — "
-                f"in live or dry — instead of refusing the boot: {outcome!r}"
+    The gate reads the Rust readiness once and takes the relay posture (and
+    its refusal) from the Rust settlement composition. These tests inject the
+    Rust answers and observe the public boot, pinning the contract without
+    the retired private posture mirror.
+    """
+
+    async def test_a_backrun_only_boot_mints_no_settlement_posture(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Posture-driven boot (case B): settlement inactive + a backrun facet
+        active boots with no settlement posture in either stance, and never
+        consults the settlement endpoint resolver."""
+        monkeypatch.setattr(
+            _strategy_home,
+            "validate_strategy_readiness",
+            lambda: _view(settlement_active=False, mevblocker_backrun_active=True),
+        )
+        monkeypatch.setattr(
+            _strategy_home,
+            "settlement_broadcast_endpoints",
+            lambda: pytest.fail("a backrun-only boot consulted the settlement endpoints"),
+        )
+        for dry_run in (False, True):
+            runner = _runner(dry_run=dry_run)
+            await runner.start()
+            assert runner._session is not None
+            assert runner._session.relay_posture is None, (
+                "a settlement-deactivated boot carries no settlement posture"
             )
 
-    def test_an_empty_fleet_refuses_in_both_stances(self) -> None:
-        """No activated facet, no work: the boot refuses with the activation
-        remediation in dry-run exactly as it refuses live."""
-        readiness = _view(settlement_active=False)
-        for stance in (True, False):
-            with pytest.raises(ActivationGateRefused, match="no active strategy"):
-                BotRunner._resolve_relay_posture(readiness=readiness, live=stance)
+    async def test_an_empty_fleet_boot_refuses_in_both_stances(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No activated facet, no work: the empty fleet reaches the Rust
+        settlement resolver, whose refusal aborts the boot in dry-run exactly
+        as it refuses live."""
+        monkeypatch.setattr(
+            _strategy_home,
+            "validate_strategy_readiness",
+            lambda: _view(settlement_active=False),
+        )
+        monkeypatch.setattr(
+            _strategy_home,
+            "settlement_broadcast_endpoints",
+            _raise_endpoints,
+        )
+        for dry_run in (False, True):
+            with pytest.raises(ActivationGateRefused, match="settlement is not active"):
+                await _runner(dry_run=dry_run).start()
 
-    def test_a_readiness_refusal_is_an_activation_refusal(self, monkeypatch) -> None:
-        """A readiness refusal aborts the boot the same way in either stance:
-        the runner never enters run() on an unreadiness activation."""
+    async def test_a_settled_live_boot_mints_the_posture(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A live, settlement-active boot carries the Rust-resolved endpoints."""
+        monkeypatch.setattr(
+            _strategy_home,
+            "validate_strategy_readiness",
+            lambda: _view(settlement_active=True),
+        )
+        monkeypatch.setattr(
+            _strategy_home,
+            "settlement_broadcast_endpoints",
+            lambda: ["http://relay-a"],
+        )
+        runner = _runner(dry_run=False)
+        await runner.start()
+        assert runner._session is not None
+        posture = runner._session.relay_posture
+        assert posture is not None
+        assert posture.relay_urls == ["http://relay-a"]
+
+    async def test_a_settled_dry_run_boot_carries_no_posture(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A settled dry-run boot has no signing surface, so no posture is
+        minted even though the Rust resolver settles the endpoints."""
+        monkeypatch.setattr(
+            _strategy_home,
+            "validate_strategy_readiness",
+            lambda: _view(settlement_active=True),
+        )
+        monkeypatch.setattr(
+            _strategy_home,
+            "settlement_broadcast_endpoints",
+            lambda: ["http://relay-a"],
+        )
+        runner = _runner(dry_run=True)
+        await runner.start()
+        assert runner._session is not None
+        assert runner._session.relay_posture is None
+
+    def test_a_readiness_refusal_is_an_activation_refusal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Rust readiness refusal aborts the boot the same way: the runner
+        never enters run() on an unreadiness activation."""
         monkeypatch.setattr(
             _strategy_home,
             "validate_strategy_readiness",
@@ -214,27 +335,18 @@ class TestBootGate:
         with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
             BotRunner._gate_readiness()
 
-    def test_a_backrun_only_boot_ignores_the_settlement_endpoints_seam(self) -> None:
-        """With the settlement facet inactive the runner never consults the
-        settlement broadcast posture: a view whose settlement endpoints are
-        unset is unreachable from a backrun-only boot."""
-        readiness = _view(settlement_active=False, mevblocker_backrun_active=True)
-        assert BotRunner._resolve_relay_posture(readiness=readiness, live=False) is None
-        assert BotRunner._resolve_relay_posture(readiness=readiness, live=True) is None
-
-    def test_a_settled_dry_run_boot_carries_no_posture(self) -> None:
-        """Refusal symmetry, not posture symmetry: a settled dry-run boot has
-        no signing surface, so no fan-out posture is minted — while the same
-        readiness settles into a live RelayPosture."""
-        readiness = _view(settlement_endpoints=["http://relay-a"])
-        assert BotRunner._resolve_relay_posture(readiness=readiness, live=False) is None
-        posture = BotRunner._resolve_relay_posture(readiness=readiness, live=True)
-        assert posture is not None
-        assert posture.relay_urls == ["http://relay-a"]
-
 
 def _raise(refusal: ValueError) -> None:
     raise refusal
+
+
+def _raise_endpoints() -> list[str]:
+    """The Rust settlement resolver's refusal for an inactive/empty arm."""
+    msg = (
+        "strategy settlement is not active: this hosted runner IS the "
+        "settlement arm; activate it first"
+    )
+    raise ValueError(msg)
 
 
 def _view(

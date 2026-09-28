@@ -95,18 +95,6 @@ class ActivationGateRefused(RuntimeError):
         super().__init__(f"activation gate refused: {refusal}")
 
 
-class SettlementArmGateRefused(RuntimeError):
-    """The settlement-arm gate refused: broadcast endpoints are not settled.
-
-    A hosted runner IS the settlement arm, so an unsettled (or inactive)
-    endpoint set aborts the session instead of degrading a live broadcast
-    to the public mempool; the gate's ValueError text becomes the message.
-    """
-
-    def __init__(self, refusal: ValueError) -> None:
-        super().__init__(f"settlement arm gate refused: {refusal}")
-
-
 class PhaseError(RuntimeError):
     """Cockpit phase violation: a lifecycle method ran in the wrong phase.
 
@@ -538,10 +526,7 @@ class BotRunner:
             relay_posture=(
                 self._injected_relay_posture
                 if self._injected_relay_posture is not None
-                else self._resolve_relay_posture(
-                    readiness=self._readiness,
-                    live=not cfg.dry_run,
-                )
+                else self._boot_relay_posture(live=not cfg.dry_run)
             ),
         )
         self._resolve_settlement_arm()
@@ -588,38 +573,31 @@ class BotRunner:
         except ValueError as refusal:
             raise ActivationGateRefused(refusal) from refusal
 
-    @staticmethod
-    def _resolve_relay_posture(
-        *,
-        readiness: StrategyReadinessView,
-        live: bool,
-    ) -> RelayPosture | None:
-        """The settlement broadcast posture from the readiness the boot gate resolved.
+    def _boot_relay_posture(self, *, live: bool) -> RelayPosture | None:
+        """The session's settlement broadcast posture for this boot.
 
-        The readiness value refuses an activated facet with an unsettled
-        endpoint set (naming the `degenbot strategy activate` remedies), and
-        the hosted runner IS the settlement arm, so an inactive settlement
-        facet yields no posture. Dry-run sessions keep no posture either:
-        nothing is signed, so no fan-out surface exists once the gate settles.
+        The endpoint set and its refusal are the Rust settlement
+        composition's: ``settlement_broadcast_endpoints`` resolves them, so
+        the settled-endpoint rule has one home and a refused arm surfaces
+        here as :class:`ActivationGateRefused`. A backrun-only boot
+        (settlement inactive, a backrun facet active) runs no settlement
+        seam and mints no posture; an empty fleet reaches the resolver, which
+        refuses. Only a live, settlement-active boot mints the posture — a
+        dry-run boot signs nothing.
         """
-        # The posture gate is stance-independent over the resolved facet
-        # postures: the operator's active facets RUN; the inactive facets do
-        # not load. An empty fleet refuses (there is nothing to host); an
-        # active-settlement boot carries its settled endpoints on the view; a
-        # backrun-only boot runs no settlement pipeline, so no posture exists.
-        if not (
-            readiness.settlement_active
-            or readiness.mevblocker_backrun_active
-            or readiness.txpool_backrun_active
+        readiness = self._readiness
+        assert readiness is not None, "start() resolved the readiness before the posture"
+        if not readiness.settlement_active and (
+            readiness.mevblocker_backrun_active or readiness.txpool_backrun_active
         ):
-            refusal = ValueError(
-                "no active strategy: activate at least one facet "
-                "(degenbot strategy activate settlement|mevblocker_backrun|txpool_backrun)"
-            )
-            raise ActivationGateRefused(refusal) from refusal
-        if not readiness.settlement_active or not live:
             return None
-        return RelayPosture(relay_urls=list(readiness.settlement_endpoints))
+        from degenbot.strategy import settlement_broadcast_endpoints
+
+        try:
+            endpoints = settlement_broadcast_endpoints()
+        except ValueError as refusal:
+            raise ActivationGateRefused(refusal) from refusal
+        return RelayPosture(relay_urls=endpoints) if live else None
 
     @staticmethod
     def _build_sim_ctx(
