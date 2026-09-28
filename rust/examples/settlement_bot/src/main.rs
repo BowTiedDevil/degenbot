@@ -93,55 +93,8 @@ const AGE_DECAY_CONSTANT: f64 = 0.25;
 const PATH_SUPPRESS_THRESHOLD: u64 = 10;
 const PATH_SUPPRESS_RETRY_INTERVAL: u64 = 100;
 
-/// `_ALLOWED_INTERMEDIATE_TOKENS` (runner/identity.py) — checksummed,
-/// lowercase-compared by the path predicate (row 13; implemented by the
-/// `policy` module). Kept here so the config dump reports the same value the
-/// Python config would.
-const ALLOWED_INTERMEDIATE_TOKENS: [&str; 11] = [
-    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
-    "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
-    "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
-    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", // WBTC
-    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", // UNI
-    "0x514910771AF9Ca656af840dff83E8264EcF986CA", // LINK
-    "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2", // SUSHI
-    "0xD533a949740bb3306d119CC777fa900bA034cd52", // CRV
-    "0xc00e94Cb662C3520282E6f5717214004A7f26888", // COMP
-    "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e", // YFI
-    "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", // MATIC/POL
-];
-
 /// `WETH_ADDRESS` (runner/identity.py) — Ethereum mainnet wrapped native.
 const WETH_ADDRESS: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-
-/// `ETH_MAINNET_ALLOWED_TOKENS` (runner/identity.py) — the DISCOVERY allowlist
-/// `build_paths.py::discovery_sweep` passes to `find_paths_async`.
-///
-/// NOTE: Python has two distinct sets. `identity.py::_ALLOWED_INTERMEDIATE_TOKENS`
-/// (11 tokens, mirrored by `ALLOWED_INTERMEDIATE_TOKENS` above) is the config
-/// FIELD; the discovery path passes `identity.py::ETH_MAINNET_ALLOWED_TOKENS`
-/// (which includes WETH — required, because `build_path_graph` intersects the
-/// candidate-token set with it). This example mirrors the discovery subset as
-/// it stood when the mirror was written; the Python set has since gained
-/// curated second-tier tokens. The config field stays the 11-token list for
-/// row-2 parity.
-const ETH_MAINNET_DISCOVERY_ALLOWED_TOKENS: [&str; 15] = [
-    "0x163f8C2467924be0ae7B5347228CABF260318753", // WLD
-    "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8", // PyUSD
-    "0xB8c77482e45F1F44dE1745F52C74426C631bDD52", // BNB
-    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH
-    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
-    "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
-    "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
-    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", // WBTC
-    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", // UNI
-    "0x514910771AF9Ca656af840dff83E8264EcF986CA", // LINK
-    "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2", // SUSHI
-    "0xD533a949740bb3306d119CC777fa900bA034cd52", // CRV
-    "0xc00e94Cb662C3520282E6f5717214004A7f26888", // COMP
-    "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e", // YFI
-    "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", // MATIC/POL
-];
 
 // Deployment identity is an independent parity mirror, not a core re-export:
 // a `cargo add degenbot` consumer deploys its own executor, so the core does
@@ -261,7 +214,6 @@ struct SettlementBotConfig {
     max_priority_fee_percentile: u64,
     path_suppress_threshold: u64,
     path_suppress_retry_interval: u64,
-    allowed_intermediate_tokens: BTreeSet<String>,
     permutation_filter: Option<String>,
     verification_retry_policy: RetryPolicy,
     dry_run: bool,
@@ -413,10 +365,6 @@ impl SettlementBotConfig {
             max_priority_fee_percentile: PRIORITY_FEE_PERCENTILES[P50_INDEX],
             path_suppress_threshold: PATH_SUPPRESS_THRESHOLD,
             path_suppress_retry_interval: PATH_SUPPRESS_RETRY_INTERVAL,
-            allowed_intermediate_tokens: ALLOWED_INTERMEDIATE_TOKENS
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
             permutation_filter: cli.permutation.clone(),
             verification_retry_policy,
             dry_run: !cli.live,
@@ -446,7 +394,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("10-pool-construction", "REACHABLE", "probe_pool_type + build_v2/v3/v4/... (umbrella)"),
         ("11-discovery-db-enumeration", "REACHABLE", "degenbot::db::SnapshotDb::fetch_discovery_rows (degenbot-db::discovery_read) + tests/discovery_read_parity.rs"),
         ("12-path-discovery-batching", "REACHABLE", "discovery.rs: graph build over G2 rows + batched lazy OwnedPathFinder (batch_size<=1 per-path; one cooperative async hop per batch)"),
-        ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation) + discovery allowlist graph filter; identity.py 11-token config field + ETH_MAINNET_ALLOWED_TOKENS discovery set"),
+        ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation); discovery admits every token as an intermediate hop"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
         ("15-dispatch-selection", "REACHABLE", "degenbot::arbitrage::{dispatch_profitable_results,filter_thin_margin_results} + driver dispatch.rs plan_batch typed decisions (skip/suppressed/thin-margin/sim)"),
         ("16-sim-fanout-submitter", "DRIVER-POLICY", "sim_submit.rs: tokio Semaphore(max_simulate_concurrent) + single ordered FIFO submitter; consume.rs consumes the EngineDriver result stream (row 7); no core lift"),
@@ -550,7 +498,7 @@ fn run() -> Result<(), String> {
         "[config] fee_history_window={} fee_percentiles={:?} \
         target_profit_ratio={} nonce_expires_blocks={} max_sim_concurrent={} \
         age_decay={} priority_fee_percentiles=[{},{}] path_suppress=[{},{}] \
-        allowed_intermediate_tokens={} permutation={:?}",
+        permutation={:?}",
         cfg.fee_history_window,
         cfg.fee_percentiles,
         cfg.target_profit_ratio,
@@ -561,7 +509,6 @@ fn run() -> Result<(), String> {
         cfg.max_priority_fee_percentile,
         cfg.path_suppress_threshold,
         cfg.path_suppress_retry_interval,
-        cfg.allowed_intermediate_tokens.len(),
         cfg.permutation_filter,
     );
     println!(
@@ -648,11 +595,9 @@ fn run() -> Result<(), String> {
     );
 
     // 2. Graph build from the SAME held discovery rows (snapshot discipline).
-    let allowed: BTreeSet<String> = ETH_MAINNET_DISCOVERY_ALLOWED_TOKENS
-        .iter()
-        .map(|t| t.to_lowercase())
-        .collect();
-    let built = build_graph(&discovered, &requested_kinds, Some(&allowed));
+    //    `None` admits every token as an intermediate hop, mirroring the Python
+    //    driver's discovery sweep.
+    let built = build_graph(&discovered, &requested_kinds, None);
     println!(
         "[g3] graph built: {} nodes, {} candidate tokens, {} requested kinds {:?}",
         built.nodes.len(),
@@ -697,8 +642,8 @@ fn run() -> Result<(), String> {
     };
 
     // 5. Driver policy (row 13): hop bounds pinned to the discovery floor/cap,
-    //    duplicate-pool guard on; the token allowlist is applied at the graph
-    //    filter above (mirroring `find_paths_async`'s `allowed_intermediate_tokens`).
+    //    duplicate-pool guard on. Discovery admits every token as an
+    //    intermediate hop, mirroring the Python driver's discovery sweep.
     let policy = PathPolicy {
         min_hops: 2,
         max_hops: 3,
@@ -759,7 +704,6 @@ fn run() -> Result<(), String> {
             std::sync::Arc::new(operator_channel::PipelinePathOps::new(
                 &discovered,
                 &requested_kinds,
-                &allowed,
                 &params,
                 pipeline.policy.clone(),
                 pipeline.retry_policy,
@@ -861,7 +805,6 @@ fn run() -> Result<(), String> {
                     std::sync::Arc::new(operator_channel::PipelinePathOps::new(
                         &discovered,
                         &requested_kinds,
-                        &allowed,
                         &params,
                         pipeline.policy.clone(),
                         pipeline.retry_policy,

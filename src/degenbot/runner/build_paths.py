@@ -42,7 +42,6 @@ from degenbot.runner._registration_ledger import (
     RegistrationOutcome,
 )
 from degenbot.runner.identity import (
-    ALLOWED_INTERMEDIATE_TOKENS,
     PANCAKESWAP_V3_MAINNET_FACTORY,
     SUSHISWAP_V3_MAINNET_FACTORY,
     UNISWAP_V3_MAINNET_FACTORY,
@@ -968,7 +967,6 @@ class PathRegistrationPipeline:
                 pool_types=self.pool_types,
                 database_path=self.constr_database_path,
                 pool_type_per_depth=self.pool_type_per_depth,
-                allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
             ),
             batch_size=self.discovery_batch_size,
         )

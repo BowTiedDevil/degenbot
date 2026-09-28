@@ -27,7 +27,6 @@ from degenbot.config import resolve_rpc_uris, resolved_config
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.runner.diag import DiagConfig
 from degenbot.runner.identity import (
-    _ALLOWED_INTERMEDIATE_TOKENS,
     _DEFAULT_EXECUTOR_ADDRESS,
     _DEFAULT_EXECUTOR_OWNER,
     _DEFAULT_INJECTED_ADDRESS,
@@ -205,7 +204,6 @@ class ArbitrageConfig:
     # thresholds are core-owned and applied in the core, so a driver-side copy
     # of any of them could only be a value the core ignores.
     # Path discovery
-    allowed_intermediate_tokens: frozenset[str]
     permutation_filter: frozenset[str] | None
     # Bounded retry-with-backoff for transient verification RPC failures
     # (per-call transport / provider-init). Mismatch stays fatal.
@@ -385,7 +383,6 @@ class ArbitrageConfig:
             executor_owner=executor_owner,
             inject_executor_code=inject_executor_code,
             injected_address=injected_address,
-            allowed_intermediate_tokens=_ALLOWED_INTERMEDIATE_TOKENS,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
             erc6909_profit=bool(_declared(values, "dispatch.erc6909_profit")),

@@ -4,7 +4,7 @@
   "permitted_divergence": [
     {
       "key": "graph.candidate_tokens",
-      "reason": "The Rust boot applies the 15-token ETH-mainnet discovery allowlist (parity ledger row 13), so the fixture's single candidate token is filtered to 0; the Python probe reads the UNFILTERED build_path_graph output ([1]). Documented in the boot oracle python_reachable.note and the parity ledger row 13."
+      "reason": "The Python probe records the candidate-token LIST ([1]) while the Rust boot decision records the COUNT (1); the two drivers agree on the candidate set itself. Documented in the boot oracle python_reachable.note."
     }
   ],
   "python": [
@@ -42,7 +42,7 @@
     },
     {
       "key": "graph.candidate_tokens",
-      "value": 0
+      "value": 1
     }
   ]
 }

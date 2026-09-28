@@ -20,7 +20,7 @@
     "discovery_count": 2,
     "graph": {
       "nodes": 2,
-      "candidate_tokens": 0,
+      "candidate_tokens": 1,
       "requested_kinds": [
         "V2",
         "V3",
@@ -68,6 +68,6 @@
       1
     ],
     "graph_edges": 0,
-    "note": "The Python consumer path reaches S via degenbot._ffi.Bot.load_snapshot_from_db and the parity.db graph via degenbot._ffi.build_path_graph (chain 8453). candidate_tokens here is UNFILTERED; the Rust boot applies the 15-token ETH mainnet discovery allowlist (row 13), which is why expected.graph.candidate_tokens is 0."
+    "note": "The Python consumer path reaches S via degenbot._ffi.Bot.load_snapshot_from_db and the parity.db graph via degenbot._ffi.build_path_graph (chain 8453). Discovery admits every token as an intermediate hop, so the Rust boot's candidate-token count (expected.graph.candidate_tokens) matches this unfiltered set."
   }
 }

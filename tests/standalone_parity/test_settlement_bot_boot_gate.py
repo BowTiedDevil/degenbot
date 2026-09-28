@@ -17,12 +17,10 @@ seams the Python driver uses:
   Rust-owned build_path_graph seam the Python pathfinding wrapper
   calls (src/degenbot/pathfinding/_pathfinding.py).
 
-The Rust-example boot applies the 15-token ETH-mainnet discovery
-allowlist (parity ledger row 13), which filters the fixture's
-candidate token out; the Python probe reads the UNFILTERED graph, so
-python_reachable.graph_candidate_tokens is [1] while
-expected.graph.candidate_tokens is 0. That deliberate
-filtered/unfiltered difference is the documented permitted divergence.
+Discovery admits every token as an intermediate hop, so the Rust
+example and the Python probe see the same candidate graph:
+python_reachable.graph_candidate_tokens is [1] and
+expected.graph.candidate_tokens is 1.
 
 A seeded divergence must fail the comparator: mutate one expected
 value in an in-memory copy (the checked-in oracle is never touched)

@@ -443,9 +443,9 @@ pub async fn run_offline(
         }
         tokio::task::yield_now().await;
     }
-    // The driver applies the token allowlist at the GRAPH filter (mirroring
-    // `find_paths_async`'s `allowed_intermediate_tokens`), so the policy gate
-    // never sees a token-filter rejection by default; `token_filter_count`
+    // Discovery admits every token as an intermediate hop (mirroring
+    // `find_paths_async` with no `allowed_intermediate_tokens`), so the policy
+    // gate never sees a token-filter rejection by default; `token_filter_count`
     // stays the Python counter it is (0 unless a `PathPolicy` allow/deny set is
     // configured).
     report

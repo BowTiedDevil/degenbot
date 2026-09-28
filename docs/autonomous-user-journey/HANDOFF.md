@@ -38,7 +38,7 @@ You are given:
 
 The example bots in this repo are configured for a *development environment*. They deliberately narrow the search space — chief among them (all verified in code):
 
-- **Token whitelist**: paths may only route through a small set of intermediate tokens (`_driver_constants.ALLOWED_INTERMEDIATE_TOKENS`, ~16 majors — WETH, USDC, USDT, DAI, WBTC, …). This excludes fee-on-transfer/rebase tokens that waste simulation gas and always revert. Setting the set to `None` allows all tokens.
+- **Token admission**: discovery admits every token as an intermediate hop. The former intermediate-token whitelist was removed; fee-on-transfer protection now comes from the runtime FoT registry (`is_fot`), not from a curated token set.
 - **Path cap**: total registered arbitrage paths is capped (`DEGENBOT_MAX_PATHS`; `0` = uncapped) so registration load stays observable. Caveat worth the 10 seconds it takes to check: the *code* default is 100,000, but this devcontainer exports `DEGENBOT_MAX_PATHS=1000000`, and nothing in the boot logs echoes the effective value. Layered defaults are a repo theme — when a document states a number, `printenv` beats the docstring.
 - **Execution strategy**: the shipped settlement-arbitrage adapter (`cmd_executor`) is the *default*, not the only option — the `ExecutionAdapter` seam (ADR-025, `docs/execution-strategy.md`) lets you bring a different executor contract / payload encoding entirely, and flags like `DEGENBOT_ERC6909_PROFIT` change how profit is captured on-chain.
 

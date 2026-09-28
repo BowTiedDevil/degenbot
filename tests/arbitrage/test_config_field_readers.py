@@ -58,6 +58,7 @@ RETIRED_FIELDS = (
     "max_priority_fee_percentile",
     "path_suppress_threshold",
     "path_suppress_retry_interval",
+    "allowed_intermediate_tokens",
 )
 
 

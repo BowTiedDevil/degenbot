@@ -166,15 +166,10 @@ pub struct PipelinePathOps {
 
 impl PipelinePathOps {
     /// Build the sink from the boot discovery rows + driver policy.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "linear projection of the boot discovery/policy state into the operator sink"
-    )]
     #[must_use]
     pub fn new(
         rows: &[DiscoveryPoolRow],
         requested_kinds: &[PoolKind],
-        allowed: &std::collections::BTreeSet<String>,
         params: &DiscoveryParams,
         policy: PathPolicy,
         retry_policy: RetryPolicy,
@@ -182,7 +177,7 @@ impl PipelinePathOps {
         weth: String,
     ) -> Self {
         Self {
-            graph: build_graph(rows, requested_kinds, Some(allowed)),
+            graph: build_graph(rows, requested_kinds, None),
             params: params.clone(),
             pipeline: Mutex::new(RegistrationPipeline::new(policy, retry_policy)),
             input_token,

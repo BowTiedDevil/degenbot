@@ -61,7 +61,6 @@ from degenbot.runner.build_paths import (
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.diag import arm_diagnostics
 from degenbot.runner.identity import (
-    ETH_MAINNET_ALLOWED_TOKENS,
     MULTICALL3_ADDRESS,
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
@@ -481,12 +480,6 @@ class BotRunner:
 
         # ── Coordination state ──
         dispatcher = Dispatcher.for_block(current_block)
-
-        # Register the operator-verified standard-ERC-20 set as a hard
-        # classifier invariant: if the FoT registry ever confirms one of
-        # these, the driver panics rather than silently dropping that token's
-        # real arbitrage (coarse guard, not an exemption).
-        dispatcher.set_fot_verified_non_fot(list(ETH_MAINNET_ALLOWED_TOKENS))
 
         sim_ctx = self._build_sim_ctx(async_w3, cfg, engine_registry)
 

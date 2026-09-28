@@ -1,48 +1,27 @@
-"""FFI smoke tests for the verified-non-FoT hard guard.
+"""The FoT registry has no operator-attestation surface.
 
-The ``set_fot_verified_non_fot`` setter seeds the Rust
-``FeeOnTransferRegistry`` with the operator's manually-verified standard-ERC-20
-set. This is a hard classifier invariant — NOT an exemption: if the classifier
-ever CONFIRMS one of these, ``fot_tokens`` panics. The panic behavior itself is
-covered by the Rust unit tests in ``fot_registry.rs`` (driving a confirmation
-from Python would require the full dispatch-feedback loop); these tests pin the
-FFI registration + address parsing + the no-panic-until-confirmation contract.
+
+
+Fee-on-transfer verdicts come from runtime suspicion alone: a token with no
+
+suspicion evidence is never FoT, and two distinct failing pools confirm it.
+
+There is no operator ``verified_non_fot`` setter — an attestation cannot
+
+suppress a verdict.
 """
 
 from __future__ import annotations
 
-import pytest
-
 from degenbot._ffi.submission import Dispatcher
 
-# WBTC — the canonical false-positive victim from the original report.
-WBTC = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
-WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+def test_dispatcher_has_no_fot_verified_non_fot_setter() -> None:
+    """The retired operator-attestation setter must not exist on the FFI."""
+    assert not hasattr(Dispatcher, "set_fot_verified_non_fot")
 
 
-def test_set_fot_verified_non_fot_accepts_verified_set() -> None:
-    """A fresh dispatcher can be seeded with the verified set with no error."""
+def test_dispatcher_fot_tokens_starts_empty() -> None:
+    """A fresh dispatcher has no FoT evidence and reports no FoT tokens."""
     d = Dispatcher.for_block(10)
-    d.set_fot_verified_non_fot([WBTC, WETH])
-    # No confirmation yet → no panic; the guard is inert until a confirmation.
-    assert d.fot_tokens(10) == []
-
-
-def test_set_fot_verified_non_fot_empty_disables_guard() -> None:
-    d = Dispatcher.for_block(10)
-    d.set_fot_verified_non_fot([])
-    assert d.fot_tokens(10) == []
-
-
-def test_set_fot_verified_non_fot_invalid_address_raises() -> None:
-    d = Dispatcher.for_block(10)
-    with pytest.raises(ValueError, match="invalid verified non-FoT token"):
-        d.set_fot_verified_non_fot(["0xnotanaddress"])
-
-
-def test_set_fot_verified_non_fot_replaces_wholesale() -> None:
-    d = Dispatcher.for_block(10)
-    d.set_fot_verified_non_fot([WBTC])
-    # A second seed with a different set replaces the first wholesale.
-    d.set_fot_verified_non_fot([WETH])
     assert d.fot_tokens(10) == []
