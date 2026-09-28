@@ -1,11 +1,11 @@
-"""SMOZG3: operator ERC6909 vault-capture toggle reaches the Rust seam.
+"""Operator ERC6909 vault-capture toggle reaches the Rust assembly seam.
 
-``_dispatch_profitable`` must project the driver's
-``ERC6909_PROFIT`` operator knob (``driver_constants``, env-gated default
-off) into the ``assemble_dispatch_candidates(erc6909_profit=...)`` seam so the Rust
-strategy's ``resolve_axes`` / ``config_for_options`` axis chain (→
-``check_mode=2`` + the pure-V4 ``V4_MINT_COMPACT`` stream) is reachable in
-production. The seam's kwarg acceptance itself is pinned by
+The sim-submit pipeline's simulate leaf (``_run_sim``) must project the
+driver's ``ERC6909_PROFIT`` operator knob (``driver_constants``, env-gated
+default off) into the ``assemble_dispatch_candidates(erc6909_profit=...)``
+seam so the Rust strategy's ``resolve_axes`` / ``config_for_options`` axis
+chain (→ ``check_mode=2`` + the pure-V4 ``V4_MINT_COMPACT`` stream) is
+reachable in production. The seam's kwarg acceptance itself is pinned by
 ``tests/rust/test_simulation_seam_classes.py``; this test pins the driver's
 projection of the knob into it.
 """
@@ -16,6 +16,7 @@ import pytest
 
 from degenbot.dispatch import Dispatcher
 from degenbot.runner import _dispatch as d
+from degenbot.runner._sim_submit import BatchWork, _run_sim
 from degenbot.runner.bot_runner import _SessionState
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers.identity_env import identity_env
@@ -48,7 +49,7 @@ def test_erc6909_default_is_off() -> None:
     assert cfg.erc6909_profit is False
 
 
-async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
+async def test_run_sim_projects_erc6909_toggle(monkeypatch) -> None:
     recorded: list[dict] = []
 
     class _Rec(_FakeAssembly):
@@ -58,8 +59,9 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
 
     monkeypatch.setattr(d, "assemble_dispatch_candidates", _Rec)
 
-    # One solved result; ``sim_ctx=None`` raises AFTER candidate construction
-    # (the RuntimeError is the tripwire that the constructor really ran).
+    # One solved result; ``sim_ctx=None`` makes the simulate leaf raise AFTER
+    # candidate construction (the RuntimeError is the tripwire that the
+    # constructor really ran).
     results = [(1, 100, 5, (105,), (100,), 10, (0,))]
     with identity_env(
         {
@@ -83,11 +85,14 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
     )
     cfg_knob_state = owner.cfg.erc6909_profit
     with pytest.raises(RuntimeError, match="SimulateContext is required"):
-        await d._dispatch_profitable(
+        await _run_sim(
             owner,
-            results,
-            context=d.BatchContext(block_timestamp=1_700_000_000, base_fee_next=1_000_000_000),
-            operator_nonce=0,
+            BatchWork(
+                results=results,
+                block_timestamp=1_700_000_000,
+                base_fee_next=1_000_000_000,
+                current_block=10,
+            ),
         )
 
     assert len(recorded) == 1, "one assembly call must carry the batch"

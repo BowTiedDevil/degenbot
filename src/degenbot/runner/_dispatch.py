@@ -1,9 +1,9 @@
-"""Dispatch + sim-render helpers for the settlement-arbitrage ``BotRunner``.
+"""Dispatch + sim-render leaf helpers for the settlement-arbitrage ``BotRunner``.
 
-Owns the encode→simulate→submit leaf
-(:func:`_dispatch_profitable` — the ``dispatch_profitable`` /
-``dispatch_and_submit`` Rust seam) and the ``[sim]``/``[profit]``/``[sim-fail]``
-renderers that contextualize ``DispatchOutcome``.
+The production path is the Rust-owned ordered sim-submit pipeline
+(:mod:`degenbot.runner._sim_submit`), whose Python leaves shape candidates,
+stitch inline-sim payload records, render outcomes, and submit records over the
+``dispatch_profitable`` / ``dispatch_and_submit`` Rust seams.
 
 The renderers are display-only (``stays-python``); all sim/submit arithmetic
 runs in the Rust core. Only candidate-list shaping + log rendering happen
@@ -16,7 +16,6 @@ Rust-side, for both entry arms.
 
 from __future__ import annotations
 
-import dataclasses
 import pathlib
 import time
 from dataclasses import dataclass
@@ -46,7 +45,6 @@ from degenbot.dispatch import (
     TxSigner,
     assemble_dispatch_candidates,
     dispatch_and_submit,
-    dispatch_profitable,
     merge_payload_results,
 )
 from degenbot.logging import logger as bot_logger
@@ -114,56 +112,6 @@ def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
     return code
 
 
-@dataclasses.dataclass(frozen=True)
-class BatchContext:
-    """Per-batch economics carried by the serial dispatch leaf's callers."""
-
-    block_timestamp: int
-    base_fee_next: int
-
-
-async def _dispatch_profitable(
-    session: _SessionState,
-    results: list[_RawResult],
-    *,
-    context: BatchContext,
-    operator_nonce: int,
-    payloads: dict[int, dict] | None = None,
-) -> None:
-    """Encode - simulate - submit one batch of profitable results serially.
-
-    The serial composition; production drives the Rust-owned
-    :mod:`degenbot.runner._sim_submit` pipeline (K-way concurrent sims over
-    the same seam contracts, ordered submit fan-in). All session coordination
-    state is read from the single ``session`` owner (CONTEXT.md: *session
-    state*), never re-passed.
-
-    ``payloads`` are the engine's inline-sim results — those entries skip the
-    FFI sim and their submit records are stitched straight into the outcome
-    (per-entry presence decides).
-    """
-    candidates = _build_dispatch_candidates(session, results, payloads=payloads)
-    outcome: DispatchOutcome | None = None
-    if candidates:
-        current_block = session.dispatcher.current_block
-        outcome = await _simulate_batch(
-            session,
-            candidates,
-            block_timestamp=context.block_timestamp,
-            base_fee_next=context.base_fee_next,
-            current_block=current_block,
-        )
-    merged = _merge_payload_outcome(session, outcome, payloads)
-    if not merged:
-        return
-    _render_outcome(session, merged, session.dispatcher.current_block)
-    await _submit_batch_records(
-        session,
-        merged,
-        operator_nonce=operator_nonce,
-    )
-
-
 def _build_dispatch_candidates(
     session: _SessionState,
     results: list[_RawResult],
@@ -172,8 +120,7 @@ def _build_dispatch_candidates(
 ) -> list[DispatchCandidate]:
     """Shape a batch of raw engine results into Rust-seam candidates.
 
-    Shared by the serial leaf (:func:`_dispatch_profitable`) and the concurrent
-    pipeline (``_sim_submit``). The whole batch is assembled by the
+    The whole batch is assembled by the
     Rust seam in one call: path resolution, per-row field construction, the
     empty-hop skip, and the payload-served skip all run in the core. Only the
     display-only ``[sim-none]`` log and the operator policy bools stay Python.
@@ -358,30 +305,6 @@ def _merge_payload_outcome(
     return MergedOutcome(base_outcome, candidates, failures, path_infos, unprofitable)
 
 
-async def _simulate_batch(
-    session: _SessionState,
-    candidates: list[DispatchCandidate],
-    *,
-    block_timestamp: int,
-    base_fee_next: int,
-    current_block: int,
-) -> DispatchOutcome:
-    """Run the Rust simulate fan-out for a candidate batch (one DispatchOutcome)."""
-    if session.sim_ctx is None:
-        msg = "SimulateContext is required to dispatch (non-Alloy provider or sim context unbuilt)"
-        raise RuntimeError(msg)
-    return await dispatch_profitable(
-        candidates=candidates,
-        context=session.sim_ctx,
-        dispatcher=session.dispatcher,
-        base_fee_next=base_fee_next,
-        current_block=current_block,
-        block_timestamp=block_timestamp,
-        min_profit_margin_bps=session.cfg.min_profit_margin_bps,
-        engine=session.engine_registry.engine,
-    )
-
-
 def _render_outcome(
     session: _SessionState,
     outcome: _SimOutcome,
@@ -459,7 +382,7 @@ async def _submit_batch_records(
 ) -> None:
     """Submit gas-profitable candidates via the Rust submit leaf + render records.
 
-    Shared by the serial leaf and the pipeline's ordered submitter. Expects
+    The pipeline's ordered submitter calls this. Expects
     the operator nonce fetched AT submit time (serialized consumers only) and
     forwards it unchanged: the Rust authority seeds from that chain read and
     leases the sign-time nonce, so no nonce is computed Python-side.
