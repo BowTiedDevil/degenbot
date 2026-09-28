@@ -65,6 +65,7 @@ from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import config_file_path
+from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.registry.pool_type import PoolRegistration
 from degenbot.types import dex_identity
@@ -222,25 +223,59 @@ def _overlay_path_from_config() -> Path | None:
     is read as a raw table from the file the loader selected — the same file
     the typed load read, not a re-derived path.
 
+    Absent means none: no file layer, no ``[deployments]`` section, or no
+    ``overlay`` key all return ``None`` quietly, because an operator who did
+    not write an overlay is not making a mistake. A file that exists but
+    cannot serve the read — unreadable, unparseable, a non-table
+    ``[deployments]``, or a non-string/empty ``overlay`` — raises instead:
+    the bot must never silently drop the operator's overlay deployments.
+
     Returns:
-        The overlay path (expanded + absolute), or ``None`` when the process has
-        no file layer or the section/key is absent.
+        The overlay path (expanded + absolute), or ``None`` when the process
+        has no file layer or the section/key is absent.
+
+    Raises:
+        DegenbotValueError: When the selected config file exists but cannot
+            be read as ``[deployments] overlay``, naming the file and the
+            problem.
 
     """
     selected = config_file_path()
     if selected is None:
         return None
+    path = Path(selected)
     try:
-        with Path(selected).open("rb") as fh:
+        with path.open("rb") as fh:
             data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
-        return None
+    except OSError as exc:
+        msg = (
+            f"Operator config file {path} could not be read to resolve [deployments] overlay: {exc}"
+        )
+        raise DegenbotValueError(message=msg) from exc
+    except tomllib.TOMLDecodeError as exc:
+        msg = (
+            f"Operator config file {path} is not valid TOML (needed to read "
+            f"[deployments] overlay): {exc}"
+        )
+        raise DegenbotValueError(message=msg) from exc
     section = data.get("deployments")
+    if section is None:
+        return None
     if not isinstance(section, dict):
-        return None
+        msg = (
+            f"Operator config file {path}: [deployments] must be a table, "
+            f"got {type(section).__name__}"
+        )
+        raise DegenbotValueError(message=msg)
     overlay = section.get("overlay")
-    if not isinstance(overlay, str) or not overlay:
+    if overlay is None:
         return None
+    if not isinstance(overlay, str) or not overlay:
+        msg = (
+            f"Operator config file {path}: [deployments] overlay must be a "
+            f"non-empty string, got {overlay!r}"
+        )
+        raise DegenbotValueError(message=msg)
     return Path(overlay).expanduser().absolute()
 
 
