@@ -44,12 +44,17 @@ def validate_strategy_readiness() -> StrategyReadinessView:
 def settlement_broadcast_endpoints() -> list[str]:
     """Return the resolved settlement broadcast endpoints (this process's arm).
 
+    The endpoints are the settlement arm's settled list from the
+    ``degenbot-config`` readiness resolution -- the one splitter and allowlist
+    gate -- so the driver path and the strategy plane cannot disagree about
+    what settled.
+
     Raises ``ValueError`` when the settlement facet is inactive or its endpoint
     set is unsettled: a hosted runner IS the settlement arm, so its broadcast
     posture is never optional.
 
     Returns:
-        The broadcast endpoints the settlement composition resolved.
+        The settlement arm's settled broadcast endpoints.
 
     """
     return resolved_config().settlement_broadcast_endpoints()

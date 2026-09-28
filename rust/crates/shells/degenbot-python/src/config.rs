@@ -460,25 +460,37 @@ impl ResolvedConfig {
     /// The resolved settlement broadcast endpoints (this process's settlement
     /// arm).
     ///
+    /// The endpoints are the settlement arm's settled list from
+    /// `degenbot-config`'s readiness resolution — the one splitter and
+    /// allowlist gate. The settlement strategy composition keeps its role for
+    /// the strategy plane; this driver path does not re-derive the list
+    /// through it.
+    ///
     /// # Errors
     ///
-    /// `ValueError` when the settlement facet is not active — a hosted runner
-    /// is the settlement arm, so its broadcast posture is never optional.
+    /// `ValueError` when the settlement facet is not active, or when its
+    /// endpoint set is unsettled or refused by the readiness gate — a hosted
+    /// runner is the settlement arm, so its broadcast posture is never
+    /// optional.
     fn settlement_broadcast_endpoints(&self) -> PyResult<Vec<String>> {
-        let config = &self.verdict.layers.config;
-        let readiness = ::degenbot_config::strategy_readiness(config)
-            .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-        if matches!(readiness.settlement, ::degenbot_config::Arm::Inactive) {
-            return Err(::pyo3::exceptions::PyValueError::new_err(
-                "strategy settlement is not active: this hosted runner IS the settlement arm; \
-                 activate it first (degenbot strategy activate settlement --endpoints-default)",
-            ));
-        }
-        // The endpoints come from the settlement strategy composition, so the
-        // broadcast posture and the strategy plane read one config surface.
-        Ok(::degenbot_strategy::Settlement::from_config(config)
-            .into_config()
-            .endpoints)
+        settlement_broadcast_endpoints_in(&self.verdict.layers.config)
+    }
+}
+
+/// [`ResolvedConfig::settlement_broadcast_endpoints`] over an explicit typed
+/// config: the settlement readiness arm's settled URLs, which the one readiness
+/// resolution already split and allowlist-validated.
+fn settlement_broadcast_endpoints_in(
+    config: &::degenbot_config::BotConfig,
+) -> PyResult<Vec<String>> {
+    let readiness = ::degenbot_config::strategy_readiness(config)
+        .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    match readiness.settlement {
+        ::degenbot_config::Arm::Active(urls) => Ok(urls),
+        ::degenbot_config::Arm::Inactive => Err(::pyo3::exceptions::PyValueError::new_err(
+            "strategy settlement is not active: this hosted runner IS the settlement arm; \
+             activate it first (degenbot strategy activate settlement --endpoints-default)",
+        )),
     }
 }
 
@@ -731,11 +743,13 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
-    use ::degenbot_config::{BotConfigLoader, MapEnv, NodeScope, Source};
+    use ::degenbot_config::{Arm, BotConfig, BotConfigLoader, MapEnv, NodeScope, Source};
+    use ::degenbot_strategy::Settlement;
 
     use super::{
         chain_id_in, database_path_in, declared_database_path_of, entry_provenance_by_env,
-        node_uri_in, provenance_by_path, values_by_path, ResolvedConfig,
+        node_uri_in, provenance_by_path, settlement_broadcast_endpoints_in, values_by_path,
+        ResolvedConfig,
     };
 
     /// The layers a `MapEnv` supplies, with no file layer and no process
@@ -965,5 +979,100 @@ mod tests {
                 "the forwarded batch size must never collapse to a busy loop"
             );
         });
+    }
+
+    /// The readiness resolution's settled settlement URLs, or `None` when the
+    /// resolution refuses or the arm is inactive.
+    fn readiness_settlement_endpoints(cfg: &BotConfig) -> Option<Vec<String>> {
+        match ::degenbot_config::strategy_readiness(cfg) {
+            Ok(readiness) => match readiness.settlement {
+                Arm::Active(urls) => Some(urls),
+                Arm::Inactive => None,
+            },
+            Err(_) => None,
+        }
+    }
+
+    /// Precondition for returning the readiness arm directly: for every
+    /// representative settlement config the readiness arm's settled URLs equal
+    /// the composition's, so the lift cannot change the returned list. A blank
+    /// or whitespace-only set is the refusal shape both splitters agree on:
+    /// the composition settles to empty, and the readiness resolution refuses
+    /// it outright because an active facet may not carry an unsettled set.
+    #[test]
+    fn readiness_and_composition_settle_the_same_settlement_endpoints() {
+        let explicit = {
+            let mut cfg = BotConfig::default();
+            cfg.strategy.settlement.active = true;
+            cfg.strategy.settlement.endpoints = Some(String::from(
+                "https://rpc.mevblocker.io/noreverts, https://rpc.flashbots.net?hint=hash",
+            ));
+            cfg
+        };
+        let default_stamped = {
+            let mut cfg = BotConfig::default();
+            cfg.strategy.settlement.active = true;
+            cfg.strategy.settlement.endpoints =
+                Some(::degenbot_config::SETTLEMENT_DEFAULT_ENDPOINTS.join(","));
+            cfg
+        };
+        for cfg in [&explicit, &default_stamped] {
+            let readiness = readiness_settlement_endpoints(cfg)
+                .expect("the settlement arm is active with an allowlisted set");
+            assert_eq!(
+                readiness,
+                Settlement::from_config(cfg).into_config().endpoints,
+                "the readiness arm and the composition must settle one list"
+            );
+        }
+        for raw in ["", "   ", " , , "] {
+            let mut cfg = BotConfig::default();
+            cfg.strategy.settlement.active = true;
+            cfg.strategy.settlement.endpoints = Some(String::from(raw));
+            assert!(
+                ::degenbot_config::strategy_readiness(&cfg).is_err(),
+                "an active settlement facet with a blank set must refuse"
+            );
+            assert!(
+                Settlement::from_config(&cfg)
+                    .into_config()
+                    .endpoints
+                    .is_empty(),
+                "the composition's split of a blank set is empty, matching the refusal"
+            );
+        }
+    }
+
+    /// The returned list is pinned here in Rust: the Python relay-posture pins
+    /// monkeypatch the wrapper, so the lift's return home needs a lower-level
+    /// pin. Splitting, trimming, and order come from the readiness resolution.
+    #[test]
+    fn settlement_broadcast_endpoints_returns_the_readiness_arm_list() {
+        let mut cfg = BotConfig::default();
+        cfg.strategy.settlement.active = true;
+        cfg.strategy.settlement.endpoints = Some(String::from(
+            " https://rpc.mevblocker.io/noreverts , https://rpc.flashbots.net?hint=hash ",
+        ));
+        assert_eq!(
+            settlement_broadcast_endpoints_in(&cfg).expect("the settlement arm is active"),
+            vec![
+                String::from("https://rpc.mevblocker.io/noreverts"),
+                String::from("https://rpc.flashbots.net?hint=hash"),
+            ]
+        );
+    }
+
+    /// An inactive settlement facet refuses with the settlement-arm message,
+    /// not an empty list.
+    #[test]
+    fn settlement_broadcast_endpoints_refuses_an_inactive_facet() {
+        let error = settlement_broadcast_endpoints_in(&BotConfig::default())
+            .expect_err("an inactive settlement arm refuses");
+        assert!(
+            error
+                .to_string()
+                .contains("this hosted runner IS the settlement arm"),
+            "the refusal must name the settlement-arm remedy, got: {error}"
+        );
     }
 }
