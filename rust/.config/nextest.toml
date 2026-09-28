@@ -1,0 +1,12 @@
+# nextest profiles for degenbot's Rust workspace.
+# Run with: just test-rust-nextest (or cargo nextest run ... --profile ci).
+# The ci profile writes per-test durations as JUnit XML (sort `time` to rank
+# slow tests); `just test-timing` does that ranking.
+
+[profile.ci]
+retries = 0
+# Mark anything over 10s as slow; over 20s (2x) fail it so regressions are visible.
+slow-timeout = { period = "10s", terminate-after = 2 }
+
+[profile.ci.junit]
+path = "nextest-ci.junit.xml"

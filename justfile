@@ -129,6 +129,40 @@ test-rust: test-standalone
     cmp -s src/degenbot/registry/deployments.json rust/crates/foundation/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
     cargo test --locked --manifest-path rust/Cargo.toml --workspace
 
+# Run the cargo workspace suite under cargo-nextest: per-process test
+# isolation, cross-binary parallelism, and per-test durations as JUnit XML at
+# rust/target/nextest/ci/nextest-ci.junit.xml. `--no-fail-fast` because a
+# tree-wide rebuild advances `.build-number` mid-build, after degenbot-cli
+# embedded the older receipt — the build-receipt gate then fails once until
+# the next compile re-embeds it (fail-fast would abort the whole run there).
+# Requires cargo-nextest: cargo install --locked cargo-nextest
+test-rust-nextest:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo nextest run --locked --manifest-path rust/Cargo.toml --workspace --profile ci --no-fail-fast "$@"
+
+# Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
+test-timing top='30':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --no-sync python - <<'EOF'
+    import statistics, xml.etree.ElementTree as ET
+    top = int("{{top}}")
+    tree = ET.parse("rust/target/nextest/ci/nextest-ci.junit.xml")
+    cases = sorted(
+        ((float(tc.get("time")), f"{tc.get('classname')}. {tc.get('name')}") for tc in tree.iter("testcase")),
+        reverse=True,
+    )
+    serial = sum(d for d, _ in cases)
+    slow = [c for c in cases if c[0] >= 1.0]
+    print(f"tests: {len(cases)}  serial sum: {serial:.1f}s  median: {statistics.median(d for d, _ in cases)*1000:.1f}ms")
+    print(f"tests >= 1s: {len(slow)}  combined: {sum(d for d, _ in slow):.1f}s ({100*sum(d for d, _ in slow)/serial:.0f}% of serial time)")
+    for d, name in cases[:top]:
+        print(f"  {d:8.3f}s  {name}")
+    EOF
+
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every publishable workspace member in dependency order.
 # ~20-40 min cold. CI's PR gate (check-publish) runs the clean-tree form.
