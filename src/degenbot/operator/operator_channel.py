@@ -288,6 +288,7 @@ class OperatorServer:
         self._request_timeout = request_timeout
         self._server: asyncio.AbstractServer | None = None
         self._serving: asyncio.Future[None] | None = None
+        self._ready = asyncio.Event()
 
     async def serve(self) -> None:
         """Start the socket server and accept connections until closed.
@@ -299,9 +300,19 @@ class OperatorServer:
         loop).
         """
         self._server = await asyncio.start_unix_server(self._on_client, self._socket_path)
+        self._ready.set()  # socket is bound + listening: readiness signal
         self._serving = asyncio.ensure_future(self._server.serve_forever())
         async with self._server:
             await self._serving
+
+    async def wait_ready(self, timeout_s: float = 5.0) -> None:
+        """Wait until :meth:`serve` has bound the socket and is listening.
+
+        Args:
+            timeout_s: seconds to wait before raising :class:`TimeoutError`.
+
+        """
+        await asyncio.wait_for(self._ready.wait(), timeout_s)
 
     async def _handle_line(self, line: bytes) -> dict[str, Any]:
         """Decode + dispatch one request line to the wrapped handler.

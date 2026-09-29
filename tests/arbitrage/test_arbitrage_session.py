@@ -245,7 +245,8 @@ class TestBotRunnerStart:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -281,7 +282,8 @@ class TestBotRunnerStart:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -306,7 +308,8 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -333,7 +336,8 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -366,7 +370,8 @@ class TestBotRunnerRun:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=async_w3,
@@ -428,7 +433,8 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
         )
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=registry,  # type: ignore[arg-type]
                 async_w3=_FakeAsyncW3(),
@@ -469,7 +475,8 @@ class TestBotRunnerShutdown:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -495,7 +502,8 @@ class TestBotRunnerShutdown:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -522,7 +530,8 @@ class TestBotRunnerShutdown:
         engine_registry.engine.stop_raises = RuntimeError("engine torn down")
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -547,7 +556,8 @@ class TestBotRunnerShutdown:
         # AttributeError). Let a Ctrl-C during startup still exit cleanly.
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=None,
                 engine_registry=None,
                 async_w3=None,
@@ -575,7 +585,8 @@ class TestBotRunnerShutdown:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -588,9 +599,10 @@ class TestBotRunnerShutdown:
         await session.start()
 
         async with session:
-            # run() will block on the hanging consumer; cancel it to exit the
-            # async-with cleanly so __aexit__ runs.
-            await asyncio.sleep(0.01)
+            # No run() call: __aexit__ must tear down cleanly from the
+            # started-only state (shutdown() + consumer-task cancel are
+            # no-op-safe there).
+            pass
 
         # shutdown() (→ engine.stop) ran during __aexit__, recording "stop"
         assert engine_registry.engine.stop_calls == 1
@@ -618,7 +630,8 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -641,7 +654,8 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -656,7 +670,7 @@ class TestBotRunnerSigintHandler:
         assert signal.getsignal(signal.SIGINT) is not baseline
 
         async with session:
-            await asyncio.sleep(0.01)
+            pass
 
         # __aexit__ restored the previous handler (whatever it was — typically
         # asyncio.run's Runner handler, not SIG_DFL).
@@ -670,7 +684,8 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -697,7 +712,8 @@ class TestBotRunnerSigintHandler:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -778,12 +794,15 @@ class TestConstructionContext:
         seen: dict = {}
 
         async def recording_path_builder(**kwargs):
-            await asyncio.sleep(0)
+            await asyncio.sleep(
+                0
+            )  # single yield: stands in for the real builder's first await (RPC verify)
             seen["kwargs"] = dict(kwargs)
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -828,13 +847,16 @@ class TestSubBBackgroundRegistration:
             await asyncio.Event().wait()
 
         async def raising_path_builder(**_kwargs):
-            await asyncio.sleep(0)
+            await asyncio.sleep(
+                0
+            )  # single yield: stands in for the real builder's pre-failure await
             boom = "tick data mismatch"
             raise VerificationMismatchError(boom)
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -862,7 +884,8 @@ class TestSubBBackgroundRegistration:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -876,7 +899,9 @@ class TestSubBBackgroundRegistration:
         calls: list[object] = []
 
         async def recording_path_builder(**kwargs):
-            await asyncio.sleep(0)
+            await asyncio.sleep(
+                0
+            )  # single yield: stands in for the real builder's first await (RPC verify)
             calls.append(kwargs["options"].context)
 
         await session._run_registration_background(
@@ -907,7 +932,8 @@ class TestSubBBackgroundRegistration:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True,
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),
@@ -946,7 +972,8 @@ class TestSubBBackgroundRegistration:
         bot._py_bot = _RecordingPyBot(calls)  # records `close_snapshot_tx`
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),
@@ -958,7 +985,9 @@ class TestSubBBackgroundRegistration:
         session.engine_registry = _FakeEngineRegistry()
 
         async def noop_path_builder(**kwargs):
-            await asyncio.sleep(0)
+            await asyncio.sleep(
+                0
+            )  # single yield: stands in for the real builder's construction await
 
         await session._run_registration_background(
             path_builder=noop_path_builder,
@@ -989,7 +1018,8 @@ class TestSubBBackgroundRegistration:
         bot._py_bot = _RecordingPyBot(calls, raise_on_close=True)
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),
@@ -1000,7 +1030,10 @@ class TestSubBBackgroundRegistration:
         session.bot = bot
         session.engine_registry = _FakeEngineRegistry()
 
+        builder_started = asyncio.Event()
+
         async def hanging_path_builder(**kwargs):
+            builder_started.set()
             await asyncio.Event().wait()
 
         task = asyncio.create_task(
@@ -1010,7 +1043,7 @@ class TestSubBBackgroundRegistration:
                 retry_policy=None,
             )
         )
-        await asyncio.sleep(0)  # let the builder start
+        await asyncio.wait_for(builder_started.wait(), timeout=1)
         task.cancel()
         # The cancelled task re-raises CancelledError cleanly — the secondary
         # `close_snapshot_tx` RuntimeError must NOT surface in its place.
@@ -1050,17 +1083,20 @@ class TestSubCBgRegistrationConcurrency:
             while True:  # discovery never exhausts, but yields cooperatively
                 climbed = i
                 i += 1
-                await asyncio.sleep(0)
+                await asyncio.sleep(
+                    0
+                )  # yield stands in for the real builder's per-path construction await
 
         async def consumer(**_kwargs):
             # dispatch path — discrete work, then end the main loop
             for n in range(25):
                 dispatch_work.append(n)
-                await asyncio.sleep(0)
+                await asyncio.sleep(0)  # yield stands in for one dispatch hot-loop await
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1094,7 +1130,7 @@ class TestSubCBgRegistrationConcurrency:
             nonlocal verify_steps
             for _ in range(40):  # RPC-verify awaits (each a cooperative yield)
                 verify_steps += 1
-                await asyncio.sleep(0)
+                await asyncio.sleep(0)  # each yield stands in for one RPC-verify await
 
         async def consumer(**_kwargs):
             # hot loop does not depend on a 'final' discovery state: advance
@@ -1103,14 +1139,15 @@ class TestSubCBgRegistrationConcurrency:
             # coroutine runs — run() creates the reg task before the main loop.)
             for n in range(10):
                 dispatch_work.append(n)
-                await asyncio.sleep(0)
+                await asyncio.sleep(0)  # yield stands in for one dispatch hot-loop await
             registration_task = session._registration_task
             assert registration_task is not None
             await registration_task  # returns once the drain is done
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1144,13 +1181,16 @@ class TestSubCBgRegistrationConcurrency:
             await asyncio.Event().wait()
 
         async def raising_path_builder(**_kwargs):
-            await asyncio.sleep(0)
+            await asyncio.sleep(
+                0
+            )  # single yield: stands in for the real builder's pre-failure await
             boom = "provider transport failure after bounded retry"
             raise VerificationRpcError(boom)
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1193,11 +1233,15 @@ class TestSubCBgRegistrationConcurrency:
             while True:
                 climbed = i
                 i += 1
-                await asyncio.sleep(0)
+                await asyncio.sleep(
+                    0
+                )  # yield stands in for the real builder's per-path construction await
 
         async def recording_consumer(*, block_stream=None, **_kw) -> None:
             async for _b in block_stream:
-                await asyncio.sleep(0)
+                await asyncio.sleep(
+                    0
+                )  # yield stands in for the real consumer's per-block dispatch await
 
         registry = _Registry()
         # The main loop ends on the finite block stream — carried by the bot
@@ -1205,7 +1249,8 @@ class TestSubCBgRegistrationConcurrency:
         bot = _FakeBot(blocks=[_block_dict(500)])
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=registry,  # type: ignore[arg-type]
                 async_w3=_FakeAsyncW3(),
@@ -1251,11 +1296,12 @@ class Test6VZN7HOngoingDiscovery:
 
         async def consumer(**_kwargs):
             for _ in range(3):
-                await asyncio.sleep(0)
+                await asyncio.sleep(0)  # each yield stands in for one hot-loop dispatch await
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=bot,
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1419,7 +1465,9 @@ class TestPathRegistrationPipeline:
             pancakeswap_v3_tracker=object(),
             weth=weth,
         )
-        pipeline = PathRegistrationPipeline(context=ctx, engine_registry=reg, max_paths=0, discovery_batch_size=1000)
+        pipeline = PathRegistrationPipeline(
+            context=ctx, engine_registry=reg, max_paths=0, discovery_batch_size=1000
+        )
         # The pipeline retains its own context (NWTUM3 trimmed-state guarantee):
         # a call-site that drops run()'s bot (and even the local `ctx` ref)
         # still has everything construction needs.
@@ -1458,14 +1506,18 @@ class TestPathRegistrationPipeline:
         consumed: list[object] = []
 
         async def counting_consume(item, directions=None):
-            await asyncio.sleep(0)
+            await asyncio.sleep(
+                0
+            )  # single yield: stands in for the real _consume's construction await
             consumed.append(item)
 
         pipeline._consume = counting_consume  # type: ignore[method-assign]
 
         async def sweep():
             for item in ["p0", "p1", "p2"]:  # type: ignore[list-item]
-                await asyncio.sleep(0)
+                await asyncio.sleep(
+                    0
+                )  # yield per item: stands in for the real sweep's per-item fetch await
                 yield item
 
         pipeline.discovery_sweep = sweep  # type: ignore[method-assign]
@@ -1515,18 +1567,32 @@ class TestPathRegistrationPipeline:
                 # a V2/V3/V4 pool table class) — exercises the pipeline body +
                 # backpressure forever, and safe (no list(object()) TypeError).
                 i += 1
-                await asyncio.sleep(0)
+                await asyncio.sleep(
+                    0
+                )  # yield per item: stands in for the real discovery sweep's per-path await
                 yield [self._Step(type=object, address="0x" + f"{i:x}" * 40)]
 
         # Run the unbounded discovery producer through the crawl as a
         # background task (never returns). PRG-5: the bounded producer/consumer
         # queue retired — the crawl is bounded-window submission over the
         # fleet intake (the scripted receipts self-resolve inline).
+        # Deterministic readiness: signal when the FIRST unit outcome is folded.
+        # run_registration (PRG-5) submits discovery units directly through the
+        # fleet intake and folds outcomes via `_absorb_outcome` — it never
+        # dispatches through `_consume`, so a `_consume` wrapper would never
+        # fire from the crawl.
+        first_consume = asyncio.Event()
+        real_absorb = pipeline._absorb_outcome
+
+        def absorb_and_signal(outcome):
+            real_absorb(outcome)
+            first_consume.set()
+
+        pipeline._absorb_outcome = absorb_and_signal  # type: ignore[method-assign]
+
         reg_task = asyncio.create_task(pipeline.run_registration(producer=forever_producer()))
         try:
-            # Let forever discovery climb a few cooperative steps.
-            for _ in range(5):
-                await asyncio.sleep(0)
+            await asyncio.wait_for(first_consume.wait(), timeout=1)
 
             # MID-RUN add: a concrete 1-hop V2 path through the SAME `_consume`,
             # while forever discovery is still climbing in the background task.
@@ -1597,7 +1663,8 @@ class TestSessionOperatorSurface:
         engine_registry = _FakeEngineRegistry()
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1648,11 +1715,12 @@ class TestSessionOperatorSurface:
                     # the hot loop keeps solving previously-added hops.
                     await session.enqueue_path(["hop-a", "hop-b"], directions=[True, False])
                     await session.trigger_discovery(bound=3)
-                await asyncio.sleep(0)
+                await asyncio.sleep(0)  # yield stands in for one dispatch hot-loop await
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1694,8 +1762,11 @@ class TestPumpFinishedWatchdog:
             def __init__(self) -> None:
                 super().__init__()
                 self.pump_ended = asyncio.Event()
+                self.watchdog_parked = asyncio.Event()
 
             async def session_end_future(self) -> str:
+                # The watchdog awaiting this future IS the readiness signal.
+                self.watchdog_parked.set()
                 await self.pump_ended.wait()
                 return "PumpFinished"
 
@@ -1713,7 +1784,8 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1726,9 +1798,8 @@ class TestPumpFinishedWatchdog:
         await session.start()
 
         async def _end_pump_soon() -> None:
-            # Let run() start the consumer + watchdog, then signal the pump end.
-            for _ in range(5):
-                await asyncio.sleep(0)
+            # Fire only once run()'s watchdog is parked on the pump-end future.
+            await finishing.watchdog_parked.wait()
             finishing.pump_ended.set()
 
         fire = asyncio.create_task(_end_pump_soon())
@@ -1749,7 +1820,8 @@ class TestPumpFinishedWatchdog:
         class _PanickedEngine(_FakeEngine):
             async def session_end_future(self) -> str:
                 # A panicked pump task drops its completion sender; a real
-                # awaitable resolves after a beat (it does not raise).
+                # awaitable resolves after a beat (it does not raise). These
+                # yields stand in for that pending window before resolution.
                 for _ in range(3):
                     await asyncio.sleep(0)
                 return "PumpFinished"
@@ -1770,7 +1842,8 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=engine_registry,
                 async_w3=_FakeAsyncW3(),
@@ -1796,7 +1869,8 @@ class TestPumpFinishedWatchdog:
 
         session = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),

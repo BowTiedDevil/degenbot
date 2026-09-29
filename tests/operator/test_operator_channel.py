@@ -72,11 +72,7 @@ async def test_add_path_and_discover_round_trip(tmp_path) -> None:
     server = OperatorServer(handler, socket_path=socket_path)
     task = asyncio.create_task(server.serve())
     try:
-        # brief yield so the server binds the socket
-        for _ in range(50):
-            if _socket_bound(socket_path):
-                break
-            await asyncio.sleep(0.01)
+        await server.wait_ready()
 
         resp = await send_command(
             socket_path,
@@ -110,6 +106,34 @@ async def test_add_path_and_discover_round_trip(tmp_path) -> None:
         await server.close()
 
 
+async def test_serve_parks_until_closed(tmp_path) -> None:
+    """serve() itself must park: it runs forever (cancellable), so the serve
+    task stays pending while the server is up and completes only once close()
+    tears down serve_forever — a caller that ``create_task(serve())`` gets a
+    task that lives for the bot's lifetime, not one that returns instantly.
+    """
+    handler, _ = _stub_handler()
+    socket_path = str(tmp_path / "bot.sock")
+    server = OperatorServer(handler, socket_path=socket_path)
+    task = asyncio.create_task(server.serve())
+    try:
+        await server.wait_ready(timeout_s=5)
+        # Parked on serve_forever — not completed, not errored out.
+        assert task.done() is False
+
+        # While serve() parks, the channel is live for real traffic.
+        resp = await send_command(socket_path, "discover", {"bound": 1})
+        assert resp == {"ok": True, "detail": "discovery processed 1"}
+        assert task.done() is False
+    finally:
+        # close() cancels serve_forever, so the parked serve() task unwinds
+        # (cancelled) — bounded so a regression to a non-parking serve()
+        # surfaces as a fast failure, not a hang.
+        await server.close()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
+
+
 async def test_handler_error_becomes_ok_false_and_host_survives(tmp_path) -> None:
     """A failing command returns ok=false without crashing the host."""
     handler, _ = _stub_handler(fail_on="add_path")
@@ -117,10 +141,7 @@ async def test_handler_error_becomes_ok_false_and_host_survives(tmp_path) -> Non
     server = OperatorServer(handler, socket_path=socket_path)
     task = asyncio.create_task(server.serve())
     try:
-        for _ in range(50):
-            if _socket_bound(socket_path):
-                break
-            await asyncio.sleep(0.01)
+        await server.wait_ready()
 
         resp = await send_command(
             socket_path,
@@ -147,10 +168,7 @@ async def test_malformed_request_returns_ok_false(tmp_path) -> None:
     server = OperatorServer(handler, socket_path=socket_path)
     task = asyncio.create_task(server.serve())
     try:
-        for _ in range(50):
-            if _socket_bound(socket_path):
-                break
-            await asyncio.sleep(0.01)
+        await server.wait_ready()
 
         reader, writer = await asyncio.open_unix_connection(socket_path)
         writer.write(b"not-json\n")
@@ -166,13 +184,6 @@ async def test_malformed_request_returns_ok_false(tmp_path) -> None:
         with pytest.raises(asyncio.CancelledError):
             await task
         await server.close()
-
-
-def _socket_bound(path: str) -> bool:
-    """Return True once the server has bound its Unix socket file."""
-    from pathlib import Path
-
-    return Path(path).exists()
 
 
 def test_wrap_handler_normalizes_detail_and_error() -> None:
