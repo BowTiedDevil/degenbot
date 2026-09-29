@@ -260,7 +260,13 @@ impl TickMapSampleVerifier for CountingVerifier {
 fn typed_v4_post_admits_and_declares_a_v4_v2_solve() {
     let rt = runtime_fixture(500);
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &[v4_post(), v2_post()], 1, "0xtest", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &[v4_post(), v2_post()],
+        1,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
+    );
     assert_eq!(affected.len(), 2, "both typed posts admit");
 
     let v4 = affected
@@ -338,7 +344,13 @@ fn v4_anchor_with_no_crossed_ticks_uses_and_samples_the_real_pool_ingress() {
         panic!("fixture is a typed V4 post");
     };
     touched_ticks.clear();
-    let affected = admit_extracted(&rt, &mut solver, &[v4, v2_post()], 1, "0xtest", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &[v4, v2_post()],
+        1,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
+    );
     assert_eq!(
         calls.load(std::sync::atomic::Ordering::SeqCst),
         1,
@@ -391,7 +403,9 @@ fn v4_fee_past_encoder_bound_skips_loudly() {
 
     let rt = runtime_fixture(degenbot_executor::encoders::V4_FEE_ENCODER_MAX);
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &[v4_post()], 1, "0xtest", None);
+    let mut stage_trace = degenbot_strategy::frame_pipeline::StageTrace::default();
+    let affected = admit_extracted(&rt, &mut solver, &[v4_post()], 1, &mut stage_trace);
+    stage_trace.render("0xtest");
     assert!(affected.is_empty(), "an un-encodable fee never admits");
 
     let text = std::fs::read_to_string(&trace).expect("read trace");

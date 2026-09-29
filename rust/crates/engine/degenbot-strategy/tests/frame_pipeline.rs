@@ -33,15 +33,16 @@ use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{
-    admit_extracted, backrun_encode_options, cycle_refs, cycle_touched_legs,
-    discover_trace_payload, net_bid, solve_dfs_chains, BackrunIntents, CycleHop,
+    admit_extracted, backrun_encode_options, cycle_refs, cycle_touched_legs, net_bid,
+    solve_dfs_chains, BackrunIntents, CycleHop,
 };
 use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use degenbot_strategy::execution_context::{
     ExecutionContext, ETHEREUM_V4_POOL_MANAGER, ETHEREUM_WETH as WETH,
 };
 use degenbot_strategy::frame_pipeline::{
-    build_descriptors, empty_frame_observe_reason, state_digest, MarketContext, PipelineConfig,
+    build_descriptors, discover_trace_payload, empty_frame_observe_reason, state_digest,
+    DiscoverTrace, MarketContext, PipelineConfig, StageTrace,
 };
 use degenbot_strategy::project_candidate;
 
@@ -119,7 +120,7 @@ fn market_context(
     MarketContext::new(1, db, kit, 8, 4)
 }
 
-use degenbot_strategy::pending_tx::PendingTxReaction;
+use degenbot_strategy::pending_tx::{FrameContext, PendingTxReaction};
 use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
 // ─────────────────── the golden frame (offline, end to end) ────────────────
@@ -250,7 +251,13 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
 
     // admit into THIS frame's fresh workspace scope.
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &extracted,
+        SEED,
+        &mut StageTrace::default(),
+    );
     assert_eq!(affected.len(), 1, "P admits and trades WETH");
     assert_eq!(affected[0].address, P);
     assert_eq!(
@@ -366,7 +373,13 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
         &descriptors.by_address,
     );
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xparity", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &extracted,
+        SEED,
+        &mut StageTrace::default(),
+    );
     assert_eq!(affected.len(), 1);
     let q_id = solver
         .admit_v2(&BackrunV2Pool {
@@ -536,16 +549,21 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
 
     let discover = discover_trace_payload(
         "0xtouched",
-        cycles.len(),
-        cycles.len(),
-        1,
-        0,
-        1,
-        refused,
-        false,
-        4,
-        &touched,
-        &cycles,
+        &DiscoverTrace {
+            connectors: cycles.len(),
+            dfs_cycles: cycles.len(),
+            dfs_chains: 1,
+            unsupported_hop: 0,
+            affected: 1,
+            non_weth_cycles: refused,
+            non_base_quote_dropped: false,
+            cycle_max_hops: 4,
+            touched_pools: touched.len(),
+            cycles_with_multi_touched: cycles
+                .iter()
+                .filter(|c| cycle_touched_legs(c, &touched) > 1)
+                .count(),
+        },
     );
     assert_eq!(
         discover["touched_pools"].as_u64(),
@@ -622,7 +640,21 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
         non_base_quote_dropped: false,
         bailed: false,
     };
-    let _ = strategy.evaluate(&mut solver, intents, &pl, "0xtouched");
+    let knobs = degenbot_strategy::MevblockerBackrun::from_config(
+        &degenbot_config::BotConfig::default(),
+        String::new(),
+    )
+    .into_config();
+    let mut stage_trace = StageTrace::default();
+    let mut cx = FrameContext {
+        pl: &pl,
+        knobs: &knobs,
+        head: 0,
+        trace_tx: "0xtouched",
+        trace: &mut stage_trace,
+    };
+    let _ = strategy.evaluate(&mut cx, &mut solver, intents);
+    cx.trace.render("0xtouched");
 
     let traced = std::fs::read_to_string(&trace_path).expect("trace file was written");
     let solve = traced
@@ -730,7 +762,13 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
     );
     assert_eq!(extracted.len(), 1);
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &extracted, SEED, "0xfixture", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &extracted,
+        SEED,
+        &mut StageTrace::default(),
+    );
     // The WETH-only admission cut this frame short: `affected` was empty, so
     // no quote-land discovery could ever start for a USDC-quoted pair.
     assert_eq!(

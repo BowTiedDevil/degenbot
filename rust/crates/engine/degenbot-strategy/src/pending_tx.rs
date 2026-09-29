@@ -13,31 +13,13 @@
 
 use crate::backrun::BackrunConfig;
 use crate::backrun_engine::BackrunSolver;
-use alloy::primitives::{Address, Bytes, U256};
-use degenbot_pools::v3_state::ClSlotLayout;
-use degenbot_pools::TickInfo;
+use alloy::primitives::{Bytes, U256};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::journal_pools::PoolPostState;
 use degenbot_simulation::sim::evm::{ScratchDb, ScratchEvm};
-use hashbrown::HashMap as HbMap;
 
-use crate::frame_pipeline::{BidEconomics, PipelineConfig};
+use crate::frame_pipeline::{BidEconomics, PipelineConfig, StageTrace};
 use crate::market_context::MarketContext;
-
-/// A test/legacy CL tick-window source. Production V3 and V4 anchors receive
-/// their complete or sparse maps through `PoolIngress`, never this seam.
-pub trait V3TickWindow {
-    /// The in-range initialized ticks around `current_tick` (retained for
-    /// test mocks; production V3 routes through the ingress).
-    fn tick_window(
-        &self,
-        pool: Address,
-        layout: ClSlotLayout,
-        tick_spacing: i32,
-        current_tick: i32,
-        head: u64,
-    ) -> HbMap<i32, TickInfo>;
-}
 
 /// The candidate the driver simulates: the solved best composed at the
 /// strategy's competitiveness ceiling, plus the profit evidence the trace
@@ -60,7 +42,43 @@ pub struct Decided {
     pub economics: Option<BidEconomics>,
 }
 
+/// The frame's production context: the per-driver configuration and the
+/// per-frame identity every stage reads, plus the frame's stage-evidence
+/// buffer the frame module renders to the driver-owned offline-review
+/// capture. The heavy frame surfaces (the frame-surviving runtime, the fresh
+/// workspace, the scratch EVM, the read provider) stay stage arguments —
+/// only the stages that read them name them.
+pub struct FrameContext<'a> {
+    /// The pipeline configuration (deployment, owner, economics).
+    pub pl: &'a PipelineConfig,
+    /// The strategy knobs.
+    pub knobs: &'a BackrunConfig,
+    /// The head the frame replays against (the admission seed block).
+    pub head: u64,
+    /// The frame's trace identity.
+    pub trace_tx: &'a str,
+    /// The stage-evidence buffer; the frame module renders it after each
+    /// stage.
+    pub trace: &'a mut StageTrace,
+}
+
+/// The decide stage's gate input: the evaluated frame, the composed artifact
+/// the driver simulated, the bundle-simulation verdict over it, and the
+/// frame's spent budget.
+pub struct GateInput<'a, E> {
+    pub evaluated: &'a E,
+    pub composed: Option<&'a ComposedIntent>,
+    pub sim_ok: bool,
+    pub spent: U256,
+}
+
 /// One strategy that reacts to observed pending transactions.
+///
+/// Every stage reads [`FrameContext`] — the frame's config, identity, and
+/// evidence buffer — plus its stage-specific input, so no stage threads a
+/// parallel parameter list of the driver's seams. Stages report
+/// instrumentation by appending typed events to [`FrameContext::trace`]; the
+/// frame module renders them, and no strategy code touches the capture.
 #[expect(
     async_fn_in_trait,
     reason = "consumed only through generic dispatch, never as a dyn object"
@@ -76,15 +94,14 @@ pub trait PendingTxReaction {
     fn name(&self) -> &'static str;
 
     /// Admit what this strategy cares about from the recovered post-states
-    /// into the trigger's fresh workspace.
+    /// into the trigger's fresh workspace. The admission seed block is
+    /// [`FrameContext::head`].
     async fn admit(
         &mut self,
+        cx: &mut FrameContext<'_>,
         ctx: &MarketContext,
         workspace: &mut BackrunSolver,
         states: &[PoolPostState],
-        seed_block: u64,
-        trace_tx: &str,
-        tick_window: Option<&dyn V3TickWindow>,
     ) -> Self::Affected;
 
     /// `true` when nothing relevant was admitted (the driver observes the
@@ -92,53 +109,33 @@ pub trait PendingTxReaction {
     fn affected_is_empty(affected: &Self::Affected) -> bool;
 
     /// Discover candidate plays over the admitted set.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the stage threads the driver's distinct seams"
-    )]
     async fn discover(
         &mut self,
+        cx: &mut FrameContext<'_>,
         ctx: &MarketContext,
         workspace: &mut BackrunSolver,
         scratch: &mut ScratchEvm<ScratchDb<'_>>,
         provider: &AlloyProvider,
         affected: &Self::Affected,
-        head: u64,
-        trace_tx: &str,
     ) -> Self::Intents;
 
     /// Evaluate the discovered intents inside the workspace.
     fn evaluate(
         &mut self,
+        cx: &mut FrameContext<'_>,
         workspace: &mut BackrunSolver,
         intents: Self::Intents,
-        pl: &PipelineConfig,
-        trace_tx: &str,
     ) -> Self::Evaluated;
 
     /// Compose the best evaluated candidate into the artifact the driver
     /// simulates, or `None` when nothing composes.
     fn compose(
         &mut self,
+        cx: &mut FrameContext<'_>,
         evaluated: &Self::Evaluated,
-        pl: &PipelineConfig,
-        trace_tx: &str,
     ) -> Option<ComposedIntent>;
 
     /// The final gate over the composed artifact and the driver's simulation
     /// verdict; returns the decision plus the submit artifact.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the gate reads the driver's verdict and the composed artifact"
-    )]
-    fn decide(
-        &self,
-        knobs: &BackrunConfig,
-        pl: &PipelineConfig,
-        evaluated: &Self::Evaluated,
-        composed: Option<&ComposedIntent>,
-        sim_ok: bool,
-        spent: U256,
-        trace_tx: &str,
-    ) -> Decided;
+    fn decide(&self, cx: &mut FrameContext<'_>, gate: &GateInput<'_, Self::Evaluated>) -> Decided;
 }

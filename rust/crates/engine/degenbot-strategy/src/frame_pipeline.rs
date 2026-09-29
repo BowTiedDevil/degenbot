@@ -67,16 +67,21 @@
 //!    decision), and [`decide`] only caps the bid against the
 //!    budget/bundle ceilings.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::backrun::{BackrunConfig, Decision};
+use crate::anchored_dfs::NON_WETH_CYCLE;
+use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
 use crate::backrun_engine::BackrunSolver;
-use alloy::primitives::{Address, Bytes, U256};
+use crate::backrun_engine::PathReject;
+use crate::backrun_strategy::SolveStats;
+use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_bot::bot_core::SimAnchorOracle;
 use degenbot_bot::connector_index::V2ConnectorIndex;
+use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
-use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use degenbot_simulation::sim::evm::frame_replay::{
     ReplayFrameError, ReplayStatus, ReplayableTx, SequenceReplayError,
 };
@@ -86,11 +91,18 @@ use degenbot_simulation::sim::evm::journal_pools::{
 };
 use degenbot_simulation::sim::evm::BlockSimHandle;
 use degenbot_simulation::{SimulationOverrideParams, WarmCodeCacheInner};
+use degenbot_submission::dispatcher::Dispatcher;
+use degenbot_submission::monitor::ReceiptProbe;
+use degenbot_submission::signer::TxSigner;
+use degenbot_submission::submission_ledger::NonceLane;
+use degenbot_submission::submit::{
+    dispatch_and_submit, BundleTarget, SubmissionTarget, SubmitCandidate,
+};
 use hashbrown::HashMap as HbMap;
 use parking_lot::RwLock;
 
 use crate::execution_context::ExecutionContext;
-use crate::pending_tx::PendingTxReaction;
+use crate::pending_tx::{FrameContext, GateInput, PendingTxReaction};
 
 pub use crate::market_context::MarketContext;
 
@@ -138,6 +150,268 @@ fn now_unix_ms() -> u64 {
             .map_or(0_u128, |d| d.as_millis()),
     )
     .unwrap_or_default()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Driver-owned stage instrumentation
+// ─────────────────────────────────────────────────────────────────────────
+
+/// One typed instrumentation event a strategy stage reported. Stages append
+/// domain facts to the frame's [`StageTrace`]; this module renders them to
+/// the offline-review capture, so no strategy code touches the capture.
+#[derive(Debug)]
+pub enum StageEvent {
+    /// An admission skip: the pool and the sub-step that refused it.
+    ExtractSkip { pool: Address, stage: &'static str },
+    /// A V3 anchor entering the staged window (before its ingress admission).
+    AnchorStage { pool: Address },
+    /// A V3 anchor's staged tick evidence (after its ingress admission).
+    AnchorTicks {
+        pool: Address,
+        layout: ClSlotLayout,
+        spacing: i32,
+        tick: i32,
+        liquidity: u128,
+        crossed: usize,
+    },
+    /// A discovery hop reusing a pool this frame already admitted.
+    HopReuse {
+        pool: Address,
+        workspace_pool_id: u64,
+    },
+    /// A discovery hop's admission step refused: the pool, the sub-step, and
+    /// the detail.
+    HopFail {
+        pool: Address,
+        stage: String,
+        detail: String,
+    },
+    /// A discovery hop whose pool family the arm cannot type.
+    UnsupportedHop { pool_id: u64, kind: String },
+    /// The discovery counters behind the frame's `discover` event.
+    Discover(DiscoverTrace),
+    /// The evaluate stage's solve evidence.
+    Solve(SolveTrace),
+    /// The composer declined to encode (the decline's stable label).
+    ComposeDecline { reason: &'static str },
+    /// The wallet gate refused the net-of-gas bid.
+    NetGateRefusal {
+        gross_profit_wei: u128,
+        wallet_gas_cost_wei: u128,
+    },
+}
+
+/// The discovery counters the `discover` event publishes.
+#[derive(Debug)]
+pub struct DiscoverTrace {
+    pub connectors: usize,
+    pub dfs_cycles: usize,
+    pub dfs_chains: usize,
+    pub unsupported_hop: usize,
+    pub affected: usize,
+    pub non_weth_cycles: usize,
+    pub non_base_quote_dropped: bool,
+    pub cycle_max_hops: usize,
+    pub touched_pools: usize,
+    pub cycles_with_multi_touched: usize,
+}
+
+/// The evaluate stage's solve evidence: the aggregate stats plus the
+/// per-chain touched-leg counts, aligned with the stats' chains.
+#[derive(Debug)]
+pub struct SolveTrace {
+    pub stats: SolveStats,
+    pub touched_legs: Vec<usize>,
+}
+
+/// The stage-evidence buffer one frame's stages append to. The frame module
+/// renders (and drains) it after each stage, so the capture carries the
+/// events in stage order with no strategy-owned emission.
+#[derive(Debug, Default)]
+pub struct StageTrace {
+    events: Vec<StageEvent>,
+}
+
+impl StageTrace {
+    /// Append one typed stage event.
+    pub fn push(&mut self, event: StageEvent) {
+        self.events.push(event);
+    }
+
+    /// Render the buffered events to the offline-review capture, stamping
+    /// each with the frame's trace identity, then drain the buffer.
+    pub fn render(&mut self, trace_tx: &str) {
+        for event in self.events.drain(..) {
+            match event {
+                StageEvent::ExtractSkip { pool, stage } => trace_jsonl(
+                    "extract_skip",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool": format!("0x{}", alloy::hex::encode(pool)),
+                        "stage": stage,
+                    }),
+                ),
+                StageEvent::AnchorStage { pool } => trace_jsonl(
+                    "anchor_stage",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool": format!("0x{}", alloy::hex::encode(pool)),
+                        "stage": "window-enter",
+                    }),
+                ),
+                StageEvent::AnchorTicks {
+                    pool,
+                    layout,
+                    spacing,
+                    tick,
+                    liquidity,
+                    crossed,
+                } => trace_jsonl(
+                    "anchor_ticks",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool": format!("0x{}", alloy::hex::encode(pool)),
+                        "layout": format!("{layout:?}"),
+                        "spacing": spacing,
+                        "tick": tick,
+                        "liquidity": liquidity.to_string(),
+                        "crossed": crossed,
+                        "source": "ingress",
+                    }),
+                ),
+                StageEvent::HopReuse {
+                    pool,
+                    workspace_pool_id,
+                } => trace_jsonl(
+                    "hop_reuse",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool": format!("0x{}", alloy::hex::encode(pool)),
+                        "workspace_pool_id": workspace_pool_id,
+                    }),
+                ),
+                StageEvent::HopFail {
+                    pool,
+                    stage,
+                    detail,
+                } => trace_jsonl(
+                    "admit_hop_fail",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool": format!("0x{}", alloy::hex::encode(pool)),
+                        "stage": stage,
+                        "detail": detail,
+                    }),
+                ),
+                StageEvent::UnsupportedHop { pool_id, kind } => trace_jsonl(
+                    "unsupported_hop",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "pool_id": pool_id,
+                        "kind": kind,
+                    }),
+                ),
+                StageEvent::Discover(trace) => {
+                    trace_jsonl("discover", discover_trace_payload(trace_tx, &trace));
+                }
+                StageEvent::Solve(trace) => {
+                    trace_jsonl("solve", solve_trace_payload(trace_tx, &trace));
+                }
+                StageEvent::ComposeDecline { reason } => trace_jsonl(
+                    "composed",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "composed": false,
+                        "reason": reason,
+                    }),
+                ),
+                StageEvent::NetGateRefusal {
+                    gross_profit_wei,
+                    wallet_gas_cost_wei,
+                } => trace_jsonl(
+                    "composed",
+                    serde_json::json!({
+                        "tx": trace_tx,
+                        "composed": false,
+                        "reason": "net_after_gas_unprofitable",
+                        "gross_profit_wei": gross_profit_wei,
+                        "wallet_gas_cost_wei": wallet_gas_cost_wei,
+                    }),
+                ),
+            }
+        }
+    }
+}
+
+/// The `discover` JSONL payload built from the frame's discovery counters.
+/// The offline harness asserts this boundary because the stage itself needs
+/// the production scratch stack.
+#[must_use]
+pub fn discover_trace_payload(trace_tx: &str, t: &DiscoverTrace) -> serde_json::Value {
+    serde_json::json!({
+        "tx": trace_tx,
+        "connectors": t.connectors,
+        "cycles_proposed": t.dfs_cycles,
+        "dfs_cycles": t.dfs_cycles,
+        "dfs_chains": t.dfs_chains,
+        "unsupported_hop": t.unsupported_hop,
+        "affected": t.affected,
+        "non_weth_cycles": t.non_weth_cycles,
+        "cycle_reject": NON_WETH_CYCLE,
+        "non_base_quote_dropped": t.non_base_quote_dropped,
+        "cycle_max_hops": t.cycle_max_hops,
+        "touched_pools": t.touched_pools,
+        "cycles_with_multi_touched": t.cycles_with_multi_touched,
+    })
+}
+
+/// The `solve` JSONL payload: the per-chain outcomes behind the aggregate
+/// stats, with the touched-leg counts the discovery stage reported.
+fn solve_trace_payload(trace_tx: &str, t: &SolveTrace) -> serde_json::Value {
+    serde_json::json!({
+        "tx": trace_tx,
+        "chains": t
+            .stats
+            .chains
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let deficit_reasons = match &c.reject {
+                    Some(PathReject::UnusablePoolState { reasons, .. }) => {
+                        (!reasons.is_empty()).then(|| reasons.clone())
+                    }
+                    _ => None,
+                };
+                serde_json::json!({
+                "pools": c
+                    .pools
+                    .iter()
+                    .map(|a| format!("0x{}", alloy::hex::encode(a)))
+                    .collect::<Vec<_>>(),
+                "touched_legs": t.touched_legs.get(i).copied().unwrap_or(0),
+                "evaluated": c.evaluated,
+                "profit_wei": c.profit_wei.map(|p| p.to_string()),
+                "reject": c.reject.as_ref().map(PathReject::label),
+                "reject_deficits": match &c.reject {
+                    Some(PathReject::UnusablePoolState { deficits, .. }) => Some(deficits),
+                    _ => None,
+                },
+                "reject_deficit_reasons": deficit_reasons,
+                "reject_deficit_pools": match &c.reject {
+                    Some(PathReject::UnusablePoolState { pools, .. }) => {
+                        (!pools.is_empty()).then(|| pools.clone())
+                    }
+                    _ => None,
+                },
+                })
+            })
+            .collect::<Vec<_>>(),
+        "best": t.stats.best.is_some(),
+        "best_profit_wei": t.stats.best.as_ref().map(|b| b.profit.to_string()),
+        "dfs_declared": t.stats.dfs_declared,
+        "dfs_evaluated": t.stats.dfs_evaluated,
+        "non_base_quote_dropped": t.stats.non_base_quote_dropped,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -634,6 +908,292 @@ pub async fn simulate_candidate(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// The frame's submit ordering (dispatch consumption owned by the frame)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// The frame's receipt probe: one receipt read over the provider the driver
+/// signs against. The submit ordering's liveness evidence, and the monitor's
+/// landed check.
+struct FrameProbe {
+    provider: Arc<AlloyProvider>,
+}
+
+impl ReceiptProbe for FrameProbe {
+    fn receipt_found(
+        &self,
+        tx_hash: B256,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = degenbot_submission::SubmissionResult<bool>>
+                + Send
+                + '_,
+        >,
+    > {
+        let provider = Arc::clone(&self.provider);
+        Box::pin(async move {
+            let rec = provider
+                .get_transaction_receipt(&tx_hash.to_string())
+                .await
+                .map_err(|e| degenbot_submission::SubmissionError::MonitorProbe(format!("{e}")))?;
+            Ok(rec.is_some())
+        })
+    }
+}
+
+/// The submit surfaces one decided frame's dispatch consumes: the node join
+/// every probe and relay rides, the typed channel pair, and the signer when
+/// bid mode loaded one. Grouped so the frame module owns the whole submit
+/// ordering.
+pub struct FrameSubmit<'a> {
+    /// The node the driver signs against (the probe's provider and the raw
+    /// fan-out's public fallback relay).
+    pub provider: &'a Arc<AlloyProvider>,
+    pub dispatcher: &'a Arc<Mutex<Dispatcher>>,
+    pub nonce_lane: &'a Arc<NonceLane>,
+    pub signer: Option<&'a TxSigner>,
+}
+
+/// The frame's submit ordering: liveness probe on the target → the
+/// mined-target gate → the candidate build → channel dispatch → spent
+/// accounting. A mined target can never be backrun — observe
+/// `already_settled`. A probe failure carries no positive evidence, so it
+/// never kills the bid; the `MEVBlocker` bundle's block anchoring is the
+/// final backstop. Returns the post-gate decision the driver routes on.
+///
+/// # Panics
+///
+/// The candidate's path id takes the first 8 bytes of the frame hash — an
+/// infallible split (`expect` pins the invariant).
+#[expect(
+    clippy::too_many_lines,
+    reason = "the submit ordering reads top-to-bottom"
+)]
+pub async fn dispatch_frame(
+    cfg: &BackrunConfig,
+    pl: &PipelineConfig,
+    ev: &BackrunFeedEvent,
+    head: u64,
+    artifacts: FrameArtifacts,
+    submit: FrameSubmit<'_>,
+    spent: &mut U256,
+) -> Decision {
+    let provider = submit.provider;
+    let target_mined = if matches!(artifacts.decision, Decision::Bid { .. }) {
+        FrameProbe {
+            provider: Arc::clone(provider),
+        }
+        .receipt_found(ev.hash)
+        .await
+        .unwrap_or(false)
+    } else {
+        false
+    };
+    if target_mined {
+        trace_jsonl(
+            "bid_gate",
+            serde_json::json!({
+                "tx": ev.hash.to_string(),
+                "target_mined": true,
+                "reason": "already_settled",
+            }),
+        );
+    }
+    match gate_mined_target(artifacts.decision, target_mined) {
+        Decision::Bid { bid_wei } => {
+            let Some(s) = submit.signer else {
+                tracing::warn!("bid decided without a signer loaded - skipping");
+                return Decision::Bid { bid_wei };
+            };
+            // Defense in depth: decide() already refuses zero bids; this
+            // refusal keeps a bare-sweep bid out of the auction even if a
+            // future refactor reintroduces a fallback.
+            let Some(cd) = artifacts.submit_calldata.clone() else {
+                tracing::warn!(
+                    tx = %ev.hash,
+                    "bid decided without a composed candidate - refusing"
+                );
+                return Decision::Bid { bid_wei };
+            };
+            let base_fee_next = provider
+                .get_block(head)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|b| b.header.base_fee_per_gas)
+                .map_or(30_000_000_000u128, |x| u128::from(x) * 12 / 10);
+            let priority_fee: u128 = priority_fee_wei(cfg);
+            // Honest economics per `SubmitCandidate`'s own contract: gross
+            // is the solved profit, net subtracts the wallet's gas burn,
+            // gas_used is the estimate (never a placeholder).
+            let gross_profit = U256::from(
+                artifacts
+                    .economics
+                    .as_ref()
+                    .map_or(0u128, |e| e.gross_profit_wei),
+            );
+            let net_profit = U256::from(artifacts.economics.as_ref().map_or(0u128, |e| {
+                e.gross_profit_wei.saturating_sub(e.wallet_gas_cost_wei)
+            }));
+            let candidate = SubmitCandidate {
+                #[expect(
+                    clippy::expect_used,
+                    reason = "a frame hash is 32 bytes; the first 8 always split into u64"
+                )]
+                path_id: u64::from_be_bytes(ev.hash.0[0..8].try_into().expect("8 bytes")),
+                gross_profit,
+                net_profit,
+                gas_used: cfg.bundle_gas_est,
+                priority_fee,
+                base_fee_next,
+                execute_calldata: cd,
+                executor_address: pl.execution.executor(),
+                access_list: None,
+                path_pools: HashSet::new(),
+            };
+            // The submission slot decides both the target and the raw
+            // fan-out: the MEVBlocker arm anchors a bundle and leads the
+            // fan-out with its private endpoint, the builder-relay arm
+            // bundles the target's verbatim signed bytes, and the legacy
+            // public arm fans the signed bytes out. The reaction machinery
+            // above is identical for every arm.
+            let broadcast_relays = build_broadcast_relays(cfg, provider).await;
+            let Some(target) =
+                bid_submission_target(cfg, ev.hash, head + 1, ev.raw_signed_tx.as_ref())
+            else {
+                tracing::warn!(
+                    tx = %ev.hash,
+                    "builder-relay slot without the target raw signed bytes - refusing"
+                );
+                return Decision::Bid { bid_wei };
+            };
+            match dispatch_and_submit(
+                vec![candidate],
+                submit.dispatcher,
+                provider,
+                s,
+                Arc::new(FrameProbe {
+                    provider: Arc::clone(provider),
+                }),
+                submit.nonce_lane,
+                head,
+                cfg.dry_run,
+                false,
+                &broadcast_relays,
+                target,
+            )
+            .await
+            {
+                Ok(outcome) => {
+                    if outcome.submitted_count() > 0 {
+                        // The wallet's true outflow per dispatched bid is
+                        // the GAS (the bribe comes from flash proceeds); the
+                        // budget tracks what the bank can actually lose.
+                        *spent += U256::from(
+                            artifacts
+                                .economics
+                                .as_ref()
+                                .map_or(0u128, |e| e.wallet_gas_cost_wei),
+                        );
+                    }
+                    tracing::info!(
+                        tx = %ev.hash,
+                        target = %ev.hash,
+                        bid_wei = %bid_wei,
+                        submitted = outcome.submitted_count(),
+                        skipped = outcome.skipped_count(),
+                        "bid dispatched"
+                    );
+                }
+                Err(e) => tracing::warn!(tx = %ev.hash, error = %e, "bid dispatch failed"),
+            }
+            Decision::Bid { bid_wei }
+        }
+        Decision::Observe { reason } => {
+            tracing::info!(tx = %ev.hash, reason, "observe");
+            Decision::Observe { reason }
+        }
+        Decision::Drop { reason } => {
+            tracing::debug!(tx = %ev.hash, reason, "drop");
+            Decision::Drop { reason }
+        }
+    }
+}
+
+/// The operator's priority fee converted from the facet's gwei to wei.
+#[must_use]
+pub fn priority_fee_wei(cfg: &BackrunConfig) -> u128 {
+    u128::from(cfg.priority_fee_gwei).saturating_mul(1_000_000_000u128)
+}
+
+/// The raw-broadcast relay list for the private-broadcast arm, private-first.
+///
+/// Empty when the `MEVBlocker` slot's private endpoint is unset: the submit leaf then
+/// broadcasts to the read provider alone. When set, the configured private
+/// endpoint leads and the read provider follows, so the private path is tried
+/// first and the public provider is the fallback relay. An endpoint that cannot
+/// be constructed degrades to the read-provider-only list.
+pub async fn build_broadcast_relays(
+    cfg: &BackrunConfig,
+    provider: &Arc<AlloyProvider>,
+) -> Vec<Arc<AlloyProvider>> {
+    let urls = cfg.submission.raw_relay_urls();
+    if urls.is_empty() {
+        return Vec::new();
+    }
+    let mut relays = Vec::new();
+    for url in &urls {
+        match AlloyProvider::new(url, DEFAULT_MAX_RETRIES).await {
+            Ok(relay) => relays.push(Arc::new(relay)),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    url,
+                    "raw broadcast relay build failed - skipped"
+                );
+            }
+        }
+    }
+    // The read provider is the public fallback relay on every raw fan-out.
+    relays.push(Arc::clone(provider));
+    relays
+}
+
+/// The bid's submission target, bound by the composition's slot: the
+/// `MEVBlocker` arm anchors a bundle on its searcher WebSocket, the
+/// builder-relay arm bundles the target's verbatim signed bytes with the
+/// signed backrun, and the legacy public arm fans the signed bytes out.
+///
+/// `Some(None)` semantics are folded into the `Option` return: a
+/// builder-relay slot whose frame lacks the target's raw signed bytes has no
+/// bundle to send (the caller logs a quiet skip — it is never broadcast raw,
+/// which would leak the backrun without its target).
+#[must_use]
+pub fn bid_submission_target(
+    cfg: &BackrunConfig,
+    target_tx_hash: B256,
+    block_number: u64,
+    target_raw: Option<&alloy::primitives::Bytes>,
+) -> Option<SubmissionTarget> {
+    match &cfg.submission {
+        crate::backrun::SubmissionSlot::Mevblocker { bundle_url, .. } => {
+            Some(SubmissionTarget::Bundle(BundleTarget {
+                stream_url: bundle_url.clone(),
+                target_tx_hash,
+                block_number,
+            }))
+        }
+        crate::backrun::SubmissionSlot::BuilderRelay { relays } => {
+            Some(SubmissionTarget::BuilderRelay {
+                relays: relays.clone(),
+                target_raw: target_raw?.clone(),
+                block_number,
+            })
+        }
+        crate::backrun::SubmissionSlot::PublicFanOut { .. } => Some(SubmissionTarget::Public),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // The frame pipeline (one feed frame, end to end)
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -894,13 +1454,27 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
         return FrameArtifacts::observe(empty_frame_observe_reason(&descriptors), stages);
     }
 
+    // The frame's stage context: the per-driver config and per-frame identity
+    // every stage reads, plus the evidence buffer the stages append to and
+    // this module renders after each stage — no strategy code touches the
+    // offline-review capture.
+    let mut stage_trace = StageTrace::default();
+    let mut cx = FrameContext {
+        pl,
+        knobs,
+        head,
+        trace_tx: &tx_hex,
+        trace: &mut stage_trace,
+    };
+
     // ── stage: admission (fresh scope; replayed state verbatim) ──────────
     let t = Instant::now();
     let mut solver = BackrunSolver::new();
     let affected = strategy
-        .admit(&*ctx, &mut solver, &extracted, head, &tx_hex, None)
+        .admit(&mut cx, &*ctx, &mut solver, &extracted)
         .await;
     stages.admit_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
+    cx.trace.render(&tx_hex);
     if S::affected_is_empty(&affected) {
         return FrameArtifacts::observe("no_candidate", stages);
     }
@@ -908,27 +1482,22 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     // ── stage: discovery (per-frame; strategy-owned) ─────────────────────
     let t = Instant::now();
     let intents = strategy
-        .discover(
-            &*ctx,
-            &mut solver,
-            scratch,
-            provider,
-            &affected,
-            head,
-            &tx_hex,
-        )
+        .discover(&mut cx, &*ctx, &mut solver, scratch, provider, &affected)
         .await;
     stages.discover_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
+    cx.trace.render(&tx_hex);
 
     // ── stage: evaluate (envelope-gated; strategy-owned) ─────────────────
     let t = Instant::now();
-    let evaluated = strategy.evaluate(&mut solver, intents, pl, &tx_hex);
+    let evaluated = strategy.evaluate(&mut cx, &mut solver, intents);
     stages.solve_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
+    cx.trace.render(&tx_hex);
 
     // ── stage: compose (strategy-owned; the driver sims the result) ──────
     let t = Instant::now();
-    let composed = strategy.compose(&evaluated, pl, &tx_hex);
+    let composed = strategy.compose(&mut cx, &evaluated);
     stages.compose_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
+    cx.trace.render(&tx_hex);
 
     // ── stage: the driver-owned bundle sim gate ──────────────────────────
     let mut sim_ok = false;
@@ -970,15 +1539,14 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     }
 
     // ── stage: decide (strategy-owned; carries the truthful observe) ─────
-    let decided = strategy.decide(
-        knobs,
-        pl,
-        &evaluated,
-        composed.as_ref(),
+    let gate = GateInput {
+        evaluated: &evaluated,
+        composed: composed.as_ref(),
         sim_ok,
         spent,
-        &tx_hex,
-    );
+    };
+    let decided = strategy.decide(&mut cx, &gate);
+    cx.trace.render(&tx_hex);
     FrameArtifacts {
         decision: decided.decision,
         requested_bid: decided.requested_bid,

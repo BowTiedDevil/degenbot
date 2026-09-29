@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use crate::backrun::{decide, BackrunConfig, Decision};
+use crate::backrun::{decide, Decision};
 use crate::backrun_engine::{
     BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily, PathReject,
 };
@@ -30,10 +30,12 @@ use degenbot_simulation::sim::evm::journal_pools::{
 use degenbot_simulation::sim::evm::{read_view_word, ScratchDb, ScratchEvm};
 use hashbrown::HashMap as HbMap;
 
-use crate::anchored_dfs::{resolve_hop, AnchorPool, DfsCycle, ResolvedHop, NON_WETH_CYCLE};
-use crate::frame_pipeline::{honest_observe, trace_jsonl, BidEconomics, PipelineConfig};
+use crate::anchored_dfs::{resolve_hop, AnchorPool, DfsCycle, ResolvedHop};
+use crate::frame_pipeline::{
+    honest_observe, BidEconomics, DiscoverTrace, SolveTrace, StageEvent, StageTrace,
+};
 use crate::market_context::MarketContext;
-use crate::pending_tx::{ComposedIntent, Decided, PendingTxReaction, V3TickWindow};
+use crate::pending_tx::{ComposedIntent, Decided, FrameContext, GateInput, PendingTxReaction};
 
 use crate::execution_context::ETHEREUM_WETH as WETH;
 
@@ -121,19 +123,14 @@ pub const fn backrun_encode_options(bribe_bips: u16) -> EncodeOptions {
 )]
 fn cmd_executor_bytes(
     outcome: CmdExecutorOutcome,
-    trace_tx: &str,
+    trace: &mut StageTrace,
 ) -> Option<alloy::primitives::Bytes> {
     match outcome {
         CmdExecutorOutcome::Encoded(bytes) => Some(bytes),
         CmdExecutorOutcome::Declined(decline) => {
-            trace_jsonl(
-                "composed",
-                serde_json::json!({
-                    "tx": trace_tx,
-                    "composed": false,
-                    "reason": decline.label(),
-                }),
-            );
+            trace.push(StageEvent::ComposeDecline {
+                reason: decline.label(),
+            });
             None
         }
         CmdExecutorOutcome::Rejected(rejection) => {
@@ -206,16 +203,14 @@ pub fn admit_extracted(
     solver: &mut BackrunSolver,
     states: &[PoolPostState],
     seed_block: u64,
-    trace_tx: &str,
-    tick_window: Option<&dyn V3TickWindow>,
+    trace: &mut StageTrace,
 ) -> Vec<AffectedPool> {
     degenbot_core::runtime::get_runtime().block_on(admit_extracted_verified(
         rt,
         solver,
         states,
         seed_block,
-        trace_tx,
-        tick_window,
+        &mut *trace,
     ))
 }
 
@@ -229,22 +224,15 @@ pub async fn admit_extracted_verified(
     solver: &mut BackrunSolver,
     states: &[PoolPostState],
     seed_block: u64,
-    trace_tx: &str,
-    _tick_window: Option<&dyn V3TickWindow>,
+    trace: &mut StageTrace,
 ) -> Vec<AffectedPool> {
+    // One admission skip: the pool and the sub-step that refused it.
+    fn skip(trace: &mut StageTrace, pool: Address, stage: &'static str) {
+        trace.push(StageEvent::ExtractSkip { pool, stage });
+    }
     let mut out = Vec::new();
     let Some(idx) = rt.index() else {
         return out;
-    };
-    let skip = |pool: Address, stage: &'static str| {
-        trace_jsonl(
-            "extract_skip",
-            serde_json::json!({
-                "tx": trace_tx,
-                "pool": format!("0x{}", alloy::hex::encode(pool)),
-                "stage": stage,
-            }),
-        );
     };
     for st in states {
         let PoolPostKind::Typed(tp) = &st.kind else {
@@ -252,7 +240,7 @@ pub async fn admit_extracted_verified(
             // V4 half is observed but not admitted (no V4 lane yet). Record
             // the skip so a mixed frame is never silently empty-armed on the
             // V4 side.
-            skip(st.address, "v4-half-unobserved");
+            skip(trace, st.address, "v4-half-unobserved");
             continue;
         };
         match &st.family {
@@ -266,7 +254,7 @@ pub async fn admit_extracted_verified(
                 let (Some(token0), Some(token1)) =
                     (rt.token_addr(edge.token0_id), rt.token_addr(edge.token1_id))
                 else {
-                    skip(st.address, "token-join");
+                    skip(trace, st.address, "token-join");
                     continue;
                 };
                 let (r0, r1) = (
@@ -274,7 +262,7 @@ pub async fn admit_extracted_verified(
                     u112_to_u128(reserves.reserve1),
                 );
                 let Ok(fees) = edge.fees.resolve() else {
-                    skip(st.address, "v2-fee");
+                    skip(trace, st.address, "v2-fee");
                     continue;
                 };
                 let Ok(p_id) = solver.admit_v2(&BackrunV2Pool {
@@ -288,12 +276,12 @@ pub async fn admit_extracted_verified(
                         fees.token1,
                     ),
                 }) else {
-                    skip(st.address, "v2-admit");
+                    skip(trace, st.address, "v2-admit");
                     continue;
                 };
                 let quotes = quote_orientations(rt, token0, token1);
                 if quotes.is_empty() {
-                    skip(st.address, "no-supported-quote");
+                    skip(trace, st.address, "no-supported-quote");
                 } else {
                     out.push(AffectedPool {
                         address: st.address,
@@ -322,19 +310,19 @@ pub async fn admit_extracted_verified(
                 };
                 let spacing = *tick_spacing;
                 let Some(edge) = idx.v3_edge_by_address(st.address) else {
-                    skip(st.address, "v3-edge");
+                    skip(trace, st.address, "v3-edge");
                     continue;
                 };
                 let (Some(token0), Some(token1)) =
                     (rt.token_addr(edge.token0_id), rt.token_addr(edge.token1_id))
                 else {
-                    skip(st.address, "token-join");
+                    skip(trace, st.address, "token-join");
                     continue;
                 };
                 // Nothing is fabricated: an incomplete slot0/liquidity set
                 // cannot stage (the scope never fills in missing words).
                 let (Some(sqrt), Some(tk), Some(liq)) = (*sqrt_price_x96, *tick, *liquidity) else {
-                    skip(st.address, "incomplete-slot0-liquidity");
+                    skip(trace, st.address, "incomplete-slot0-liquidity");
                     continue;
                 };
                 let mut tick_data = HbMap::default();
@@ -358,14 +346,7 @@ pub async fn admit_extracted_verified(
                 // per-tick map the pump maintains, else the sparse bootstrap.
                 // Replayed touched ticks win (they are the post-frame facts).
                 let crossed = touched_ticks.len();
-                trace_jsonl(
-                    "anchor_stage",
-                    serde_json::json!({
-                        "tx": trace_tx,
-                        "pool": format!("0x{}", alloy::hex::encode(st.address)),
-                        "stage": "window-enter",
-                    }),
-                );
+                trace.push(StageEvent::AnchorStage { pool: st.address });
                 let p_id = match solver
                     .admit_v3_replay(
                         st.address,
@@ -385,27 +366,22 @@ pub async fn admit_extracted_verified(
                 {
                     Ok(p_id) => p_id,
                     Err(decline) => {
-                        trace_admit_fail(trace_tx, st.address, decline.stage(), &decline.detail());
-                        skip(st.address, "v3-ingress");
+                        hop_admit_fail(trace, st.address, decline.stage(), &decline.detail());
+                        skip(trace, st.address, "v3-ingress");
                         continue;
                     }
                 };
-                trace_jsonl(
-                    "anchor_ticks",
-                    serde_json::json!({
-                        "tx": trace_tx,
-                        "pool": format!("0x{}", alloy::hex::encode(st.address)),
-                        "layout": format!("{layout:?}"),
-                        "spacing": spacing,
-                        "tick": tk,
-                        "liquidity": liq.to_string(),
-                        "crossed": crossed,
-                        "source": "ingress",
-                    }),
-                );
+                trace.push(StageEvent::AnchorTicks {
+                    pool: st.address,
+                    layout: *layout,
+                    spacing,
+                    tick: tk,
+                    liquidity: liq,
+                    crossed,
+                });
                 let quotes = quote_orientations(rt, token0, token1);
                 if quotes.is_empty() {
-                    skip(st.address, "no-supported-quote");
+                    skip(trace, st.address, "no-supported-quote");
                 } else {
                     out.push(AffectedPool {
                         address: st.address,
@@ -434,20 +410,20 @@ pub async fn admit_extracted_verified(
                 // has no lane (the manager's touched set may name a pool the
                 // connector never loaded).
                 let Some(edge) = idx.v4_edge_by_pool_hash(*pool_id) else {
-                    skip(st.address, "v4-edge");
+                    skip(trace, st.address, "v4-edge");
                     continue;
                 };
                 // The executor encodes the V4 fee in 2 bytes; a fee past that
                 // bound can never compose, so refuse at admission (the gate
                 // says no, rather than the composer failing later).
                 if edge.fee >= V4_FEE_ENCODER_MAX {
-                    skip(st.address, "v4-fee-encoder-overflow");
+                    skip(trace, st.address, "v4-fee-encoder-overflow");
                     continue;
                 }
                 // Nothing is fabricated: an incomplete slot0/liquidity set
                 // cannot stage (the scope never fills in missing words).
                 let (Some(sqrt), Some(tk), Some(liq)) = (*sqrt_price_x96, *tick, *liquidity) else {
-                    skip(st.address, "incomplete-slot0-liquidity");
+                    skip(trace, st.address, "incomplete-slot0-liquidity");
                     continue;
                 };
                 let mut tick_data = HbMap::default();
@@ -484,14 +460,14 @@ pub async fn admit_extracted_verified(
                 {
                     Ok(pool_id) => pool_id,
                     Err(decline) => {
-                        trace_admit_fail(trace_tx, st.address, decline.stage(), &decline.detail());
-                        skip(st.address, "v4-ingress");
+                        hop_admit_fail(trace, st.address, decline.stage(), &decline.detail());
+                        skip(trace, st.address, "v4-ingress");
                         continue;
                     }
                 };
                 let quotes = quote_orientations(rt, edge.token0, edge.token1);
                 if quotes.is_empty() {
-                    skip(st.address, "no-supported-quote");
+                    skip(trace, st.address, "no-supported-quote");
                 } else {
                     out.push(AffectedPool {
                         address: st.address,
@@ -641,21 +617,17 @@ async fn admit_hop_pool(
     provider: &AlloyProvider,
     hop: &ResolvedHop,
     head: u64,
-    trace_tx: &str,
+    trace: &mut StageTrace,
 ) -> Option<u64> {
     let address = *hop.address();
     // Overlap reuse first: a pool this frame already admitted is usable NOW.
     // Re-admitting it refuses (`AlreadyRegistered`) and dropping the cycle
     // was the funnel's silent killer — every overlapping cycle died.
     if let Some(id) = solver.registered_pool_id(&address) {
-        trace_jsonl(
-            "hop_reuse",
-            serde_json::json!({
-                "tx": trace_tx,
-                "pool": format!("0x{}", alloy::hex::encode(address)),
-                "workspace_pool_id": id,
-            }),
-        );
+        trace.push(StageEvent::HopReuse {
+            pool: address,
+            workspace_pool_id: id,
+        });
         return Some(id);
     }
     match hop {
@@ -670,8 +642,8 @@ async fn admit_hop_pool(
                     match degenbot_rpc::abi::fetch_v2_reserves(provider, &e.address, None).await {
                         Ok((r0, r1)) => {
                             let (Ok(r0), Ok(r1)) = (u128::try_from(r0), u128::try_from(r1)) else {
-                                trace_admit_fail(
-                                    trace_tx,
+                                hop_admit_fail(
+                                    trace,
                                     address,
                                     "reserves-rpc-width",
                                     "reserves exceed u128",
@@ -681,7 +653,7 @@ async fn admit_hop_pool(
                             (r0, r1)
                         }
                         Err(err) => {
-                            trace_admit_fail(trace_tx, address, "reserves-rpc", &err.to_string());
+                            hop_admit_fail(trace, address, "reserves-rpc", &err.to_string());
                             return None;
                         }
                     }
@@ -690,7 +662,7 @@ async fn admit_hop_pool(
             let (Some(token0), Some(token1)) =
                 (rt.token_addr(e.token0_id), rt.token_addr(e.token1_id))
             else {
-                trace_admit_fail(trace_tx, address, "token-join", "V2 token id unresolved");
+                hop_admit_fail(trace, address, "token-join", "V2 token id unresolved");
                 return None;
             };
             match solver.admit_v2(&BackrunV2Pool {
@@ -703,7 +675,7 @@ async fn admit_hop_pool(
             }) {
                 Ok(id) => Some(id),
                 Err(reason) => {
-                    trace_admit_fail(trace_tx, address, "admit-v2", &reason.to_string());
+                    hop_admit_fail(trace, address, "admit-v2", &reason.to_string());
                     None
                 }
             }
@@ -712,7 +684,7 @@ async fn admit_hop_pool(
             let (Some(token0), Some(token1)) =
                 (rt.token_addr(e.token0_id), rt.token_addr(e.token1_id))
             else {
-                trace_admit_fail(trace_tx, address, "token-join", "V3 token id unresolved");
+                hop_admit_fail(trace, address, "token-join", "V3 token id unresolved");
                 return None;
             };
             match solver
@@ -735,7 +707,7 @@ async fn admit_hop_pool(
                     // The refused step, not one lumped label: a Db read failure,
                     // an archive RPC failure, a width refusal, and an
                     // AlreadyRegistered duplicate will not share a line.
-                    trace_admit_fail(trace_tx, address, reject.stage(), &reject.detail());
+                    hop_admit_fail(trace, address, reject.stage(), &reject.detail());
                     None
                 }
             }
@@ -743,19 +715,16 @@ async fn admit_hop_pool(
     }
 }
 
-/// One line per failed hop admission: the exact hop pool + the sub-step that
-/// refused it. A declined admission otherwise leaves the chain visibly
-/// undeclared (and the solve 100% `unusable_pool_state`) with no cause.
-fn trace_admit_fail(trace_tx: &str, pool: Address, stage: &str, detail: &str) {
-    trace_jsonl(
-        "admit_hop_fail",
-        serde_json::json!({
-            "tx": trace_tx,
-            "pool": format!("0x{}", alloy::hex::encode(pool)),
-            "stage": stage,
-            "detail": detail,
-        }),
-    );
+/// One record per failed hop admission: the exact hop pool + the sub-step
+/// that refused it. A declined admission otherwise leaves the chain visibly
+/// undeclared (and the solve 100% `unusable_pool_state`) with no cause. The
+/// frame module renders the record to the capture.
+fn hop_admit_fail(trace: &mut StageTrace, pool: Address, stage: &str, detail: &str) {
+    trace.push(StageEvent::HopFail {
+        pool,
+        stage: stage.to_string(),
+        detail: detail.to_string(),
+    });
 }
 
 /// One WETH-entry cycle hop resolved against the frame: the workspace pool id
@@ -853,7 +822,7 @@ async fn cycle_chain(
     solver: &mut BackrunSolver,
     provider: &AlloyProvider,
     head: u64,
-    trace_tx: &str,
+    trace: &mut StageTrace,
 ) -> CycleWalk {
     let mut walk = CycleWalk::default();
     let Some(weth_addr) = rt.token_addr(weth_id) else {
@@ -876,14 +845,10 @@ async fn cycle_chain(
             Ok(None) => return walk,
             Err(hop) => {
                 walk.unsupported_hop += 1;
-                trace_jsonl(
-                    "unsupported_hop",
-                    serde_json::json!({
-                        "tx": trace_tx,
-                        "pool_id": hop.pool_id,
-                        "kind": format!("{:?}", hop.kind),
-                    }),
-                );
+                trace.push(StageEvent::UnsupportedHop {
+                    pool_id: hop.pool_id,
+                    kind: format!("{:?}", hop.kind),
+                });
                 return walk;
             }
         };
@@ -892,8 +857,7 @@ async fn cycle_chain(
         else {
             return walk;
         };
-        let Some(ws) = admit_hop_pool(rt, solver, scratch, provider, &h, head, trace_tx).await
-        else {
+        let Some(ws) = admit_hop_pool(rt, solver, scratch, provider, &h, head, trace).await else {
             return walk;
         };
         walk.admitted += 1;
@@ -965,50 +929,6 @@ impl BackrunIntents {
     }
 }
 
-/// The `discover` JSONL payload built from the frame's counters. `touched`
-/// is the frame's pin set and `admitted_cycles` the WETH-entry cycles that
-/// cleared admission, so the pinned-pool and multi-pinned fields are derived
-/// here rather than at each call site; the offline harness asserts this
-/// boundary because the stage itself needs the production scratch stack.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one argument per discovery counter the trace publishes"
-)]
-#[must_use]
-pub fn discover_trace_payload(
-    trace_tx: &str,
-    connectors: usize,
-    dfs_cycles: usize,
-    dfs_chains: usize,
-    unsupported_hop: usize,
-    affected: usize,
-    non_weth_cycles: usize,
-    non_base_quote_dropped: bool,
-    cycle_max_hops: usize,
-    touched: &[AnchorPool],
-    admitted_cycles: &[DfsCycle],
-) -> serde_json::Value {
-    let cycles_with_multi_touched = admitted_cycles
-        .iter()
-        .filter(|c| cycle_touched_legs(c, touched) > 1)
-        .count();
-    serde_json::json!({
-        "tx": trace_tx,
-        "connectors": connectors,
-        "cycles_proposed": dfs_cycles,
-        "dfs_cycles": dfs_cycles,
-        "dfs_chains": dfs_chains,
-        "unsupported_hop": unsupported_hop,
-        "affected": affected,
-        "non_weth_cycles": non_weth_cycles,
-        "cycle_reject": NON_WETH_CYCLE,
-        "non_base_quote_dropped": non_base_quote_dropped,
-        "cycle_max_hops": cycle_max_hops,
-        "touched_pools": touched.len(),
-        "cycles_with_multi_touched": cycles_with_multi_touched,
-    })
-}
-
 /// The solved frame: the aggregate solve stats behind the best candidate.
 pub struct BackrunEvaluated {
     pub stats: SolveStats,
@@ -1029,25 +949,22 @@ impl PendingTxReaction for BackrunStrategy {
 
     async fn admit(
         &mut self,
+        cx: &mut FrameContext<'_>,
         ctx: &MarketContext,
         workspace: &mut BackrunSolver,
         states: &[PoolPostState],
-        seed_block: u64,
-        trace_tx: &str,
-        tick_window: Option<&dyn V3TickWindow>,
     ) -> Self::Affected {
-        admit_extracted_verified(ctx, workspace, states, seed_block, trace_tx, tick_window).await
+        admit_extracted_verified(ctx, workspace, states, cx.head, cx.trace).await
     }
 
     async fn discover(
         &mut self,
+        cx: &mut FrameContext<'_>,
         ctx: &MarketContext,
         workspace: &mut BackrunSolver,
         scratch: &mut ScratchEvm<ScratchDb<'_>>,
         provider: &AlloyProvider,
         affected: &Self::Affected,
-        head: u64,
-        trace_tx: &str,
     ) -> Self::Intents {
         let Some(idx) = ctx.index() else {
             return BackrunIntents::bailed();
@@ -1118,8 +1035,8 @@ impl PendingTxReaction for BackrunStrategy {
                     scratch,
                     workspace,
                     provider,
-                    head,
-                    trace_tx,
+                    cx.head,
+                    cx.trace,
                 )
                 .await;
                 connectors_seen += walk.admitted;
@@ -1141,22 +1058,21 @@ impl PendingTxReaction for BackrunStrategy {
                 .any(|a| a.quotes.iter().all(|q| q.quote != WETH));
             non_base_quote_dropped = has_non_weth_quote_pool && admitted_cycles.is_empty();
         }
-        trace_jsonl(
-            "discover",
-            discover_trace_payload(
-                trace_tx,
-                connectors_seen,
-                dfs_cycles,
-                dfs_chains.len(),
-                unsupported_hop,
-                affected.len(),
-                non_weth_cycles,
-                non_base_quote_dropped,
-                ctx.cycle_max_hops,
-                &touched,
-                &admitted_cycles,
-            ),
-        );
+        cx.trace.push(StageEvent::Discover(DiscoverTrace {
+            connectors: connectors_seen,
+            dfs_cycles,
+            dfs_chains: dfs_chains.len(),
+            unsupported_hop,
+            affected: affected.len(),
+            non_weth_cycles,
+            non_base_quote_dropped,
+            cycle_max_hops: ctx.cycle_max_hops,
+            touched_pools: touched.len(),
+            cycles_with_multi_touched: admitted_cycles
+                .iter()
+                .filter(|c| cycle_touched_legs(c, &touched) > 1)
+                .count(),
+        }));
         BackrunIntents {
             chains: dfs_chains,
             touched_legs: chain_touched_legs,
@@ -1167,10 +1083,9 @@ impl PendingTxReaction for BackrunStrategy {
 
     fn evaluate(
         &mut self,
+        cx: &mut FrameContext<'_>,
         workspace: &mut BackrunSolver,
         intents: Self::Intents,
-        pl: &PipelineConfig,
-        trace_tx: &str,
     ) -> Self::Evaluated {
         if intents.bailed {
             return BackrunEvaluated {
@@ -1179,7 +1094,7 @@ impl PendingTxReaction for BackrunStrategy {
         }
         let mut aggregate = SolveStats::default();
         if !intents.chains.is_empty() {
-            let mut dfs_stats = solve_dfs_chains(workspace, &intents.chains, pl.gas_floor_wei);
+            let mut dfs_stats = solve_dfs_chains(workspace, &intents.chains, cx.pl.gas_floor_wei);
             aggregate.dfs_declared += dfs_stats.dfs_declared;
             aggregate.dfs_evaluated += dfs_stats.dfs_evaluated;
             if dfs_stats.best.as_ref().is_some_and(|b| {
@@ -1193,83 +1108,41 @@ impl PendingTxReaction for BackrunStrategy {
             aggregate.chains.append(&mut dfs_stats.chains);
         }
         aggregate.non_base_quote_dropped |= intents.non_base_quote_dropped;
-        trace_jsonl(
-            "solve",
-            serde_json::json!({
-                "tx": trace_tx,
-                "chains": aggregate
-                    .chains
-                    .iter()
-                    .enumerate()
-                    .map(|(i, c)| {
-                        let deficit_reasons = match &c.reject {
-                            Some(PathReject::UnusablePoolState { reasons, .. }) => {
-                                (!reasons.is_empty()).then(|| reasons.clone())
-                            }
-                            _ => None,
-                        };
-                        serde_json::json!({
-                        "pools": c
-                            .pools
-                            .iter()
-                            .map(|a| format!("0x{}", alloy::hex::encode(a)))
-                            .collect::<Vec<_>>(),
-                        "touched_legs": intents.touched_legs.get(i).copied().unwrap_or(0),
-                        "evaluated": c.evaluated,
-                        "profit_wei": c.profit_wei.map(|p| p.to_string()),
-                        "reject": c.reject.as_ref().map(PathReject::label),
-                        "reject_deficits": match c.reject {
-                            Some(PathReject::UnusablePoolState { deficits, .. }) => Some(deficits),
-                            _ => None,
-                        },
-                        "reject_deficit_reasons": deficit_reasons,
-                        "reject_deficit_pools": match &c.reject {
-                            Some(PathReject::UnusablePoolState { pools, .. }) => {
-                                (!pools.is_empty()).then(|| pools.clone())
-                            }
-                            _ => None,
-                        },
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-                "best": aggregate.best.is_some(),
-                "best_profit_wei": aggregate.best.as_ref().map(|b| b.profit.to_string()),
-                "dfs_declared": aggregate.dfs_declared,
-                "dfs_evaluated": aggregate.dfs_evaluated,
-                "non_base_quote_dropped": aggregate.non_base_quote_dropped,
-            }),
-        );
+        // The frame module renders the solve event from this evidence; the
+        // stage reports the stats plus the per-chain touched-leg counts.
+        cx.trace.push(StageEvent::Solve(SolveTrace {
+            touched_legs: intents.touched_legs,
+            stats: aggregate.clone(),
+        }));
         BackrunEvaluated { stats: aggregate }
     }
 
     fn compose(
         &mut self,
+        cx: &mut FrameContext<'_>,
         evaluated: &Self::Evaluated,
-        pl: &PipelineConfig,
-        trace_tx: &str,
     ) -> Option<ComposedIntent> {
         let best = evaluated.stats.best.clone()?;
         let (path, result) = project_candidate(&best);
         let outcome =
             self.cmd_executor
-                .compose(&path, &result, backrun_encode_options(pl.bribe_bips));
-        cmd_executor_bytes(outcome, trace_tx).map(|sim_calldata| ComposedIntent {
+                .compose(&path, &result, backrun_encode_options(cx.pl.bribe_bips));
+        cmd_executor_bytes(outcome, cx.trace).map(|sim_calldata| ComposedIntent {
             sim_calldata,
             profit_wei: best.profit,
             optimal_input_wei: best.optimal_input,
         })
     }
 
-    fn decide(
-        &self,
-        knobs: &BackrunConfig,
-        pl: &PipelineConfig,
-        evaluated: &Self::Evaluated,
-        composed: Option<&ComposedIntent>,
-        sim_ok: bool,
-        spent: U256,
-        trace_tx: &str,
-    ) -> Decided {
+    fn decide(&self, cx: &mut FrameContext<'_>, gate: &GateInput<'_, Self::Evaluated>) -> Decided {
+        let knobs = cx.knobs;
+        let pl = cx.pl;
+        let GateInput {
+            evaluated,
+            composed,
+            sim_ok,
+            spent,
+        } = *gate;
         let best = evaluated.stats.best.as_ref();
         let mut requested_bid = U256::ZERO;
         let mut submit_calldata = None;
@@ -1306,7 +1179,7 @@ impl PendingTxReaction for BackrunStrategy {
                             &result,
                             backrun_encode_options(nb.bribe_bips),
                         );
-                        if let Some(cd_net) = cmd_executor_bytes(outcome, trace_tx) {
+                        if let Some(cd_net) = cmd_executor_bytes(outcome, cx.trace) {
                             requested_bid = nb.bid_wei.max(U256::from(1));
                             submit_calldata = Some(cd_net);
                             economics = Some(BidEconomics {
@@ -1318,16 +1191,10 @@ impl PendingTxReaction for BackrunStrategy {
                         }
                     } else {
                         net_gated = true;
-                        trace_jsonl(
-                            "composed",
-                            serde_json::json!({
-                                "tx": trace_tx,
-                                "composed": false,
-                                "reason": "net_after_gas_unprofitable",
-                                "gross_profit_wei": best.profit,
-                                "wallet_gas_cost_wei": wallet_gas_cost,
-                            }),
-                        );
+                        cx.trace.push(StageEvent::NetGateRefusal {
+                            gross_profit_wei: best.profit,
+                            wallet_gas_cost_wei: wallet_gas_cost,
+                        });
                     }
                 }
             }

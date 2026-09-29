@@ -128,7 +128,13 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
     };
 
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &[post], head, "0xlive", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &[post],
+        head,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
+    );
     assert_eq!(affected.len(), 1, "the production V3 anchor admits");
     let a = &affected[0];
 

@@ -1,24 +1,12 @@
-//! The bid's economics: the price reads, the broadcast relay fan-out, and the
-//! bundle target a decided frame is submitted against.
+//! The bid's wallet economics: the price reads the head-advance refresh rides.
 //!
 //! Invariant surface: these are reads and pure derivations, never lifecycle
-//! moves. The submission slot the composition binds decides the target and
-//! the raw fan-out: the `MEVBlocker` slot anchors a bundle on its searcher
-//! WebSocket and leads the raw fan-out with the private endpoint, the peer
-//! slot fans the signed bytes over the public relays.
+//! moves. The submit ordering itself (the relay fan-out, the bundle target,
+//! the dispatch) lives in the frame module.
 
-use std::sync::Arc;
-
-use crate::backrun::{BackrunConfig, SubmissionSlot};
-use alloy::primitives::B256;
-use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
-
-use degenbot_submission::submit::{BundleTarget, SubmissionTarget};
-
-/// The operator's priority fee converted from the facet's gwei to wei.
-pub(super) fn priority_fee_wei(cfg: &BackrunConfig) -> u128 {
-    u128::from(cfg.priority_fee_gwei).saturating_mul(1_000_000_000u128)
-}
+use crate::backrun::BackrunConfig;
+use crate::frame_pipeline::priority_fee_wei;
+use degenbot_rpc::provider::AlloyProvider;
 
 /// The wallet's gas burn for one composed bundle at `head`:
 /// estimate x (next base fee x 1.2 + priority). Read on head advances so
@@ -42,69 +30,4 @@ pub(super) async fn wallet_gas_cost_at(
 pub(super) async fn initial_wallet_gas_cost(provider: &AlloyProvider, cfg: &BackrunConfig) -> u128 {
     let head = provider.get_block_number().await.unwrap_or(0);
     wallet_gas_cost_at(provider, head, cfg).await
-}
-
-/// The raw-broadcast relay list for the private-broadcast arm, private-first.
-///
-/// Empty when the `MEVBlocker` slot's private endpoint is unset: the submit leaf then
-/// broadcasts to the read provider alone. When set, the configured private
-/// endpoint leads and the read provider follows, so the private path is tried
-/// first and the public provider is the fallback relay. An endpoint that cannot
-/// be constructed degrades to the read-provider-only list.
-pub(super) async fn build_broadcast_relays(
-    cfg: &BackrunConfig,
-    provider: &Arc<AlloyProvider>,
-) -> Vec<Arc<AlloyProvider>> {
-    let urls = cfg.submission.raw_relay_urls();
-    if urls.is_empty() {
-        return Vec::new();
-    }
-    let mut relays = Vec::new();
-    for url in &urls {
-        match AlloyProvider::new(url, DEFAULT_MAX_RETRIES).await {
-            Ok(relay) => relays.push(Arc::new(relay)),
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    url,
-                    "raw broadcast relay build failed - skipped"
-                );
-            }
-        }
-    }
-    // The read provider is the public fallback relay on every raw fan-out.
-    relays.push(Arc::clone(provider));
-    relays
-}
-
-/// The bid's submission target, bound by the composition's slot: the
-/// `MEVBlocker` arm anchors a bundle on its searcher WebSocket, the
-/// builder-relay arm bundles the target's verbatim signed bytes with the
-/// signed backrun, and the legacy public arm fans the signed bytes out.
-///
-/// `Some(None)` semantics are folded into the `Option` return: a
-/// builder-relay slot whose frame lacks the target's raw signed bytes has no
-/// bundle to send (the caller logs a quiet skip — it is never broadcast raw,
-/// which would leak the backrun without its target).
-pub(super) fn bid_submission_target(
-    cfg: &BackrunConfig,
-    target_tx_hash: B256,
-    block_number: u64,
-    target_raw: Option<&alloy::primitives::Bytes>,
-) -> Option<SubmissionTarget> {
-    match &cfg.submission {
-        SubmissionSlot::Mevblocker { bundle_url, .. } => {
-            Some(SubmissionTarget::Bundle(BundleTarget {
-                stream_url: bundle_url.clone(),
-                target_tx_hash,
-                block_number,
-            }))
-        }
-        SubmissionSlot::BuilderRelay { relays } => Some(SubmissionTarget::BuilderRelay {
-            relays: relays.clone(),
-            target_raw: target_raw?.clone(),
-            block_number,
-        }),
-        SubmissionSlot::PublicFanOut { .. } => Some(SubmissionTarget::Public),
-    }
 }

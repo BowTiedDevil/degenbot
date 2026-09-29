@@ -13,7 +13,6 @@
     reason = "driver start and loop wiring: fatal config, lock, and feed-registration failures exit the process loudly"
 )]
 
-use std::collections::HashSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -23,7 +22,7 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::backrun::SubmissionSlot;
-use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
+use crate::backrun::{BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
@@ -36,24 +35,19 @@ use parking_lot::Mutex as ParkingMutex;
 
 use crate::backrun_strategy::BackrunStrategy;
 use crate::frame_pipeline::{
-    build_block_handle, load_fixture_frames, process_frame_with_prefix, trace_jsonl, MarketContext,
-    PipelineConfig,
+    build_block_handle, dispatch_frame, load_fixture_frames, process_frame_with_prefix,
+    trace_jsonl, FrameSubmit, MarketContext, PipelineConfig,
 };
 use crate::gap_quarantine::{NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{
     self, ArchivedResolution, ParkRecord, QuarantineJournal, Resolution, ResolutionArchiveRecord,
 };
 use degenbot_submission::dispatcher::Dispatcher;
-use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submission_ledger::NonceLane;
-use degenbot_submission::submit::{dispatch_and_submit, SubmitCandidate};
 
 use super::driver_boot::{BackrunBootError, BackrunStrategyBoot};
-use super::driver_policy::{
-    bid_submission_target, build_broadcast_relays, initial_wallet_gas_cost, priority_fee_wei,
-    wallet_gas_cost_at,
-};
+use super::driver_policy::{initial_wallet_gas_cost, wallet_gas_cost_at};
 use super::node_capability::NodeCapability;
 
 /// How long the live loop waits on the head watch before servicing the frame
@@ -72,32 +66,6 @@ const HEAD_WATCH_STALE: Duration = Duration::from_secs(30);
 
 /// The fallback head-poll cadence (the pre-subscription loop's tick).
 const HEAD_POLL_TICK: Duration = Duration::from_millis(200);
-
-struct BackrunProbe {
-    provider: Arc<AlloyProvider>,
-}
-
-impl ReceiptProbe for BackrunProbe {
-    fn receipt_found(
-        &self,
-        tx_hash: alloy::primitives::B256,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = degenbot_submission::SubmissionResult<bool>>
-                + Send
-                + '_,
-        >,
-    > {
-        let provider = Arc::clone(&self.provider);
-        Box::pin(async move {
-            let rec = provider
-                .get_transaction_receipt(&tx_hash.to_string())
-                .await
-                .map_err(|e| degenbot_submission::SubmissionError::MonitorProbe(format!("{e}")))?;
-            Ok(rec.is_some())
-        })
-    }
-}
 
 /// The terminal class of one funnel pass, as the rescue router consumes it.
 ///
@@ -420,144 +388,29 @@ pub(super) async fn run_frame(
             }),
         );
     }
-    // Bid-path liveness: probe the target's receipt before any dispatch. A
-    // mined target can never be backrun -- observe `already_settled`. A probe
-    // failure carries no positive evidence, so it never kills the bid; the
-    // MEVBlocker bundle's block anchoring is the final backstop.
-    let target_mined = if matches!(artifacts.decision, Decision::Bid { .. }) {
-        BackrunProbe {
-            provider: Arc::clone(provider),
-        }
-        .receipt_found(ev.hash)
-        .await
-        .unwrap_or(false)
-    } else {
-        false
-    };
-    if target_mined {
-        trace_jsonl(
-            "bid_gate",
-            serde_json::json!({
-                "tx": ev.hash.to_string(),
-                "target_mined": true,
-                "reason": "already_settled",
-            }),
-        );
-    }
-    match gate_mined_target(artifacts.decision, target_mined) {
-        Decision::Bid { bid_wei } => {
-            let Some(s) = signer else {
-                tracing::warn!("bid decided without a signer loaded - skipping");
-                return FrameOutcome::Bid;
-            };
-            // Defense in depth: decide() already refuses zero bids; this
-            // refusal keeps a bare-sweep bid out of the auction even if a
-            // future refactor reintroduces a fallback.
-            let Some(cd) = artifacts.submit_calldata.clone() else {
-                tracing::warn!(
-                    tx = %ev.hash,
-                    "bid decided without a composed candidate - refusing"
-                );
-                return FrameOutcome::Bid;
-            };
-            let base_fee_next = provider
-                .get_block(head)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|b| b.header.base_fee_per_gas)
-                .map_or(30_000_000_000u128, |x| u128::from(x) * 12 / 10);
-            let priority_fee: u128 = priority_fee_wei(cfg);
-            // Honest economics per `SubmitCandidate`'s own contract: gross
-            // is the solved profit, net subtracts the wallet's gas burn,
-            // gas_used is the estimate (never a placeholder).
-            let gross_profit = U256::from(
-                artifacts
-                    .economics
-                    .as_ref()
-                    .map_or(0u128, |e| e.gross_profit_wei),
-            );
-            let net_profit = U256::from(artifacts.economics.as_ref().map_or(0u128, |e| {
-                e.gross_profit_wei.saturating_sub(e.wallet_gas_cost_wei)
-            }));
-            let candidate = SubmitCandidate {
-                path_id: u64::from_be_bytes(ev.hash.0[0..8].try_into().expect("8 bytes")),
-                gross_profit,
-                net_profit,
-                gas_used: cfg.bundle_gas_est,
-                priority_fee,
-                base_fee_next,
-                execute_calldata: cd,
-                executor_address: pl.execution.executor(),
-                access_list: None,
-                path_pools: HashSet::new(),
-            };
-            // The submission slot decides both the target and the raw
-            // fan-out: the MEVBlocker arm anchors a bundle and leads the
-            // fan-out with its private endpoint, the builder-relay arm
-            // bundles the target's verbatim signed bytes, and the legacy
-            // public arm fans the signed bytes out. The reaction machinery
-            // above is identical for every arm.
-            let broadcast_relays = build_broadcast_relays(cfg, provider).await;
-            let Some(target) =
-                bid_submission_target(cfg, ev.hash, head + 1, ev.raw_signed_tx.as_ref())
-            else {
-                tracing::warn!(
-                    tx = %ev.hash,
-                    "builder-relay slot without the target raw signed bytes - refusing"
-                );
-                return FrameOutcome::Bid;
-            };
-            match dispatch_and_submit(
-                vec![candidate],
-                dispatcher,
-                provider,
-                s,
-                Arc::new(BackrunProbe {
-                    provider: Arc::clone(provider),
-                }),
-                nonce_lane,
-                head,
-                cfg.dry_run,
-                false,
-                &broadcast_relays,
-                target,
-            )
-            .await
-            {
-                Ok(outcome) => {
-                    if outcome.submitted_count() > 0 {
-                        // The wallet's true outflow per dispatched bid is
-                        // the GAS (the bribe comes from flash proceeds); the
-                        // budget tracks what the bank can actually lose.
-                        *spent += U256::from(
-                            artifacts
-                                .economics
-                                .as_ref()
-                                .map_or(0u128, |e| e.wallet_gas_cost_wei),
-                        );
-                    }
-                    tracing::info!(
-                        tx = %ev.hash,
-                        target = %ev.hash,
-                        bid_wei = %bid_wei,
-                        submitted = outcome.submitted_count(),
-                        skipped = outcome.skipped_count(),
-                        "bid dispatched"
-                    );
-                }
-                Err(e) => tracing::warn!(tx = %ev.hash, error = %e, "bid dispatch failed"),
-            }
-            FrameOutcome::Bid
-        }
-        Decision::Observe { reason } => {
-            tracing::info!(tx = %ev.hash, reason, "observe");
-            outcome_for(reason)
-        }
-        Decision::Drop { reason } => {
-            tracing::debug!(tx = %ev.hash, reason, "drop");
-            FrameOutcome::Terminal(reason)
-        }
+    // The frame module owns the whole submit ordering: liveness probe on the
+    // target, the mined-target gate, the candidate build, channel dispatch,
+    // and the spent accounting. The driver routes only on the post-gate
+    // decision.
+    let decision = dispatch_frame(
+        cfg,
+        pl,
+        ev,
+        head,
+        artifacts,
+        FrameSubmit {
+            provider,
+            dispatcher,
+            nonce_lane,
+            signer,
+        },
+        spent,
+    )
+    .await;
+    match decision {
+        Decision::Bid { .. } => FrameOutcome::Bid,
+        Decision::Observe { reason } => outcome_for(reason),
+        Decision::Drop { reason } => FrameOutcome::Terminal(reason),
     }
 }
 

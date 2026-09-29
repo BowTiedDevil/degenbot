@@ -468,7 +468,13 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
     let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2, &cap.ladder);
     let mut solver = BackrunSolver::new();
     let post = post_state(pool, cap.sqrt, cap.tick, cap.liquidity, POOL_SPACING);
-    let affected = admit_extracted(&rt, &mut solver, &[post], head, "0xprobe-red", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &[post],
+        head,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
+    );
     assert_eq!(affected.len(), 1, "the anchor admits under the ladder map");
     let v2_id = solver
         .admit_v2(&BackrunV2Pool {
@@ -508,7 +514,13 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
     let rt = runtime_for(pool, token, POOL_SPACING, POOL_FEE, v2, &cap.wide);
     let mut solver = BackrunSolver::new();
     let post = post_state(pool, cap.sqrt, cap.tick, cap.liquidity, POOL_SPACING);
-    let affected = admit_extracted(&rt, &mut solver, &[post], head, "0xprobe-green", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &[post],
+        head,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
+    );
     assert_eq!(affected.len(), 1, "the anchor admits under the wide map");
     let v2_id = solver
         .admit_v2(&BackrunV2Pool {

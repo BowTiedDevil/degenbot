@@ -130,7 +130,11 @@ fn mixed_frame_traces_the_v4_half_instead_of_dropping_it_silently() {
         },
     ];
 
-    let affected = admit_extracted(&rt, &mut solver, &states, 7, "0xtest", None);
+    // The stage evidence renders at the driver-owned boundary: the strategy
+    // reported typed events into the buffer, this render writes the capture.
+    let mut stage_trace = degenbot_strategy::frame_pipeline::StageTrace::default();
+    let affected = admit_extracted(&rt, &mut solver, &states, 7, &mut stage_trace);
+    stage_trace.render("0xtest");
     assert_eq!(affected.len(), 1, "the typed V2 half still admits");
     assert_eq!(affected[0].address, P);
 

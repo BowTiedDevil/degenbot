@@ -258,8 +258,7 @@ fn v3_anchor_db_tick_map_admits_and_solves() {
         &mut solver,
         &[anchor_post_state()],
         SEED,
-        "0xpin",
-        None,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
     );
     assert_eq!(affected.len(), 1, "the V3 anchor admits into the scope");
     let mid_id = admit_mid(&mut solver);
@@ -291,8 +290,7 @@ fn v3_anchor_db_tick_map_admits_and_solves() {
         &mut solver,
         &[anchor_post_state()],
         SEED,
-        "0xpin",
-        None,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
     );
     assert_eq!(affected.len(), 1, "the V3 anchor admits");
     let mid_id = admit_mid(&mut solver);
@@ -320,7 +318,13 @@ fn anchor_admission_survives_u128_liquidity() {
     if let PoolPostKind::Typed(TypedPoolPost::V3 { liquidity, .. }) = &mut post.kind {
         *liquidity = Some(u128::MAX);
     }
-    let affected = admit_extracted(&rt, &mut BackrunSolver::new(), &[post], SEED, "0xpin", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut BackrunSolver::new(),
+        &[post],
+        SEED,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
+    );
     assert_eq!(
         affected.len(),
         1,
@@ -344,7 +348,13 @@ fn replayed_touched_tick_wins_over_ingress_map() {
         );
     }
     let mut solver = BackrunSolver::new();
-    let affected = admit_extracted(&rt, &mut solver, &[post], SEED, "0xpin", None);
+    let affected = admit_extracted(
+        &rt,
+        &mut solver,
+        &[post],
+        SEED,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
+    );
     assert_eq!(affected.len(), 1);
     // The pool's state is readable and the chain solves (the replayed tick
     // did not corrupt the merged map).

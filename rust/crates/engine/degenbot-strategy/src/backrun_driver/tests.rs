@@ -18,8 +18,8 @@ use super::driver_loop::{
     reentry_outcome, route_failed_hydration, route_unhydratable_hydration, run_frame, DriverHandle,
     FrameOutcome, GapParkMemo, LoopDecline, LoopPhase, LoopShared, ReentryOutcome, FEED_PREFIX,
 };
-use super::driver_policy::{bid_submission_target, build_broadcast_relays};
 use super::node_capability::NodeCapability;
+use crate::frame_pipeline::{bid_submission_target, build_broadcast_relays};
 
 /// The strategy boot product owns one DB-backed registry, and every concrete
 /// ecosystem composition views those same facts. The fixture seeds the

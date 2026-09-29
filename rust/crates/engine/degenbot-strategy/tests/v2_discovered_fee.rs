@@ -124,8 +124,7 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
         &mut solver,
         &[post(POOL_P, 500_000, 1_000)],
         1,
-        "0xdiscovered-fee",
-        None,
+        &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
     );
     assert_eq!(affected.len(), 1, "the discovered P edge admits");
     let p_fees = match affected[0].family {

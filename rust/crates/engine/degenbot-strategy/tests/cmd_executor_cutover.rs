@@ -14,8 +14,8 @@ use degenbot_strategy::backrun_engine::{BackrunHopRef, LaneCandidate, LaneFamily
 use degenbot_strategy::backrun_strategy::{BackrunEvaluated, BackrunStrategy};
 use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_WETH as WETH};
-use degenbot_strategy::frame_pipeline::PipelineConfig;
-use degenbot_strategy::pending_tx::PendingTxReaction;
+use degenbot_strategy::frame_pipeline::{PipelineConfig, StageTrace};
+use degenbot_strategy::pending_tx::{GateInput, PendingTxReaction};
 use degenbot_strategy::project_candidate;
 
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");
@@ -117,9 +117,28 @@ fn strategy_declines_v4_candidate_from_a_different_session_manager() {
         fixture_mode: false,
     };
 
-    assert!(strategy
-        .compose(&evaluated, &pipeline, "0xwrong-manager")
-        .is_none());
+    let knobs =
+        MevblockerBackrun::from_config(&degenbot_config::BotConfig::default(), String::new())
+            .into_config();
+    let mut stage_trace = StageTrace::default();
+    let mut cx = frame_context(&pipeline, &knobs, &mut stage_trace, "0xwrong-manager");
+    assert!(strategy.compose(&mut cx, &evaluated).is_none());
+}
+
+/// The stages' production context over one test's config + evidence buffer.
+fn frame_context<'a>(
+    pl: &'a PipelineConfig,
+    knobs: &'a degenbot_strategy::BackrunConfig,
+    trace: &'a mut StageTrace,
+    trace_tx: &'a str,
+) -> degenbot_strategy::pending_tx::FrameContext<'a> {
+    degenbot_strategy::pending_tx::FrameContext {
+        pl,
+        knobs,
+        head: 0,
+        trace_tx,
+        trace,
+    }
 }
 
 #[test]
@@ -142,23 +161,25 @@ fn wallet_true_net_bid_recomposes_through_the_session_adapter() {
         fixture_mode: false,
     };
 
-    let ceiling = strategy
-        .compose(&evaluated, &pipeline, "0xcutover")
-        .expect("ceiling composition encodes");
     let mut config =
         MevblockerBackrun::from_config(&degenbot_config::BotConfig::default(), String::new())
             .into_config();
     config.bid_mode = true;
     config.budget_wei = alloy::primitives::U256::from(1_000_000_000u64);
     config.max_bundle_wei = alloy::primitives::U256::from(1_000_000_000u64);
+    let mut stage_trace = StageTrace::default();
+    let mut cx = frame_context(&pipeline, &config, &mut stage_trace, "0xcutover");
+    let ceiling = strategy
+        .compose(&mut cx, &evaluated)
+        .expect("ceiling composition encodes");
     let decided = strategy.decide(
-        &config,
-        &pipeline,
-        &evaluated,
-        Some(&ceiling),
-        true,
-        alloy::primitives::U256::ZERO,
-        "0xcutover",
+        &mut cx,
+        &GateInput {
+            evaluated: &evaluated,
+            composed: Some(&ceiling),
+            sim_ok: true,
+            spent: alloy::primitives::U256::ZERO,
+        },
     );
 
     assert!(matches!(decided.decision, Decision::Bid { .. }));
