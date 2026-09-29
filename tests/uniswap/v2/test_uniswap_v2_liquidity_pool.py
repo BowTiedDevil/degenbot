@@ -145,7 +145,9 @@ def test_nominal_price_scaled_by_decimals(
         )
 
 
-@pytest.mark.skip
+@pytest.mark.skip(
+    reason="ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse"
+)
 def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     bot = _make_bot(fork_arbitrum_full)
     lp = bot.build_pool(CAMELOT_MIM_USDC_LP_ADDRESS)

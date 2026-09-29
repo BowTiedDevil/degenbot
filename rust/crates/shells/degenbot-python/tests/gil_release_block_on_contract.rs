@@ -79,38 +79,6 @@ fn test_detach_releases_gil_during_block_on() {
     );
 }
 
-/// The pre-fix shape (`block_on` WITHOUT `detach`) - a RED baseline the
-/// assertion above is designed to catch. Kept as a documented negative; it is
-/// NOT run (the GIL is held, so `attach_during_park` stays false -> assertion
-/// fails). It exists to make the contract the test enforces unambiguous.
-#[test]
-#[ignore = "RED baseline: documents the pre-fix GIL-holding block_on"]
-fn test_block_on_without_detach_holds_gil() {
-    let attach_during_park = Arc::new(AtomicBool::new(false));
-    let probe = Arc::clone(&attach_during_park);
-    let probe_thread = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(50));
-        Python::attach(|_py| ());
-        probe.store(true, Ordering::Release);
-    });
-
-    Python::attach(|py| {
-        // Pre-fix shape: block_on WITHOUT detach -> GIL held -> the probe
-        // thread's attach blocks until this returns.
-        py.run(c"import time; time.sleep(0.0002)", None, None)
-            .unwrap();
-    });
-
-    probe_thread.join().expect("probe thread panicked");
-    // With the GIL held the whole time, the probe could not have attached
-    // during the park window - this is the failure the GREEN test forbids.
-    assert!(
-        !attach_during_park.load(Ordering::Acquire),
-        "baseline: GIL held, probe did not attach mid-park (expected - this \
-         confirms the RED shape the GREEN test catches)"
-    );
-}
-
 #[pymodule]
 fn gil_release_contract(_py: Python<'_>, _m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
