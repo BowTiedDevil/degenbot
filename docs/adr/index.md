@@ -83,6 +83,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [064](ADR-064-session-object-registry-cutover.md) | The session object registry is the cutover — identity is minted once, and the Python side is an adapter | accepted |
 | [065](ADR-065-verdict-single-configuration-authority.md) | The verdict is the single configuration authority — one load, one frozen projection, provenance in the authority | accepted |
 | [066](ADR-066-deterministic-stub-generation.md) | Deterministic Stub Generation — `experimental-inspect` and `pyo3-introspection` retire the hand-maintained `.pyi` set | accepted |
+| [067](ADR-067-strategy-substrate-home.md) | The strategy substrate gets one home — ADR-061's placement reopens | accepted |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 
