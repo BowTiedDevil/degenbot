@@ -21,27 +21,9 @@
 //!   startup discovery graph built from its connector index. `None` keeps the
 //!   discovery fan shut — frames observe; connectors are never guessed.
 //!
-//! # Cells deliberately absent
-//!
-//! The ADR's sketch also names `simulate`, `submit`, and `react`. None has a
-//! genuine boot-resolved per-strategy value today, so inventing placeholder
-//! ones would be exactly the "hypothetical seam" the design rule forbids:
-//!
-//! - **simulate**: `BlockSimHandle` is rebuilt inside the driver loop whenever
-//!   the observed head advances ([`build_block_handle`]) and borrows the
-//!   loop's own runtime; it is a per-block loop-local resource, not a
-//!   per-strategy boot fact. A hosted `StrategyKit` cannot own it without
-//!   moving the head watch into the kit.
-//! - **submit**: the submission lane (`NonceLane`) is minted by the host and
-//!   carried by the boot context; the submission target is resolved per-frame
-//!   by `driver_policy` (relay fan-out + builder target). No `SubmitCell`
-//!   value is resolved at kit time today.
-//! - **react**: the head subscription and pending-tx feed are registered with
-//!   the host [`Hub`](degenbot_eventhub::Hub) at drive time inside the driver
-//!   loop. Reaction-kind dispatch stays strategy-owned (ADR-061 D6); the
-//!   head/feed handles are not a per-strategy kit value.
-//!
-//! [`build_block_handle`]: crate::frame_pipeline::build_block_handle
+//! The kit's vocabulary is extracted by subtraction — a slot with a consumer
+//! stays out (the Strategy-plane rule), so the cell set is exactly the two
+//! live cells above.
 
 use std::sync::Arc;
 
@@ -199,25 +181,12 @@ pub enum StrategyCell {
     Provision,
     /// Discovery handles (registry + startup graph).
     Discovery,
-    /// Per-strategy block simulation handle — deliberately absent (see module
-    /// doc).
-    Simulate,
-    /// Per-strategy submission lane + target — deliberately absent.
-    Submit,
-    /// Reaction feeds (head tick + pending-tx ring) — deliberately absent.
-    React,
 }
 
 impl StrategyCell {
-    /// Every cell in the vocabulary, including the three the kit documents as
-    /// absent, so the declaration pin cannot silently skip one.
-    pub const ALL: [Self; 5] = [
-        Self::Provision,
-        Self::Discovery,
-        Self::Simulate,
-        Self::Submit,
-        Self::React,
-    ];
+    /// The closed cell vocabulary, so the declaration pin cannot silently
+    /// skip one.
+    pub const ALL: [Self; 2] = [Self::Provision, Self::Discovery];
 
     /// Stable label for diagnostics and test messages.
     #[must_use]
@@ -225,9 +194,6 @@ impl StrategyCell {
         match self {
             Self::Provision => "provision",
             Self::Discovery => "discovery",
-            Self::Simulate => "simulate",
-            Self::Submit => "submit",
-            Self::React => "react",
         }
     }
 }

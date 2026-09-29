@@ -1,6 +1,5 @@
 //! ADR-061 D3 declared==wired pin: every plane strategy's kit-cell
-//! declaration must match what the kit actually composes, and the three
-//! deliberately-absent cells must stay absent.
+//! declaration must match what the kit actually composes.
 //!
 //! The declaration lives in `degenbot_strategy::strategy_kit::STRATEGY_CELLS`;
 //! this test is the mechanical enforcement. A flipped declaration must fail
@@ -69,21 +68,14 @@ fn declared_rows_match_the_kit_composition() {
 }
 
 #[test]
-fn absent_cells_stay_absent_everywhere() {
-    // Simulate/submit/react have no boot-resolved per-strategy value; a row
-    // declaring one would be the hypothetical-seam failure the design rule
-    // forbids.
-    for name in StrategyName::ALL {
-        for cell in declared_cells(name).expect("row") {
-            assert!(
-                matches!(cell, StrategyCell::Provision | StrategyCell::Discovery),
-                "{} declares {} which the kit cannot carry",
-                name.as_str(),
-                cell.label()
-            );
-        }
-    }
-    assert_eq!(StrategyCell::ALL.len(), 5, "the cell vocabulary is closed");
+fn cell_vocabulary_is_exactly_the_live_cells() {
+    // The kit's vocabulary is extracted by subtraction: a slot with a
+    // consumer stays out, so the closed set is exactly what the kit wires.
+    assert_eq!(
+        StrategyCell::ALL,
+        [StrategyCell::Provision, StrategyCell::Discovery],
+        "the cell vocabulary is closed and live-only"
+    );
 }
 
 #[test]
