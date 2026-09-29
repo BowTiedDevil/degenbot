@@ -1,17 +1,15 @@
-"""Dispatch + sim-render leaf helpers for the settlement-arbitrage ``BotRunner``.
+"""Render-fold + record-render helpers for the settlement-arbitrage cockpit.
 
-The production path is the Rust-owned ordered sim-submit pipeline
-(:mod:`degenbot.runner._sim_submit`), whose Python leaves shape candidates,
-stitch inline-sim payload records, render outcomes, and submit records over the
-``dispatch_profitable`` / ``dispatch_and_submit`` Rust seams.
+The production path is the Rust core's batch executor
+(:mod:`degenbot.runner._sim_submit` builds it; the consumer enqueues batches
+and a drain task renders). This module owns the DISPLAY fold: one drained
+batch's Batch outcome records fold into the :class:`MergedOutcome` render
+view (the counters are exact folds over the records — never stored fields),
+and the submit-lane records render the ``[dispatch]`` lines + the
+silent-veto smoke FSM.
 
 The renderers are display-only (``stays-python``); all sim/submit arithmetic
-runs in the Rust core. Only candidate-list shaping + log rendering happen
-here — the inline-sim payload arm routes through the same Rust sim seam
-(``merge_payload_results`` → the FFI batch's
-``join_sim_result``/``derive_path_pools`` + the Rust ``MIN_PROFIT_NET``
-gate), so pool-key derivation and threshold categorization are owned once,
-Rust-side, for both entry arms.
+runs in the Rust core.
 """
 
 from __future__ import annotations
@@ -32,21 +30,14 @@ from degenbot.runner._render import (
 from degenbot.runner.config import ArbitrageConfig
 
 if TYPE_CHECKING:
-    from degenbot.dispatch import DispatchOutcome
     from degenbot.runner.bot_runner import _SessionState
 
 from degenbot.dispatch import (
-    DispatchCandidate,
-    PayloadOutcome,
+    AssemblyVerdict,
+    SimulateVerdict,
     SkippedRecord,
-    SubmitCandidate,
-    SubmitContext,
     SubmitSkipReason,
     SubmittedRecord,
-    TxSigner,
-    assemble_dispatch_candidates,
-    dispatch_and_submit,
-    merge_payload_results,
 )
 from degenbot.logging import logger as bot_logger
 
@@ -128,55 +119,36 @@ def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
     return code
 
 
-def _build_dispatch_candidates(
-    session: _SessionState,
-    results: list[RawEngineResult],
-    *,
-    payloads: dict[int, dict] | None = None,
-) -> list[DispatchCandidate]:
-    """Shape a batch of raw engine results into Rust-seam candidates.
+@dataclass(frozen=True, slots=True)
+class _RenderCandidate:
+    """The display-fold view of one gas-profitable Batch outcome record.
 
-    The whole batch is assembled by the
-    Rust seam in one call: path resolution, per-row field construction, the
-    empty-hop skip, and the payload-served skip all run in the core. Only the
-    display-only ``[sim-none]`` log and the operator policy bools stay Python.
-    Returns an EMPTY list when nothing is dispatchable (the caller skips sim +
-    submit).
-
-    Path ids present in ``payloads`` were ALREADY simulated
-    inline in the Rust engine — they never enter the FFI sim batch (the
-    payload derives their submit records directly; per-entry presence
-    decides, so a mixed batch only degrades the payload-less entries).
+    The renderers read ``path_id``/``gross_profit``/``net_profit``/
+    ``gas_used``/``priority_fee`` off a submit candidate; the record's typed
+    ``SimReceipt`` projects onto exactly that surface (the calldata/encoding
+    lives in the core now — a rendered candidate is no longer an encodable
+    payload).
     """
-    if not results:
-        return []
-    assembly = assemble_dispatch_candidates(
-        engine=session.engine_registry.engine,
-        results=results,
-        # The operator's ERC6909 vault-capture toggle - the Rust seam defaults
-        # it to False (custody capture, the long-standing production behavior);
-        # env-gated opt-in.
-        erc6909_profit=session.cfg.erc6909_profit,
-        skip_path_ids=sorted(payloads) if payloads else None,
-    )
-    for path_id in assembly.empty_hop_path_ids:
-        bot_logger.debug(f"[sim-none] path={path_id}: empty hop_outputs")
-    return list(assembly.candidates)
+
+    path_id: int
+    gross_profit: int
+    net_profit: int
+    gas_used: int
+    priority_fee: int
 
 
 @dataclass(frozen=True, slots=True)
 class MergedOutcome:
-    """The named sim/submit outcome record the renderers + submit leaf consume.
+    """The named sim/submit render view over one drained batch.
 
-    The FFI batch outcome and the payload-derived records are stitched ONCE,
-    at construction (see :meth:`from_parts`), into flat named fields — the
-    renderers keep ``DispatchOutcome`` attribute parity (the
-    ``[sim]``/``[profit]``/``[sim-fail]`` contract) without re-tallying on
-    every property access. Falsy when empty: callers skip render+submit on
-    falsy outcomes.
+    The view is an exact FOLD over the batch's Batch outcome records
+    (:meth:`from_records`) — the renderers keep ``DispatchOutcome`` attribute
+    parity (the ``[sim]``/``[profit]``/``[sim-fail]`` contract) without
+    re-tallying on every property access. Falsy when empty: the drain skips
+    render+submit bookkeeping on falsy outcomes.
     """
 
-    gas_profitable: list[SubmitCandidate]
+    gas_profitable: list[_RenderCandidate]
     gas_unprofitable_count: int
     exception_count: int
     fail_count: int
@@ -198,91 +170,86 @@ class MergedOutcome:
         )
 
     @classmethod
-    def from_parts(
-        cls,
-        base: DispatchOutcome | None,
-        payload: PayloadOutcome,
-    ) -> MergedOutcome:
-        """Stitch the FFI batch tallies + payload records into one flat record.
+    def from_records(cls, records: Any) -> MergedOutcome:
+        """Fold one drained batch's Batch outcome records into the render view.
 
-        ``base`` is ``None`` when every entry was payload-served (no FFI
-        batch ran) — the neutral part contributes nothing.
+        Every counter is a FOLD over the records (never a stored field); the
+        failure rows and ``path_infos`` decode through the seam's one
+        serializers (``FailureDetail.record()`` / ``path_info_dict()``), so
+        the pool-key derivation and threshold categorization the renderers
+        display are Rust-owned end to end. The pre-assembly skip verdicts
+        carry their display-only ``[sim-none]`` log here.
         """
-        candidates = list(payload.candidates)
-        failures = list(payload.failures)
-        buckets: dict[str, int] = {} if base is None else dict(base.fail_buckets)
-        for rec in failures:
-            bucket = rec["bucket"]
-            buckets[bucket] = buckets.get(bucket, 0) + 1
-        path_infos: dict[int, dict[str, Any]] = {} if base is None else dict(base.path_infos)
-        path_infos.update(payload.path_infos)
-        unprofitable = payload.unprofitable_count
+        gas_profitable: list[_RenderCandidate] = []
+        gas_unprofitable_count = 0
+        exception_count = 0
+        fail_count = 0
+        fail_buckets: dict[str, int] = {}
+        failures: list[dict[str, Any]] = []
+        path_infos: dict[int, dict[str, Any]] = {}
+        suppressed = thin = divergent = fot = 0
+        for rec in records:
+            match rec.assembly:
+                case AssemblyVerdict.SkipEmptyHops:
+                    bot_logger.debug(f"[sim-none] path={rec.path_id}: empty hop_outputs")
+                    continue
+                case (
+                    AssemblyVerdict.SkipResolveMiss
+                    | AssemblyVerdict.SkipPayloadServed
+                    | AssemblyVerdict.SkipThinMargin
+                    | AssemblyVerdict.SkipDivergentPool
+                    | AssemblyVerdict.SkipFeeOnTransfer
+                ):
+                    continue
+                case AssemblyVerdict.SkipSuppressed:
+                    suppressed += 1
+                    continue
+                case _:
+                    pass
+            # Assembled: the display context + the sim verdict fold.
+            path_infos[rec.path_id] = rec.path_info_dict()
+            match rec.simulate:
+                case SimulateVerdict.Profitable(receipt=receipt):
+                    gas_profitable.append(
+                        _RenderCandidate(
+                            path_id=rec.path_id,
+                            gross_profit=int(receipt.gross_profit),
+                            net_profit=int(receipt.net_profit),
+                            gas_used=receipt.gas_used,
+                            priority_fee=receipt.priority_fee,
+                        )
+                    )
+                case SimulateVerdict.GasUnprofitable():
+                    gas_unprofitable_count += 1
+                case SimulateVerdict.Failed(detail=detail):
+                    fail_count += 1
+                    record = detail.record()
+                    failures.append(record)
+                    bucket = record["bucket"]
+                    fail_buckets[bucket] = fail_buckets.get(bucket, 0) + 1
+                case SimulateVerdict.Exception():
+                    exception_count += 1
+                case _:
+                    # Post-assembly drop (the solve-snapshot staleness gate /
+                    # the per-batch cap) — the same drain-invisible drop the
+                    # pre-cut-over outcome applied.
+                    path_infos.pop(rec.path_id, None)
         return cls(
-            gas_profitable=([] if base is None else list(base.gas_profitable)) + candidates,
-            gas_unprofitable_count=(0 if base is None else base.gas_unprofitable_count)
-            + unprofitable,
-            exception_count=0 if base is None else base.exception_count,
-            fail_count=(0 if base is None else base.fail_count) + len(failures),
+            gas_profitable=gas_profitable,
+            gas_unprofitable_count=gas_unprofitable_count,
+            exception_count=exception_count,
+            fail_count=fail_count,
             candidate_count=(
-                (0 if base is None else base.candidate_count)
-                + len(candidates)
-                + unprofitable
-                + len(failures)
+                len(gas_profitable) + gas_unprofitable_count + fail_count + exception_count
             ),
-            suppressed_count=0 if base is None else base.suppressed_count,
-            thin_dropped=0 if base is None else base.thin_dropped,
-            divergent_dropped=0 if base is None else base.divergent_dropped,
-            fot_dropped=0 if base is None else base.fot_dropped,
-            fail_buckets=buckets,
-            failures=([] if base is None else list(base.failures)) + failures,
+            suppressed_count=suppressed,
+            thin_dropped=thin,
+            divergent_dropped=divergent,
+            fot_dropped=fot,
+            fail_buckets=fail_buckets,
+            failures=failures,
             path_infos=path_infos,
         )
-
-
-def _merge_payload_outcome(
-    session: _SessionState,
-    base_outcome: DispatchOutcome | None,
-    payloads: dict[int, dict] | None,
-) -> _SimOutcome | None:
-    """Stitch inline-sim payload records into (or over) the FFI batch outcome.
-
-    The payload arm routes through the SAME sim seam the FFI batch uses
-    (:func:`merge_payload_results`), so the mutual-exclusion pool keys
-    (the Rust `derive_path_pools` walk over the engine's typed hops) and the
-    net-profit threshold (the Rust-owned `MIN_PROFIT_NET` constant) are
-    evaluated exactly once, Rust-side, for BOTH entry arms. This function
-    only renders/stitches the returned record rows — honoring this module's
-    docstring contract.
-
-    Per-entry presence decides: each payload yields a submit row (built by
-    the Rust `join_sim_result` FFI join over the engine's registered
-    `PathInfo`), a gas-unprofitable tally entry (Rust-categorized), or a
-    `[sim-fail]` record (the FFI row shape, built by the same seam). The
-    below-threshold verdict arrives as a Rust `kind` string — no threshold
-    value crosses to Python.
-
-    `base_outcome` is the FFI outcome for the REMAINING (payload-less)
-    entries — `None` only when there was nothing to send through the FFI
-    batch at all.
-    """
-    if not payloads:
-        return base_outcome or None
-    sim_ctx = session.sim_ctx
-    if sim_ctx is None:
-        msg = "SimulateContext is required to merge payload records"
-        raise RuntimeError(msg)
-
-    # THE SIM SEAM: the payload records route through the SAME Rust
-    # join the FFI batch uses — the mutual-exclusion path_pools derive from
-    # the engine's typed hops (derive_path_pools) and the MIN_PROFIT_NET
-    # gate applies there, ONCE. The submit rows arrive as PySubmitCandidate
-    # (the gas_profitable element type) ready for dispatch_and_submit.
-    outcome = merge_payload_results(
-        [payloads[pid] for pid in sorted(payloads)],
-        session.engine_registry.engine,
-        sim_ctx.executor_address,
-    )
-    return MergedOutcome.from_parts(base_outcome, outcome)
 
 
 def _render_outcome(
@@ -352,72 +319,6 @@ class SubmissionSmoke:
         return SubmissionSmokeVerdict.STREAK
 
 
-async def _submit_batch_records(  # ruff:ignore[too-many-arguments]
-    session: _SessionState,
-    outcome: _SimOutcome,
-    *,
-    operator_nonce: int,
-    submitter: Any = None,
-    relay_providers: Any = None,
-    logger: Any = bot_logger,
-) -> None:
-    """Submit gas-profitable candidates via the Rust submit leaf + render records.
-
-    The pipeline's ordered submitter calls this. Expects
-    the operator nonce fetched AT submit time (serialized consumers only) and
-    forwards it unchanged: the Rust authority seeds from that chain read and
-    leases the sign-time nonce, so no nonce is computed Python-side.
-
-    ``submitter``/``relay_providers``/``logger`` are the DI seams (tests inject
-    a recording submitter + opaque providers + a recording logger; production
-    runs the default ``dispatch_and_submit``, the cached relay provider set,
-    and the module logger).
-    """
-    async_alloy = session.async_w3.as_async_alloy()
-    if async_alloy is None:
-        logger.error("[dispatch] async_w3 is not an Alloy-backed provider; cannot submit")
-        return
-    # Relay submission seam (ADR-025 companion): same signed bytes, dedicated
-    # broadcast URL, revert-protecting private builder endpoints instead of
-    # the public mempool. The POSTURE is owned by the session's RelayPosture
-    # (resolved once from the typed config at session start — see
-    # _relay_posture);
-    # sessions without one (bare test fakes) fall back to the env read. The
-    # operator nonce is forwarded unchanged: the Rust authority issues it.
-    relay_posture = getattr(session, "relay_posture", None)
-    if relay_posture is None or not relay_posture.relay_urls:
-        if outcome.gas_profitable and not session.cfg.dry_run:
-            # Unreachable past the boot gate; kept as the loudly-impossible
-            # state guard rather than any fallthrough to a raw broadcast.
-            logger.error("[dispatch] no relay posture on a live session: refusing submission")
-            return
-        broadcast_providers = None
-    else:
-        broadcast_providers = await _resolve_relay_providers(
-            relay_posture.relay_urls, relay_providers
-        )
-
-    _log_submit_arm(outcome.gas_profitable, session.dispatcher.current_block, logger=logger)
-
-    signer = TxSigner(key=session.cfg.operator_private_key, chain_id=session.cfg.chain_id)
-    records = await (submitter if submitter is not None else dispatch_and_submit)(
-        candidates=outcome.gas_profitable,
-        dispatcher=session.dispatcher,
-        provider=async_alloy,
-        context=SubmitContext(
-            signer=signer,
-            operator_nonce=operator_nonce,
-            current_block=session.dispatcher.current_block,
-            dry_run=session.cfg.dry_run,
-            inject_code=session.cfg.inject_executor_code,
-            broadcast_providers=broadcast_providers,
-        ),
-    )
-    submitted_count = sum(isinstance(record, SubmittedRecord) for record in records)
-    skip_histogram = _render_submit_records(records, logger=logger)
-    _track_submission_smoke(session, outcome, submitted_count, skip_histogram, logger=logger)
-
-
 async def _resolve_relay_providers(
     relay_urls: list[str],
     relay_providers: Any,
@@ -445,29 +346,6 @@ async def _resolve_relay_providers(
             relay_provider.as_async_alloy() for _, relay_provider in _RELAY_SUBMIT_PROVIDERS
         ]
     return broadcast_providers
-
-
-def _log_submit_arm(
-    candidates: list[Any],
-    solve_block: int,
-    *,
-    logger: Any = bot_logger,
-) -> None:
-    """Forensic capture (fork-replay): the exact calldata + candidate economics.
-
-    One INFO line per gate-clearing candidate BEFORE broadcast, so any later tx
-    can be replayed at its solve block.
-    """
-    for c in candidates:
-        calldata = getattr(c, "execute_calldata", None)
-        logger.info(
-            "[submit-arm] path=%s solve_block=%s net_wei=%s gas=%s calldata=%s",
-            c.path_id,
-            solve_block,
-            c.net_profit,
-            c.gas_used,
-            calldata.hex() if calldata else "<unavailable>",
-        )
 
 
 def _render_submit_records(

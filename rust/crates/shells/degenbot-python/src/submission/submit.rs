@@ -492,7 +492,7 @@ fn int_to_u256(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<U256> {
 }
 
 /// Map `SkipReason` to a Python-friendly `(reason_str, Option<detail>)`.
-fn skip_reason_to_py(reason: &SkipReason) -> (&'static str, Option<String>) {
+pub(crate) fn skip_reason_to_py(reason: &SkipReason) -> (&'static str, Option<String>) {
     match reason {
         SkipReason::PoolsClaimed => ("pools_claimed", None),
         SkipReason::DryRun => ("dry_run", None),

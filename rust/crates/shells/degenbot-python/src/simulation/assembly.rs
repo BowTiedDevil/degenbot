@@ -43,13 +43,13 @@ use std::collections::HashSet;
 /// dataclass); no positional 7-tuple crosses the boundary.
 #[derive(FromPyObject, Clone)]
 pub struct RawEngineResult {
-    path_id: u64,
-    optimal_input: u128,
-    engine_profit: u128,
-    hop_outputs: Vec<u128>,
-    consumed_inputs: Vec<u128>,
-    solve_block: u64,
-    state_nonces: Vec<u64>,
+    pub(crate) path_id: u64,
+    pub(crate) optimal_input: u128,
+    pub(crate) engine_profit: u128,
+    pub(crate) hop_outputs: Vec<u128>,
+    pub(crate) consumed_inputs: Vec<u128>,
+    pub(crate) solve_block: u64,
+    pub(crate) state_nonces: Vec<u64>,
 }
 
 /// The batched assembly result: ready candidates + the skipped empty-hop path

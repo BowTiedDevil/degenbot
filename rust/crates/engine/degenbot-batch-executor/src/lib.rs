@@ -39,7 +39,7 @@ pub use assembly::{
     merge_payload_results, AssemblyError, MergedPayloadOutcome, PathResolver, PayloadArm,
     RawRowClass,
 };
-pub use executor::{BatchExecutor, BatchWork, ExecutorConfig};
+pub use executor::{BatchDrain, BatchExecutor, BatchOutcomeSet, BatchWork, ExecutorConfig};
 pub use record::{
     fold_counters, AssemblyVerdict, BatchCounters, BatchOutcome, FailureDetail, FailureKind,
     PathInfoView, SimReceipt, SimulateVerdict, SubmitVerdict,

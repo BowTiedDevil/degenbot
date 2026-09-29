@@ -249,72 +249,7 @@ impl PyDispatchOutcome {
     fn failures<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let list = PyList::empty(py);
         for f in &self.failures {
-            let dict = PyDict::new(py);
-            dict.set_item("path_id", f.path_id)?;
-            dict.set_item("bucket", &f.bucket)?;
-            match f.fail_index {
-                Some(idx) => dict.set_item("fail_index", idx)?,
-                None => dict.set_item("fail_index", py.None())?,
-            }
-            let hex_str = alloy::hex::encode_prefixed(&f.revert_data);
-            dict.set_item("revert_data", hex_str)?;
-            match &f.reverting_frame {
-                Some(rf) => {
-                    let rdict = PyDict::new(py);
-                    rdict.set_item("depth", rf.depth)?;
-                    rdict.set_item("target", format!("{:#x}", rf.target))?;
-                    rdict.set_item(
-                        "selector",
-                        format!("0x{}", alloy::primitives::hex::encode(rf.selector)),
-                    )?;
-                    rdict.set_item("revert_data", alloy::hex::encode_prefixed(&rf.revert_data))?;
-                    rdict.set_item("label", &rf.label)?;
-                    rdict.set_item("outcome_kind", rf.outcome_kind)?;
-                    rdict.set_item("gas_used", rf.gas_used)?;
-                    dict.set_item("reverting_frame", rdict)?;
-                }
-                None => dict.set_item("reverting_frame", py.None())?,
-            }
-            // The captured swaps (before the revert) — per-swap dicts.
-            let swaps_list = PyList::empty(py);
-            for s in &f.captured_swaps {
-                swaps_list.append(captured_swap_to_dict(py, s)?)?;
-            }
-            dict.set_item("captured_swaps", swaps_list)?;
-            dict.set_item("log_full_count", f.log_full_count)?;
-            // Swaps emitted inside REVERTED frames (frame-misclassification diag).
-            let rsw = PyList::empty(py);
-            for s in &f.reverted_swaps {
-                rsw.append(captured_swap_to_dict(py, s)?)?;
-            }
-            dict.set_item("reverted_swaps", rsw)?;
-            // Compact per-frame EVM call-trace summary (no-profit diagnostic).
-            let ct_list = PyList::empty(py);
-            for s in &f.call_trace {
-                ct_list.append(s)?;
-            }
-            dict.set_item("call_trace", ct_list)?;
-            dict.set_item("weth_before", f.weth_before)?;
-            dict.set_item("weth_after", f.weth_after)?;
-            dict.set_item("eth_before", f.eth_before)?;
-            dict.set_item("eth_after", f.eth_after)?;
-            dict.set_item("erc6909_before", f.erc6909_before)?;
-            dict.set_item("erc6909_after", f.erc6909_after)?;
-            // The solver's expected amounts — the [sim-diag] classifier's
-            // EXPECTED half (the ACTUAL half is `captured_swaps`). The gap
-            // between `hop_outputs[i]` and the i-th captured swap's amount
-            // is the new SolverCalc basis (replaces the deleted recompute).
-            // `optimal_input` is the solver's expected input (context for the
-            // expected-vs-actual render).
-            let optimal_input = alloy_py::u256_to_py(py, &U256::from(f.optimal_input))?;
-            dict.set_item("optimal_input", optimal_input)?;
-            let hop_outputs_list = PyList::empty(py);
-            for ho in &f.hop_outputs {
-                let v = alloy_py::u256_to_py(py, &U256::from(*ho))?;
-                hop_outputs_list.append(v)?;
-            }
-            dict.set_item("hop_outputs", hop_outputs_list)?;
-            list.append(dict)?;
+            list.append(sim_failure_to_dict(py, f)?)?;
         }
         Ok(list)
     }
@@ -425,6 +360,82 @@ fn hop_to_py_dict<'py>(
 /// `failures()` + the success-path `profitable_captured_swaps()` getters both
 /// emit, so the Python consumer sees one captured-swap dict shape regardless of
 /// whether the swap came from a reverted or a profitable run .
+/// Build the per-failure render dict for one `SimFailure` — the shared shape
+/// the `DispatchOutcome.failures` getter and the batch-executor seam's
+/// `FailureDetail.record()` both emit, so the Python `[sim-fail]` renderers
+/// see ONE failure-record shape on both entry arms.
+pub(crate) fn sim_failure_to_dict<'py>(
+    py: Python<'py>,
+    f: &SimFailure,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("path_id", f.path_id)?;
+    dict.set_item("bucket", &f.bucket)?;
+    match f.fail_index {
+        Some(idx) => dict.set_item("fail_index", idx)?,
+        None => dict.set_item("fail_index", py.None())?,
+    }
+    let hex_str = alloy::hex::encode_prefixed(&f.revert_data);
+    dict.set_item("revert_data", hex_str)?;
+    match &f.reverting_frame {
+        Some(rf) => {
+            let rdict = PyDict::new(py);
+            rdict.set_item("depth", rf.depth)?;
+            rdict.set_item("target", format!("{:#x}", rf.target))?;
+            rdict.set_item(
+                "selector",
+                format!("0x{}", alloy::primitives::hex::encode(rf.selector)),
+            )?;
+            rdict.set_item("revert_data", alloy::hex::encode_prefixed(&rf.revert_data))?;
+            rdict.set_item("label", &rf.label)?;
+            rdict.set_item("outcome_kind", rf.outcome_kind)?;
+            rdict.set_item("gas_used", rf.gas_used)?;
+            dict.set_item("reverting_frame", rdict)?;
+        }
+        None => dict.set_item("reverting_frame", py.None())?,
+    }
+    // The captured swaps (before the revert) — per-swap dicts.
+    let swaps_list = PyList::empty(py);
+    for s in &f.captured_swaps {
+        swaps_list.append(captured_swap_to_dict(py, s)?)?;
+    }
+    dict.set_item("captured_swaps", swaps_list)?;
+    dict.set_item("log_full_count", f.log_full_count)?;
+    // Swaps emitted inside REVERTED frames (frame-misclassification diag).
+    let rsw = PyList::empty(py);
+    for s in &f.reverted_swaps {
+        rsw.append(captured_swap_to_dict(py, s)?)?;
+    }
+    dict.set_item("reverted_swaps", rsw)?;
+    // Compact per-frame EVM call-trace summary (no-profit diagnostic).
+    let ct_list = PyList::empty(py);
+    for s in &f.call_trace {
+        ct_list.append(s)?;
+    }
+    dict.set_item("call_trace", ct_list)?;
+    dict.set_item("weth_before", f.weth_before)?;
+    dict.set_item("weth_after", f.weth_after)?;
+    dict.set_item("eth_before", f.eth_before)?;
+    dict.set_item("eth_after", f.eth_after)?;
+    dict.set_item("erc6909_before", f.erc6909_before)?;
+    dict.set_item("erc6909_after", f.erc6909_after)?;
+    // The solver's expected amounts — the [sim-diag] classifier's
+    // EXPECTED half (the ACTUAL half is `captured_swaps`). The gap
+    // between `hop_outputs[i]` and the i-th captured swap's amount
+    // is the new SolverCalc basis (replaces the deleted recompute).
+    // `optimal_input` is the solver's expected input (context for the
+    // expected-vs-actual render).
+    let optimal_input = alloy_py::u256_to_py(py, &U256::from(f.optimal_input))?;
+    dict.set_item("optimal_input", optimal_input)?;
+    let hop_outputs_list = PyList::empty(py);
+    for ho in &f.hop_outputs {
+        let v = alloy_py::u256_to_py(py, &U256::from(*ho))?;
+        hop_outputs_list.append(v)?;
+    }
+    dict.set_item("hop_outputs", hop_outputs_list)?;
+    Ok(dict)
+}
+
 pub(crate) fn captured_swap_to_dict<'py>(
     py: Python<'py>,
     s: &CapturedSwap,

@@ -492,7 +492,7 @@ fn required_u64(entry: &Bound<'_, PyDict>, key: &str) -> PyResult<u64> {
 /// serializer emitted (the EIP-2930 JSON shape) are parsed back into the
 /// alloy `AccessList` so the crate join stamps the row exactly like the FFI
 /// batch survivor.
-fn payload_row_from_dict(entry: &Bound<'_, PyDict>) -> PyResult<PayloadRow> {
+pub(crate) fn payload_row_from_dict(entry: &Bound<'_, PyDict>) -> PyResult<PayloadRow> {
     let path_id = required_u64(entry, "path_id")?;
     let gross_obj = entry
         .get_item("gross_profit")?

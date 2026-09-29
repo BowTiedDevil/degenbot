@@ -134,6 +134,19 @@ struct SimStageOutput {
     submit_candidates: Vec<degenbot_submission::SubmitCandidate>,
 }
 
+/// One drained batch: the candidate outcome records + the RAW submit-lane
+/// records (`Submitted`/`Skipped` with reason + detail) the Python drain
+/// renders (the `[dispatch]` per-record lines + the silent-veto smoke FSM —
+/// reads that live on the submit records, not inside the typed
+/// `SubmitVerdict` slot).
+#[derive(Debug, Clone)]
+pub struct BatchOutcomeSet {
+    /// The per-candidate outcome records, in submit order.
+    pub records: Vec<BatchOutcome>,
+    /// The submit lane's raw per-candidate records, in submit order.
+    pub submit_records: Vec<SubmitRecord>,
+}
+
 /// The two production leaves over one shared config. The record sender is
 /// held WEAK: the strong half lives on [`BatchExecutor`], which drops it at
 /// `shutdown` so a drain-to-completion `next_outcome` loop terminates — a
@@ -141,7 +154,7 @@ struct SimStageOutput {
 /// lifetime) would keep the channel open forever and hang the drain.
 struct EngineLeaves {
     config: Arc<ExecutorConfig>,
-    outcome_tx: mpsc::WeakUnboundedSender<Vec<BatchOutcome>>,
+    outcome_tx: mpsc::WeakUnboundedSender<BatchOutcomeSet>,
 }
 
 impl EngineLeaves {
@@ -379,22 +392,43 @@ impl SubmitLeaf<BatchWork, SimStageOutput> for EngineLeaves {
             // records are dropped because the drain is gone too (the lane is
             // already torn down; no live reader exists).
             if let Some(tx) = tx.upgrade() {
-                let _ = tx.send(stamped);
+                let _ = tx.send(BatchOutcomeSet {
+                    records: stamped,
+                    submit_records: submit_outcome.records.clone(),
+                });
             }
             Ok(())
         })
     }
 }
 
+/// A drain handle over the record stream, shared with the executor's own
+/// `next_outcome` (the unbounded receiver is not `Clone`, so both lock the
+/// same mutex-guarded receiver — the `PyO3` seam's drain task owns one handle
+/// and never touches the executor itself).
+pub struct BatchDrain {
+    rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<BatchOutcomeSet>>>,
+}
+
+impl BatchDrain {
+    /// Await the next batch's outcome set (`None` when the lane is closed
+    /// and drained).
+    pub async fn next(&mut self) -> Option<BatchOutcomeSet> {
+        self.rx.lock().await.recv().await
+    }
+}
+
 /// The core batch executor.
 pub struct BatchExecutor {
     pipeline: SimSubmitPipeline<BatchWork, SimStageOutput>,
-    /// The record channel's strong half. `shutdown` drops it after the lane
+    /// The record channel's strong half, behind interior mutability so
+    /// `shutdown` takes `&self` (the shared-consumer seam drives the
+    /// executor through an `Arc`). Dropped by `shutdown` after the lane
     /// drains so `next_outcome` returns `None` (the leaves hold only a weak
     /// sender — a strong copy living in the leaves would pin the channel
     /// open and hang any drain-to-completion loop).
-    outcome_tx: Option<mpsc::UnboundedSender<Vec<BatchOutcome>>>,
-    outcome_rx: mpsc::UnboundedReceiver<Vec<BatchOutcome>>,
+    outcome_tx: std::sync::Mutex<Option<mpsc::UnboundedSender<BatchOutcomeSet>>>,
+    outcome_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<BatchOutcomeSet>>>,
 }
 
 impl BatchExecutor {
@@ -416,6 +450,14 @@ impl BatchExecutor {
         )
     }
 
+    /// A drain handle over the record stream (see [`BatchDrain`]).
+    #[must_use]
+    pub fn drain_handle(&self) -> BatchDrain {
+        BatchDrain {
+            rx: Arc::clone(&self.outcome_rx),
+        }
+    }
+
     /// Wire one leaf pair + the record channel into the ordered lane. The
     /// production constructor passes [`EngineLeaves`]; the tests pass fakes
     /// over the SAME `BatchWork` / `SimStageOutput` types so the lane's
@@ -426,14 +468,14 @@ impl BatchExecutor {
         concurrency: usize,
         sim: Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
         submit: Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,
-        outcome_tx: mpsc::UnboundedSender<Vec<BatchOutcome>>,
-        outcome_rx: mpsc::UnboundedReceiver<Vec<BatchOutcome>>,
+        outcome_tx: mpsc::UnboundedSender<BatchOutcomeSet>,
+        outcome_rx: mpsc::UnboundedReceiver<BatchOutcomeSet>,
     ) -> Self {
         let pipeline = SimSubmitPipeline::new(concurrency, sim, submit);
         Self {
             pipeline,
-            outcome_tx: Some(outcome_tx),
-            outcome_rx,
+            outcome_tx: std::sync::Mutex::new(Some(outcome_tx)),
+            outcome_rx: Arc::new(tokio::sync::Mutex::new(outcome_rx)),
         }
     }
 
@@ -444,16 +486,16 @@ impl BatchExecutor {
         self.pipeline.enqueue(work);
     }
 
-    /// Await the next batch's outcome records (`None` when the lane is
-    /// closed and drained).
-    pub async fn next_outcome(&mut self) -> Option<Vec<BatchOutcome>> {
-        self.outcome_rx.recv().await
+    /// Await the next batch's outcome set (`None` when the lane is closed
+    /// and drained).
+    pub async fn next_outcome(&self) -> Option<BatchOutcomeSet> {
+        self.outcome_rx.lock().await.recv().await
     }
 
-    /// Poll for the next batch's outcome records without awaiting.
+    /// Poll for the next batch's outcome set without awaiting.
     #[must_use]
-    pub fn try_next_outcome(&mut self) -> Option<Vec<BatchOutcome>> {
-        self.outcome_rx.try_recv().ok()
+    pub async fn try_next_outcome(&self) -> Option<BatchOutcomeSet> {
+        self.outcome_rx.lock().await.try_recv().ok()
     }
 
     /// How many batches have been enqueued.
@@ -485,12 +527,15 @@ impl BatchExecutor {
     /// # Errors
     ///
     /// [`PipelineFailure`] when a leaf failed.
-    pub async fn shutdown(&mut self) -> Result<(), PipelineFailure> {
+    pub async fn shutdown(&self) -> Result<(), PipelineFailure> {
         let result = self.pipeline.shutdown().await;
         // Release the record channel (see the field doc): the lane drained
         // every batch before this drop, so no send is lost, and a
         // drain-to-completion `next_outcome` loop now terminates.
-        self.outcome_tx = None;
+        *self
+            .outcome_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         result
     }
 }
@@ -574,7 +619,7 @@ mod tests {
     /// (block) submit order, and publishes the stamped records.
     struct StampingSubmit {
         order: Arc<std::sync::Mutex<Vec<u64>>>,
-        tx: mpsc::WeakUnboundedSender<Vec<BatchOutcome>>,
+        tx: mpsc::WeakUnboundedSender<BatchOutcomeSet>,
     }
 
     impl SubmitLeaf<BatchWork, SimStageOutput> for StampingSubmit {
@@ -593,7 +638,10 @@ mod tests {
                     record.submit = Some(SubmitVerdict::Submitted);
                 }
                 if let Some(tx) = tx.upgrade() {
-                    let _ = tx.send(records);
+                    let _ = tx.send(BatchOutcomeSet {
+                        records,
+                        submit_records: Vec::new(),
+                    });
                 }
                 Ok(())
             })
@@ -626,8 +674,7 @@ mod tests {
     #[tokio::test]
     async fn submit_lane_runs_in_nonce_order_not_sim_completion_order() {
         let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut executor =
-            executor_with(ReversedFinishSim { fail_block: None }, Arc::clone(&order));
+        let executor = executor_with(ReversedFinishSim { fail_block: None }, Arc::clone(&order));
         for batch in 0_u64..4 {
             executor.enqueue(work(BASE_BLOCK + batch));
         }
@@ -645,7 +692,7 @@ mod tests {
         // submit order.
         let mut drained = Vec::new();
         while let Some(records) = executor.next_outcome().await {
-            drained.extend(records.iter().map(|r| r.block));
+            drained.extend(records.records.iter().map(|r| r.block));
         }
         assert_eq!(
             drained,
@@ -659,7 +706,7 @@ mod tests {
     #[tokio::test]
     async fn sim_leaf_failure_is_reraised_in_the_caller_frame() {
         let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut executor = executor_with(
+        let executor = executor_with(
             ReversedFinishSim {
                 fail_block: Some(BASE_BLOCK),
             },
@@ -681,7 +728,7 @@ mod tests {
     #[tokio::test]
     async fn raise_if_failed_surfaces_the_stored_failure_once() {
         let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut executor = executor_with(
+        let executor = executor_with(
             ReversedFinishSim {
                 fail_block: Some(BASE_BLOCK + 1),
             },
@@ -690,7 +737,7 @@ mod tests {
         executor.enqueue(work(BASE_BLOCK));
         executor.enqueue(work(BASE_BLOCK + 1));
         // Batch 0 submits; batch 1's sim failure stops the lane.
-        let _ = executor.try_next_outcome();
+        let _ = executor.try_next_outcome().await;
         while executor.submitted() < 1 {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
@@ -709,14 +756,14 @@ mod tests {
     #[tokio::test]
     async fn block_only_drain_reads_just_the_heartbeat() {
         let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut executor = executor_with(ReversedFinishSim { fail_block: None }, order);
+        let executor = executor_with(ReversedFinishSim { fail_block: None }, order);
         for batch in 0_u64..3 {
             executor.enqueue(work(BASE_BLOCK + batch));
         }
         executor.shutdown().await.expect("no failure");
         let mut heartbeats = Vec::new();
         while let Some(records) = executor.next_outcome().await {
-            for record in records {
+            for record in records.records {
                 heartbeats.push(record.block);
             }
         }
@@ -817,7 +864,7 @@ mod tests {
         /// Stamps path 1 `Submitted` and path 4 a typed RPC failure — the
         /// submit-lane surface the renderers read.
         struct PartialSubmit {
-            tx: mpsc::WeakUnboundedSender<Vec<BatchOutcome>>,
+            tx: mpsc::WeakUnboundedSender<BatchOutcomeSet>,
         }
         impl SubmitLeaf<BatchWork, SimStageOutput> for PartialSubmit {
             fn submit<'a>(
@@ -836,7 +883,10 @@ mod tests {
                         };
                     }
                     if let Some(tx) = tx.upgrade() {
-                        let _ = tx.send(records);
+                        let _ = tx.send(BatchOutcomeSet {
+                            records,
+                            submit_records: Vec::new(),
+                        });
                     }
                     Ok(())
                 })
@@ -844,7 +894,7 @@ mod tests {
         }
 
         let (tx, rx) = mpsc::unbounded_channel();
-        let mut executor = BatchExecutor::from_leaves(
+        let executor = BatchExecutor::from_leaves(
             1,
             Arc::new(MixedSim),
             Arc::new(PartialSubmit { tx: tx.downgrade() }),
@@ -855,7 +905,7 @@ mod tests {
         executor.shutdown().await.expect("no failure");
 
         // ── The renderer-shaped drain: every stage + path_info ──
-        let mut records = executor.next_outcome().await.expect("one batch");
+        let mut records = executor.next_outcome().await.expect("one batch").records;
         assert_eq!(records.len(), 4);
         let by_id: std::collections::HashMap<u64, BatchOutcome> =
             records.drain(..).map(|r| (r.path_id, r)).collect();

@@ -34,6 +34,7 @@ Symbol map (FFI name → stable companion name):
 - SimulateContext → SimulateContext
 - TxSigner → TxSigner
 - assemble_dispatch_candidates_py → assemble_dispatch_candidates
+- build_batch_executor_py → build_batch_executor
 - dispatch_profitable_py → dispatch_profitable
 - merge_payload_results_py → merge_payload_results
 - dispatch_and_submit_py → dispatch_and_submit (wrapper: dict → typed records)
@@ -46,14 +47,24 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from degenbot._ffi.simulation import (
+    AssemblyVerdict,
+    BatchExecutor,
+    BatchOutcome,
+    BatchOutcomeSet,
     CandidateAssembly,
     DispatchCandidate,
     DispatchOutcome,
+    FailureDetail,
+    FailureKind,
     PayloadOutcome,
     PayloadVerdict,
+    SimReceipt,
     SimulateContext,
+    SimulateVerdict,
+    SubmitVerdict,
 )
 from degenbot._ffi.simulation import assemble_dispatch_candidates_py as assemble_dispatch_candidates
+from degenbot._ffi.simulation import build_batch_executor_py as build_batch_executor
 from degenbot._ffi.simulation import dispatch_profitable_py as dispatch_profitable
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
 from degenbot._ffi.submission import Dispatcher, SimSubmitPipeline, SubmitCandidate, TxSigner
@@ -134,22 +145,32 @@ async def dispatch_and_submit(
 
 
 __all__ = [
+    "AssemblyVerdict",
+    "BatchExecutor",
+    "BatchOutcome",
+    "BatchOutcomeSet",
     "CandidateAssembly",
     "DispatchCandidate",
     "DispatchOutcome",
     "Dispatcher",
+    "FailureDetail",
+    "FailureKind",
     "PayloadOutcome",
     "PayloadVerdict",
+    "SimReceipt",
     "SimSubmitPipeline",
     "SimulateContext",
+    "SimulateVerdict",
     "SkippedRecord",
     "SubmitCandidate",
     "SubmitContext",
     "SubmitRecord",
     "SubmitSkipReason",
+    "SubmitVerdict",
     "SubmittedRecord",
     "TxSigner",
     "assemble_dispatch_candidates",
+    "build_batch_executor",
     "dispatch_and_submit",
     "dispatch_profitable",
     "fetch_fee_history",

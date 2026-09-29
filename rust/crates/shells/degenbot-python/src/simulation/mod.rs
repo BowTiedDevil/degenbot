@@ -42,6 +42,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 pub mod assembly;
+pub mod batch;
 pub mod candidate;
 pub mod context;
 pub mod dispatch;
@@ -68,6 +69,19 @@ pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_class::<PyDispatchOutcome>()?;
     submod.add_class::<crate::simulation::dispatch::PyPayloadOutcome>()?;
     submod.add_class::<crate::simulation::dispatch::PyPayloadVerdict>()?;
+    submod.add_class::<crate::simulation::batch::PySimReceipt>()?;
+    submod.add_class::<crate::simulation::batch::PyFailureDetail>()?;
+    submod.add_class::<crate::simulation::batch::PyAssemblyVerdict>()?;
+    submod.add_class::<crate::simulation::batch::PySimulateVerdict>()?;
+    submod.add_class::<crate::simulation::batch::PyFailureKind>()?;
+    submod.add_class::<crate::simulation::batch::PySubmitVerdict>()?;
+    submod.add_class::<crate::simulation::batch::PyBatchOutcome>()?;
+    submod.add_class::<crate::simulation::batch::PyBatchOutcomeSet>()?;
+    submod.add_class::<crate::simulation::batch::PyBatchExecutor>()?;
+    submod.add_function(wrap_pyfunction!(
+        crate::simulation::batch::build_batch_executor_py,
+        &submod
+    )?)?;
     submod.add_function(wrap_pyfunction!(
         crate::simulation::dispatch::dispatch_profitable_py,
         &submod

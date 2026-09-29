@@ -42,14 +42,19 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from degenbot import Bot
 from degenbot.arbitrage import session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.dispatch import Dispatcher, SimSubmitPipeline, SimulateContext, fetch_fee_history
+from degenbot.dispatch import (
+    BatchExecutor,
+    Dispatcher,
+    SimulateContext,
+    fetch_fee_history,
+)
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner._dispatch import SubmissionSmoke, _load_executor_runtime_bytecode
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner._run_ritual import RunRitual
 from degenbot.runner._session_watch import SessionWatch
-from degenbot.runner._sim_submit import build_sim_submit_pipeline
+from degenbot.runner._sim_submit import build_batch_executor
 from degenbot.runner.build_paths import ConstructionContext
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.diag import arm_diagnostics
@@ -196,11 +201,14 @@ class _SessionState:
     #: The concurrent sim fan-out + single ordered submitter (attached at
     #: consumer start via :meth:`attach_pipeline`); ``None`` means the consumer
     #: lazily builds it through the session's ``pipeline_factory``.
-    sim_submit_pipeline: SimSubmitPipeline | None = None
+    sim_submit_pipeline: BatchExecutor | None = None
     #: Factory for the lazily-built sim/submit pipeline. The default builds
     #: the production pipeline; a test double supplied here observes the
     #: consumer's attach without touching the Rust sim seam.
-    pipeline_factory: Callable[[_SessionState], SimSubmitPipeline] = build_sim_submit_pipeline
+    #: The factory may be async (the production BatchExecutor construction
+    #: dials the relay providers + seeds the nonce lane); the consumer
+    #: tolerates either shape.
+    pipeline_factory: Callable[[_SessionState], Any] = build_batch_executor
     #: The head-tick ``eth_feeHistory`` leaf (Rust owns the decode +
     #: ``record_priority_fees``). Injected so a provider double can drive the
     #: reconcile path; the default is the production FFI leaf.
@@ -234,7 +242,7 @@ class _SessionState:
         """Advance the session's block clock (the consumer's one mutation)."""
         self.current_block = block_number
 
-    def attach_pipeline(self, pipeline: SimSubmitPipeline) -> None:
+    def attach_pipeline(self, pipeline: BatchExecutor) -> None:
         """Attach the lazily-built sim/submit pipeline."""
         self.sim_submit_pipeline = pipeline
 
@@ -254,9 +262,9 @@ class InjectedActors:
     path_builder: Any = None
     consumer: Any = None
     #: Factory for the session's lazily-built sim/submit pipeline (``None`` =
-    #: production :class:`SimSubmitPipeline`); tests inject a stub to observe
+    #: production :class:`BatchExecutor`); tests inject a stub to observe
     #: the consumer's attach without the Rust sim seam.
-    pipeline_factory: Callable[[_SessionState], SimSubmitPipeline] | None = None
+    pipeline_factory: Callable[[_SessionState], Any] | None = None
     #: Offline seam for the live activation gate: when set, the session's
     #: relay posture is this injected value (lifecycle tests pin a stub;
     #: production leaves it unset so the Rust readiness resolution owns the
@@ -590,7 +598,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
             pipeline_factory=(
                 self._injected_pipeline_factory
                 if self._injected_pipeline_factory is not None
-                else build_sim_submit_pipeline
+                else build_batch_executor
             ),
             relay_posture=(
                 self._injected_relay_posture
