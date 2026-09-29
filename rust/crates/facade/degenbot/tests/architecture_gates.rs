@@ -194,11 +194,12 @@ fn python_phrases(line: &str) -> Vec<(String, String, String)> {
 
 #[test]
 fn workspace_membership_is_exact_and_role_grouped() {
-    const EXPECTED_NAMES: [&str; 33] = [
+    const EXPECTED_NAMES: [&str; 34] = [
         "degenbot",
         "degenbot-aave",
         "degenbot-abi",
         "degenbot-arbitrage",
+        "degenbot-batch-executor",
         "degenbot-bot",
         "degenbot-cli",
         "degenbot-cli-core",

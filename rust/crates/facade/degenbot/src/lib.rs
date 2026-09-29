@@ -82,6 +82,11 @@ pub use degenbot_simulation as simulation;
 /// co-implementation).
 pub use degenbot_arbitrage as arbitrage;
 
+/// The core batch executor (the per-batch dispatch choreography: assembly,
+/// payload merge, ordered sim-submit lane) — the value-configured module both
+/// the pure-Rust bot and the Python companion drive for Batch outcome records.
+pub use degenbot_batch_executor as batch_executor;
+
 /// consumer by this crate.
 pub use degenbot_order_index as order_index;
 

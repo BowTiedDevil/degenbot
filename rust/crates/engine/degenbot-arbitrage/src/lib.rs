@@ -69,8 +69,9 @@ pub use calldata::{
 /// it through the surface they already use.
 pub use degenbot_rpc::BlockPriorityFees;
 pub use dispatch::{
-    dispatch_profitable_results, filter_thin_margin_results, is_gas_profitable, DispatchCandidate,
-    DispatchOutcome, SolveStep, BPS_DENOM, MAX_SIMULATE_CONCURRENT, MIN_PROFIT_NET,
+    candidate_is_stale, dispatch_profitable_results, filter_thin_margin_results, is_gas_profitable,
+    DispatchCandidate, DispatchOutcome, SolveStep, BPS_DENOM, MAX_SIMULATE_CONCURRENT,
+    MIN_PROFIT_NET,
 };
 pub use fot_registry::{
     fot_suspected_token, fot_suspected_token_from_reverting_frame,

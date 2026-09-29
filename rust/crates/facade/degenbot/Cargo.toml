@@ -53,6 +53,9 @@ degenbot-rpc.workspace = true
 degenbot-runs.workspace = true
 degenbot-simulation.workspace = true
 degenbot-arbitrage = { workspace = true, features = ["order-index"] }
+# The core batch executor (the per-batch dispatch choreography both
+# first-class consumers drive) — re-exported as `degenbot::batch_executor`.
+degenbot-batch-executor.workspace = true
 degenbot-solvers.workspace = true
 degenbot-strategy.workspace = true
 degenbot-submission.workspace = true

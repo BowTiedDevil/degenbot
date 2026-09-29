@@ -2207,6 +2207,7 @@ dependencies = [
  "degenbot-aave",
  "degenbot-abi",
  "degenbot-arbitrage",
+ "degenbot-batch-executor",
  "degenbot-bot",
  "degenbot-config",
  "degenbot-core",
@@ -2292,6 +2293,23 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "degenbot-batch-executor"
+version = "0.6.0-alpha.14"
+dependencies = [
+ "alloy",
+ "degenbot-arbitrage",
+ "degenbot-bot",
+ "degenbot-core",
+ "degenbot-executor",
+ "degenbot-rpc",
+ "degenbot-simulation",
+ "degenbot-submission",
+ "parking_lot",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2786,6 +2804,7 @@ dependencies = [
  "degenbot-aave",
  "degenbot-abi",
  "degenbot-arbitrage",
+ "degenbot-batch-executor",
  "degenbot-bot",
  "degenbot-cli",
  "degenbot-cli-core",

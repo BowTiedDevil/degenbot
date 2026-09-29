@@ -20,7 +20,7 @@
 //!
 //! [`SimulatedPathResult`] carries, field-for-field, everything
 //! `degenbot_arbitrage::SimResult` exposes through
-//! `degenbot_python::simulation::dispatch::join_sim_result` →
+//! `degenbot_batch_executor::assembly::join_sim_result` →
 //! `SubmitCandidate`:
 //!
 //! | SimResult / SubmitCandidate | SimulatedPathResult |

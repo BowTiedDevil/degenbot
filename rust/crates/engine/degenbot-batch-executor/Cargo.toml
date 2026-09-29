@@ -1,0 +1,43 @@
+[package]
+name = "degenbot-batch-executor"
+description = "Core batch executor: the per-batch dispatch choreography — assembly, payload merge, and the ordered sim-submit lane — as one value-configured engine module."
+keywords = ["mev", "arbitrage", "batch", "dispatch"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy = { version = "^2.5", features = ["full"] }
+# The sim fan-out + the typed sim-failure record (`SimFailure`) the outcome
+# records carry, plus the policy registries (divergence / FoT) the assembly
+# stage reads at its bookends.
+degenbot-arbitrage.workspace = true
+# `BotState` (the staleness gate reads the shared state owner) + the
+# simulate-dispatch telemetry span (ADR-043).
+degenbot-bot.workspace = true
+# `EncodeOptions` / `PathInfo` / `HopInfo` / `WarmupSlots` (the composer seam).
+degenbot-executor.workspace = true
+# `AlloyProvider` — the sim leaf's cold-miss DB fallback + the submit leaf's
+# broadcast surfaces.
+degenbot-rpc.workspace = true
+# The cross-block warm-code cache the fan-out handle build consumes.
+degenbot-simulation.workspace = true
+# The ordered lane (`SimSubmitPipeline`) + the production submit leaf
+# (`dispatch_and_submit`) + the policy state (`PathSuppression`, `Dispatcher`).
+degenbot-submission.workspace = true
+# `WarmCodeCacheInner::shared_default()` returns a parking_lot RwLock; the
+# config holds that arc type.
+parking_lot = "^0.12"
+tokio = { version = "^1.45", default-features = false, features = ["sync"] }
+tracing = { version = "^0.1" }
+
+[dev-dependencies]
+# The address-parse helper the test fixtures share with the other crates.
+degenbot-core.workspace = true
+tokio = { version = "^1.45", features = ["rt-multi-thread", "macros", "time"] }

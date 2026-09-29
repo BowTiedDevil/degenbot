@@ -229,6 +229,25 @@ impl PathSuppression {
     pub fn is_in_suppressed_set(&self, path_id: u64) -> bool {
         self.suppressed.contains(&path_id)
     }
+
+    /// Whether the path is suppressed AND not due for a retry this block —
+    /// the read-only projection of [`Self::is_suppressed`] WITHOUT the retry
+    /// stamp.
+    ///
+    /// The batch executor's assembly stage attributes suppression skips with
+    /// this so the stamping read stays single-sited (the fan-out's step-1
+    /// read): a not-due suppressed path is skipped by both projections (no
+    /// record is lost), while a retry-due path is admitted by the assembly
+    /// AND by the fan-out's stamping read — the Python retry semantics, with
+    /// no double-read re-suppression.
+    #[must_use]
+    pub fn is_suppressed_without_stamp(&self, path_id: u64, current_block: u64) -> bool {
+        if !self.suppressed.contains(&path_id) {
+            return false;
+        }
+        let last_retry = self.last_retry_block.get(&path_id).copied().unwrap_or(0);
+        current_block.saturating_sub(last_retry) < PATH_SUPPRESS_RETRY_INTERVAL
+    }
 }
 
 // ============================================================================

@@ -945,7 +945,8 @@ pub fn dispatch_profitable_results(
 /// the executor chains the solver's predicted hop outputs as exact-in
 /// amounts, so a stale hop's over-prediction becomes an IIA underpayment
 /// revert. Dropping the candidate pre-sim avoids the revert.
-fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
+#[must_use]
+pub fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
     use degenbot_executor::composers::HopInfo;
     for (i, hop) in candidate.path_info.hops.iter().enumerate() {
         let Some(step) = candidate.steps.get(i) else {

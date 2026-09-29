@@ -78,6 +78,7 @@ degenbot = { version = "0.6.0-alpha.14", path = "crates/facade/degenbot" }
 # version literals in sync with [workspace.package].version (lockstep, ADR-009).
 degenbot-aave = { version = "0.6.0-alpha.14", path = "crates/integrations/degenbot-aave" }
 degenbot-abi = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-abi" }
+degenbot-batch-executor = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-batch-executor" }
 degenbot-arbitrage = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-arbitrage" }
 degenbot-bot = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-bot" }
 degenbot-cli = { version = "0.6.0-alpha.14", path = "crates/shells/degenbot-cli" }
@@ -140,6 +141,7 @@ members = [
     "crates/foundation/degenbot-rpc",
     "crates/foundation/degenbot-uniswap",
     "crates/engine/degenbot-arbitrage",
+    "crates/engine/degenbot-batch-executor",
     "crates/engine/degenbot-bot",
     "crates/engine/degenbot-execution",
     "crates/engine/degenbot-simulation",
