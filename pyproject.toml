@@ -166,6 +166,15 @@ allow-star-arg-any = true
 "src/degenbot/provider/factory.py" = [
     "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
 ]
+"src/degenbot/provider/sync.py" = [
+    "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
+]
+"src/degenbot/provider/async_provider.py" = [
+    "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
+]
+"src/degenbot/provider/offline_provider.py" = [
+    "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
+]
 "src/degenbot/registry/deployment_loader.py" = [
     "import-outside-top-level",  # lazy imports avoid circular dependency (pool classes → uniswap → this module)
 ]

@@ -31,11 +31,13 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from degenbot.provider import RustAlloyProvider
 from degenbot.types.rpc_types import BlockTag
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
+    # ADR-013: the Rust pyclass is imported only for annotations here; the
+    # runtime binding lives in the package ``__init__`` barrier.
+    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
     from degenbot.types.rpc_types import BlockData, TxParams
 
 
@@ -80,6 +82,8 @@ class _OfflineDataMixin(_OfflineBacked):
         # multi-block `{"chain_id", "blocks": {...}}` envelope matches the
         # `RecordedData` wire format parsed by `OfflineProvider::from_json_bytes`.
         recorded_json = json.dumps({"chain_id": chain_id, "blocks": blocks})
+        from degenbot.provider import RustAlloyProvider
+
         self._alloy: RustAlloyProvider = RustAlloyProvider.offline_from_json_string(recorded_json)
 
     @property
