@@ -26,12 +26,13 @@ import pytest
 
 from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
+from degenbot.runner._run_ritual import RunRitual
 from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
-from tests.helpers.identity_env import identity_env
 from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
-
+from tests.helpers.boot_actors import inline_registration_scheduler
+from tests.helpers.identity_env import identity_env
 
 # The endpoint every test in this module resolves to. The session tests inject
 # fakes for bot/engine_registry/async_w3, so the URI is never connected — it
@@ -253,6 +254,7 @@ class TestBotRunnerStart:
                 path_builder=_Recorder(events, "path_builder"),
                 consumer=_Recorder(events, "consumer"),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
 
@@ -290,6 +292,7 @@ class TestBotRunnerStart:
                 path_builder=lambda **kw: _noop_coro(),
                 consumer=lambda **kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -316,6 +319,7 @@ class TestBotRunnerRun:
                 path_builder=_Recorder(events, "path_builder"),
                 consumer=_Recorder(events, "consumer"),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -344,6 +348,7 @@ class TestBotRunnerRun:
                 path_builder=lambda **kw: _noop_coro(),
                 consumer=lambda **kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -378,6 +383,7 @@ class TestBotRunnerRun:
                 path_builder=raising_path_builder,
                 consumer=hanging_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -413,6 +419,7 @@ class TestSessionPhaseMachine:
             "path_builder": lambda **_kw: _noop_coro(),
             "consumer": lambda **_kw: _noop_coro(),
             "relay_posture": RelayPosture(relay_urls=["http://offline-test.relay"]),
+            "scheduler": inline_registration_scheduler,
         }
         actors.update(actor_overrides)
         return BotRunner(_cfg(), actors=InjectedActors(**actors))
@@ -567,6 +574,7 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=recording_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -609,6 +617,7 @@ class TestBotRunnerShutdown:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -636,6 +645,7 @@ class TestBotRunnerShutdown:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -664,6 +674,7 @@ class TestBotRunnerShutdown:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -690,6 +701,7 @@ class TestBotRunnerShutdown:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
 
@@ -719,6 +731,7 @@ class TestBotRunnerShutdown:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=hanging_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -764,6 +777,7 @@ class TestBotRunnerSigintHandler:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
             install_sigint=True,
         )
@@ -788,6 +802,7 @@ class TestBotRunnerSigintHandler:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
             install_sigint=True,
         )
@@ -818,6 +833,7 @@ class TestBotRunnerSigintHandler:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
             install_sigint=False,
         )
@@ -846,6 +862,7 @@ class TestBotRunnerSigintHandler:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
             install_sigint=True,
         )
@@ -873,13 +890,13 @@ class TestConstructionContext:
     task owns them out of run()'s main-loop trim."""
 
     def test_for_bot_builds_trackers_weth_db_once(self) -> None:
+        from degenbot.runner.build_paths import ConstructionContext
         from degenbot.runner.identity import (
             PANCAKESWAP_V3_MAINNET_FACTORY,
             SUSHISWAP_V3_MAINNET_FACTORY,
             UNISWAP_V3_MAINNET_FACTORY,
             WETH_ADDRESS,
         )
-        from degenbot.runner.build_paths import ConstructionContext
 
         class _BuildBot:
             def __init__(self) -> None:
@@ -935,6 +952,7 @@ class TestConstructionContext:
                 path_builder=recording_path_builder,
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         asyncio.run(_drive_run(session))
@@ -990,7 +1008,6 @@ class TestSubBBackgroundRegistration:
                 consumer=hanging_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
-            background_registration=True,
         )
         await session.start()
         with pytest.raises(VerificationMismatchError, match="tick data mismatch"):
@@ -1016,7 +1033,6 @@ class TestSubBBackgroundRegistration:
                 async_w3=_FakeAsyncW3(),
                 snapshots=(None, None, None, None),
             ),
-            background_registration=True,
         )
         session.bot = bot  # start()/run() resolve these; call the seam directly
         session.engine_registry = engine_registry
@@ -1029,7 +1045,7 @@ class TestSubBBackgroundRegistration:
             )  # single yield: stands in for the real builder's first await (RPC verify)
             calls.append(kwargs["options"].context)
 
-        await session._run_registration_background(
+        await RunRitual(session)._run_registration_background(
             path_builder=recording_path_builder,
             registration_context=None,
             retry_policy=None,
@@ -1067,7 +1083,6 @@ class TestSubBBackgroundRegistration:
                 consumer=hanging_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
-            background_registration=True,
         )
         await session.start()
         run_task = asyncio.create_task(session.run())
@@ -1104,7 +1119,6 @@ class TestSubBBackgroundRegistration:
                 async_w3=_FakeAsyncW3(),
                 snapshots=(None, None, None, None),
             ),
-            background_registration=True,
         )
         session.bot = bot
         session.engine_registry = _FakeEngineRegistry()
@@ -1114,7 +1128,7 @@ class TestSubBBackgroundRegistration:
                 0
             )  # single yield: stands in for the real builder's construction await
 
-        await session._run_registration_background(
+        await RunRitual(session)._run_registration_background(
             path_builder=noop_path_builder,
             registration_context=None,
             retry_policy=None,
@@ -1150,7 +1164,6 @@ class TestSubBBackgroundRegistration:
                 async_w3=_FakeAsyncW3(),
                 snapshots=(None, None, None, None),
             ),
-            background_registration=True,
         )
         session.bot = bot
         session.engine_registry = _FakeEngineRegistry()
@@ -1162,7 +1175,7 @@ class TestSubBBackgroundRegistration:
             await asyncio.Event().wait()
 
         task = asyncio.create_task(
-            session._run_registration_background(
+            RunRitual(session)._run_registration_background(
                 path_builder=hanging_path_builder,
                 registration_context=None,
                 retry_policy=None,
@@ -1230,7 +1243,6 @@ class TestSubCBgRegistrationConcurrency:
                 consumer=consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
-            background_registration=True,
         )
         await session.start()
         await session.run()
@@ -1281,12 +1293,12 @@ class TestSubCBgRegistrationConcurrency:
                 consumer=consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
-            background_registration=True,
         )
         await session.start()
         await session.run()
 
         assert verify_steps == 40, "registration must have drained all verifies"
+
         assert dispatch_work == list(range(10))
         reg = session._registration_task
         # Clean, deadlock-free completion: registration finished without error.
@@ -1324,7 +1336,6 @@ class TestSubCBgRegistrationConcurrency:
                 consumer=hanging_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
-            background_registration=True,
         )
         await session.start()
         with pytest.raises(VerificationRpcError, match="provider transport"):
@@ -1384,7 +1395,6 @@ class TestSubCBgRegistrationConcurrency:
                 consumer=recording_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
-            background_registration=True,
         )
         await session.start()
         await session.run()
@@ -1435,7 +1445,6 @@ class Test6VZN7HOngoingDiscovery:
                 consumer=consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
             ),
-            background_registration=True,
         )
         await session.start()
         await session.run()
@@ -1804,6 +1813,7 @@ class TestSessionOperatorSurface:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=lambda **_kw: _noop_coro(),
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -1860,6 +1870,7 @@ class TestSessionOperatorSurface:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -1925,6 +1936,7 @@ class TestPumpFinishedWatchdog:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=hanging_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -1983,6 +1995,7 @@ class TestPumpFinishedWatchdog:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=hanging_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()
@@ -2010,6 +2023,7 @@ class TestPumpFinishedWatchdog:
                 path_builder=lambda **_kw: _noop_coro(),
                 consumer=hanging_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
         )
         await session.start()

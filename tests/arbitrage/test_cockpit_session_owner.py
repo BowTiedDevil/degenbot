@@ -28,9 +28,10 @@ from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase, _SessionState
 from degenbot.runner.config import ArbitrageConfig
-from tests.helpers.identity_env import identity_env
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
+from tests.helpers.boot_actors import inline_registration_scheduler
+from tests.helpers.identity_env import identity_env
 
 
 @pytest.fixture(autouse=True)
@@ -118,6 +119,7 @@ def _runner(**overrides: object) -> BotRunner:
         "path_builder": lambda **kw: _noop(),
         "consumer": lambda **kw: _noop(),
         "relay_posture": RelayPosture(relay_urls=["http://offline-test.relay"]),
+        "scheduler": inline_registration_scheduler,
     }
     install_sigint = overrides.pop("install_sigint", False)
     actors.update(overrides)

@@ -14,12 +14,50 @@ engine-registry contract double, not a boot-path actor.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from degenbot.runner import BotRunner
 from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
 from tests.fakes.engine import FakeEngineRegistry
+
+
+def inline_registration_scheduler(coro: Any) -> Any:
+    """Deterministic scheduler double for the run ritual's registration hand-off.
+
+    The ritual's scheduler is DATA (the production default is
+    ``asyncio.create_task``); there is no second production mode to select.
+    Tests that must observe the hand-off deterministically (the trim fired
+    before the main loop, builder kwargs captured, event ordering pinned)
+    inject this double, which drives the coroutine to completion inline —
+    through cooperative ``asyncio.sleep(0)`` yields, but through no real
+    pending await — and returns a task that replays the outcome (so a fatal
+    registration error still surfaces through the watch's fail-fast verdict).
+    """
+    outcome: BaseException | None = None
+    while True:
+        try:
+            yielded = coro.send(None)
+        except StopIteration:
+            break
+        except BaseException as exc:  # ruff: ignore[blind-except] replayed on the task below
+            outcome = exc
+            break
+        if yielded is not None:
+            coro.close()
+            msg = "deterministic scheduler: the registration hand-off suspended on a real await"
+            raise AssertionError(msg)
+
+    async def _replay() -> None:
+        # One cooperative yield: the hand-off already ran inline; this task
+        # replays its outcome on the loop like any scheduled task would.
+        await asyncio.sleep(0)
+        if outcome is not None:
+            raise outcome
+
+    return asyncio.create_task(_replay(), name="registration-background")
 
 
 def noop_coro():
@@ -96,12 +134,16 @@ def boot_runner(
     readiness=None,
     settlement_endpoints=None,
     install_sigint: bool = True,
+    scheduler: Any = None,
 ) -> BotRunner:
     """A real ``BotRunner`` on the fake actor trio, with the boot posture gate live.
 
     ``readiness`` / ``settlement_endpoints`` are the activation-gate DI
     factories (``None`` = the real ``degenbot.strategy`` resolvers); a test
-    injects a resolving factory or a raising refusal.
+    injects a resolving factory or a raising refusal. ``scheduler`` defaults
+    to the deterministic registration double so a settlement-active boot's
+    hand-off (and its trim) completes inline; pass the production
+    ``asyncio.create_task`` to observe the real decoupling instead.
     """
 
     return BotRunner(
@@ -116,6 +158,7 @@ def boot_runner(
             settlement_arm=settlement_arm,
             readiness=readiness,
             settlement_endpoints=settlement_endpoints,
+            scheduler=scheduler if scheduler is not None else inline_registration_scheduler,
         ),
         install_sigint=install_sigint,
     )

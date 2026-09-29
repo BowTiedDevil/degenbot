@@ -22,9 +22,10 @@ from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
-from tests.helpers.identity_env import identity_env
 from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
+from tests.helpers.boot_actors import inline_registration_scheduler
+from tests.helpers.identity_env import identity_env
 
 
 @pytest.fixture(autouse=True)
@@ -167,6 +168,7 @@ class TestSessionOwner:
                 path_builder=lambda **kw: _noop(),
                 consumer=capturing_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+                scheduler=inline_registration_scheduler,
             ),
             install_sigint=False,
         )

@@ -268,6 +268,15 @@ Detection of *why* the session ended is core-owned
 watchdog); the watch reads that fact and applies its own ranking.
 _Avoid_: "await loop", "fail-fast wrapper", "detection owner".
 
+**Run ritual**:
+The cockpit's one owner of a running session's startup ordering — consumer-attach,
+watch-attach, resume, registration, main loop — as a state machine; the registration
+mode and the task scheduler are data it consumes, never branches tests select. It
+sits strictly behind the ``run()`` phase gate and re-legislates no legality the Rust
+``SessionPhase`` table already owns.
+_Avoid_: "run loop" (the main loop is the session watch's), "startup sequence"
+(prose, not a module), exposing ritual states as a public lifecycle vocabulary.
+
 ## Pool registration lifecycle
 
 Canonical phases for the CL (V3/V4) registration verify lifecycle:

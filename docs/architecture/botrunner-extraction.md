@@ -73,7 +73,7 @@ class BotRunner:
         path_builder: Callable[..., Awaitable[None]] | None = None,
         consumer: Callable[..., Awaitable[None]] | None = None,
         install_sigint: bool = True,
-        background_registration: bool | None = None,
+        scheduler: Callable[[Coroutine[Any, Any, None]], asyncio.Task[Any]] = asyncio.create_task,
     ) -> None: ...
 
     async def start(self) -> "BotRunner":
@@ -177,8 +177,9 @@ unchanged in semantics**. The only diff is the import target:
 
 Production call sites rename `BackrunSession(...)` → `BotRunner(...)` in the same commit
 (examples/eth_backrun_v2_v3_v4_rust.py `main()`), so the fake-injection constructor defaults
-(`background_registration` auto-select, injectable actors) are asserted by the existing
-orchestration tests with **no behavior change**.
+(the registration `scheduler` seam — production `asyncio.create_task`, with the deterministic
+test double for replayable hand-offs — and the other injectable actors) are asserted by the
+existing orchestration tests with **no behavior change**.
 
 ## 7. ADR interaction
 
