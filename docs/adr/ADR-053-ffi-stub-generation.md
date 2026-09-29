@@ -1,6 +1,7 @@
 # ADR-053: FFI Stub Generation — Retire the Hand-Maintained `.pyi` Set?
 
-**Status: accepted.** Recommendation from spike ergo **BLY6CT** (T6). The
+**Status: superseded in part by [ADR-066](ADR-066-deterministic-stub-generation.md).**
+Recommendation from spike ergo **BLY6CT** (T6). The
 hand-maintained stub set stays; the bespoke AST drift gate is slimmed to the
 checks a standard tool cannot cover, with `mypy.stubtest` taking over the
 surface-consistency checks. `pyo3-stub-gen` is rejected.

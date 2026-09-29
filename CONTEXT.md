@@ -155,11 +155,22 @@ The one core owner of a block's concurrent simulate fan-out plus its submit lane
 batch's simulate work runs bounded by an injected in-flight cap, and a single submitter
 drains batches in arrival order, awaiting each batch's own sim before submitting.
 Submission order is therefore nonce order, and the loud-abort contract re-raises the
-first leaf failure in the caller's frame. The cap VALUE stays driver-side; the pipeline
-accepts a plain count.
+first leaf failure in the caller's frame. The simulate and submit leaves are core-owned production code shared by every
+consumer; a driver injects values — the cap as a plain count, the policy values, the
+relay posture and budgets — never choreography code. Its product is the stream of
+Batch outcome records.
 _Avoid_: "sim queue", "submit queue" (one shared arrival-ordered lane, not a queue per
 concern); "task pool" (the bound is a cap the driver injects, not a pool the pipeline
-sizes).
+sizes); driver-authored leaf closures over the seam.
+
+**Batch outcome record**:
+The typed result of one candidate's ordered pass through the pipeline — the assembly
+verdict, the simulate verdict, and the submit receipt or typed failure — delivered as
+the stream both first-class consumers drain: the pure-Rust bot into its sinks, the
+Python companion's renderers. One record vocabulary, so a driver's remaining
+responsibility is display.
+_Avoid_: per-driver result tuples; renderers reading raw engine structures; an outcome
+callback seam.
 
 ## Session objects
 
@@ -276,6 +287,24 @@ sits strictly behind the ``run()`` phase gate and re-legislates no legality the 
 ``SessionPhase`` table already owns.
 _Avoid_: "run loop" (the main loop is the session watch's), "startup sequence"
 (prose, not a module), exposing ritual states as a public lifecycle vocabulary.
+
+## Pool construction
+
+**Pool construction**:
+The core's one entry from a requested pool to a constructed, registered pool: the
+construction-route order, construction identity (the DB two-step — manager row → pool
+row → token rows), and get-or-register into session state. A construction failure
+classifies stable-vs-transient on the build-refusal taxonomy: a stable refusal aborts
+loudly under the loud-abort rule, a transient one keeps skip semantics. The cockpit
+supplies resolved policy values, never construction code.
+_Avoid_: a driver-side construction fallback chain; bare except-and-continue over
+construction failures.
+
+**Construction route**:
+One ordered attempt to construct a pool at a factory or the generic builder; the
+module's policy ordering, tried in turn. A route failure is a typed build refusal, never
+a bare exception swallowed into the next route.
+_Avoid_: "fallback rung" living at the driver's edge.
 
 ## Pool registration lifecycle
 
