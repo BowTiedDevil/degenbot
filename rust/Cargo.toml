@@ -19,7 +19,7 @@
 # (`crates/shells/degenbot-python/`) inherits it, and maturin reads that crate's
 # version to set the published wheel's — so one edit moves both halves.
 [workspace.package]
-version = "0.6.0-alpha.13"
+version = "0.6.0-alpha.14"
 edition = "2021"
 license = "MIT"
 rust-version = "1.97"
@@ -72,39 +72,39 @@ await_holding_lock = "deny"
 exit = "deny"
 
 [workspace.dependencies]
-degenbot = { version = "0.6.0-alpha.13", path = "crates/facade/degenbot" }
+degenbot = { version = "0.6.0-alpha.14", path = "crates/facade/degenbot" }
 # Internal path deps carry explicit version requirements here so the 30
 # publishable crates pass cargo publish manifest validation. Keep these
 # version literals in sync with [workspace.package].version (lockstep, ADR-009).
-degenbot-aave = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-aave" }
-degenbot-abi = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-abi" }
-degenbot-arbitrage = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-arbitrage" }
-degenbot-bot = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-bot" }
-degenbot-cli = { version = "0.6.0-alpha.13", path = "crates/shells/degenbot-cli" }
-degenbot-cli-core = { version = "0.6.0-alpha.13", path = "crates/shells/degenbot-cli-core" }
-degenbot-core = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-core" }
-degenbot-config = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-config" }
-degenbot-db = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-db" }
-degenbot-decoders = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-decoders" }
-degenbot-execution = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-execution" }
-degenbot-executor = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-executor" }
-degenbot-eventhub = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-eventhub" }
-degenbot-fork = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-fork" }
-degenbot-ingestion = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-ingestion" }
-degenbot-math = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-math" }
-degenbot-order-index = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-order-index" }
-degenbot-pathfinding = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-pathfinding" }
-degenbot-pool-updater = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-pool-updater" }
-degenbot-pools = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-pools" }
-degenbot-price = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-price" }
-degenbot-rpc = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-rpc" }
-degenbot-runs = { version = "0.6.0-alpha.13", path = "crates/integrations/degenbot-runs" }
-degenbot-simulation = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-simulation" }
-degenbot-solvers = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-solvers" }
-degenbot-strategy = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-strategy" }
-degenbot-submission = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-submission" }
-degenbot-uniswap = { version = "0.6.0-alpha.13", path = "crates/foundation/degenbot-uniswap" }
-degenbot-workers = { version = "0.6.0-alpha.13", path = "crates/engine/degenbot-workers" }
+degenbot-aave = { version = "0.6.0-alpha.14", path = "crates/integrations/degenbot-aave" }
+degenbot-abi = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-abi" }
+degenbot-arbitrage = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-arbitrage" }
+degenbot-bot = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-bot" }
+degenbot-cli = { version = "0.6.0-alpha.14", path = "crates/shells/degenbot-cli" }
+degenbot-cli-core = { version = "0.6.0-alpha.14", path = "crates/shells/degenbot-cli-core" }
+degenbot-core = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-core" }
+degenbot-config = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-config" }
+degenbot-db = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-db" }
+degenbot-decoders = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-decoders" }
+degenbot-execution = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-execution" }
+degenbot-executor = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-executor" }
+degenbot-eventhub = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-eventhub" }
+degenbot-fork = { version = "0.6.0-alpha.14", path = "crates/integrations/degenbot-fork" }
+degenbot-ingestion = { version = "0.6.0-alpha.14", path = "crates/integrations/degenbot-ingestion" }
+degenbot-math = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-math" }
+degenbot-order-index = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-order-index" }
+degenbot-pathfinding = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-pathfinding" }
+degenbot-pool-updater = { version = "0.6.0-alpha.14", path = "crates/integrations/degenbot-pool-updater" }
+degenbot-pools = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-pools" }
+degenbot-price = { version = "0.6.0-alpha.14", path = "crates/integrations/degenbot-price" }
+degenbot-rpc = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-rpc" }
+degenbot-runs = { version = "0.6.0-alpha.14", path = "crates/integrations/degenbot-runs" }
+degenbot-simulation = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-simulation" }
+degenbot-solvers = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-solvers" }
+degenbot-strategy = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-strategy" }
+degenbot-submission = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-submission" }
+degenbot-uniswap = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-uniswap" }
+degenbot-workers = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-workers" }
 # hashbrown: foldhash-based HashMap/HashSet for the hot maps (small int/string
 # keys generated in-process — no DoS surface). 0.17.1 + foldhash 0.2.0 already
 # resolve transitively (indexmap 2.14 / lru 0.18), so this direct dependency
