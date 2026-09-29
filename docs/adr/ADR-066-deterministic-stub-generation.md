@@ -63,3 +63,19 @@ and the dead seam doors beside it (`verification_retry_policy_defaults`, the dup
   human transcription work a deterministic tool now performs.
 - **`pyo3-stub-gen`.** Stays rejected per ADR-053 — it rewrites the seam's source via
   proc macros instead of introspecting the built artifact; it was never this proposal.
+
+## Gate outcome — the first spike
+
+The stub-diff spike measured the mechanism against the real seam: the generator
+(`pyo3-introspection` 0.29.2, audited) works, introspection data embeds correctly,
+but `pyo3-macros-backend`'s fn-based `#[pymodule]` expansion passes empty member
+lists and the incomplete flag, and this seam registers imperatively
+(`PyModule::new` + `add_function` + `add_submodule`) at ~27 sites. Result: 27 of
+27 deltas are generator-gap at the module-structure level; zero generator-correct,
+zero generator-broken.
+
+The decision therefore stands, with a named prerequisite now visible: the
+registration surface must move to declarative `#[pymodule] mod` form (tracked as
+an implementation task). The post-conversion re-gate is folded into that task's
+acceptance: if generation still cannot cover the seam after conversion, this ADR
+reopens under its own terms.
