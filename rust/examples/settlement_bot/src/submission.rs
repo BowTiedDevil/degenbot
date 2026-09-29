@@ -16,7 +16,10 @@
 //! `ReceiptProbe`; only the live arm (`SMOKE_RPC_URL` + `--live`) constructs it.
 //!
 //! Post-T1 the authority is the only nonce issuer: `dispatch_and_submit` takes
-//! an `&Arc<NonceLane>`, never a caller-supplied `u64`. This exercise builds no
+//! an `&Arc<NonceLane>`, never a caller-supplied `u64`. Post-cut-over the
+//! seam deals ONLY in the core record vocabulary (`SubmitRecord`): the
+//! driver no longer re-shapes submit outcomes into a local decision type —
+//! one record vocabulary, a driver's remaining responsibility is display. This exercise builds no
 //! strategy host, so [`LiveSubmissionSeam::new`] mints the host's one-account
 //! `NonceAuthority` + `SubmissionLedger` directly (the standalone sidecar's
 //! host-of-size-one shape) and the lane stamps every operator nonce. The
@@ -36,53 +39,9 @@ use degenbot::submission::{
     SubmitRecord, SubmittedTx, TxSigner,
 };
 
-/// The driver's typed submit decision (the RSP-8 diff surface).
-#[derive(Clone, Debug, PartialEq)]
-pub enum SubmitDecision {
-    /// The tx was broadcast.
-    Submitted {
-        /// The path id.
-        path_id: u64,
-        /// The broadcast tx hash.
-        tx_hash: alloy::primitives::B256,
-        /// The claimed nonce.
-        nonce: u64,
-    },
-    /// The candidate was skipped (the typed core reason).
-    Skipped {
-        /// The path id.
-        path_id: u64,
-        /// The typed skip reason.
-        reason: SkipReason,
-    },
-}
-
-impl SubmitDecision {
-    /// The stable machine label (the RSP-8 diff column).
-    #[must_use]
-    pub const fn label(&self) -> &'static str {
-        match self {
-            Self::Submitted { .. } => "submitted",
-            Self::Skipped { reason, .. } => match reason {
-                SkipReason::PoolsClaimed => "skipped-pools-claimed",
-                SkipReason::DryRun => "skipped-dry-run",
-                SkipReason::InjectCode => "skipped-inject-code",
-                SkipReason::BroadcastFailed(_) => "skipped-broadcast-failed",
-            },
-        }
-    }
-
-    /// The candidate's path id.
-    #[must_use]
-    pub const fn path_id(&self) -> u64 {
-        match self {
-            Self::Submitted { path_id, .. } | Self::Skipped { path_id, .. } => *path_id,
-        }
-    }
-}
-
-/// The boxed future the signing seam returns.
-pub type SeamFuture<'a> = Pin<Box<dyn Future<Output = Result<SubmitDecision, String>> + Send + 'a>>;
+/// The boxed future the signing seam returns: the core's ONE submit record
+/// for the one candidate handed in.
+pub type SeamFuture<'a> = Pin<Box<dyn Future<Output = Result<SubmitRecord, String>> + Send + 'a>>;
 
 /// The driver's signing boundary.
 ///
@@ -99,7 +58,8 @@ pub trait SubmissionSeam: Send + Sync {
     ) -> SeamFuture<'_>;
 }
 
-/// Submit a batch with the Python `_submit_batch_records` guard order.
+/// Submit a batch with the Python `_submit_batch_records` guard order,
+/// returning the core's typed [`SubmitRecord`]s (one per candidate).
 ///
 /// 1. Sort best-first by net profit (the core re-asserts this; the driver
 ///    mirrors the seam contract).
@@ -122,7 +82,7 @@ pub async fn submit_batch(
     current_block: u64,
     dry_run: bool,
     inject_code: bool,
-) -> Result<Vec<SubmitDecision>, String> {
+) -> Result<Vec<SubmitRecord>, String> {
     candidates.sort_by_key(|c| std::cmp::Reverse(c.net_profit));
     let mut committed_pools: HashSet<PoolKey> = HashSet::new();
     let mut decisions = Vec::with_capacity(candidates.len());
@@ -134,7 +94,7 @@ pub async fn submit_batch(
             d.is_path_blocked(&path_pools, &committed_pools)
         };
         if blocked {
-            decisions.push(SubmitDecision::Skipped {
+            decisions.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
                 reason: SkipReason::PoolsClaimed,
             });
@@ -145,7 +105,7 @@ pub async fn submit_batch(
             // mutual exclusivity is respected, then skip WITHOUT touching the
             // seam.
             committed_pools.extend(path_pools);
-            decisions.push(SubmitDecision::Skipped {
+            decisions.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
                 reason: SkipReason::DryRun,
             });
@@ -153,7 +113,7 @@ pub async fn submit_batch(
         }
         if inject_code {
             committed_pools.extend(path_pools);
-            decisions.push(SubmitDecision::Skipped {
+            decisions.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
                 reason: SkipReason::InjectCode,
             });
@@ -252,7 +212,13 @@ impl SubmissionSeam for LiveSubmissionSeam<'_> {
             )
             .await
             .map_err(|e| e.to_string())?;
-            map_single_record(outcome.records)
+            // One candidate in, exactly one core record out (the core's
+            // contract for a single-candidate batch).
+            outcome
+                .records
+                .into_iter()
+                .next()
+                .ok_or_else(|| "dispatch_and_submit returned no records".to_string())
         })
     }
 }
@@ -276,30 +242,6 @@ pub async fn monitor_with_config(
     monitor_pending_transaction(tx, probe, dispatcher, blocks_before_nonce_expires)
         .await
         .map_err(|e| e.to_string())
-}
-
-/// Map the core's single-record submit outcome into the driver decision.
-///
-/// # Errors
-///
-/// Returns an error only if the core returned no records for a non-empty
-/// single-candidate batch (a contract violation).
-pub fn map_single_record(records: Vec<SubmitRecord>) -> Result<SubmitDecision, String> {
-    match records.into_iter().next() {
-        Some(SubmitRecord::Submitted {
-            path_id,
-            tx_hash,
-            nonce,
-        }) => Ok(SubmitDecision::Submitted {
-            path_id,
-            tx_hash,
-            nonce,
-        }),
-        Some(SubmitRecord::Skipped { path_id, reason }) => {
-            Ok(SubmitDecision::Skipped { path_id, reason })
-        }
-        None => Err("dispatch_and_submit returned no records".to_string()),
-    }
 }
 
 #[cfg(test)]
@@ -341,7 +283,7 @@ mod tests {
             let calls = &self.calls;
             Box::pin(async move {
                 calls.fetch_add(1, Ordering::SeqCst);
-                Ok(SubmitDecision::Submitted {
+                Ok(SubmitRecord::Submitted {
                     path_id: candidate.path_id,
                     tx_hash: B256::ZERO,
                     nonce: 0,
@@ -366,7 +308,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(seam.calls.load(Ordering::SeqCst), 0, "dry-run signed!");
-        assert!(decisions.iter().all(|d| d.label() == "skipped-dry-run"));
+        assert!(decisions.iter().all(|record| matches!(
+            record,
+            SubmitRecord::Skipped {
+                reason: SkipReason::DryRun,
+                ..
+            }
+        )));
         assert_eq!(decisions.len(), 2);
     }
 
@@ -386,7 +334,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(seam.calls.load(Ordering::SeqCst), 2);
-        assert!(decisions.iter().all(|d| d.label() == "submitted"));
+        assert!(decisions
+            .iter()
+            .all(|record| matches!(record, SubmitRecord::Submitted { .. })));
     }
 
     #[tokio::test]
@@ -405,7 +355,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(seam.calls.load(Ordering::SeqCst), 0);
-        assert_eq!(decisions[0].label(), "skipped-inject-code");
+        assert!(matches!(
+            &decisions[0],
+            SubmitRecord::Skipped {
+                reason: SkipReason::InjectCode,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -431,6 +387,12 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(seam.calls.load(Ordering::SeqCst), 0);
-        assert_eq!(decisions[0].label(), "skipped-pools-claimed");
+        assert!(matches!(
+            &decisions[0],
+            SubmitRecord::Skipped {
+                reason: SkipReason::PoolsClaimed,
+                ..
+            }
+        ));
     }
 }

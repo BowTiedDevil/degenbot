@@ -48,6 +48,11 @@ class StubPipeline:
     def raise_if_failed(self) -> None:
         return None
 
+    async def next_outcome(self) -> None:
+        # The executor's drain loop terminator: the void stub publishes no
+        # records, so the drain ends immediately.
+        return None
+
     async def shutdown(self) -> None:
         return None
 

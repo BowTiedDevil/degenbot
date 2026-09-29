@@ -1,15 +1,15 @@
-"""Adapter tests for the sim-submit pipeline seam.
+"""Adapter tests for the batch-executor construction seam.
 
 The mechanism itself (bounded concurrency, FIFO submit order, fail-loud on a
-sim/submit leaf failure, counters) is Rust-owned and tested in
-``degenbot-submission``'s ``sim_pipeline`` suite. Python keeps only the adapter
-contracts:
+leaf failure, counters) is Rust-owned and tested in the core crates
+(``degenbot-submission``'s ``sim_pipeline`` + ``degenbot-batch-executor``).
+Python keeps only the adapter contracts:
 
 - the knob VALUE parsing (``DEGENBOT_SIM_PIPELINE_CONCURRENCY``, default 8,
   floored at 1) stays driver-side;
-- the factory injects the resolved cap into the FFI pipeline;
-- the FFI pipeline drives the two Python async leaves and surfaces a leaf
-  failure through ``raise_if_failed``.
+- the construction boundary resolves the cap once and injects it into the FFI
+  executor (the FFI projection itself is pinned by the executor seam suite in
+  ``tests/rust/test_batch_executor_seam.py``).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from degenbot.dispatch import SimSubmitPipeline
-from degenbot.runner._sim_submit import build_sim_submit_pipeline
+from degenbot.runner._sim_submit import resolve_sim_concurrency
 from tests.fakes.session import FakeRunnerConfig, FakeRunnerSession
 from tests.helpers import verdict_probe as probe
 
@@ -60,14 +60,16 @@ def test_the_operator_file_reaches_the_cap(tmp_path: Path) -> None:
         ] == 3
 
 
-async def test_factory_injects_the_configured_cap() -> None:
-    pipeline = build_sim_submit_pipeline(_session(cap=5))
-    assert pipeline.concurrency == 5
+async def test_the_boundary_injects_the_configured_cap() -> None:
+    assert resolve_sim_concurrency(_session(cap=5)) == 5
 
 
-async def test_factory_honors_an_injected_cap() -> None:
-    pipeline = build_sim_submit_pipeline(_session(cap=5), concurrency=3)
-    assert pipeline.concurrency == 3
+async def test_the_boundary_honors_an_injected_cap() -> None:
+    assert resolve_sim_concurrency(_session(cap=5), concurrency=3) == 3
+
+
+async def test_an_injected_zero_cap_is_floored_at_one() -> None:
+    assert resolve_sim_concurrency(_session(cap=5), concurrency=0) == 1
 
 
 async def test_ffi_pipeline_drives_the_python_leaves_in_order() -> None:

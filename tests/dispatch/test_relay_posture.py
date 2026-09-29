@@ -1,14 +1,11 @@
-"""Relay posture + nonce issuance at the submit seam.
+"""Relay posture + the boot gate's posture contract.
 
-What this suite guards against: Python computing the operator nonce. The
-process-wide Rust ``NonceAuthority`` is the one issuer, and the settlement
-seam forwards the submission-time chain read unchanged so the authority can
-seed from it and lease the sign-time nonce. The retired Python reservation
-ledger is a loud deprecation shim only.
-
-The seam is driven with CONSTRUCTOR-INJECTED fakes — a recording submitter and
-injected relay providers (the ``submitter``/``relay_providers`` seams on
-``_submit_batch_records``), no live RPC, no monkeypatching, no env mutation.
+What this suite guards against: the boot gate minting a settlement posture
+only where a live signing surface exists, and a live session never booting
+without a settled endpoint set. The nonce-forwarding contract moved to the
+executor construction boundary (the one chain read seeds the Rust authority's
+lane — see ``tests/rust/test_batch_executor_seam.py``); the retired Python
+reservation ledger is a loud deprecation shim only.
 """
 
 from __future__ import annotations
@@ -19,40 +16,14 @@ from typing import Any
 
 import pytest
 
-from degenbot.runner._dispatch import _submit_batch_records
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import (
     ActivationGateRefused,
     BotRunner,
 )
 from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.session import (
-    FakeAsyncW3,
-    FakeCandidate,
-    FakeRelayProvider,
-    FakeSession,
-    FakeSubmitOutcome,
-    fake_session,
-)
 from tests.helpers.boot_actors import boot_runner
 from tests.helpers.identity_env import identity_env
-
-
-class _RecordingSubmitter:
-    """Fake ``dispatch_and_submit`` companion: records the submit kwargs."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    async def __call__(self, **kwargs: Any) -> list[Any]:
-        self.calls.append(kwargs)
-        return []
-
-
-def _opaque_rust_provider() -> Any:
-    # The injected fakes are opaque at the submit seam: the only access is
-    # as_async_alloy() producing the Rust-pyclass provider.
-    return object()
 
 
 def _cfg(*, dry_run: bool) -> ArbitrageConfig:
@@ -86,42 +57,6 @@ def _runner(
     )
 
 
-def _session(relay_posture: RelayPosture | None) -> FakeSession:
-    return fake_session(
-        relay_posture=relay_posture,
-        current_block=100,
-        async_w3=FakeAsyncW3(as_async_alloy=_opaque_rust_provider),
-    )
-
-
-def _relays() -> list[FakeRelayProvider]:
-    return [FakeRelayProvider(as_async_alloy=_opaque_rust_provider)]
-
-
-def _candidate(path_id: int = 7) -> FakeCandidate:
-    return FakeCandidate(path_id=path_id, net_profit=1, gas_used=1)
-
-
-def _outcome(candidates: list[FakeCandidate]) -> FakeSubmitOutcome:
-    return FakeSubmitOutcome(gas_profitable=candidates)
-
-
-async def _submit_relay(
-    session: Any,
-    candidates: list[Any],
-    *,
-    operator_nonce: int,
-    submitter: _RecordingSubmitter,
-) -> None:
-    await _submit_batch_records(
-        session,
-        _outcome(candidates),
-        operator_nonce=operator_nonce,
-        submitter=submitter,
-        relay_providers=_relays(),
-    )
-
-
 class TestRelayPosture:
     """The posture holder and the deprecated reservation shim."""
 
@@ -152,60 +87,6 @@ class TestRelayPosture:
         urls = posture.relay_urls
         urls.clear()
         assert posture.relay_urls == ["http://relay-a", "http://relay-b"]
-
-
-class TestSubmitSeamForwardsTheCallersNonce:
-    """Python forwards the chain read; the Rust authority issues the nonce."""
-
-    async def test_relay_batches_forward_the_same_nonce_read(self) -> None:
-        """Two relay batches with the same local chain read forward that value
-        unchanged. The authority, not Python, advances the nonce."""
-        posture = RelayPosture(relay_urls=["http://relay-a"])
-        submitter = _RecordingSubmitter()
-        session = _session(posture)
-
-        await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
-        await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
-
-        assert submitter.calls[0]["context"].broadcast_providers is not None
-        assert [call["context"].operator_nonce for call in submitter.calls] == [42, 42]
-
-    async def test_multi_candidate_batch_forwards_the_read_unchanged(self) -> None:
-        posture = RelayPosture(relay_urls=["http://relay-a"])
-        submitter = _RecordingSubmitter()
-        session = _session(posture)
-
-        await _submit_relay(
-            session, [_candidate(1), _candidate(2)], operator_nonce=42, submitter=submitter
-        )
-
-        assert [call["context"].operator_nonce for call in submitter.calls] == [42]
-
-
-class TestNoRelayPosture:
-    """A live session without a settled posture refuses submission."""
-
-    async def test_a_live_session_without_a_posture_refuses_submission(self) -> None:
-        """Unreachable past the boot gate, but if it ever happens the seam
-        refuses rather than falling back to a raw public mempool broadcast."""
-        submitter = _RecordingSubmitter()
-        session = _session(None)
-
-        await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
-
-        assert submitter.calls == [], "no submit may leave without a posture"
-
-    async def test_a_dry_run_session_without_a_posture_submits_nothing(self) -> None:
-        posture = RelayPosture(relay_urls=["http://relay-a"])
-        submitter = _RecordingSubmitter()
-        session = _session(posture)
-        session.cfg.dry_run = True
-
-        await _submit_relay(session, [_candidate()], operator_nonce=42, submitter=submitter)
-
-        # The dry-run skip is guarded downstream (the Rust leaf skips the
-        # candidates); the seam itself still resolves theproviders.
-        assert len(submitter.calls) == 1
 
 
 class TestBootGate:
@@ -246,10 +127,8 @@ class TestBootGate:
         settlement resolver is ever consulted, in dry-run exactly as live."""
 
         def readiness() -> Any:
-            raise ValueError(
-                "no strategy facet is active: activate one with "
-                "`degenbot strategy activate settlement --endpoints-default`"
-            )
+            refusal = "no strategy facet is active: activate one with "
+            raise ValueError(refusal + "`degenbot strategy activate settlement --endpoints-default`")
 
         def settlement_endpoints() -> list[str]:
             pytest.fail("an empty-fleet boot consulted the settlement endpoints")

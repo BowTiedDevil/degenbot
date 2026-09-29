@@ -19,7 +19,10 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use degenbot::batch_executor::BatchExecutor;
 use degenbot::bot::arb_engine::ResultBatch;
+
+use crate::dispatch;
 
 /// The session block clock (the consumer-owned `[block: N]` state).
 ///
@@ -200,16 +203,51 @@ pub async fn consume_result_batches(
     Ok(report)
 }
 
-/// A sink that beats the session-watch heartbeat for each consumed batch
-/// (G5 session watch,) while counting nothing else.
+/// The liveness sink: a DRAIN of the executor's Batch outcome record stream.
+///
+/// Per consumed `ResultBatch` it converts the batch into executor work
+/// ([`crate::dispatch::batch_work`]), enqueues it, and then drains every
+/// record set the lane has completed so far. The sink READS NOTHING from the
+/// drained records — display is the driver's remaining responsibility, and
+/// the liveness contract stays exactly what it was: the heartbeat beat + the
+/// [`SessionProgress`] note read only `clock.current_block`.
+///
 struct HeartbeatSink {
+    executor: BatchExecutor,
     heartbeat: Option<degenbot::session_end::Heartbeat>,
     progress: Option<SessionProgress>,
 }
 
+impl HeartbeatSink {
+    fn new(
+        executor: BatchExecutor,
+        heartbeat: Option<degenbot::session_end::Heartbeat>,
+        progress: Option<SessionProgress>,
+    ) -> Self {
+        Self {
+            executor,
+            heartbeat,
+            progress,
+        }
+    }
+}
+
 impl BatchSink for HeartbeatSink {
-    fn on_batch<'a>(&'a self, _batch: &'a ResultBatch, clock: &'a BlockClock) -> SinkFuture<'a> {
+    fn on_batch<'a>(&'a self, batch: &'a ResultBatch, clock: &'a BlockClock) -> SinkFuture<'a> {
         Box::pin(async move {
+            // Loud-abort check FIRST: a stored sim/submit leaf failure
+            // re-raises in the caller's frame — never silently swallowed by
+            // later batches.
+            if let Err(failure) = self.executor.raise_if_failed() {
+                return Err(failure.detail);
+            }
+            self.executor.enqueue(dispatch::batch_work(batch, clock));
+            // Drain the record stream: every batch the lane already
+            // completed yields its outcome set here. The records are display
+            // terrain — the drain only keeps the channel bounded and proves
+            // the stream flows (a full drain at stream end catches the tail
+            // batches).
+            while self.executor.try_next_outcome().await.is_some() {}
             if let Some(heartbeat) = &self.heartbeat {
                 heartbeat.beat();
             }
@@ -222,39 +260,37 @@ impl BatchSink for HeartbeatSink {
 }
 
 /// Convenience runner for the live arm: consume the driver's result stream
-/// with an optional heartbeat sink, returning the report + the final block
-/// clock.
+/// through the core batch executor, draining its Batch outcome record stream,
+/// and return the report + the final block clock.
 ///
 /// `allow_quiet_end` is `true` because the driver's `stop()` is the intended
 /// teardown (ADR-050 D6); the loud pump-death branch belongs to a supervised
-/// consumer (G5 session watch,).
+/// consumer (G5 session watch,). After the stream ends the executor is shut
+/// down (draining the in-flight lane) and any stored leaf failure re-raises
+/// here — the loud-abort rule re-raised in the caller's frame.
 ///
 /// # Errors
 ///
-/// Returns [`ConsumerError`] if the sink fails.
+/// Returns [`ConsumerError`] if the sink fails or an executor leaf failed.
 pub async fn run_result_consumer_watched(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<ResultBatch>,
+    executor: BatchExecutor,
     heartbeat: Option<degenbot::session_end::Heartbeat>,
     progress: Option<SessionProgress>,
 ) -> Result<(ConsumerReport, BlockClock), ConsumerError> {
-    let sink = HeartbeatSink {
-        heartbeat,
-        progress,
-    };
+    let sink = HeartbeatSink::new(executor, heartbeat, progress);
     let mut clock = BlockClock::default();
     let report = consume_result_batches(&mut rx, &mut clock, &sink, true).await?;
+    // Teardown: close the queue, drain in-flight work, then re-raise any
+    // stored leaf failure (the lane stops on the first one).
+    let shutdown = sink.executor.shutdown().await;
+    // Drain the record sets completed during (or buffered before) shutdown.
+    while sink.executor.try_next_outcome().await.is_some() {}
+    shutdown.map_err(|failure| ConsumerError {
+        batch_index: report.batches,
+        detail: failure.detail,
+    })?;
     Ok((report, clock))
-}
-
-/// Convenience runner without a heartbeat (kept for the offline tests).
-///
-/// # Errors
-///
-/// Returns [`ConsumerError`] if the sink fails.
-pub async fn run_result_consumer(
-    rx: tokio::sync::mpsc::UnboundedReceiver<ResultBatch>,
-) -> Result<(ConsumerReport, BlockClock), ConsumerError> {
-    run_result_consumer_watched(rx, None, None).await
 }
 
 #[cfg(test)]
@@ -394,5 +430,241 @@ mod tests {
         assert_eq!(clock.current_block, 10);
         assert!(clock.advance(&batch(11)));
         assert_eq!(clock.current_block, 11);
+    }
+
+    // ── The executor cut-over: HeartbeatSink drains the Batch outcome
+    // record stream through a REAL offline `BatchExecutor` ──
+
+    use std::collections::HashMap;
+
+    use alloy::primitives::{Bytes, U256};
+    use degenbot::arbitrage::{FeeOnTransferRegistry, PoolDivergence};
+    use degenbot::batch_executor::ExecutorConfig;
+    use degenbot::bot::arb_engine::SimulatedPathResult;
+    use degenbot::bot::nonce_authority::NonceAuthority;
+    use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
+    use degenbot::core::address_utils::parse_address;
+    use degenbot::solvers::mixed::SolvePathResult;
+    use degenbot::submission::{
+        Dispatcher, NonceLane, PathSuppression, ReceiptProbe, SubmissionLedger, SubmissionTarget,
+        TxSigner,
+    };
+
+    /// A probe that never reports a receipt (unused under `dry_run`).
+    struct NoopProbe;
+    impl ReceiptProbe for NoopProbe {
+        fn receipt_found(
+            &self,
+            _tx_hash: alloy::primitives::B256,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = degenbot::submission::SubmissionResult<bool>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Ok(false) })
+        }
+    }
+
+    fn fixture_path_info() -> PathInfo {
+        let pool = parse_address("0x1111111111111111111111111111111111111111").unwrap();
+        let t0 = parse_address("0x2222222222222222222222222222222222222222").unwrap();
+        let t1 = parse_address("0x3333333333333333333333333333333333333333").unwrap();
+        PathInfo::new(vec![HopInfo::V2(V2HopInfo {
+            pool_address: pool,
+            token0_address: t0,
+            token1_address: t1,
+            fee: 30,
+            zfo: true,
+        })])
+    }
+
+    /// An offline-safe real `BatchExecutor`: the production constructor with
+    /// `dry_run = true`, an empty-hop policy floor, and a dummy provider (the
+    /// record shapes these tests drive all skip pre-sim, so no RPC fires).
+    async fn offline_executor(
+        resolver: HashMap<u64, PathInfo>,
+        suppression: PathSuppression,
+    ) -> BatchExecutor {
+        let provider = degenbot::rpc::provider::AlloyProvider::new("http://127.0.0.1:1", 0)
+            .await
+            .unwrap();
+        let executor_address = parse_address("0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5").unwrap();
+        let weth = parse_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+        let config = ExecutorConfig {
+            sim_concurrency: 1,
+            max_candidates: 50,
+            min_profit_margin_bps: 0,
+            opts: EncodeOptions::default(),
+            resolver: Arc::new(crate::dispatch::MapResolver(resolver)),
+            suppression: Arc::new(std::sync::Mutex::new(suppression)),
+            divergence: Arc::new(std::sync::Mutex::new(PoolDivergence::new())),
+            fot: Arc::new(std::sync::Mutex::new(FeeOnTransferRegistry::new())),
+            provider: Arc::new(provider),
+            executor_owner: parse_address("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
+            executor_address,
+            weth_address: weth,
+            pool_manager_address: alloy::primitives::Address::ZERO,
+            multicall3_address: alloy::primitives::Address::ZERO,
+            inject_code: false,
+            injected_address: None,
+            runtime_bytecode: Bytes::new(),
+            warmup: degenbot::cmd_executor::compute_simulation_warmup_slots(executor_address, weth),
+            bot_state: None,
+            warm_cache: None,
+            dispatcher: Arc::new(std::sync::Mutex::new(Dispatcher::for_block(0))),
+            signer: Arc::new(
+                TxSigner::from_key_hex(
+                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                    1,
+                )
+                .unwrap(),
+            ),
+            probe: Arc::new(NoopProbe),
+            nonce_lane: Arc::new(NonceLane::new(
+                Arc::new(NonceAuthority::new(0)),
+                Arc::new(SubmissionLedger::new()),
+                "settlement",
+            )),
+            dry_run: true,
+            inject_code_guard: false,
+            extra_broadcast: Vec::new(),
+            target: SubmissionTarget::Public,
+        };
+        BatchExecutor::new(config)
+    }
+
+    /// One single-hop solve row (hop lengths match the fixture `PathInfo`).
+    fn solve_row(path_id: u64, with_hops: bool) -> (u64, SolvePathResult) {
+        let result = SolvePathResult {
+            optimal_input: U256::from(1_000_u64),
+            profit: U256::from(100_u64),
+            hop_outputs: if with_hops {
+                vec![U256::from(100_u64)]
+            } else {
+                Vec::new()
+            },
+            consumed_inputs: if with_hops {
+                vec![U256::from(1_000_u64)]
+            } else {
+                Vec::new()
+            },
+            state_nonces: vec![1],
+            solver_pool_states: Vec::new(),
+        };
+        (path_id, result)
+    }
+
+    fn row_batch(solve_block: u64, rows: Vec<(u64, SolvePathResult)>) -> ResultBatch {
+        let mut b = batch(solve_block);
+        b.fresh = rows;
+        b
+    }
+
+    fn payload_batch(solve_block: u64, path_id: u64) -> ResultBatch {
+        let mut b = batch(solve_block);
+        b.payloads.insert(
+            path_id,
+            SimulatedPathResult {
+                path_id,
+                gross_profit: U256::from(1_000_u64),
+                net_profit: U256::from(900_u64),
+                gas_used: 300_000,
+                priority_fee: 2,
+                base_fee_next: 7,
+                execute_calldata: Vec::new(),
+                access_list: None,
+                captured_swaps: Vec::new(),
+                hop_count: 1,
+                failure: Some(degenbot::bot::arb_engine::InlineSimFailure {
+                    fail_index: Some(3),
+                    revert_data: Vec::new(),
+                    bucket: "no-profit".to_string(),
+                }),
+            },
+        );
+        b
+    }
+
+    #[tokio::test]
+    async fn drain_sink_feeds_the_executor_and_drains_typed_skip_records() {
+        // Row 1: empty hops → SkipEmptyHops. Row 2: unresolvable → the
+        // unified SkipResolveMiss (task A6SXEH a: a typed skip + counted,
+        // never an abort, never an empty-hop fold). Both drain as records —
+        // the record stream is the executor's product, and the liveness
+        // sink's contract stays the clock.
+        let executor = offline_executor(HashMap::new(), PathSuppression::new()).await;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tx.send(row_batch(
+            100,
+            vec![solve_row(1, false), solve_row(2, true)],
+        ))
+        .unwrap();
+        drop(tx);
+        let heartbeat = degenbot::session_end::Heartbeat::new();
+        let progress = SessionProgress::new();
+        let (report, clock) = run_result_consumer_watched(
+            rx,
+            executor,
+            Some(heartbeat.clone()),
+            Some(progress.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.batches, 1);
+        assert_eq!(report.end, Some(ConsumerEnd::QuietEnd));
+        assert_eq!(clock.current_block, 100);
+        assert_eq!(progress.batches(), 1);
+        assert!(heartbeat.seq() >= 1, "the drain beat the heartbeat");
+    }
+
+    #[tokio::test]
+    async fn served_set_and_suppression_are_distinct_policy_verdicts() {
+        // The payload-served set is BATCH-LOCAL (path 10 is in the same
+        // batch's payloads → its raw row drains SkipPayloadServed); the
+        // suppression registry is CROSS-BLOCK (path 11 recorded to threshold
+        // → SkipSuppressed). The two rows exercise DIFFERENT policy inputs
+        // and yield DIFFERENT assembly verdicts — the record vocabulary
+        // keeps them distinct.
+        let mut suppression = PathSuppression::new();
+        for _ in 0..degenbot::submission::PATH_SUPPRESS_THRESHOLD {
+            suppression.record_failure(11);
+        }
+        // Both rows resolve (the resolve stage runs before the suppression
+        // and payload-served policies differentiate them).
+        let resolver =
+            HashMap::from([(10_u64, fixture_path_info()), (11_u64, fixture_path_info())]);
+        let executor = offline_executor(resolver, suppression).await;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut served_batch = row_batch(1, vec![solve_row(10, true), solve_row(11, true)]);
+        served_batch
+            .payloads
+            .insert(10, payload_batch(1, 10).payloads.remove(&10).unwrap());
+        tx.send(served_batch).unwrap();
+        drop(tx);
+        let (report, _) = run_result_consumer_watched(rx, executor, None, None)
+            .await
+            .unwrap();
+        assert_eq!(report.batches, 1);
+    }
+
+    #[tokio::test]
+    async fn payload_resolve_miss_is_the_loud_abort_arm() {
+        // A payload row is engine-born: a resolve miss evidences batch /
+        // registry divergence and aborts LOUDLY through the consumer error —
+        // re-raised at the shutdown boundary in the caller's frame.
+        let executor = offline_executor(HashMap::new(), PathSuppression::new()).await;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tx.send(payload_batch(1, 99)).unwrap();
+        drop(tx);
+        let err = run_result_consumer_watched(rx, executor, None, None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.detail.contains("99"),
+            "the loud-abort detail names the unresolvable payload path: {}",
+            err.detail
+        );
     }
 }

@@ -94,6 +94,13 @@ const PATH_SUPPRESS_RETRY_INTERVAL: u64 = 100;
 /// `WETH_ADDRESS` (runner/identity.py) — Ethereum mainnet wrapped native.
 const WETH_ADDRESS: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
+/// `MULTICALL3_ADDRESS` (runner/identity.py) — the aggregate3 probe target
+/// the simulate fan-out reads balances through.
+const MULTICALL3_ADDRESS: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
+
+/// `UNISWAP_V4_POOL_MANAGER_ADDRESS` (runner/identity.py).
+const UNISWAP_V4_POOL_MANAGER_ADDRESS: &str = "0x000000000004444c5dc75cB358380D2e3De08A90";
+
 // Deployment identity is an independent parity mirror, not a core re-export:
 // a `cargo add degenbot` consumer deploys its own executor, so the core does
 // not own one deployment's defaults. The Python home is
@@ -394,8 +401,8 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("12-path-discovery-batching", "REACHABLE", "discovery.rs: graph build over G2 rows + batched lazy OwnedPathFinder (batch_size<=1 per-path; one cooperative async hop per batch)"),
         ("13-path-policy", "DRIVER-POLICY", "policy.rs (hop bounds 2/3, allow/deny, duplicate-pool, permutation); discovery admits every token as an intermediate hop"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
-        ("15-dispatch-selection", "REACHABLE", "degenbot::arbitrage::{dispatch_profitable_results,filter_thin_margin_results} + driver dispatch.rs plan_batch typed decisions (skip/suppressed/thin-margin/sim)"),
-        ("16-sim-fanout-submitter", "REACHABLE", "degenbot::submission::SimSubmitPipeline (degenbot-submission::sim_pipeline): bounded Semaphore cap + single ordered FIFO submitter + fail-loud raise_if_failed; the driver injects max_simulate_concurrent as a plain cap; consume.rs consumes the EngineDriver result stream (row 7)"),
+        ("15-dispatch-selection", "REACHABLE", "degenbot::batch_executor::BatchExecutor stage-1 assembly: typed AssemblyVerdict pre-sim policy (empty-hops / resolve-miss / payload-served / suppression / thin-margin / divergent-pool / fee-on-transfer); the batch-local payload-served set (derived per BatchWork from the payload rows) and the cross-block suppression registry (ExecutorConfig.suppression) stay DISTINCT policy inputs; dispatch.rs keeps only the seam extraction (raw_row/payload_row/batch_work)"),
+        ("16-sim-fanout-submitter", "REACHABLE", "degenbot::batch_executor::BatchExecutor over degenbot::submission::SimSubmitPipeline: bounded sim fan-out + single ordered FIFO submit lane + fail-loud raise_if_failed; the driver enqueues BatchWork (caps as plain counts) and drains the typed BatchOutcome record stream; consume.rs HeartbeatSink drains it reading only the block clock (row 7 result stream)"),
         ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
         ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
         ("19-session-watch", "DRIVER-POLICY", "session_watch.rs ranks the core detection facts (degenbot::session_end::{SessionEndCause,SessionEndFacts,SessionEndDetection} over EngineDriver::wait_session_end + the heartbeat stall watchdog) into SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} (watch-as-observer; ranking + teardown stay driver)"),
@@ -748,10 +755,12 @@ fn run() -> Result<(), String> {
         cfg.node_http.clone()
     };
     let bot = std::sync::Arc::new(bot);
-    let driver = degenbot::EngineDriver::new(
+    // Arc: the executor's path resolver shares the driver (its registry is
+    // the one path_info projection the result batch's path ids name).
+    let driver = std::sync::Arc::new(degenbot::EngineDriver::new(
         std::sync::Arc::clone(&bot),
         degenbot::config::holder::config_arc(),
-    );
+    ));
     // Bind the registered-path budget from the loaded schema
     // (`pathfinding.max_registered_paths`, declared default 100 000; 0 =
     // uncapped) onto the engine registry BEFORE the crawl, mirroring
@@ -780,8 +789,25 @@ fn run() -> Result<(), String> {
         let heartbeat = degenbot::session_end::Heartbeat::new();
         // RSP-10: the shared progress view the run-loop heartbeat reads.
         let progress = consume::SessionProgress::new();
+
+        // ── The core batch executor (ledger rows 15 + 16; the executor
+        // cut-over) ── Value-configured ONCE: the driver injects the plain
+        // caps, the policy values (the cross-block suppression registry
+        // stays DISTINCT from the batch-local payload-served set the
+        // executor derives from each batch's payload rows), and the relay
+        // posture — never choreography code. The consumer's HeartbeatSink
+        // drains the Batch outcome record stream it produces.
+        let provider = degenbot::rpc::provider::AlloyProvider::for_chain(
+            &http,
+            CHAIN_ID,
+            degenbot::rpc::provider::DEFAULT_MAX_RETRIES,
+        )
+        .await
+        .map_err(|e| format!("live construction provider from {http}: {e}"))?;
+        let executor = build_batch_executor(&cfg, &loaded, &provider, &bot, &driver)?;
         let consumer = tokio::spawn(consume::run_result_consumer_watched(
             result_rx,
+            executor,
             Some(heartbeat.clone()),
             Some(progress.clone()),
         ));
@@ -1040,6 +1066,113 @@ fn run() -> Result<(), String> {
 /// parity twin of the hosted runner's stance-independent posture gate), and
 /// an activated pending-transaction facet belongs to its own binary or the
 /// hosted process, not this runner.
+/// Build the session-static core batch executor from the driver config —
+/// the value-configured construction (ledger rows 15 + 16): the plain caps,
+/// the policy values, the relay posture. The choreography itself (assembly
+/// policy, sim fan-out, ordered submit) is core-owned
+/// (`degenbot::batch_executor::BatchExecutor`).
+fn build_batch_executor(
+    cfg: &SettlementBotConfig,
+    loaded: &degenbot::config::LoadedConfig,
+    provider: &degenbot::rpc::provider::AlloyProvider,
+    bot: &std::sync::Arc<degenbot::bot_core::Bot>,
+    driver: &std::sync::Arc<degenbot::EngineDriver>,
+) -> Result<degenbot::batch_executor::BatchExecutor, String> {
+    use degenbot::batch_executor::ExecutorConfig;
+
+    let executor_address = degenbot::core::address_utils::parse_address(&cfg.executor_address)
+        .map_err(|e| format!("executor address {}: {e}", cfg.executor_address))?;
+    let weth_address = degenbot::core::address_utils::parse_address(WETH_ADDRESS)
+        .map_err(|e| format!("WETH address {WETH_ADDRESS}: {e}"))?;
+    let executor_owner = degenbot::core::address_utils::parse_address(&cfg.executor_owner)
+        .map_err(|e| format!("executor owner {}: {e}", cfg.executor_owner))?;
+    // The executor runtime bytecode the sim injects: `EXECUTOR_RUNTIME` (a hex
+    // blob) when set, empty otherwise (the sim then runs against the
+    // on-chain contract — live-only, and `inject_code_guard` refuses
+    // submission while the injected stance is on).
+    let runtime_bytecode = match &cfg.executor_runtime {
+        Some(hex) => alloy::primitives::Bytes::from(
+            degenbot::core::hex_utils::decode_hex(hex)
+                .map_err(|e| format!("EXECUTOR_RUNTIME: {e}"))?,
+        ),
+        None => alloy::primitives::Bytes::new(),
+    };
+    // The thin-margin floor is a declared driver-side stance
+    // (`dispatch.min_profit_margin_bps`); a negative value is a config error
+    // clamped to the disabled floor rather than a u64 wrap.
+    let min_profit_margin_bps =
+        u64::try_from(loaded.config.dispatch.min_profit_margin_bps.max(0)).unwrap_or(u64::MAX);
+    let cap = usize::try_from(cfg.max_simulate_concurrent)
+        .unwrap_or(usize::MAX)
+        .max(1);
+    let config = ExecutorConfig {
+        sim_concurrency: cap,
+        max_candidates: cap,
+        min_profit_margin_bps,
+        opts: degenbot::cmd_executor::composers::EncodeOptions::default(),
+        resolver: std::sync::Arc::new(dispatch::DriverResolver {
+            driver: std::sync::Arc::clone(driver),
+        }),
+        // The cross-block suppression registry is its OWN policy value —
+        // never merged with the batch-local payload-served set the executor
+        // derives from each `BatchWork`'s payload rows.
+        suppression: std::sync::Arc::new(std::sync::Mutex::new(
+            degenbot::submission::PathSuppression::new(),
+        )),
+        divergence: std::sync::Arc::new(std::sync::Mutex::new(
+            degenbot::arbitrage::PoolDivergence::new(),
+        )),
+        fot: std::sync::Arc::new(std::sync::Mutex::new(
+            degenbot::arbitrage::FeeOnTransferRegistry::new(),
+        )),
+        provider: std::sync::Arc::new(provider.clone()),
+        executor_owner,
+        executor_address,
+        weth_address,
+        pool_manager_address: degenbot::core::address_utils::parse_address(
+            UNISWAP_V4_POOL_MANAGER_ADDRESS,
+        )
+        .map_err(|e| format!("V4 PoolManager address: {e}"))?,
+        multicall3_address: degenbot::core::address_utils::parse_address(MULTICALL3_ADDRESS)
+            .map_err(|e| format!("Multicall3 address: {e}"))?,
+        inject_code: cfg.inject_executor_code,
+        injected_address: cfg
+            .inject_executor_code
+            .then(|| degenbot::core::address_utils::parse_address(&cfg.injected_address))
+            .transpose()
+            .map_err(|e| format!("injected executor address: {e}"))?,
+        runtime_bytecode,
+        warmup: degenbot::cmd_executor::compute_simulation_warmup_slots(
+            executor_address,
+            weth_address,
+        ),
+        bot_state: Some(bot.state_arc()),
+        // No separate warm-code cache in this driver: the sim's cold-miss
+        // fallback DB (the provider) serves the reads.
+        warm_cache: None,
+        dispatcher: std::sync::Arc::new(std::sync::Mutex::new(
+            degenbot::submission::Dispatcher::for_block(0),
+        )),
+        signer: std::sync::Arc::new(
+            degenbot::submission::TxSigner::from_key_hex(&cfg.operator_private_key, CHAIN_ID)
+                .map_err(|e| format!("operator signer: {e}"))?,
+        ),
+        probe: std::sync::Arc::new(dispatch::ProviderReceiptProbe {
+            provider: std::sync::Arc::new(provider.clone()),
+        }),
+        nonce_lane: std::sync::Arc::new(degenbot::submission::NonceLane::new(
+            std::sync::Arc::new(degenbot::bot::nonce_authority::NonceAuthority::new(0)),
+            std::sync::Arc::new(degenbot::submission::SubmissionLedger::new()),
+            "settlement",
+        )),
+        dry_run: cfg.dry_run,
+        inject_code_guard: cfg.inject_executor_code,
+        extra_broadcast: Vec::new(),
+        target: degenbot::submission::SubmissionTarget::Public,
+    };
+    Ok(degenbot::batch_executor::BatchExecutor::new(config))
+}
+
 fn strategy_arm_refusal(
     settlement_active: bool,
     mevblocker_active: bool,

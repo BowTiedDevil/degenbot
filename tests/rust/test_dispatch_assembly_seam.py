@@ -18,10 +18,7 @@ from degenbot._ffi.simulation import (
     DispatchCandidate,
     assemble_dispatch_candidates_py,
 )
-from degenbot.runner import _dispatch as d
 from degenbot.runner._dispatch import RawEngineResult
-from tests.fakes.engine import FakeEngineRegistry
-from tests.fakes.session import FakeRunnerConfig, FakeRunnerSession
 
 
 def _row(path_id: int) -> RawEngineResult:
@@ -102,22 +99,3 @@ class TestAssemblySeam:
         )
         with pytest.raises(ValueError, match="hop_outputs length"):
             assemble_dispatch_candidates_py(engine=engine, results=[bad])
-
-
-class TestPythonAssemblyParity:
-    """The runner's ``_build_dispatch_candidates`` delegates to the seam.
-
-    The Python wrapper keeps only the display log + the operator policy bool;
-    candidate construction + filtering are Rust-owned. This pins that the
-    runner path produces the same ready list the raw seam does.
-    """
-
-    def test_runner_builder_returns_seam_candidates(self, nxm2bf_v2_engine_and_path) -> None:
-        engine, path_id = nxm2bf_v2_engine_and_path
-        session = FakeRunnerSession(
-            engine_registry=FakeEngineRegistry(engine),
-            cfg=FakeRunnerConfig(erc6909_profit=False),
-        )
-        candidates = d._build_dispatch_candidates(session, [_row(path_id)])
-        assert len(candidates) == 1
-        assert isinstance(candidates[0], DispatchCandidate)

@@ -1,227 +1,182 @@
-//! Driver-side dispatch policy — parity-ledger row 15 (Gap G4).
+//! Driver-side executor wiring — parity-ledger rows 15 + 16 (Gap G4; the
+//! executor cut-over).
 //!
-//! Mirrors `src/degenbot/runner/_dispatch.py` at the *driver* boundary: shape
-//! a `ResultBatch`'s raw engine rows into `DispatchCandidate`s, apply the
-//! driver-owned pre-filters (empty-hop skip, `PathSuppression` skip,
-//! thin-margin via the core `filter_thin_margin_results`), then hand the
-//! survivors to the core fan-out (`dispatch_profitable_results`). Fee
-//! determination wraps the core `compute_priority_fee` +
-//! `degenbot_core::eip_1559::next_base_fee`.
+//! The per-batch dispatch choreography is CORE-owned
+//! (`degenbot::batch_executor::BatchExecutor`): the typed pre-sim policy
+//! (the `AssemblyVerdict` skips), the bounded sim fan-out, and the ordered
+//! submit lane all run inside the executor. This module keeps only the
+//! driver boundary:
 //!
-//! The fan-out itself is core-owned (ADR-019 D4); everything in this module is
-//! the driver's decision log — the typed `DispatchDecision` outcome the RSP-8
-//! gate diffs against the Python driver.
+//! - the seam extraction ([`raw_row`] / [`payload_row`] / [`batch_work`]):
+//!   the engine's `SolvePathResult` / `SimulatedPathResult` rows translated
+//!   into the executor's input rows — the Rust twin of the `PyO3` shell's
+//!   dict → row extraction at its seam, not a re-implementation of the
+//!   shaping (candidate building is the executor's assembly stage);
+//! - the path-resolver adapters ([`MapResolver`] for maps,
+//!   [`DriverResolver`] for the live engine registry);
+//! - the receipt probe the submit monitors poll ([`ProviderReceiptProbe`]);
+//! - the fee helpers that stay driver reach proofs (row 17):
+//!   [`priority_fee`] / [`next_base_fee`] / the fee-history fetchers.
+//!
+//! The payload-served set (BATCH-LOCAL, derived from the batch's payload
+//! rows) and the suppression registry (CROSS-BLOCK failure feedback) remain
+//! DISTINCT policy inputs: the served set is re-derived per [`BatchWork`],
+//! the registry is injected once into the `ExecutorConfig` and owned across
+//! blocks — they are never merged into one knob.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use alloy::primitives::U256;
-use degenbot::arbitrage::{
-    compute_priority_fee, dispatch_profitable_results, filter_thin_margin_results,
-    BlockPriorityFees, DispatchCandidate, DispatchOutcome, FeeOnTransferRegistry, PoolDivergence,
-    SimulateContext, SolveStep,
-};
-use degenbot::cmd_executor::composers::{EncodeOptions, PathInfo};
+use alloy::primitives::{B256, U256};
+use degenbot::arbitrage::{compute_priority_fee, BlockPriorityFees};
+use degenbot::batch_executor::{BatchWork, PathResolver, PayloadFailure, PayloadRow, RawResult};
+use degenbot::bot::arb_engine::{ResultBatch, SimulatedPathResult};
+use degenbot::cmd_executor::composers::PathInfo;
 use degenbot::rpc::provider::AlloyProvider;
 use degenbot::solvers::mixed::SolvePathResult;
-use degenbot::submission::{Dispatcher, PathSuppression};
+use degenbot::submission::{Dispatcher, ReceiptProbe, SubmissionError, SubmissionResult};
 
-/// The driver's typed per-candidate decision (the RSP-8 diff surface).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DispatchDecision {
-    /// `hop_outputs` was empty — the `[sim-none]` skip (Python
-    /// `_build_dispatch_candidates`).
-    SkipEmptyHops {
-        /// The path id.
-        path_id: u64,
-    },
-    /// The path is suppressed by `PathSuppression::is_suppressed`.
-    Suppressed {
-        /// The path id.
-        path_id: u64,
-    },
-    /// The candidate was dropped by the thin-margin pre-filter.
-    ThinMargin {
-        /// The path id.
-        path_id: u64,
-    },
-    /// The candidate is ready for the sim fan-out.
-    Sim {
-        /// The path id.
-        path_id: u64,
-    },
-}
-
-impl DispatchDecision {
-    /// The stable machine label (the RSP-8 diff column).
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::SkipEmptyHops { .. } => "skip-empty-hops",
-            Self::Suppressed { .. } => "suppressed",
-            Self::ThinMargin { .. } => "thin-margin",
-            Self::Sim { .. } => "sim",
-        }
-    }
-
-    /// The candidate's path id.
-    #[must_use]
-    pub const fn path_id(self) -> u64 {
-        match self {
-            Self::SkipEmptyHops { path_id }
-            | Self::Suppressed { path_id }
-            | Self::ThinMargin { path_id }
-            | Self::Sim { path_id } => path_id,
-        }
-    }
-}
-
-/// One raw engine-result row, mirroring the Python `_RawResult` tuple
-/// `(path_id, optimal_input, profit, hop_outputs, consumed_inputs, solve_block,
-/// state_nonces)`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RawResult {
-    /// `path_id`.
-    pub path_id: u64,
-    /// The solver's optimal input.
-    pub optimal_input: u128,
-    /// The solver's expected gross profit.
-    pub profit: u128,
-    /// Per-hop expected outputs.
-    pub hop_outputs: Vec<u128>,
-    /// Per-hop consumed inputs.
-    pub consumed_inputs: Vec<u128>,
-    /// The block the solver produced the result on.
-    pub solve_block: u64,
-    /// Per-hop solve-time state nonces.
-    pub state_nonces: Vec<u64>,
-}
-
-impl RawResult {
-    /// Build a raw row from a `ResultBatch` entry (`SolvePathResult`).
-    ///
-    /// `U256` values saturate into `u128` (the driver's decision log is
-    /// display/threshold arithmetic; the sim seam works in `U256`).
-    #[must_use]
-    pub fn from_solve_path(path_id: u64, result: &SolvePathResult, solve_block: u64) -> Self {
-        let hop_outputs: Vec<u128> = result
-            .hop_outputs
-            .iter()
-            .map(|v| u128::try_from(*v).unwrap_or(u128::MAX))
-            .collect();
-        let consumed_inputs: Vec<u128> = result
-            .consumed_inputs
-            .iter()
-            .map(|v| u128::try_from(*v).unwrap_or(u128::MAX))
-            .collect();
-        Self {
-            path_id,
-            optimal_input: u128::try_from(result.optimal_input).unwrap_or(u128::MAX),
-            profit: u128::try_from(result.profit).unwrap_or(u128::MAX),
-            hop_outputs,
-            consumed_inputs,
-            solve_block,
-            state_nonces: result.state_nonces.clone(),
-        }
-    }
-
-    /// Whether the row is dispatchable (non-empty hop outputs).
-    #[must_use]
-    pub fn has_hops(&self) -> bool {
-        !self.hop_outputs.is_empty()
-    }
-
-    /// Build a [`DispatchCandidate`] from the row + its resolved [`PathInfo`].
-    #[must_use]
-    pub fn to_candidate(&self, path_info: PathInfo, opts: EncodeOptions) -> DispatchCandidate {
-        let count = self
-            .hop_outputs
-            .len()
-            .min(self.consumed_inputs.len())
-            .min(self.state_nonces.len());
-        let steps: Vec<SolveStep> = (0..count)
-            .map(|i| SolveStep {
-                output: self.hop_outputs[i],
-                consumed_input: self.consumed_inputs[i],
-                state_nonce: self.state_nonces[i],
-            })
-            .collect();
-        DispatchCandidate {
-            path_id: self.path_id,
-            optimal_input: self.optimal_input,
-            engine_profit: self.profit,
-            steps: steps.into_boxed_slice(),
-            solve_block: self.solve_block,
-            path_info,
-            opts,
-        }
-    }
-}
-
-/// The result of planning a batch: the per-path decisions + the `Sim`-ready
-/// candidates.
-#[derive(Debug, Default)]
-pub struct BatchPlan {
-    /// One decision per input row, in input (path-id) order.
-    pub decisions: Vec<DispatchDecision>,
-    /// The candidates that reached the `Sim` stage, in input order.
-    pub candidates: Vec<DispatchCandidate>,
-}
-
-/// Shape + pre-filter one batch of raw rows into the driver's typed plan.
-///
-/// Applies, in Python order: the empty-hop skip
-/// (`_build_dispatch_candidates`), then the suppression skip
-/// ([`PathSuppression::is_suppressed`]), then the thin-margin filter
-/// (core [`filter_thin_margin_results`]). A row with no resolvable
-/// [`PathInfo`] is skipped (a driver guard; the engine always resolves).
+/// Translate one engine solve row into the executor's raw row — the seam
+/// extraction. `U256` values saturate into `u128` (the driver's display and
+/// threshold arithmetic is `u128`; the sim seam works in `U256`).
 #[must_use]
-pub fn plan_batch(
-    results: &[RawResult],
-    resolve: &dyn Fn(u64) -> Option<PathInfo>,
-    opts: EncodeOptions,
-    suppression: &mut PathSuppression,
-    current_block: u64,
-    min_profit_margin_bps: u64,
-) -> BatchPlan {
-    let mut plan = BatchPlan::default();
-    let mut candidates: Vec<DispatchCandidate> = Vec::new();
-    for row in results {
-        if !row.has_hops() {
-            plan.decisions.push(DispatchDecision::SkipEmptyHops {
-                path_id: row.path_id,
-            });
-            continue;
-        }
-        let Some(path_info) = resolve(row.path_id) else {
-            plan.decisions.push(DispatchDecision::SkipEmptyHops {
-                path_id: row.path_id,
-            });
-            continue;
-        };
-        if suppression.is_suppressed(row.path_id, current_block) {
-            plan.decisions.push(DispatchDecision::Suppressed {
-                path_id: row.path_id,
-            });
-            continue;
-        }
-        candidates.push(row.to_candidate(path_info, opts));
+pub fn raw_row(path_id: u64, result: &SolvePathResult, solve_block: u64) -> RawResult {
+    let saturate = |value: &U256| u128::try_from(*value).unwrap_or(u128::MAX);
+    RawResult {
+        path_id,
+        optimal_input: saturate(&result.optimal_input),
+        profit: saturate(&result.profit),
+        hop_outputs: result.hop_outputs.iter().map(saturate).collect(),
+        consumed_inputs: result.consumed_inputs.iter().map(saturate).collect(),
+        solve_block,
+        state_nonces: result.state_nonces.clone(),
     }
+}
 
-    // Thin-margin filter over the survivors (core leaf, pure int).
-    let survivors: Vec<u64> = candidates.iter().map(|c| c.path_id).collect();
-    let (kept, _dropped) = filter_thin_margin_results(candidates, min_profit_margin_bps);
-    let kept_ids: HashSet<u64> = kept.iter().map(|c| c.path_id).collect();
-    for id in survivors {
-        if kept_ids.contains(&id) {
-            plan.decisions.push(DispatchDecision::Sim { path_id: id });
-        } else {
-            plan.decisions
-                .push(DispatchDecision::ThinMargin { path_id: id });
-        }
+/// Translate one engine inline-sim payload into the executor's payload row —
+/// the seam extraction. The join + categorization run crate-side
+/// (`degenbot_batch_executor::assembly`): a payload row's resolve miss is
+/// the loud-abort arm there, so this extraction never fabricates a path.
+#[must_use]
+pub fn payload_row(sim: &SimulatedPathResult) -> PayloadRow {
+    PayloadRow {
+        path_id: sim.path_id,
+        gross_profit: sim.gross_profit,
+        net_profit: sim.net_profit,
+        gas_used: sim.gas_used,
+        priority_fee: sim.priority_fee,
+        base_fee_next: sim.base_fee_next,
+        execute_calldata: alloy::primitives::Bytes::from(sim.execute_calldata.clone()),
+        access_list: sim.access_list.as_ref().map(|rows| {
+            alloy::rpc::types::AccessList(
+                rows.iter()
+                    .map(|row| alloy::rpc::types::AccessListItem {
+                        address: row.address,
+                        storage_keys: row
+                            .storage_keys
+                            .iter()
+                            .map(|key| B256::from(*key))
+                            .collect(),
+                    })
+                    .collect(),
+            )
+        }),
+        failure: sim.failure.as_ref().map(|failure| PayloadFailure {
+            bucket: failure.bucket.clone(),
+            fail_index: failure.fail_index,
+            revert_data: alloy::primitives::Bytes::from(failure.revert_data.clone()),
+        }),
     }
-    plan.candidates = kept;
-    plan
+}
+
+/// Build one batch's executor work from a consumed `ResultBatch` + the
+/// session block clock.
+///
+/// The `fresh` and `updated` engine rows join the raw batch; the inline-sim
+/// payloads join in path-id order (a deterministic record order for the
+/// drain). The payload rows' path ids ARE the batch-local payload-served set
+/// the executor's assembly reads — per-entry presence decides, so a mixed
+/// batch only degrades the payload-less entries.
+///
+/// `block_priority_fees` stays `None`: the payload arm carries its own
+/// market-aware fees, and the FFI arm prices through the core's target-fee
+/// fallback (`compute_priority_fee`'s no-history path). The percentile
+/// fetch itself stays a driver reach proof ([`fetch_priority_fees`], row 17).
+#[must_use]
+pub fn batch_work(batch: &ResultBatch, clock: &crate::consume::BlockClock) -> BatchWork {
+    let rows: Vec<RawResult> = batch
+        .fresh
+        .iter()
+        .chain(batch.updated.iter())
+        .map(|(path_id, result)| raw_row(*path_id, result, batch.solve_block))
+        .collect();
+    let mut payload_ids: Vec<u64> = batch.payloads.keys().copied().collect();
+    payload_ids.sort_unstable();
+    let payloads = payload_ids
+        .iter()
+        .filter_map(|id| batch.payloads.get(id).map(payload_row))
+        .collect();
+    BatchWork {
+        rows,
+        payloads,
+        current_block: clock.current_block,
+        base_fee_next: clock.base_fee_next,
+        block_timestamp: clock.block_timestamp,
+        block_priority_fees: None,
+    }
+}
+
+/// A map-backed [`PathResolver`] (offline drivers + tests).
+#[derive(Debug, Default, Clone)]
+pub struct MapResolver(pub HashMap<u64, PathInfo>);
+
+impl PathResolver for MapResolver {
+    fn resolve(&self, path_id: u64) -> Option<PathInfo> {
+        self.0.get(&path_id).cloned()
+    }
+}
+
+/// The live resolver: the engine registry projection through
+/// `EngineDriver::path_info_for` — the same registry the result batch's
+/// path ids name.
+#[derive(Clone)]
+pub struct DriverResolver {
+    /// The session driver (shared with the engine handshake).
+    pub driver: Arc<degenbot::EngineDriver>,
+}
+
+impl PathResolver for DriverResolver {
+    fn resolve(&self, path_id: u64) -> Option<PathInfo> {
+        self.driver
+            .path_info_for(path_id)
+            .and_then(std::result::Result::ok)
+    }
+}
+
+/// The receipt probe the executor's submit monitors poll: one
+/// `eth_getTransactionReceipt` read per probe through the session provider.
+#[derive(Clone)]
+pub struct ProviderReceiptProbe {
+    /// The typed RPC provider (the broadcast provider's read twin).
+    pub provider: Arc<AlloyProvider>,
+}
+
+impl ReceiptProbe for ProviderReceiptProbe {
+    fn receipt_found(
+        &self,
+        tx_hash: B256,
+    ) -> Pin<Box<dyn Future<Output = SubmissionResult<bool>> + Send + '_>> {
+        let provider = Arc::clone(&self.provider);
+        Box::pin(async move {
+            let receipt = provider
+                .get_transaction_receipt(&tx_hash.to_string())
+                .await
+                .map_err(|e| SubmissionError::MonitorProbe(format!("{e}")))?;
+            Ok(receipt.is_some())
+        })
+    }
 }
 
 /// Fee determination: the market-aware priority fee (`compute_priority_fee`)
@@ -261,70 +216,6 @@ pub fn next_base_fee(parent_base_fee: u128, parent_gas_used: u128, parent_gas_li
     )
 }
 
-/// The typed failure category for a `FailBuckets` label, mirroring the driver's
-/// `classify_revert` taxonomy (Python `runner/config.py` + the
-/// `tests/arbitrage/test_revert_taxonomy.py` fixture set).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FailureKind {
-    /// A revert label produced by `classify_revert`.
-    Revert,
-    /// `no-profit` — the sim ran but the path was unprofitable.
-    NoProfit,
-    /// `int128-overflow` — a V4 amount exceeded `int128`.
-    Int128Overflow,
-    /// `encode-failed` — the encoder refused the path.
-    EncodeFailed,
-    /// `rpc-failed` — the sim's RPC cold-miss failed.
-    RpcFailed,
-    /// `stale` — the solve snapshot advanced before the sim.
-    Stale,
-    /// Anything else (never silently dropped).
-    Other,
-}
-
-impl FailureKind {
-    /// Classify a `FailBuckets` label.
-    #[must_use]
-    pub fn from_bucket(bucket: &str) -> Self {
-        match bucket {
-            "no-profit" => Self::NoProfit,
-            "int128-overflow" => Self::Int128Overflow,
-            "encode-failed" => Self::EncodeFailed,
-            "rpc-failed" => Self::RpcFailed,
-            "stale" => Self::Stale,
-            "empty" | "numeric-revert" => Self::Revert,
-            other => {
-                // The taxonomy's custom-error + Error(string) + Panic labels
-                // are all non-orchestration strings; treat them as reverts.
-                if other.starts_with("unknown:0x")
-                    || other.starts_with("short:")
-                    || other.starts_with("Panic(")
-                    || other.starts_with("Error(")
-                    || other.ends_with("NotSettled")
-                {
-                    Self::Revert
-                } else {
-                    Self::Other
-                }
-            }
-        }
-    }
-
-    /// The stable machine label.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Revert => "revert",
-            Self::NoProfit => "no-profit",
-            Self::Int128Overflow => "int128-overflow",
-            Self::EncodeFailed => "encode-failed",
-            Self::RpcFailed => "rpc-failed",
-            Self::Stale => "stale",
-            Self::Other => "other",
-        }
-    }
-}
-
 /// The category of the failing call index in the 7-call bundle
 /// (`[3 pre-balance] [execute] [3 post-balance]` → the Python `fail_index`
 /// attribution).
@@ -343,34 +234,6 @@ pub const fn fail_index_category(fail_index: Option<usize>) -> &'static str {
 #[must_use]
 pub fn classify_revert(revert_data: &[u8]) -> String {
     degenbot::decoders::revert::classify_revert(revert_data)
-}
-
-/// Run the core sim fan-out over the planned candidates.
-///
-/// RPC-gated: requires a live [`SimulateContext`] + `BotState`. This is the
-/// live-arm path only; the offline tests exercise [`plan_batch`] +
-/// [`priority_fee`] + the taxonomy helpers.
-#[must_use]
-pub fn run_sim_fanout(
-    candidates: Vec<DispatchCandidate>,
-    ctx: &SimulateContext<'_>,
-    suppression: &Arc<Mutex<PathSuppression>>,
-    pool_divergence: &Arc<Mutex<PoolDivergence>>,
-    fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
-    current_block: u64,
-    min_profit_margin_bps: u64,
-) -> DispatchOutcome {
-    dispatch_profitable_results(
-        candidates,
-        ctx,
-        suppression,
-        current_block,
-        min_profit_margin_bps,
-        pool_divergence,
-        fot_registry,
-        None,
-        None,
-    )
 }
 
 /// Fetch the p10/p50 priority-fee percentiles through the umbrella RPC leaf
@@ -407,18 +270,16 @@ pub async fn record_fee_history(
         .await
 }
 
-/// Resolve a map keyed by path id into the `plan_batch` resolver shape.
-pub fn map_resolver(map: HashMap<u64, PathInfo>) -> impl Fn(u64) -> Option<PathInfo> {
-    move |id| map.get(&id).cloned()
-}
-
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
+    clippy::expect_used,
     reason = "tests assert on known-valid inputs; parse_address fixtures are valid"
 )]
 mod tests {
     use super::*;
+    use crate::consume::BlockClock;
+    use degenbot::bot::arb_engine::{AccessListRow, InlineSimFailure};
     use degenbot::cmd_executor::composers::{HopInfo, V2HopInfo, V3HopInfo};
     use degenbot::core::address_utils::parse_address;
 
@@ -444,94 +305,162 @@ mod tests {
         ])
     }
 
-    fn raw(path_id: u64, optimal_input: u128, profit: u128) -> RawResult {
-        RawResult {
-            path_id,
-            optimal_input,
-            profit,
-            hop_outputs: vec![profit, profit],
-            consumed_inputs: vec![optimal_input, optimal_input],
-            solve_block: 100,
+    fn solve_result(optimal_input: u64, profit: u64) -> SolvePathResult {
+        SolvePathResult {
+            optimal_input: U256::from(optimal_input),
+            profit: U256::from(profit),
+            hop_outputs: vec![U256::from(profit), U256::from(profit * 2)],
+            consumed_inputs: vec![U256::from(optimal_input), U256::from(optimal_input)],
             state_nonces: vec![1, 2],
+            solver_pool_states: Vec::new(),
         }
     }
 
     #[test]
-    fn empty_hops_are_skipped_before_any_policy() {
-        let mut row = raw(7, 1_000, 100);
-        row.hop_outputs.clear();
-        let mut suppression = PathSuppression::new();
-        let plan = plan_batch(
-            &[row],
-            &|_| Some(fixture_info()),
-            EncodeOptions::default(),
-            &mut suppression,
-            100,
-            0,
-        );
-        assert_eq!(plan.decisions.len(), 1);
-        assert_eq!(plan.decisions[0].label(), "skip-empty-hops");
-        assert!(plan.candidates.is_empty());
+    fn raw_row_projects_the_engine_row_with_u128_saturation() {
+        let row = raw_row(9, &solve_result(500, 42), 100);
+        assert_eq!(row.path_id, 9);
+        assert_eq!(row.optimal_input, 500);
+        assert_eq!(row.profit, 42);
+        assert_eq!(row.hop_outputs, vec![42, 84]);
+        assert_eq!(row.consumed_inputs, vec![500, 500]);
+        assert_eq!(row.solve_block, 100);
+        assert_eq!(row.state_nonces, vec![1, 2]);
+
+        // A u64-saturating U256 clamps to u128::MAX instead of wrapping.
+        let huge = SolvePathResult {
+            optimal_input: U256::MAX,
+            profit: U256::from(1_u64),
+            hop_outputs: vec![U256::MAX],
+            consumed_inputs: vec![U256::from(1_u64)],
+            state_nonces: vec![7],
+            solver_pool_states: Vec::new(),
+        };
+        let row = raw_row(1, &huge, 100);
+        assert_eq!(row.optimal_input, u128::MAX);
+        assert_eq!(row.hop_outputs, vec![u128::MAX]);
     }
 
     #[test]
-    fn thin_margin_filter_drops_razor_thin_after_suppression() {
-        // 50 bps margin: profit*10000 >= input*50. 100/1_000_000 = 1 bps → dropped.
-        let fine = raw(1, 1_000_000, 100);
-        let healthy = raw(2, 1_000_000, 10_000); // 100 bps → kept
-        let mut suppression = PathSuppression::new();
-        let plan = plan_batch(
-            &[fine, healthy],
-            &|_| Some(fixture_info()),
-            EncodeOptions::default(),
-            &mut suppression,
-            100,
-            50,
-        );
-        assert_eq!(plan.decisions.len(), 2);
-        assert_eq!(plan.decisions[0].label(), "thin-margin");
-        assert_eq!(plan.decisions[1].label(), "sim");
-        assert_eq!(plan.candidates.len(), 1);
-        assert_eq!(plan.candidates[0].path_id, 2);
+    fn payload_row_projects_the_inline_sim_row() {
+        let sim = SimulatedPathResult {
+            path_id: 4,
+            gross_profit: U256::from(1_000_u64),
+            net_profit: U256::from(900_u64),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 7,
+            execute_calldata: vec![0xde, 0xad],
+            access_list: Some(vec![AccessListRow {
+                address: parse_address("0x1111111111111111111111111111111111111111").unwrap(),
+                storage_keys: vec![U256::from(3_u64)],
+            }]),
+            captured_swaps: Vec::new(),
+            hop_count: 2,
+            failure: Some(InlineSimFailure {
+                fail_index: Some(3),
+                revert_data: vec![0x01, 0x02],
+                bucket: "no-profit".to_string(),
+            }),
+        };
+        let row = payload_row(&sim);
+        assert_eq!(row.path_id, 4);
+        assert_eq!(row.net_profit, U256::from(900_u64));
+        assert_eq!(row.gas_used, 300_000);
+        assert_eq!(row.base_fee_next, 7);
+        assert_eq!(row.execute_calldata.as_ref(), &[0xde, 0xad][..]);
+        let list = row.access_list.expect("access list projected");
+        assert_eq!(list.0.len(), 1);
+        assert_eq!(list.0[0].storage_keys, vec![B256::from(U256::from(3_u64))]);
+        let failure = row.failure.expect("failure projected");
+        assert_eq!(failure.bucket, "no-profit");
+        assert_eq!(failure.fail_index, Some(3));
+        assert_eq!(failure.revert_data.as_ref(), &[0x01, 0x02][..]);
+
+        // A healthy payload carries no failure.
+        let healthy = SimulatedPathResult {
+            failure: None,
+            access_list: None,
+            ..sim
+        };
+        let row = payload_row(&healthy);
+        assert!(row.failure.is_none());
+        assert!(row.access_list.is_none());
     }
 
     #[test]
-    fn suppressed_path_decides_suppressed_not_sim() {
-        let mut suppression = PathSuppression::new();
-        for _ in 0..degenbot::submission::PATH_SUPPRESS_THRESHOLD {
-            suppression.record_failure(5);
-        }
-        let plan = plan_batch(
-            &[raw(5, 1_000_000, 10_000)],
-            &|_| Some(fixture_info()),
-            EncodeOptions::default(),
-            &mut suppression,
-            1,
-            0,
+    #[expect(
+        clippy::default_trait_access,
+        reason = "the payload map is hashbrown's (not nameable without a direct dep); Default::default() is the only dep-free spelling"
+    )]
+    fn batch_work_joins_rows_and_orders_payloads_by_path_id() {
+        // The payload map is the engine's hashbrown map: build the batch
+        // first, then insert through the field.
+        let mut batch = ResultBatch {
+            solve_block: 101,
+            timestamp: 1_700_000_101,
+            base_fee_per_gas: Some(1_000_000_000),
+            gas_used: 15_000_000,
+            gas_limit: 30_000_000,
+            fresh: vec![(1_u64, solve_result(100, 10))],
+            updated: vec![(2_u64, solve_result(200, 20))],
+            expired: Vec::new(),
+            removed: Vec::new(),
+            payloads: Default::default(),
+        };
+        batch.payloads.insert(
+            20_u64,
+            SimulatedPathResult {
+                path_id: 20,
+                gross_profit: U256::from(2_u64),
+                net_profit: U256::from(2_u64),
+                gas_used: 1,
+                priority_fee: 1,
+                base_fee_next: 1,
+                execute_calldata: Vec::new(),
+                access_list: None,
+                captured_swaps: Vec::new(),
+                hop_count: 1,
+                failure: None,
+            },
         );
-        assert_eq!(plan.decisions[0].label(), "suppressed");
-        assert!(plan.candidates.is_empty());
+        batch.payloads.insert(
+            5_u64,
+            SimulatedPathResult {
+                path_id: 5,
+                ..batch.payloads[&20].clone()
+            },
+        );
+        let clock = BlockClock {
+            current_block: 101,
+            block_timestamp: 1_700_000_101,
+            base_fee_next: 1_041_666_666,
+        };
+        let work = batch_work(&batch, &clock);
+        // fresh + updated join, in stream order.
+        assert_eq!(
+            work.rows.iter().map(|r| r.path_id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        // The payloads join in path-id order (deterministic record order).
+        assert_eq!(
+            work.payloads.iter().map(|p| p.path_id).collect::<Vec<_>>(),
+            vec![5, 20]
+        );
+        // Per-block facts ride the clock.
+        assert_eq!(work.current_block, 101);
+        assert_eq!(work.base_fee_next, 1_041_666_666);
+        assert_eq!(work.block_timestamp, 1_700_000_101);
+        assert!(work.block_priority_fees.is_none());
     }
 
     #[test]
-    fn suppressed_path_retries_after_the_retry_interval() {
-        let mut suppression = PathSuppression::new();
-        for _ in 0..degenbot::submission::PATH_SUPPRESS_THRESHOLD {
-            suppression.record_failure(5);
-        }
-        // `current_block - last_retry(0) >= PATH_SUPPRESS_RETRY_INTERVAL` → the
-        // path is due for a retry this block, so `is_suppressed` returns
-        // false and the candidate reaches the sim stage (Python semantics).
-        let plan = plan_batch(
-            &[raw(5, 1_000_000, 10_000)],
-            &|_| Some(fixture_info()),
-            EncodeOptions::default(),
-            &mut suppression,
-            degenbot::submission::PATH_SUPPRESS_RETRY_INTERVAL,
-            0,
-        );
-        assert_eq!(plan.decisions[0].label(), "sim");
-        assert_eq!(plan.candidates.len(), 1);
+    fn map_resolver_answers_from_the_map() {
+        let mut map = HashMap::new();
+        map.insert(7_u64, fixture_info());
+        let resolver = MapResolver(map);
+        assert!(resolver.resolve(7).is_some());
+        assert!(resolver.resolve(8).is_none());
     }
 
     #[test]
@@ -588,37 +517,10 @@ mod tests {
     }
 
     #[test]
-    fn failure_kind_taxonomy_is_total() {
-        assert_eq!(FailureKind::from_bucket("no-profit"), FailureKind::NoProfit);
-        assert_eq!(
-            FailureKind::from_bucket("int128-overflow"),
-            FailureKind::Int128Overflow
-        );
-        assert_eq!(
-            FailureKind::from_bucket("CurrencyNotSettled"),
-            FailureKind::Revert
-        );
-        assert_eq!(FailureKind::from_bucket("Panic(0x11)"), FailureKind::Revert);
-        assert_eq!(
-            FailureKind::from_bucket("ERC20: transfer amount exceeds balance"),
-            FailureKind::Other
-        );
-    }
-
-    #[test]
     fn fail_index_maps_the_7_call_bundle() {
         assert_eq!(fail_index_category(Some(0)), "pre-balance");
         assert_eq!(fail_index_category(Some(3)), "execute");
         assert_eq!(fail_index_category(Some(6)), "post-balance");
         assert_eq!(fail_index_category(None), "orchestration");
-    }
-
-    #[test]
-    fn raw_result_to_candidate_keeps_step_correspondence() {
-        let candidate = raw(9, 500, 42).to_candidate(fixture_info(), EncodeOptions::default());
-        assert_eq!(candidate.path_id, 9);
-        assert_eq!(candidate.steps.len(), 2);
-        assert_eq!(candidate.steps[1].state_nonce, 2);
-        assert_eq!(candidate.steps[0].output, 42);
     }
 }

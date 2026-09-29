@@ -221,14 +221,12 @@ class TestExampleRoutesThroughRust:
         symbols — the driver does not import ``degenbot_rs`` directly).
         """
         sim_src = (REPO / "src" / "degenbot" / "runner" / "_sim_submit.py").read_text()
-        assert "dispatch_profitable(" in sim_src, (
-            "driver must route simulation through dispatch_profitable (A5)"
+        assert "build_batch_executor_py(" in sim_src, (
+            "driver must construct the core batch executor (build_batch_executor_py)"
         )
-        src = (REPO / "src" / "degenbot" / "runner" / "_dispatch.py").read_text()
-        assert "submitter if submitter is not None else dispatch_and_submit" in src, (
-            "driver must default the submitter DI seam to dispatch_and_submit "
-            "(the Rust submit pyfunction) — an injected submitter is test-only "
-            "DI and must never replace the production routing"
+        assert "dispatch_profitable" not in sim_src and "dispatch_and_submit" not in sim_src, (
+            "the cut-over driver authors no sim/submit choreography — the "
+            "ordered lane runs core-side"
         )
 
 
