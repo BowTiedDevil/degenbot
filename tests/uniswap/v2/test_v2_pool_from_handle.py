@@ -1,6 +1,6 @@
-"""UniswapV2Pool._from_py_pool is the Polars-style slim seam (ADR-005 / OGTTCS).
+"""UniswapV2Pool.from_handle is the Polars-style slim seam (ADR-005 / OGTTCS).
 
-``_from_py_pool(cls, py_pool) -> Self`` takes ONLY the Rust handle. Every
+``from_handle(cls, py_pool) -> Self`` takes ONLY the Rust handle. Every
 identity field is recovered off the handle — the Polars ``_from_pydf`` end
 state for V2. This test asserts delegation: the companion reads identity from
 the handle rather than constructor args, and the recovered values match what
@@ -23,14 +23,14 @@ from tests.helpers.v3_pool_factory import make_v3_pool
 
 
 class TestFromPyPoolSlimSeam:
-    """``_from_py_pool`` takes only ``py_pool`` and reads identity off the handle."""
+    """``from_handle`` takes only ``py_pool`` and reads identity off the handle."""
 
     def test_signature_takes_only_py_pool(self) -> None:
         """The classmethod accepts a single positional arg (the handle)."""
-        sig = inspect.signature(UniswapV2Pool._from_py_pool)
+        sig = inspect.signature(UniswapV2Pool.from_handle)
         params = [p for p in sig.parameters.values() if p.name != "cls"]
         assert len(params) == 1, (
-            f"_from_py_pool must take only py_pool, got params: {[p.name for p in params]}"
+            f"from_handle must take only py_pool, got params: {[p.name for p in params]}"
         )
         assert params[0].name == "py_pool"
 
@@ -79,7 +79,7 @@ class TestFromPyPoolSlimSeam:
     def test_rejects_non_v2_handle_with_family_error(self) -> None:
         """A V3-family handle must be rejected with a family-mismatch error.
 
-        ``_from_py_pool`` is the V2 companion seam; wrapping a handle whose
+        ``from_handle`` is the V2 companion seam; wrapping a handle whose
         ``PoolEntry`` is not ``V2`` would read empty/default identity (the
         union-handle leak) and later crash with a confusing
         ``ZeroDivisionError`` on ``Fraction(denom - gamma, denom)``. The
@@ -122,7 +122,7 @@ class TestFromPyPoolSlimSeam:
         # companion holds the same handle shape, so passing it to the V2 seam
         # is the misuse the ``pool_family`` assertion must catch.
         with pytest.raises(DegenbotValueError, match="V2-family"):
-            UniswapV2Pool._from_py_pool(v3_pool._py_pool)
+            UniswapV2Pool.from_handle(v3_pool._py_pool)
 
     def test_tokens_recovered_from_same_bot(self) -> None:
         """token0/token1 companions are rebuilt off the pool's handle."""

@@ -133,12 +133,12 @@ class TestStateRaisesAfterUnregister:
         assert removed is False
 
 
-def test_from_py_pool_still_usable_after_unregister() -> None:
+def testfrom_handle_still_usable_after_unregister() -> None:
     """The companion's identity getters survive deregistration; only ``state`` raises.
 
     ADR-005's identity/state split: ``BotState`` drops the whole ``PoolEntry``
     on unregister, but the companion caches identity off the handle at
-    ``_from_py_pool`` time. So identity reads (``address``/``factory``/fees/
+    ``from_handle`` time. So identity reads (``address``/``factory``/fees/
     tokens) keep working post-unregister; only the live-state read (``state``
     /``update_block``) raises. This is the contract the ``state`` ``None``
     -check enforces at runtime.

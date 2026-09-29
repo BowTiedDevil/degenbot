@@ -37,7 +37,7 @@ def make_erc20(
     py_token = py_bot.get_token(address)
     if py_token is None:
         py_token = py_bot.register_token(address, name, symbol, decimals, chain_id)
-    return Erc20Token._from_py_token(
+    return Erc20Token.from_handle(
         py_token,
         oracle_address=oracle_address,
         state_cache_depth=state_cache_depth,
@@ -55,4 +55,4 @@ def make_ether_placeholder(
     py_token = py_bot.get_token(address)
     if py_token is None:
         py_token = py_bot.register_token(address, "Ether Placeholder", "ETH", 18, chain_id)
-    return EtherPlaceholder._from_py_token(py_token, state_cache_depth=state_cache_depth)
+    return EtherPlaceholder.from_handle(py_token, state_cache_depth=state_cache_depth)

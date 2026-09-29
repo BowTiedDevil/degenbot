@@ -198,7 +198,7 @@ class TestSingletonDexPresets:
 
 
 class TestLiquidityPoolDexIdentity:
-    """`_from_py_pool` recovers dex identity off the handle (OGTTCS slim seam).
+    """`from_handle` recovers dex identity off the handle (OGTTCS slim seam).
 
     After the Polars-style slim seam, ``dex`` is ALWAYS present on the pool —
     resolved from the registered variant via ``py_pool.dex`` (Rust's

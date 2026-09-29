@@ -156,7 +156,7 @@ class UniswapV4Pool(
 
     type PoolState = UniswapV4PoolState
 
-    # Instance attributes set in `_from_py_pool` (the only construction seam).
+    # Instance attributes set in `from_handle` (the only construction seam).
     _py_pool: Pool
     _pool_id: bytes
     _pool_manager_address: ChecksummedAddress
@@ -183,7 +183,7 @@ class UniswapV4Pool(
         - Tests: ``make_v4_pool(...)``
 
         Both register the pool in Rust, obtain the ``Pool``
-        handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
+        handle, and wrap it via :meth:`from_handle` (mirroring Polars'
         ``_from_pydf`` seam).
 
         Raises:
@@ -199,7 +199,7 @@ class UniswapV4Pool(
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: Pool) -> Self:
+    def from_handle(cls, py_pool: Pool) -> Self:
         """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
@@ -212,7 +212,7 @@ class UniswapV4Pool(
 
         Protocol fee / LP fee / state_view_address are builder-supplied
         values the seam defaults; the builder overrides them after
-        ``_from_py_pool`` (matches V3's deployer/init_hash override).
+        ``from_handle`` (matches V3's deployer/init_hash override).
 
         Returns:
             A ``cls`` instance wrapping ``py_pool``.
@@ -229,7 +229,7 @@ class UniswapV4Pool(
             msg = (
                 "Pool handle is not a V4-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
-                "UniswapV4Pool._from_py_pool requires a handle "
+                "UniswapV4Pool.from_handle requires a handle "
                 "registered via register_v4_pool"
             )
             raise DegenbotValueError(message=msg)
@@ -252,8 +252,8 @@ class UniswapV4Pool(
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
-        self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
+        self._token0 = Erc20Token.from_handle(py_token0)
+        self._token1 = Erc20Token.from_handle(py_token1)
 
         view = py_pool.concentrated_liquidity()
         self._pool_key = UniswapV4PoolKey(
@@ -285,7 +285,7 @@ class UniswapV4Pool(
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, id={to_0x_hex(self.pool_id)})"  # ruff:ignore[line-too-long]
 
         # Protocol fee / LP fee / initial state block — builder-supplied values
-        # the seam defaults; the builder overrides after _from_py_pool.
+        # the seam defaults; the builder overrides after from_handle.
         self.protocol_fee = ProtocolFee(zero_for_one=0, one_for_zero=0)
         self.lp_fee = self.pool_key.fee
         self._initial_state_block = self._py_pool.concentrated_liquidity().update_block

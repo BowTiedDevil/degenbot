@@ -53,7 +53,7 @@ fn v2_identity_round_trip() {
 fn pool_family_dispatches_v2_and_unknown() {
     // `pool_family(pool_id)` returns a kebab-case family tag by matching
     // on the `PoolEntry` variant. This is the uniform family-guard
-    // primitive every `_from_py_pool` seam asserts against (replacing the
+    // primitive every `from_handle` seam asserts against (replacing the
     // V2-only `variant` getter). Tracer bullet: V2 + unregistered.
     let mut core = BotState::new();
     let pool_id = core
@@ -128,7 +128,7 @@ fn curve_get_dy_runs_the_rust_owned_swap_path() {
 fn pool_family_dispatches_every_registered_family() {
     // Each non-V2 `PoolEntry` variant resolves to its own family tag.
     // Registers one pool of each family with minimal params and asserts
-    // the tag — this is the precondition for every non-V2 `_from_py_pool`
+    // the tag — this is the precondition for every non-V2 `from_handle`
     // seam's variant-family guard.
     use crate::bot_core::{
         RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,

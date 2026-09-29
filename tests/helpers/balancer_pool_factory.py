@@ -102,7 +102,7 @@ def make_balancer_weighted_pool(
     for tok in tokens:
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
-    return pool_class._from_py_pool(handle)
+    return pool_class.from_handle(handle)
 
 
 def make_balancer_stable_pool(
@@ -147,7 +147,7 @@ def make_balancer_stable_pool(
     bot = py_bot if py_bot is not None else Bot()
 
     # The sealed seam ignores ``base_scaling_factors`` (the companion derives
-    # base SF from token decimals in ``_from_py_pool``); retained on the
+    # base SF from token decimals in ``from_handle``); retained on the
     # factory signature for API compatibility with callers that pass it.
 
     # encode the Fraction fee the Python-side companion keeps, target-perfect
@@ -181,7 +181,7 @@ def make_balancer_stable_pool(
     handle: Pool | None = bot.get_pool(pool_id_int)
     assert handle is not None, "register_balancer_stable_pool returned a pool_id with no handle"
 
-    return pool_class._from_py_pool(handle)
+    return pool_class.from_handle(handle)
 
 
 __all__ = [

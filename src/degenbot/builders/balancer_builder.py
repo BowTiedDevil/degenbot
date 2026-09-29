@@ -194,7 +194,7 @@ class BalancerBuilder(BalancerBuilderBase):
             "register_balancer_weighted_pool returned a pool_id with no handle"
         )
 
-        pool = BalancerV2Pool._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
+        pool = BalancerV2Pool.from_handle(py_pool)
 
         self._pools.add(pool, chain_id=ctx.chain_id, pool_address=pool.address)
         return pool
@@ -284,7 +284,7 @@ class BalancerBuilder(BalancerBuilderBase):
             "register_balancer_stable_pool returned a pool_id with no handle"
         )
 
-        pool = BalancerV2StablePool._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
+        pool = BalancerV2StablePool.from_handle(py_pool)
 
         self._pools.add(pool, chain_id=ctx.chain_id, pool_address=pool.address)
         return pool

@@ -116,7 +116,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
 
-    # Class-scope instance-attribute declarations (red-knot): `_from_py_pool`
+    # Class-scope instance-attribute declarations (red-knot): `from_handle`
     # assigns these on `Self`; declare them at class scope so attribute reads
     # in helper methods resolve (mirrors the weighted companion).
     address: ChecksummedAddress
@@ -144,7 +144,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
 
         Both register the pool in Rust (including the optional rate provider
         as the stored I/O trait object), obtain the ``Pool``
-        handle, and wrap it via :meth:`_from_py_pool`.
+        handle, and wrap it via :meth:`from_handle`.
 
         Raises:
             TypeError: Always. Direct construction is not supported.
@@ -159,7 +159,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: Pool) -> Self:
+    def from_handle(cls, py_pool: Pool) -> Self:
         """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
@@ -205,10 +205,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
                 "(ADR-006): get_balancer_stable_tokens returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._tokens = tuple(
-            Erc20Token._from_py_token(t)  # ruff:ignore[private-member-access]
-            for t in py_tokens
-        )
+        self._tokens = tuple(Erc20Token.from_handle(t) for t in py_tokens)
 
         self.amp = py_pool.balancer_amp
         self.bpt_idx = py_pool.balancer_bpt_index

@@ -35,16 +35,16 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
 
     # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). The
     # companion sets these as INSTANCE attrs off the `Pool` handle's
-    # `V2PoolDescriptor` (see `_from_py_pool`) — `stable_swap` selects the
+    # `V2PoolDescriptor` (see `from_handle`) — `stable_swap` selects the
     # stable calc branch for Camelot stable pools; False
     # otherwise. ``fee_denominator`` carries Camelot's integer fee scaling
     # (used by the stable math); None for non-Camelot V2 (volatile calc ignores
     # it). The class-level defaults are the read path ONLY for instances that
-    # bypassed `_from_py_pool` (none — the construction guard blocks `__init__`).
+    # bypassed `from_handle` (none — the construction guard blocks `__init__`).
     stable_swap: bool = False
     fee_denominator: int | None = None
 
-    # Instance attributes set in `_from_py_pool` (the only construction seam —
+    # Instance attributes set in `from_handle` (the only construction seam —
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body
     _py_pool: Pool
@@ -73,7 +73,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         - Tests: ``make_v2_pool(...)``
 
         Both register the pool in Rust, obtain the ``Pool``
-        handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
+        handle, and wrap it via :meth:`from_handle` (mirroring Polars'
         ``_from_pydf`` seam).
 
         Raises:
@@ -89,7 +89,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: Pool) -> Self:
+    def from_handle(cls, py_pool: Pool) -> Self:
         """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
@@ -130,7 +130,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         # later crash with a confusing ``ZeroDivisionError`` on
         # ``Fraction(denom - gamma, denom)`` when ``fee_tokenN`` yields ``(0, 0)``.
         # Fail fast with a clear message instead — the uniform precondition
-        # check every ``_from_py_pool`` seam uses (``pool_family`` dispatches on
+        # check every ``from_handle`` seam uses (``pool_family`` dispatches on
         # the ``PoolEntry`` variant directly, so it is correct for every
         # registered family; the V2-only ``variant`` getter returns ``""`` for
         # non-V2 and can't serve as a cross-family guard).
@@ -138,7 +138,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
             msg = (
                 "Pool handle is not a V2-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
-                "UniswapV2Pool._from_py_pool requires a handle registered via "
+                "UniswapV2Pool.from_handle requires a handle registered via "
                 "register_v2_pool"
             )
             raise DegenbotValueError(message=msg)
@@ -168,8 +168,8 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
-        self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
+        self._token0 = Erc20Token.from_handle(py_token0)
+        self._token1 = Erc20Token.from_handle(py_token1)
 
         self.address = get_checksum_address(py_pool.address)
         self.factory = get_checksum_address(py_pool.factory)

@@ -147,14 +147,14 @@ def make_v3_pool(
         )
 
     # ADR-006 (OGTTCS D1): the pool's tokens must live in the SAME Bot as
-    # the pool — ``_from_py_pool`` recovers them via ``py_pool.get_token0``/
+    # the pool — ``from_handle`` recovers them via ``py_pool.get_token0``/
     # ``get_token1``, which look up ``token0_address``/``token1_address`` in
     # the pool's own ``BotState``. The token companions passed in may have been
     # built against a different ``Bot``; re-register their metadata here.
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
-    return pool_class._from_py_pool(handle)
+    return pool_class.from_handle(handle)
 
 
 __all__ = [

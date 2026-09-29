@@ -1,7 +1,7 @@
 """V4 identity round-trip with a REAL hook address (pool-ID mismatch regression).
 
 Incident: during live runs, every V4 pool with a nonzero hook contract address
-failed at `UniswapV4Pool._from_py_pool` with
+failed at `UniswapV4Pool.from_handle` with
 
     Skip V4 <id>: Supplied pool ID <id> does not match calculated ID <other>
 
@@ -79,7 +79,7 @@ def test_incident_pool_key_hashes_to_recorded_id() -> None:
 def test_hooked_pool_round_trips_pool_id_through_identity() -> None:
     """The full incident path: register a hooked pool under its onchain ID.
 
-    Before the fix this raised AssertionError from `_from_py_pool`: the
+    Before the fix this raised AssertionError from `from_handle`: the
     registered pool key carried hooks=0x0, so the companion's re-derived ID
     missed the recorded one.
     """

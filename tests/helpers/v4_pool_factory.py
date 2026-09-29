@@ -118,7 +118,7 @@ def make_v4_pool(
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
-    pool = UniswapV4Pool._from_py_pool(handle)
+    pool = UniswapV4Pool.from_handle(handle)
     # Builder-supplied values the seam defaults; override from test args.
     pool._state_view_address = (
         get_checksum_address(state_view_address) if state_view_address else ZERO_ADDRESS

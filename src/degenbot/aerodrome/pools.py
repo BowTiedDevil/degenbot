@@ -45,7 +45,7 @@ class AerodromeV2Pool(
 
     FEE_DENOMINATOR = 10_000
 
-    # Instance attributes set in `_from_py_pool` (the only construction seam).
+    # Instance attributes set in `from_handle` (the only construction seam).
     _py_pool: Pool
     address: ChecksummedAddress
     factory: ChecksummedAddress
@@ -67,7 +67,7 @@ class AerodromeV2Pool(
         - Tests: ``make_aerodrome_v2_pool(...)``
 
         Both register the pool in Rust, obtain the ``Pool``
-        handle, and wrap it via :meth:`_from_py_pool`.
+        handle, and wrap it via :meth:`from_handle`.
 
         Raises:
             TypeError: Always. Direct construction is not supported.
@@ -82,7 +82,7 @@ class AerodromeV2Pool(
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: Pool) -> Self:
+    def from_handle(cls, py_pool: Pool) -> Self:
         """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
@@ -119,8 +119,8 @@ class AerodromeV2Pool(
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
-        self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
+        self._token0 = Erc20Token.from_handle(py_token0)
+        self._token1 = Erc20Token.from_handle(py_token1)
 
         self._stable = py_pool.aerodrome_stable
         fee_numer, fee_denom = py_pool.aerodrome_fee

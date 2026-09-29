@@ -150,4 +150,4 @@ def test_v2_handle_raises_degenbot_value_error(case: WrongFamilyCase) -> None:
     )
 
     with pytest.raises(DegenbotValueError):
-        case.target_cls._from_py_pool(v2_pool._py_pool)
+        case.target_cls.from_handle(v2_pool._py_pool)

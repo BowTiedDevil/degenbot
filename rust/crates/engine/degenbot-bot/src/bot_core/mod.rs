@@ -622,7 +622,7 @@ impl BotState {
     /// (`"v2"`, `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
     /// `"balancer-stable"`), or `None` for an unregistered `pool_id`.
     ///
-    /// This is the uniform family-guard primitive every `_from_py_pool`
+    /// This is the uniform family-guard primitive every `from_handle`
     /// seam asserts against — dispatches on the `PoolEntry` variant directly,
     /// so it is correct for every registered family (unlike the V2-only
     /// `variant` getter on `PyLiquidityPool`, which returns `""` for non-V2).

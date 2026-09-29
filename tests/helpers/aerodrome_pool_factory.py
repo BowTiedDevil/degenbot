@@ -39,7 +39,7 @@ def make_aerodrome_v2_pool(
 
     Registers the pool in a short-lived ``Bot`` (the returned handle holds an
     ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``),
-    then wraps via ``_from_py_pool``. Tokens must be registered in the same
+    then wraps via ``from_handle``. Tokens must be registered in the same
     ``Bot`` (ADR-006).
     """
     bot = py_bot or Bot()
@@ -69,7 +69,7 @@ def make_aerodrome_v2_pool(
     handle = bot.get_pool(pool_id)
     assert handle is not None, "register_aerodrome_pool returned no handle"
 
-    pool = pool_class._from_py_pool(handle)
+    pool = pool_class.from_handle(handle)
     if deployer_address is not None:
         pool.deployer_address = get_checksum_address(deployer_address)
     return pool

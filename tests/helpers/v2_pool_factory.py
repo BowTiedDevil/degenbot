@@ -84,7 +84,7 @@ def make_v2_pool(
     precedence (non-breaking for callers that pass everything explicitly).
     """
     address = get_checksum_address(address)
-    # chain_id is recovered off the handle by _from_py_pool (token0.chain_id).
+    # chain_id is recovered off the handle by from_handle (token0.chain_id).
     if dex is not None:
         if factory is None:
             factory = dex.factory
@@ -144,7 +144,7 @@ def make_v2_pool(
         fee_denominator=fee_denominator,
     )
     # ADR-006 (OGTTCS D1): the pool's tokens must live in the SAME Bot as
-    # the pool — ``_from_py_pool`` recovers them via ``py_pool.get_token0``/
+    # the pool — ``from_handle`` recovers them via ``py_pool.get_token0``/
     # ``get_token1``, which look up ``token0_address``/``token1_address`` in
     # the pool's own ``BotState``. The token companions passed in may have been
     # built against a different ``Bot``; re-register their metadata here so
@@ -157,4 +157,4 @@ def make_v2_pool(
     py_pool: Pool | None = py_bot.get_pool(pool_id)
     assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
 
-    return pool_class._from_py_pool(py_pool)
+    return pool_class.from_handle(py_pool)

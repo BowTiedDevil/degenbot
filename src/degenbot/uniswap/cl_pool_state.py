@@ -15,7 +15,7 @@ from degenbot.uniswap import PoolTickCoverage
 class ConcentratedLiquidityPoolState:
     """State surface shared by every CL pool state mixin (V3/V4)."""
 
-    # The CL handle (set by the companion's _from_py_pool); the
+    # The CL handle (set by the companion's from_handle); the
     # sparse_liquidity_map property reads Rust coverage through it.
     _py_pool: Any
 

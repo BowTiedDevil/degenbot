@@ -648,7 +648,7 @@ class Bot(AccountQueryMixin):
         # reserves/state, DEX resolve incl. Camelot, CREATE2 verify, V3
         # tick-map DB-first) and registers directly into `BotState`. The Python
         # side then registers the two Erc20Tokens in the same `Bot` (ADR-006 —
-        # `_from_py_pool` resolves them off the handle) and wraps the structural
+        # `from_handle` resolves them off the handle) and wraps the structural
         # handle with the companion pool class.
         #
         # V3 wires a `tick_data_fetcher` (the legacy web3-sync fetcher) into
@@ -794,7 +794,7 @@ class Bot(AccountQueryMixin):
         core builder runs the full io choreography + registers into `BotState`
         and returns the pool id. This shell then registers the pool's two
         Erc20Tokens in the same `Bot` (ADR-006 — the companion's
-        ``_from_py_pool`` resolves ``get_token0/get_token1`` off the handle and
+        ``from_handle`` resolves ``get_token0/get_token1`` off the handle and
         requires them registered) and wraps the structural handle with
         ``pool_class``.
 
@@ -866,10 +866,10 @@ class Bot(AccountQueryMixin):
             request=request,
         )
 
-        # `_from_py_pool` is a concrete-class classmethod (not on the base); cast
+        # `from_handle` is a concrete-class classmethod (not on the base); cast
         # to `type[Any]` so the call is type-checkable + the union of the five
         # delegated families stays branch-free here.
-        pool = cast("type[Any]", pool_class)._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
+        pool = cast("type[Any]", pool_class).from_handle(py_pool)
         # Idempotent register: a concurrent registration worker
         # may have built this same shared pool first; use the canonical instance
         # so THIS path still registers instead of being lossily skipped. (pool_id
@@ -1094,7 +1094,7 @@ class Bot(AccountQueryMixin):
             identity=identity,
             block=int(state_block) if state_block is not None else None,
         )
-        pool = UniswapV4Pool._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
+        pool = UniswapV4Pool.from_handle(py_pool)
         # Builder-supplied values the seam defaults; override from RPC.
         pool._state_view_address = (  # ruff:ignore[private-member-access]
             identity.state_view_address

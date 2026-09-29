@@ -1376,7 +1376,7 @@ impl PyLiquidityPool {
 
     // --- V2 identity getters (ADR-005 identity slice) ---
     // Immutable per-pool identity read from V2PoolState (+ the registration
-    // descriptor) so the Python companion's `_from_py_pool(py_pool)` can be
+    // descriptor) so the Python companion's `from_handle(py_pool)` can be
     // self-describing — the Polars `_from_pydf` end state. These re-export
     // what V2PoolState already holds; the descriptor (variant/stable_swap/
     // fee_denominator) + resolved DexIdentity preset are new in this slice.
@@ -1553,7 +1553,7 @@ impl PyLiquidityPool {
     /// `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
     /// `"balancer-stable"`). Raises if unregistered — a handle always
     /// references a registered pool, so the `""` sentinel is retired.
-    /// This is the uniform family-guard primitive every `_from_py_pool`
+    /// This is the uniform family-guard primitive every `from_handle`
     /// seam asserts against — dispatches on the `PoolEntry` variant
     /// directly, so it is correct for every registered family (unlike
     /// `variant`, which is V2-only and returns `""` for non-V2).
@@ -1593,8 +1593,8 @@ impl PyLiquidityPool {
     // --- V2 token-recovery getters (ADR-005 identity slice) ---
     // Recover `PyErc20Token` handles for the pool's token0/token1 from the
     // SAME shared BotState (ADR-006: one Bot per chain owns all assets). The
-    // companion wraps these via `Erc20Token._from_py_token` so the
-    // `_from_py_pool(py_pool)` seam needs no token args — the Polars
+    // companion wraps these via `Erc20Token.from_handle` so the
+    // `from_handle(py_pool)` seam needs no token args — the Polars
     // `_from_pydf` end state.
     //
     // Returns `None` if the pool isn't V2 or the token address isn't
@@ -1665,7 +1665,7 @@ impl PyLiquidityPool {
     // a registered V3 pool (matching the V2 getters' behavior on V2).
 
     // --- V4 identity getters (ADR-005 sealed seam) ---
-    // Read off V4PoolIdentity so UniswapV4Pool._from_py_pool is self-describing.
+    // Read off V4PoolIdentity so UniswapV4Pool.from_handle is self-describing.
 
     /// Pool manager contract address (EIP-55 checksummed hex). Empty string if
     /// not a V4 pool.
@@ -2319,7 +2319,7 @@ impl PyLiquidityPool {
     /// The Curve pool's token companion handles, resolved via the shared
     /// `BotState` token registry. `None` if this is not a Curve pool or any
     /// token isn't registered (mirror of `get_balancer_tokens`). The companion
-    /// wraps each via `Erc20Token._from_py_token`.
+    /// wraps each via `Erc20Token.from_handle`.
     fn get_curve_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
         self.with_state(py, |core| {
             let identity = core.get_curve_identity(self.pool_id)?;
@@ -2370,7 +2370,7 @@ impl PyLiquidityPool {
     /// The Curve pool's raw ERC-20 coin addresses in canonical order. Unlike
     /// `get_curve_tokens`, this does NOT require the tokens to be registered
     /// first — it is the builder/companion-orchestration seam that lets a
-    /// caller construct ERC20 companions *before* `_from_py_pool`. `None` for
+    /// caller construct ERC20 companions *before* `from_handle`. `None` for
     /// a non-Curve pool.
     fn curve_token_addresses(&self, py: Python<'_>) -> Option<Vec<String>> {
         self.with_state(py, |core| {
@@ -2415,7 +2415,7 @@ impl PyLiquidityPool {
     /// stored `base_pool` address through the existing `pool_id_by_address`
     /// index — no Python registry needed. `None` for plain pools, non-Curve
     /// handles, or when the base pool isn't registered. The companion recurses:
-    /// `CurveStableswapPool._from_py_pool(handle.curve_base_pool())`.
+    /// `CurveStableswapPool.from_handle(handle.curve_base_pool())`.
     fn curve_base_pool(&self, py: Python<'_>) -> Option<PyLiquidityPool> {
         self.with_state(py, |core| {
             let id = core.get_curve_identity(self.pool_id)?;

@@ -167,7 +167,7 @@ def make_curve_pool(
     handle: Pool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_curve_pool returned a pool_id with no handle"
 
-    return pool_class._from_py_pool(handle)
+    return pool_class.from_handle(handle)
 
 
 __all__ = [

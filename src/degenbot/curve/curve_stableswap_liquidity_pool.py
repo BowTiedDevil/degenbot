@@ -200,7 +200,7 @@ class CurveStableswapPool(
     PRECISION_DECIMALS: int = 18
     PRECISION: int = 10**PRECISION_DECIMALS
 
-    # Class-scope instance-attribute declarations (red-knot): `_from_py_pool`
+    # Class-scope instance-attribute declarations (red-knot): `from_handle`
     # assigns these on `Self`; declare them at class scope so attribute reads
     # in helper/calc methods resolve (mirrors the Balancer/Aerodrome seams).
     address: ChecksummedAddress
@@ -240,7 +240,7 @@ class CurveStableswapPool(
         ``Pool`` handle. The handle can only be produced by
         registering a pool in a ``Bot`` (production: ``Bot.build_pool()``;
         tests: ``make_curve_pool``), then wrapping via
-        :meth:`_from_py_pool`. Direct constructor calls are rejected so that
+        :meth:`from_handle`. Direct constructor calls are rejected so that
         the only paths to a pool instance are the ones that wire the handle —
         mirroring Polars' ``_from_pydf`` pattern and matching V2/V3/V4/Balancer
         /Aerodrome. Every identity field + the stored I/O trait objects are
@@ -255,13 +255,13 @@ class CurveStableswapPool(
             f"{type(self).__name__} cannot be constructed directly. "
             "A Pool handle is wired by Bot.build_pool() "
             "(production) or make_curve_pool (tests); call "
-            f"{type(self).__name__}._from_py_pool(handle) to wrap a "
+            f"{type(self).__name__}.from_handle(handle) to wrap a "
             "registered handle."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: Pool) -> Self:
+    def from_handle(cls, py_pool: Pool) -> Self:
         """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Single-arg seam (ADR-005): reads *every* identity field + the
@@ -298,10 +298,7 @@ class CurveStableswapPool(
                 "register them via Bot.build_pool() / make_erc20 first."
             )
             raise DegenbotValueError(message=msg)
-        self._tokens = tuple(
-            Erc20Token._from_py_token(t)  # ruff:ignore[private-member-access]
-            for t in py_tokens
-        )
+        self._tokens = tuple(Erc20Token.from_handle(t) for t in py_tokens)
 
         self._a_coefficient = py_pool.curve_a_coefficient
         self._fee = py_pool.curve_fee
@@ -347,14 +344,10 @@ class CurveStableswapPool(
         # Underlying + LP tokens — recovered as companion handles.
         underlying = py_pool.get_curve_tokens_underlying()
         self._tokens_underlying = (
-            tuple(Erc20Token._from_py_token(t) for t in underlying)  # ruff:ignore[private-member-access]
-            if underlying is not None
-            else None
+            tuple(Erc20Token.from_handle(t) for t in underlying) if underlying is not None else None
         )
         lp = py_pool.get_curve_lp_token()
-        self._lp_token = (
-            Erc20Token._from_py_token(lp) if lp is not None else self._tokens[0]  # ruff:ignore[private-member-access]
-        )
+        self._lp_token = Erc20Token.from_handle(lp) if lp is not None else self._tokens[0]
 
         ul = tuple(py_pool.curve_use_lending)
         self._use_lending = ul or tuple(False for _ in self._tokens)
@@ -831,7 +824,7 @@ class _LazyBasePool:
     members the ``DyCalculator`` actually calls.
 
     Defined after ``CurveStableswapPool`` (forward reference); resolved as a
-    module global at call time from within ``CurveStableswapPool._from_py_pool``.
+    module global at call time from within ``CurveStableswapPool.from_handle``.
     """
 
     __slots__ = ("_built", "_handle")
@@ -842,7 +835,7 @@ class _LazyBasePool:
 
     def _pool(self) -> CurveStableswapPool:
         if self._built is None:
-            self._built = CurveStableswapPool._from_py_pool(self._handle)  # ruff:ignore[private-member-access]
+            self._built = CurveStableswapPool.from_handle(self._handle)
         return self._built
 
     @property

@@ -55,7 +55,7 @@ class BalancerV2Pool(AbstractLiquidityPool):
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
 
-    # Instance attributes set in `_from_py_pool` (the only construction seam).
+    # Instance attributes set in `from_handle` (the only construction seam).
     _py_pool: Pool
     address: ChecksummedAddress
     pool_id: bytes
@@ -77,7 +77,7 @@ class BalancerV2Pool(AbstractLiquidityPool):
         - Tests: ``make_balancer_weighted_pool(...)``
 
         Both register the pool in Rust, obtain the ``Pool``
-        handle, and wrap it via :meth:`_from_py_pool`.
+        handle, and wrap it via :meth:`from_handle`.
 
         Raises:
             TypeError: Always. Direct construction is not supported.
@@ -92,7 +92,7 @@ class BalancerV2Pool(AbstractLiquidityPool):
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: Pool) -> Self:
+    def from_handle(cls, py_pool: Pool) -> Self:
         """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
@@ -129,10 +129,7 @@ class BalancerV2Pool(AbstractLiquidityPool):
                 "(ADR-006): get_balancer_tokens returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._tokens = tuple(
-            Erc20Token._from_py_token(t)  # ruff:ignore[private-member-access]
-            for t in py_tokens
-        )
+        self._tokens = tuple(Erc20Token.from_handle(t) for t in py_tokens)
         self.scaling_factors = tuple(_compute_scaling_factor(t) for t in self._tokens)
         self.fee = Fraction(py_pool.balancer_swap_fee, cls.FEE_DENOMINATOR)
         self.weights = tuple(py_pool.balancer_weights)

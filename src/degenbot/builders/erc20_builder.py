@@ -65,7 +65,7 @@ class Erc20Builder:
         runs `build_erc20_metadata` over the attached `ConstructionIo`. This
         Python shell keeps only the *companion* concerns: the `TokenRegistry`
         idempotent short-circuit, the `EtherPlaceholder`
-        special case, and the `Erc20Token._from_py_token` display wrapper.
+        special case, and the `Erc20Token.from_handle` display wrapper.
         The `io` argument is a retained compat shim (ignored — the Bot owns
         the `ConstructionIo`); it is stripped when `BotIo` retires.
 
@@ -107,7 +107,7 @@ class Erc20Builder:
                 18,
                 chain_id,
             )
-            token: Erc20Token = EtherPlaceholder._from_py_token(py_token)  # ruff:ignore[private-member-access]
+            token: Erc20Token = EtherPlaceholder.from_handle(py_token)
             token = self._tokens.get_or_add(
                 token_address=token.address, chain_id=chain_id, token=token
             )
@@ -131,7 +131,7 @@ class Erc20Builder:
             raise DegenbotValueError(
                 message=str(exc).removeprefix("pool build decode failure: ")
             ) from exc
-        token = Erc20Token._from_py_token(py_token)  # ruff:ignore[private-member-access]
+        token = Erc20Token.from_handle(py_token)
 
         # Register idempotently: a concurrent worker may have
         # built + registered this same token first; use the canonical instance
@@ -160,7 +160,7 @@ class Erc20Builder:
         py_token = self._py_bot.register_token(
             address, metadata.name, metadata.symbol, metadata.decimals, chain_id
         )
-        token = Erc20Token._from_py_token(py_token)  # ruff:ignore[private-member-access]
+        token = Erc20Token.from_handle(py_token)
         token = self._tokens.get_or_add(token_address=token.address, chain_id=chain_id, token=token)
         if not silent:
             logger.info(f"• {token.symbol} ({token.name})")

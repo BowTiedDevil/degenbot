@@ -92,7 +92,7 @@ class UniswapV3Pool(
 
     type PoolState = UniswapV3PoolState
 
-    # Instance attributes set in `_from_py_pool` (the only construction seam —
+    # Instance attributes set in `from_handle` (the only construction seam —
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body.
     _py_pool: Pool
@@ -139,7 +139,7 @@ class UniswapV3Pool(
         - Tests: ``make_v3_pool(...)``
 
         Both register the pool in Rust, obtain the ``Pool``
-        handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
+        handle, and wrap it via :meth:`from_handle` (mirroring Polars'
         ``_from_pydf`` seam).
 
         Raises:
@@ -155,7 +155,7 @@ class UniswapV3Pool(
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: Pool) -> Self:
+    def from_handle(cls, py_pool: Pool) -> Self:
         """Wrap a Rust-owned ``Pool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
@@ -188,7 +188,7 @@ class UniswapV3Pool(
             msg = (
                 "Pool handle is not a V3-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
-                "UniswapV3Pool._from_py_pool requires a handle "
+                "UniswapV3Pool.from_handle requires a handle "
                 "registered via register_v3_pool"
             )
             raise DegenbotValueError(message=msg)
@@ -208,8 +208,8 @@ class UniswapV3Pool(
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
-        self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
+        self._token0 = Erc20Token.from_handle(py_token0)
+        self._token1 = Erc20Token.from_handle(py_token1)
 
         # Deployer / init-hash: read off the Rust handle (Fork A).
         # The builder resolved the JSON-sourced deployer (effective deployer,

@@ -272,7 +272,7 @@ def _make_curve_builder(
 
     Mirrors `Bot.__init__` wiring (Erc20Builder → BuilderContext →
     CurvePoolBuilder) so `build` runs the full production I/O choreography:
-    detection, ERC20 token building, `register_curve_pool`, `_from_py_pool`.
+    detection, ERC20 token building, `register_curve_pool`, `from_handle`.
     Returns the builder and the shared `Bot`.
     """
     from degenbot.builders.context import BuilderContext
@@ -392,7 +392,7 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
     """Dual-driver: real `CurvePoolBuilder.build` equals the Rust path (plain).
 
     Drives the CURRENT Python `CurvePoolBuilder.build` (detection + ERC20 token
-    building + `register_curve_pool` + `_from_py_pool`) over the full plain
+    building + `register_curve_pool` + `from_handle`) over the full plain
     cassette, and independently drives the Rust `build_curve_pool` over the
     SAME cassette. Asserts the resulting pool identity state is identical on
     both sides — the parity gate that lets `build` be retargeted to the Rust
@@ -426,7 +426,9 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
     assert pool.a_coefficient == handle_a.curve_a_coefficient == 2000
     assert pool.fee == handle_a.curve_fee == 1_000_000
     assert pool.admin_fee == handle_a.curve_admin_fee == 500_000_000
-    assert tuple(pool.balances) == tuple(handle_a.balance_vector().balances) == (1_000_000, 2_000_000)
+    assert (
+        tuple(pool.balances) == tuple(handle_a.balance_vector().balances) == (1_000_000, 2_000_000)
+    )
     assert tuple(pool.rate_multipliers) == tuple(handle_a.curve_rate_multipliers)
     assert tuple(pool.precision_multipliers) == tuple(handle_a.curve_precision_multipliers)
     assert pool.rate_multipliers[0] == 10**30

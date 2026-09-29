@@ -27,7 +27,7 @@ class Erc20Token(AbstractErc20Token):
     Balance, approval, and total supply queries go through ``Bot.get_token_balance()`` etc.
     """
 
-    # Instance attributes set in `_from_py_token` (the only construction seam —
+    # Instance attributes set in `from_handle` (the only construction seam —
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body (red-knot rejects
     # `self.x: T = ...` as `invalid-type-form`).
@@ -50,7 +50,7 @@ class Erc20Token(AbstractErc20Token):
         - Tests: ``make_erc20(...)``
 
         Both register the token metadata in Rust, obtain the ``_TokenHandle``
-        handle, and wrap it via :meth:`_from_py_token` (mirroring Polars'
+        handle, and wrap it via :meth:`from_handle` (mirroring Polars'
         ``_from_pydf`` seam).
 
         Raises:
@@ -66,7 +66,7 @@ class Erc20Token(AbstractErc20Token):
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_token(
+    def from_handle(
         cls,
         py_token: _TokenHandle,
         *,
