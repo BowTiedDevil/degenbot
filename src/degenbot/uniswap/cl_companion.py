@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from degenbot._ffi import PoolTickCoverage
 from degenbot.exceptions import ExternalUpdateError
 from degenbot.exceptions.pool import LiquidityMapWordMissing, NoPoolStateAvailable
 from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.uniswap import PoolTickCoverage
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,

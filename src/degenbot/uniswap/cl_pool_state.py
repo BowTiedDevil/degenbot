@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from degenbot._ffi import PoolTickCoverage
+from degenbot.uniswap import PoolTickCoverage
 
 
 class ConcentratedLiquidityPoolState:
