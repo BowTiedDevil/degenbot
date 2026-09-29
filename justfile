@@ -339,6 +339,22 @@ dev:
 test-python:
     uv run --no-sync pytest -x -q --no-header
 
+# Flake probe for the ordering-sensitive suites (session/operator-channel
+# state machines, where inter-test order leaks surface): run both suites
+# three consecutive times with the cache provider off; ANY failing run fails
+# the recipe. Each invocation is `timeout`-bounded as a process-level backstop
+# beside pytest-timeout's in-process guard, so the probe completes or fails —
+# never hangs.
+test-flake-probe:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for i in 1 2 3; do
+        echo "▶ flake-probe run ${i}/3"
+        timeout 600 uv run --no-sync pytest -q --no-header -p no:cacheprovider \
+            tests/arbitrage/test_arbitrage_session.py tests/operator/test_operator_channel.py
+    done
+    echo "✓ flake-probe: 3/3 green"
+
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
 # fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:
 #   just record-golden -- tests/uniswap/v3/test_uniswap_v3_liquidity_pool.py::test_cached_calculations

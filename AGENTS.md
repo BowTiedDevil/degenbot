@@ -124,6 +124,10 @@ For whole-workspace runs, use `just test-rust-nextest` — never a hand-typed `c
 
 Why: resolver v3 unifies features for `--workspace`, so its artifacts are the one warm, canonical set in `rust/target`. A `-p <crate>` selection unifies features differently (core crates lose the `pyo3` feature the binding layer enables; dep features like tokio's shrink), so cargo stores a second rlib set under different metadata hashes — alternating between the two rebuilds shared dependencies on every shared edit (measured: `-p degenbot-simulation` recompiled 6 just-built crates in ~1m; a leaf crate pays nothing). The workspace run also executes every crate's suite, catching cross-crate fallout (signature changes rippling into dependents, e.g. examples/settlement_bot) that a scoped run never sees.
 
+## Python test scope
+
+The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly). The suite carries pytest-timeout: a test exceeding the 300s global default (`thread` method — safe under asyncio/xdist) FAILS with a timeout report instead of parking its xdist worker; the slow-marked on-demand suites (live-RPC parity gates) get 900s via the collection hook in `tests/conftest.py`. The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.
+
 ## Build-Artifact Housekeeping
 
 `rust/target` is the Cargo target root, but it contains several independently
