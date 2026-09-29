@@ -467,16 +467,16 @@ fn collect_collateral_events_burn_vs_transfers_split() {
     assert_eq!(
         ct.len(),
         0,
-        "TYS5MS: Erc20CollateralTransfer to liquidator is now SKIPPED at \
-         collect-time (the LC-op filter \
-         LC-op filter — ERC20 Transfers in Liquidation ops are never applied; \
+        "Erc20CollateralTransfer to liquidator is now SKIPPED at \
+         collect-time (the LC-op filter — ERC20 Transfers in Liquidation ops \
+         are never applied; \
          the liquidator's credit comes via the Mint event or via the \
          `CollateralTransfer` BalanceTransfer variant, not via the standard \
          ERC20 Transfer event)"
     );
     assert!(
         assigned.contains(&11),
-        "TYS5MS: filtered ERC20 transfer marked assigned so the standalone \
+        "filtered ERC20 transfer marked assigned so the standalone \
          Step-4e Transfer path doesn't re-collect it"
     );
 }
@@ -556,7 +556,7 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
     assert_eq!(
         ct.len(),
         1,
-        "TYS5MS: only the BT fee transfer is collected; \
+        "only the BT fee transfer is collected; \
         the Erc20CollateralTransfer(user→treasury, fee) is SKIPPED at \
         collect-time (the LC-op filter)"
     );
@@ -569,7 +569,7 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
     // would re-instate the double-application the skip-guard prevents).
     assert!(
         assigned.contains(&11),
-        "TYS5MS: the skipped Erc20CollateralTransfer to treasury IS marked \
+        "the skipped Erc20CollateralTransfer to treasury IS marked \
          assigned so the standalone Step-4e Transfer path skips it; the \
          paired BT event also IS marked assigned by being collected"
     );
@@ -618,7 +618,7 @@ fn collect_collateral_events_filters_burn_side_pair_transfer_to_zero() {
     assert_eq!(
         ct.len(),
         0,
-        "burn-side pair Transfer-to-ZERO filtered (EIWEPM fix)"
+        "burn-side pair Transfer-to-ZERO filtered by is_part_of_burn"
     );
     assert!(
         assigned.contains(&11),
