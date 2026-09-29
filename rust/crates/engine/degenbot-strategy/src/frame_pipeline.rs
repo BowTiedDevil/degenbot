@@ -22,10 +22,9 @@
 //! # Calldata-free frames
 //!
 //! The touched set + journalled words decide everything; call bytes are never
-//! decoded. The downstream `decide()` gate keeps its `TargetClass` parameter
-//! shape, so the pipeline feeds the actionable sentinel directly (a frame
-//! evaluated end-to-end here is actionable by construction) and carries
-//! TRUTHFUL observe reasons via
+//! decoded. A frame evaluated end-to-end here is actionable by construction,
+//! so the downstream `decide()` stage gates on bid economics alone — and
+//! carries TRUTHFUL observe reasons via
 //! [`FrameArtifacts::decision`]: `replay_failed`, `reverted`,
 //! `v4_unsupported`, and `no_candidate` are distinct and mutually exclusive.
 //!
@@ -1004,9 +1003,9 @@ pub async fn dispatch_frame(
                 tracing::warn!("bid decided without a signer loaded - skipping");
                 return Decision::Bid { bid_wei };
             };
-            // Defense in depth: decide() already refuses zero bids; this
-            // refusal keeps a bare-sweep bid out of the auction even if a
-            // future refactor reintroduces a fallback.
+            // A Bid can only be decided on a positive recomposed net bid,
+            // so this refusal keeps a bare-sweep bid out of the auction even
+            // if a future refactor reintroduces a zero-bid fallback.
             let Some(cd) = artifacts.submit_calldata.clone() else {
                 tracing::warn!(
                     tx = %ev.hash,

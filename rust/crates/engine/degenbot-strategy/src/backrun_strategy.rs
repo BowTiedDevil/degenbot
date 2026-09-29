@@ -8,16 +8,15 @@
 
 use std::collections::HashSet;
 
-use crate::backrun::{decide, Decision};
+use crate::backrun::Decision;
 use crate::backrun_engine::{
     BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily, PathReject,
 };
 use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use crate::execution_context::ExecutionContext;
 use crate::project_candidate;
-use alloy::primitives::{address, Address, U256};
+use alloy::primitives::{address, Address, Bytes, U256};
 use degenbot_bot::connector_index::V2ConnectorIndex;
-use degenbot_decoders::target_class::TargetClass;
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
 use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
@@ -885,6 +884,21 @@ async fn cycle_chain(
 // The backrun strategy (the pending-tx seam's first implementation)
 // ─────────────────────────────────────────────────────────────────────────
 
+/// The wallet-true net-bid artifact the decision stage recomposes over a
+/// composed candidate, plus the refusal evidence the gate arms read: what
+/// the frame produced, and why it may have produced nothing.
+#[derive(Default)]
+struct NetArtifact {
+    requested_bid: U256,
+    submit_calldata: Option<Bytes>,
+    economics: Option<BidEconomics>,
+    /// The solved gross could not cover the wallet's gas plus margin.
+    net_gated: bool,
+    /// Fixture mode: the frame answered the would-it-bid question without
+    /// a live sim.
+    fixture_composed: bool,
+}
+
 /// One strategy that reacts to observed pending transactions by backrunning
 /// them: it settles a target's pool-state dislocation through a supported
 /// quote and bids the surplus.
@@ -898,6 +912,74 @@ impl BackrunStrategy {
     pub fn new(context: ExecutionContext) -> Self {
         Self {
             cmd_executor: CmdExecutorAdapter::new(context),
+        }
+    }
+
+    /// The wallet-true net artifact: the ceiling candidate recomposed at the
+    /// wallet's breakeven bips. Fixture mode skips the live sim but still
+    /// answers whether the frame WOULD have bid.
+    fn recompose_net_bid(
+        &self,
+        cx: &mut FrameContext<'_>,
+        best: &LaneCandidate,
+        fixture_mode: bool,
+        sim_ok: bool,
+        max_bundle_wei: U256,
+        bribe_bips: u16,
+    ) -> NetArtifact {
+        if fixture_mode {
+            // Historical mode: the live bundle sim is skipped. The wallet
+            // gate still runs: whether the frame WOULD have bid is part of
+            // the historical answer.
+            let cap = u128::try_from(max_bundle_wei).unwrap_or(u128::MAX);
+            let net_gated =
+                net_bid(best.profit, cx.pl.wallet_gas_cost(), bribe_bips, cap).is_none();
+            return NetArtifact {
+                net_gated,
+                fixture_composed: true,
+                ..NetArtifact::default()
+            };
+        }
+        if !sim_ok {
+            // The driver's sim verdict stands; nothing recomposes.
+            return NetArtifact::default();
+        }
+        // The wallet economics gate: the wallet funds only the gas (the
+        // bribe is drawn from flash proceeds on-chain).
+        let wallet_gas_cost = cx.pl.wallet_gas_cost();
+        let bid_cap_wei = u128::try_from(max_bundle_wei).unwrap_or(u128::MAX);
+        let Some(nb) = net_bid(best.profit, wallet_gas_cost, bribe_bips, bid_cap_wei) else {
+            cx.trace.push(StageEvent::NetGateRefusal {
+                gross_profit_wei: best.profit,
+                wallet_gas_cost_wei: wallet_gas_cost,
+            });
+            return NetArtifact {
+                net_gated: true,
+                ..NetArtifact::default()
+            };
+        };
+        // Re-compose the config word with the wallet-true bips. The
+        // recomposed bips are only LOWER than the ceiling the sim passed: a
+        // smaller bribe strictly eases the executor on-chain profit check,
+        // so the passed sim stays valid.
+        let (path, result) = project_candidate(best);
+        let outcome =
+            self.cmd_executor
+                .compose(&path, &result, backrun_encode_options(nb.bribe_bips));
+        match cmd_executor_bytes(outcome, cx.trace) {
+            Some(cd_net) => NetArtifact {
+                requested_bid: nb.bid_wei.max(U256::from(1)),
+                submit_calldata: Some(cd_net),
+                economics: Some(BidEconomics {
+                    gross_profit_wei: best.profit,
+                    wallet_gas_cost_wei: wallet_gas_cost,
+                    bribe_bips: nb.bribe_bips,
+                    bid_wei: nb.bid_wei,
+                }),
+                net_gated: false,
+                fixture_composed: false,
+            },
+            None => NetArtifact::default(),
         }
     }
 }
@@ -1143,107 +1225,79 @@ impl PendingTxReaction for BackrunStrategy {
             sim_ok,
             spent,
         } = *gate;
-        let best = evaluated.stats.best.as_ref();
-        let mut requested_bid = U256::ZERO;
-        let mut submit_calldata = None;
-        let mut economics = None;
-        let mut net_gated = false;
-        let mut fixture_composed = false;
-        if let Some(best) = best {
-            if composed.is_some() {
-                if pl.fixture_mode {
-                    // Historical mode: the live bundle sim is skipped. The
-                    // wallet gate still runs: whether the frame WOULD have
-                    // bid is part of the historical answer.
-                    let cap = u128::try_from(knobs.max_bundle_wei).unwrap_or(u128::MAX);
-                    if net_bid(best.profit, pl.wallet_gas_cost(), pl.bribe_bips, cap).is_none() {
-                        net_gated = true;
+        let net = match evaluated.stats.best.as_ref() {
+            // The net artifact is born only over a composed candidate.
+            Some(best) if composed.is_some() => self.recompose_net_bid(
+                cx,
+                best,
+                pl.fixture_mode,
+                sim_ok,
+                knobs.max_bundle_wei,
+                pl.bribe_bips,
+            ),
+            _ => NetArtifact::default(),
+        };
+        // The kill switch outranks every economics arm: a present stop file
+        // drops the frame before any bid is sized.
+        if knobs.stop_file.exists() {
+            return Decided {
+                decision: Decision::Drop {
+                    reason: "kill_switch",
+                },
+                requested_bid: net.requested_bid,
+                submit_calldata: net.submit_calldata,
+                economics: net.economics,
+            };
+        }
+        // The gate reads only inputs born in this stage: the recomposed net
+        // artifact, the driver's real simulation verdict, and the live knobs.
+        // No target classification exists here — a frame that reached the
+        // decision stage is actionable by construction.
+        let decision = if net.submit_calldata.is_some() {
+            if knobs.bid_mode_legal() {
+                let bind = net.requested_bid.min(knobs.max_bundle_wei);
+                if spent + bind > knobs.budget_wei {
+                    Decision::Observe {
+                        reason: "budget_exhausted",
                     }
-                    fixture_composed = true;
-                } else if sim_ok {
-                    // The wallet economics gate: the wallet funds only the
-                    // gas (the bribe is drawn from flash proceeds on-chain).
-                    let wallet_gas_cost = pl.wallet_gas_cost();
-                    let bid_cap_wei = u128::try_from(knobs.max_bundle_wei).unwrap_or(u128::MAX);
-                    if let Some(nb) =
-                        net_bid(best.profit, wallet_gas_cost, pl.bribe_bips, bid_cap_wei)
-                    {
-                        // Re-compose the config word with the wallet-true
-                        // bips. The recomposed bips are only LOWER than the
-                        // ceiling the sim passed: a smaller bribe strictly
-                        // eases the executor on-chain profit check, so the
-                        // passed sim stays valid.
-                        let (path, result) = project_candidate(best);
-                        let outcome = self.cmd_executor.compose(
-                            &path,
-                            &result,
-                            backrun_encode_options(nb.bribe_bips),
-                        );
-                        if let Some(cd_net) = cmd_executor_bytes(outcome, cx.trace) {
-                            requested_bid = nb.bid_wei.max(U256::from(1));
-                            submit_calldata = Some(cd_net);
-                            economics = Some(BidEconomics {
-                                gross_profit_wei: best.profit,
-                                wallet_gas_cost_wei: wallet_gas_cost,
-                                bribe_bips: nb.bribe_bips,
-                                bid_wei: nb.bid_wei,
-                            });
-                        }
-                    } else {
-                        net_gated = true;
-                        cx.trace.push(StageEvent::NetGateRefusal {
-                            gross_profit_wei: best.profit,
-                            wallet_gas_cost_wei: wallet_gas_cost,
-                        });
-                    }
+                } else {
+                    Decision::Bid { bid_wei: bind }
+                }
+            } else {
+                Decision::Observe {
+                    reason: "observe_only",
                 }
             }
-        }
-        let composed_any = submit_calldata.is_some();
-        // The classifier is off the hot path: a frame that reached the
-        // decision stage IS actionable — the sentinel routes decide()
-        // through its actionable arm without consulting degenbot_decoders.
-        let class = TargetClass::Swap(Vec::new());
-        let decision = decide(
-            knobs,
-            knobs.stop_file.exists(),
-            &class,
-            composed_any,
-            requested_bid,
-            spent,
-        );
-        // The observe label tells the truth: a frame that never composed a
-        // candidate must not read as "the sim rejected our work".
-        let non_base_quote_dropped = evaluated.stats.non_base_quote_dropped;
-        let solved_any = best.is_some();
-        let decision = if composed_any {
-            decision
-        } else if net_gated {
+        } else if net.net_gated {
             Decision::Observe {
                 reason: "net_after_gas_unprofitable",
             }
-        } else if fixture_composed {
+        } else if net.fixture_composed {
             Decision::Observe {
                 reason: "sim_skipped_fixture_mode",
             }
+        } else if composed.is_some() {
+            // A composed candidate the bundle sim rejected: forward the real
+            // verdict instead of masking it as "no candidate".
+            Decision::Observe {
+                reason: "sim_gate_failed",
+            }
         } else {
-            match decision {
-                Decision::Observe {
-                    reason: "sim_gate_failed",
-                } => Decision::Observe {
-                    reason: honest_observe("no_candidate", non_base_quote_dropped, solved_any),
-                },
-                Decision::Observe { reason } => Decision::Observe {
-                    reason: honest_observe(reason, non_base_quote_dropped, solved_any),
-                },
-                d => d,
+            // The observe label tells the truth: a frame that never composed
+            // a candidate must not read as "the sim rejected our work".
+            Decision::Observe {
+                reason: honest_observe(
+                    "no_candidate",
+                    evaluated.stats.non_base_quote_dropped,
+                    evaluated.stats.best.is_some(),
+                ),
             }
         };
         Decided {
             decision,
-            requested_bid,
-            submit_calldata,
-            economics,
+            requested_bid: net.requested_bid,
+            submit_calldata: net.submit_calldata,
+            economics: net.economics,
         }
     }
 }

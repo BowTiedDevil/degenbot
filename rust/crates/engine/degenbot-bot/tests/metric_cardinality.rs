@@ -27,15 +27,15 @@ const ALLOWED_LABELS: &[&str] = &[
     "site",
     // `degenbot_backrun_frame_observed{reason}`: the frame-terminal observe
     // reason — a closed set of `&'static` `Decision` reasons produced by
-    // `backrun.rs::decide`, `backrun_strategy.rs::decide` (`honest_observe`),
-    // and the `frame_pipeline.rs` reason functions: `no_candidate`,
+    // `backrun_strategy.rs::decide` (`honest_observe`) and the
+    // `frame_pipeline.rs` reason functions: `no_candidate`,
     // `non_base_quote`, `v4_unsupported`, `family-unsupported`, `reverted`,
     // `replay_unavailable`, `gap_pending`, `already_settled`,
     // `malformed_transaction`, `mispriced_transaction`, `replay_failed`,
     // `predecessor_malformed`, `predecessor_replay_failed`,
     // `sim_gate_failed`, `sim_skipped_fixture_mode`,
-    // `net_after_gas_unprofitable`, `observe_only`, `zero_bid`,
-    // `budget_exhausted`, `kill_switch`, `inert_target`. The same `reason`
+    // `net_after_gas_unprofitable`, `observe_only`, `budget_exhausted`,
+    // `kill_switch`. The same `reason`
     // label name also carries the registration-skip and sim-error closed
     // sets. Compose-reject labels (`amount_exceeds_uint96`,
     // `encoding_failed:cmd_stream`, `encoding_failed:execute_call`,
