@@ -25,7 +25,6 @@ import pathlib
 import sys
 import threading
 import time
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -43,6 +42,7 @@ from degenbot.pathfinding import (
 )
 from degenbot.runner.build_paths import PathRegistrationPipeline
 from degenbot.types.chain import ChainId
+from tests.fakes.runner_pipelines import FakeFleetHostedBot, FakePipelineContext
 from tests.helpers import verdict_probe as probe
 from tests.helpers.database import seed_v2_topology
 
@@ -482,15 +482,7 @@ def test_typed_config_is_positive_clamped() -> None:
 
 
 def _make_pipeline() -> PathRegistrationPipeline:
-    ctx = SimpleNamespace(
-        bot=SimpleNamespace(registration_fleet_hosted=lambda: True, _py_bot=None),
-        chain_id=1,
-        database_path=pathlib.Path("unused.db"),
-        uniswap_v3_tracker=None,
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=None,
-    )
+    ctx = FakePipelineContext(bot=FakeFleetHostedBot())
     return PathRegistrationPipeline(
         context=ctx,
         engine_registry=None,

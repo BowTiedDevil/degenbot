@@ -206,18 +206,10 @@ except RuntimeError as exc:
 else:
     raise AssertionError("the legacy stance must refuse the fleet intake")
 
-from types import SimpleNamespace
 from degenbot.runner.build_paths import PathRegistrationPipeline
+from tests.fakes.runner_pipelines import FakePipelineContext
 
-ctx = SimpleNamespace(
-    bot=bot,
-    chain_id=1,
-    database_path=Path("unused.db"),
-    uniswap_v3_tracker=None,
-    sushiswap_v3_tracker=None,
-    pancakeswap_v3_tracker=None,
-    weth=None,
-)
+ctx = FakePipelineContext(bot=bot)
 try:
     PathRegistrationPipeline(
         context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000

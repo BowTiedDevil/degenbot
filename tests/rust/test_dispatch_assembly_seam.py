@@ -11,8 +11,6 @@ semantics against the real engine fixture.
 
 from __future__ import annotations
 
-import types
-
 import pytest
 
 from degenbot._ffi.simulation import (
@@ -22,6 +20,8 @@ from degenbot._ffi.simulation import (
 )
 from degenbot.runner import _dispatch as d
 from degenbot.runner._dispatch import RawEngineResult
+from tests.fakes.engine import FakeEngineRegistry
+from tests.fakes.session import FakeRunnerConfig, FakeRunnerSession
 
 
 def _row(path_id: int) -> RawEngineResult:
@@ -114,9 +114,9 @@ class TestPythonAssemblyParity:
 
     def test_runner_builder_returns_seam_candidates(self, nxm2bf_v2_engine_and_path) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
-        session = types.SimpleNamespace(
-            engine_registry=types.SimpleNamespace(engine=engine),
-            cfg=types.SimpleNamespace(erc6909_profit=False),
+        session = FakeRunnerSession(
+            engine_registry=FakeEngineRegistry(engine),
+            cfg=FakeRunnerConfig(erc6909_profit=False),
         )
         candidates = d._build_dispatch_candidates(session, [_row(path_id)])
         assert len(candidates) == 1

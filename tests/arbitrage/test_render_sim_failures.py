@@ -10,7 +10,7 @@ path reverted against WHICH pools.
 These tests stub the ``DispatchOutcome`` shape (the PyO3 pyclass is too
 heavy to instantiate without a full simulate round-trip; the renderer only
 reads the two attributes — ``failures: list[dict]`` and ``path_infos:
-dict[int, dict]`` — so a ``SimpleNamespace`` is sufficient). WEFVGE:
+dict[int, dict]`` — so ``FakeDispatchOutcome`` carries exactly those attrs). WEFVGE:
 ``path_infos`` values are plain dicts (``{path_type, hops: [hop_dict, …]}``),
 not the retired ``*HopInfo`` dataclasses.
 """
@@ -18,13 +18,13 @@ not the retired ``*HopInfo`` dataclasses.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from degenbot.runner import _render
 from degenbot.runner._render import _render_sim_failures, format_failure_breakdown
+from tests.fakes.session import FakeDispatchOutcome
 from tests.helpers import verdict_probe as probe
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ def _hops() -> list[dict[str, Any]]:
 def _outcome(failures: list[dict[str, Any]]) -> Any:
     """A stub ``DispatchOutcome`` exposing only the renderer-read attrs."""
     path_info = {"path_type": "V2-V2", "hops": _hops()}
-    return SimpleNamespace(
+    return FakeDispatchOutcome(
         failures=failures,
         path_infos={1: path_info, 2: path_info},
     )

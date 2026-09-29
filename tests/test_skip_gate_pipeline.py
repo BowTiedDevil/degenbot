@@ -10,22 +10,12 @@ raced duplicate builds self-heal in the engine single-flight path (PRG-1).
 
 from __future__ import annotations
 
-from pathlib import Path
-from types import SimpleNamespace
-
 from degenbot.runner.build_paths import PathRegistrationPipeline
+from tests.fakes.runner_pipelines import FakeFleetHostedBot, FakePipelineContext
 
 
 def make_pipeline(py_bot: object | None = None) -> PathRegistrationPipeline:
-    ctx = SimpleNamespace(
-        bot=SimpleNamespace(_py_bot=py_bot, registration_fleet_hosted=lambda: True),
-        chain_id=1,
-        database_path=Path("unused.db"),
-        uniswap_v3_tracker=None,
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=None,
-    )
+    ctx = FakePipelineContext(bot=FakeFleetHostedBot(_py_bot=py_bot))
     return PathRegistrationPipeline(context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000)
 
 
@@ -57,15 +47,7 @@ def test_record_skip_forwards_to_the_rust_meter() -> None:
 def test_record_skip_without_a_bot_only_counts() -> None:
     # Construction contexts without a live core (pipeline tests) must not
     # attempt the meter record.
-    ctx = SimpleNamespace(
-        bot=SimpleNamespace(_py_bot=None, registration_fleet_hosted=lambda: True),
-        chain_id=1,
-        database_path=Path("unused.db"),
-        uniswap_v3_tracker=None,
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=None,
-    )
+    ctx = FakePipelineContext(bot=FakeFleetHostedBot())
     p = PathRegistrationPipeline(context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000)
     p._record_skip("v4-no-hash")
     assert p._skip_reasons["v4-no-hash"] == 1

@@ -21,7 +21,7 @@ bypassed on this side of the boundary.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
+from dataclasses import dataclass
 
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.utils.bytes import to_0x_hex, to_bytes
@@ -57,15 +57,39 @@ class _CountingFakeEngine:
         await asyncio.sleep(0.005)
 
 
-def _fake_v3_pool(pool_id: int) -> SimpleNamespace:
-    return SimpleNamespace(address=V3_ADDR, _py_pool=SimpleNamespace(pool_id=pool_id))
+@dataclass
+class _PoolHandle:
+    """The Rust pool-handle slice the registry reads: the engine pool id."""
+
+    pool_id: int
 
 
-def _fake_v4_pool(pool_id: int) -> SimpleNamespace:
-    return SimpleNamespace(
+@dataclass
+class _FakeV3Pool:
+    """Pool double carrying the identity slice ``register_v3_pool`` reads."""
+
+    address: str
+    _py_pool: _PoolHandle
+
+
+@dataclass
+class _FakeV4Pool:
+    """Pool double carrying the identity slice ``register_v4_pool`` reads."""
+
+    address: str
+    pool_id: bytes
+    _py_pool: _PoolHandle
+
+
+def _fake_v3_pool(pool_id: int) -> _FakeV3Pool:
+    return _FakeV3Pool(address=V3_ADDR, _py_pool=_PoolHandle(pool_id=pool_id))
+
+
+def _fake_v4_pool(pool_id: int) -> _FakeV4Pool:
+    return _FakeV4Pool(
         address=V4_MANAGER,
         pool_id=to_bytes(b"\x01" * 32),
-        _py_pool=SimpleNamespace(pool_id=pool_id),
+        _py_pool=_PoolHandle(pool_id=pool_id),
     )
 
 

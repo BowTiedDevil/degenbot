@@ -10,14 +10,13 @@ python state. An all-inactive fleet refuses at the posture gate.
 from __future__ import annotations
 
 import signal
-import types
 
 import pytest
 
 from degenbot.runner import BotRunner
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness
-from tests.helpers.boot_actors import boot_runner, noop_coro
+from tests.helpers.boot_actors import FakeBootReadiness, boot_runner, noop_coro
 from tests.helpers.identity_env import identity_env
 
 
@@ -113,7 +112,7 @@ async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
     session = _runner(
         lambda **kw: noop_coro(),
         settlement_arm=True,
-        readiness=lambda: types.SimpleNamespace(settlement_active=True),
+        readiness=lambda: FakeBootReadiness(settlement_active=True),
         settlement_endpoints=lambda: ["http://relay-a"],
     )
     await session.start()

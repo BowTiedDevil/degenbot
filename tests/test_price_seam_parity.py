@@ -27,8 +27,8 @@ from __future__ import annotations
 import json
 import socket
 from contextlib import contextmanager
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -139,10 +139,16 @@ def mock_provider() -> Generator[AlloyProvider, None, None]:
         yield AlloyProvider(url, 0)
 
 
+@dataclass
+class FakeProviderBot:
+    """Bot double carrying the provider slice ``ChainlinkPriceContract`` reads."""
+
+    provider: AlloyProvider
+
+
 @pytest.fixture
-def fake_bot(mock_provider: AlloyProvider) -> SimpleNamespace:
-    # ChainlinkPriceContract only reads ``bot.provider`` → a namespace suffices.
-    return SimpleNamespace(provider=mock_provider)
+def fake_bot(mock_provider: AlloyProvider) -> FakeProviderBot:
+    return FakeProviderBot(provider=mock_provider)
 
 
 def _free_port_plausible() -> bool:
@@ -175,7 +181,7 @@ def test_py_chainlink_feed_latest_round_data_byte_exact(
 
 
 def test_chainlink_shell_price_matches_python_float_division(
-    fake_bot: SimpleNamespace,
+    fake_bot: FakeProviderBot,
 ) -> None:
     """Shell ``price`` == ``float(answer) / 10**decimals`` (prior Python path)."""
     contract = ChainlinkPriceContract(CHAINLINK_ETH_USD, bot=fake_bot)
@@ -188,7 +194,7 @@ def test_chainlink_shell_price_matches_python_float_division(
     assert price == pytest.approx(1845.00000005)
 
 
-def test_chainlink_shell_decimals_cached(fake_bot: SimpleNamespace) -> None:
+def test_chainlink_shell_decimals_cached(fake_bot: FakeProviderBot) -> None:
     contract = ChainlinkPriceContract(CHAINLINK_ETH_USD, bot=fake_bot)
     assert contract.decimals == CHAINLINK_DECIMALS
     # Second access uses the cached value (no second eth_call for decimals).

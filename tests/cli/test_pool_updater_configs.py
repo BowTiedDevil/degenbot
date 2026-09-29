@@ -1,8 +1,7 @@
 """Tests for the parameterized pool updater configs."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import get_type_hints
 
 import pytest
@@ -17,6 +16,13 @@ from degenbot.updater.pool_updater_configs import (
     apply_v3_liquidity_updates,
     apply_v4_liquidity_updates,
 )
+
+
+@dataclass(frozen=True)
+class _FakeProvider:
+    """The provider slice the updater configs read: the chain id."""
+
+    chain_id: int = 1
 
 
 def test_pool_updater_requests_accept_rust_backed_rows(tmp_path: Path) -> None:
@@ -36,7 +42,7 @@ def test_pool_updater_requests_accept_rust_backed_rows(tmp_path: Path) -> None:
         exchange_id=exchange.id,
     )
     request = PoolUpdateRequest(
-        provider=SimpleNamespace(chain_id=1),
+        provider=_FakeProvider(),
         start_block=1,
         end_block=2,
         exchange=exchange,
@@ -57,7 +63,7 @@ def test_pool_updater_requests_accept_rust_backed_rows(tmp_path: Path) -> None:
     assert get_type_hints(apply_v4_liquidity_updates)["pool_manager"] is PoolManagerRow
 
     apply_v3_liquidity_updates(
-        provider=SimpleNamespace(chain_id=1),
+        provider=_FakeProvider(),
         pool_address=get_checksum_address("0x" + "1" * 40),
         liquidity_events=[],
         exchanges_in_scope={exchange},

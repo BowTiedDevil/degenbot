@@ -21,8 +21,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
@@ -32,7 +30,8 @@ from degenbot.runner.config import (
     RpcCascadeOverrides,
     _RETIRED_SHELL_KNOBS,
 )
-from tests.fakes.engine import FakeEngine
+from tests.fakes.engine import FakeEngine, FakeEngineRegistry
+from tests.fakes.runner_pipelines import FakeFleetHostedBot, FakePipelineContext
 from tests.helpers import verdict_probe as probe
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -71,26 +70,6 @@ def _run(code: str, **env: str) -> subprocess.CompletedProcess[str]:
         timeout=120,
         check=False,
     )
-
-
-def _context(bot: Any) -> SimpleNamespace:
-    """A construction context carrying only what the pipeline constructor reads."""
-    return SimpleNamespace(
-        bot=bot,
-        chain_id=1,
-        database_path=Path("unused.db"),
-        uniswap_v3_tracker=None,
-        sushiswap_v3_tracker=None,
-        pancakeswap_v3_tracker=None,
-        weth=None,
-    )
-
-
-class _FleetHostedBot:
-    """The pipeline refuses a bot the registration intake is not hosted on."""
-
-    def registration_fleet_hosted(self) -> bool:
-        return True
 
 
 # ── DEGENBOT_DEBUG: the console level ────────────────────────────────────
@@ -151,7 +130,7 @@ def test_the_pipeline_refuses_to_invent_its_own_path_cap() -> None:
     """No cap argument, no pipeline: there is nothing left to inherit."""
     with pytest.raises(TypeError):
         PathRegistrationPipeline(
-            context=_context(_FleetHostedBot()),
+            context=FakePipelineContext(bot=FakeFleetHostedBot()),
             engine_registry=None,
         )
 
@@ -171,8 +150,8 @@ def test_the_cap_the_caller_resolved_is_the_cap_the_engine_gets() -> None:
     cfg = probe.build_config(env={"DEGENBOT_MAX_PATHS": "1234"})
     engine = _CapEngine()
     PathRegistrationPipeline(
-        context=_context(_FleetHostedBot()),
-        engine_registry=SimpleNamespace(engine=engine),
+        context=FakePipelineContext(bot=FakeFleetHostedBot()),
+        engine_registry=FakeEngineRegistry(engine),
         max_paths=cfg.max_registered_paths,
         discovery_batch_size=cfg.discovery_batch_size,
     )
@@ -185,8 +164,8 @@ def test_an_explicitly_uncapped_pipeline_tells_the_engine_uncapped() -> None:
     """``0`` is the config's uncapped spelling; the engine's is ``None``."""
     engine = FakeEngine()
     PathRegistrationPipeline(
-        context=_context(_FleetHostedBot()),
-        engine_registry=SimpleNamespace(engine=engine),
+        context=FakePipelineContext(bot=FakeFleetHostedBot()),
+        engine_registry=FakeEngineRegistry(engine),
         max_paths=0,
         discovery_batch_size=1000,
     )

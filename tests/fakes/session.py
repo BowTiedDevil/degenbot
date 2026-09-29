@@ -1,4 +1,4 @@
-"""Session fakes for the two session seams the tests drive.
+"""Session fakes for the session seams the tests drive.
 
 **The session-registry seam for an injected ``Bot`` double.** Several tests
 inject a stand-in for the Rust `Bot` engine so a build path can be driven
@@ -156,3 +156,70 @@ def fake_session(
         engine_registry=engine_registry,
         pipeline=pipeline,
     )
+
+
+# ---------------------------------------------------------------------------
+# The runner's dispatch/sim session seams (dispatch assembly, payload merge,
+# sim-submit factory) and the outcome doubles their renderers read.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeRunnerConfig:
+    """The ``cfg`` slices the runner's dispatch/sim seams read.
+
+    A field a seam never reads stays ``None`` — extend deliberately, so an
+    unexpected read surfaces as a loud ``None`` at the seam that misread it.
+    """
+
+    erc6909_profit: bool | None = None
+    sim_pipeline_concurrency: int | None = None
+    operator_address: str | None = None
+
+
+@dataclass
+class FakeSimContext:
+    """The sim-context double: the executor address the merge seam passes."""
+
+    executor_address: str | None = None
+
+
+@dataclass
+class FakeRunnerSession:
+    """The session double the runner's dispatch/merge/sim-submit seams read.
+
+    Unlike :class:`FakeSession` (the submit seam), these seams read the
+    registry, config, sim context, and dispatcher off one session shape; a
+    field the seam under test never reads stays unset (``None``).
+    """
+
+    engine_registry: object | None = None
+    dispatcher: FakeDispatcher | None = None
+    sim_ctx: FakeSimContext | None = None
+    cfg: FakeRunnerConfig | None = None
+
+
+@dataclass
+class FakeBatchOutcome:
+    """The FFI batch-outcome double the merged-outcome stitch renders."""
+
+    gas_profitable: list[object] = field(default_factory=list)
+    gas_unprofitable_count: int = 0
+    exception_count: int = 0
+    fail_count: int = 0
+    candidate_count: int = 0
+    suppressed_count: int = 0
+    thin_dropped: int = 0
+    divergent_dropped: int = 0
+    fot_dropped: int = 0
+    fail_buckets: dict[str, int] = field(default_factory=dict)
+    failures: list[dict[str, Any]] = field(default_factory=list)
+    path_infos: dict[int, dict[str, Any]] = field(default_factory=dict)
+
+
+@dataclass
+class FakeDispatchOutcome:
+    """The ``DispatchOutcome`` double the ``[sim-fail]`` renderer reads."""
+
+    failures: list[dict[str, Any]] = field(default_factory=list)
+    path_infos: dict[int, dict[str, Any]] = field(default_factory=dict)

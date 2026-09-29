@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
-from types import SimpleNamespace
 
 from degenbot.dispatch import Dispatcher
 from degenbot.runner import identity
@@ -24,6 +23,7 @@ from degenbot.runner._consume import _apply_block_if_ready
 from degenbot.runner.bot_runner import _SessionState
 from tests.fakes.engine import FakeEngine, FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
+from tests.fakes.session import FakeRunnerConfig
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SIMULATOR_RS = _REPO_ROOT / "rust/crates/engine/degenbot-arbitrage/src/simulator.rs"
@@ -45,7 +45,7 @@ def _session(recorder) -> _SessionState:
         async_w3=_AlloyW3(),  # type: ignore[arg-type]
         sim_ctx=None,
         dispatcher=Dispatcher.for_block(0),
-        cfg=SimpleNamespace(  # type: ignore[arg-type]
+        cfg=FakeRunnerConfig(  # type: ignore[arg-type]
             operator_address="0x9C56a29c7231974c269E24F9FB3c29203039089E"
         ),
         current_block=0,

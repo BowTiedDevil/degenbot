@@ -14,6 +14,8 @@ engine-registry contract double, not a boot-path actor.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from degenbot.runner import BotRunner
 from degenbot.runner.bot_runner import InjectedActors
 from degenbot.runner.config import ArbitrageConfig
@@ -25,6 +27,13 @@ def noop_coro():
         pass
 
     return _n()
+
+
+@dataclass(frozen=True)
+class FakeBootReadiness:
+    """The posture-readiness double: what the boot's readiness probe answers."""
+
+    settlement_active: bool = False
 
 
 class FakeEth:

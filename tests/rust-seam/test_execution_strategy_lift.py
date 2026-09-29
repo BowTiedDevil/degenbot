@@ -16,6 +16,7 @@ proven Rust-side in ``crates/shells/degenbot-python/src/execution/mod.rs`` unit 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,15 @@ if TYPE_CHECKING:
 import pytest
 
 EXAMPLE_PATH = Path(__file__).resolve().parents[2] / "examples" / "execution_strategy_foreign.py"
+
+
+@dataclass(frozen=True)
+class _StrategyResult:
+    """The SolveResult slice the foreign example's composer reads."""
+
+    optimal_input: int
+    hop_outputs: list[int]
+    consumed_inputs: list[int]
 
 
 @pytest.fixture(scope="module")
@@ -100,9 +110,7 @@ class TestPythonForeignStrategySample:
     """OULU5O — the Python driver's foreign Encode blob, exercised end-to-end."""
 
     def test_foreign_encode_via_abi_helper(self, foreign_strategy_example: ModuleType) -> None:
-        from types import SimpleNamespace
-
-        result = SimpleNamespace(
+        result = _StrategyResult(
             optimal_input=1_000_000_000_000_000_000,
             hop_outputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
             consumed_inputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
@@ -131,8 +139,6 @@ class TestPythonForeignStrategySample:
         """UQ6WOG — the Python foreign path reproduces the SAME recorded corpus
         the Rust sample pins (byte-identical across layers), and that corpus is
         distinct from `cmd_executor`."""
-        from types import SimpleNamespace
-
         corpus = bytes.fromhex(
             "ead35cae"
             "0000000000000000000000000000000000000000000000000de0b6b3a7640000"
@@ -142,7 +148,7 @@ class TestPythonForeignStrategySample:
             "0000000000000000000000000000000000000000000000000de0b6b3a7640000"
             "00000000000000000000000000000000000000000000000010cac896d2390000"
         )
-        result = SimpleNamespace(
+        result = _StrategyResult(
             optimal_input=999_999_999_999_999_999 + 1,
             hop_outputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],
             consumed_inputs=[1_000_000_000_000_000_000, 1_210_000_000_000_000_000],

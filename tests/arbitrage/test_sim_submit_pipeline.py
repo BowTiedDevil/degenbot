@@ -15,13 +15,13 @@ contracts:
 from __future__ import annotations
 
 import asyncio
-import types
 from pathlib import Path
 
 import pytest
 
 from degenbot.dispatch import SimSubmitPipeline
 from degenbot.runner._sim_submit import build_sim_submit_pipeline
+from tests.fakes.session import FakeRunnerConfig, FakeRunnerSession
 from tests.helpers import verdict_probe as probe
 
 
@@ -31,12 +31,10 @@ def _concurrency(**env: str) -> int:
     return probe.build_config(env=env).sim_pipeline_concurrency
 
 
-def _session(cap: int = 5) -> types.SimpleNamespace:
+def _session(cap: int = 5) -> FakeRunnerSession:
     """A session double carrying only the factory-read config value."""
 
-    return types.SimpleNamespace(
-        cfg=types.SimpleNamespace(sim_pipeline_concurrency=cap),
-    )
+    return FakeRunnerSession(cfg=FakeRunnerConfig(sim_pipeline_concurrency=cap))
 
 
 def test_the_declared_default_is_eight() -> None:

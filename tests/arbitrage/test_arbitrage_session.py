@@ -21,7 +21,6 @@ import signal
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -1354,6 +1353,13 @@ _POOL_ID_LOCK = threading.Lock()
 _POOL_IDS: dict[str, int] = {}
 
 
+@dataclass(frozen=True)
+class _PoolHandle:
+    """The Rust pool-handle slice the engine reads: the pool id."""
+
+    pool_id: int
+
+
 def _pool_id_for(address: str) -> int:
     """Deterministic fake pool ids keyed by address (the dedup key)."""
     with _POOL_ID_LOCK:
@@ -1402,7 +1408,7 @@ class TestPathRegistrationPipeline:
             pool = TestPathRegistrationPipeline._FakePool(address)
             # Deterministic per-address engine key: the engine dedup keys on
             # the hop signature, so a repeat path must resolve the SAME id.
-            pool._py_pool = SimpleNamespace(pool_id=_pool_id_for(address))
+            pool._py_pool = _PoolHandle(pool_id=_pool_id_for(address))
             return pool
 
     class _FakeReg:

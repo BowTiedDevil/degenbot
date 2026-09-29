@@ -26,7 +26,6 @@ offline-registered V2/V4 pools and paths — no live RPC.
 from __future__ import annotations
 
 import asyncio
-import types
 from fractions import Fraction
 from typing import Any
 
@@ -36,6 +35,13 @@ from degenbot._ffi import ArbitrageEngine, Bot
 from degenbot._ffi.simulation import merge_payload_results_py
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.runner._dispatch import _merge_payload_outcome
+from tests.fakes.engine import FakeEngineRegistry
+from tests.fakes.session import (
+    FakeBatchOutcome,
+    FakeDispatcher,
+    FakeRunnerSession,
+    FakeSimContext,
+)
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v4_pool_factory import make_v4_pool
@@ -275,18 +281,18 @@ class TestPathPoolsParityAcrossEntryArms:
 # ── the merged-outcome stitching over the seam ───────────────────────────
 
 
-def _session(engine: Any) -> Any:
+def _session(engine: Any) -> FakeRunnerSession:
     """The session double: the real engine behind the registry boundary."""
-    return types.SimpleNamespace(
-        dispatcher=type("D", (), {"current_block": 42})(),
-        sim_ctx=types.SimpleNamespace(executor_address=EXECUTOR),
-        engine_registry=type("R", (), {"engine": engine})(),
+    return FakeRunnerSession(
+        dispatcher=FakeDispatcher(current_block=42),
+        sim_ctx=FakeSimContext(executor_address=EXECUTOR),
+        engine_registry=FakeEngineRegistry(engine),
     )
 
 
-def _base_outcome() -> Any:
+def _base_outcome() -> FakeBatchOutcome:
     """The FFI batch outcome double (the mixed-batch stitch fixture)."""
-    return types.SimpleNamespace(
+    return FakeBatchOutcome(
         gas_profitable=["legacy-cand"],
         gas_unprofitable_count=1,
         exception_count=0,
