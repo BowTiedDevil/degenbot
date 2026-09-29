@@ -684,21 +684,19 @@ class BotRunner:
 
     # ── Phase B: the rolling-start main loop ──────────────────────────
     async def run(self) -> None:
-        """Attach the consumer, resume the pump, build paths, release, then run the main loop.
+        """Run the cockpit main loop until the consumer task ends.
 
-        Ordering (the invariant this session enforces):
-        1. create the consumer task (BEFORE resume so batches drain as they arrive)
-        2. ``engine_registry.engine.resume()`` (the single gate after which batches flow)
-        3. ``await build_paths(...)`` (rolling start: eager solves dispatch as fresh blocks roll in)
-        4. ``bot.release_python_state()`` + drop the bot (hot loop keeps only engine + async_w3)
-        5. await the session watch over the main loop (indefinite)
+        Requires the ``Started`` phase — the session phase machine
+        (:class:`PhaseError`, delegating to the Rust host's ``SessionPhase``
+        table) owns the lifecycle gate and the operation sequence; this
+        method only adds the non-obvious ordering the FSM cannot carry:
 
-        The Rust driver owns the once-only result-receiver hand-off: ``resume()``
-        is refused unless a consumer has taken the receiver. The PyO3 adapter
-        takes it at engine construction, so the engine-owned gate is already
-        satisfied before this method runs. Creating the consumer TASK below
-        before ``resume()`` is the residual asyncio-side ordering: batches
-        arrive over the unbounded channel and must be drained as they land.
+        The engine's once-only result-receiver hand-off is satisfied at
+        engine construction, so creating the consumer TASK before
+        ``resume()`` is the residual asyncio-side ordering — batches arrive
+        over the unbounded channel and must be drained as they land.
+        ``resume()`` is then the single gate after which result batches
+        flow.
         """
         self._phase = self._phase.on_run()
         # The session's construction answers the actor asserts: the actors

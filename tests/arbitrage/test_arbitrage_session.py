@@ -26,7 +26,7 @@ import pytest
 
 from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
-from degenbot.runner.bot_runner import InjectedActors
+from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers.identity_env import identity_env
 from tests.fakes.engine import FakeEngine as _FakeEngine
@@ -390,6 +390,132 @@ class TestBotRunnerRun:
         # the consumer task must have been cancelled by __aexit__
         assert session._result_consumer_task is not None
         assert session._result_consumer_task.cancelled()
+
+
+class TestSessionPhaseMachine:
+    """The session lifecycle is a typed FSM: ``New -> Started -> Running ->
+    Closed``. Legality is delegated to the Rust host's ``SessionPhase``
+    table (``strategy_host.rs``, read through
+    ``degenbot._ffi.session_phase_next``) — the Python enum translates the
+    host's verdict into :class:`PhaseError` and never authors the matrix.
+    These tests pin the delegated verdicts so a host-table change surfaces
+    as a loud test failure, not silent drift.
+    """
+
+    @staticmethod
+    def _session(**actor_overrides) -> BotRunner:
+        actors: dict = {
+            "settlement_arm": True,
+            "bot": _FakeBot(),
+            "engine_registry": _FakeEngineRegistry(),
+            "async_w3": _FakeAsyncW3(),
+            "snapshots": (None, None, None, None),
+            "path_builder": lambda **_kw: _noop_coro(),
+            "consumer": lambda **_kw: _noop_coro(),
+            "relay_posture": RelayPosture(relay_urls=["http://offline-test.relay"]),
+        }
+        actors.update(actor_overrides)
+        return BotRunner(_cfg(), actors=InjectedActors(**actors))
+
+    async def test_happy_path_phase_progression(self) -> None:
+        session = self._session()
+        assert session._phase is _Phase.NEW
+
+        await session.start()
+        assert session._phase is _Phase.STARTED
+
+        await session.run()
+        assert session._phase is _Phase.RUNNING
+
+        await session.shutdown()
+        assert session._phase is _Phase.CLOSED
+
+    async def test_run_before_start_refused(self) -> None:
+        session = self._session()
+        with pytest.raises(PhaseError, match="requires phase 'started'"):
+            await session.run()
+        # The refusal leaves the phase untouched and the engine un-resumed.
+        assert session._phase is _Phase.NEW
+        assert session.engine_registry.engine.resumed is False
+
+    async def test_start_from_running_refused(self) -> None:
+        session = self._session()
+        await session.start()
+        await session.run()
+
+        with pytest.raises(PhaseError, match="running"):
+            await session.start()
+        assert session._phase is _Phase.RUNNING
+
+    async def test_start_from_closed_refused(self) -> None:
+        session = self._session()
+        await session.shutdown()
+
+        with pytest.raises(PhaseError, match="closed"):
+            await session.start()
+        assert session._phase is _Phase.CLOSED
+
+    async def test_query_before_running_refused(self) -> None:
+        session = self._session()
+        with pytest.raises(PhaseError, match="needs 'running'"):
+            await session.enqueue_path([])
+        with pytest.raises(PhaseError, match="needs 'running'"):
+            await session.trigger_discovery()
+        assert session._phase is _Phase.NEW
+
+    async def test_shutdown_legal_from_every_phase(self) -> None:
+        # The SIGINT teardown ordering depends on shutdown() being reachable
+        # at any lifecycle point; the host table admits it everywhere.
+        fresh = self._session()
+        await fresh.shutdown()
+        assert fresh._phase is _Phase.CLOSED
+
+        started = self._session()
+        await started.start()
+        await started.shutdown()
+        assert started._phase is _Phase.CLOSED
+
+        running = self._session()
+        await running.start()
+        await running.run()
+        await running.shutdown()
+        assert running._phase is _Phase.CLOSED
+
+    async def test_start_started_reentry_is_noop(self) -> None:
+        # Started re-entry is the deliberate idempotent no-op (Running/
+        # Closed re-entry raises — pinned above).
+        session = self._session()
+        first = await session.start()
+        engine_registry = session.engine_registry
+        assert engine_registry is not None
+
+        second = await session.start()
+
+        assert first is second is session
+        assert len(engine_registry.start_calls) == 1
+
+    def test_phase_table_mirrors_the_host_matrix(self) -> None:
+        # The full 4x4 delegated matrix (phase x operation), pinned directly
+        # against the Python enum's translation of the host verdicts.
+        assert _Phase.NEW.on_start() is _Phase.STARTED
+        assert _Phase.STARTED.on_start() is _Phase.STARTED
+        for phase in (_Phase.RUNNING, _Phase.CLOSED):
+            with pytest.raises(PhaseError, match="session can only start from New"):
+                phase.on_start()
+
+        assert _Phase.STARTED.on_run() is _Phase.RUNNING
+        for phase in (_Phase.NEW, _Phase.RUNNING, _Phase.CLOSED):
+            with pytest.raises(PhaseError, match="requires phase 'started'"):
+                phase.on_run()
+
+        assert _Phase.RUNNING.on_query("enqueue_path") is _Phase.RUNNING
+        for phase in (_Phase.NEW, _Phase.STARTED, _Phase.CLOSED):
+            with pytest.raises(PhaseError, match="needs 'running'"):
+                phase.on_query("enqueue_path")
+
+        # shutdown is total: every phase moves to Closed.
+        for phase in (_Phase.NEW, _Phase.STARTED, _Phase.RUNNING, _Phase.CLOSED):
+            assert phase.on_shutdown() is _Phase.CLOSED
 
 
 class TestBotRunnerRunBlockStreamAcquiredOnce:
