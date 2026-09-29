@@ -22,8 +22,10 @@ from typing import Any
 
 import pytest
 
+from degenbot.diagnostics import FailureAction, failure_action
+from degenbot.exceptions.base import DegenbotValueError
 from degenbot.runner import _render
-from degenbot.runner._render import _render_sim_failures, format_failure_breakdown
+from degenbot.runner._render import _render_sim_failures, format_failure_breakdown, hop_fields
 from tests.fakes.session import FakeDispatchOutcome
 from tests.helpers import verdict_probe as probe
 
@@ -243,6 +245,66 @@ def test_format_breakdown_empty() -> None:
     assert len(result) == 0
 
 
+# ── hop_fields: the ONE family-string → PoolKind read ────────────────────
+
+
+def test_unknown_hop_family_raises_in_strict_mode() -> None:
+    """A family string outside the PoolKind taxonomy raises in strict mode (the
+    [profit] render path) — an unknown render-seam family is loud, never
+    silently branched. Lenient mode (``default=``) keeps the fixture-dump
+    semantics and is exercised by every tripwire test above.
+    """
+    with pytest.raises(ValueError, match="Unsupported hop family: 'V5'"):
+        hop_fields({"family": "V5"})
+
+
+# ── failure_action: the real Rust matrix → FailureAction members ─────────
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason", "expected"),
+    [
+        ("verify_mismatch", None, FailureAction.QUARANTINE),
+        ("sim_failure", None, FailureAction.EVENT),
+        ("sim_failure", "revert_pool_state", FailureAction.EVENT),
+        ("sim_failure", "pre_encode", FailureAction.QUARANTINE),
+        ("sim_failure", "revert_economics", FailureAction.OBSERVE),
+        ("sim_failure", "rpc", FailureAction.EVENT),
+        ("submit_failure", None, FailureAction.EVENT),
+        ("monitor_failure", None, FailureAction.EVENT),
+        ("ws_completeness", None, FailureAction.EXIT),
+        ("drain_stall", None, FailureAction.EXIT),
+        ("drain_dead", None, FailureAction.EXIT),
+        ("late_log", None, FailureAction.EVENT),
+        ("brand_new_bucket", None, FailureAction.EVENT),  # the evolution floor
+    ],
+)
+def test_failure_action_maps_the_rust_matrix(
+    kind: str, reason: str | None, expected: FailureAction
+) -> None:
+    """The Rust ``failure_policy`` matrix is the single source of truth; the
+    wrapper returns its spellings as FailureAction MEMBERS (this consults the
+    real PyO3 pyfunction — no stub, no process-global override installed)."""
+    assert failure_action(kind, reason) is expected
+
+
+def test_failure_action_wire_drift_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wire string outside the FailureAction vocabulary is Rust/Python
+    matrix drift — loud. Stubbed at the ``_diagnostics.failure_action`` FFI
+    boundary (the module attribute; the wrapper exposes no injectable seam)."""
+    import degenbot.diagnostics as diag
+
+    monkeypatch.setattr(
+        diag._diagnostics,
+        "failure_action",
+        lambda kind, reason=None: "obliterate",
+    )
+    with pytest.raises(DegenbotValueError, match="Unrecognized failure action 'obliterate'"):
+        failure_action("sim_failure", None)
+
+
 # ── Tripwire bucket-fatal semantics (fail hard + loud, no default mask) ──
 
 
@@ -276,7 +338,7 @@ def test_ignoring_a_bucket_opts_the_trap_out(
         {"DEGENBOT_SIM_EXIT_ON_FAIL": "1", "DEGENBOT_SIM_EXIT_IGNORE_BUCKETS": "empty"},
         operator_file=None,
     )
-    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
+    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: FailureAction.EXIT)
     with caplog.at_level("INFO", logger="degenbot"):
         _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
     assert armed is True
@@ -294,7 +356,7 @@ def test_the_operator_file_can_ignore_a_bucket_too(
     body = "sim_exit_on_fail = true\nexit_ignore_buckets = 'empty'\n"
     with probe.operator_file(f"[simulation]\n{body}") as written:
         armed, ignore = _arm_from(operator_file=written)
-    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
+    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: FailureAction.EXIT)
     _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
     assert armed is True
     assert ignore == "empty"
@@ -312,7 +374,7 @@ def test_operator_exit_override_still_traps(
     """
     import degenbot.diagnostics as diag
 
-    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
+    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: FailureAction.EXIT)
     failures = [
         {"path_id": 1, "bucket": "Error(string)", "fail_index": 3, "revert_data": "0x08c379a0"}
     ]
@@ -373,7 +435,7 @@ def test_the_operator_file_can_arm_the_tripwire(
     with probe.operator_file("[simulation]\nsim_exit_on_fail = true\n") as written:
         armed, ignore = _arm_from(operator_file=written)
     assert armed is True, "the file layer must be able to arm the trap"
-    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
+    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: FailureAction.EXIT)
     with pytest.raises(SystemExit) as ei:
         _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
     assert ei.value.code == 3

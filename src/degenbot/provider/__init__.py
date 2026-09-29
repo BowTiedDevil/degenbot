@@ -52,6 +52,7 @@ from degenbot.provider.offline_provider import (
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.rpc_types import (
     BlockData,
+    BlockTag,
     LogData,
     TransactionData,
     TransactionReceiptData,
@@ -175,20 +176,13 @@ class _AlloyQueryMixin(_AlloyBacked):
         Returns:
             Block data as dictionary with plain bytes for hash fields, or None if not found.
 
-        Raises:
-            ValueError: If ``block_identifier`` is an unsupported string.
+        An unsupported tag string raises ``ValueError`` (:meth:`BlockTag.parse`).
 
         """
         if isinstance(block_identifier, str):
-            if block_identifier == "latest":
-                block_identifier = self._provider.get_block_number()
-            elif block_identifier == "earliest":
-                block_identifier = 0
-            elif block_identifier == "pending":
-                block_identifier = self._provider.get_block_number() + 1
-            else:
-                msg = f"Unsupported block identifier: {block_identifier!r}"
-                raise ValueError(msg)
+            block_identifier = BlockTag.parse(block_identifier).to_block_number(
+                self._provider.get_block_number()
+            )
         return self._provider.get_block(block_identifier)
 
     def get_code(self, address: str, block: int | None = None) -> bytes:
@@ -673,20 +667,13 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
         Returns:
             Block data, or None if not found.
 
-        Raises:
-            ValueError: If ``block_identifier`` is an unsupported string.
+        An unsupported tag string raises ``ValueError`` (:meth:`BlockTag.parse`).
 
         """
         if isinstance(block_identifier, str):
-            if block_identifier == "latest":
-                block_identifier = await self._provider.get_block_number()
-            elif block_identifier == "earliest":
-                block_identifier = 0
-            elif block_identifier == "pending":
-                block_identifier = await self._provider.get_block_number() + 1
-            else:
-                msg = f"Unsupported block identifier: {block_identifier!r}"
-                raise ValueError(msg)
+            block_identifier = BlockTag.parse(block_identifier).to_block_number(
+                await self._provider.get_block_number()
+            )
         return await self._provider.get_block(block_identifier)
 
     async def get_transaction(self, tx_hash: str) -> TransactionData | None:

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from degenbot.provider import RustAlloyProvider
+from degenbot.types.rpc_types import BlockTag
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
@@ -164,7 +165,7 @@ class _OfflineDataMixin(_OfflineBacked):
             ``None`` if the block is not recorded.
 
         """
-        if block_identifier == "latest":
+        if block_identifier == BlockTag.LATEST:
             block_num = self._alloy.get_block_number()
         else:
             try:

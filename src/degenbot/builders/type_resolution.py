@@ -23,7 +23,15 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.pool_type import PoolFamily, PoolProbe, PoolTypeDescriptor, derive_kind
+from degenbot.types.pool_type import (
+    BALANCER_VARIANTS,
+    PoolFamily,
+    PoolProbe,
+    PoolTypeDescriptor,
+    PoolVariant,
+    classify_pool_variant,
+    derive_kind,
+)
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
@@ -70,17 +78,26 @@ def pool_class_for_descriptor(
                 pool_type_registry.get_v3_class(chain_id, pool_type.factory or "") or UniswapV3Pool,
             )
         case PoolFamily.STABLESWAP:
-            # Variant-aware: reject Balancer stable pools without factory registration
-            if pool_type.variant is not None and pool_type.variant.startswith("balancer"):
+            # Variant-aware: the vault-dependent Balancer variants REQUIRE a
+            # factory registration, and an unrecognized variant must not
+            # silently masquerade as generic Curve (ADR-021 — classify or raise).
+            variant = classify_pool_variant(pool_type.variant)
+            if variant in BALANCER_VARIANTS:
                 msg = (
                     f"Balancer stable pool with unregistered factory {pool_type.factory}. "
                     f"Register the factory address in pool_type_registry first."
                 )
                 raise DegenbotValueError(message=msg)
+            if variant is PoolVariant.UNRECOGNIZED:
+                msg = (
+                    f"Unrecognized stableswap variant {pool_type.variant!r} with unregistered "
+                    f"factory {pool_type.factory}; refusing to default it to CurveStableswapPool."
+                )
+                raise DegenbotValueError(message=msg)
             return CurveStableswapPool
         case PoolFamily.WEIGHTED:
             # No default Balancer weighted class — require factory registration
-            if pool_type.variant is not None and pool_type.variant.startswith("balancer"):
+            if classify_pool_variant(pool_type.variant) in BALANCER_VARIANTS:
                 msg = (
                     f"Balancer weighted pool with unregistered factory {pool_type.factory}. "
                     f"Register the factory address in pool_type_registry first."

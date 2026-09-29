@@ -4,7 +4,9 @@ Private leaf module (underscore name): pure renderers over dispatch
 outcomes and engine failure records. The dispatch path
 (:mod:`~degenbot.runner._dispatch`) imports :func:`_dump_failure_fixture`,
 :func:`_render_profit_logs`, and :func:`_render_sim_failures`; outside
-that, only tests import this module. Nothing here touches the Rust core.
+that, only tests import this module. Nothing here calls the Rust core — the
+single FFI-typed import is ``PoolKind`` (type identity only, for the hop
+family taxonomy).
 
 The sim-failure tripwire reads its armed state and ignore set as values the
 caller resolved, never the process verdict: the arm/disarm decision is the
@@ -19,6 +21,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from degenbot.logging import logger as bot_logger
+from degenbot.pathfinding import PoolKind
 
 if TYPE_CHECKING:
     from degenbot.dispatch import Dispatcher, DispatchOutcome
@@ -31,6 +34,29 @@ _SIM_FAIL_RENDER_CAP = 25
 # Sentinel for `hop_fields`' strict-read mode (distinct from any field value,
 # including None).
 _UNSET: Any = object()
+
+# The hop ``family`` wire string → the FFI PoolKind taxonomy (the V2/V3/V4
+# axis — NOT the PoolFamily invariant axis). The ONE conversion for the render
+# seam; consumers compare members.
+_FAMILY_TO_POOL_KIND: dict[str, PoolKind] = {
+    "V2": PoolKind.V2,
+    "V3": PoolKind.V3,
+    "V4": PoolKind.V4,
+}
+
+# Render labels for PoolKind members (the pyclass str() spells "PoolKind.V2";
+# the operator-facing lines keep the bare version spelling).
+_POOL_KIND_LABEL: dict[PoolKind, str] = {
+    kind: family for family, kind in _FAMILY_TO_POOL_KIND.items()
+}
+
+
+def _family_label(family: Any) -> str:
+    """Render one HopFields family: the PoolKind label, or the lenient default."""
+
+    if isinstance(family, PoolKind):
+        return _POOL_KIND_LABEL[family]
+    return str(family)
 
 
 # A sim-dispatch outcome handed to the renderers: the FFI batch outcome or
@@ -49,7 +75,7 @@ class HopFields:
     fields instead of re-branching on the dict keys.
     """
 
-    family: str
+    family: PoolKind | Any
     # V2/V3 pool_address | V4 pool_id_hex.
     pool_ref: str
     # token0_address | currency0_address.
@@ -66,19 +92,34 @@ class HopFields:
 def hop_fields(hop: dict[str, Any], *, default: Any = _UNSET) -> HopFields:
     """Read one plain-dict hop into the typed :class:`HopFields` view.
 
-    With ``default`` the read is lenient (``dict.get`` semantics, every field
-    falling back to that value) — the failure-fixture dump renders malformed
-    hops instead of raising on them.
+    The wire ``family`` string converts to the FFI PoolKind taxonomy at this
+    ONE point; consumers compare members. With ``default`` the read is lenient
+    (``dict.get`` semantics, every field falling back to that value) — the
+    failure-fixture dump renders malformed hops instead of raising on them.
+
+    Raises:
+        ValueError: On a family string outside the PoolKind taxonomy in strict
+            mode — an unknown render-seam family is loud, never silently
+            branched.
+
     """
 
     def get(key: str) -> Any:
         return hop[key] if default is _UNSET else hop.get(key, default)
 
     family = get("family")
+    kind = _FAMILY_TO_POOL_KIND.get(family) if isinstance(family, str) else None
+    if kind is None:
+        if default is _UNSET:
+            msg = f"Unsupported hop family: {family!r}"
+            raise ValueError(msg)
+        # Lenient read (the failure-fixture dump): an unknown family keeps the
+        # caller's default and takes the V4-field branch, as before.
+        kind = family
 
-    if family in {"V2", "V3"}:
+    if isinstance(kind, PoolKind) and kind in {PoolKind.V2, PoolKind.V3}:
         return HopFields(
-            family=family,
+            family=kind,
             pool_ref=get("pool_address"),
             token0=get("token0_address"),
             token1=get("token1_address"),
@@ -87,7 +128,7 @@ def hop_fields(hop: dict[str, Any], *, default: Any = _UNSET) -> HopFields:
         )
 
     return HopFields(
-        family=family,
+        family=kind,
         pool_ref=get("pool_id_hex"),
         token0=get("currency0_address"),
         token1=get("currency1_address"),
@@ -179,7 +220,7 @@ def _render_profit_logs(outcome: _SimOutcome) -> None:
             for i, h in enumerate(path_info["hops"]):
                 hf = hop_fields(h)
 
-                if hf.family == "V4":
+                if hf.family == PoolKind.V4:
                     hop_details.append(
                         f"  hop[{i}] V4 pm={hf.pool_manager} "
                         f"pid={hf.pool_ref} "
@@ -189,7 +230,7 @@ def _render_profit_logs(outcome: _SimOutcome) -> None:
 
                 else:
                     hop_details.append(
-                        f"  hop[{i}] {hf.family} addr={hf.pool_ref} "
+                        f"  hop[{i}] {_family_label(hf.family)} addr={hf.pool_ref} "
                         f"t0={hf.token0} t1={hf.token1} "
                         f"fee={hf.fee} zfo={hf.zfo}",
                     )
@@ -242,9 +283,9 @@ def _dump_failure_fixture(
     for i, h in enumerate(hops):
         hf = hop_fields(h, default="?")
 
-        if hf.family in {"V2", "V3"}:
+        if isinstance(hf.family, PoolKind) and hf.family in {PoolKind.V2, PoolKind.V3}:
             bot_logger.error(
-                f"[sim-fixture] hop[{i}] {hf.family} pool={hf.pool_ref} "
+                f"[sim-fixture] hop[{i}] {_family_label(hf.family)} pool={hf.pool_ref} "
                 f"t0={hf.token0} t1={hf.token1} fee={hf.fee} zfo={hf.zfo}",
             )
 
@@ -416,10 +457,11 @@ def _enforce_sim_failure_policy(
     # Rust core owns the closed bucket matrix (single source of truth);
     # Python only consults it. A sim failure's effective action is the
     # `sim_failure` bucket's (reason sub-split lands at the sim seam).
+    from degenbot.diagnostics import FailureAction
     from degenbot.diagnostics import failure_action as _policy
 
     action = _policy("sim_failure", None)
-    if action == "exit":
+    if action == FailureAction.EXIT:
         bot_logger.error(
             f"[sim-trap] exiting on first sim failure at block={current_block} "
             f"(failure_policy sim_failure bucket action=exit) "

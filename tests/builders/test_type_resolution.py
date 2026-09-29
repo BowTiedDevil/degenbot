@@ -23,6 +23,7 @@ from degenbot.builders.type_resolution import (
     resolve_pool_type,
     resolve_pool_type_by_probing,
 )
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.types.pool_type import PoolFamily, PoolProbe, PoolTypeDescriptor
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -63,6 +64,42 @@ class TestPoolClassForDescriptor:
             factory=None,
         )
         with pytest.raises(DegenbotValueError, match="No pool class for WEIGHTED"):
+            pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
+
+    def test_stableswap_returns_curve_class(self) -> None:
+        """A positive Curve identity (variant=None) keeps its default class."""
+        descriptor = PoolTypeDescriptor(
+            family=PoolFamily.STABLESWAP,
+            variant=None,
+            kind="stableswap",
+            factory=None,
+        )
+        result = pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
+        assert result is CurveStableswapPool
+
+    def test_stableswap_balancer_variant_with_unregistered_factory_raises(self) -> None:
+        """The vault-dependent Balancer variants REQUIRE a factory registration."""
+        descriptor = PoolTypeDescriptor(
+            family=PoolFamily.STABLESWAP,
+            variant="balancer_stable",
+            kind="balancer_stable",
+            factory=None,
+        )
+        with pytest.raises(
+            DegenbotValueError, match="Balancer stable pool with unregistered factory"
+        ):
+            pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
+
+    def test_stableswap_unrecognized_variant_with_unregistered_factory_raises(self) -> None:
+        """An unrecognized stableswap variant raises instead of silently
+        defaulting to CurveStableswapPool — classify or raise, never guess."""
+        descriptor = PoolTypeDescriptor(
+            family=PoolFamily.STABLESWAP,
+            variant="mycustom",
+            kind="mycustom",
+            factory=None,
+        )
+        with pytest.raises(DegenbotValueError, match="Unrecognized stableswap variant"):
             pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
 
     def test_registered_factory_returns_registered_class(self) -> None:

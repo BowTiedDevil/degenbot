@@ -17,6 +17,7 @@ type-check churn.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from degenbot.types.chain import HexStr
@@ -31,6 +32,61 @@ if TYPE_CHECKING:
 #: web3's ``Union[int, Literal["earliest", "latest", "pending"], Hash32]`` is.
 #: subsumed by the ``str`` arm.
 BlockIdentifier = int | str
+
+
+class BlockTag(StrEnum):
+    """The canonical block-position tags (the ``eth_getBlockBy*`` ladder).
+
+    Public provider APIs keep accepting the wire strings; :meth:`parse` is the
+    ONE string → member conversion and provider internals dispatch on members.
+
+    Member values are the wire spellings — ``StrEnum`` keeps them comparable
+    with the persisted/over-the-wire strings at the read boundary only.
+    """
+
+    EARLIEST = "earliest"
+    LATEST = "latest"
+    PENDING = "pending"
+
+    @classmethod
+    def parse(cls, raw: str) -> BlockTag:
+        """Parse one canonical tag string.
+
+        Args:
+            raw: The wire spelling (``"latest"``, ``"earliest"``, ``"pending"``).
+
+        Returns:
+            The matching member.
+
+        Raises:
+            ValueError: On any other string — the provider ladder's loud
+                unsupported-identifier contract.
+
+        """
+        try:
+            return cls(raw)
+        except ValueError:
+            msg = f"Unsupported block identifier: {raw!r}"
+            raise ValueError(msg) from None
+
+    def to_block_number(self, head: int) -> int:
+        """Resolve the tag against the current head block number.
+
+        Args:
+            head: The provider's current block number.
+
+        Returns:
+            The concrete block number the tag names (``latest`` → head,
+            ``earliest`` → 0, ``pending`` → head + 1).
+
+        """
+        match self:
+            case BlockTag.EARLIEST:
+                return 0
+            case BlockTag.LATEST:
+                return head
+            case BlockTag.PENDING:
+                return head + 1
 
 
 #: Transaction params for ``eth_call`` / ``eth_sendTransaction`` — was ``web3.types.TxParams``.

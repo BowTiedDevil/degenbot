@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum, IntEnum
+from enum import Enum, IntEnum, StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -41,6 +41,59 @@ class PoolFamily(Enum):
     CONCENTRATED_LIQUIDITY = "concentrated_liquidity"  # V3-family
     STABLESWAP = "stableswap"  # Curve V1-family
     WEIGHTED = "weighted"  # Balancer (future)
+
+
+class PoolVariant(StrEnum):
+    """The KNOWN pool-variant vocabulary — an intentionally OPEN set.
+
+    The variant is the DEX identity string carried on
+    :class:`PoolTypeDescriptor` and persisted into the DB ``kind`` (via
+    :func:`derive_kind`). Third-party DEXes register their own spellings
+    (``PoolRegistration.variant``, the ``variant`` key of deployments.json
+    overlays), so the set cannot be closed: unknown strings surface as
+    ``UNRECOGNIZED`` at the conversion point
+    (:func:`classify_pool_variant`) and raise loudly at the decision points
+    that must act on variant semantics — never silently guessed.
+
+    Members enumerate the variants shipped in this repository.
+    """
+
+    BALANCER_STABLE = "balancer_stable"
+    BALANCER_WEIGHTED = "balancer_weighted"
+    AERODROME = "aerodrome"
+    CAMELOT = "camelot"
+    PANCAKESWAP = "pancakeswap"
+    SUSHISWAP = "sushiswap"
+    SWAPBASED = "swapbased"
+    UNRECOGNIZED = "unrecognized"
+
+
+#: The vault-dependent variants: they REQUIRE a factory registration and have
+#: no default pool class.
+BALANCER_VARIANTS = frozenset(
+    {PoolVariant.BALANCER_STABLE, PoolVariant.BALANCER_WEIGHTED},
+)
+
+
+def classify_pool_variant(variant: str | None) -> PoolVariant | None:
+    """Classify one raw variant string into the variant taxonomy — the ONE conversion point.
+
+    Args:
+        variant: The descriptor's raw variant string, or ``None`` for the
+            canonical Uniswap / no-variant identity.
+
+    Returns:
+        ``None`` for ``None`` input, the matching :class:`PoolVariant` member
+        for a known spelling, or ``PoolVariant.UNRECOGNIZED`` for an open-set
+        string this process does not know.
+
+    """
+    if variant is None:
+        return None
+    try:
+        return PoolVariant(variant)
+    except ValueError:
+        return PoolVariant.UNRECOGNIZED
 
 
 @dataclass(frozen=True)
