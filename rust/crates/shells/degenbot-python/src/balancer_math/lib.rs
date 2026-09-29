@@ -18,8 +18,8 @@ use alloy::primitives::U256;
 use degenbot_math::balancer::{BalancerMathError, PowVersion};
 use pyo3::{
     exceptions::{PyOverflowError, PyValueError},
-    types::{PyList, PyModule},
-    wrap_pyfunction, PyTypeInfo,
+    types::PyList,
+    PyTypeInfo,
 };
 
 // PyObject alias for pyo3 0.29.
@@ -392,45 +392,30 @@ pub fn stable_calc_in_given_out(
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
-pub fn add_balancer_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.balancer_math")?;
-
+/// The `degenbot._ffi.balancer_math` Python submodule (declarative
+/// `#[pymodule]`), carrying the weighted / fixed-point / stable math
+/// pyfunctions. The parent module registers the submodule itself; the
+/// `sys.modules["degenbot._ffi.balancer_math"]` entry (needed for the
+/// dotted-path import — the extension module is a single file, not a
+/// package) lives in the parent's shared helper.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod balancer_math {
     // Weighted math
-    submod.add_function(wrap_pyfunction!(weighted_calculate_invariant, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(weighted_calc_out_given_in, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(weighted_calc_in_given_out, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
-        weighted_subtract_swap_fee_amount,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(weighted_add_swap_fee_amount, &submod)?)?;
+    #[pymodule_export]
+    use super::{
+        weighted_add_swap_fee_amount, weighted_calc_in_given_out, weighted_calc_out_given_in,
+        weighted_calculate_invariant, weighted_subtract_swap_fee_amount,
+    };
 
     // Fixed-point (shared by weighted + stable)
-    submod.add_function(wrap_pyfunction!(fixed_point_mul_down, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(fixed_point_div_down, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(fixed_point_div_up, &submod)?)?;
+    #[pymodule_export]
+    use super::{fixed_point_div_down, fixed_point_div_up, fixed_point_mul_down};
 
     // Stable math
-    submod.add_function(wrap_pyfunction!(stable_calculate_invariant, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
+    #[pymodule_export]
+    use super::{
+        stable_calc_in_given_out, stable_calc_out_given_in, stable_calculate_invariant,
         stable_calculate_invariant_deployed,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(stable_calc_out_given_in, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(stable_calc_in_given_out, &submod)?)?;
-
-    // Register as an attribute of the parent AND in `sys.modules` so
-    // `from degenbot._ffi.balancer_math import X` resolves. `add_submodule`
-    // alone only sets the attribute — Python's import system also requires
-    // a `sys.modules` entry to traverse the `degenbot._ffi.balancer_math`
-    // dotted path (the extension module `_ffi.abi3.so` is a single file,
-    // not a package, so without this entry the dotted-path import fails
-    // with `ModuleNotFoundError: 'degenbot._ffi' is not a package`).
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.balancer_math", &submod)?;
-
-    Ok(())
+    };
 }

@@ -251,42 +251,7 @@ pub fn get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8)
     liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing)
 }
 
-// ─── Register all CL math functions ────────────────────────────────────
-
-/// Register the math functions on the concentrated-liquidity submodule.
-///
-/// Called by `crate::concentrated_liquidity_math::add_concentrated_liquidity_math_module` (the single entry point that
-/// also registers the `tick_math.rs` entry points + boundary constants and
-/// wires up `sys.modules`). This helper registers only the `lib.rs` fns
-/// (`BitMath` / `FullMath` / `UnsafeMath` / `LiquidityMath` / `SqrtPriceMath` /
-/// `SwapMath` / `TickMath` helpers / `LiquidityMapping`), un-prefixed.
-///
-/// # Errors
-///
-/// Returns `PyErr` if any function fails to register.
-pub fn add_lib_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // BitMath
-    m.add_function(wrap_pyfunction!(most_significant_bit, m)?)?;
-    m.add_function(wrap_pyfunction!(least_significant_bit, m)?)?;
-
-    // FullMath
-    m.add_function(wrap_pyfunction!(muldiv, m)?)?;
-    m.add_function(wrap_pyfunction!(muldiv_rounding_up, m)?)?;
-
-    // UnsafeMath
-
-    // LiquidityMath
-
-    // SqrtPriceMath
-
-    // SwapMath
-    m.add_function(wrap_pyfunction!(compute_swap_step_v3, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_swap_step_v4, m)?)?;
-
-    // TickMath (additional helpers beyond the existing get_sqrt_ratio/tick functions)
-
-    // LiquidityMapping
-    m.add_function(wrap_pyfunction!(get_tick_word_and_bit_position, m)?)?;
-
-    Ok(())
-}
+// The `lib.rs` members (`BitMath` / `FullMath` / `UnsafeMath` /
+// `LiquidityMath` / `SqrtPriceMath` / `SwapMath` / `TickMath` helpers /
+// `LiquidityMapping`) are exported declaratively from the
+// `concentrated_liquidity_math` `#[pymodule]` in the parent `mod.rs`.

@@ -298,20 +298,18 @@ fn abi_value_to_python<'py>(
     }
 }
 
-/// Add contract module to Python module.
-#[expect(clippy::missing_errors_doc)]
-pub fn add_contract_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.contract")?;
-    submod.add_class::<PyContract>()?;
-    submod.add_function(wrap_pyfunction!(encode_function_call, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(decode_return_data, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(get_function_selector, &submod)?)?;
+/// The `degenbot._ffi.contract` Python submodule (declarative
+/// `#[pymodule]`), carrying the contract seam pyclass + ABI
+/// call/decode/selector pyfunctions (plus the async contract under
+/// `feature = "async"`). The parent module registers the submodule itself
+/// and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod contract {
+    #[pymodule_export]
+    use super::{decode_return_data, encode_function_call, get_function_selector, PyContract};
+
     #[cfg(feature = "async")]
-    submod.add_class::<crate::rpc::async_contract::PyAsyncContract>()?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.contract", &submod)?;
-    Ok(())
+    #[pymodule_export]
+    use crate::rpc::async_contract::PyAsyncContract;
 }

@@ -39,7 +39,6 @@
 //! (the read-only result), plus the `dispatch_profitable_py` pyfunction.
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
 
 pub mod assembly;
 pub mod batch;
@@ -54,57 +53,33 @@ pub use candidate::PyDispatchCandidate;
 pub use context::PySimulateContext;
 pub use outcome::PyDispatchOutcome;
 
-/// Register the simulation pyclasses + the `dispatch_profitable_py`
-/// pyfunction on the module.
-///
-/// # Errors
-///
-/// Returns `PyErr` if a class or function fails to register on the module.
-pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.simulation")?;
-    submod.add_class::<PySimulateContext>()?;
-    submod.add_class::<PyDispatchCandidate>()?;
-    submod.add_class::<crate::simulation::assembly::PyCandidateAssembly>()?;
-    submod.add_class::<PyDispatchOutcome>()?;
-    submod.add_class::<crate::simulation::dispatch::PyPayloadOutcome>()?;
-    submod.add_class::<crate::simulation::dispatch::PyPayloadVerdict>()?;
-    submod.add_class::<crate::simulation::batch::PySimReceipt>()?;
-    submod.add_class::<crate::simulation::batch::PyFailureDetail>()?;
-    submod.add_class::<crate::simulation::batch::PyAssemblyVerdict>()?;
-    submod.add_class::<crate::simulation::batch::PySimulateVerdict>()?;
-    submod.add_class::<crate::simulation::batch::PyFailureKind>()?;
-    submod.add_class::<crate::simulation::batch::PySubmitVerdict>()?;
-    submod.add_class::<crate::simulation::batch::PyBatchOutcome>()?;
-    submod.add_class::<crate::simulation::batch::PyBatchOutcomeSet>()?;
-    submod.add_class::<crate::simulation::batch::PyBatchExecutor>()?;
-    submod.add_function(wrap_pyfunction!(
-        crate::simulation::batch::build_batch_executor_py,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        crate::simulation::dispatch::dispatch_profitable_py,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        crate::simulation::assembly::assemble_dispatch_candidates_py,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        crate::simulation::dispatch::merge_payload_results_py,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        crate::simulation::in_process_probe::simulate_in_process_revert_probe,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        crate::simulation::in_process_probe::simulate_in_process_success_probe,
-        &submod
-    )?)?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.simulation", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.simulation` Python submodule (declarative
+/// `#[pymodule]`), carrying the simulation pyclasses + the
+/// dispatch/assembly/probe pyfunctions. The parent module registers the
+/// submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod simulation {
+    #[pymodule_export]
+    use super::{PyDispatchCandidate, PyDispatchOutcome, PySimulateContext};
+
+    #[pymodule_export]
+    use super::assembly::{assemble_dispatch_candidates_py, PyCandidateAssembly};
+
+    #[pymodule_export]
+    use super::batch::{
+        build_batch_executor_py, PyAssemblyVerdict, PyBatchExecutor, PyBatchOutcome,
+        PyBatchOutcomeSet, PyFailureDetail, PyFailureKind, PySimReceipt, PySimulateVerdict,
+        PySubmitVerdict,
+    };
+
+    #[pymodule_export]
+    use super::dispatch::{
+        dispatch_profitable_py, merge_payload_results_py, PyPayloadOutcome, PyPayloadVerdict,
+    };
+
+    #[pymodule_export]
+    use super::in_process_probe::{
+        simulate_in_process_revert_probe, simulate_in_process_success_probe,
+    };
 }

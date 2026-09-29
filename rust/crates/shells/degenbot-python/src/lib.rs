@@ -23,7 +23,6 @@
 //!
 //! See individual module documentation for usage examples.
 
-use degenbot_core::op_info;
 // Opt-in allocator swap for churn-heavy workloads (missed-WS-pong follow-up,
 // RSS-growth investigation). The measured pathology was glibc free-page
 // retention across per-thread arenas (system vs in-use spread of gigabytes,
@@ -58,7 +57,6 @@ pub mod bot;
 /// Build identity: monotonic build counter baked by `build.rs` (stale-
 /// `.so` detector, AGENTS.md). Unconditional — see `build_info.rs`.
 pub mod build_info;
-pub mod c_api;
 /// `CancelHandle` — the cooperative cancel flag for the updater loops.
 /// Gated on `any(pool, aave-updater)` (whichever seam needs it).
 #[cfg(any(feature = "pool", feature = "aave-updater"))]
@@ -254,119 +252,589 @@ fn driver_boot(_py: Python<'_>) {
     degenbot_core::worker_census::emit_boot_table();
 }
 
+// The declarative root of the `degenbot._ffi` module tree.
+//
+// Declarative `#[pymodule] mod` form (ADR-066 prerequisite, task TGFHFG):
+// the fn-based `#[pymodule]` expansion passed empty member lists and the
+// incomplete flag to `experimental-inspect` introspection, so the generated
+// stubs could not see any member. Every root function/class below is a
+// `#[pymodule_export] use`, every submodule a declarative `#[pymodule]`
+// living beside its definitions (e.g. `crate::abi::abi`), so the macro
+// expansion records the full member tree. Registration order and names
+// mirror the pre-conversion `c_api::register` body; the one imperative
+// island left is the `create_exception!` types (they have no `_PYO3_DEF`
+// and so cannot be exported declaratively) plus the `sys.modules`
+// submodule entries — both in `init`.
 #[pymodule]
-fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
+mod _ffi {
+    use degenbot_core::op_info;
+    use pyo3::prelude::*;
+
     // Initialize tracing subscriber stack with batched Python-forwarding layer.
     // Replaces the previous `pyo3_log::init()` (per-record GIL round-trip)
     // with a `tracing_subscriber` registry + a custom `PythonLogLayer` that
     // batches events and flushes to Python `logging` via one `Python::attach`
-    // per batch. Stays in the module init (not `c_api::register`) because it
-    // is module-lifecycle setup, not symbol registration.
-    // KAHU5W boot wiring: install the typed BotConfig BEFORE any
-    // subscriber/failure-policy/engine code reads the holder. The loader is
-    // the ONLY env-reading site; without this install every production run
-    // observed schema defaults (metrics bound 127.0.0.1, default debounce),
-    // silently ignoring DEGENBOT_* env.
-    // Option B hard cutover: the standard file layer is LIVE —
-    // DEGENBOT_CONFIG (or ~/.config/degenbot/config.toml) feeds the typed
-    // BotConfig; the retired pre-0.6 vocabulary ([rpc]/[ws]/[database]/
-    // [otel]/default_chain_id) fails the load with pointed migration
-    // errors (docs/config-migration.md). [failure_policy] is a sanctioned
-    // free-form table the loader skips; the reader below consumes it from
-    // the SAME file via the single standard_file_path() contract.
-    // ADR-040 D3: per-bucket failure-policy overrides, boot-validated. An
-    // invalid bucket/action is a boot ERROR (process exits) — the operator
-    // asked for a specific containment stance; silently ignoring it would
-    // trade on a policy the process does not actually have.
-    let config_file = ::degenbot_config::standard_file_path();
-    match ::degenbot_config::load_process_config() {
-        Ok(loaded) => {
-            // First-wins: a test harness or an embedding that installed
-            // earlier keeps ITS config; this is the production boot path.
-            let installed =
-                degenbot_bot::bot_core::stance::install(std::sync::Arc::new(loaded.config.clone()));
-            // The driver-domain resolvers read the LAYERS, not just the typed
-            // value, so they need the provenance this same load produced. One
-            // load, published once: a resolver cannot see a different file or
-            // environment than the holder received.
-            crate::config::publish_loaded(loaded, installed);
-            // The verdict is the seam's one object, so it is built from the
-            // layers this same load published rather than on first read.
-            crate::config::install_verdict();
-        }
-        Err(e) => {
-            #[expect(clippy::print_stderr)]
-            {
-                eprintln!("invalid configuration - boot refused: {e}");
+    // per batch. Stays in the module init (not a registration site) because
+    // it is module-lifecycle setup, not symbol registration.
+    //
+    // Everything the long-running Python driver needs (runtimes, subscriber +
+    // drainer, metrics scrape, panic hook, census dump) lives behind the
+    // explicit `driver_boot()` — a one-shot consumer (the console passthrough,
+    // a plain library import) pays none of it at import.
+    #[pymodule_export]
+    use crate::driver_boot;
+
+    // The shutdown pyfunctions on the module (pre-conversion:
+    // `PythonLogLayer::register_pyfunction`).
+    #[pymodule_export]
+    use crate::python_log_layer::{flush_telemetry, shutdown_log_drainer};
+
+    // Build identity (stale-.so detector, AGENTS.md): the monotonic build
+    // counter `build.rs` bakes into every compile of this cdylib.
+    // Unconditional — the freshness check must work in every configuration.
+    #[pymodule_export]
+    use crate::build_info::{build_fingerprint, build_number};
+
+    // ADR-051 D3: the Python console entry (degenbot._cli:main) forwards argv
+    // verbatim into the Rust console. Registered unconditionally - the console
+    // passthrough is core, not a feature.
+    #[pymodule_export]
+    use crate::cli::cli_main;
+
+    // FF-T5: the runtime fleet status — budget, plan,
+    // census ("degenbot.runtime_status()").
+    #[pymodule_export]
+    use crate::runtime_status::runtime_status;
+
+    // ADR-062 D7/D10: the resolved config verdict. ONE frozen object carries
+    // every declared key, the layer each came from, and the resolutions that
+    // need a capability or an override, so the seam stops growing one
+    // function per config key. Registered unconditionally: the loader that
+    // produced the layers is unconditional.
+    #[pymodule_export]
+    use crate::config::{
+        resolve_hypothetical, resolve_hypothetical_chain_id, resolve_hypothetical_database_path,
+        resolve_hypothetical_node_uri, resolved_config, verification_retry_policy_defaults,
+        HypotheticalConfig, ResolvedChainId, ResolvedConfig, ResolvedDatabasePath, ResolvedNodeUri,
+        RetryPolicy, RetryPolicyDefaults, StrategyReadinessView,
+    };
+
+    // Ambient-runtime driver seam: lets a Python driver satisfy the
+    // ambient-runtime-only policy on the verify seams. Unconditional —
+    // degenbot-core (the runtime singleton) is.
+    #[pymodule_export]
+    use crate::ambient_runtime::{call_blocking_on_ambient_runtime, call_on_ambient_runtime};
+
+    // Keccak256 + event topic (always a dependency;)
+    #[pymodule_export]
+    use crate::crypto::{event_topic, keccak256};
+
+    // Address utilities (feature = "uniswap"): the Uniswap V2/V3
+    // pool-address derivations + the generic EIP-1014 primitive — FFI
+    // exposure of `degenbot-uniswap`'s pure-Rust `create2` family; the
+    // Python counterparts in `src/degenbot/uniswap/v{2,3}_functions.py` and
+    // `src/degenbot/contract/addresses.py` delegate here.
+    #[cfg(feature = "uniswap")]
+    #[pymodule_export]
+    use crate::uniswap::address::{
+        compute_aerodrome_v2_pool_address, compute_aerodrome_v3_pool_address, create2_address,
+        generate_v2_pool_address, generate_v3_pool_address, to_checksum_address,
+    };
+
+    // Pathfinding graph + DFS (feature = "pathfinding").
+    #[cfg(feature = "pathfinding")]
+    #[pymodule_export]
+    use crate::pathfinding::{
+        classify_pool_kind, classify_pool_kinds, convert_pool_type_filter, find_paths_async_rust,
+        find_paths_rust, prepare_traversal_plan, PathBatchIterator, PathIterator, PathStepBuilder,
+        PoolKind,
+    };
+    // The build_path_graph seam choreographs a degenbot-db read + a
+    // degenbot-pathfinding graph build, so it needs BOTH features.
+    #[cfg(all(feature = "pathfinding", feature = "db"))]
+    #[pymodule_export]
+    use crate::pathfinding::build_path_graph;
+
+    // S12: the core registration outcome ledger + its bounded tag vocabulary
+    // (`degenbot_bot::bot_core::registration_ledger`), projected for the
+    // Python registration pipeline. The tags are exported so Python builds its
+    // label enum FROM the core vocabulary rather than re-declaring it.
+    #[pymodule_export]
+    use crate::registration::{
+        classify_build_refusal, registration_outcome_tags, registration_pool_memo_key,
+        PyBuildRefusal, PyRegistrationLedger, PyUnregistrablePoolRecord,
+    };
+
+    // Uniswap mixed V2/V3/V4 engine (feature = "bot") + the block-stream
+    // async iterator (the authoritative `newHeads`-derived block clock) +
+    // the cockpit session-phase table (`strategy_host::SessionPhase`),
+    // exposed so the Python `_Phase` translates the host's verdict instead
+    // of authoring the legal-state matrix.
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::engine::{session_phase_next, BlockStream, PyArbEngine};
+
+    // Bot — Rust-owned state (feature = "bot"). `PyIntakeReceipt` and
+    // `PyConcentratedLiquidityView` keep the (missing) gate they had in the
+    // pre-conversion registration body — mirrored, not fixed, so the surface
+    // stays byte-equivalent; `bot` is a default feature so every real build
+    // compiles them.
+    #[pymodule_export]
+    use crate::bot::intake::PyIntakeReceipt;
+    #[pymodule_export]
+    use crate::bot::pool::PyConcentratedLiquidityView;
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::pool::{PyBalanceVectorView, PyPoolTickCoverage, PyReservePairView};
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::token::PyErc20Token;
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::{PyBot, PyLiquidityPool};
+    // Session object identity — the canonical name the session's pool/token
+    // registries resolve through (thin projection of the Rust
+    // `SessionObjectRegistry`; the registry stays the identity authority).
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::py_bot_io::PyBotIo;
+    #[cfg(all(feature = "bot", feature = "db"))]
+    #[pymodule_export]
+    use crate::bot::py_bot_io::PyErc20TokenRow;
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::session_registry::PySessionObject;
+
+    // The core fee-history percentile pair the settlement driver polls. A
+    // module function like `verification_retry_policy_defaults`: a core
+    // default, not a member of the resolved config verdict.
+    #[cfg(feature = "simulation")]
+    #[pymodule_export]
+    use crate::simulation::dispatch::fee_percentiles;
+
+    // `QuantAMM` closed-form N-token Balancer weighted basket solver
+    // (feature = "bot") — `solve_balancer_weighted_basket`.
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::solvers_basket::solve_balancer_weighted_basket;
+
+    // ── Submodules (declarative `#[pymodule]`s beside their definitions;
+    //    registration order mirrors the pre-conversion body) ──────────────
+
+    // Concentrated-liquidity math (feature = "concentrated-liquidity-math") —
+    // 21 fns + 4 tick-boundary constants, un-prefixed. See
+    // `crate::concentrated_liquidity_math::concentrated_liquidity_math`.
+    #[cfg(feature = "concentrated-liquidity-math")]
+    #[pymodule_export]
+    use crate::concentrated_liquidity_math::concentrated_liquidity_math;
+
+    // Solady LibZip (FastLZ) compress/decompress — lives in `degenbot-core`
+    // (always a dependency), so no feature gate.
+    #[pymodule_export]
+    use crate::solady::solady;
+
+    #[cfg(feature = "balancer-math")]
+    #[pymodule_export]
+    use crate::balancer_math::lib::balancer_math;
+
+    #[cfg(feature = "curve-math")]
+    #[pymodule_export]
+    use crate::curve_math::lib::curve_math;
+
+    #[cfg(feature = "curve-math")]
+    #[pymodule_export]
+    use crate::curve_dy::lib::curve_dy;
+
+    #[cfg(feature = "solidly-math")]
+    #[pymodule_export]
+    use crate::solidly_math::lib::solidly_math;
+
+    #[cfg(feature = "v2-math")]
+    #[pymodule_export]
+    use crate::v2_math::lib::v2_math;
+
+    #[cfg(feature = "db")]
+    #[pymodule_export]
+    use crate::db::db;
+
+    // EIP-1559 base fee (next_base_fee) — always on (degenbot-core is a
+    // non-optional, no-extra-feature dep).
+    #[pymodule_export]
+    use crate::eip_1559::eip_1559;
+
+    // `CancelHandle` — the cooperative cancel flag for the updater loops
+    // (`run_pool_update`, `run_aave_update`). Gated on either updater feature
+    // (whichever needs it); registered once, as its own submodule.
+    #[cfg(any(feature = "pool", feature = "aave-updater"))]
+    #[pymodule_export]
+    use crate::cancel::cancel;
+
+    // Pool-updater chunk-loop seam (feature = "pool") — `run_pool_update`.
+    #[cfg(feature = "pool")]
+    #[pymodule_export]
+    use crate::pool::pool;
+
+    // Aave-updater chunk-loop seam (feature = "aave-updater") —
+    // `run_aave_update` (Python name `aave`, mirroring the pre-conversion
+    // `degenbot._ffi.aave` submodule name).
+    #[cfg(feature = "aave-updater")]
+    #[pymodule_export]
+    use crate::aave_updater::aave;
+
+    // Command-stream encoding seam (feature = "executor").
+    #[cfg(feature = "executor")]
+    #[pymodule_export]
+    use crate::executor::executor;
+
+    // ExecutionAdapter seam lift (feature = "execution") — `PySolveResult`,
+    // `PyPayloadComposer`, `abi_encode_call` (ADR-025). Foreign-contract path;
+    // never threaded into the canonical dispatch fan-out (D3).
+    #[cfg(feature = "execution")]
+    #[pymodule_export]
+    use crate::execution::execution;
+
+    // Anvil-fork seam (feature = "fork") — `PyAnvilFork` over the
+    // `degenbot-fork` core crate. Lifecycle + dev-RPC.
+    #[cfg(feature = "fork")]
+    #[pymodule_export]
+    use crate::fork::fork;
+
+    // ABI decoder/encoder functions (feature = "abi").
+    #[cfg(feature = "abi")]
+    #[pymodule_export]
+    use crate::abi::abi;
+
+    // Provider + contract + subscription + backrun modules (feature = "rpc").
+    #[cfg(feature = "rpc")]
+    #[pymodule_export]
+    use crate::rpc::provider::provider;
+
+    #[cfg(feature = "rpc")]
+    #[pymodule_export]
+    use crate::rpc::backrun_py::backrun;
+
+    #[cfg(feature = "rpc")]
+    #[pymodule_export]
+    use crate::rpc::contract::contract;
+
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::dex_identity::dex_identity_pymodule;
+
+    // Deployment-identity lookup over the embedded deployments.json
+    // (Fork A, 7FA5EZ) (feature = "bot").
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::deployments::deployments;
+
+    // Price-reader seam (feature = "price").
+    #[cfg(feature = "price")]
+    #[pymodule_export]
+    use crate::price::price;
+
+    // Submission seam (feature = "submission").
+    #[cfg(feature = "submission")]
+    #[pymodule_export]
+    use crate::submission::submission;
+
+    // Diagnostics instrumentation: GIL-acquire-latency probe
+    // + main-loop stuck-watchdog. Unconditional (no feature gate) so the
+    // probe is available in every build; the example opts in at startup.
+    #[pymodule_export]
+    use crate::diagnostics::gil_probe::diagnostics;
+
+    // Simulation seam (feature = "simulation") — the PyO3 binding over
+    // `degenbot-arbitrage` (per-block profitability pipeline).
+    #[cfg(feature = "simulation")]
+    #[pymodule_export]
+    use crate::simulation::simulation;
+
+    // Fleet operator seam (feature = "simulation") — the JCI2FW Part B
+    // runtime re-tune channel over the process posture owner (the mirror
+    // home is `degenbot.fleet`; the operator op is `set_fleet_posture`).
+    #[cfg(feature = "simulation")]
+    #[pymodule_export]
+    use crate::fleet::fleet;
+
+    /// Module-lifecycle setup: the typed-config install, the failure-policy
+    /// overrides, the retired-env warnings, the `create_exception!` island,
+    /// and the `sys.modules` entries for the declarative submodules.
+    ///
+    /// Runs AFTER the declarative member registration (the expansion calls it
+    /// last) — a reordering with no observable effect: the only failure exit
+    /// is `std::process::exit(2)`, which never returns to Python either way.
+    #[pymodule_init]
+    fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        // KAHU5W boot wiring: install the typed BotConfig BEFORE any
+        // subscriber/failure-policy/engine code reads the holder. The loader is
+        // the ONLY env-reading site; without this install every production run
+        // observed schema defaults (metrics bound 127.0.0.1, default debounce),
+        // silently ignoring DEGENBOT_* env.
+        // Option B hard cutover: the standard file layer is LIVE —
+        // DEGENBOT_CONFIG (or ~/.config/degenbot/config.toml) feeds the typed
+        // BotConfig; the retired pre-0.6 vocabulary ([rpc]/[ws]/[database]/
+        // [otel]/default_chain_id) fails the load with pointed migration
+        // errors (docs/config-migration.md). [failure_policy] is a sanctioned
+        // free-form table the loader skips; the reader below consumes it from
+        // the SAME file via the single standard_file_path() contract.
+        // ADR-040 D3: per-bucket failure-policy overrides, boot-validated. An
+        // invalid bucket/action is a boot ERROR (process exits) — the operator
+        // asked for a specific containment stance; silently ignoring it would
+        // trade on a policy the process does not actually have.
+        let config_file = ::degenbot_config::standard_file_path();
+        match ::degenbot_config::load_process_config() {
+            Ok(loaded) => {
+                // First-wins: a test harness or an embedding that installed
+                // earlier keeps ITS config; this is the production boot path.
+                let installed = degenbot_bot::bot_core::stance::install(std::sync::Arc::new(
+                    loaded.config.clone(),
+                ));
+                // The driver-domain resolvers read the LAYERS, not just the typed
+                // value, so they need the provenance this same load produced. One
+                // load, published once: a resolver cannot see a different file or
+                // environment than the holder received.
+                crate::config::publish_loaded(loaded, installed);
+                // The verdict is the seam's one object, so it is built from the
+                // layers this same load published rather than on first read.
+                crate::config::install_verdict();
             }
-            #[expect(clippy::exit)]
-            std::process::exit(2);
-        }
-    }
-    match python_log_layer::read_failure_policy_overrides(config_file.as_deref()) {
-        Ok(overrides) if !overrides.is_empty() => {
-            let refs: Vec<(&str, &str)> = overrides
-                .iter()
-                .map(|(k, a)| (k.as_str(), a.as_str()))
-                .collect();
-            if let Err(e) = degenbot_bot::failure_policy::install_overrides(refs) {
-                // DELIBERATE fail-loud import seam: module init has no
-                // subscriber yet and no trading surface is up, so a refused
-                // policy exits the process before any boot can proceed on a
-                // half-read containment stance. Both lints are suppressed for
-                // this one seam (the same predicates block_pump.rs grants its
-                // pre-abort stderr marker).
+            Err(e) => {
                 #[expect(clippy::print_stderr)]
                 {
-                    eprintln!("invalid override - boot refused: {e}");
+                    eprintln!("invalid configuration - boot refused: {e}");
                 }
                 #[expect(clippy::exit)]
                 std::process::exit(2);
             }
-            // ADR-040 D3 loudness: a softened tainted bucket must be visible
-            // as an operator DECISION on the boot surface, not a silent count.
-            // (Softening = any kind whose default is quarantine/exit set to a
-            // weaker action; the pair list makes it greppable.)
-            let pairs = overrides
-                .iter()
-                .map(|(k, a)| format!("{k}={a}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            op_info!(domain = pump, count = overrides.len(),
-                overrides = %pairs,
-                "failure_policy overrides installed"
-            );
         }
-        Ok(_) => {}
-        // A malformed [failure_policy] VALUES table is a boot error (ADR-040
-        // D3): the operator asked for a containment stance; refuse loudly.
-        Err(e) => {
-            // DELIBERATE fail-loud import seam (see the Ok arm above).
-            #[expect(clippy::print_stderr)]
-            {
-                eprintln!("invalid override table - boot refused: {e}");
+        match crate::python_log_layer::read_failure_policy_overrides(config_file.as_deref()) {
+            Ok(overrides) if !overrides.is_empty() => {
+                let refs: Vec<(&str, &str)> = overrides
+                    .iter()
+                    .map(|(k, a)| (k.as_str(), a.as_str()))
+                    .collect();
+                if let Err(e) = degenbot_bot::failure_policy::install_overrides(refs) {
+                    // DELIBERATE fail-loud import seam: module init has no
+                    // subscriber yet and no trading surface is up, so a refused
+                    // policy exits the process before any boot can proceed on a
+                    // half-read containment stance. Both lints are suppressed for
+                    // this one seam (the same predicates block_pump.rs grants its
+                    // pre-abort stderr marker).
+                    #[expect(clippy::print_stderr)]
+                    {
+                        eprintln!("invalid override - boot refused: {e}");
+                    }
+                    #[expect(clippy::exit)]
+                    std::process::exit(2);
+                }
+                // ADR-040 D3 loudness: a softened tainted bucket must be visible
+                // as an operator DECISION on the boot surface, not a silent count.
+                // (Softening = any kind whose default is quarantine/exit set to a
+                // weaker action; the pair list makes it greppable.)
+                let pairs = overrides
+                    .iter()
+                    .map(|(k, a)| format!("{k}={a}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                op_info!(domain = pump, count = overrides.len(),
+                    overrides = %pairs,
+                    "failure_policy overrides installed"
+                );
             }
-            #[expect(clippy::exit)]
-            std::process::exit(2);
+            Ok(_) => {}
+            // A malformed [failure_policy] VALUES table is a boot error (ADR-040
+            // D3): the operator asked for a containment stance; refuse loudly.
+            Err(e) => {
+                // DELIBERATE fail-loud import seam (see the Ok arm above).
+                #[expect(clippy::print_stderr)]
+                {
+                    eprintln!("invalid override table - boot refused: {e}");
+                }
+                #[expect(clippy::exit)]
+                std::process::exit(2);
+            }
         }
+
+        // ADR-043 §5 migration safety net: loudly name any retired verbosity env
+        // name still present in the environment (detection, not compatibility).
+        degenbot_core::telemetry::warn_retired_env_names();
+
+        register_exception_types(m)?;
+        register_submodules_in_sys(m)
     }
 
-    // ADR-043 §5 migration safety net: loudly name any retired verbosity env
-    // name still present in the environment (detection, not compatibility).
-    degenbot_core::telemetry::warn_retired_env_names();
+    /// The `create_exception!` exception types. They carry no `_PYO3_DEF`
+    /// (only `#[pyclass]`/`#[pyfunction]`/`#[pymodule]` items do), so they
+    /// cannot take `#[pymodule_export]` — this is the one imperative
+    /// registration island left on the root module.
+    fn register_exception_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        let py = m.py();
+        // The chain-identity refusal (ADR-062 D8): a distinct type so a driver
+        // can read the expected and actual chain ids off the exception instead
+        // of matching a message. (feature = "rpc")
+        #[cfg(feature = "rpc")]
+        m.add(
+            "ChainMismatchError",
+            py.get_type::<crate::rpc::errors::ChainMismatchError>(),
+        )?;
 
-    // Register the driver-boot pyfunction on the module: everything the
-    // long-running Python driver needs (runtimes, subscriber + drainer,
-    // metrics scrape, panic hook, census dump) lives behind the explicit
-    // `driver_boot()` — a one-shot consumer (the console passthrough, a
-    // plain library import) pays none of it at import.
-    m.add_function(wrap_pyfunction!(driver_boot, m)?)?;
+        // Typed verification exceptions (TODO-53b7453b): distinct `RuntimeError`
+        // subclasses so `build_paths` can classify verification failures by type
+        // instead of fragile string matching. (feature = "bot")
+        #[cfg(feature = "bot")]
+        {
+            m.add(
+                "VerificationMismatchError",
+                py.get_type::<crate::bot::engine::VerificationMismatchError>(),
+            )?;
+            m.add(
+                "VerificationRpcError",
+                py.get_type::<crate::bot::engine::VerificationRpcError>(),
+            )?;
+            // FF-T1: the fleet boot refusal surfaces as the typed
+            // BootRefused exception — the library never aborts the host process
+            // on the boot-refusal arm; the degenbot binary maps it to its loud
+            // named fail-fast exit.
+            m.add(
+                "BootRefused",
+                py.get_type::<crate::bot::engine::BootRefused>(),
+            )?;
+            // the Faulted intake drain (spike S2) surfaces as a typed
+            // receipt exception.
+            m.add(
+                "FleetIntakeFaultedError",
+                py.get_type::<crate::bot::engine::FleetIntakeFaultedError>(),
+            )?;
+            // Typed pool-admission exceptions (Plan 102, F2EVV6): a unified
+            // `PoolRegistrationError` hierarchy so `build_paths` can classify
+            // V2/V3/V4 admission refusals by type instead of fragile string
+            // matching. The V4-specific `HookedPoolRejectedError` /
+            // `DynamicFeePoolRejectedError` reparent under
+            // `PoolRegistrationError`; `PoolAlreadyRegisteredError` +
+            // `SpecViolationError` are the unified admission categories shared
+            // by V2/V3/V4.
+            m.add(
+                "PoolRegistrationError",
+                py.get_type::<crate::bot::engine::PoolRegistrationError>(),
+            )?;
+            m.add(
+                "HookedPoolRejectedError",
+                py.get_type::<crate::bot::engine::HookedPoolRejectedError>(),
+            )?;
+            m.add(
+                "DynamicFeePoolRejectedError",
+                py.get_type::<crate::bot::engine::DynamicFeePoolRejectedError>(),
+            )?;
+            m.add(
+                "PossibleInaccurateResult",
+                py.get_type::<crate::bot::engine::PossibleInaccurateResult>(),
+            )?;
+            m.add(
+                "HighFeePoolRejectedError",
+                py.get_type::<crate::bot::engine::HighFeePoolRejectedError>(),
+            )?;
+            m.add(
+                "PoolAlreadyRegisteredError",
+                py.get_type::<crate::bot::engine::PoolAlreadyRegisteredError>(),
+            )?;
+            m.add(
+                "SpecViolationError",
+                py.get_type::<crate::bot::engine::SpecViolationError>(),
+            )?;
+            // PRG-4: the registered-path cap refusal — a BENIGN stop signal
+            // the crawl catches instead of a Python counter unwind.
+            m.add(
+                "PathRegistryFullError",
+                py.get_type::<crate::bot::engine::PathRegistryFullError>(),
+            )?;
+            // Strategy-host operator refusals: typed so an unknown or
+            // unconfigured strategy is classifiable by type, not message.
+            m.add(
+                "StrategyHostError",
+                py.get_type::<crate::bot::engine::StrategyHostError>(),
+            )?;
+            m.add(
+                "UnknownStrategyError",
+                py.get_type::<crate::bot::engine::UnknownStrategyError>(),
+            )?;
+            m.add(
+                "UnconfiguredStrategyError",
+                py.get_type::<crate::bot::engine::UnconfiguredStrategyError>(),
+            )?;
+        }
+        Ok(())
+    }
 
-    // Register the shutdown pyfunction on the module.
-    python_log_layer::PythonLogLayer::register_pyfunction(m)?;
+    /// Populate `sys.modules["degenbot._ffi.<name>"]` for every registered
+    /// submodule.
+    ///
+    /// Declarative submodule registration only sets the parent attribute
+    /// (`add_submodule`) — it does NOT insert the `sys.modules` entry, and
+    /// Python's import system needs that entry to traverse the
+    /// `degenbot._ffi.<name>` dotted path (the extension module is a single
+    /// file, not a package, so without it the import fails with
+    /// `ModuleNotFoundError: 'degenbot._ffi' is not a package`). The
+    /// pre-conversion imperative builders each inserted their own entry; this
+    /// shared helper replaces all of them, gated to the same feature set.
+    fn register_submodules_in_sys(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        let py = m.py();
+        let sys_modules = py.import("sys")?.getattr("modules")?;
+        // The unconditional entries lead the initializer; the feature-gated
+        // remainder appends push-by-push so each name carries its own gate
+        // mirroring the registration site above (order carries no meaning —
+        // the sys.modules entries are independent set_items).
+        let mut names: Vec<&'static str> = vec!["solady", "eip_1559", "diagnostics"];
+        #[cfg(feature = "concentrated-liquidity-math")]
+        names.push("concentrated_liquidity_math");
+        #[cfg(feature = "balancer-math")]
+        names.push("balancer_math");
+        #[cfg(feature = "curve-math")]
+        names.push("curve_math");
+        #[cfg(feature = "curve-math")]
+        names.push("curve_dy");
+        #[cfg(feature = "solidly-math")]
+        names.push("solidly_math");
+        #[cfg(feature = "v2-math")]
+        names.push("v2_math");
+        #[cfg(feature = "db")]
+        names.push("db");
+        #[cfg(any(feature = "pool", feature = "aave-updater"))]
+        names.push("cancel");
+        #[cfg(feature = "pool")]
+        names.push("pool");
+        #[cfg(feature = "aave-updater")]
+        names.push("aave");
+        #[cfg(feature = "executor")]
+        names.push("executor");
+        #[cfg(feature = "execution")]
+        names.push("execution");
+        #[cfg(feature = "fork")]
+        names.push("fork");
+        #[cfg(feature = "abi")]
+        names.push("abi");
+        #[cfg(feature = "rpc")]
+        names.push("provider");
+        #[cfg(feature = "rpc")]
+        names.push("backrun");
+        #[cfg(feature = "rpc")]
+        names.push("contract");
+        #[cfg(feature = "bot")]
+        names.push("dex_identity");
+        #[cfg(feature = "bot")]
+        names.push("deployments");
+        #[cfg(feature = "price")]
+        names.push("price");
+        #[cfg(feature = "submission")]
+        names.push("submission");
+        #[cfg(feature = "simulation")]
+        names.push("simulation");
+        #[cfg(feature = "simulation")]
+        names.push("fleet");
 
-    // Register every `#[pyfunction]`/`#[pyclass]` surface on the module.
-    // See `c_api.rs`  — mirrors polars-python's
-    // `c_api/mod.rs` registration site.
-    c_api::register(m)
+        for name in names {
+            let dotted = format!("degenbot._ffi.{name}");
+            sys_modules.set_item(dotted, m.getattr(name)?)?;
+        }
+        Ok(())
+    }
 }

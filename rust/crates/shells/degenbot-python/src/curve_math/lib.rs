@@ -12,11 +12,7 @@
 use crate::prelude::*;
 use alloy::primitives::U256;
 use degenbot_math::curve::{CurveMathError, CurveMathError as CErr, DVariant, YDVariant, YVariant};
-use pyo3::{
-    exceptions::PyValueError,
-    types::{PyList, PyModule},
-    wrap_pyfunction, PyTypeInfo,
-};
+use pyo3::{exceptions::PyValueError, types::PyList, PyTypeInfo};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
@@ -301,28 +297,17 @@ pub fn derive_rate_and_precision_multipliers(
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
-pub fn add_curve_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.curve_math")?;
-
-    submod.add_function(wrap_pyfunction!(stableswap_get_d, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(stableswap_get_y, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(stableswap_get_y_d, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(stableswap_newton_y, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(stableswap_reduction_coefficient, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
-        derive_rate_and_precision_multipliers,
-        &submod
-    )?)?;
-
-    // Register as parent attribute AND in `sys.modules` so
-    // `from degenbot._ffi.curve_math import X` resolves (see
-    // `add_balancer_math_module` for the `sys.modules` rationale —
-    // the extension module is a single file, not a package).
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.curve_math", &submod)?;
-
-    Ok(())
+/// The `degenbot._ffi.curve_math` Python submodule (declarative
+/// `#[pymodule]`), carrying the `StableSwap` math pyfunctions. The parent
+/// module registers the submodule itself; the `sys.modules` entry (needed
+/// for the dotted-path import — the extension module is a single file, not
+/// a package) lives in the parent's shared helper.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod curve_math {
+    #[pymodule_export]
+    use super::{
+        derive_rate_and_precision_multipliers, stableswap_get_d, stableswap_get_y,
+        stableswap_get_y_d, stableswap_newton_y, stableswap_reduction_coefficient,
+    };
 }

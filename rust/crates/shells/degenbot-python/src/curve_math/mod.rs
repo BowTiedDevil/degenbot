@@ -3,7 +3,8 @@
 //! Thin binding layer that extracts Python arguments, calls the pure-Rust math
 //! leaf, and converts results back to Python `int`s. Mirrors the `balancer_math`
 //! binding shape (top-level functions added to the umbrella module via
-//! `add_curve_math_module`). The GIL is held during computation — the Curve
+//! declarative `curve_math` `#[pymodule]` in `lib.rs`). The GIL is held
+//! during computation — the Curve
 //! math operations are cheap and never block on I/O.
 //!
 //! Only the five iterative solvers (`stableswap_get_d`/`_y`/`_y_d`/

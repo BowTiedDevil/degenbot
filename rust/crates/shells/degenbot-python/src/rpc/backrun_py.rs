@@ -101,13 +101,12 @@ impl PyBackrunFeed {
 /// # Errors
 ///
 /// Propagates any `PyResult` failure from the module add calls.
-pub fn add_backrun_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.backrun")?;
-    submod.add_class::<PyBackrunFeed>()?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.backrun", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.backrun` Python submodule (declarative
+/// `#[pymodule]`), carrying the backrun pipeline feed pyclass. The parent
+/// module registers the submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod backrun {
+    #[pymodule_export]
+    use super::PyBackrunFeed;
 }

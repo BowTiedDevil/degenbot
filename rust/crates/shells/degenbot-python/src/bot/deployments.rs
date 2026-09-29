@@ -26,7 +26,8 @@
 use crate::prelude::*;
 
 use address_utils::{address_to_checksum_string, parse_address};
-use degenbot_uniswap::deployments::{self, AddressMismatch};
+use degenbot_uniswap::deployments as core_deployments;
+use degenbot_uniswap::deployments::AddressMismatch;
 
 /// Resolve the CREATE2 init code hash for a ``(chain_id, factory)`` pair from
 /// the embedded canonical `deployments.json`.
@@ -42,10 +43,8 @@ use degenbot_uniswap::deployments::{self, AddressMismatch};
 fn init_hash_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
     let addr = parse_address(factory)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(
-        deployments::lookup(chain_id, addr)
-            .and_then(|rec| rec.init_hash.map(|h| format!("{h:#x}"))),
-    )
+    Ok(core_deployments::lookup(chain_id, addr)
+        .and_then(|rec| rec.init_hash.map(|h| format!("{h:#x}"))))
 }
 
 /// Resolve the *effective* CREATE2 deployer for a ``(chain_id, factory)``
@@ -64,7 +63,7 @@ fn init_hash_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
 fn deployer_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
     let addr = parse_address(factory)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(deployments::lookup(chain_id, addr)
+    Ok(core_deployments::lookup(chain_id, addr)
         .map(|rec| address_to_checksum_string(&rec.effective_deployer())))
 }
 
@@ -75,9 +74,9 @@ fn deployer_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
 fn resolve_deployer(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(address_to_checksum_string(&deployments::resolve_deployer(
-        chain_id, addr,
-    )))
+    Ok(address_to_checksum_string(
+        &core_deployments::resolve_deployer(chain_id, addr),
+    ))
 }
 
 /// Resolve the CREATE2 init code hash for a V3 ``(chain_id, factory)`` pair,
@@ -90,7 +89,7 @@ fn resolve_v3_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(format!(
         "{:#x}",
-        deployments::resolve_v3_init_hash(chain_id, addr)
+        core_deployments::resolve_v3_init_hash(chain_id, addr)
     ))
 }
 
@@ -104,25 +103,23 @@ fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(format!(
         "{:#x}",
-        deployments::resolve_v2_init_hash(chain_id, addr)
+        core_deployments::resolve_v2_init_hash(chain_id, addr)
     ))
 }
 
 /// Register the `init_hash_for` / `deployer_for` free functions on the
 /// `degenbot._ffi.deployments` submodule.
-pub(crate) fn add_deployments(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.deployments")?;
-    submod.add_function(wrap_pyfunction!(init_hash_for, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(deployer_for, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(resolve_deployer, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(resolve_v3_init_hash, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(resolve_v2_init_hash, &submod)?)?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.deployments", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.deployments` Python submodule (declarative
+/// `#[pymodule]`), carrying the deployment-identity lookup over the
+/// embedded deployments.json (Fork A, 7FA5EZ). The parent module registers
+/// the submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod deployments {
+    #[pymodule_export]
+    use super::{
+        deployer_for, init_hash_for, resolve_deployer, resolve_v2_init_hash, resolve_v3_init_hash,
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +149,7 @@ pub(crate) fn verify_v2(
     token0: alloy::primitives::Address,
     token1: alloy::primitives::Address,
 ) -> PyResult<()> {
-    deployments::verify_v2_pool_address(chain_id, factory, expected, token0, token1)
+    core_deployments::verify_v2_pool_address(chain_id, factory, expected, token0, token1)
         .map_err(map_mismatch)
 }
 
@@ -167,7 +164,7 @@ pub(crate) fn verify_v3(
     token1: alloy::primitives::Address,
     fee: u32,
 ) -> PyResult<()> {
-    deployments::verify_v3_pool_address(chain_id, factory, expected, token0, token1, fee)
+    core_deployments::verify_v3_pool_address(chain_id, factory, expected, token0, token1, fee)
         .map_err(map_mismatch)
 }
 
@@ -184,7 +181,7 @@ pub(crate) fn verify_aerodrome_v2(
     token1: alloy::primitives::Address,
     stable: bool,
 ) -> PyResult<()> {
-    deployments::verify_aerodrome_v2_pool_address(
+    core_deployments::verify_aerodrome_v2_pool_address(
         chain_id, factory, expected, token0, token1, stable,
     )
     .map_err(map_mismatch)
@@ -204,7 +201,7 @@ pub(crate) fn verify_aerodrome_v3(
     token1: alloy::primitives::Address,
     tick_spacing: i32,
 ) -> PyResult<()> {
-    deployments::verify_aerodrome_v3_pool_address(
+    core_deployments::verify_aerodrome_v3_pool_address(
         chain_id,
         factory,
         expected,

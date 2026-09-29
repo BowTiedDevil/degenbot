@@ -787,19 +787,20 @@ impl PyAlloyProvider {
     }
 }
 
-/// Add provider module to Python module.
-#[expect(clippy::missing_errors_doc)]
-pub fn add_provider_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.provider")?;
-    submod.add_class::<PyLogFilter>()?;
-    submod.add_class::<PyAlloyProvider>()?;
+/// The `degenbot._ffi.provider` Python submodule (declarative
+/// `#[pymodule]`), carrying the sync provider/filter/subscription pyclasses
+/// (plus the async provider under `feature = "async"`). The parent module
+/// registers the submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod provider {
+    #[pymodule_export]
+    use super::{PyAlloyProvider, PyLogFilter};
+
+    #[pymodule_export]
+    use crate::rpc::subscription::PyAlloySubscription;
+
     #[cfg(feature = "async")]
-    submod.add_class::<crate::rpc::async_provider::PyAsyncAlloyProvider>()?;
-    submod.add_class::<crate::rpc::subscription::PyAlloySubscription>()?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.provider", &submod)?;
-    Ok(())
+    #[pymodule_export]
+    use crate::rpc::async_provider::PyAsyncAlloyProvider;
 }

@@ -6,7 +6,7 @@
 
 use crate::prelude::*;
 use alloy::primitives::U256;
-use pyo3::{exceptions::PyValueError, types::PyModule, wrap_pyfunction, PyTypeInfo};
+use pyo3::{exceptions::PyValueError, PyTypeInfo};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
@@ -124,17 +124,13 @@ pub fn calc_exact_out_v2(
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
-pub fn add_v2_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.v2_math")?;
-
-    submod.add_function(wrap_pyfunction!(calc_exact_in_v2, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(calc_exact_out_v2, &submod)?)?;
-
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.v2_math", &submod)?;
-
-    Ok(())
+/// The `degenbot._ffi.v2_math` Python submodule (declarative
+/// `#[pymodule]`), carrying the V2 constant-product swap-math pyfunctions.
+/// The parent module registers the submodule itself; the `sys.modules`
+/// entry lives in the parent's shared helper.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod v2_math {
+    #[pymodule_export]
+    use super::{calc_exact_in_v2, calc_exact_out_v2};
 }

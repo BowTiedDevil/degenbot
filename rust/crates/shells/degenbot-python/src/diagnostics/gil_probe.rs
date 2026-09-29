@@ -350,17 +350,14 @@ enum WatchdogVerdict {
 ///
 /// # Errors
 /// Returns `PyErr` if a function fails to register.
-pub fn add_diagnostics_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.diagnostics")?;
-    submod.add_function(wrap_pyfunction!(start_gil_probe, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(mark_progress, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(failure_action, &submod)?)?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.diagnostics", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.diagnostics` Python submodule (declarative
+/// `#[pymodule]`), carrying the GIL-probe pyfunctions. The parent module
+/// registers the submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod diagnostics {
+    #[pymodule_export]
+    use super::{failure_action, mark_progress, start_gil_probe};
 }
 
 // Keep the unused-import linter quiet in builds without the probe wired.

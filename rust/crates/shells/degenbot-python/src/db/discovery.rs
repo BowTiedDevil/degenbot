@@ -409,21 +409,6 @@ pub(crate) fn db_upsert_pool_manager(
 // Module registration
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Register the discovery seam functions + pyclasses on `m`.
-///
-/// # Errors
-///
-/// Returns a [`PyErr`] if any `add_function` / `add_class` call fails.
-pub fn add_discovery_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(db_upsert_v2_pools, m)?)?;
-    m.add_function(wrap_pyfunction!(db_upsert_v3_pools, m)?)?;
-    m.add_function(wrap_pyfunction!(db_upsert_v4_pools, m)?)?;
-    m.add_function(wrap_pyfunction!(db_set_exchange_last_update_block, m)?)?;
-    m.add_function(wrap_pyfunction!(db_upsert_exchange, m)?)?;
-    m.add_function(wrap_pyfunction!(db_set_exchange_active, m)?)?;
-    m.add_function(wrap_pyfunction!(db_upsert_pool_manager, m)?)?;
-    m.add_class::<PyV2PoolRowInput>()?;
-    m.add_class::<PyV3PoolRowInput>()?;
-    m.add_class::<PyV4PoolRowInput>()?;
-    Ok(())
-}
+// The discovery seam members (the upsert/write pyfunctions + the pool-row
+// input builders) are exported declaratively from the `db` `#[pymodule]` in
+// the parent `mod.rs`.

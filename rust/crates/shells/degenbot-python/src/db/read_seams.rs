@@ -84,7 +84,6 @@ mod tests {
     #![expect(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
-    use pyo3::types::PyModule;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
     use std::thread;
@@ -171,9 +170,11 @@ mod tests {
     #[test]
     fn read_seams_are_registered_on_db_submodule() {
         Python::attach(|py| {
-            let root = PyModule::new(py, "degenbot._ffi").unwrap();
-            crate::db::add_db_module(&root).unwrap();
-            let db = root.getattr("db").unwrap();
+            // The declarative `#[pymodule]` submodule builds its module object
+            // through its `ModuleDef` — the same path the root module's
+            // `add_submodule` registration takes.
+            let db = crate::db::db::_PYO3_DEF.make_module(py).unwrap();
+            let db = db.bind(py);
             assert!(db.hasattr("db_resolve_token_ids").unwrap());
             assert!(db.hasattr("db_fetch_graph_edition").unwrap());
         });

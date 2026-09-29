@@ -1,7 +1,7 @@
 //! The fleet registration intake's `PyO3` surface (PRG-3): the Python
 //! driver submits its pool-build callables as fleet units to the
 //! `PoolStateUpdater` intake executor and joins each unit's receipt. The
-//! legacy stance never sees this module — the `c_api` register site gates
+//! legacy stance never sees this module — the root `#[pymodule]` gates
 //! it on the installed fleet boot (construction-time stance like the
 //! executor field, never read per call).
 //!

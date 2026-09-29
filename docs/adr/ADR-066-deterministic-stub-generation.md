@@ -79,3 +79,13 @@ registration surface must move to declarative `#[pymodule] mod` form (tracked as
 an implementation task). The post-conversion re-gate is folded into that task's
 acceptance: if generation still cannot cover the seam after conversion, this ADR
 reopens under its own terms.
+
+Post-conversion re-gate: the decision stands. The root module introspects 28
+classes, 36 functions, and all 26 declarative submodule trees with reachable
+members — 27 generated stubs, 1:1 with the hand tree, `incomplete=false` on 24 of
+26. Classification: generator-correct in bulk (including catching ten runtime
+members of `degenbot._ffi.simulation` missing from the hand `.pyi`, soaked today
+by the stubtest allowlist), generator-gap confined to the `create_exception!`
+island types, imperative U256 attributes, the #2454 annotation frontier,
+`__all__` emission, and `__new__`-vs-`__init__` representation; generator-broken:
+zero. The stub-generation lane builds with the gap list as the allowlist's origin.

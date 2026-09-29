@@ -18,22 +18,14 @@ pub mod chainlink;
 pub use aave::PyAavePriceOracle;
 pub use chainlink::PyChainlinkPriceFeed;
 
-/// Register the price-reader pyclasses on the module.
-///
-/// # Errors
-///
-/// Returns `PyErr` if a class fails to register on the module.
-pub fn add_price_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.price")?;
-    submod.add_class::<PyChainlinkPriceFeed>()?;
-    submod.add_class::<PyAavePriceOracle>()?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.price", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.price` Python submodule (declarative `#[pymodule]`),
+/// carrying the price-reader pyclasses. The parent module registers the
+/// submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod price {
+    #[pymodule_export]
+    use super::{PyAavePriceOracle, PyChainlinkPriceFeed};
 }
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule;

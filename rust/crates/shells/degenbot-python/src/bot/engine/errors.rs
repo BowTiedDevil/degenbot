@@ -1,7 +1,8 @@
 //! Distinct Python exception types for the engine-wrapper surface.
 //!
 //! `create_exception!` registers the Rust type in *this* module
-//! (`crate::bot::engine::errors`); `engine::mod` re-exports them so `c_api`
+//! (`crate::bot::engine::errors`); `engine::mod` re-exports them so the root
+//! `#[pymodule]`
 //! and the sibling concern files reference them as `crate::bot::engine::*`.
 
 use pyo3::{create_exception, PyErr};

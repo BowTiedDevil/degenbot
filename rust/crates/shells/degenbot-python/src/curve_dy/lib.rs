@@ -14,8 +14,8 @@ use degenbot_math::curve::curve_dy_calculator::{
 };
 use pyo3::{
     exceptions::PyValueError,
-    types::{PyDict, PyList, PyModule},
-    wrap_pyfunction, PyTypeInfo,
+    types::{PyDict, PyList},
+    PyTypeInfo,
 };
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
@@ -447,18 +447,13 @@ fn calculate_dy_underlying(
 /// # Errors
 ///
 /// Returns `PyErr` if any symbol fails to register.
-pub fn add_curve_dy_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.curve_dy")?;
-
-    submod.add_class::<DyCalculationInputs>()?;
-    submod.add_function(wrap_pyfunction!(calculate_dy, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(calculate_dy_underlying, &submod)?)?;
-
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.curve_dy", &submod)?;
-
-    Ok(())
+/// The `degenbot._ffi.curve_dy` Python submodule (declarative
+/// `#[pymodule]`), carrying the `get_dy` calculator seam. The parent module
+/// registers the submodule itself; the `sys.modules` entry lives in the
+/// parent's shared helper.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod curve_dy {
+    #[pymodule_export]
+    use super::{calculate_dy, calculate_dy_underlying, DyCalculationInputs};
 }

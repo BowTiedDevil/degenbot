@@ -36,7 +36,7 @@ use degenbot_core::op_warn;
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyModule};
+use pyo3::types::{PyBool, PyDict};
 
 use degenbot_workers::posture::{FleetPosture, PosturePolicy, PosturePolicyPatch};
 
@@ -329,15 +329,27 @@ pub fn current_posture_policy(py: Python<'_>) -> PyResult<Py<PyDict>> {
 ///
 /// Returns `PyErr` if the submodule, the typed exception, or a function
 /// fails to register on the module.
-pub fn add_fleet_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.fleet")?;
-    submod.add("PostureRetuneError", py.get_type::<PostureRetuneError>())?;
-    submod.add_function(wrap_pyfunction!(set_posture_policy, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(current_posture_policy, &submod)?)?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.fleet", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.fleet` Python submodule (declarative `#[pymodule]`),
+/// carrying the posture re-tune operator pyfunctions. The parent module
+/// registers the submodule itself and its `sys.modules` entry.
+///
+/// [`PostureRetuneError`] is a `create_exception!` type (no `_PYO3_DEF`), so
+/// it stays on the submodule's one imperative registration line in `init`.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod fleet {
+    use pyo3::prelude::*;
+
+    use super::PostureRetuneError;
+
+    #[pymodule_export]
+    use super::{current_posture_policy, set_posture_policy};
+
+    #[pymodule_init]
+    fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add(
+            "PostureRetuneError",
+            m.py().get_type::<PostureRetuneError>(),
+        )
+    }
 }

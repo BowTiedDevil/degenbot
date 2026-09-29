@@ -12,6 +12,8 @@
 //! runtime + no `block_on` here — signing is pure compute, unlike the price
 //! readers' `eth_call` (which IS async I/O).
 
+use pyo3::prelude::*;
+
 pub mod dispatcher;
 pub mod params;
 pub mod signer;
@@ -24,38 +26,23 @@ pub use signer::PyTxSigner;
 pub use sim_pipeline::PySimSubmitPipeline;
 pub use submit::PySubmitCandidate;
 
-use pyo3::prelude::*;
-use pyo3::types::PyModule;
+/// The `degenbot._ffi.submission` Python submodule (declarative
+/// `#[pymodule]`), carrying the submission pyclasses + the
+/// `finalize_fees_py` / `dispatch_and_submit_py` / `fetch_fee_history_py`
+/// pyfunctions. The parent module registers the submodule itself and its
+/// `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod submission {
+    #[pymodule_export]
+    use super::{
+        PyDispatcher, PyDivergentPool, PySimSubmitPipeline, PySubmitCandidate, PyTxParams,
+        PyTxSigner,
+    };
 
-/// Register the submission pyclasses + `finalize_fees` pyfunction on the module.
-///
-/// # Errors
-///
-/// Returns `PyErr` if a class/function fails to register on the module.
-pub fn add_submission_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.submission")?;
-    submod.add_class::<PyDispatcher>()?;
-    submod.add_class::<PyDivergentPool>()?;
-    submod.add_class::<PyTxSigner>()?;
-    submod.add_class::<PyTxParams>()?;
-    submod.add_class::<PySubmitCandidate>()?;
-    submod.add_class::<PySimSubmitPipeline>()?;
-    submod.add_function(wrap_pyfunction!(
-        crate::submission::params::finalize_fees_py,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        crate::submission::submit::dispatch_and_submit_py,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        crate::submission::submit::fetch_fee_history_py,
-        &submod
-    )?)?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.submission", &submod)?;
-    Ok(())
+    #[pymodule_export]
+    use super::params::finalize_fees_py;
+
+    #[pymodule_export]
+    use super::submit::{dispatch_and_submit_py, fetch_fee_history_py};
 }

@@ -32,7 +32,6 @@ use std::time::{Duration, Instant};
 
 use crossbeam_queue::ArrayQueue;
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
 use tracing_subscriber::layer::{Context, Layer, Layered};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
@@ -133,18 +132,6 @@ impl PythonLogLayer {
             .spawn(move || drainer_loop(drainer_state))
             .expect("spawn rust-log-drainer thread");
         Self { state }
-    }
-
-    /// Register a `shutdown_log_drainer()` pyfunction on the given module
-    /// so the Python driver can call it at shutdown.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `PyErr` if the function can't be registered on the module.
-    pub fn register_pyfunction(m: &Bound<'_, PyModule>) -> PyResult<()> {
-        m.add_function(pyo3::wrap_pyfunction!(shutdown_log_drainer, m)?)?;
-        m.add_function(pyo3::wrap_pyfunction!(flush_telemetry, m)?)?;
-        Ok(())
     }
 }
 

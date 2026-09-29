@@ -32,7 +32,7 @@
 use alloy::primitives::{Bytes, U256};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyModule};
+use pyo3::types::{PyBytes, PyDict, PyList};
 
 use degenbot_execution::solve_result::{HopDescriptor, HopFamily};
 use degenbot_execution::{ComposeError, ComposerInputs, PayloadComposer, SolveResult};
@@ -339,17 +339,14 @@ fn abi_encode_call<'py>(
 ///
 /// Returns a [`PyErr`] if any `add_class`/`add_function` call fails (e.g. a
 /// name collision); propagated unchanged to the `#[pymodule]` caller.
-pub fn add_execution_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.execution")?;
-    submod.add_class::<PySolveResult>()?;
-    submod.add_class::<PyPayloadComposer>()?;
-    submod.add_function(wrap_pyfunction!(abi_encode_call, &submod)?)?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.execution", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.execution` Python submodule (declarative
+/// `#[pymodule]`), carrying the `ExecutionAdapter` seam lift (ADR-025). The
+/// parent module registers the submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod execution {
+    #[pymodule_export]
+    use super::{abi_encode_call, PyPayloadComposer, PySolveResult};
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

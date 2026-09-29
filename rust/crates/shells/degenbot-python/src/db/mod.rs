@@ -23,7 +23,6 @@ use std::path::PathBuf;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3::wrap_pyfunction;
 
 pub use aave::PyDatabasePositionQuery;
 use degenbot_db::ops::{self, UpgradeOutcome};
@@ -188,85 +187,63 @@ pub(crate) fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
 
-/// Register the `db` file-op functions on `m` (feature = "db").
-///
-/// # Errors
-///
-/// Register the `#[pyclass]` types on the `db` submodule (extracted from
-/// [`add_db_module`] to keep it under clippy's line budget).
-///
-/// # Errors
-///
-/// Returns a [`PyErr`] if any `add_class`/`add` call fails.
-fn register_db_classes(submod: &Bound<'_, PyModule>) -> PyResult<()> {
-    submod.add_class::<liquidity_updater::PyLiquidityUpdateEvent>()?;
-    submod.add_class::<snapshot::PyDatabaseSnapshot>()?;
-    submod.add_class::<aave::PyDatabasePositionQuery>()?;
-    submod.add_class::<pool_read::PyLiquidityPoolRow>()?;
-    submod.add_class::<pool_read::PyExchangeRow>()?;
-    submod.add_class::<pool_read::PyPoolManagerRow>()?;
-
-    Ok(())
-}
-
-/// Register the DB functions + classes on a real Python submodule.
-///
-/// Creates `degenbot._ffi.db` (a `PyModule`, not flat root-level functions)
-/// and registers all ~45 `db_*` pyfunctions + ~11 pyclasses on it. The
-/// `db_` prefix is retained on
-/// the submodule names (unlike the math submodules which dropped their
-/// prefix) because (a) the blast radius is much larger (5 Rust files, ~45
-/// fns) and (b) `db_` functions as a functional namespace marker is clearer
-/// than bare `backup_database` on a `db` submodule.
+/// The `degenbot._ffi.db` Python submodule (declarative `#[pymodule]`),
+/// registering all ~45 `db_*` pyfunctions + ~11 pyclasses. The `db_` prefix
+/// is retained on the submodule names (unlike the math submodules which
+/// dropped their prefix) because (a) the blast radius is much larger (5 Rust
+/// files, ~45 fns) and (b) `db_` functions as a functional namespace marker
+/// is clearer than bare `backup_database` on a `db` submodule.
 ///
 /// The companion `src/degenbot/database/_ffi.py` re-exports these as the
 /// stable import path, decoupling Python consumers from `degenbot._ffi`.
-///
-/// # Errors
-///
-/// Returns a [`PyErr`] if any `add_function`/`add_class`/`add` call fails
-/// (e.g. a name collision); propagated unchanged to the `#[pymodule]` caller.
-pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.db")?;
+/// The parent module registers the submodule itself and its `sys.modules`
+/// entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod db {
+    // Core file ops (this file).
+    #[pymodule_export]
+    use super::{
+        db_backup_database, db_compact_database, db_heal_database, db_inspect_schema_state,
+        db_schema_version, db_upgrade_database,
+    };
 
-    submod.add_function(wrap_pyfunction!(db_backup_database, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(db_compact_database, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(db_schema_version, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(db_upgrade_database, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(db_inspect_schema_state, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(db_heal_database, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
-        liquidity_updater::db_apply_v3_liquidity_updates,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        liquidity_updater::db_apply_v4_liquidity_updates,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(pool_read::db_fetch_pool_row, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(pool_read::db_fetch_exchange, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
-        pool_read::db_fetch_exchange_by_name,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(read_seams::db_resolve_token_ids, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
-        read_seams::db_fetch_graph_edition,
-        &submod
-    )?)?;
-    discovery::add_discovery_module(&submod)?;
-    register_db_classes(&submod)?;
+    // Liquidity-updater write path.
+    #[pymodule_export]
+    use super::liquidity_updater::{
+        db_apply_v3_liquidity_updates, db_apply_v4_liquidity_updates, PyLiquidityUpdateEvent,
+    };
+
+    // Pool/exchange read rows.
+    #[pymodule_export]
+    use super::aave::PyDatabasePositionQuery;
+    #[pymodule_export]
+    use super::pool_read::{
+        db_fetch_exchange, db_fetch_exchange_by_name, db_fetch_pool_row, PyExchangeRow,
+        PyLiquidityPoolRow, PyPoolManagerRow,
+    };
+    #[pymodule_export]
+    use super::snapshot::PyDatabaseSnapshot;
+
+    // Read seams (token-id resolution + graph edition).
+    #[pymodule_export]
+    use super::read_seams::{db_fetch_graph_edition, db_resolve_token_ids};
+
+    // Discovery seam: upsert/write functions + the pool-row input builders.
+    #[pymodule_export]
+    use super::discovery::{
+        db_set_exchange_active, db_set_exchange_last_update_block, db_upsert_exchange,
+        db_upsert_pool_manager, db_upsert_v2_pools, db_upsert_v3_pools, db_upsert_v4_pools,
+        PyV2PoolRowInput, PyV3PoolRowInput, PyV4PoolRowInput,
+    };
+
     // Aave analysis seam (Step B of GAXGCR): the pure `analyze_user_position`
     // math over `degenbot-aave::analysis`. Gated on `aave-updater` (the
     // feature that brings in the `degenbot-aave` dep).
     #[cfg(feature = "aave-updater")]
-    aave_analysis::register_aave_analysis(&submod)?;
-
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.db", &submod)?;
-
-    Ok(())
+    #[pymodule_export]
+    use super::aave_analysis::{
+        analyze_aave_user_position, PyCollateralPositionData, PyDebtPositionData,
+        PyUserPositionSummary,
+    };
 }

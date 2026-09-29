@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::PyDict;
 
 use degenbot_aave::{
     activate_aave_market as core_activate_aave_market,
@@ -606,30 +606,27 @@ fn deactivate_aave_market(py: Python<'_>, database_path: &str, market_id: i64) -
 }
 
 /// Register the aave-updater seam on `m` (feature = "aave-updater"). Mirrors
-/// `pool::add_pool_module`. `CancelHandle` is registered separately by
-/// `cancel::register_cancel` (shared).
+/// the declarative `crate::pool::pool` `#[pymodule]`. `CancelHandle` is
+/// registered separately by the declarative `crate::cancel::cancel`
+/// `#[pymodule]` (shared).
 ///
 /// # Errors
 ///
 /// Returns a [`PyErr`] if the `add_function` call fails (a name collision);
 /// propagated unchanged to the `#[pymodule]` caller.
-pub fn add_aave_updater_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.aave")?;
-    submod.add_function(wrap_pyfunction!(run_aave_update, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
-        verify_touched_positions_on_chain,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(verify_all_positions_on_chain, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(cleanup_zero_balance_positions, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(activate_aave_market, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(deactivate_aave_market, &submod)?)?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.aave", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.aave` Python submodule (declarative `#[pymodule]`;
+/// the Python-facing name is `aave`, not `aave_updater`), carrying the Aave
+/// chunk-loop + verify/maintenance pyfunctions. The parent module registers
+/// the submodule itself and its `sys.modules` entry. `CancelHandle` is
+/// registered separately by `crate::cancel::cancel` (shared).
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod aave {
+    #[pymodule_export]
+    use super::{
+        activate_aave_market, cleanup_zero_balance_positions, deactivate_aave_market,
+        run_aave_update, verify_all_positions_on_chain, verify_touched_positions_on_chain,
+    };
 }
 
 #[cfg(all(test, feature = "auto-initialize"))]

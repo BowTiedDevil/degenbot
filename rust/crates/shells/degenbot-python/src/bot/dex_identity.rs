@@ -255,14 +255,13 @@ fn dex_identity(variant: &str) -> Option<PyDexIdentity> {
 
 /// Register the `dex_identity` free function + the `PyDexIdentity` class on
 /// the `degenbot._ffi.dex_identity` submodule.
-pub(crate) fn add_dex_identity(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.dex_identity")?;
-    submod.add_function(wrap_pyfunction!(dex_identity, &submod)?)?;
-    submod.add_class::<PyDexIdentity>()?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.dex_identity", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.dex_identity` Python submodule (declarative
+/// `#[pymodule]`), carrying the DEX-identity preset lookup (ADR-005 slice
+/// 6). The parent module registers the submodule itself and its
+/// `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi", name = "dex_identity")]
+pub mod dex_identity_pymodule {
+    #[pymodule_export]
+    use super::{dex_identity, PyDexIdentity};
 }

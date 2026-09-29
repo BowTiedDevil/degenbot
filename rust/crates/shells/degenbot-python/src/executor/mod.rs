@@ -25,7 +25,7 @@
 use alloy::primitives::U256;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyInt, PyModule};
+use pyo3::types::{PyDict, PyInt};
 
 use degenbot_executor::config::{self, ConfigError};
 use degenbot_executor::{
@@ -212,16 +212,12 @@ fn config_err_to_py(err: ConfigError) -> PyErr {
 ///
 /// Returns a [`PyErr`] if any `add_function` call fails (e.g. a name
 /// collision); propagated unchanged to the `#[pymodule]` caller.
-pub fn add_executor_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.executor")?;
-    submod.add_function(wrap_pyfunction!(compute_simulation_warmup_slots, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(pack_config, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(mapping_slot, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(nested_mapping_slot, &submod)?)?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.executor", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.executor` Python submodule (declarative
+/// `#[pymodule]`), carrying the command-stream encoding pyfunctions. The
+/// parent module registers the submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod executor {
+    #[pymodule_export]
+    use super::{compute_simulation_warmup_slots, mapping_slot, nested_mapping_slot, pack_config};
 }

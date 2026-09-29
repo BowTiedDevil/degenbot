@@ -7,7 +7,8 @@
 //! NOT pool-specific — it lived in `pool/mod.rs` only because the pool seam
 //! was the first consumer.
 //!
-//! Registered on the `degenbot._ffi.cancel` submodule by `register_cancel`
+//! Registered on the `degenbot._ffi.cancel` submodule (declarative
+//! `#[pymodule]` below)
 //! (gated on `any(feature = "pool", feature = "aave-updater")`) so the
 //! `from degenbot._ffi.cancel import CancelHandle` import path is stable
 //! regardless of which updater features are enabled.
@@ -16,7 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
 
 /// `degenbot._ffi.cancel.CancelHandle` — the cooperative cancel flag for the
 /// long-running updater loops (`run_pool_update`, `run_aave_update`).
@@ -77,25 +77,16 @@ impl Default for CancelHandle {
     }
 }
 
-/// Register `CancelHandle` on the `degenbot._ffi.cancel` submodule. Called once
-/// from `c_api::register` under `any(feature = "pool", feature =
-/// "aave-updater")` — whichever updater seam is enabled needs the class
-/// registered. No-op-safe when both are enabled (a single `add_class` call).
-///
-/// # Errors
-///
-/// Returns a [`PyErr`] if the `add_class` call fails (a name collision with
-/// an already-registered `CancelHandle`); propagated unchanged to the
-/// `#[pymodule]` caller.
-pub fn register_cancel(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.cancel")?;
-    submod.add_class::<CancelHandle>()?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.cancel", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.cancel` Python submodule (declarative `#[pymodule]`),
+/// carrying the shared [`CancelHandle`] pyclass. Called by the parent module
+/// under `any(feature = "pool", feature = "aave-updater")` — whichever
+/// updater seam is enabled needs the class registered. No-op-safe when both
+/// are enabled (a single declarative export).
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod cancel {
+    #[pymodule_export]
+    use super::CancelHandle;
 }
 
 #[cfg(test)]

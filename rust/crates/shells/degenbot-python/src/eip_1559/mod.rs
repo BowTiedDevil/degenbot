@@ -10,8 +10,6 @@
 
 use pyo3::exceptions::PyZeroDivisionError;
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
-use pyo3::wrap_pyfunction;
 
 /// Compute the EIP-1559 next-block base fee, mirroring the pure-Rust
 /// `degenbot_core::eip_1559::next_base_fee`.
@@ -53,21 +51,12 @@ fn next_base_fee(
     ))
 }
 
-/// Register the `degenbot._ffi.eip_1559` submodule.
-///
-/// # Errors
-///
-/// Returns `PyErr` if any function fails to register.
-pub fn add_eip_1559_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.eip_1559")?;
-
-    submod.add_function(wrap_pyfunction!(next_base_fee, &submod)?)?;
-
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.eip_1559", &submod)?;
-
-    Ok(())
+/// The `degenbot._ffi.eip_1559` Python submodule (declarative `#[pymodule]`),
+/// carrying the EIP-1559 `next_base_fee` seam. The parent module registers
+/// the submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod eip_1559 {
+    #[pymodule_export]
+    use super::next_base_fee;
 }

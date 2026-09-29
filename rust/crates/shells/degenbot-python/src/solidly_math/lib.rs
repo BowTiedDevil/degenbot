@@ -11,8 +11,7 @@ use alloy::primitives::U256;
 use degenbot_math::solidly::SolidlyMathError;
 use pyo3::{
     exceptions::{PyValueError, PyZeroDivisionError},
-    types::PyModule,
-    wrap_pyfunction, PyTypeInfo,
+    PyTypeInfo,
 };
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
@@ -375,26 +374,17 @@ pub fn calc_exact_in_stable_camelot(
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
-pub fn add_solidly_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.solidly_math")?;
-
-    submod.add_function(wrap_pyfunction!(calc_d, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(calc_k, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(calc_f, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(camelot_f, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(camelot_k, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(get_y_solidly, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(camelot_get_y_camelot, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(calc_exact_in_volatile, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(calc_exact_in_stable_solidly, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(calc_exact_out_stable_solidly, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(calc_exact_in_stable_camelot, &submod)?)?;
-
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.solidly_math", &submod)?;
-
-    Ok(())
+/// The `degenbot._ffi.solidly_math` Python submodule (declarative
+/// `#[pymodule]`), carrying the Solidly / Aerodrome / Camelot stable-math
+/// pyfunctions. The parent module registers the submodule itself; the
+/// `sys.modules` entry lives in the parent's shared helper.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod solidly_math {
+    #[pymodule_export]
+    use super::{
+        calc_d, calc_exact_in_stable_camelot, calc_exact_in_stable_solidly, calc_exact_in_volatile,
+        calc_exact_out_stable_solidly, calc_f, calc_k, camelot_f, camelot_get_y_camelot, camelot_k,
+        get_y_solidly,
+    };
 }

@@ -33,7 +33,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::PyDict;
 
 use degenbot_pool_updater::run::{self, NoProgress, ProgressSink, RunError, UpdateReport};
 
@@ -419,19 +419,16 @@ fn run_err_to_py(err: RunError) -> PyErr {
 ///
 /// Returns a [`PyErr`] if any `add_function`/`add_class` call fails (a name
 /// collision); propagated unchanged to the `#[pymodule]` caller.
-pub fn add_pool_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.pool")?;
-    submod.add_function(wrap_pyfunction!(run_pool_update, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(verify_v3_liquidity_map, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(verify_v4_liquidity_map, &submod)?)?;
-    // `CancelHandle` is registered by `cancel::register_cancel` in `c_api`
-    // (shared with the Aave updater seam).
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.pool", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.pool` Python submodule (declarative `#[pymodule]`),
+/// carrying the pool-updater chunk-loop + liquidity-map verify pyfunctions.
+/// The parent module registers the submodule itself and its `sys.modules`
+/// entry. `CancelHandle` is registered by `crate::cancel::cancel` (shared
+/// with the Aave updater seam).
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod pool {
+    #[pymodule_export]
+    use super::{run_pool_update, verify_v3_liquidity_map, verify_v4_liquidity_map};
 }
 
 #[cfg(all(test, feature = "auto-initialize"))]

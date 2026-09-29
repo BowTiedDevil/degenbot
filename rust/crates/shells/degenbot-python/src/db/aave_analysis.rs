@@ -26,7 +26,6 @@ use std::collections::HashMap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
-use pyo3::wrap_pyfunction;
 
 use alloy::primitives::U256;
 
@@ -513,22 +512,10 @@ pub(crate) fn analyze_aave_user_position(
 // registration
 // =========================================================================
 
-/// Register the Aave analysis seam on the `db` submodule.
-///
-/// Adds the `analyze_aave_user_position` pyfunction + the three `#[pyclass]`
-/// wrappers. Mirrors the `aave::PyDatabasePositionQuery` registration
-/// (gated on `aave-updater`, which brings in the `degenbot-aave` dep).
-///
-/// # Errors
-///
-/// Returns a [`PyErr`] if any `add_function`/`add_class` call fails.
-pub fn register_aave_analysis(submod: &Bound<'_, PyModule>) -> PyResult<()> {
-    submod.add_function(wrap_pyfunction!(analyze_aave_user_position, submod)?)?;
-    submod.add_class::<PyUserPositionSummary>()?;
-    submod.add_class::<PyCollateralPositionData>()?;
-    submod.add_class::<PyDebtPositionData>()?;
-    Ok(())
-}
+// The Aave analysis seam members (`analyze_aave_user_position` + the three
+// `#[pyclass]` wrappers) are exported declaratively from the `db`
+// `#[pymodule]` in the parent `mod.rs`, gated on `aave-updater` (the
+// feature that brings in the `degenbot-aave` dep).
 
 #[cfg(all(test, feature = "auto-initialize"))]
 #[expect(clippy::unwrap_used)]

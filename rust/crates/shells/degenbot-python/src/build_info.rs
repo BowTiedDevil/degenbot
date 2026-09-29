@@ -12,7 +12,8 @@
 //! (The counter lives outside `rust/target` so `cargo clean` and sweeps can
 //! never roll it back.)
 //!
-//! Python surface: `degenbot._ffi.build_number()` (registered in `c_api`) and
+//! Python surface: `degenbot._ffi.build_number()` (exported declaratively
+//! from the root `#[pymodule]` in `lib.rs`) and
 //! the cross-check helper `degenbot.build_info` (staleness comparisons live
 //! Python-side, where the receipt file and the installed library meet).
 

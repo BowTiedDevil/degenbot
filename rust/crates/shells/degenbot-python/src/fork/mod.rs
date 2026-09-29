@@ -55,7 +55,7 @@ use alloy::primitives::{Address, Bytes};
 use degenbot_fork::{AnvilFork as CoreAnvilFork, AnvilForkBuilder, ForkError, MiningMode};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyModule};
+use pyo3::types::PyBytes;
 
 /// Default mnemonic — matches the legacy Python `AnvilFork.__init__`
 /// default (the Brownie/Ganache test mnemonic). The default value
@@ -402,13 +402,12 @@ impl PyAnvilFork {
 ///
 /// # Errors
 /// Returns `PyErr` if `add_class` fails (e.g. name collision).
-pub fn add_fork_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.fork")?;
-    submod.add_class::<PyAnvilFork>()?;
-    m.add_submodule(&submod)?;
-    py.import("sys")?
-        .getattr("modules")?
-        .set_item("degenbot._ffi.fork", &submod)?;
-    Ok(())
+/// The `degenbot._ffi.fork` Python submodule (declarative `#[pymodule]`),
+/// carrying the `PyAnvilFork` lifecycle + dev-RPC seam. The parent module
+/// registers the submodule itself and its `sys.modules` entry.
+#[pymodule(submodule)]
+#[pyo3(module = "degenbot._ffi")]
+pub mod fork {
+    #[pymodule_export]
+    use super::PyAnvilFork;
 }

@@ -46,7 +46,7 @@ fn narrow_reserve(
     degenbot_pools::spec_bounds::narrow_v2_reserve(value, field)
         .map_err(|sv| SpecViolationError::new_err(format!("{sv}")))
 }
-use crate::bot::pool::PyLiquidityPool;
+pub use crate::bot::pool::PyLiquidityPool;
 use crate::bot::token::PyErc20Token;
 use crate::diagnostics::thread_registry::{
     note_state_intent, StateIntentGuard, StateLockMode, StateLockPhase,
