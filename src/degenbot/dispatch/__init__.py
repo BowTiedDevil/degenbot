@@ -70,6 +70,9 @@ from degenbot.dispatch.records import (
 if TYPE_CHECKING:
     # The FFI pyfunction dispatch_and_submit_py requires the Rust pyclass,
     # not the degenbot.provider wrapper — annotate the seam accordingly.
+    from collections.abc import Callable
+    from typing import Any
+
     from degenbot._ffi.provider import AsyncAlloyProvider
 
 
@@ -99,6 +102,7 @@ async def dispatch_and_submit(
     provider: AsyncAlloyProvider,
     *,
     context: SubmitContext,
+    submit_leaf: Callable[..., Any] = _dispatch_and_submit_py,
 ) -> list[SubmitRecord]:
     """Await the Rust submit leaf and decode its records to typed values.
 
@@ -107,13 +111,15 @@ async def dispatch_and_submit(
     into SubmittedRecord / SkippedRecord — unknown wire values raise instead
     of dropping a submission event. ``context`` carries the per-call submit
     knobs through to the pyfunction unchanged; pyclass identity for
-    candidates/dispatcher/provider/context.signer is preserved.
+    candidates/dispatcher/provider/context.signer is preserved. ``submit_leaf``
+    is the FFI seam (tests inject a fake leaf returning raw dicts); the
+    default is the production pyfunction.
 
     Returns:
         The typed per-candidate records, in submit order.
 
     """
-    raw = await _dispatch_and_submit_py(
+    raw = await submit_leaf(
         candidates=candidates,
         dispatcher=dispatcher,
         provider=provider,

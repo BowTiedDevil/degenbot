@@ -264,6 +264,11 @@ class InjectedActors:
     #: ``settlement_broadcast_endpoints``). The refusal rides the same
     #: ``ActivationGateRefused`` routing as the readiness gate.
     settlement_endpoints: Callable[[], list[str]] | None = None
+    #: Offline seam for the engine-stop funnel (``shutdown()`` + the SIGINT
+    #: handler both route through ``BotRunner._stop_engine``): when set, the
+    #: funnel's stop is this injected callback; ``None`` (production) stops
+    #: the real engine through the registry.
+    stop_engine: Callable[[], None] | None = None
 
 
 class BotRunner:
@@ -347,6 +352,7 @@ class BotRunner:
         self._injected_settlement_arm = injected.settlement_arm
         self._injected_readiness = injected.readiness
         self._injected_settlement_endpoints = injected.settlement_endpoints
+        self._injected_stop_engine = injected.stop_engine
         self._background_registration: bool | None = background_registration
         # The registration-owned construction context (built in run() for
         # the real build_paths; None for injected builders and until run()).
@@ -1170,8 +1176,13 @@ class BotRunner:
 
         Mirrors the Rust ``stop()`` contract: idempotent, sets the shutdown
         flag, and aborts the pump task. Best-effort — a torn-down engine during
-        a partial startup must not mask the in-flight exception.
+        a partial startup must not mask the in-flight exception. An injected
+        ``stop_engine`` actor (tests) replaces the registry stop; ``None``
+        (production) stops the real engine.
         """
+        if self._injected_stop_engine is not None:
+            self._injected_stop_engine()
+            return
         registry = self.engine_registry
         engine = registry.engine if registry is not None else None
         if engine is None:

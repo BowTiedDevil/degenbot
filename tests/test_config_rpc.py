@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 # refusal is genuinely the absence of every layer rather than a leak.
 _UNCONFIGURED_CHAIN = 988877
 
+
 def _probe(tmp_path: Path, file_body: str, *ops: list[Any], **env_overrides: str) -> list[dict]:
     """Resolve ``ops`` in-process over a hypothetical environment.
 
@@ -358,9 +359,7 @@ class TestBotKeywordOverrides:
             assert bot.chain_id == 4242
             assert bot.database_path == database
 
-    def test_the_node_override_reaches_the_provider_factory(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_the_node_override_reaches_the_provider_factory(self) -> None:
         """The endpoint the session asks for is the one the factory resolves."""
         recorded: dict[str, object] = {}
 
@@ -369,9 +368,11 @@ class TestBotKeywordOverrides:
             recorded["node"] = node
             return _BoundaryProvider(1)
 
-        monkeypatch.setattr("degenbot.bot._bot.get_provider_from_config", fake_factory)
-
-        with Bot(node="https://override-http:8545", database=":memory:") as bot:
+        with Bot(
+            node="https://override-http:8545",
+            database=":memory:",
+            provider_factory=fake_factory,
+        ) as bot:
             assert bot.chain_id == resolve_chain_id(None)
 
         assert recorded["node"] == "https://override-http:8545"
@@ -446,6 +447,9 @@ class TestDatabaseAndChainCascade:
 
     def test_the_module_no_longer_owns_the_file_location(self) -> None:
         """The duplicated XDG/path logic is gone; the core reports the file."""
-        assert config_module.config_file_path() == config_module._ffi.resolved_config().config_file_path
+        assert (
+            config_module.config_file_path()
+            == config_module._ffi.resolved_config().config_file_path
+        )
         for retired in ("CONFIG_DIR", "CONFIG_FILE", "DB_PATH", "DegenbotConfig"):
             assert not hasattr(config_module, retired)

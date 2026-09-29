@@ -22,7 +22,6 @@ import asyncio
 import contextlib
 import gc
 import pathlib
-import sys
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -267,15 +266,14 @@ def _fake_traversal() -> object:
     )
 
 
-def _install_fake_rust_seam(
-    monkeypatch: pytest.MonkeyPatch,
+def _fake_rust_seam(
     *,
     batches: list[list[object]],
     error: BaseException | None = None,
     dropped: list[bool] | None = None,
     captured: dict[str, object] | None = None,
-) -> None:
-    """Patch the prep + Rust batch seam so no DB is required."""
+) -> dict[str, object]:
+    """The injected prep + Rust batch seams, so no DB is required."""
 
     def factory(*args: object, **kwargs: object) -> _FakeBatchIterator:
         if captured is not None:
@@ -283,19 +281,22 @@ def _install_fake_rust_seam(
             captured["kwargs"] = kwargs
         return _FakeBatchIterator(batches, error=error, dropped=dropped)
 
-    monkeypatch.setattr(_pathfinding, "find_paths_async_rust", factory)
-    monkeypatch.setattr(_pathfinding, "_prepare_traversals", lambda **_: [_fake_traversal()])
+    return {
+        "prepare_traversals": lambda **_: [_fake_traversal()],
+        "find_paths_async_rust": factory,
+    }
 
 
-def test_adapter_forwards_batch_size_to_rust_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adapter_forwards_batch_size_to_rust_seam() -> None:
     """The adapter hands the requested batch_size straight to the Rust seam."""
     captured: dict[str, object] = {}
-    _install_fake_rust_seam(monkeypatch, batches=[[[], []]], captured=captured)
+    seams = _fake_rust_seam(batches=[[[], []]], captured=captured)
 
     got = asyncio.run(
         _collect(
             request=_adapter_request(),
             batch_size=7,
+            **seams,  # type: ignore[arg-type]
         )
     )
     assert got == [[], []]
@@ -306,10 +307,9 @@ def test_adapter_forwards_batch_size_to_rust_seam(monkeypatch: pytest.MonkeyPatc
     assert args[7] == 7  # batch_size
 
 
-async def test_producer_exception_reraises_at_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_producer_exception_reraises_at_consumer() -> None:
     """A Rust `__anext__` failure surfaces at the consumer, pending batch first."""
-    _install_fake_rust_seam(
-        monkeypatch,
+    seams = _fake_rust_seam(
         batches=[[[], []]],
         error=_BoomError("producer died"),
     )
@@ -320,6 +320,7 @@ async def test_producer_exception_reraises_at_consumer(monkeypatch: pytest.Monke
             find_paths_async(
                 request=_adapter_request(),
                 batch_size=2,
+                **seams,  # type: ignore[arg-type]
             ),
             got,
         )
@@ -327,16 +328,15 @@ async def test_producer_exception_reraises_at_consumer(monkeypatch: pytest.Monke
     assert got == [[], []], "the pending batch must be delivered before the raise"
 
 
-async def test_aclose_releases_the_rust_iterator(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_aclose_releases_the_rust_iterator() -> None:
     """aclose clears the adapter's reference so the Rust iterator can drop."""
     dropped: list[bool] = []
-    _install_fake_rust_seam(
-        monkeypatch,
+    seams = _fake_rust_seam(
         batches=[[[], [], []], [[], [], []]],
         dropped=dropped,
     )
 
-    agen = find_paths_async(request=_adapter_request(), batch_size=2)
+    agen = find_paths_async(request=_adapter_request(), batch_size=2, **seams)  # type: ignore[arg-type]
     seen = 0
     async for _path in agen:
         seen += 1
@@ -398,7 +398,7 @@ async def test_aclose_leaves_no_worker_threads(db: pathlib.Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_prep_never_blocks_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_prep_never_blocks_the_event_loop() -> None:
     """A slow prep must not stall the asyncio loop (canary keeps ticking).
 
     Pre-FYZMAF the one-time prep (`_prepare_traversals`: Rust token
@@ -419,13 +419,12 @@ async def test_prep_never_blocks_the_event_loop(monkeypatch: pytest.MonkeyPatch)
         time.sleep(0.3)
         return [_fake_traversal()]
 
-    monkeypatch.setattr(_pathfinding, "_prepare_traversals", slow_prep)
-    monkeypatch.setattr(
-        _pathfinding, "find_paths_async_rust", lambda *a, **k: _FakeBatchIterator([[]])
-    )
-
     canary_task = asyncio.ensure_future(canary())
-    agen = find_paths_async(request=_adapter_request())
+    agen = find_paths_async(
+        request=_adapter_request(),
+        prepare_traversals=slow_prep,
+        find_paths_async_rust=lambda *a, **k: _FakeBatchIterator([[]]),
+    )
     started = time.perf_counter()
     with pytest.raises(StopAsyncIteration):
         await anext(agen)
@@ -491,17 +490,14 @@ def _make_pipeline() -> PathRegistrationPipeline:
     )
 
 
-def test_discovery_sweep_passes_typed_batch_size(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_discovery_sweep_passes_typed_batch_size() -> None:
     """discovery_sweep forwards the pipeline's resolved batch size."""
-    build_paths_module = sys.modules["degenbot.runner.build_paths"]
     captured: dict[str, object] = {}
 
     def fake_find_paths_async(**kwargs: object) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr(build_paths_module, "find_paths_async", fake_find_paths_async)
-
     pipeline = _make_pipeline()
     pipeline.discovery_batch_size = 42
-    pipeline.discovery_sweep()
+    pipeline.discovery_sweep(find_paths_async=fake_find_paths_async)  # type: ignore[arg-type]
     assert captured["batch_size"] == 42

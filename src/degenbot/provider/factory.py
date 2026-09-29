@@ -22,6 +22,9 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider import ChainMismatchError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 
 
@@ -61,6 +64,9 @@ def get_provider_from_config(
     *,
     chain_id: int | str | None = None,
     node: str | None = None,
+    resolve_uri: Callable[..., str] = resolve_http_rpc_uri,
+    provider_factory: Callable[..., AlloyProvider] | None = None,
+    chain_mismatch_error: type[ChainMismatchError] = ChainMismatchError,
 ) -> AlloyProvider:
     """Build a chain-bound :class:`AlloyProvider` for the session chain.
 
@@ -72,10 +78,21 @@ def get_provider_from_config(
     endpoint's ``eth_chainId`` once, and its refusal is translated into a
     :class:`DegenbotValueError` here.
 
+    ``resolve_uri``/``provider_factory``/``chain_mismatch_error`` are the DI
+    seams (tests inject a recording resolver, a stand-in constructor, and a
+    constructible stand-in for the PyO3 refusal class); omitted kwargs keep
+    the production bindings.
+
     Args:
         chain_id: The explicit chain override; resolved from the config layers
             when absent.
         node: The explicit endpoint override, classified by its own value.
+        resolve_uri: The endpoint resolver called as
+            ``resolve_uri(session_chain_id, node=node)``.
+        provider_factory: The provider constructor called as
+            ``provider_factory(endpoint, chain_id=session_chain_id)``.
+        chain_mismatch_error: The exception class the core's refusal is
+            caught as before re-homing.
 
     Returns:
         A chain-bound AlloyProvider over the resolved RPC endpoint.
@@ -87,13 +104,15 @@ def get_provider_from_config(
             :class:`ValueError`.
 
     """
-    from degenbot.provider import AlloyProvider
-
     session_chain_id = resolve_chain_id(chain_id)
-    endpoint = resolve_http_rpc_uri(session_chain_id, node=node)
+    endpoint = resolve_uri(session_chain_id, node=node)
+    if provider_factory is None:
+        from degenbot.provider import AlloyProvider
+
+        provider_factory = AlloyProvider
     try:
-        return AlloyProvider(endpoint, chain_id=session_chain_id)
-    except ChainMismatchError as exc:
+        return provider_factory(endpoint, chain_id=session_chain_id)
+    except chain_mismatch_error as exc:
         raise ChainIdentityMismatchError(message=_chain_mismatch_message(exc)) from exc
 
 
@@ -101,16 +120,27 @@ async def get_async_provider_from_config(
     *,
     chain_id: int | str | None = None,
     node: str | None = None,
+    resolve_uri: Callable[..., str] = resolve_http_rpc_uri,
+    provider_factory: Callable[..., Any] | None = None,
+    chain_mismatch_error: type[ChainMismatchError] = ChainMismatchError,
 ) -> AsyncAlloyProvider:
     """Build a chain-bound :class:`AsyncAlloyProvider` for the session chain.
 
     Async counterpart of :func:`get_provider_from_config`: the same resolution,
-    the same core check, awaited on the caller's event loop.
+    the same core check, awaited on the caller's event loop. The DI seams are
+    the sync factory's; an omitted ``provider_factory`` resolves to
+    ``AsyncAlloyProvider.create``.
 
     Args:
         chain_id: The explicit chain override; resolved from the config layers
             when absent.
         node: The explicit endpoint override, classified by its own value.
+        resolve_uri: The endpoint resolver called as
+            ``resolve_uri(session_chain_id, node=node)``.
+        provider_factory: The awaited provider constructor called as
+            ``provider_factory(endpoint, chain_id=session_chain_id)``.
+        chain_mismatch_error: The exception class the core's refusal is
+            caught as before re-homing.
 
     Returns:
         A chain-bound AsyncAlloyProvider over the resolved RPC endpoint.
@@ -122,11 +152,13 @@ async def get_async_provider_from_config(
             :class:`ValueError`.
 
     """
-    from degenbot.provider import AsyncAlloyProvider
-
     session_chain_id = resolve_chain_id(chain_id)
-    endpoint = resolve_http_rpc_uri(session_chain_id, node=node)
+    endpoint = resolve_uri(session_chain_id, node=node)
+    if provider_factory is None:
+        from degenbot.provider import AsyncAlloyProvider
+
+        provider_factory = AsyncAlloyProvider.create
     try:
-        return await AsyncAlloyProvider.create(endpoint, chain_id=session_chain_id)
-    except ChainMismatchError as exc:
+        return await provider_factory(endpoint, chain_id=session_chain_id)
+    except chain_mismatch_error as exc:
         raise ChainIdentityMismatchError(message=_chain_mismatch_message(exc)) from exc

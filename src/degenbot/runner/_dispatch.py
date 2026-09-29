@@ -352,13 +352,14 @@ class SubmissionSmoke:
         return SubmissionSmokeVerdict.STREAK
 
 
-async def _submit_batch_records(
+async def _submit_batch_records(  # ruff:ignore[too-many-arguments]
     session: _SessionState,
     outcome: _SimOutcome,
     *,
     operator_nonce: int,
     submitter: Any = None,
     relay_providers: Any = None,
+    logger: Any = bot_logger,
 ) -> None:
     """Submit gas-profitable candidates via the Rust submit leaf + render records.
 
@@ -367,13 +368,14 @@ async def _submit_batch_records(
     forwards it unchanged: the Rust authority seeds from that chain read and
     leases the sign-time nonce, so no nonce is computed Python-side.
 
-    ``submitter``/``relay_providers`` are the DI seams (tests inject a
-    recording submitter + opaque providers; production runs the default
-    ``dispatch_and_submit`` + the cached relay provider set).
+    ``submitter``/``relay_providers``/``logger`` are the DI seams (tests inject
+    a recording submitter + opaque providers + a recording logger; production
+    runs the default ``dispatch_and_submit``, the cached relay provider set,
+    and the module logger).
     """
     async_alloy = session.async_w3.as_async_alloy()
     if async_alloy is None:
-        bot_logger.error("[dispatch] async_w3 is not an Alloy-backed provider; cannot submit")
+        logger.error("[dispatch] async_w3 is not an Alloy-backed provider; cannot submit")
         return
     # Relay submission seam (ADR-025 companion): same signed bytes, dedicated
     # broadcast URL, revert-protecting private builder endpoints instead of
@@ -387,7 +389,7 @@ async def _submit_batch_records(
         if outcome.gas_profitable and not session.cfg.dry_run:
             # Unreachable past the boot gate; kept as the loudly-impossible
             # state guard rather than any fallthrough to a raw broadcast.
-            bot_logger.error("[dispatch] no relay posture on a live session: refusing submission")
+            logger.error("[dispatch] no relay posture on a live session: refusing submission")
             return
         broadcast_providers = None
     else:
@@ -395,7 +397,7 @@ async def _submit_batch_records(
             relay_posture.relay_urls, relay_providers
         )
 
-    _log_submit_arm(outcome.gas_profitable, session.dispatcher.current_block)
+    _log_submit_arm(outcome.gas_profitable, session.dispatcher.current_block, logger=logger)
 
     signer = TxSigner(key=session.cfg.operator_private_key, chain_id=session.cfg.chain_id)
     records = await (submitter if submitter is not None else dispatch_and_submit)(
@@ -412,8 +414,8 @@ async def _submit_batch_records(
         ),
     )
     submitted_count = sum(isinstance(record, SubmittedRecord) for record in records)
-    skip_histogram = _render_submit_records(records)
-    _track_submission_smoke(session, outcome, submitted_count, skip_histogram)
+    skip_histogram = _render_submit_records(records, logger=logger)
+    _track_submission_smoke(session, outcome, submitted_count, skip_histogram, logger=logger)
 
 
 async def _resolve_relay_providers(
@@ -445,7 +447,12 @@ async def _resolve_relay_providers(
     return broadcast_providers
 
 
-def _log_submit_arm(candidates: list[Any], solve_block: int) -> None:
+def _log_submit_arm(
+    candidates: list[Any],
+    solve_block: int,
+    *,
+    logger: Any = bot_logger,
+) -> None:
     """Forensic capture (fork-replay): the exact calldata + candidate economics.
 
     One INFO line per gate-clearing candidate BEFORE broadcast, so any later tx
@@ -453,14 +460,21 @@ def _log_submit_arm(candidates: list[Any], solve_block: int) -> None:
     """
     for c in candidates:
         calldata = getattr(c, "execute_calldata", None)
-        bot_logger.info(
-            f"[submit-arm] path={c.path_id} solve_block={solve_block} "
-            f"net_wei={c.net_profit} gas={c.gas_used} "
-            f"calldata={calldata.hex() if calldata else '<unavailable>'}",
+        logger.info(
+            "[submit-arm] path=%s solve_block=%s net_wei=%s gas=%s calldata=%s",
+            c.path_id,
+            solve_block,
+            c.net_profit,
+            c.gas_used,
+            calldata.hex() if calldata else "<unavailable>",
         )
 
 
-def _render_submit_records(records: list[Any]) -> dict[str, int]:
+def _render_submit_records(
+    records: list[Any],
+    *,
+    logger: Any = bot_logger,
+) -> dict[str, int]:
     """Render one log line per submit record; return the skip-reason histogram."""
     skip_histogram: dict[str, int] = {}
     for record in records:
@@ -468,18 +482,19 @@ def _render_submit_records(records: list[Any]) -> dict[str, int]:
             skip_histogram[record.reason.name] = skip_histogram.get(record.reason.name, 0) + 1
         match record:
             case SubmittedRecord(path_id=path_id, tx_hash=tx_hash, nonce=nonce):
-                bot_logger.info(f"Submitted path {path_id} hash={tx_hash} nonce={nonce}")
+                logger.info("Submitted path %s hash=%s nonce=%s", path_id, tx_hash, nonce)
             case SkippedRecord(path_id=path_id, reason=SubmitSkipReason.POOLS_CLAIMED):
-                bot_logger.debug(f"[dispatch] skip path={path_id}: pools claimed after sim")
+                logger.debug("[dispatch] skip path=%s: pools claimed after sim", path_id)
             case SkippedRecord(reason=SubmitSkipReason.DRY_RUN):
                 pass  # dry_run skip already logged above
             case SkippedRecord(path_id=path_id, reason=SubmitSkipReason.INJECT_CODE):
-                bot_logger.warning(
-                    f"[dispatch] path={path_id}: skipping submission - "
+                logger.warning(
+                    "[dispatch] path=%s: skipping submission - "
                     "executor code injection is active (simulation.inject_executor_code)",
+                    path_id,
                 )
             case SkippedRecord(reason=SubmitSkipReason.BROADCAST_FAILED, detail=detail):
-                bot_logger.warning(f"[dispatch] broadcast failed: {detail or 'no detail'}")
+                logger.warning("[dispatch] broadcast failed: %s", detail or "no detail")
     return skip_histogram
 
 
@@ -488,6 +503,8 @@ def _track_submission_smoke(
     outcome: _SimOutcome,
     submitted_count: int,
     skip_histogram: dict[str, int],
+    *,
+    logger: Any = bot_logger,
 ) -> None:
     """Throttle the silent-veto WARN over a fully-vetoed live-batch streak.
 
@@ -503,8 +520,9 @@ def _track_submission_smoke(
     smoke = session.submission_smoke
     verdict = smoke.observe(vetoed=vetoed, now=time.monotonic())
     if verdict is SubmissionSmokeVerdict.WARN:
-        bot_logger.warning(
-            f"[dispatch] live-armed with gate-clearing candidates but no submissions in "
-            f"{smoke.streak} consecutive batches; skip reasons "
-            f"{skip_histogram or '{}'} — a configuration-level veto is likely"
+        logger.warning(
+            "[dispatch] live-armed with gate-clearing candidates but no submissions in "
+            "%s consecutive batches; skip reasons %s — a configuration-level veto is likely",
+            smoke.streak,
+            skip_histogram or "{}",
         )

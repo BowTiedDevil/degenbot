@@ -6,9 +6,9 @@
 ``MAX_PRIORITY_FEE_PERCENTILE``); the driver reads it back over the FFI so the
 two cannot drift, and the retired ``FEE_PERCENTILES`` module literal is gone.
 
-The routing test monkeypatches the core reader to a distinguishable pair: a
-call site that hardcodes, caches, or mirrors the values fails it even while the
-current numbers happen to match.
+The routing test injects a distinguishable pair at the leaf's
+``reward_percentiles`` seam: a call site that hardcodes, caches, or mirrors the
+values fails it even while the current numbers happen to match.
 """
 
 from __future__ import annotations
@@ -64,22 +64,24 @@ def _tick() -> dict[str, int]:
     }
 
 
-async def _drive(session: _SessionState) -> None:
+async def _drive(
+    session: _SessionState,
+    *,
+    reward_percentiles: tuple[int, int] | None = None,
+) -> None:
     fut: asyncio.Future[dict[str, int]] = asyncio.get_running_loop().create_future()
     fut.set_result(_tick())
-    await _apply_block_if_ready(fut, session)
+    await _apply_block_if_ready(fut, session, reward_percentiles=reward_percentiles)
 
 
-async def test_head_tick_requests_core_percentiles(monkeypatch) -> None:
+async def test_head_tick_requests_core_percentiles() -> None:
     seen: list[list[float]] = []
 
     async def _record(**kwargs) -> bool:
         seen.append(list(kwargs["reward_percentiles"]))
         return True
 
-    monkeypatch.setattr("degenbot.runner._consume.fee_percentiles", lambda: (7, 77))
-
-    await _drive(_session(_record))
+    await _drive(_session(_record), reward_percentiles=(7, 77))
 
     assert seen == [[7.0, 77.0]], (
         "the head tick must poll the percentiles the core reader returns; a "

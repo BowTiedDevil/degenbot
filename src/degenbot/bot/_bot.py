@@ -204,6 +204,7 @@ class Bot(AccountQueryMixin):
         py_bot: _Engine | None = None,
         io: BotIo | None = None,
         erc20_builder: Erc20Builder | None = None,
+        provider_factory: Callable[..., Any] | None = None,
     ) -> None:
         """Initialize the single-chain Bot session.
 
@@ -237,6 +238,11 @@ class Bot(AccountQueryMixin):
             py_bot: An injected Rust engine handle.
             io: An injected ``BotIo`` handle.
             erc20_builder: An injected ERC-20 builder.
+            provider_factory: The factory called as
+                ``provider_factory(chain_id=..., node=...)`` when ``provider``
+                is omitted (tests inject a recording factory to observe the
+                override keywords); the default is
+                :func:`~degenbot.provider.factory.get_provider_from_config`.
 
         Refuses with a :class:`ValueError` when no layer names a chain or an
         endpoint (naming what to declare, export, or pass), and with a
@@ -258,7 +264,9 @@ class Bot(AccountQueryMixin):
         else:
             # Resolved from the cascade — the factory hands the chain to the core,
             # which enforces the match itself.
-            self._provider = get_provider_from_config(chain_id=self._chain_id, node=node)
+            self._provider = (provider_factory or get_provider_from_config)(
+                chain_id=self._chain_id, node=node
+            )
 
         # Polars-inspired three-layer architecture (ADR-005): a the Rust ``Bot`` engine
         # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.

@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import Counter, deque
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -946,8 +946,17 @@ class PathRegistrationPipeline:
             self._sweep_completed_edition = edition
         return count
 
-    def discovery_sweep(self) -> AsyncGenerator[object, None]:
-        """A single discovery sweep over the DB subgraph (V2/V3/V4 DFS)."""
+    def discovery_sweep(
+        self,
+        *,
+        find_paths_async: Callable[..., AsyncGenerator[object, None]] = find_paths_async,
+    ) -> AsyncGenerator[object, None]:
+        """A single discovery sweep over the DB subgraph (V2/V3/V4 DFS).
+
+        ``find_paths_async`` is the discovery producer seam (tests inject a
+        recording producer to observe the forwarded batch size); the default
+        is the production adapter.
+        """
         return find_paths_async(
             request=PathfindingRequest(
                 chain_id=self.constr_chain_id,

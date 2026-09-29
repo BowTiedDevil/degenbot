@@ -24,6 +24,7 @@ from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import PoolKind
 
 if TYPE_CHECKING:
+    from degenbot.diagnostics import FailureAction
     from degenbot.dispatch import Dispatcher, DispatchOutcome
     from degenbot.runner._dispatch import MergedOutcome
 
@@ -312,6 +313,7 @@ def _render_sim_failures(
     current_block: int,
     sim_exit_on_fail: bool,
     exit_ignore_buckets: str,
+    sim_failure_action: FailureAction | None = None,
 ) -> None:
     """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted / failed
     candidate (D3). Capped at :data:`_SIM_FAIL_RENDER_CAP` records.
@@ -319,7 +321,9 @@ def _render_sim_failures(
     ``sim_exit_on_fail`` and ``exit_ignore_buckets`` are the resolved
     ``simulation.*`` values the caller threads down: the tripwire never reads
     the process verdict, so the arm/disarm decision is a value at the
-    consumption boundary rather than an ambient reach.
+    consumption boundary rather than an ambient reach. ``sim_failure_action``
+    is the resolved ``sim_failure`` bucket action handed down the same way;
+    ``None`` (production) consults the Rust policy matrix at trap time.
 
     When the operator has armed the sim-failure trap
     (``simulation.sim_exit_on_fail``), dump the full hop-detail for the FIRST
@@ -342,6 +346,7 @@ def _render_sim_failures(
         current_block,
         sim_exit_on_fail=sim_exit_on_fail,
         exit_ignore_buckets=exit_ignore_buckets,
+        sim_failure_action=sim_failure_action,
     )
 
     overflow = len(failures) - cap
@@ -431,13 +436,14 @@ def _render_reverted_swaps(rec: dict[str, Any], path_id: int) -> None:
     bot_logger.debug(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
 
 
-def _enforce_sim_failure_policy(
+def _enforce_sim_failure_policy(  # ruff:ignore[too-many-arguments]
     failures: list[dict[str, Any]],
     path_infos: dict[int, dict[str, Any]],
     current_block: int,
     *,
     sim_exit_on_fail: bool,
     exit_ignore_buckets: str,
+    sim_failure_action: FailureAction | None = None,
 ) -> None:
     """Apply the sim-failure tripwire over one failure batch."""
     if not sim_exit_on_fail:
@@ -460,7 +466,9 @@ def _enforce_sim_failure_policy(
     from degenbot.diagnostics import FailureAction
     from degenbot.diagnostics import failure_action as _policy
 
-    action = _policy("sim_failure", None)
+    # The resolved action rides the injection seam when the caller handed it
+    # down; the default consults the Rust policy matrix at trap time.
+    action = sim_failure_action if sim_failure_action is not None else _policy("sim_failure", None)
     if action == FailureAction.EXIT:
         bot_logger.error(
             f"[sim-trap] exiting on first sim failure at block={current_block} "

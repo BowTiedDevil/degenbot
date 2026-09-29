@@ -46,13 +46,11 @@ def _restore_sigint() -> None:
 
 
 def _cfg() -> ArbitrageConfig:
-    with identity_env(
-        {
-            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-            "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-        }
-    ):
+    with identity_env({
+        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+        "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
+        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+    }):
         return ArbitrageConfig.build(live=True, permutation=None)
 
 
@@ -368,13 +366,13 @@ class TestPhaseGuardMatrix:
 class TestStopFunnel:
     """Stop has ONE engine-level entrypoint for both Python entrances."""
 
-    async def test_shutdown_and_sigint_share_the_stop_entrypoint(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        runner = _runner(install_sigint=True)
-        await runner.start()
+    async def test_shutdown_and_sigint_share_the_stop_entrypoint(self) -> None:
         calls: list[str] = []
-        monkeypatch.setattr(runner, "_stop_engine", lambda: calls.append("stop"))
+        runner = _runner(
+            install_sigint=True,
+            stop_engine=lambda: calls.append("stop"),
+        )
+        await runner.start()
 
         await runner.shutdown()
         with pytest.raises(KeyboardInterrupt):

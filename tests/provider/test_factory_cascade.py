@@ -17,10 +17,8 @@ from typing import Any
 
 import pytest
 
-import degenbot.provider as provider_mod
 from degenbot.config import RpcNotConfiguredError
 from degenbot.provider.factory import ChainIdentityMismatchError
-from degenbot.provider import factory as factory_mod
 from degenbot.provider.factory import get_provider_from_config
 
 # A chain id no operator file or harness sets, so the refusal is genuinely the
@@ -57,47 +55,41 @@ class _FakeChainMismatchError(ValueError):
 class TestFactoryDelegatesToCascade:
     """The factory builds the provider from the resolved uri, not from a config."""
 
-    def test_uses_the_resolver_uri(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_uses_the_resolver_uri(self) -> None:
         resolved: list[tuple[int, str | None]] = []
 
         def fake_resolve(chain_id: int, /, *, node: str | None = None) -> str:
             resolved.append((chain_id, node))
             return "http://from-resolver.example"
 
-        monkeypatch.setattr(factory_mod, "resolve_http_rpc_uri", fake_resolve)
         constructed: list[tuple[str, int | None]] = []
-        monkeypatch.setattr(
-            provider_mod,
-            "AlloyProvider",
-            lambda endpoint, *, chain_id=None: (
-                constructed.append((endpoint, chain_id)),
-                _FakeAlloy(endpoint, chain_id=chain_id),
-            )[1],
-        )
 
-        result = get_provider_from_config(chain_id=1, node="http://from-cli.example")
+        def fake_provider(endpoint: str, *, chain_id: int | None = None) -> _FakeAlloy:
+            constructed.append((endpoint, chain_id))
+            return _FakeAlloy(endpoint, chain_id=chain_id)
+
+        result = get_provider_from_config(
+            chain_id=1,
+            node="http://from-cli.example",
+            resolve_uri=fake_resolve,
+            provider_factory=fake_provider,
+        )
 
         assert resolved == [(1, "http://from-cli.example")]
         assert constructed == [("http://from-resolver.example", 1)]
         assert isinstance(result, _FakeAlloy)
 
-    def test_the_chain_id_reaches_the_core_that_enforces_it(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    def test_the_chain_id_reaches_the_core_that_enforces_it(self) -> None:
         """The ``eth_chainId`` check is the core's; the factory's part is the handoff."""
-        monkeypatch.setattr(
-            factory_mod,
-            "resolve_http_rpc_uri",
-            lambda chain_id, /, *, node=None: "http://x.example",
-        )
-        monkeypatch.setattr(
-            provider_mod,
-            "AlloyProvider",
-            lambda endpoint, *, chain_id=None: _FakeAlloy(endpoint, chain_id=chain_id),
+        provider = get_provider_from_config(
+            chain_id=1,
+            resolve_uri=lambda chain_id, /, *, node=None: "http://x.example",
+            provider_factory=lambda endpoint, *, chain_id=None: _FakeAlloy(
+                endpoint, chain_id=chain_id
+            ),
         )
 
-        assert get_provider_from_config(chain_id=1).bound_to == 1
+        assert provider.bound_to == 1
 
 
 class TestFactoryTranslatesTheChainRefusal:
@@ -107,24 +99,17 @@ class TestFactoryTranslatesTheChainRefusal:
         """A caller that already handled a misconfigured endpoint keeps working."""
         assert issubclass(ChainIdentityMismatchError, ValueError)
 
-    def test_the_core_refusal_becomes_a_degenbot_error(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setattr(
-            factory_mod,
-            "resolve_http_rpc_uri",
-            lambda chain_id, /, *, node=None: "http://x.example",
-        )
-        monkeypatch.setattr(factory_mod, "ChainMismatchError", _FakeChainMismatchError)
-
+    def test_the_core_refusal_becomes_a_degenbot_error(self) -> None:
         def refusing(endpoint: str, *, chain_id: int | None = None) -> object:
             raise _FakeChainMismatchError(chain_id or 0, (chain_id or 0) + 1, endpoint)
 
-        monkeypatch.setattr(provider_mod, "AlloyProvider", refusing)
-
         with pytest.raises(ChainIdentityMismatchError, match="wrong chain") as refusal:
-            get_provider_from_config(chain_id=1)
+            get_provider_from_config(
+                chain_id=1,
+                resolve_uri=lambda chain_id, /, *, node=None: "http://x.example",
+                provider_factory=refusing,
+                chain_mismatch_error=_FakeChainMismatchError,
+            )
 
         assert refusal.value.message is not None
         assert "1" in refusal.value.message
@@ -148,23 +133,21 @@ class TestFactoryRaisesWhenNoSource:
 class TestFactoryTakesOverrideKeywords:
     """The override keywords are the explicit layer, ahead of every configured one."""
 
-    def test_the_node_override_is_classified_by_the_core(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_the_node_override_is_classified_by_the_core(self) -> None:
         seen: dict[str, Any] = {}
 
         def fake_resolve(chain_id: int, /, *, node: str | None = None) -> str:
             seen["node"] = node
             return "http://from-resolver.example"
 
-        monkeypatch.setattr(factory_mod, "resolve_http_rpc_uri", fake_resolve)
-        monkeypatch.setattr(
-            provider_mod,
-            "AlloyProvider",
-            lambda endpoint, *, chain_id=None: _FakeAlloy(endpoint, chain_id=chain_id),
+        get_provider_from_config(
+            chain_id=1,
+            node="ipc:///tmp/anvil.ipc",
+            resolve_uri=fake_resolve,
+            provider_factory=lambda endpoint, *, chain_id=None: _FakeAlloy(
+                endpoint, chain_id=chain_id
+            ),
         )
-
-        get_provider_from_config(chain_id=1, node="ipc:///tmp/anvil.ipc")
 
         assert seen["node"] == "ipc:///tmp/anvil.ipc"
 

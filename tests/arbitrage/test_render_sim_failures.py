@@ -84,17 +84,20 @@ def _render(
     *,
     armed: bool = False,
     ignore: str = "",
+    action: FailureAction | None = None,
 ) -> None:
     """Render one failure batch with the tripwire values threaded explicitly.
 
     The renderer takes the resolved trap values as parameters, so a test arms
-    or disarms by passing them rather than by poking the process verdict.
+    or disarms by passing them rather than by poking the process verdict, and
+    hands the resolved ``sim_failure`` bucket action down the same way.
     """
     _render_sim_failures(
         outcome,
         current_block=100,
         sim_exit_on_fail=armed,
         exit_ignore_buckets=ignore,
+        sim_failure_action=action,
     )
 
 
@@ -324,62 +327,51 @@ def test_sim_failures_continue_by_default(caplog: pytest.LogCaptureFixture) -> N
     assert any("[sim-fail]" in r.message for r in caplog.records)
 
 
-def test_ignoring_a_bucket_opts_the_trap_out(
-    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ignoring_a_bucket_opts_the_trap_out(caplog: pytest.LogCaptureFixture) -> None:
     """Narrowing an armed trap is an EXPLICIT operator opt-in, not a default.
     The ignore set is the declared ``simulation.exit_ignore_buckets`` key, so
     the trap stays armed and the named bucket stops counting. There is no
-    implicit mask: an armed process with no list still traps.
+    implicit mask: an armed process with no list still traps. The EXIT action
+    is injected as the resolved bucket action — reaching the policy (the trap
+    did not short-circuit) would SystemExit and fail the test.
     """
-    import degenbot.diagnostics as diag
-
     armed, ignore = _arm_from(
         {"DEGENBOT_SIM_EXIT_ON_FAIL": "1", "DEGENBOT_SIM_EXIT_IGNORE_BUCKETS": "empty"},
         operator_file=None,
     )
-    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: FailureAction.EXIT)
     with caplog.at_level("INFO", logger="degenbot"):
-        _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
+        _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore, action=FailureAction.EXIT)
     assert armed is True
     # The ignored bucket short-circuits the trap: reaching here without a
     # SystemExit is the assertion, and the failure line still rendered.
     assert any("[sim-fail]" in r.message for r in caplog.records)
 
 
-def test_the_operator_file_can_ignore_a_bucket_too(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_operator_file_can_ignore_a_bucket_too(tmp_path: Path) -> None:
     """The file layer narrows the trap, which only the environment could."""
-    import degenbot.diagnostics as diag
-
     body = "sim_exit_on_fail = true\nexit_ignore_buckets = 'empty'\n"
     with probe.operator_file(f"[simulation]\n{body}") as written:
         armed, ignore = _arm_from(operator_file=written)
-    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: FailureAction.EXIT)
-    _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
+    _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore, action=FailureAction.EXIT)
     assert armed is True
     assert ignore == "empty"
 
 
 def test_operator_exit_override_still_traps(
-    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The exit path survives ADR-040: when the operator's per-bucket policy
     says ``exit`` for ``sim_failure`` (a ``[failure_policy]`` override), the
-    trap fires (``SystemExit(3)``) after the fixture dump. This test stubs the
-    policy consult - the real resolution is boot-validated Rust-side; here we
-    deterministically test the EXIT WIRING without mutating process-global
-    Rust state.
+    trap fires (``SystemExit(3)``) after the fixture dump. This test injects
+    the resolved EXIT action - the real resolution is boot-validated
+    Rust-side; here we deterministically test the EXIT WIRING without mutating
+    process-global Rust state.
     """
-    import degenbot.diagnostics as diag
-
-    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: FailureAction.EXIT)
     failures = [
         {"path_id": 1, "bucket": "Error(string)", "fail_index": 3, "revert_data": "0x08c379a0"}
     ]
     with pytest.raises(SystemExit) as ei, caplog.at_level("INFO", logger="degenbot"):
-        _render(_outcome(failures), armed=True)
+        _render(_outcome(failures), armed=True, action=FailureAction.EXIT)
     assert ei.value.code == 3
     assert any("[sim-trap]" in r.message for r in caplog.records)
 
@@ -422,22 +414,17 @@ def test_a_bare_invocation_leaves_the_tripwire_disarmed(tmp_path: Path) -> None:
     _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
 
 
-def test_the_operator_file_can_arm_the_tripwire(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_operator_file_can_arm_the_tripwire(tmp_path: Path) -> None:
     """The file layer reaches the trap in the arming direction too.
 
     The pair of file-layer tests is the point: a change that left the trap
     permanently off would pass the disarming test alone.
     """
-    import degenbot.diagnostics as diag
-
     with probe.operator_file("[simulation]\nsim_exit_on_fail = true\n") as written:
         armed, ignore = _arm_from(operator_file=written)
     assert armed is True, "the file layer must be able to arm the trap"
-    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: FailureAction.EXIT)
     with pytest.raises(SystemExit) as ei:
-        _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore)
+        _render(_outcome([_EMPTY_FAILURE]), armed=armed, ignore=ignore, action=FailureAction.EXIT)
     assert ei.value.code == 3
 
 

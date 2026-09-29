@@ -30,7 +30,8 @@ from degenbot.pathfinding import (
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
+    from collections.abc import AsyncGenerator, Callable, Iterable, Iterator, Sequence
+    from typing import Any
 
     from degenbot.types.chain import ChecksummedAddress
 
@@ -261,6 +262,8 @@ async def find_paths_async(
     *,
     request: PathfindingRequest,
     batch_size: int = 1000,
+    prepare_traversals: Callable[..., list[_Traversal]] = _prepare_traversals,
+    find_paths_async_rust: Callable[..., Any] = find_paths_async_rust,
 ) -> AsyncGenerator[Sequence[PathStep], None]:
     """Async `find_paths`, driving the Rust batched async iterator.
 
@@ -270,6 +273,10 @@ async def find_paths_async(
     Args:
         request: The graph scope + traversal constraints for this search.
         batch_size: Paths per Rust delivery batch (default 1000), clamped `>= 1`.
+        prepare_traversals: The one-time prep seam called as
+            ``prepare_traversals(request=request)`` on the blocking pool.
+        find_paths_async_rust: The Rust batched async iterator factory, called
+            with the traversal's positional seam arguments.
 
     Yields:
         Sequences of PathStep objects representing arbitrage paths.
@@ -283,7 +290,7 @@ async def find_paths_async(
     discovery_last_log = discovery_start
 
     traversals = await call_blocking_on_ambient_runtime(
-        partial(_prepare_traversals, request=request)
+        partial(prepare_traversals, request=request)
     )
     effective_batch = max(1, int(batch_size))
 

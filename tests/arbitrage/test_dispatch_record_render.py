@@ -20,27 +20,31 @@ from tests.fakes.session import (
 
 
 class _CapturingLogger:
+    """A recording logger double rendering the standard lazy ``%`` args."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    def _cap(self, level: str, msg: str) -> None:
+    def _cap(self, level: str, msg: str, *args: object) -> None:
+        if args:
+            msg = msg % args
         self.calls.append((level, msg))
 
-    def info(self, msg: str) -> None:
-        self._cap("info", msg)
+    def info(self, msg: str, *args: object) -> None:
+        self._cap("info", msg, *args)
 
-    def warning(self, msg: str) -> None:
-        self._cap("warning", msg)
+    def warning(self, msg: str, *args: object) -> None:
+        self._cap("warning", msg, *args)
 
-    def debug(self, msg: str) -> None:
-        self._cap("debug", msg)
+    def debug(self, msg: str, *args: object) -> None:
+        self._cap("debug", msg, *args)
 
-    def error(self, msg: str) -> None:
-        self._cap("error", msg)
+    def error(self, msg: str, *args: object) -> None:
+        self._cap("error", msg, *args)
 
 
 @pytest.mark.asyncio
-async def test_broadcast_failure_renders_at_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_broadcast_failure_renders_at_warning() -> None:
     rec = dispatch_module.SkippedRecord(
         path_id=7,
         reason=dispatch_module.SubmitSkipReason.BROADCAST_FAILED,
@@ -48,20 +52,21 @@ async def test_broadcast_failure_renders_at_warning(monkeypatch: pytest.MonkeyPa
     )
 
     captured = _CapturingLogger()
-    monkeypatch.setattr(dispatch_module, "bot_logger", captured)
 
     async def fake_dispatch_and_submit(**kwargs):  # noqa: ANN003, ANN202
         return [rec]
 
-    monkeypatch.setattr(dispatch_module, "dispatch_and_submit", fake_dispatch_and_submit)
-
-    session = fake_session(
-        relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"])
-    )
+    session = fake_session(relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]))
     candidate = FakeCandidate()
     outcome = FakeSubmitOutcome(gas_profitable=[candidate])
 
-    await dispatch_module._submit_batch_records(session, outcome, operator_nonce=3)
+    await dispatch_module._submit_batch_records(
+        session,
+        outcome,
+        operator_nonce=3,
+        submitter=fake_dispatch_and_submit,
+        logger=captured,
+    )
 
     assert any(
         level == "warning" and "relay unreachable" in msg for level, msg in captured.calls
@@ -80,11 +85,10 @@ def _candidate() -> FakeCandidate:
 
 
 @pytest.mark.asyncio
-async def test_silent_veto_streak_warns_once(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_silent_veto_streak_warns_once() -> None:
     """Live-armed + gate-clearing candidates + zero submissions, repeatedly,
     must produce exactly one throttled WARN naming the skip reasons."""
     captured = _CapturingLogger()
-    monkeypatch.setattr(dispatch_module, "bot_logger", captured)
 
     skip = dispatch_module.SkippedRecord(
         path_id=7, reason=dispatch_module.SubmitSkipReason.POOLS_CLAIMED
@@ -93,12 +97,13 @@ async def test_silent_veto_streak_warns_once(monkeypatch: pytest.MonkeyPatch) ->
     async def all_skipped(**kwargs):  # noqa: ANN003, ANN202
         return [skip]
 
-    monkeypatch.setattr(dispatch_module, "dispatch_and_submit", all_skipped)
     session = _live_session({})
     outcome = FakeSubmitOutcome(gas_profitable=[_candidate()])
 
     for _ in range(4):
-        await dispatch_module._submit_batch_records(session, outcome, operator_nonce=3)
+        await dispatch_module._submit_batch_records(
+            session, outcome, operator_nonce=3, submitter=all_skipped, logger=captured
+        )
 
     stall_warnings = [m for lvl, m in captured.calls if lvl == "warning" and "no submissions" in m]
     assert len(stall_warnings) == 1, f"expected one throttled stall warn, got {captured.calls}"
@@ -108,8 +113,9 @@ async def test_silent_veto_streak_warns_once(monkeypatch: pytest.MonkeyPatch) ->
     async def one_submitted(**kwargs):  # noqa: ANN003, ANN202
         return [real_submitted]
 
-    monkeypatch.setattr(dispatch_module, "dispatch_and_submit", one_submitted)
-    await dispatch_module._submit_batch_records(session, outcome, operator_nonce=3)
+    await dispatch_module._submit_batch_records(
+        session, outcome, operator_nonce=3, submitter=one_submitted, logger=captured
+    )
     assert session.submission_smoke.streak == 0
 
 

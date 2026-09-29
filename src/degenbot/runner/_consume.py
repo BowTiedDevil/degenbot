@@ -28,6 +28,8 @@ from degenbot.runner._dispatch import RawEngineResult
 from degenbot.runner._sim_submit import BatchWork
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from degenbot.runner.bot_runner import _SessionState
 
 
@@ -132,8 +134,18 @@ def _reprime(
     return asyncio.ensure_future(anext(stream)), False
 
 
-async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _SessionState) -> None:
-    """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved."""
+async def _apply_block_if_ready(
+    fut: asyncio.Task[dict[str, int]],
+    session: _SessionState,
+    *,
+    reward_percentiles: Sequence[int] | None = None,
+) -> None:
+    """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved.
+
+    ``reward_percentiles`` is the resolved core pair the caller hands down;
+    ``None`` (production) consults the Rust ``fee_percentiles`` reader per
+    tick, so the values can never be hardcoded, cached, or mirrored here.
+    """
     if fut.cancelled() or fut.exception() is not None:
         return
     dispatcher = session.dispatcher
@@ -159,12 +171,14 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
     # happen in the Rust submit leaf (``fetch_fee_history``). No-op on failure.
     async_alloy = async_w3.as_async_alloy()
     if async_alloy is not None:
+        if reward_percentiles is None:
+            reward_percentiles = fee_percentiles()
         await session.fee_history_fetcher(
             provider=async_alloy,
             dispatcher=dispatcher,
             block_count=1,
             last_block=block_number,
-            reward_percentiles=[float(p) for p in fee_percentiles()],
+            reward_percentiles=[float(p) for p in reward_percentiles],
         )
         # The same head tick drives the hosted per-head reconciliation: refresh
         # the confirmed chain nonce, close outstanding submission records out,

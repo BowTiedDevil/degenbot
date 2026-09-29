@@ -85,12 +85,7 @@ class TestTypedSubmitRecord:
 class TestDispatchAndSubmitWrapper:
     """The companion wrapper converts the FFI's dict list to typed records."""
 
-    async def test_wrapper_types_the_ffi_dicts(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import degenbot.dispatch as dispatch_mod
-
+    async def test_wrapper_types_the_ffi_dicts(self) -> None:
         raw_records = [
             {"kind": "submitted", "path_id": 1, "tx_hash": "0xh", "nonce": 2},
             {"kind": "skipped", "path_id": 3, "reason": "dry_run"},
@@ -102,7 +97,6 @@ class TestDispatchAndSubmitWrapper:
 
             return _inner()
 
-        monkeypatch.setattr(dispatch_mod, "_dispatch_and_submit_py", fake_py)
         records = await dispatch_and_submit(
             candidates=[],
             dispatcher=None,
@@ -114,6 +108,7 @@ class TestDispatchAndSubmitWrapper:
                 dry_run=True,
                 inject_code=False,
             ),
+            submit_leaf=fake_py,
         )
         assert len(records) == 2
         assert records[0] == SubmittedRecord(path_id=1, tx_hash="0xh", nonce=2)
