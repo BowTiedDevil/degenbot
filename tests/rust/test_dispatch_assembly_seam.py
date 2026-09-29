@@ -21,20 +21,19 @@ from degenbot._ffi.simulation import (
     assemble_dispatch_candidates_py,
 )
 from degenbot.runner import _dispatch as d
+from degenbot.runner._dispatch import RawEngineResult
 
 
-def _row(
-    path_id: int,
-) -> tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]:
+def _row(path_id: int) -> RawEngineResult:
     """One raw engine-result row for the fixture's 2-hop V2 cycle."""
-    return (
-        path_id,
-        1_000_000_000_000_000_000,
-        2_000_000_000_000_000_000,
-        (1_500_000_000_000_000_000, 1_400_000_000_000_000_000),
-        (1_000_000_000_000_000_000, 1_500_000_000_000_000_000),
-        100,
-        (0, 0),
+    return RawEngineResult(
+        path_id=path_id,
+        optimal_input=1_000_000_000_000_000_000,
+        engine_profit=2_000_000_000_000_000_000,
+        hop_outputs=(1_500_000_000_000_000_000, 1_400_000_000_000_000_000),
+        consumed_inputs=(1_000_000_000_000_000_000, 1_500_000_000_000_000_000),
+        solve_block=100,
+        state_nonces=(0, 0),
     )
 
 
@@ -55,7 +54,15 @@ class TestAssemblySeam:
 
     def test_empty_hop_rows_are_reported_not_built(self, nxm2bf_v2_engine_and_path) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
-        empty_hop = (path_id, 1, 1, (), (), 100, ())
+        empty_hop = RawEngineResult(
+            path_id=path_id,
+            optimal_input=1,
+            engine_profit=1,
+            hop_outputs=(),
+            consumed_inputs=(),
+            solve_block=100,
+            state_nonces=(),
+        )
         assembly = assemble_dispatch_candidates_py(
             engine=engine, results=[_row(path_id), empty_hop]
         )
@@ -84,7 +91,15 @@ class TestAssemblySeam:
 
     def test_hop_length_mismatch_raises(self, nxm2bf_v2_engine_and_path) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
-        bad = (path_id, 1, 1, (1,), (1,), 100, (0,))
+        bad = RawEngineResult(
+            path_id=path_id,
+            optimal_input=1,
+            engine_profit=1,
+            hop_outputs=(1,),
+            consumed_inputs=(1,),
+            solve_block=100,
+            state_nonces=(0,),
+        )
         with pytest.raises(ValueError, match="hop_outputs length"):
             assemble_dispatch_candidates_py(engine=engine, results=[bad])
 

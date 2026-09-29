@@ -1,8 +1,7 @@
 //! Batched engine-result → `DispatchCandidate` assembly.
 //!
-//! The settlement runner shaped each raw solver result row
-//! `(path_id, optimal_input, engine_profit, hop_outputs, consumed_inputs,
-//! solve_block, state_nonces)` into a `DispatchCandidate` one Python object at
+//! The settlement runner shaped each raw solver result row (the named
+//! `RawEngineResult` record) into a `DispatchCandidate` one Python object at
 //! a time. This seam performs the whole batch in one call: payload-served
 //! path ids and empty-hop rows are skipped, the survivors resolve their
 //! `composers::PathInfo` through the same `PyArbEngine::path_info_for_core`
@@ -22,9 +21,20 @@ use degenbot_arbitrage::DispatchCandidate;
 use pyo3::types::PyList;
 use std::collections::HashSet;
 
-/// One raw engine-result row — the tuple shape the solver result batch stream
-/// delivers.
-type RawResultRow = (u64, u128, u128, Vec<u128>, Vec<u128>, u64, Vec<u64>);
+/// One raw engine-result row — the named record the runner constructs at the
+/// batch-stream conversion point (`_consume._engine_result`) and this seam
+/// extracts by field name (`FromPyObject` getattr extraction over the frozen
+/// dataclass); no positional 7-tuple crosses the boundary.
+#[derive(FromPyObject, Clone)]
+pub struct RawEngineResult {
+    path_id: u64,
+    optimal_input: u128,
+    engine_profit: u128,
+    hop_outputs: Vec<u128>,
+    consumed_inputs: Vec<u128>,
+    solve_block: u64,
+    state_nonces: Vec<u64>,
+}
 
 /// The batched assembly result: ready candidates + the skipped empty-hop path
 /// ids (the display-only `[sim-none]` log's input).
@@ -73,7 +83,7 @@ impl PyCandidateAssembly {
 pub fn assemble_dispatch_candidates_py(
     py: Python<'_>,
     engine: Py<PyArbEngine>,
-    results: Vec<RawResultRow>,
+    results: Vec<RawEngineResult>,
     erc6909_profit: bool,
     use_v4_batch: bool,
     skip_path_ids: Option<Vec<u64>>,
@@ -82,37 +92,28 @@ pub fn assemble_dispatch_candidates_py(
     let mut candidates = Vec::with_capacity(results.len());
     let mut empty_hop_path_ids = Vec::new();
 
-    for (
-        path_id,
-        optimal_input,
-        engine_profit,
-        hop_outputs,
-        consumed_inputs,
-        solve_block,
-        state_nonces,
-    ) in results
-    {
+    for row in results {
         // An empty hop list is not an encodable path — the sim seam never
         // sees it. Reported so the driver's `[sim-none]` log keeps its home.
-        if hop_outputs.is_empty() {
-            empty_hop_path_ids.push(path_id);
+        if row.hop_outputs.is_empty() {
+            empty_hop_path_ids.push(row.path_id);
             continue;
         }
         // Already simulated inline by the engine; its submit record comes
         // from the payload arm, not the FFI sim batch.
-        if skip.contains(&path_id) {
+        if skip.contains(&row.path_id) {
             continue;
         }
         candidates.push(build_dispatch_candidate(
             py,
             &engine,
-            path_id,
-            optimal_input,
-            engine_profit,
-            hop_outputs,
-            consumed_inputs,
-            solve_block,
-            state_nonces,
+            row.path_id,
+            row.optimal_input,
+            row.engine_profit,
+            row.hop_outputs,
+            row.consumed_inputs,
+            row.solve_block,
+            row.state_nonces,
             erc6909_profit,
             use_v4_batch,
         )?);

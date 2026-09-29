@@ -16,6 +16,7 @@ import pytest
 
 from degenbot.dispatch import Dispatcher
 from degenbot.runner import _dispatch as d
+from degenbot.runner._dispatch import RawEngineResult
 from degenbot.runner._sim_submit import BatchWork, _run_sim
 from degenbot.runner.bot_runner import _SessionState
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
@@ -62,7 +63,17 @@ async def test_run_sim_projects_erc6909_toggle(monkeypatch) -> None:
     # One solved result; ``sim_ctx=None`` makes the simulate leaf raise AFTER
     # candidate construction (the RuntimeError is the tripwire that the
     # constructor really ran).
-    results = [(1, 100, 5, (105,), (100,), 10, (0,))]
+    results = [
+        RawEngineResult(
+            path_id=1,
+            optimal_input=100,
+            engine_profit=5,
+            hop_outputs=(105,),
+            consumed_inputs=(100,),
+            solve_block=10,
+            state_nonces=(0,),
+        )
+    ]
     with identity_env(
         {
             "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",

@@ -112,9 +112,10 @@ def dispatch_profitable_py(
 ) -> Coroutine[Any, Any, DispatchOutcome]: ...
 def assemble_dispatch_candidates_py(
     engine: ArbitrageEngine,
-    # The binding extracts any sequence (pyo3 Vec<T>: list or tuple rows) —
-    # the runner's solver-result batch stream delivers tuple rows.
-    results: Sequence[tuple[int, int, int, Sequence[int], Sequence[int], int, Sequence[int]]],
+    # Each row is the runner's frozen RawEngineResult record
+    # (degenbot.runner._dispatch) — the binding extracts it by field name,
+    # never positionally.
+    results: Sequence[Any],
     *,
     erc6909_profit: bool = False,
     use_v4_batch: bool = False,

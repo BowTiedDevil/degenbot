@@ -28,21 +28,74 @@ if TYPE_CHECKING:
 # revert storm can otherwise flood the log during a stalled head.
 _SIM_FAIL_RENDER_CAP = 25
 
+# Sentinel for `hop_fields`' strict-read mode (distinct from any field value,
+# including None).
+_UNSET: Any = object()
+
 
 # A sim-dispatch outcome handed to the renderers: the FFI batch outcome or
 # MergedOutcome (the payload-stitched adapter — structurally identical view).
 type _SimOutcome = DispatchOutcome | MergedOutcome
 
 
-def _hop_display_addr(hop: dict[str, Any]) -> str:
-    """Return a short display address for logging (plain-dict hop)."""
+@dataclasses.dataclass(frozen=True, slots=True)
+class HopFields:
+    """The typed view of one plain-dict hop (the ``outcome.path_infos`` shape).
 
-    family = hop["family"]
+    The ONE home for the family-conditional field names: V2/V3 hops carry
+    ``pool_address``/``token0_address``/``token1_address``, V4 hops carry
+    ``pool_id_hex``/``currency0_address``/``currency1_address`` (plus the
+    pool manager + tick spacing) — the render consumers read the named
+    fields instead of re-branching on the dict keys.
+    """
+
+    family: str
+    # V2/V3 pool_address | V4 pool_id_hex.
+    pool_ref: str
+    # token0_address | currency0_address.
+    token0: str
+    # token1_address | currency1_address.
+    token1: str
+    fee: int
+    zfo: bool
+    # V4-only fields (None on the V2/V3 variants).
+    pool_manager: str | None = None
+    tick_spacing: int | None = None
+
+
+def hop_fields(hop: dict[str, Any], *, default: Any = _UNSET) -> HopFields:
+    """Read one plain-dict hop into the typed :class:`HopFields` view.
+
+    With ``default`` the read is lenient (``dict.get`` semantics, every field
+    falling back to that value) — the failure-fixture dump renders malformed
+    hops instead of raising on them.
+    """
+
+    def get(key: str) -> Any:
+        return hop[key] if default is _UNSET else hop.get(key, default)
+
+    family = get("family")
 
     if family in {"V2", "V3"}:
-        return hop["pool_address"]
+        return HopFields(
+            family=family,
+            pool_ref=get("pool_address"),
+            token0=get("token0_address"),
+            token1=get("token1_address"),
+            fee=get("fee"),
+            zfo=get("zfo"),
+        )
 
-    return hop["pool_id_hex"]
+    return HopFields(
+        family=family,
+        pool_ref=get("pool_id_hex"),
+        token0=get("currency0_address"),
+        token1=get("currency1_address"),
+        fee=get("fee"),
+        zfo=get("zfo"),
+        pool_manager=get("pool_manager_address"),
+        tick_spacing=get("tick_spacing"),
+    )
 
 
 def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> str:
@@ -56,15 +109,9 @@ def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) 
     parts: list[str] = []
 
     for h in hops:
-        family = h["family"]
+        hf = hop_fields(h)
 
-        if family in {"V2", "V3"}:
-            t0, t1 = h["token0_address"], h["token1_address"]
-
-        else:
-            t0, t1 = h["currency0_address"], h["currency1_address"]
-
-        parts.append(f"{t0}→{t1}{'↗' if h['zfo'] else '↘'}")
+        parts.append(f"{hf.token0}→{hf.token1}{'↗' if hf.zfo else '↘'}")
 
     return " ".join(parts)
 
@@ -130,28 +177,21 @@ def _render_profit_logs(outcome: _SimOutcome) -> None:
 
         if path_info is not None:
             for i, h in enumerate(path_info["hops"]):
-                family = h["family"]
+                hf = hop_fields(h)
 
-                if family == "V2":
+                if hf.family == "V4":
                     hop_details.append(
-                        f"  hop[{i}] V2 addr={h['pool_address']} "
-                        f"t0={h['token0_address']} t1={h['token1_address']} "
-                        f"fee={h['fee']} zfo={h['zfo']}",
+                        f"  hop[{i}] V4 pm={hf.pool_manager} "
+                        f"pid={hf.pool_ref} "
+                        f"c0={hf.token0} c1={hf.token1} "
+                        f"fee={hf.fee} ts={hf.tick_spacing} zfo={hf.zfo}",
                     )
 
-                elif family == "V3":
+                else:
                     hop_details.append(
-                        f"  hop[{i}] V3 addr={h['pool_address']} "
-                        f"t0={h['token0_address']} t1={h['token1_address']} "
-                        f"fee={h['fee']} zfo={h['zfo']}",
-                    )
-
-                elif family == "V4":
-                    hop_details.append(
-                        f"  hop[{i}] V4 pm={h['pool_manager_address']} "
-                        f"pid={h['pool_id_hex']} "
-                        f"c0={h['currency0_address']} c1={h['currency1_address']} "
-                        f"fee={h['fee']} ts={h['tick_spacing']} zfo={h['zfo']}",
+                        f"  hop[{i}] {hf.family} addr={hf.pool_ref} "
+                        f"t0={hf.token0} t1={hf.token1} "
+                        f"fee={hf.fee} zfo={hf.zfo}",
                     )
 
         hops_str = "\n".join(hop_details)
@@ -200,29 +240,20 @@ def _dump_failure_fixture(
     )
 
     for i, h in enumerate(hops):
-        family = h.get("family")
+        hf = hop_fields(h, default="?")
 
-        if family in {"V2", "V3"}:
-            addr = h.get("pool_address")
-
-            t0, t1 = h.get("token0_address", "?"), h.get("token1_address", "?")
-
+        if hf.family in {"V2", "V3"}:
             bot_logger.error(
-                f"[sim-fixture] hop[{i}] {family} pool={addr} "
-                f"t0={t0} t1={t1} fee={h.get('fee')} zfo={h.get('zfo')}",
+                f"[sim-fixture] hop[{i}] {hf.family} pool={hf.pool_ref} "
+                f"t0={hf.token0} t1={hf.token1} fee={hf.fee} zfo={hf.zfo}",
             )
 
         else:  # V4
-            pm = h.get("pool_manager_address", "?")
-
-            pid = h.get("pool_id_hex", "?")
-
-            c0, c1 = h.get("currency0_address", "?"), h.get("currency1_address", "?")
-
             bot_logger.error(
-                f"[sim-fixture] hop[{i}] V4 pool_manager={pm} pool_id={pid} "
-                f"c0={c0} c1={c1} fee={h.get('fee')} "
-                f"tick_spacing={h.get('tick_spacing')} zfo={h.get('zfo')}",
+                f"[sim-fixture] hop[{i}] V4 pool_manager={hf.pool_manager} "
+                f"pool_id={hf.pool_ref} "
+                f"c0={hf.token0} c1={hf.token1} fee={hf.fee} "
+                f"tick_spacing={hf.tick_spacing} zfo={hf.zfo}",
             )
 
     for j, s in enumerate(captured):

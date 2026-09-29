@@ -31,7 +31,7 @@ from degenbot.runner._dispatch import (
 )
 
 if TYPE_CHECKING:
-    from degenbot.runner._dispatch import _RawResult
+    from degenbot.runner._dispatch import RawEngineResult
     from degenbot.runner._render import _SimOutcome
     from degenbot.runner.bot_runner import _SessionState
 
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 class BatchWork:
     """One streamed solver batch traversing the pipeline."""
 
-    results: list[_RawResult]
+    results: list[RawEngineResult]
     block_timestamp: int
     base_fee_next: int
     current_block: int

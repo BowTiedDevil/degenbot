@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
 from degenbot.dispatch import (
     DispatchCandidate,
+    PayloadOutcome,
     SkippedRecord,
     SubmitCandidate,
     SubmitContext,
@@ -54,10 +55,25 @@ from degenbot.logging import logger as bot_logger
 # the builder endpoints per batch.
 _RELAY_SUBMIT_PROVIDERS: list[tuple[str, Any]] | None = None
 
-#: One raw engine-result row (path_id, optimal_input, profit, hop_outputs,
-#: consumed_inputs, solve_block, state_nonces) - the tuple shape the result
-#: batch stream delivers.
-_RawResult = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]
+
+@dataclass(frozen=True, slots=True)
+class RawEngineResult:
+    """One raw engine-result row the solver result batch stream delivers.
+
+    The named record is constructed at the batch-stream conversion point
+    (``_consume._engine_result``) and extracted by field name by the Rust
+    ``assemble_dispatch_candidates`` seam — the field order never crosses
+    the boundary positionally.
+    """
+
+    path_id: int
+    optimal_input: int
+    engine_profit: int
+    hop_outputs: tuple[int, ...]
+    consumed_inputs: tuple[int, ...]
+    solve_block: int
+    state_nonces: tuple[int, ...]
+
 
 # The executor runtime bytecode file (one canonical filename in any
 # contracts directory).
@@ -114,7 +130,7 @@ def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
 
 def _build_dispatch_candidates(
     session: _SessionState,
-    results: list[_RawResult],
+    results: list[RawEngineResult],
     *,
     payloads: dict[int, dict] | None = None,
 ) -> list[DispatchCandidate]:
@@ -148,110 +164,79 @@ def _build_dispatch_candidates(
     return list(assembly.candidates)
 
 
+@dataclass(frozen=True, slots=True)
 class MergedOutcome:
-    """A ``DispatchOutcome``-protocol view: the FFI outcome + payload records.
+    """The named sim/submit outcome record the renderers + submit leaf consume.
 
-    Entries the engine simulated inline never enter the FFI batch, so the
-    batch outcome alone under-reports. This adapter stitches
-    the payload-derived submit candidates/failure records into the base
-    outcome's tallies so the renderers and the submit leaf see one
-    attribute-uniform object (the attribute parity the
-    ``[sim]``/``[profit]``/``[sim-fail]`` render contract demands). When every entry was
-    payload-served (no FFI batch ran), ``base`` is ``None`` and only the
-    payload records surface.
+    The FFI batch outcome and the payload-derived records are stitched ONCE,
+    at construction (see :meth:`from_parts`), into flat named fields — the
+    renderers keep ``DispatchOutcome`` attribute parity (the
+    ``[sim]``/``[profit]``/``[sim-fail]`` contract) without re-tallying on
+    every property access. Falsy when empty: callers skip render+submit on
+    falsy outcomes.
     """
 
-    def __init__(
-        self,
-        base: DispatchOutcome | None,
-        candidates: list[SubmitCandidate],
-        failures: list[dict[str, Any]],
-        path_infos: dict[int, dict[str, Any]],
-        unprofitable_count: int,
-    ) -> None:
-        self._base: DispatchOutcome | None = base
-        self._candidates = candidates
-        self._failures = failures
-        self._path_infos = path_infos
-        self._unprofitable_count = unprofitable_count
+    gas_profitable: list[SubmitCandidate]
+    gas_unprofitable_count: int
+    exception_count: int
+    fail_count: int
+    candidate_count: int
+    suppressed_count: int
+    thin_dropped: int
+    divergent_dropped: int
+    fot_dropped: int
+    fail_buckets: dict[str, int]
+    failures: list[dict[str, Any]]
+    path_infos: dict[int, dict[str, Any]]
 
     def __bool__(self) -> bool:
-        # A merged outcome with no base and no payload records is empty
-        # ( callers skip render+submit on falsy outcomes).
-        if self._base is not None:
-            return True
-        return bool(self._candidates or self._failures or self._unprofitable_count)
+        return bool(
+            self.gas_profitable
+            or self.failures
+            or self.gas_unprofitable_count
+            or self.candidate_count
+        )
 
-    @property
-    def gas_profitable(self) -> list[SubmitCandidate]:
-        base = self._base
-        base_candidates = [] if base is None else list(base.gas_profitable)
-        return base_candidates + self._candidates
+    @classmethod
+    def from_parts(
+        cls,
+        base: DispatchOutcome | None,
+        payload: PayloadOutcome,
+    ) -> MergedOutcome:
+        """Stitch the FFI batch tallies + payload records into one flat record.
 
-    @property
-    def gas_unprofitable_count(self) -> int:
-        base = self._base
-        base_count = 0 if base is None else base.gas_unprofitable_count
-        return base_count + self._unprofitable_count
-
-    @property
-    def exception_count(self) -> int:
-        base = self._base
-        return 0 if base is None else base.exception_count
-
-    @property
-    def fail_count(self) -> int:
-        base = self._base
-        base_count = 0 if base is None else base.fail_count
-        return base_count + len(self._failures)
-
-    @property
-    def candidate_count(self) -> int:
-        base = self._base
-        base_count = 0 if base is None else base.candidate_count
-        return base_count + len(self._candidates) + self._unprofitable_count + len(self._failures)
-
-    @property
-    def suppressed_count(self) -> int:
-        base = self._base
-        return 0 if base is None else base.suppressed_count
-
-    @property
-    def thin_dropped(self) -> int:
-        base = self._base
-        return 0 if base is None else base.thin_dropped
-
-    @property
-    def divergent_dropped(self) -> int:
-        base = self._base
-        return 0 if base is None else base.divergent_dropped
-
-    @property
-    def fot_dropped(self) -> int:
-        base = self._base
-        return 0 if base is None else base.fot_dropped
-
-    @property
-    def fail_buckets(self) -> dict[str, int]:
-        base = self._base
-        buckets = {} if base is None else dict(base.fail_buckets)
-        for rec in self._failures:
+        ``base`` is ``None`` when every entry was payload-served (no FFI
+        batch ran) — the neutral part contributes nothing.
+        """
+        candidates = list(payload.candidates)
+        failures = list(payload.failures)
+        buckets: dict[str, int] = {} if base is None else dict(base.fail_buckets)
+        for rec in failures:
             bucket = rec["bucket"]
             buckets[bucket] = buckets.get(bucket, 0) + 1
-        return buckets
-
-    @property
-    def failures(self) -> list[dict[str, Any]]:
-        base = self._base
-        base_failures = [] if base is None else list(base.failures)
-        return base_failures + self._failures
-
-    @property
-    def path_infos(self) -> dict[int, dict[str, Any]]:
-        base = self._base
-        merged = {} if base is None else dict(base.path_infos)
-        merged.update(self._path_infos)
-        return merged
+        path_infos: dict[int, dict[str, Any]] = {} if base is None else dict(base.path_infos)
+        path_infos.update(payload.path_infos)
+        unprofitable = payload.unprofitable_count
+        return cls(
+            gas_profitable=([] if base is None else list(base.gas_profitable)) + candidates,
+            gas_unprofitable_count=(0 if base is None else base.gas_unprofitable_count)
+            + unprofitable,
+            exception_count=0 if base is None else base.exception_count,
+            fail_count=(0 if base is None else base.fail_count) + len(failures),
+            candidate_count=(
+                (0 if base is None else base.candidate_count)
+                + len(candidates)
+                + unprofitable
+                + len(failures)
+            ),
+            suppressed_count=0 if base is None else base.suppressed_count,
+            thin_dropped=0 if base is None else base.thin_dropped,
+            divergent_dropped=0 if base is None else base.divergent_dropped,
+            fot_dropped=0 if base is None else base.fot_dropped,
+            fail_buckets=buckets,
+            failures=([] if base is None else list(base.failures)) + failures,
+            path_infos=path_infos,
+        )
 
 
 def _merge_payload_outcome(
@@ -297,12 +282,7 @@ def _merge_payload_outcome(
         session.engine_registry.engine,
         sim_ctx.executor_address,
     )
-    candidates = list(outcome.candidates)
-    failures = list(outcome.failures)
-    path_infos = dict(outcome.path_infos)
-    unprofitable = outcome.unprofitable_count
-
-    return MergedOutcome(base_outcome, candidates, failures, path_infos, unprofitable)
+    return MergedOutcome.from_parts(base_outcome, outcome)
 
 
 def _render_outcome(

@@ -24,6 +24,7 @@ from degenbot.calculations import next_base_fee
 from degenbot.diagnostics import mark_progress
 from degenbot.dispatch import SimSubmitPipeline
 from degenbot.logging import logger as bot_logger
+from degenbot.runner._dispatch import RawEngineResult
 from degenbot.runner._sim_submit import BatchWork
 
 if TYPE_CHECKING:
@@ -199,6 +200,20 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
     session.advance_block(block_number)
 
 
+def _engine_result(item: Any, solve_block: int) -> RawEngineResult:
+    """Shape one solver-result row into the named assembly-seam record."""
+    path_id, opt_input, profit, hop_outs, consumed_ins, state_nonces = item
+    return RawEngineResult(
+        path_id=int(path_id),
+        optimal_input=int(opt_input),
+        engine_profit=int(profit),
+        hop_outputs=tuple(int(h) for h in hop_outs),
+        consumed_inputs=tuple(int(c) for c in consumed_ins),
+        solve_block=solve_block,
+        state_nonces=tuple(int(n) for n in state_nonces),
+    )
+
+
 def _apply_result_if_ready(
     fut: asyncio.Task[dict[str, object]],
     session: _SessionState,
@@ -220,29 +235,8 @@ def _apply_result_if_ready(
     current_block = session.dispatcher.current_block
     solve_block = int(cast("Any", batch["solve_block"]))
 
-    results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]] = []
-    for item in cast("Any", batch["fresh"]):
-        path_id, opt_input, profit, hop_outs, consumed_ins, state_nonces = item
-        results.append((
-            int(path_id),
-            int(opt_input),
-            int(profit),
-            tuple(int(h) for h in hop_outs),
-            tuple(int(c) for c in consumed_ins),
-            solve_block,
-            tuple(int(n) for n in state_nonces),
-        ))
-    for item in cast("Any", batch["updated"]):
-        path_id, opt_input, profit, hop_outs, consumed_ins, state_nonces = item
-        results.append((
-            int(path_id),
-            int(opt_input),
-            int(profit),
-            tuple(int(h) for h in hop_outs),
-            tuple(int(c) for c in consumed_ins),
-            solve_block,
-            tuple(int(n) for n in state_nonces),
-        ))
+    results = [_engine_result(item, solve_block) for item in cast("Any", batch["fresh"])]
+    results += [_engine_result(item, solve_block) for item in cast("Any", batch["updated"])]
 
     for path_id in cast("Any", batch["removed"]):
         session.dispatcher.discard_path(int(path_id))
