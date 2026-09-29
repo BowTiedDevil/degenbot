@@ -35,6 +35,19 @@ The gap: the offline tests *dropped* the exact quoter parity assertion
 (replaced with loose ranges), and the *recorder* that would populate a cassette
 was never generalised — the existing `chain_data` files were hand-produced.
 
+### The Curve cassette recorder
+
+The one L1 recorder that exists is `scripts/record_curve_tripool_cassette.py`:
+it forks mainnet at `--block` via the archive URI, builds the Curve tripool
+through the production `Bot.build_pool` path, and serializes the pool's
+constructor inputs into `tests/fixtures/chain_data/1/curve_tripool_block_<N>.json`
+(committed cassette: `curve_tripool_block_14900000.json`), which
+`tests/curve/test_curve_stableswap_pool.py::test_a_ramping` replays offline.
+Re-record only when the pinned regression block changes —
+`uv run --no-sync python scripts/record_curve_tripool_cassette.py --block <N>`
+(requires a reachable archive node serving that block and the anvil binary).
+Generalizing this recorder to other pools remains the deferred non-goal below.
+
 ## Two layers, one goal
 
 On-chain parity tests need **two** kinds of off-chain truth:
