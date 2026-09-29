@@ -122,8 +122,10 @@ class RunRitual:
         host = self._host
         session = host.session
         assert session is not None
+        consumer_task = session.result_consumer_task
+        assert consumer_task is not None
         host.session_watch.attach(
-            consumer_task=session.result_consumer_task,
+            consumer_task=consumer_task,
             watchdog_factory=host.pump_finished_watchdog,
         )
         self._state = _RitualState.RESUME
@@ -148,7 +150,9 @@ class RunRitual:
                 f"[host-arms] settlement facet inactive — hosted arms: "
                 f"{', '.join(facets) if facets else 'NONE'}"
             )
-        host.session.engine_registry.engine.resume(facets=facets)
+        session = host.session
+        assert session is not None
+        session.engine_registry.engine.resume(facets=facets)
         self._state = _RitualState.REGISTRATION
 
     def registration(self) -> None:
