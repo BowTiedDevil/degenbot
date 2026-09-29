@@ -24,6 +24,7 @@ degenbot-config.workspace = true
 # `BotState` (ADR-003 state owner) — the snapshot surface the dispatch
 # fan-out reads via `BlockSimHandle`.
 degenbot-bot.workspace = true
+degenbot-substrate.workspace = true
 # `PathInfo` / `HopInfo` / `EncodeOptions` / `WarmupSlots` / the
 # `compute_simulation_warmup_slots` the candidate + context consume.
 degenbot-executor.workspace = true

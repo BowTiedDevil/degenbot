@@ -15,14 +15,14 @@ use std::sync::Arc;
 use crate::backrun::{BackrunConfig, MevblockerBackrun, TxpoolBackrun};
 use crate::execution_context::ExecutionContext;
 use crate::strategy_kit::StrategyKit;
-use degenbot_bot::bot_core::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerifier, DbArm};
-use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_bot::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_bot::strategy_host::{DriverExit, DriverFuture, DriverSpawnFactory};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_eventhub::Hub;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickBootstrapRpc;
+use degenbot_substrate::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
+use degenbot_substrate::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerifier, DbArm};
+use degenbot_substrate::RouteRegistry;
 
 use degenbot_submission::submission_ledger::NonceLane;
 
@@ -176,13 +176,13 @@ impl BackrunStrategyBoot {
 
     /// The concrete provisioning ingress, including its verification policy.
     #[must_use]
-    pub fn ingress(&self) -> &degenbot_bot::bot_core::pool_ingress::PoolIngress {
+    pub fn ingress(&self) -> &degenbot_substrate::pool_ingress::PoolIngress {
         self.kit.ingress()
     }
 
     /// The verification policy selected by this strategy facet.
     #[must_use]
-    pub fn verify_level(&self) -> degenbot_bot::bot_core::pool_ingress::VerifyLevel {
+    pub fn verify_level(&self) -> degenbot_substrate::pool_ingress::VerifyLevel {
         self.ingress().verify_level()
     }
 }
@@ -555,7 +555,7 @@ async fn load_chain_roster(
                         if config.strategy.mevblocker_backrun.rank_evidence
                             || config.strategy.txpool_backrun.rank_evidence
                         {
-                            match degenbot_bot::connector_index::deep_pair_ranking_evidence(
+                            match degenbot_substrate::connector_index::deep_pair_ranking_evidence(
                                 next_registry.index(),
                                 &db,
                             )

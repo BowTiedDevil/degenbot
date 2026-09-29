@@ -21,7 +21,7 @@
 #![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{aliases::U112, Address};
-use degenbot::bot_core::BotState;
+use degenbot::substrate::BotState;
 use degenbot::PoolEntry;
 use degenbot::RegisterAerodromeV2PoolParams;
 use degenbot_uniswap::dex_identity::DexVariant;

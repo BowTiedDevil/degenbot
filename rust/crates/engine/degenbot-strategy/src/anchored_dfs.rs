@@ -17,8 +17,8 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::{EdgeKey, PathGraph, PoolKind};
+use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 
 /// One touched pool the frame's cycles anchor on: the connector-index
 /// identity (pool id + table family) and the DB token ids it trades.
@@ -414,7 +414,7 @@ mod tests {
             token0_id,
             token1_id,
             address: Address::new([u8::try_from(pool_id % 254).unwrap_or(0); 20]),
-            fees: degenbot_bot::bot_core::executor_hop::V2FeePair::from_discovered(
+            fees: degenbot_substrate::executor_hop::V2FeePair::from_discovered(
                 Some(3),
                 Some(3),
                 Some(1_000),

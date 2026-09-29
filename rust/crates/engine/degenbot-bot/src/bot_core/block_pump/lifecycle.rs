@@ -202,7 +202,7 @@ impl BlockPump {
         let s = self
             .bot
             .state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .snapshot_seed_block();
         let Some(seed) = s else { return Ok(0) };
         if seed == 0 || ws_block == 0 || seed >= ws_block {

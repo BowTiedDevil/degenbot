@@ -159,7 +159,7 @@ fn schema_state_label(state: &degenbot_db::SchemaState) -> &'static str {
     }
 }
 
-/// Map a [`degenbot_bot::bot_core::tick_assembly::TickMapAssemblyError`] to a
+/// Map a [`degenbot_substrate::tick_assembly::TickMapAssemblyError`] to a
 /// Python exception.
 ///
 /// - `Db` variant → delegates to [`db_err_to_py`] (a `ValueError`).
@@ -167,9 +167,9 @@ fn schema_state_label(state: &degenbot_db::SchemaState) -> &'static str {
 ///   RPC failures surface as a typed exception, not swallowed into a silent
 ///   degrade-to-sparse path).
 pub(crate) fn assembly_err_to_py(
-    err: &degenbot_bot::bot_core::tick_assembly::TickMapAssemblyError,
+    err: &degenbot_substrate::tick_assembly::TickMapAssemblyError,
 ) -> PyErr {
-    use degenbot_bot::bot_core::tick_assembly::TickMapAssemblyError;
+    use degenbot_substrate::tick_assembly::TickMapAssemblyError;
     match err {
         TickMapAssemblyError::Db(e) => db_err_to_py(e),
         TickMapAssemblyError::Chain(e) => pyo3::exceptions::PyRuntimeError::new_err(e.to_string()),

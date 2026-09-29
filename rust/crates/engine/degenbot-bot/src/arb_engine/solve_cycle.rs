@@ -63,9 +63,6 @@ use super::DeferredReRecordHook;
 use crate::arb_engine::detached_cycle::{self, DetachedArm, LaneDrainCounts};
 use crate::arb_engine::executor::{run_solve_lane, LaneOutcome, SolveLane, SolveOutcome};
 use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
-use crate::bot_core::resolve::resolve_hops;
-use crate::bot_core::resolve::HopProjectionCache;
-use crate::bot_core::{BlockMetadata, BotState, EpochDelta};
 use ::degenbot_solvers::mixed::{
     HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
 };
@@ -76,6 +73,9 @@ use degenbot_core::{op_error, op_info};
 use degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};
 use degenbot_pools::v4_state::v4_simulate_swap;
 use degenbot_solvers::affected_keys::AffectedKey;
+use degenbot_substrate::resolve::resolve_hops;
+use degenbot_substrate::resolve::HopProjectionCache;
+use degenbot_substrate::{BlockMetadata, BotState, EpochDelta};
 use degenbot_workers::dispatcher::SeatSurvivesPolicy;
 use degenbot_workers::lane::LaneCtx;
 use hashbrown::{HashMap, HashSet};
@@ -92,7 +92,7 @@ const RESOLVE_CHUNK: usize = 256;
 const RESOLVE_PAR_MIN: usize = 512;
 struct ResolveChunkOut {
     resolved: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)>,
-    status: Vec<(u64, Vec<crate::bot_core::resolve::HopDeficit>)>,
+    status: Vec<(u64, Vec<degenbot_substrate::resolve::HopDeficit>)>,
     snapshots: Vec<(u64, Vec<u64>)>,
     same_state: u64,
     projections: u64,
@@ -152,7 +152,7 @@ pub(crate) struct SolveCycleShared {
     /// build) — the WORKER-side clamp takes the same short core read the
     /// merge-site clamp took; no engine state is touched (MQUKB6-T3 intact:
     /// engine-then-core ordering, short read, no guard across awaits).
-    pub(crate) core: std::sync::Arc<crate::bot_core::state_lock::StateLock<BotState>>,
+    pub(crate) core: std::sync::Arc<degenbot_substrate::state_lock::StateLock<BotState>>,
     /// Per-path pool-ref snapshot, ALIGNED TO `to_solve` ORDER (index i in
     /// every bin mirrors `to_solve[i]`): the worker clamp's pool list, taken
     /// under the cycle's engine Mutex (stable for the whole cycle).
@@ -284,7 +284,7 @@ pub(crate) struct SolveCycle {
     pub(crate) resolve_par_stance: bool,
     // --- Shared dependencies (ADR-045 T4: the cycle drives resolve/solve) ---
     /// The shared `BotState` handle (a clone of the engine's Arc; ADR-006 D1).
-    pub(crate) core: Arc<crate::bot_core::state_lock::StateLock<crate::bot_core::BotState>>,
+    pub(crate) core: Arc<degenbot_substrate::state_lock::StateLock<degenbot_substrate::BotState>>,
     /// KAHU5W config + the instance solver runtime stance (immutable after
     /// construction), and the inline-sim hook (kept in sync by
     /// `set_inline_simulator`).
@@ -932,7 +932,7 @@ impl SolveCycle {
         let live_stamp: Vec<u64> = {
             let core = self
                 .core
-                .read_at(crate::bot_core::state_lock::LockSite::Solver);
+                .read_at(degenbot_substrate::state_lock::LockSite::Solver);
             registered
                 .pools
                 .iter()
@@ -1101,7 +1101,7 @@ impl SolveCycle {
         };
         let core = self
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         clamp_result_with_state(&core, path_id, &path.pools, result)
     }
     #[expect(clippy::too_many_lines)]
@@ -1167,7 +1167,7 @@ impl SolveCycle {
             block_number,
             &self
                 .core
-                .read_at(crate::bot_core::state_lock::LockSite::Solver),
+                .read_at(degenbot_substrate::state_lock::LockSite::Solver),
         );
         let solve_block = anchor.block();
         // Cross-block walk-composition census: advance the epoch BEFORE the
@@ -1350,7 +1350,7 @@ impl SolveCycle {
             let core = hotpath::measure_block!(
                 "resolve.core_read_acquire",
                 self.core
-                    .read_at(crate::bot_core::state_lock::LockSite::Solver)
+                    .read_at(degenbot_substrate::state_lock::LockSite::Solver)
             );
             let resolve_chunk = |path_ids: &[u64]| -> ResolveChunkOut {
                 let mut out = ResolveChunkOut {
@@ -2104,7 +2104,7 @@ impl SolveCycle {
                     }) {
                         if let Some(path) = path_pools.get(path_id) {
                             let core_read =
-                                core.read_at(crate::bot_core::state_lock::LockSite::Solver);
+                                core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
                             let _ =
                                 clamp_result_with_state(&core_read, *path_id, &path.pools, &mut r);
                         }
@@ -2222,7 +2222,7 @@ impl SolveCycle {
         let deficits = {
             let core = self
                 .core
-                .read_at(crate::bot_core::state_lock::LockSite::Solver);
+                .read_at(degenbot_substrate::state_lock::LockSite::Solver);
             resolve_hops(
                 &core,
                 &pool_refs,
@@ -2295,7 +2295,7 @@ impl SolveCycle {
         let mut hop_descs = Vec::with_capacity(hops.len());
         let core = self
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         for hop in hops {
             let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
                 return Err(PathRegistrationError::Invalid(format!(
@@ -2358,7 +2358,7 @@ impl SolveCycle {
         {
             let core = self
                 .core
-                .read_at(crate::bot_core::state_lock::LockSite::Solver);
+                .read_at(degenbot_substrate::state_lock::LockSite::Solver);
             for (&path_id, path) in registry.iter() {
                 let mut resolved = ResolvedMixedPath::default();
                 let deficits = resolve_hops(
@@ -2398,7 +2398,7 @@ impl SolveCycle {
         };
         let core = self
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let hops: Vec<String> = path
             .pools
             .iter()
@@ -2799,7 +2799,7 @@ mod tests {
     /// retired `admission_draw_zero` stash).
     #[test]
     fn run_epoch_consumes_the_epoch_work_carried_delta() {
-        use crate::bot_core::EpochDelta;
+        use degenbot_substrate::EpochDelta;
         // The epoch ledger is the SINGLE work-carried owner. The Resolved
         // stage draws the cycle's `affected` keys from it; the Solved stage's
         // `SolveCycle::run_epoch` must consume exactly that vector.

@@ -118,8 +118,8 @@ pub enum LogDecision {
 use std::collections::{HashMap, HashSet};
 
 use crate::bot_core::RELEVANT_TOPICS;
-use crate::bot_core::{BlockContext, BlockMetadata, Epoch};
 use alloy::primitives::B256;
+use degenbot_substrate::{BlockContext, BlockMetadata, Epoch};
 
 use super::stage_handlers::Stage;
 

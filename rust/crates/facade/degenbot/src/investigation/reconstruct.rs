@@ -10,11 +10,11 @@ use hashbrown::HashMap;
 
 use alloy::primitives::{aliases::U112, Address, B256, U256};
 
-use crate::bot_core::BotState;
 use crate::decoders::v4_swap_decoder::V4PoolId;
 use crate::pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
 use crate::pools::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use crate::pools::TickInfo;
+use crate::substrate::BotState;
 use crate::{DexVariant, RegisterV2PoolParams};
 
 use super::fixture::{PoolData, TickJson};
@@ -227,8 +227,8 @@ mod hook_wiring_tests {
     //! the pool key round-trips `keccak(abi.encode(pool_key))` and the ADR-037
     //! guard surface stays truthful in investigations.
     use super::*;
-    use crate::bot_core::BotState;
     use crate::investigation::fixture::Amount;
+    use crate::substrate::BotState;
 
     #[test]
     fn replay_v4_pool_carries_hook_from_fixture() {

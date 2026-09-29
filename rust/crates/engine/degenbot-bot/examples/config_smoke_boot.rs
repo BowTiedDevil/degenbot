@@ -45,21 +45,21 @@ fn main() -> Result<(), String> {
 
     // The boot path installs the typed config BEFORE any engine/pump
     // construction (stance::config() below serves the packed value).
-    if !::degenbot_bot::bot_core::stance::install(Arc::clone(&cfg)) {
+    if !::degenbot_substrate::stance::install(Arc::clone(&cfg)) {
         return Err("a config was already installed in this process".into());
     }
 
     // Main()-level engine construction: the same construction the live pump
     // performs once per engine — stances packed from the typed config.
-    let core = Arc::new(degenbot_bot::bot_core::state_lock::StateLock::new(
-        degenbot_bot::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     // The ONE external construction seam: `EngineStages` builds the engine
     // internally (the engine type never crosses the crate boundary).
     let stages = degenbot_bot::arb_engine::EngineStages::with_core_cfg(
         core,
         &cfg,
-        Arc::new(degenbot_bot::bot_core::EpochDelta::new(0u64)),
+        Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
 
     // Observe the packed stances end-to-end (config file -> engine field):

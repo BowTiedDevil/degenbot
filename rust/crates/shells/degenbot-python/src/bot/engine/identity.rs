@@ -16,7 +16,7 @@
 use super::{hex_string_to_pool_id, Address, PyArbEngine};
 use crate::prelude::*;
 
-use degenbot_bot::bot_core::session_registry::PoolIdentity;
+use degenbot_substrate::session_registry::PoolIdentity;
 
 #[pymethods]
 impl PyArbEngine {

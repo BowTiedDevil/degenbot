@@ -104,6 +104,7 @@ degenbot-simulation = { version = "0.6.0-alpha.14", path = "crates/engine/degenb
 degenbot-solvers = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-solvers" }
 degenbot-strategy = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-strategy" }
 degenbot-submission = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-submission" }
+degenbot-substrate = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-substrate" }
 degenbot-uniswap = { version = "0.6.0-alpha.14", path = "crates/foundation/degenbot-uniswap" }
 degenbot-workers = { version = "0.6.0-alpha.14", path = "crates/engine/degenbot-workers" }
 # hashbrown: foldhash-based HashMap/HashSet for the hot maps (small int/string
@@ -138,6 +139,7 @@ members = [
     "crates/foundation/degenbot-order-index",
     "crates/foundation/degenbot-pathfinding",
     "crates/foundation/degenbot-pools",
+    "crates/foundation/degenbot-substrate",
     "crates/foundation/degenbot-rpc",
     "crates/foundation/degenbot-uniswap",
     "crates/engine/degenbot-arbitrage",

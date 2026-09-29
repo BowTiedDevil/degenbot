@@ -33,7 +33,7 @@
 //!   (an early swap of the anchor block, e.g. 0xE0554a @ 25658682) and is
 //!   legitimate.
 
-use crate::bot_core::{BotState, Epoch};
+use degenbot_substrate::{BotState, Epoch};
 
 /// The block solve / verify / sim run against: the request block floored by
 /// the pool-state head (see the module docs for the desync / IIA history),
@@ -85,9 +85,10 @@ impl SolveAnchor {
 #[cfg(test)]
 mod tests {
     use super::SolveAnchor;
-    use crate::bot_core::{BotState, RegisterV2PoolParams};
+    use crate::bot_core::RegisterV2PoolParams;
     use alloy::primitives::aliases::U112;
     use alloy::primitives::Address;
+    use degenbot_substrate::BotState;
 
     /// A single-pool state whose pool-state head tracks `block`.
     fn core_with_head(block: u64) -> BotState {

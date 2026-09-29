@@ -35,10 +35,10 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use degenbot_bot::bot_core::epoch::Epoch;
 use degenbot_bot::bot_core::stage_telemetry::StageTelemetry;
 use degenbot_bot::metrics::{build_prometheus_provider, render};
 use degenbot_bot::otel;
+use degenbot_substrate::epoch::Epoch;
 use opentelemetry_sdk::trace::InMemorySpanExporter;
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 use tracing_subscriber::registry::LookupSpan;

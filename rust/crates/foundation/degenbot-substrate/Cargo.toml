@@ -1,0 +1,44 @@
+[package]
+name = "degenbot-substrate"
+description = "The strategy substrate: BotState (the live state owner), the planning workspace, pool ingress, the connector index, and executor hop views."
+keywords = ["mev", "arbitrage", "bot", "evm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy = { version = "^2.5", features = ["full", "transport-throttle"] }
+async-trait = { version = "^0.1" }
+dashmap = { version = "^6.2" }
+hashbrown.workspace = true
+indexmap.workspace = true
+degenbot-config.workspace = true
+degenbot-core.workspace = true
+degenbot-db.workspace = true
+degenbot-decoders.workspace = true
+degenbot-executor.workspace = true
+degenbot-ingestion.workspace = true
+degenbot-math.workspace = true
+degenbot-pathfinding.workspace = true
+degenbot-pool-updater.workspace = true
+degenbot-pools.workspace = true
+degenbot-rpc.workspace = true
+degenbot-solvers.workspace = true
+degenbot-uniswap.workspace = true
+hotpath = { version = "=0.26.0", default-features = false }
+parking_lot = { version = "^0.12" }
+thiserror = { version = "^2.0" }
+tracing = { version = "^0.1" }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
+
+[dev-dependencies]
+rusqlite = { version = "^0.40", features = ["bundled"] }
+tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter", "registry"] }
+tokio = { version = "^1.53", features = ["test-util"] }
+degenbot-rpc = { workspace = true, features = ["test-utils"] }

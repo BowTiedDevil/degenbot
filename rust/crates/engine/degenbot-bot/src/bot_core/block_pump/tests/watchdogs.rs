@@ -304,7 +304,7 @@ async fn on_drain_receives_promoted_active_block_not_stalled_header() {
     let bot = Arc::new(Bot::new(1));
     {
         let arc = bot.state_arc();
-        let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = arc.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.register_v2_pool(&RegisterV2PoolParams {
             address: A::from([0xabu8; 20]),
             token0: A::from([0xa0u8; 20]),
@@ -324,7 +324,7 @@ async fn on_drain_receives_promoted_active_block_not_stalled_header() {
     }
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .pool_state_head(),
         500,
         "state clock is ahead of the header clock (the stall)"

@@ -19,11 +19,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use alloy::primitives::Address;
-use degenbot_bot::bot_core::pool_ingress::PoolIngress;
-use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_simulation::WarmCodeCacheInner;
+use degenbot_substrate::connector_index::V2ConnectorIndex;
+use degenbot_substrate::pool_ingress::PoolIngress;
+use degenbot_substrate::RouteRegistry;
 use parking_lot::RwLock;
 
 use crate::anchored_dfs::AnchoredGraph;

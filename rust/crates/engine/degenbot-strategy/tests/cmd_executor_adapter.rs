@@ -4,7 +4,6 @@
 )]
 
 use alloy::primitives::{address, Address, Bytes, B256, U256};
-use degenbot_bot::connector_index::{V2ConnectorIndex, V4Edge};
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, encode_execute_call, EncodeContext, EncodeOptions,
@@ -17,6 +16,7 @@ use degenbot_strategy::cmd_executor_adapter::{
 };
 use degenbot_strategy::execution_context::ExecutionContext;
 use degenbot_strategy::frame_pipeline::build_descriptors;
+use degenbot_substrate::connector_index::{V2ConnectorIndex, V4Edge};
 
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");

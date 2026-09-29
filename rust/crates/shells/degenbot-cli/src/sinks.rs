@@ -61,7 +61,7 @@ pub fn boot() -> Result<TelemetryBoot, String> {
     {
         Ok(loaded) => {
             // First-wins, mirroring the Python boot path.
-            let _ = degenbot_bot::bot_core::stance::install(Arc::new(loaded.config));
+            let _ = degenbot_substrate::stance::install(Arc::new(loaded.config));
         }
         Err(error) => return Err(format!("invalid configuration - boot refused: {error}")),
     }
@@ -91,6 +91,10 @@ pub fn boot() -> Result<TelemetryBoot, String> {
     // still document this process's spawn sites either way.
     degenbot_core::telemetry::warn_retired_env_names();
     degenbot_core::telemetry::install_panic_hook();
+
+    // The substrate's telemetry port delegates to this crate's instruments
+    // registry (see `degenbot_bot::instruments`).
+    degenbot_bot::instruments::install_substrate_telemetry_port();
 
     degenbot_core::op_debug!(
         domain = pump,

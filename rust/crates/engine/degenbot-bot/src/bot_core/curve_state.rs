@@ -11,10 +11,11 @@ pub use ::degenbot_pools::curve_state::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot_core::{BotState, RegisterCurvePoolParams};
+    use crate::bot_core::RegisterCurvePoolParams;
     use ::degenbot_pools::curve_data_provider::CurveDataProvider;
     use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
     use alloy::primitives::{aliases::U112, Address, U256};
+    use degenbot_substrate::BotState;
     use std::sync::Arc;
 
     fn three_coin_params(block: u64, balances: &[u64]) -> RegisterCurvePoolParams {

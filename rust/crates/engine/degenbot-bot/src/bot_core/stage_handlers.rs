@@ -34,7 +34,7 @@
 //! plus the block's execution metadata) plus the previous
 //! stage's output. The per-epoch dirty tracking travels as the opaque
 //! [`EpochDelta`] handle — the real touched-pool ledger
-//! (`crate::bot_core::epoch_delta`), re-exported by this module;
+//! (`degenbot_substrate::epoch_delta`), re-exported by this module;
 //! its internals are NOT
 //! part of this seam, so the dirty-tracking rewrite cannot fork the trait.
 
@@ -42,7 +42,7 @@ use std::fmt;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::bot_core::{BlockContext, Epoch};
+use degenbot_substrate::{BlockContext, Epoch};
 
 // ----------------------------------------------------------------------
 // Stage
@@ -142,13 +142,13 @@ pub const fn legal_successors(previous: Option<Stage>) -> &'static [Stage] {
 // ----------------------------------------------------------------------
 
 // The module-local placeholder
-// is unified onto the REAL per-epoch dirty ledger (crate::bot_core::epoch_delta,
+// is unified onto the REAL per-epoch dirty ledger (degenbot_substrate::epoch_delta,
 // the type Bot mints at dispatch time) — the StageHandlers signatures are
 // unchanged, which is the point: dirty-tracking details cannot fork the
 // engine seam.
 
 #[doc(inline)]
-pub use crate::bot_core::epoch_delta::EpochDelta;
+pub use degenbot_substrate::epoch_delta::EpochDelta;
 
 /// A gap-backfill episode the Streaming stage executed before this epoch
 /// quiesced (stage table: Streaming applies live WS logs + gap `eth_getLogs`
@@ -1120,8 +1120,8 @@ mod conformance {
         }
 
         /// Synthetic block metadata for the harness (fees/gas/timestamp).
-        fn meta(block: u64) -> crate::bot_core::BlockMetadata {
-            crate::bot_core::BlockMetadata {
+        fn meta(block: u64) -> degenbot_substrate::BlockMetadata {
+            degenbot_substrate::BlockMetadata {
                 timestamp: block * 1_000,
                 base_fee_per_gas: Some(block),
                 gas_used: 1,
@@ -1297,7 +1297,7 @@ mod conformance {
             None
         }
 
-        fn notify_block(&self, _block: u64, _metadata: &crate::bot_core::BlockMetadata) {}
+        fn notify_block(&self, _block: u64, _metadata: &degenbot_substrate::BlockMetadata) {}
 
         fn on_pump_ended(&self) {}
     }
@@ -1479,8 +1479,8 @@ mod conformance {
         use super::*;
         use crate::bot_core::stage_machine::{StageDecision, StageMachine, WatchdogPhase};
 
-        fn meta(ts: u64) -> crate::bot_core::BlockMetadata {
-            crate::bot_core::BlockMetadata {
+        fn meta(ts: u64) -> degenbot_substrate::BlockMetadata {
+            degenbot_substrate::BlockMetadata {
                 timestamp: ts,
                 base_fee_per_gas: Some(ts),
                 gas_used: 1,
@@ -1662,7 +1662,7 @@ mod candidate2_seam_pins {
         let _: fn(&dyn PumpControl, Epoch) = PumpControl::set_solve_anchor;
         let _: fn(&dyn PumpControl) = PumpControl::record_logs_this_block;
         let _: fn(&dyn PumpControl) -> Option<Epoch> = PumpControl::last_processed_block;
-        let _: fn(&dyn PumpControl, u64, &crate::bot_core::BlockMetadata) =
+        let _: fn(&dyn PumpControl, u64, &degenbot_substrate::BlockMetadata) =
             PumpControl::notify_block;
         let _: fn(&dyn PumpControl) = PumpControl::on_pump_ended;
     }

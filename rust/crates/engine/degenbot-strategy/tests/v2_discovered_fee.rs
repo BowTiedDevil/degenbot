@@ -8,10 +8,6 @@ use std::sync::Arc;
 
 use alloy::primitives::{address, aliases::U112, Address, Bytes, U256};
 use degenbot_bot::arb_engine::path_info::build_path_info;
-use degenbot_bot::bot_core::{
-    pool_ingress::VerifyLevel, BotState, RegisterV2PoolParams, RouteRegistry,
-};
-use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_db::{DegenbotDb, V2PoolRowInput};
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 use degenbot_pools::slot_layout::V2ReservesParts;
@@ -28,6 +24,10 @@ use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_V4_POOL_MA
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::project_candidate;
 use degenbot_strategy::strategy_kit::StrategyKit;
+use degenbot_substrate::connector_index::V2ConnectorIndex;
+use degenbot_substrate::{
+    pool_ingress::VerifyLevel, BotState, RegisterV2PoolParams, RouteRegistry,
+};
 
 const TOKEN0: Address = address!("0000000000000000000000000000000000000aa1");
 const TOKEN1: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");

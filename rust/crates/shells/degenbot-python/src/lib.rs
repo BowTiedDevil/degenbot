@@ -167,7 +167,7 @@ pub use degenbot_bot::bot_core;
 // (`degenbot_decoders::v4_swap_decoder::V4PoolId`) via the direct path dependency
 // in `bot::engine`. The state-coupled dispatch layer (`LogDecoder`,
 // `DecodedPoolEvent`, `LogDispatcher`) stays in `degenbot-bot`'s
-// `bot_core::log_dispatcher`.
+// `degenbot_substrate::log_dispatcher`.
 
 // The Uniswap-protocol domain crate `degenbot-uniswap` (Plan 105) holds the
 // DEX identity presets (`DexIdentity`/`DexVariant`/`ReservesAbi`) and the V2
@@ -250,6 +250,10 @@ fn driver_boot(_py: Python<'_>) {
     // own census line on first use — the metric gauge picks every row up
     // through the export hook either way.
     degenbot_core::worker_census::emit_boot_table();
+
+    // The substrate's telemetry port delegates to this crate's instruments
+    // registry (see `degenbot_bot::instruments`).
+    degenbot_bot::instruments::install_substrate_telemetry_port();
 }
 
 // The declarative root of the `degenbot._ffi` module tree.
@@ -586,9 +590,8 @@ mod _ffi {
             Ok(loaded) => {
                 // First-wins: a test harness or an embedding that installed
                 // earlier keeps ITS config; this is the production boot path.
-                let installed = degenbot_bot::bot_core::stance::install(std::sync::Arc::new(
-                    loaded.config.clone(),
-                ));
+                let installed =
+                    degenbot_substrate::stance::install(std::sync::Arc::new(loaded.config.clone()));
                 // The driver-domain resolvers read the LAYERS, not just the typed
                 // value, so they need the provenance this same load produced. One
                 // load, published once: a resolver cannot see a different file or

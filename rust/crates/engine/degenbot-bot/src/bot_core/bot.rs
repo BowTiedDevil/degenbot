@@ -19,11 +19,11 @@
 
 use std::sync::Arc;
 
-use crate::bot_core::session_registry::SessionObjectRegistry;
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
-use crate::bot_core::state_lock::StateLock;
-use crate::bot_core::EpochDelta;
-use crate::bot_core::{log_dispatcher, BotState};
+use degenbot_substrate::session_registry::SessionObjectRegistry;
+use degenbot_substrate::state_lock::StateLock;
+use degenbot_substrate::EpochDelta;
+use degenbot_substrate::{log_dispatcher, BotState};
 
 /// The per-chain orchestrator: a thin facade over a shared
 /// [`BotState`] (the pure-data registries/swap math/reorg journal) plus the
@@ -233,7 +233,7 @@ impl Bot {
             .map_err(|_| SnapshotLoadError::Range(format!("chain_id {chain_id} exceeds i64")))?;
         let mut state = self
             .state
-            .write_at(crate::bot_core::state_lock::LockSite::Core);
+            .write_at(degenbot_substrate::state_lock::LockSite::Core);
         let now_v3 = db
             .fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V3)
             .map_err(SnapshotLoadError::from)?;
@@ -242,7 +242,7 @@ impl Bot {
             .map_err(SnapshotLoadError::from)?;
         // S = min(fetch_newest_update_block(V3), V4), ignoring None families.
         #[expect(clippy::expect_used)] // block numbers are non-negative (documented)
-        let s = match (state.snapshot_seed_block, now_v3, now_v4) {
+        let s = match (state.snapshot_seed_block(), now_v3, now_v4) {
             (None, Some(v3), Some(v4)) => {
                 Some(u64::try_from(v3.min(v4)).expect("block number non-negative"))
             }
@@ -251,7 +251,7 @@ impl Bot {
             (None, None, None) => None,
             (existing, _, _) => existing,
         };
-        state.snapshot_seed_block = s;
+        state.set_snapshot_seed_block(s);
         Ok(())
     }
 
@@ -281,7 +281,7 @@ impl Bot {
         event.resolve_pool_id(
             &self
                 .state
-                .read_at(crate::bot_core::state_lock::LockSite::Core),
+                .read_at(degenbot_substrate::state_lock::LockSite::Core),
         )
     }
 
@@ -294,7 +294,7 @@ impl Bot {
         // forget (too-deep was pre-checked via `has_state_prior_to`).
         let _ = self
             .state
-            .write_at(crate::bot_core::state_lock::LockSite::Core)
+            .write_at(degenbot_substrate::state_lock::LockSite::Core)
             .restore_pool_before_block(pool_id, block);
     }
 
@@ -304,7 +304,7 @@ impl Bot {
     #[must_use]
     pub fn newest_journal_block(&self, pool_id: u64) -> Option<u64> {
         self.state
-            .read_at(crate::bot_core::state_lock::LockSite::Core)
+            .read_at(degenbot_substrate::state_lock::LockSite::Core)
             .newest_journal_block(pool_id)
     }
 
@@ -314,7 +314,7 @@ impl Bot {
     #[must_use]
     pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
         self.state
-            .read_at(crate::bot_core::state_lock::LockSite::Core)
+            .read_at(degenbot_substrate::state_lock::LockSite::Core)
             .has_state_prior_to(pool_id, block)
     }
 
@@ -391,20 +391,20 @@ mod tests {
             ..Default::default()
         };
         state
-            .write_at(crate::bot_core::state_lock::LockSite::Core)
+            .write_at(degenbot_substrate::state_lock::LockSite::Core)
             .register_v2_pool(&params)
             .expect("test setup: V2 registration");
 
         let state2 = bot.state_arc();
         assert_eq!(
             state2
-                .read_at(crate::bot_core::state_lock::LockSite::Core)
+                .read_at(degenbot_substrate::state_lock::LockSite::Core)
                 .pool_count(),
             1,
             "state_arc() must share one BotState"
         );
         assert!(state2
-            .read_at(crate::bot_core::state_lock::LockSite::Core)
+            .read_at(degenbot_substrate::state_lock::LockSite::Core)
             .has_pool(1));
     }
 
@@ -414,7 +414,7 @@ mod tests {
     /// registry is identity only: registering an object writes no live state.
     #[test]
     fn session_registry_is_per_bot_shared_and_identity_only() {
-        use crate::bot_core::session_registry::{ObjectRefusal, PoolIdentity};
+        use degenbot_substrate::session_registry::{ObjectRefusal, PoolIdentity};
         use std::sync::Arc;
 
         let bot = super::Bot::new(5);
@@ -435,7 +435,7 @@ mod tests {
         assert_eq!(registry.pool_count(), 1);
         assert_eq!(
             bot.state_arc()
-                .read_at(crate::bot_core::state_lock::LockSite::Core)
+                .read_at(degenbot_substrate::state_lock::LockSite::Core)
                 .pool_count(),
             0,
             "an object registration writes no live state"
@@ -456,11 +456,13 @@ mod tests {
     /// session still gets its own key space.
     #[test]
     fn adopting_bots_over_one_core_share_the_session_registry() {
-        use crate::bot_core::session_registry::{PoolIdentity, SessionObjectRegistry};
-        use crate::bot_core::BotState;
+        use degenbot_substrate::session_registry::{PoolIdentity, SessionObjectRegistry};
+        use degenbot_substrate::BotState;
         use std::sync::Arc;
 
-        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
+        let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+            BotState::new(),
+        ));
         let registry = Arc::new(SessionObjectRegistry::new(7));
         let first = super::Bot::with_core(Arc::clone(&core), Arc::clone(&registry));
         let second = super::Bot::with_core(Arc::clone(&core), Arc::clone(&registry));

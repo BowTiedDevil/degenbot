@@ -24,7 +24,7 @@ impl BlockPump {
         let state_head = self
             .bot
             .state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .pool_state_head();
         let StageDecision::Drain { block, metadata } = fsm.drain_decision(state_head) else {
             unreachable!("drain_decision always drains when called");
@@ -46,7 +46,7 @@ impl BlockPump {
     pub(super) fn reorg_flying_stale(
         &self,
         fsm: &StageMachine,
-        ctx: &crate::bot_core::BlockContext,
+        ctx: &degenbot_substrate::BlockContext,
     ) -> bool {
         let observed_seq = fsm.rewind_seq();
         let epoch = ctx.epoch();
@@ -71,7 +71,7 @@ impl BlockPump {
     /// on success. Ignores `StageError`s the engine cannot produce
     /// (its hooks are infallible; a hard failure logs loud, never silently
     /// skips — ADR-021 posture).
-    pub(super) fn drive_solve(&self, fsm: &StageMachine, ctx: crate::bot_core::BlockContext) {
+    pub(super) fn drive_solve(&self, fsm: &StageMachine, ctx: degenbot_substrate::BlockContext) {
         if self.reorg_flying_stale(fsm, &ctx) {
             return;
         }
@@ -120,7 +120,7 @@ impl BlockPump {
     pub(super) fn drive_publish(
         &self,
         fsm: &StageMachine,
-        ctx: crate::bot_core::BlockContext,
+        ctx: degenbot_substrate::BlockContext,
         gated: &crate::bot_core::GateOutcome,
     ) {
         if self.reorg_flying_stale(fsm, &ctx) {
@@ -146,7 +146,7 @@ impl BlockPump {
 
     /// Drive the Finalized row: the tombstone boundary catch (VTWCIG
     /// metadata; terminal publish supersedes the pending quiesce publish).
-    pub(super) fn drive_finalize(&self, fsm: &StageMachine, ctx: crate::bot_core::BlockContext) {
+    pub(super) fn drive_finalize(&self, fsm: &StageMachine, ctx: degenbot_substrate::BlockContext) {
         if self.reorg_flying_stale(fsm, &ctx) {
             return;
         }

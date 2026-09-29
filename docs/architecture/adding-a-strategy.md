@@ -52,8 +52,8 @@ factory; a strategy composes `kit.provision.ingress` (the one V3/V4
 never an ingress it constructed itself.
 
 Tick maps enter the planning sandbox only through the sealed `TickMapSeed`
-boundary (`rust/crates/engine/degenbot-bot/src/bot_core/planning.rs`): the `Db` and
-`Chain` provenance constructors are crate-private to `bot_core` and minted by
+boundary (`rust/crates/foundation/degenbot-substrate/src/planning.rs`): the `Db` and
+`Chain` provenance constructors are crate-private to the substrate crate and minted by
 `PoolIngress`. Replay facts cross the ingress's `admit_v3_replay` /
 `admit_v4_replay` interface; a strategy cannot fabricate a sparse ladder or
 call `Workspace::register_with_state` directly.

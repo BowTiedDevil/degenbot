@@ -770,7 +770,7 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
         weth_address: Address::ZERO,
         pool_manager_address: Address::ZERO,
     };
-    let anchor = degenbot_bot::bot_core::SimAnchorState::default();
+    let anchor = degenbot_substrate::SimAnchorState::default();
     let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
     let mut handle = BlockSimHandle::build(
         &alloy_provider,
@@ -919,7 +919,7 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
         weth_address: Address::ZERO,
         pool_manager_address: Address::ZERO,
     };
-    let anchor = degenbot_bot::bot_core::SimAnchorState::default();
+    let anchor = degenbot_substrate::SimAnchorState::default();
     let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
     let mut handle = BlockSimHandle::build(
         &alloy_provider,

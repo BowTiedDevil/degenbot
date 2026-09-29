@@ -542,8 +542,8 @@ mod fleet_sim_stance_tests {
             walk_grid_total: std::sync::atomic::AtomicU64::new(0),
             sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            core: Arc::new(crate::bot_core::state_lock::StateLock::new(
-                crate::bot_core::BotState::new(),
+            core: Arc::new(degenbot_substrate::state_lock::StateLock::new(
+                degenbot_substrate::BotState::new(),
             )),
             pool_refs,
             worker_clamp: true,
@@ -591,7 +591,7 @@ mod fleet_sim_stance_tests {
         if !slot.boot_installed() {
             slot.install(crate::arb_engine::boot_stamp::BootStamp::of(
                 degenbot_workers::dispatcher::FleetBoot::from_config(
-                    crate::bot_core::stance::config(),
+                    degenbot_substrate::stance::config(),
                 ),
             ));
         }

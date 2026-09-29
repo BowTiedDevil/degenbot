@@ -27,7 +27,7 @@ impl PyArbEngine {
         // `EngineStages` twin was hard-cut); the trait cursor is Epoch-typed.
         use degenbot_bot::bot_core::PumpControl;
         PumpControl::last_processed_block(self.driver.stages().as_ref())
-            .map(degenbot_bot::bot_core::Epoch::block)
+            .map(degenbot_substrate::Epoch::block)
     }
 
     /// Set the last processed block manually after Python backfill.
@@ -109,7 +109,7 @@ impl PyArbEngine {
         // objects.
         py.detach(move || {
             let core = stages.core();
-            let mut core = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+            let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
             core.apply_backfill_buffer_v3(&addr);
             core.apply_pump_buffer_v3(&addr);
             core.pin_v3_post_drain_snapshot(addr);
@@ -137,7 +137,7 @@ impl PyArbEngine {
         // race fix) is preserved — `py.detach` wraps the OUTSIDE.
         py.detach(move || {
             let core = stages.core();
-            let mut core = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+            let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
             core.apply_backfill_buffer_v4(pm, pool_id);
             core.apply_pump_buffer_v4(pm, pool_id);
             core.pin_v4_post_drain_snapshot(pm, &pool_id);
@@ -224,7 +224,7 @@ impl PyArbEngine {
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
         self.with_core_mut(
             py,
-            degenbot_bot::bot_core::BotState::release_all_v3_v4_quarantined,
+            degenbot_substrate::BotState::release_all_v3_v4_quarantined,
         );
         Ok(())
     }

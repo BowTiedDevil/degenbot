@@ -15,7 +15,7 @@
 //! *Who installs it, and where*), where the cross-strategy claim is also asserted
 //! against a real reader.
 //!
-//! Seam: `degenbot_bot::bot_core::session_registry` (the session side) +
+//! Seam: `degenbot_substrate::session_registry` (the session side) +
 //! `Settlement` / `TxpoolBackrun` (the two arms' real policy values). The
 //! identity-vs-projection split and the layer reasoning are in
 //! `docs/architecture/session-object-registry.md`.
@@ -28,14 +28,15 @@ use std::sync::Arc;
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, U256};
 use degenbot_bot::arb_engine::EngineDriver;
-use degenbot_bot::bot_core::session_registry::{
+use degenbot_bot::bot_core::Bot;
+use degenbot_config::BotConfig;
+use degenbot_strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
+use degenbot_substrate::session_registry::{
     Freshness, HealthFactor, PositionIdentity, PositionObserver, PositionReading, PositionRefusal,
     SessionObjectRegistry,
 };
-use degenbot_bot::bot_core::state_lock::LockSite;
-use degenbot_bot::bot_core::{Bot, RegisterV2PoolParams};
-use degenbot_config::BotConfig;
-use degenbot_strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
+use degenbot_substrate::state_lock::LockSite;
+use degenbot_substrate::RegisterV2PoolParams;
 
 const CHAIN_ID: u64 = 1;
 

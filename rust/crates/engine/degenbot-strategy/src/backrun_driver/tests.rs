@@ -28,8 +28,8 @@ use crate::frame_pipeline::{bid_submission_target, build_broadcast_relays};
 #[tokio::test]
 async fn one_boot_product_shares_db_registry_graph_and_policy_facts() {
     use alloy::primitives::address;
-    use degenbot_bot::bot_core::pool_ingress::VerifyLevel;
     use degenbot_db::{V2PoolRowInput, V3PoolRowInput};
+    use degenbot_substrate::pool_ingress::VerifyLevel;
 
     const USDC_WETH_V2: Address = address!("b4e16d0168e52d35cacd2c6185b44281ec28c9dc");
     const USDC_WETH_V3: Address = address!("8ad599c3a0ff1de082011efddc58f1908eb6e6d8");
@@ -293,11 +293,11 @@ fn submission_slots_diverge_on_private_first_and_target() {
 /// the peer arm's public fan-out).
 #[test]
 fn both_backrun_compositions_host_independently_in_one_process() {
-    use degenbot_bot::bot_core::RouteRegistry;
-    use degenbot_bot::connector_index::V2ConnectorIndex;
     use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
     use degenbot_bot::strategy_host::{DriverPose, FacetStatus, StrategyHost};
     use degenbot_eventhub::Hub;
+    use degenbot_substrate::connector_index::V2ConnectorIndex;
+    use degenbot_substrate::RouteRegistry;
 
     let mut cfg = degenbot_config::BotConfig::default();
     cfg.strategy.mevblocker_backrun.active = true;

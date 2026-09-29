@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
-use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
@@ -21,6 +20,7 @@ use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2P
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
+use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 
 fn v2_fee_pair() -> V2FeePair {
     V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
@@ -35,7 +35,7 @@ fn v2_fees() -> V2Fees {
 /// fetch declines loudly rather than staging stale state.
 struct NoBackfill;
 
-impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
+impl degenbot_substrate::pool_ingress::LiquidityLogSource for NoBackfill {
     fn fetch_v3_liquidity_events(
         &self,
         _pool: alloy::primitives::Address,
@@ -57,17 +57,17 @@ impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
 }
 
 fn market_context(
-    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    registry: Option<std::sync::Arc<degenbot_substrate::RouteRegistry>>,
     db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
 ) -> MarketContext {
     let db_arm = db.clone().map(|db| {
-        degenbot_bot::bot_core::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
+        degenbot_substrate::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
     });
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
         registry,
         db_arm,
         None,
-        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
     );
     MarketContext::new(1, db, kit, 8, 4)
@@ -92,15 +92,15 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
     let provider = live_provider();
     let db_path = std::env::var("DEGENBOT_DB_PATH").unwrap();
     let (db, _state) = DegenbotDb::open(std::path::Path::new(&db_path)).unwrap();
-    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::load(&db, 1).unwrap();
+    let mut index = degenbot_substrate::connector_index::V2ConnectorIndex::load(&db, 1).unwrap();
     index.load_v3(&db, 1).unwrap();
     index.set_ranker(Arc::new(
-        degenbot_bot::connector_index::OnChainLiquidityRanker::new(Arc::clone(&provider)),
+        degenbot_substrate::connector_index::OnChainLiquidityRanker::new(Arc::clone(&provider)),
     ));
     let rt = market_context(
-        Some(std::sync::Arc::new(
-            degenbot_bot::bot_core::RouteRegistry::new(index),
-        )),
+        Some(std::sync::Arc::new(degenbot_substrate::RouteRegistry::new(
+            index,
+        ))),
         Some(std::sync::Arc::new(db)),
     );
     let head = provider.get_block_number().await.unwrap();

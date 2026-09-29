@@ -67,12 +67,10 @@ use crate::bot_core::block_pump::{BlockPump, SubscribeState};
 use crate::bot_core::liquidity_verifier::LiquidityVerifyError;
 use crate::bot_core::registration_lifecycle::RegistrationLifecycleError;
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
-use crate::bot_core::session_registry::PoolIdentity;
 use crate::bot_core::snapshot_verify::VerifyError;
-use crate::bot_core::state_lock::{LockSite, StateLock};
 use crate::bot_core::verification_retry::{retry_verification_call, RetryPolicy};
 use crate::bot_core::verify_claims::PoolVerifications;
-use crate::bot_core::{Bot, BotState, PumpControl, StageHandlers};
+use crate::bot_core::{Bot, PumpControl, StageHandlers};
 use crate::strategy_host::HostHub;
 use alloy::primitives::Address;
 use degenbot_core::{diag, op_error, op_info, op_warn};
@@ -82,6 +80,9 @@ use degenbot_executor::composers::PathInfo;
 use degenbot_ingestion::IngestEvent as WsEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_solvers::mixed::{PoolHop, SolvePathResult};
+use degenbot_substrate::session_registry::PoolIdentity;
+use degenbot_substrate::state_lock::{LockSite, StateLock};
+use degenbot_substrate::BotState;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -274,7 +275,7 @@ pub struct EngineDriver {
 /// session's only path registry, so composition is the one place both halves
 /// are in hand. Binding them here is what makes the session's canonical path
 /// identity reachable at all: a registry with no owner answers every path ask
-/// with [`ObjectRefusal::NoPathOwner`](crate::bot_core::session_registry::ObjectRefusal::NoPathOwner),
+/// with [`ObjectRefusal::NoPathOwner`](degenbot_substrate::session_registry::ObjectRefusal::NoPathOwner),
 /// so the identity the session exposes would be one no consumer can name.
 ///
 /// # A second install is reported, not merged
@@ -1287,10 +1288,10 @@ mod tests {
 
     #[test]
     fn a_host_minted_hub_wires_one_driver() {
-        use crate::bot_core::route_registry::RouteRegistry;
         use crate::connector_index::V2ConnectorIndex;
         use crate::nonce_authority::NonceAuthority;
         use crate::strategy_host::StrategyHost;
+        use degenbot_substrate::route_registry::RouteRegistry;
 
         let (host, attached) = StrategyHost::mint(
             Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),

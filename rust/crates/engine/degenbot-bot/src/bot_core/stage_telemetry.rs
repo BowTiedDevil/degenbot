@@ -46,8 +46,8 @@ use std::time::{Duration, Instant};
 
 use tracing::Span;
 
-use super::epoch::Epoch;
 use super::stage_handlers::Stage;
+use degenbot_substrate::epoch::Epoch;
 
 /// SONJQA: max age of a held (open-ended) stage-span interval before the pump
 /// force-closes it (with a stall warning). Carried over from

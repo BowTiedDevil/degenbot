@@ -139,7 +139,7 @@ impl BlockPump {
         let snapshot_seed = self
             .bot
             .state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .snapshot_seed_block();
         if current_block == 0 && first_observed_block > 0 {
             current_block = first_observed_block;
@@ -920,7 +920,7 @@ impl BlockPump {
                         if let Some(p) = crate::instruments::pipeline() {
                             p.count_reorg_recovery_dropped();
                         }
-                        crate::bot_core::apply_telemetry::trace_ws_log_dispatch(
+                        degenbot_substrate::apply_telemetry::trace_ws_log_dispatch(
                             log.address(),
                             log.topics(),
                             log_block,
@@ -964,7 +964,7 @@ impl BlockPump {
                     // decision — so the delivery order of same-block Mint/Burn
                     // logs is visible against the registration drain+pin that
                     // follows. Always-on DEBUG on `ingest`.
-                    crate::bot_core::apply_telemetry::trace_ws_log_dispatch(
+                    degenbot_substrate::apply_telemetry::trace_ws_log_dispatch(
                         log.address(),
                         log.topics(),
                         log_block,
@@ -1146,7 +1146,7 @@ impl BlockPump {
                             // `set_last_solved_block` steps).
                             self.bot
                                 .state_arc()
-                                .write_at(crate::bot_core::state_lock::LockSite::Pump)
+                                .write_at(degenbot_substrate::state_lock::LockSite::Pump)
                                 .advance_pump_complete_cutoff(prev);
                             // First removed:false log for N+1 → tombstone N.
                             // Finalize N with N's OWN metadata (snapshotted
@@ -1243,7 +1243,7 @@ impl BlockPump {
                                     "late forward log for tombstoned block {b}; dropped un-applied via the benign late-admit path (delivery jitter past the D1 tombstone edge); not a structural fault"
                                 ),
                             );
-                            crate::bot_core::apply_telemetry::trace_ws_log_dispatch(
+                            degenbot_substrate::apply_telemetry::trace_ws_log_dispatch(
                                 log.address(),
                                 log.topics(),
                                 log_block,
@@ -1302,7 +1302,7 @@ impl BlockPump {
                     let pool_state_head = self
                         .bot
                         .state_arc()
-                        .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                        .read_at(degenbot_substrate::state_lock::LockSite::Pump)
                         .pool_state_head();
                     telemetry.maybe_stats(fsm.current_block(), pool_state_head);
                 }

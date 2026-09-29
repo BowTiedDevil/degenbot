@@ -59,7 +59,7 @@ async fn newhead_promoted_solve_does_not_publish_until_quiesced() {
     let bot = Arc::new(Bot::new(1));
     {
         let arc = bot.state_arc();
-        let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = arc.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.register_v2_pool(&RegisterV2PoolParams {
             address: A::from([0xccu8; 20]),
             token0: A::from([0xa0u8; 20]),
@@ -129,7 +129,7 @@ async fn backfill_from_snapshot_s_ge_w_is_noop() {
     {
         let bot = pump.bot_arc_for_test();
         bot.state_arc()
-            .write_at(crate::bot_core::state_lock::LockSite::Pump)
+            .write_at(degenbot_substrate::state_lock::LockSite::Pump)
             .set_snapshot_seed_block(Some(100));
     }
     let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
@@ -144,7 +144,7 @@ async fn backfill_from_snapshot_s_zero_is_noop() {
     {
         let bot = pump.bot_arc_for_test();
         bot.state_arc()
-            .write_at(crate::bot_core::state_lock::LockSite::Pump)
+            .write_at(degenbot_substrate::state_lock::LockSite::Pump)
             .set_snapshot_seed_block(Some(0));
     }
     let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
@@ -159,7 +159,7 @@ async fn backfill_from_snapshot_s_zero_is_noop() {
 async fn auto_backfill_runs_inside_resume_when_s_lt_w() {
     let bot = Arc::new(Bot::new(1));
     bot.state_arc()
-        .write_at(crate::bot_core::state_lock::LockSite::Pump)
+        .write_at(degenbot_substrate::state_lock::LockSite::Pump)
         .set_snapshot_seed_block(Some(85));
     let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
 
@@ -197,7 +197,7 @@ async fn backfill_to_ws_block_populates_buffer_before_return() {
     let pool_addr = alloy::primitives::Address::from([0xc2u8; 20]);
     let bot = Arc::new(Bot::new(1));
     bot.state_arc()
-        .write_at(crate::bot_core::state_lock::LockSite::Pump)
+        .write_at(degenbot_substrate::state_lock::LockSite::Pump)
         .set_snapshot_seed_block(Some(85));
     let (pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(Arc::clone(&bot), None);
 
@@ -216,7 +216,7 @@ async fn backfill_to_ws_block_populates_buffer_before_return() {
     // before the spawned task buffered → count 0 → race.
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .buffered_v3_event_count(&pool_addr),
         1,
         "backfill_to_ws_block must buffer the V3 burn before returning (race regression)"
@@ -241,7 +241,7 @@ async fn backfill_with_drain_reinjects_events_present_during_backfill() {
     let pool_addr = alloy::primitives::Address::from([0xc3u8; 20]);
     let bot = Arc::new(Bot::new(1));
     bot.state_arc()
-        .write_at(crate::bot_core::state_lock::LockSite::Pump)
+        .write_at(degenbot_substrate::state_lock::LockSite::Pump)
         .set_snapshot_seed_block(Some(85));
     let (pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(Arc::clone(&bot), None);
 
@@ -282,7 +282,7 @@ async fn backfill_with_drain_reinjects_events_present_during_backfill() {
     // return (the synchronous contract `PumpState::resume` relies on).
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .buffered_v3_event_count(&pool_addr),
         1,
         "backfill_with_drain must buffer the V3 burn before returning"
@@ -341,7 +341,7 @@ async fn auto_backfill_skipped_when_s_none_in_resume() {
 async fn auto_backfill_skipped_when_s_ge_w_in_resume() {
     let bot = Arc::new(Bot::new(1));
     bot.state_arc()
-        .write_at(crate::bot_core::state_lock::LockSite::Pump)
+        .write_at(degenbot_substrate::state_lock::LockSite::Pump)
         .set_snapshot_seed_block(Some(100));
     let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
 

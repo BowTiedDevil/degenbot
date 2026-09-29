@@ -53,7 +53,7 @@ use std::sync::{Mutex, OnceLock};
 
 use alloy::primitives::{Address, B256, U256};
 
-use degenbot_bot::bot_core::{divergence_probe::TrackedSlotProbe, SimAnchorOracle};
+use degenbot_substrate::{divergence_probe::TrackedSlotProbe, SimAnchorOracle};
 
 /// The `[sim-divergence]` log prefix — verbatim so log greps return here.
 const SIM_DIVERGENCE_LOG_PREFIX: &str = "[sim-divergence]";
@@ -243,10 +243,9 @@ mod tests {
     use super::*;
     use crate::sim::evm::BotStateDb;
     use alloy::primitives::{address, Address, B256, U256};
-    use degenbot_bot::bot_core::{
-        divergence_probe::TrackedSlotProbe, BotState, RegisterV3PoolParams, SimAnchorState,
-        TrackedSlotKind,
-    };
+    use degenbot_bot::bot_core::RegisterV3PoolParams;
+    use degenbot_substrate::divergence_probe::TrackedSlotKind;
+    use degenbot_substrate::{divergence_probe::TrackedSlotProbe, BotState, SimAnchorState};
     use hashbrown::HashMap;
     use revm::database_interface::DatabaseRef;
     use revm::primitives::{StorageKey, StorageValue, B256 as RevmB256};

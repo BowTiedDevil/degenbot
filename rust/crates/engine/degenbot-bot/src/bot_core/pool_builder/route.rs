@@ -40,10 +40,10 @@ use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides
 use super::choreography;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
-use crate::bot_core::state_lock::LockSite;
 use crate::bot_core::{
     Bot, RegisterV2PoolError, RegisterV3PoolError, RegisterV4PoolError, RegisteredPoolFamily,
 };
+use degenbot_substrate::state_lock::LockSite;
 
 /// The resolved construction-route policy: the ordered rungs one construction
 /// attempt tries, terminating in the generic builder. A driver VALUE — the

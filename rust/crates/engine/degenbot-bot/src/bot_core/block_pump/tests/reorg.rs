@@ -124,7 +124,7 @@ async fn late_forward_after_tombstone_is_benign_late_admit() {
     // the late log for 7 must not regress it (I7).
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .pump_complete_cutoff(),
         8,
         "cutoff must rest at the last tombstone (8), untouched by the late log"
@@ -141,7 +141,7 @@ async fn late_forward_after_tombstone_is_benign_late_admit() {
     // or counting it into the applies would trip this.
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .v2_snapshot(pool_id),
         Some((U256::from(7_000), U256::from(8_000), 9)),
         "pool state reflects only Streaming-window applies; late reserves dropped"
@@ -259,7 +259,7 @@ proptest::proptest! {
                 ));
             }
             // I7: cutoff monotone at the last tombstone.
-            let cutoff = bot.state_arc().read_at(crate::bot_core::state_lock::LockSite::Pump).pump_complete_cutoff();
+            let cutoff = bot.state_arc().read_at(degenbot_substrate::state_lock::LockSite::Pump).pump_complete_cutoff();
             if cutoff != base + plan.len() as u64 - 2 {
                 return Err(format!(
                     "delivery cutoff must rest at the last tombstone: got {cutoff}"
@@ -273,7 +273,7 @@ proptest::proptest! {
                 ));
             }
             // The last LEGITIMATELY applied log owns pool state.
-            let snap = bot.state_arc().read_at(crate::bot_core::state_lock::LockSite::Pump).v2_snapshot(pool_id);
+            let snap = bot.state_arc().read_at(degenbot_substrate::state_lock::LockSite::Pump).v2_snapshot(pool_id);
             if snap != Some((last_reserves.0, last_reserves.1, last_block)) {
                 return Err(format!(
                     "pool state holds the last in-window apply, not a late tail: got {snap:?}"
@@ -312,7 +312,7 @@ async fn reorg_log_restores_pool_via_coordinator_and_pump_continues() {
     );
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .v2_snapshot(pool_id),
         Some((U256::from(1_500), U256::from(2_500), 7)),
         "forward Sync applied through the pump",
@@ -344,7 +344,7 @@ async fn reorg_log_restores_pool_via_coordinator_and_pump_continues() {
     );
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .v2_snapshot(pool_id),
         Some((U256::from(1_000), U256::from(2_000), 5)),
         "reorg rolled back to genesis reserves",
@@ -396,7 +396,7 @@ async fn reorg_contiguous_chunk_closes_on_first_forward_and_continues() {
     let (bot, pool_id) = bot_with_registered_v2(pool_addr, 5);
     let snapshot = || {
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .v2_snapshot(pool_id)
     };
 
@@ -487,14 +487,14 @@ async fn late_forward_log_on_tombstoned_block_is_benign_late_admit() {
     // neither the cutoff nor the pool state (I7).
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .pump_complete_cutoff(),
         7,
         "cutoff rests at the tombstoned block 7"
     );
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .v2_snapshot(pool_id),
         Some((U256::from(1_600), U256::from(2_600), 8)),
         "pool state holds the last in-window apply, never the late survivor"
@@ -646,7 +646,7 @@ async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
     let bot = pump.bot_arc_for_test();
     {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.register_v2_pool(&RegisterV2PoolParams {
             address: pool_addr,
             token0: Address::from([0xa0u8; 20]),
@@ -715,9 +715,9 @@ async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
     // The stale Sync@103 must NOT have been re-asserted: final reserves are
     // those of the last applied forward (Sync@104), not the stale 9999/9999.
     let state = bot.state_arc();
-    let core = state.read_at(crate::bot_core::state_lock::LockSite::Pump);
-    let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
-    if let Some(crate::bot_core::PoolEntry::V2(p)) = core.pools.get(&pool_id) {
+    let core = state.read_at(degenbot_substrate::state_lock::LockSite::Pump);
+    let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
+    if let Some(crate::bot_core::PoolEntry::V2(p)) = core.pool_entry(pool_id) {
         let pool = &p.1;
         assert_eq!(
             pool.reserve0.to::<u128>(),

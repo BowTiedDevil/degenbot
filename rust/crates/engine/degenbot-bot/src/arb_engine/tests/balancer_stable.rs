@@ -37,7 +37,7 @@ fn balancer_stable_finds_profitable_arb() {
     // Pool A: 1000 token0 / 2000 token1 (amp=200 — stable curve)
     let pool_a = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_stable_pool(&balancer_stable_params(
             Address::from([0xe1u8; 20]),
             1000,
@@ -46,7 +46,7 @@ fn balancer_stable_finds_profitable_arb() {
     // Pool B: 1000 token0 / 1950 token1 (mispriced)
     let pool_b = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_stable_pool(&balancer_stable_params(
             Address::from([0xe2u8; 20]),
             1000,
@@ -85,7 +85,7 @@ fn balancer_stable_unprofitable_path_returns_none() {
     // Two identical pools — no arb possible.
     let pool_a = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_stable_pool(&balancer_stable_params(
             Address::from([0xf1u8; 20]),
             1000,
@@ -93,7 +93,7 @@ fn balancer_stable_unprofitable_path_returns_none() {
         ));
     let pool_b = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_stable_pool(&balancer_stable_params(
             Address::from([0xf2u8; 20]),
             1000,
@@ -134,7 +134,7 @@ fn balancer_stable_mixed_with_v2_finds_arb() {
     // Balancer stable pool: 1000/1950 (mispriced), 0.01% fee
     let bs = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_stable_pool(&balancer_stable_params(
             Address::from([0xa4u8; 20]),
             1000,
@@ -164,18 +164,18 @@ fn balancer_stable_mixed_with_v2_finds_arb() {
 #[test]
 fn balancer_stable_rejects_mixed_with_cl() {
     use std::sync::Arc;
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
-        crate::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     let bs = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_stable_pool(&balancer_stable_params(
             Address::from([0xb3u8; 20]),
             1000,
             2000,
         ));
     let v3 = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xc3u8; 20]),
             token0: Address::repeat_byte(0x01),

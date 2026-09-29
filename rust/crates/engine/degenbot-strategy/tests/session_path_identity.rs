@@ -11,7 +11,7 @@
 //!
 //! Seam: `degenbot_bot::arb_engine::EngineDriver` (the production boot that
 //! binds the engine's path registry to the session) +
-//! `degenbot_bot::bot_core::session_registry::SessionObjectRegistry` (the
+//! `degenbot_substrate::session_registry::SessionObjectRegistry` (the
 //! session side) + `Settlement` / `TxpoolBackrun` (the two arms' real policy
 //! values). Rationale: `docs/architecture/session-object-registry.md`.
 
@@ -22,11 +22,12 @@ use std::sync::Arc;
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, U256};
 use degenbot_bot::arb_engine::EngineDriver;
-use degenbot_bot::bot_core::session_registry::{PathObject, PoolIdentity, SessionObjectRegistry};
-use degenbot_bot::bot_core::state_lock::LockSite;
-use degenbot_bot::bot_core::{Bot, RegisterV2PoolParams};
+use degenbot_bot::bot_core::Bot;
 use degenbot_config::BotConfig;
 use degenbot_strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
+use degenbot_substrate::session_registry::{PathObject, PoolIdentity, SessionObjectRegistry};
+use degenbot_substrate::state_lock::LockSite;
+use degenbot_substrate::RegisterV2PoolParams;
 
 const CHAIN_ID: u64 = 1;
 

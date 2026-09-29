@@ -50,7 +50,7 @@ use alloy::eips::BlockId;
 use alloy::network::Ethereum;
 use alloy::primitives::U256;
 use alloy::providers::{Provider, RootProvider};
-use degenbot_bot::bot_core::SimAnchorOracle;
+use degenbot_substrate::SimAnchorOracle;
 use parking_lot::RwLock;
 use revm::database::CacheDB;
 use revm::database_interface::WrapDatabaseAsync;

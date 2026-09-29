@@ -24,12 +24,12 @@ fn with_core_boots_from_the_installed_config_without_a_stance() {
         .load()
         .expect("a config with no retired keys loads");
     assert!(
-        degenbot_bot::bot_core::stance::install(Arc::new(loaded.config)),
+        degenbot_substrate::stance::install(Arc::new(loaded.config)),
         "first install into the fresh holder"
     );
 
-    let core = Arc::new(degenbot_bot::bot_core::state_lock::StateLock::new(
-        degenbot_bot::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     // Construction packs its stances from the INSTALLED loader config and
     // unconditionally installs the fleet boots (no stance gate survives).
@@ -37,6 +37,6 @@ fn with_core_boots_from_the_installed_config_without_a_stance() {
     // is `pub(crate)`; consumers cross `EngineStages`.
     let _stages = degenbot_bot::arb_engine::EngineStages::with_core(
         core,
-        Arc::new(degenbot_bot::bot_core::EpochDelta::new(0u64)),
+        Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
 }

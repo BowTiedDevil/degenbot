@@ -8,7 +8,6 @@ use std::sync::{atomic::AtomicU64, Arc};
 
 use alloy::primitives::{address, Address, B256};
 
-use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_strategy::backrun::{Decision, MevblockerBackrun};
 use degenbot_strategy::backrun_engine::{BackrunHopRef, LaneCandidate, LaneFamily};
 use degenbot_strategy::backrun_strategy::{BackrunEvaluated, BackrunStrategy};
@@ -17,6 +16,7 @@ use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_WETH as WE
 use degenbot_strategy::frame_pipeline::{PipelineConfig, StageTrace};
 use degenbot_strategy::pending_tx::{GateInput, PendingTxReaction};
 use degenbot_strategy::project_candidate;
+use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");
 const EXECUTOR: Address = address!("00000000000000000000000000000000000000e1");

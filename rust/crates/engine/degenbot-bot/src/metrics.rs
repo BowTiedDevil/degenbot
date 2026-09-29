@@ -187,7 +187,7 @@ pub fn metrics_addr_from_env() -> Result<SocketAddr, MetricsInitError> {
     // `DEGENBOT_METRICS_ADDR`); the loader owns any env read.
     // typed schema key `telemetry.metrics_addr`; the loader owns
     // the env read — no direct env access here.
-    let raw = crate::bot_core::stance::config()
+    let raw = degenbot_substrate::stance::config()
         .telemetry
         .metrics_addr
         .clone();

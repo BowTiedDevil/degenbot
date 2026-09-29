@@ -87,13 +87,13 @@ fn inspect_path_returns_hop_details() {
     // Verify we can resolve pool addresses via BotState (V2) / sub-engines (V3/V4)
     let v2_addr = engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver)
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver)
         .get_v2_identity(v2_fwd)
         .map(|p| p.address);
     assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
     let core = engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let v3_pool = core.get_v3_identity(v3_key);
     assert_eq!(
         v3_pool.map(|p| p.address),
@@ -472,7 +472,7 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
     // this test verifies the engine-level outcome holds under the restore.
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .restore_all_pools_before_block(5);
     engine.cycle.path_resolved.clear();
     // the re-restored pools re-enter the epoch delta; the solve
@@ -555,7 +555,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     // this test's swap/Mint direct-apply (its model).
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .set_v3_pool_live(pool_addr);
     // Capture the registration scalar state.
     let reg_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
@@ -569,19 +569,19 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     let swapped_tick = 60i32;
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .apply_v3_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
     // Mint at block 6: adds liquidity at [+60, +120] — in-range because the
     // swap moved the tick to 60, so the active `liquidity` scalar also gets
     // +500 (parity with on-chain + the concentrated-liquidity-math pure reference).
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .apply_v3_liquidity_update(pool_addr, 60, 120, 500_i128, 6);
     {
         let core = engine
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
         assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
         assert_eq!(
@@ -602,13 +602,13 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     // idempotent for pools untouched by the fork.
     let restored = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .restore_all_pools_before_block(5);
     assert_eq!(restored, 1, "the single registered V3 pool was rolled back");
     {
         let core = engine
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let s = core.get_v3_pool(pool_id).expect("v3 pool still registered");
         assert_eq!(
             s.sqrt_price_x96, reg_sp,
@@ -632,10 +632,13 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
 /// the shared core.
 #[test]
 fn with_core_adopts_shared_bot_state() {
-    use crate::bot_core::{BotState, RegisterV2PoolParams};
+    use crate::bot_core::RegisterV2PoolParams;
+    use degenbot_substrate::BotState;
     use std::sync::Arc;
     // Build a shared core with one V2 pool registered directly into `BotState`.
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        BotState::new(),
+    ));
     let params = RegisterV2PoolParams {
         address: Address::from([0x11u8; 20]),
         token0: Address::from([0x01u8; 20]),
@@ -652,7 +655,7 @@ fn with_core_adopts_shared_bot_state() {
         ..Default::default()
     };
     let _pool_id = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v2_pool(&params)
         .expect("test setup: V2 registration");
     // Engine adopts the SAME `Arc<RwLock<BotState>>` — NOT its own `BotState`.
@@ -671,12 +674,15 @@ fn with_core_adopts_shared_bot_state() {
 /// than silently producing an unresolved/invalid path).
 #[test]
 fn register_path_rejects_pool_id_not_in_bot() {
-    use crate::bot_core::{BotState, RegisterV2PoolParams};
+    use crate::bot_core::RegisterV2PoolParams;
+    use degenbot_substrate::BotState;
     use std::sync::Arc;
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        BotState::new(),
+    ));
     // Register one real V2 pool so the engine has *some* valid id.
     let real_pool_id = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v2_pool(&RegisterV2PoolParams {
             address: Address::from([0x11u8; 20]),
             token0: Address::from([0x01u8; 20]),
@@ -807,7 +813,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     // backfill swaps that must direct-apply + journal, so release to Live.
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .set_v3_pool_live(pool_addr);
     // Two swaps at distinct blocks inside one backfill chunk.
     let b1 = 10u64;
@@ -823,14 +829,14 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     // (the pump calls `BotState::process_backfill_logs` directly). The test
     // only asserts on journal/state, so call the BotState method directly
     // — the same path the production backfill uses.
-    let dispatcher = crate::bot_core::log_dispatcher::LogDispatcher::with_uniswap_decoders();
+    let dispatcher = degenbot_substrate::log_dispatcher::LogDispatcher::with_uniswap_decoders();
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .process_backfill_logs(&dispatcher, &logs, chunk_end);
     let core = engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
     // Two distinct-block swaps must produce two journal deltas — NOT one
     // collapsed delta stamped at chunk_end.
@@ -861,13 +867,13 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     drop(core);
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .restore_pool_before_block(pool_id, b2)
         .expect("restore returns Some")
         .expect("restore succeeds");
     let core = engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
     assert_eq!(
         s.sqrt_price_x96, sp_b1,
@@ -889,8 +895,8 @@ fn process_backfill_logs_stamps_per_log_block_number() {
 #[test]
 fn with_core_shares_the_same_core_arc_as_a_peer_bot() {
     use std::sync::Arc;
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
-        crate::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     let engine = ArbitrageEngine::with_core(Arc::clone(&core));
     // `Arc::ptr_eq` proves the engine + the peer hold the SAME allocation
@@ -915,11 +921,11 @@ fn with_core_shares_the_same_core_arc_as_a_peer_bot() {
 /// would surface as a panic.
 #[test]
 fn engine_then_core_lock_order_survives_concurrent_readers_and_writer() {
-    use crate::bot_core::BlockMetadata;
+    use degenbot_substrate::BlockMetadata;
     use std::sync::Arc;
     use std::thread;
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
-        crate::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     let engine = ArbitrageEngine::with_core(Arc::clone(&core));
     let pool_id = engine.register_v2_pool(
@@ -952,7 +958,7 @@ fn engine_then_core_lock_order_survives_concurrent_readers_and_writer() {
         let done = Arc::clone(&done);
         readers.push(thread::spawn(move || {
             while !done.load(std::sync::atomic::Ordering::Relaxed) {
-                let r = core.read_at(crate::bot_core::state_lock::LockSite::Solver);
+                let r = core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
                 // Read is coherent under one guard — no torn state.
                 let _pool = r.get_v2_pool_state(pool_id);
             }
@@ -1062,11 +1068,11 @@ fn solve_all_parallel_fanout_matches_per_path_eager_baseline() {
 /// a re-entrant core guard) surfaces as a panic on the writer thread.
 #[test]
 fn solve_cycle_parallel_fanout_survives_concurrent_readers_and_writer() {
-    use crate::bot_core::BlockMetadata;
+    use degenbot_substrate::BlockMetadata;
     use std::sync::Arc;
     use std::thread;
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
-        crate::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
     // Register N paths so `solve_dirty` exercises a real par_iter batch.
@@ -1128,7 +1134,7 @@ fn solve_cycle_parallel_fanout_survives_concurrent_readers_and_writer() {
         let done = Arc::clone(&done);
         readers.push(thread::spawn(move || {
             while !done.load(std::sync::atomic::Ordering::Relaxed) {
-                let _r = core.read_at(crate::bot_core::state_lock::LockSite::Solver);
+                let _r = core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
                 // Optional pool-state read; spurious empty reads on the
                 // V2 registry are fine (the registered pool_ids are stable).
             }

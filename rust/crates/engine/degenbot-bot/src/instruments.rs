@@ -228,7 +228,7 @@ pub struct PipelineInstruments {
     detached_leads_expired: Counter<u64>,
     /// time an acquisition waited for the core `BotState`
     /// lock, labeled by `site` (closed set from
-    /// `bot_core::state_lock::crate::bot_core::state_lock::LockSite::label`) + `mode` (read|write).
+    /// `bot_core::state_lock::degenbot_substrate::state_lock::LockSite::label`) + `mode` (read|write).
     state_lock_wait: Histogram<f64>,
     /// time a guard was held after acquisition, same labels.
     state_lock_hold: Histogram<f64>,
@@ -1093,7 +1093,7 @@ impl PipelineInstruments {
     }
 
     /// one state-lock acquisition wait. `site` is a small
-    /// closed set (see `bot_core::state_lock::crate::bot_core::state_lock::LockSite::label`); `mode` is
+    /// closed set (see `bot_core::state_lock::degenbot_substrate::state_lock::LockSite::label`); `mode` is
     /// `read` | `write`.
     pub fn observe_state_lock_wait(&self, site: &str, mode: &str, secs: f64) {
         self.state_lock_wait.record(
@@ -1207,6 +1207,69 @@ mod tests {
         assert!(parse_statm_resident("only", 4096).is_none());
         assert!(parse_statm_resident("12 abc 3", 4096).is_none());
     }
+}
+
+/// ADR-067: the substrate's hot paths report through the
+/// `degenbot_substrate::telemetry_port` function-pointer bundle (the
+/// substrate cannot depend on this crate's `otel`-gated instruments
+/// registry). The host installs the delegating bundle once at boot; each
+/// hook resolves the registry lazily, so install order relative to meter
+/// construction is irrelevant and un-built builds stay silent — exactly the
+/// pre-extraction `pipeline() == None` behavior.
+pub fn install_substrate_telemetry_port() {
+    use degenbot_substrate::telemetry_port::PipelineInstruments;
+    degenbot_substrate::telemetry_port::register(Some(PipelineInstruments {
+        set_quarantined_pools: |depth| {
+            if let Some(p) = pipeline() {
+                p.set_quarantined_pools(depth);
+            }
+        },
+        observe_state_lock_wait: |site, mode, secs| {
+            if let Some(p) = pipeline() {
+                p.observe_state_lock_wait(site, mode, secs);
+            }
+        },
+        observe_state_lock_hold: |site, mode, secs| {
+            if let Some(p) = pipeline() {
+                p.observe_state_lock_hold(site, mode, secs);
+            }
+        },
+        count_log_received: || {
+            if let Some(p) = pipeline() {
+                p.count_log_received();
+            }
+        },
+        observe_log_decode: |secs| {
+            if let Some(p) = pipeline() {
+                p.observe_log_decode(secs);
+            }
+        },
+        count_log_decoded: || {
+            if let Some(p) = pipeline() {
+                p.count_log_decoded();
+            }
+        },
+        count_log_undecoded: || {
+            if let Some(p) = pipeline() {
+                p.count_log_undecoded();
+            }
+        },
+        count_log_apply_missed: || {
+            if let Some(p) = pipeline() {
+                p.count_log_apply_missed();
+            }
+        },
+        observe_state_apply: |secs| {
+            if let Some(p) = pipeline() {
+                p.observe_state_apply(secs);
+            }
+        },
+        count_log_applied: || {
+            if let Some(p) = pipeline() {
+                p.count_log_applied();
+            }
+        },
+    }));
 }
 
 static PIPELINE: OnceLock<Option<PipelineInstruments>> = OnceLock::new();

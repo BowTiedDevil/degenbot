@@ -2,7 +2,7 @@
 //! identity shared by the strategies, validated pool references, and the
 //! engine's `PathRegistry` still the only owner of path state.
 //!
-//! Seam: `crate::bot_core::session_registry::{ObjectRefusal, PathObject,
+//! Seam: `degenbot_substrate::session_registry::{ObjectRefusal, PathObject,
 //! PoolIdentity, SessionObjectRegistry}` (the session's canonical path
 //! identity) + `crate::arb_engine::{path_objects::EnginePathObjects,
 //! EngineStages}` (the adapter over the engine's `PathRegistry`). The registry
@@ -19,11 +19,12 @@ use std::sync::Arc;
 
 use crate::arb_engine::path_objects::EnginePathObjects;
 use crate::arb_engine::{EngineDriver, EngineStages};
-use crate::bot_core::session_registry::{
+use crate::bot_core::{Bot, RegisterV2PoolParams};
+use degenbot_substrate::session_registry::{
     ObjectRefusal, PathObject, PoolIdentity, SessionObjectRegistry,
 };
-use crate::bot_core::state_lock::LockSite;
-use crate::bot_core::{Bot, EpochDelta, RegisterV2PoolParams};
+use degenbot_substrate::state_lock::LockSite;
+use degenbot_substrate::EpochDelta;
 use parking_lot::Mutex;
 
 /// Canonical identity is session-scoped; the chain only has to be stable.

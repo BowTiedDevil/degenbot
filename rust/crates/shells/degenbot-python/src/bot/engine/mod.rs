@@ -35,8 +35,8 @@ pub use errors::*;
 pub use result_channel::BlockStream;
 
 use crate::prelude::*;
-use degenbot_bot::bot_core::state_lock::StateLock;
-use degenbot_bot::bot_core::BotState;
+use degenbot_substrate::state_lock::StateLock;
+use degenbot_substrate::BotState;
 pub(crate) use hashbrown::HashMap;
 pub(crate) use std::sync::Arc;
 
@@ -143,7 +143,7 @@ impl PyArbEngine {
         py.detach(move || {
             let core = self.stages.core();
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let guard = core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+            let guard = core.read_at(degenbot_substrate::state_lock::LockSite::Python);
             f(&guard)
         })
     }
@@ -160,7 +160,7 @@ impl PyArbEngine {
         py.detach(move || {
             let core = self.stages.core();
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let mut guard = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+            let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
             f(&mut guard)
         })
     }
@@ -235,7 +235,7 @@ impl PyArbEngine {
     #[getter]
     fn snapshot_seed_block(&self, py: Python<'_>) -> Option<u64> {
         // GIL hygiene: guards acquired inside the accessor's py.detach.
-        self.with_core(py, degenbot_bot::bot_core::BotState::snapshot_seed_block)
+        self.with_core(py, degenbot_substrate::BotState::snapshot_seed_block)
     }
 
     /// Set the snapshot seed block `S` on the shared `BotState` for the

@@ -21,6 +21,7 @@ degenbot-arbitrage.workspace = true
 # `BotState` (the staleness gate reads the shared state owner) + the
 # simulate-dispatch telemetry span (ADR-043).
 degenbot-bot.workspace = true
+degenbot-substrate.workspace = true
 # `EncodeOptions` / `PathInfo` / `HopInfo` / `WarmupSlots` (the composer seam).
 degenbot-executor.workspace = true
 # `AlloyProvider` — the sim leaf's cold-miss DB fallback + the submit leaf's

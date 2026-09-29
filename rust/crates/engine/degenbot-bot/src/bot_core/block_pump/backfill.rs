@@ -252,7 +252,7 @@ impl BlockPump {
         let w = ws_block;
         let s = {
             let arc = self.bot.state_arc();
-            let state = arc.read_at(crate::bot_core::state_lock::LockSite::Pump);
+            let state = arc.read_at(degenbot_substrate::state_lock::LockSite::Pump);
             state.snapshot_seed_block()
         };
         let Some(s) = s else {
@@ -330,7 +330,7 @@ impl BlockPump {
             // (which advance `last_processed_block`) stay atomic per chunk.
             self.bot
                 .state_arc()
-                .write_at(crate::bot_core::state_lock::LockSite::Pump)
+                .write_at(degenbot_substrate::state_lock::LockSite::Pump)
                 .process_backfill_logs(self.bot.dispatcher(), &logs, chunk_end);
             op_info!(
                 domain = pump,

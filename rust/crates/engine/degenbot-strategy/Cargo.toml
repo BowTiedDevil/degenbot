@@ -17,6 +17,7 @@ degenbot-core.workspace = true
 degenbot-execution.workspace = true
 degenbot-submission.workspace = true
 degenbot-bot.workspace = true
+degenbot-substrate.workspace = true
 degenbot-pathfinding.workspace = true
 degenbot-pools.workspace = true
 degenbot-simulation.workspace = true

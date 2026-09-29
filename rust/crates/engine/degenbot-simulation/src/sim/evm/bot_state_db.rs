@@ -47,8 +47,8 @@
 //! ```
 
 use alloy::primitives::Address;
-use degenbot_bot::bot_core::SimAnchorOracle;
 use degenbot_core::op_warn;
+use degenbot_substrate::SimAnchorOracle;
 use revm::database_interface::DatabaseRef;
 use revm::primitives::{StorageKey, StorageValue, B256, KECCAK_EMPTY};
 use revm::state::AccountInfo;
@@ -364,8 +364,9 @@ mod tests {
     use super::*;
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U256};
-    use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams, RouteRegistry, SimAnchorState};
+    use degenbot_bot::bot_core::RegisterV2PoolParams;
     use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
+    use degenbot_substrate::{BotState, RouteRegistry, SimAnchorState};
     use degenbot_uniswap::dex_identity::DexVariant;
     use revm::bytecode::Bytecode;
     use revm::primitives::B256;
@@ -407,7 +408,7 @@ mod tests {
             token0_id: 10,
             token1_id: 20,
             address: POOL,
-            fees: degenbot_bot::bot_core::executor_hop::V2FeePair::from_discovered(
+            fees: degenbot_substrate::executor_hop::V2FeePair::from_discovered(
                 Some(3),
                 Some(3),
                 Some(1_000),

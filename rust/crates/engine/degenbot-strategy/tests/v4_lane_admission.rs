@@ -16,11 +16,6 @@
 
 use alloy::primitives::{address, aliases::U112, Address, B256, I256, U256};
 
-use degenbot_bot::bot_core::executor_hop::V2FeePair;
-use degenbot_bot::bot_core::pool_ingress::{
-    TickMapSampleTarget, TickMapSampleVerifier, VerifyLevel,
-};
-use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V4Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
 use degenbot_pools::slot_layout::V2ReservesParts;
@@ -32,6 +27,9 @@ use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily
 use degenbot_strategy::backrun_strategy::admit_extracted;
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
+use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V4Edge};
+use degenbot_substrate::executor_hop::V2FeePair;
+use degenbot_substrate::pool_ingress::{TickMapSampleTarget, TickMapSampleVerifier, VerifyLevel};
 use hashbrown::HashMap as HbMap;
 
 fn v2_fee_pair() -> V2FeePair {
@@ -43,7 +41,7 @@ fn v2_fee_pair() -> V2FeePair {
 /// fetch declines loudly rather than staging stale state.
 struct NoBackfill;
 
-impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
+impl degenbot_substrate::pool_ingress::LiquidityLogSource for NoBackfill {
     fn fetch_v3_liquidity_events(
         &self,
         _pool: alloy::primitives::Address,
@@ -65,13 +63,13 @@ impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
 }
 
 fn market_context(
-    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    registry: Option<std::sync::Arc<degenbot_substrate::RouteRegistry>>,
     db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
     verify: VerifyLevel,
     verifier: Option<std::sync::Arc<dyn TickMapSampleVerifier>>,
 ) -> MarketContext {
     let db_arm = db.clone().map(|db| {
-        degenbot_bot::bot_core::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
+        degenbot_substrate::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
     });
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
         registry, db_arm, None, verify, verifier,
@@ -186,9 +184,9 @@ fn runtime_fixture_with(
     db.upsert_v4_initialization_maps(i64::try_from(V4_DB_POOL_ID).unwrap(), &bitmaps)
         .unwrap();
     market_context(
-        Some(std::sync::Arc::new(
-            degenbot_bot::bot_core::RouteRegistry::new(index),
-        )),
+        Some(std::sync::Arc::new(degenbot_substrate::RouteRegistry::new(
+            index,
+        ))),
         Some(std::sync::Arc::new(db)),
         verify,
         verifier,

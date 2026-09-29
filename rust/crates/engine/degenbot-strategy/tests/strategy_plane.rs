@@ -111,11 +111,11 @@ fn plane_trait_carries_no_speculative_slots() {
 /// independently in one process.
 #[test]
 fn all_three_strategies_register_and_enable_through_one_verb_surface() {
-    use degenbot_bot::bot_core::route_registry::RouteRegistry;
-    use degenbot_bot::connector_index::V2ConnectorIndex;
     use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
     use degenbot_bot::strategy_host::{DriverPose, FacetStatus, StrategyHost};
     use degenbot_eventhub::Hub;
+    use degenbot_substrate::connector_index::V2ConnectorIndex;
+    use degenbot_substrate::route_registry::RouteRegistry;
     use std::sync::Arc;
 
     let mut host = StrategyHost::new(

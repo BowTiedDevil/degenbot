@@ -77,7 +77,7 @@ pub(crate) fn install_engine_stances(
     // C2: the cycle's stance values are ENGINE instance values now
     // (`SolveCycle::min_profit_floor` / `::inline_sim_enabled`, packed at
     // construction) — no process statics remain for the solve cycle.
-    crate::bot_core::resolve::install_projection_memo_stance(cfg.solve.cl_projection_cache);
+    degenbot_substrate::resolve::install_projection_memo_stance(cfg.solve.cl_projection_cache);
     // the chunked parallel resolve stance is an ENGINE
     // instance value now — packed per construction from
     // cfg.solve.solve_resolve_par (the KAHU5W construction-stance
@@ -139,22 +139,22 @@ pub(crate) fn set_event_buffer_max_age(engine: &mut ArbitrageEngine, max_age: Op
     engine.event_buffer_expiry_enabled = max_age.is_some();
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .set_v3_buffer_max_age(max_age);
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .set_v4_buffer_max_age(max_age);
 }
 /// Flush all buffered events in the V3/V4 buffers on `BotState` (ADR-003).
 pub(crate) fn flush_event_buffer(engine: &mut ArbitrageEngine) {
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .flush_v3_buffer();
     engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .flush_v4_buffer();
 }
 /// Read the last solved results and block number.
@@ -219,7 +219,7 @@ pub(crate) fn solve_all_paths(engine: &mut ArbitrageEngine, block_number: u64) {
 pub(crate) fn v2_pool_count(engine: &ArbitrageEngine) -> usize {
     engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver)
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver)
         .v2_pool_count()
 }
 /// Number of registered V3 pools (state lives in `BotState` under ADR-003).
@@ -227,7 +227,7 @@ pub(crate) fn v2_pool_count(engine: &ArbitrageEngine) -> usize {
 pub(crate) fn v3_pool_count(engine: &ArbitrageEngine) -> usize {
     engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver)
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver)
         .v3_pool_count()
 }
 /// Number of registered V4 pools (state lives in `BotState` under ADR-003).
@@ -235,7 +235,7 @@ pub(crate) fn v3_pool_count(engine: &ArbitrageEngine) -> usize {
 pub(crate) fn v4_pool_count(engine: &ArbitrageEngine) -> usize {
     engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver)
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver)
         .v4_pool_count()
 }
 /// Number of registered mixed paths.

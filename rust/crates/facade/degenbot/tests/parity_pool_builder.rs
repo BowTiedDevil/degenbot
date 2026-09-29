@@ -22,7 +22,7 @@
 #![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{Address, U256};
-use degenbot::bot_core::BotState;
+use degenbot::substrate::BotState;
 use degenbot::PoolEntry;
 use degenbot::RegisterV3PoolParams;
 use degenbot_pools::{v3_state::PoolTickCoverage, TickInfo};

@@ -26,7 +26,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use alloy::primitives::{address, keccak256, Bytes, U256};
-use degenbot_bot::bot_core::SimAnchorState;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_strategy::backrun::{BackrunConfig, Decision, MevblockerBackrun};
@@ -35,13 +34,14 @@ use degenbot_strategy::execution_context::ExecutionContext;
 use degenbot_strategy::frame_pipeline::{
     build_block_handle, process_frame, MarketContext, PipelineConfig,
 };
+use degenbot_substrate::SimAnchorState;
 
 /// Test stand-in for the Db→head backfill transport. The fixtures stamp no
 /// `liquidity_update_block`, so no window is ever backfilled; an unexpected
 /// fetch declines loudly rather than staging stale state.
 struct NoBackfill;
 
-impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
+impl degenbot_substrate::pool_ingress::LiquidityLogSource for NoBackfill {
     fn fetch_v3_liquidity_events(
         &self,
         _pool: alloy::primitives::Address,
@@ -63,17 +63,17 @@ impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
 }
 
 fn market_context(
-    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    registry: Option<std::sync::Arc<degenbot_substrate::RouteRegistry>>,
     db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
 ) -> MarketContext {
     let db_arm = db.clone().map(|db| {
-        degenbot_bot::bot_core::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
+        degenbot_substrate::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
     });
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
         registry,
         db_arm,
         None,
-        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
     );
     MarketContext::new(1, db, kit, 8, 4)
@@ -270,10 +270,10 @@ async fn runtime(
         ids.contains_key(&WETH) && ids.contains_key(&USDC),
         "WETH/USDC joined from the DB"
     );
-    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::load(&db, 1).unwrap();
+    let mut index = degenbot_substrate::connector_index::V2ConnectorIndex::load(&db, 1).unwrap();
     index.load_v3(&db, 1).unwrap();
     index.set_ranker(Arc::new(
-        degenbot_bot::connector_index::OnChainLiquidityRanker::new(Arc::clone(provider)),
+        degenbot_substrate::connector_index::OnChainLiquidityRanker::new(Arc::clone(provider)),
     ));
     assert!(
         index.edge_by_address(USDC_WETH_V2).is_some(),
@@ -281,7 +281,7 @@ async fn runtime(
     );
     let head = provider.get_block_number().await.unwrap();
     let rt = market_context(
-        Some(Arc::new(degenbot_bot::bot_core::RouteRegistry::new(index))),
+        Some(Arc::new(degenbot_substrate::RouteRegistry::new(index))),
         Some(Arc::new(live_db())),
     );
     (rt, head, ids)

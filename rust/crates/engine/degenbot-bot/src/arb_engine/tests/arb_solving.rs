@@ -490,7 +490,7 @@ fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
     {
         let mut core = engine
             .core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver);
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver);
         let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 498);
         let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 498);
     }
@@ -516,7 +516,7 @@ fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
     {
         let mut core = engine
             .core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver);
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver);
         let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 10);
         let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 10);
     }
@@ -596,7 +596,7 @@ fn no_update_block_age_defers_a_quiet_path() {
     {
         let mut core = engine
             .core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver);
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver);
         let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 490);
         let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 490);
     }
@@ -620,7 +620,7 @@ fn no_update_block_age_defers_a_quiet_path() {
     {
         let mut core = engine
             .core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver);
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver);
         let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 489);
         let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 489);
     }
@@ -724,10 +724,10 @@ fn v4_int128_overflow_path_rejected() {
     {
         let core = engine
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         for (&path_id, path) in &engine.registry.path_pools {
             let mut resolved = ResolvedMixedPath::default();
-            let _ = crate::bot_core::resolve::resolve_hops(
+            let _ = degenbot_substrate::resolve::resolve_hops(
                 &core,
                 &path.pools,
                 &mut resolved,
@@ -880,7 +880,7 @@ fn clamp_cl_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
     // twin at the CLAMPED input (zfo=false → reserve_in=token1, fee_token1).
     let core = engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let state = core.get_v2_pool_state(v2).unwrap();
     let identity = core.get_v2_identity(v2).unwrap();
     let expected = IntHopState::new(
@@ -1007,7 +1007,7 @@ fn clamp_cl_hop_capacity_caps_overfed_v4_input() {
     let input_consumed = {
         let core = engine
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core.get_v4_pool(v4_id).unwrap();
         let identity = core.get_v4_identity(v4_id).unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
@@ -1029,7 +1029,7 @@ fn clamp_cl_hop_capacity_caps_overfed_v4_input() {
     let twin_out = {
         let core = engine
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core.get_v4_pool(v4_id).unwrap();
         let identity = core.get_v4_identity(v4_id).unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
@@ -1162,7 +1162,7 @@ fn clamp_cl_hop_capacity_aligns_v4_first_hop0_outputs() {
     let twin_out = {
         let core = engine
             .core
-            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core.get_v4_pool(v4_id).unwrap();
         let identity = core.get_v4_identity(v4_id).unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();

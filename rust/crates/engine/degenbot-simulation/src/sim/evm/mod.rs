@@ -72,7 +72,7 @@ pub mod state_override;
 
 /// `BotStateDb` — a thin `revm::DatabaseRef` wrapper that forwards every read
 /// to the `WrapDatabaseAsync<AlloyDB>` fallback, with the always-on divergence
-/// observer and the code-less tripwire layered on a [`SimAnchorOracle`](degenbot_bot::bot_core::SimAnchorOracle).
+/// observer and the code-less tripwire layered on a [`SimAnchorOracle`](degenbot_substrate::SimAnchorOracle).
 /// The typed-state serving path (option B) is not wired; see the module's
 /// historical note on the retired slot encoders.
 pub mod bot_state_db;

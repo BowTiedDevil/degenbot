@@ -194,7 +194,7 @@ fn python_phrases(line: &str) -> Vec<(String, String, String)> {
 
 #[test]
 fn workspace_membership_is_exact_and_role_grouped() {
-    const EXPECTED_NAMES: [&str; 34] = [
+    const EXPECTED_NAMES: [&str; 35] = [
         "degenbot",
         "degenbot-aave",
         "degenbot-abi",
@@ -226,6 +226,7 @@ fn workspace_membership_is_exact_and_role_grouped() {
         "degenbot-solvers",
         "degenbot-strategy",
         "degenbot-submission",
+        "degenbot-substrate",
         "degenbot-uniswap",
         "degenbot-workers",
         "degenbot_rs",
@@ -613,7 +614,7 @@ fn one_path_identity_owner_is_declared_once() {
         "the canonical path object must be declared exactly once; found {object_defs:?}"
     );
     assert!(
-        object_defs[0].contains("bot_core/session_registry/path.rs"),
+        object_defs[0].contains("degenbot-substrate/src/session_registry/path.rs"),
         "the canonical path object belongs to the session registry; found {}",
         object_defs[0]
     );
@@ -648,7 +649,7 @@ fn the_session_registers_no_path_store_of_its_own() {
     // which. (The pool/token kinds legitimately keep maps in
     // `session_registry.rs` itself; only the path module must be collection-free.)
     let path_module =
-        workspace_root().join("crates/engine/degenbot-bot/src/bot_core/session_registry/path.rs");
+        workspace_root().join("crates/foundation/degenbot-substrate/src/session_registry/path.rs");
     let text = std::fs::read_to_string(&path_module).expect("read the path module");
     let mut offenders = Vec::new();
     for (line_number, line) in text.lines().enumerate() {
@@ -672,7 +673,7 @@ fn the_session_registers_no_path_store_of_its_own() {
 
     // And the registry itself stores the owner as a handle, not a map of paths.
     let registry = std::fs::read_to_string(
-        workspace_root().join("crates/engine/degenbot-bot/src/bot_core/session_registry.rs"),
+        workspace_root().join("crates/foundation/degenbot-substrate/src/session_registry/mod.rs"),
     )
     .expect("read the session registry");
     let struct_body = block_body(&registry, "pub struct SessionObjectRegistry {")
@@ -699,7 +700,7 @@ fn the_canonical_path_object_carries_no_strategy_policy() {
     // derived per strategy, so a field here would hand one arm's policy to
     // every other arm that trades the same route.
     let path_module =
-        workspace_root().join("crates/engine/degenbot-bot/src/bot_core/session_registry/path.rs");
+        workspace_root().join("crates/foundation/degenbot-substrate/src/session_registry/path.rs");
     let text = std::fs::read_to_string(&path_module).expect("read the path module");
     let struct_body =
         block_body(&text, "pub struct PathObject {").expect("the canonical path object");
@@ -812,7 +813,7 @@ fn the_session_registers_no_position_store_of_its_own() {
     let modules = [
         workspace_root().join("crates/foundation/degenbot-core/src/session_positions.rs"),
         workspace_root()
-            .join("crates/engine/degenbot-bot/src/bot_core/session_registry/position.rs"),
+            .join("crates/foundation/degenbot-substrate/src/session_registry/position.rs"),
     ];
     let mut offenders = Vec::new();
     for module in &modules {
@@ -994,7 +995,7 @@ fn no_second_map_in_the_rust_core_is_keyed_by_a_session_identity_type() {
         "RwLock<HashMap<",
         "Mutex<HashMap<",
     ];
-    let registry_module = "bot_core/session_registry";
+    let registry_module = "degenbot-substrate/src/session_registry";
 
     let mut violations = Vec::new();
     let crates_root = workspace_root().join("crates");
@@ -1028,7 +1029,7 @@ fn no_second_map_in_the_rust_core_is_keyed_by_a_session_identity_type() {
                 continue;
             };
             // The FINAL path segment names the type, so a fully-qualified key
-            // (`HashMap<crate::bot_core::session_registry::PathIdentity, u8>`)
+            // (`HashMap<crate::substrate::session_registry::PathIdentity, u8>`)
             // is caught too. Comparing the whole key type missed exactly that
             // spelling, which is the spelling an out-of-registry caller reaches
             // for when the registry is not in scope unqualified — so the gate

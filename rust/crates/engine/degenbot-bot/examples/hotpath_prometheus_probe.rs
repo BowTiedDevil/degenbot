@@ -46,7 +46,7 @@ fn main() -> Result<(), String> {
         .load()
         .map_err(|e| format!("config load failed: {e}"))?;
     let cfg = Arc::new(loaded.config);
-    if !::degenbot_bot::bot_core::stance::install(Arc::clone(&cfg)) {
+    if !::degenbot_substrate::stance::install(Arc::clone(&cfg)) {
         return Err("a config was already installed in this process".into());
     }
 

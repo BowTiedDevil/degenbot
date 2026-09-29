@@ -13,7 +13,7 @@
 //!   serve — a per-frame refill of the token joins would re-pay a DB query
 //!   per pool per frame and forfeit the index's memoized depth rankings.
 //! - **The planning workspace scope** dies per frame: [`BackrunSolver`]
-//!   wraps a fresh [`degenbot_bot::bot_core::planning::Workspace`] per
+//!   wraps a fresh [`degenbot_substrate::planning::Workspace`] per
 //!   frame; replayed pool state, declared paths, and workspace pool ids
 //!   never outlive the frame that staged them. Nothing the scope mutates
 //!   is visible to the next frame — the next frame re-admits from its own
@@ -76,8 +76,6 @@ use crate::backrun_engine::BackrunSolver;
 use crate::backrun_engine::PathReject;
 use crate::backrun_strategy::SolveStats;
 use alloy::primitives::{Address, Bytes, B256, U256};
-use degenbot_bot::bot_core::SimAnchorOracle;
-use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
@@ -97,6 +95,8 @@ use degenbot_submission::submission_ledger::NonceLane;
 use degenbot_submission::submit::{
     dispatch_and_submit, BundleTarget, SubmissionTarget, SubmitCandidate,
 };
+use degenbot_substrate::connector_index::V2ConnectorIndex;
+use degenbot_substrate::SimAnchorOracle;
 use hashbrown::HashMap as HbMap;
 use parking_lot::RwLock;
 
@@ -548,9 +548,9 @@ impl FrameArtifacts {
 /// block's env. State overrides are the ZERO set — a foreign frame must
 /// execute against chain state, not the strategy's simulated funding.
 /// `oracle` is the sim DB's membership/observation view — the boot
-/// [`RouteRegistry`](degenbot_bot::bot_core::RouteRegistry) (the driver
+/// [`RouteRegistry`](degenbot_substrate::RouteRegistry) (the driver
 /// carries no engine state, so the divergence observer is inert) or a
-/// state-less [`NoSimAnchor`](degenbot_bot::bot_core::NoSimAnchor) when the
+/// state-less [`NoSimAnchor`](degenbot_substrate::NoSimAnchor) when the
 /// registry load failed; the shared `warm_cache` carries the cross-block
 /// bytecode/account caches across handle rebuilds.
 /// `None` when the head block fetch or the handle build fails (no ambient

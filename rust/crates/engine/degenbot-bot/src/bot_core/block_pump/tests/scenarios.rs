@@ -26,7 +26,7 @@ async fn scenario_a_buffered_mint_is_drained_into_pin() {
     // The tombstone@N+1 set `last_complete_block = N`. Drain + pin.
     let (tick_data, pinned_block) = {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer_v3(&pool_addr);
         core.apply_pump_buffer_v3(&pool_addr);
         core.pin_v3_post_drain_snapshot(pool_addr);
@@ -67,9 +67,9 @@ async fn scenario_c_two_adjacent_same_block_mints_both_applied_to_pin() {
     // lower tick to mutate (mirrors on-chain where tick 6 is initialized).
     {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
-        let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
-        if let Some(crate::bot_core::PoolEntry::V3(p)) = core.pools.get_mut(&pool_id) {
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
+        let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
+        if let Some(crate::bot_core::PoolEntry::V3(p)) = core.pool_entry_mut(pool_id) {
             use alloy::primitives::U128;
             let pool = &mut p.1;
             pool.tick_data
@@ -101,7 +101,7 @@ async fn scenario_c_two_adjacent_same_block_mints_both_applied_to_pin() {
 
     let (tick_data, pinned_block) = {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer_v3(&pool_addr);
         core.apply_pump_buffer_v3(&pool_addr);
         core.pin_v3_post_drain_snapshot(pool_addr);
@@ -157,7 +157,7 @@ async fn scenario_b_dropped_mint_reproduces_verify_mismatch_symptom() {
 
     let (tick_data, pinned_block) = {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer_v3(&pool_addr);
         core.apply_pump_buffer_v3(&pool_addr);
         core.pin_v3_post_drain_snapshot(pool_addr);
@@ -222,7 +222,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                 );
             }
             let state = bot.state_arc();
-            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+            let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
             core.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
                 address: *addr,
                 token0: Address::from([0xa0u8; 20]),
@@ -333,7 +333,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                 continue;
             }
             let state = bot.state_arc();
-            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+            let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
             let mut tick_data = hashbrown::HashMap::new();
             for &t in &FUZZ_TICKS {
                 tick_data.insert(
@@ -366,7 +366,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
         }
         for addr in &addrs {
             let state = bot.state_arc();
-            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+            let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
             core.apply_backfill_buffer_v3(addr);
             core.apply_pump_buffer_v3(addr);
             core.set_v3_pool_live(*addr);
@@ -375,8 +375,8 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
         // ORACLE COMPARISON.
         for (i, addr) in addrs.iter().enumerate() {
             let state = bot.state_arc();
-            let core = state.read_at(crate::bot_core::state_lock::LockSite::Pump);
-            let pool_id = *core.pool_addresses.get(addr).unwrap();
+            let core = state.read_at(degenbot_substrate::state_lock::LockSite::Pump);
+            let pool_id = core.pool_id_by_address(addr).unwrap();
             let pool = core.get_v3_pool(pool_id).unwrap();
             for &t in &FUZZ_TICKS {
                 let actual = pool
@@ -437,7 +437,7 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
     // Tracked pool loads stale DB data and starts Quarantined.
     {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         let mut tick_data = hashbrown::HashMap::new();
         tick_data.insert(
             7,
@@ -471,11 +471,11 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
     // tail — the standard staged-application contract.
     let tick_data = {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer_v3(&pool_addr);
         core.apply_pump_buffer_v3(&pool_addr);
         core.set_v3_pool_live(pool_addr);
-        let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
+        let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
         core.get_v3_pool(pool_id)
             .expect("registered")
             .tick_data
@@ -555,7 +555,7 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
     // NOT drained). The pin captures the backfill seed state.
     let pin_after_mint1 = {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer_v3(&pool_addr);
         core.apply_pump_buffer_v3(&pool_addr);
         core.pin_v3_post_drain_snapshot(pool_addr);
@@ -585,9 +585,9 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
     // just not drained into the pin.
     let live_gross = {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_pump_buffer_v3(&pool_addr);
-        let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
+        let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
         core.get_v3_pool(pool_id)
             .unwrap()
             .tick_data

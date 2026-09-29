@@ -262,7 +262,7 @@ pub fn dump_to_file() -> Option<std::path::PathBuf> {
     #[cfg(feature = "bot")]
     {
         doc["state_lock_holds"] =
-            serde_json::Value::String(degenbot_bot::bot_core::state_lock::dump_active_holds());
+            serde_json::Value::String(degenbot_substrate::state_lock::dump_active_holds());
     }
 
     match serde_json::to_string(&doc) {

@@ -11,10 +11,11 @@ pub use ::degenbot_pools::balancer_stable_state::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot_core::{BotState, RegisterBalancerStablePoolParams};
+    use crate::bot_core::RegisterBalancerStablePoolParams;
     use ::degenbot_pools::rate_provider::BalancerRateProvider;
     use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
     use alloy::primitives::{aliases::U112, Address, U256};
+    use degenbot_substrate::BotState;
     use std::sync::Arc;
 
     /// 3-token `ComposableStablePool` fixture (BPT at index 2).

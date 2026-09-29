@@ -32,8 +32,6 @@ use std::sync::Arc;
 
 use alloy::primitives::aliases::U128;
 use alloy::primitives::{Address, U256};
-use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
-use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
 use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
@@ -51,6 +49,8 @@ use degenbot_strategy::backrun_engine::{
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
+use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
+use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 use hashbrown::HashMap as HbMap;
 
 fn v2_fee_pair() -> V2FeePair {
@@ -66,7 +66,7 @@ fn v2_fees() -> V2Fees {
 /// fetch declines loudly rather than staging stale state.
 struct NoBackfill;
 
-impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
+impl degenbot_substrate::pool_ingress::LiquidityLogSource for NoBackfill {
     fn fetch_v3_liquidity_events(
         &self,
         _pool: alloy::primitives::Address,
@@ -88,17 +88,17 @@ impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
 }
 
 fn market_context(
-    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    registry: Option<std::sync::Arc<degenbot_substrate::RouteRegistry>>,
     db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
 ) -> MarketContext {
     let db_arm = db.clone().map(|db| {
-        degenbot_bot::bot_core::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
+        degenbot_substrate::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
     });
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
         registry,
         db_arm,
         None,
-        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
     );
     MarketContext::new(1, db, kit, 8, 4)
@@ -332,7 +332,7 @@ fn runtime_for(
         fees: v2_fee_pair(),
     });
     market_context(
-        Some(Arc::new(degenbot_bot::bot_core::RouteRegistry::new(index))),
+        Some(Arc::new(degenbot_substrate::RouteRegistry::new(index))),
         Some(Arc::new(db)),
     )
 }

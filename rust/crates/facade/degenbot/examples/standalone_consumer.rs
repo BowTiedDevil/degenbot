@@ -41,7 +41,6 @@ use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
     simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
 };
-use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
 use degenbot::cmd_executor::compute_simulation_warmup_slots;
 use degenbot::db::snapshot_db::SnapshotDb;
@@ -52,6 +51,7 @@ use degenbot::math::curve::{
 };
 use degenbot::math::solidly::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
 use degenbot::simulation::apply_simulation_overrides;
+use degenbot::substrate::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::{bot_core::Bot, BotState, RegisterV2PoolParams};
 use revm::bytecode::Bytecode;
 use revm::database::CacheDB;
@@ -192,7 +192,7 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
         .expect("load_snapshot_from_db on the fixture DB returns Ok");
     let seed_block = snapshot_bot
         .state_arc()
-        .read_at(degenbot_bot::bot_core::state_lock::LockSite::Core)
+        .read_at(degenbot_substrate::state_lock::LockSite::Core)
         .snapshot_seed_block();
     // Fixture DB has V3 ticks at chain 8453 (aerodrome_v3, last_update_block
     // = 12_345_000) AND an empty V4 family (uniswap_v4 exchange row,
@@ -254,12 +254,12 @@ fn main() {
 
     // 2b. Standalone stage-surface lifecycle: the seam owns
     //    PumpPhase — a cargo-add degenbot consumer observes + guards it.
-    let lifecycle_core = Arc::new(degenbot::bot_core::state_lock::StateLock::new(
+    let lifecycle_core = Arc::new(degenbot::substrate::state_lock::StateLock::new(
         BotState::new(),
     ));
     let stages = EngineStages::with_core(
         lifecycle_core,
-        Arc::new(degenbot::bot_core::EpochDelta::new(0u64)),
+        Arc::new(degenbot::substrate::EpochDelta::new(0u64)),
     );
     assert_eq!(stages.current_phase(), PumpPhase::Created);
     assert!(stages.current_phase().allow_subscribe("subscribe").is_ok());
@@ -609,7 +609,7 @@ fn operator_config_standalone_slice() {
 /// count grows only when an identity is genuinely new, and an address-keyed
 /// read answers with the object that first claimed the address.
 fn session_registry_get_or_create_standalone_slice() {
-    use degenbot::bot_core::session_registry::{PoolIdentity, SessionObjectRegistry};
+    use degenbot::substrate::session_registry::{PoolIdentity, SessionObjectRegistry};
 
     let registry = SessionObjectRegistry::new(1);
     assert_eq!(registry.pool_count(), 0, "a fresh session holds no pools");
@@ -690,8 +690,8 @@ fn session_registry_get_or_create_standalone_slice() {
 fn registration_lifecycle_standalone_slice() {
     use hashbrown::HashMap;
 
-    use degenbot::bot_core::state_lock::StateLock;
     use degenbot::bot_core::{PoolTickCoverage, RegistrationLifecycle, TickInfo};
+    use degenbot::substrate::state_lock::StateLock;
     use degenbot::{run_cl_v3_lifecycle, RegisterV3PoolParams};
 
     let core = StateLock::new(BotState::new());
@@ -706,7 +706,7 @@ fn registration_lifecycle_standalone_slice() {
         },
     );
     let pid = core
-        .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core)
+        .write_at(degenbot_substrate::state_lock::LockSite::Core)
         .register_v3_pool(&RegisterV3PoolParams {
             address: addr,
             token0: address!("000000000000000000000000000000000000000A"),
@@ -722,7 +722,7 @@ fn registration_lifecycle_standalone_slice() {
         })
         .expect("standalone: Tracked V3 registration");
     assert_eq!(
-        core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Core)
+        core.read_at(degenbot_substrate::state_lock::LockSite::Core)
             .get_v3_pool(pid)
             .unwrap()
             .registration_lifecycle,
@@ -744,7 +744,7 @@ fn registration_lifecycle_standalone_slice() {
         ))
         .expect("standalone: lifecycle must pass");
     assert_eq!(
-        core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Core)
+        core.read_at(degenbot_substrate::state_lock::LockSite::Core)
             .get_v3_pool(pid)
             .unwrap()
             .registration_lifecycle,

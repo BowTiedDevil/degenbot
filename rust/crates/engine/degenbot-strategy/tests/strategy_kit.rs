@@ -9,11 +9,11 @@
 
 use std::sync::Arc;
 
-use degenbot_bot::bot_core::pool_ingress::VerifyLevel;
-use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_strategy::strategy_kit::{declared_cells, StrategyCell, StrategyKit, STRATEGY_CELLS};
 use degenbot_strategy::StrategyName;
+use degenbot_substrate::connector_index::V2ConnectorIndex;
+use degenbot_substrate::pool_ingress::VerifyLevel;
+use degenbot_substrate::RouteRegistry;
 
 fn registry() -> Arc<RouteRegistry> {
     Arc::new(RouteRegistry::new(V2ConnectorIndex::default()))

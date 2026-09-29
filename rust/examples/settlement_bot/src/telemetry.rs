@@ -109,7 +109,7 @@ pub(crate) fn init(loaded: &degenbot::config::LoadedConfig) -> TelemetryBoot {
     // Step 1: install the typed config the caller loaded once (file + env +
     // defaults) — first-wins, mirroring degenbot-python's production boot
     // path.
-    let _ = degenbot::bot_core::stance::install(std::sync::Arc::new(loaded.config.clone()));
+    let _ = degenbot::substrate::stance::install(std::sync::Arc::new(loaded.config.clone()));
 
     // Step 2: resolve the console/OTel record filters (ADR-043 section 4).
     let plan = bot_telemetry::resolve_filters(bot_telemetry::CONSOLE_WIRING_DEFAULT_PYTHON);

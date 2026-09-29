@@ -21,7 +21,6 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use alloy::primitives::B256;
-use degenbot_bot::bot_core::RouteRegistry;
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
 use degenbot_bot::strategy_host::{
@@ -30,6 +29,7 @@ use degenbot_bot::strategy_host::{
 };
 use degenbot_eventhub::{Hub, HubClass, HubError, HubEvent};
 use degenbot_submission::{NonceLane, SubmissionLedger, SubmissionState, TargetId};
+use degenbot_substrate::RouteRegistry;
 
 /// The mock third strategy family. A real family is named by its config facet
 /// and the operator's `strategy.name`; the mock keeps only the name the host

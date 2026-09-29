@@ -41,6 +41,7 @@ degenbot-core.workspace = true
 # crate - never on a domain-engine crate - is what keeps the console's log
 # surface identical to the Python driver's.
 degenbot-bot.workspace = true
+degenbot-substrate.workspace = true
 # argv declaration: the ONE clap tree (ADR-051 D2).
 clap = { version = "4.6", features = ["derive"] }
 # Progress rendering lives at the facade only (ADR-051 D9).

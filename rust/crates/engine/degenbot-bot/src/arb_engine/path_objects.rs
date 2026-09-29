@@ -31,10 +31,10 @@ use parking_lot::Mutex;
 
 use crate::arb_engine::lifecycle::{register_path, PathRegistrationError};
 use crate::arb_engine::ArbitrageEngine;
-use crate::bot_core::session_registry::{
+use degenbot_substrate::session_registry::{
     ObjectRefusal, PathIdentity, PathObject, PathObjectAdapter,
 };
-use crate::bot_core::state_lock::LockSite;
+use degenbot_substrate::state_lock::LockSite;
 
 /// The session's handle on the engine's path identity.
 ///

@@ -47,9 +47,14 @@ pub use degenbot_solvers as solvers;
 /// The strategy plane: the six-slot strategy vocabulary and the concrete
 /// executable strategies composed over the capability crates.
 pub use degenbot_strategy as strategy;
+
 /// The production `cmd_executor` adapter and its session deployment context,
 /// also available under `degenbot::strategy`.
 pub use degenbot_strategy::{CmdExecutorAdapter, ExecutionContext};
+/// The strategy substrate (ADR-067): the state owner, planning workspace,
+/// pool ingress, connector index, and executor hop views both consumers
+/// compose as a peer.
+pub use degenbot_substrate as substrate;
 
 /// The whole `degenbot-uniswap` crate (dex identity + V2 encoding + registry).
 pub use degenbot_uniswap as uniswap;
@@ -134,18 +139,19 @@ pub use degenbot_bot::bot_core::registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
     run_v4_registration_lifecycle, RegistrationLifecycleError,
 };
+pub use degenbot_bot::bot_core::{
+    PoolEntry, RegisterAerodromeV2PoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
+    RegisterV3PoolParams, RegisterV4PoolParams, V2PoolState, V4PoolKey,
+};
 /// The session object registry — the per-session owner of pool/token
 /// canonical identity, the path-identity and position seams (also available as
-/// [`crate::bot_core::session_registry`]).
-pub use degenbot_bot::bot_core::session_registry::{
+/// [`crate::substrate::session_registry`]).
+pub use degenbot_substrate::session_registry::{
     Freshness, HealthFactor, ObjectRefusal, PoolIdentity, PoolObject, PositionIdentity,
     PositionObserver, PositionReading, PositionRefusal, SessionObjectRegistry, TokenIdentity,
     TokenObject,
 };
-pub use degenbot_bot::bot_core::{
-    BotState, PoolEntry, RegisterAerodromeV2PoolParams, RegisterCurvePoolParams,
-    RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams, V2PoolState, V4PoolKey,
-};
+pub use degenbot_substrate::BotState;
 pub use degenbot_uniswap::dex_identity::{
     preset_for_variant, DexIdentity, DexVariant, ReservesAbi, UNISWAP_V2,
 };

@@ -100,9 +100,9 @@ impl Default for EngineRetune {
 mod tests {
     use super::*;
     use crate::arb_engine::{ArbitrageEngine, EngineStages};
-    use crate::bot_core::state_lock::StateLock;
-    use crate::bot_core::{BotState, EpochDelta};
     use degenbot_config::BotConfigLoader;
+    use degenbot_substrate::state_lock::StateLock;
+    use degenbot_substrate::{BotState, EpochDelta};
     use std::sync::Arc;
     /// Build an engine from an EXPLICIT local config (no env/file/process
     /// layer), wrapped for the stage surface. Only `solve.admission_*` is

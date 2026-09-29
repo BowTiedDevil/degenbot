@@ -88,7 +88,7 @@ fn admission_zero_budget_sheds_the_whole_cycle() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use crate::bot_core::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
     use std::sync::Arc;
     let (mut engine, pool_ids, path_ids) = detached_fixture(400);
     engine.cycle.set_solve_admission(true);
@@ -170,7 +170,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use crate::bot_core::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
     use std::sync::Arc;
     let mut engine = ArbitrageEngine::new();
     let a = engine.register_v2_pool(
@@ -314,7 +314,7 @@ fn admission_race_positive_draw_never_sheds() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use crate::bot_core::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
     use std::sync::Arc;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
     engine.cycle.set_solve_admission(true);
@@ -418,7 +418,7 @@ fn admission_race_positive_draw_never_sheds() {
 fn admission_carries_retained_keys_to_a_later_cycle() {
     use crate::arb_engine::EngineStages;
     use crate::bot_core::stage_handlers::{QuiesceOutcome, QuiesceVerdict, Resolve, StageHandlers};
-    use crate::bot_core::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
     use std::sync::Arc;
     let engine = ArbitrageEngine::new();
     let engine = Arc::new(parking_lot::Mutex::new(engine));
@@ -503,7 +503,7 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
 fn admission_retention_window_expires_carried_leads() {
     use crate::arb_engine::EngineStages;
     use crate::bot_core::stage_handlers::{QuiesceOutcome, QuiesceVerdict, Resolve, StageHandlers};
-    use crate::bot_core::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
     use std::sync::Arc;
     let engine = ArbitrageEngine::new();
     let engine = Arc::new(parking_lot::Mutex::new(engine));
@@ -549,7 +549,7 @@ fn admission_retention_window_expires_carried_leads() {
 fn admission_off_keeps_take_all_and_never_sheds() {
     use crate::arb_engine::EngineStages;
     use crate::bot_core::stage_handlers::{QuiesceOutcome, QuiesceVerdict, Resolve, StageHandlers};
-    use crate::bot_core::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
     use std::sync::Arc;
     let (mut engine, pool_ids, _path_ids) = detached_fixture(0);
     // Stance left OFF; the gauge at the cap must NOT shed.

@@ -42,9 +42,9 @@ use super::choreography::{self};
 use super::curve_choreography;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
-use crate::bot_core::planning::{TickMapPoolIdentity, TickMapSeed};
-use crate::bot_core::tick_assembly::{chain_arm, resolve_tick_map_arm};
 use crate::bot_core::{PoolTickCoverage, TickInfo};
+use degenbot_substrate::planning::{TickMapPoolIdentity, TickMapSeed};
+use degenbot_substrate::tick_assembly::{chain_arm, resolve_tick_map_arm};
 
 /// The on-chain family a `probe` resolves to (V4 is a separate
 /// `(PoolManager, pool_id)` path, not a single-address probe).
@@ -114,7 +114,7 @@ pub enum PoolBuilderError {
     /// the bitmap and tick rows contradict each other. Registration is
     /// rejected with a typed error; the message names the conflict.
     #[error("tick map assembly failure: {0}")]
-    TickAssembly(#[from] crate::bot_core::tick_assembly::TickMapAssemblyError),
+    TickAssembly(#[from] degenbot_substrate::tick_assembly::TickMapAssemblyError),
 }
 
 /// Sentinels returned when an ERC-20 metadata field cannot be resolved,
@@ -816,7 +816,7 @@ pub async fn build_balancer_stable(
 /// Assemble a V3 pool's tick map with **DB-first** coverage.
 ///
 /// The Db arm routes through the shared
-/// [`resolve_tick_map_arm`](crate::bot_core::tick_assembly::resolve_tick_map_arm)
+/// [`resolve_tick_map_arm`](degenbot_substrate::tick_assembly::resolve_tick_map_arm)
 /// (so the `Tracked`/`Sparse` precedence, the Tracked intake reconciliation,
 /// and the Db-empty semantics are identical to
 /// `tick_assembly::assemble_v3_tick_map`), then runs the async-native Chain
@@ -824,7 +824,7 @@ pub async fn build_balancer_stable(
 /// builder's own Chain adapter: it cannot `block_on` the sync
 /// [`TickBootstrapRpc`] trait object from the async registration runtime (the
 /// nested-`block_on` deadlock class). Both arms mint through the shared
-/// [`chain_arm`](crate::bot_core::tick_assembly::chain_arm) /
+/// [`chain_arm`](degenbot_substrate::tick_assembly::chain_arm) /
 /// `resolve_tick_map_arm` seed vocabulary.
 ///
 /// # Errors

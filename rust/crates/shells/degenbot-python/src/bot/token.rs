@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 
-use degenbot_bot::bot_core::state_lock::StateLock;
-use degenbot_bot::bot_core::BotState;
+use degenbot_substrate::state_lock::StateLock;
+use degenbot_substrate::BotState;
 
 /// A thin Python handle to a token registered in `BotState`.
 ///
@@ -38,7 +38,7 @@ impl PyErc20Token {
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
             let guard = self
                 .core
-                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+                .read_at(degenbot_substrate::state_lock::LockSite::Python);
             f(&guard)
         })
     }

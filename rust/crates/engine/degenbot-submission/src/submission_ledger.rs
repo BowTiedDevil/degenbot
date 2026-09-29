@@ -1251,10 +1251,10 @@ mod tests {
     /// policy.
     #[test]
     fn two_strategies_drive_lowest_free_repackage_and_orphan_fill() {
-        use degenbot_bot::bot_core::route_registry::RouteRegistry;
         use degenbot_bot::connector_index::V2ConnectorIndex;
         use degenbot_bot::strategy_host::{FacetStatus, StrategyHost};
         use degenbot_eventhub::Hub;
+        use degenbot_substrate::route_registry::RouteRegistry;
         use tokio::sync::mpsc::unbounded_channel;
 
         let authority = Arc::new(NonceAuthority::new(0));

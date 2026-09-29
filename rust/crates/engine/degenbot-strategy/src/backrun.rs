@@ -18,8 +18,8 @@
 use std::path::PathBuf;
 
 use alloy::primitives::U256;
-use degenbot_bot::bot_core::pool_ingress::VerifyLevel;
 use degenbot_config::BotConfig;
+use degenbot_substrate::pool_ingress::VerifyLevel;
 
 use crate::strategy_plane::{Strategy, StrategyName};
 

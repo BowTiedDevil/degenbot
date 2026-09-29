@@ -211,7 +211,7 @@ fn detached_undercount_trips_the_fan_in_assert() {
         .collect();
     // Drive through the production stage seam so the sidecar spawns.
     let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
-    let delta = std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64));
+    let delta = std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64));
     for &p in &pool_ids {
         delta.record_affected(HopType::V2, p, 0u64);
     }
@@ -292,7 +292,7 @@ fn detached_panic_does_not_leak_inflight_gauge() {
         .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
         .collect();
     let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
-    let delta = std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64));
+    let delta = std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64));
     for &p in &pool_ids {
         delta.record_affected(HopType::V2, p, 0u64);
     }

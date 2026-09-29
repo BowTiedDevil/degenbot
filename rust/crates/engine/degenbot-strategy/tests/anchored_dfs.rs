@@ -15,12 +15,12 @@
 #![expect(clippy::unwrap_used)]
 
 use alloy::primitives::Address;
-use degenbot_bot::bot_core::executor_hop::V2FeePair;
-use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{
     resolve_hop, AnchorPool, AnchoredGraph, DfsCycle, UnsupportedHop, NON_WETH_CYCLE,
 };
+use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
+use degenbot_substrate::executor_hop::V2FeePair;
 use proptest::prelude::*;
 
 const QUOTE_ID: u64 = 20; // the WETH DB id in every fixture

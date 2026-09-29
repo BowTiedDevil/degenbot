@@ -14,7 +14,7 @@ record of what was still undecided and is retained as history.
 
 **The path kind landed as a reach, not a move.** `PathRegistry` could not be
 relocated without inverting the layering, so it stayed where it was and the
-registry reached it: `bot_core::session_registry::PathObjectAdapter` is the
+registry reached it: `degenbot_substrate::session_registry::PathObjectAdapter` is the
 registry's side of the boundary, implemented once in
 `arb_engine::path_objects::EnginePathObjects`. The session registry holds no path
 map, and the engine keeps the id space, the dedup index, and the cap. Every other

@@ -63,7 +63,7 @@ fn balancer_weighted_5050_finds_profitable_arb() {
                  // Pool A: 1000 token0 / 2000 token1 (50/50 — reduces to constant product)
     let pool_a = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_weighted_pool(&balancer_weighted_5050_params(
             Address::from([0xd1u8; 20]),
             1000,
@@ -72,7 +72,7 @@ fn balancer_weighted_5050_finds_profitable_arb() {
     // Pool B: 1000 token0 / 1950 token1 (mispriced — cheaper token1 here)
     let pool_b = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_weighted_pool(&balancer_weighted_5050_params(
             Address::from([0xd2u8; 20]),
             1000,
@@ -111,7 +111,7 @@ fn balancer_weighted_8020_finds_profitable_arb() {
     // 80/20 pools with a mispricing to create an arb cycle.
     let pool_a = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_weighted_pool(&balancer_weighted_8020_params(
             Address::from([0xe1u8; 20]),
             800_000,
@@ -119,7 +119,7 @@ fn balancer_weighted_8020_finds_profitable_arb() {
         ));
     let pool_b = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_weighted_pool(&balancer_weighted_8020_params(
             Address::from([0xe2u8; 20]),
             800_000,
@@ -192,11 +192,11 @@ fn balancer_weighted_5050_matches_v2_mobius_on_same_reserves() {
     };
     let bw_a = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_weighted_pool(&bw_params(Address::from([0xf3u8; 20]), 1000, 2000));
     let bw_b = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_weighted_pool(&bw_params(Address::from([0xf4u8; 20]), 1000, 1950));
     // Solve V2-V2 path
     register_path(
@@ -219,7 +219,7 @@ fn balancer_weighted_5050_matches_v2_mobius_on_same_reserves() {
     drop(
         engine
             .core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver),
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver),
     );
     let bw_path = register_path(
         &mut engine,
@@ -292,7 +292,7 @@ fn balancer_weighted_mixed_with_v2_finds_arb() {
     };
     let bw = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_weighted_pool(&bw_params);
     // V2 → Balancer weighted path
     register_path(
@@ -316,12 +316,12 @@ fn balancer_weighted_mixed_with_v2_finds_arb() {
 #[test]
 fn balancer_weighted_rejects_mixed_with_cl() {
     use std::sync::Arc;
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
-        crate::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     // Register a Balancer weighted pool
     let bw = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_balancer_weighted_pool(&balancer_weighted_5050_params(
             Address::from([0xb1u8; 20]),
             1000,
@@ -329,7 +329,7 @@ fn balancer_weighted_rejects_mixed_with_cl() {
         ));
     // Register a V3 pool
     let v3 = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xc1u8; 20]),
             token0: Address::repeat_byte(0x01),

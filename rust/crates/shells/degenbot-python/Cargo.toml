@@ -30,6 +30,9 @@ alloy = { version = "^2.5", features = ["full", "transport-throttle"] }
 degenbot-rpc = { workspace = true, optional = true }
 
 degenbot-bot = { workspace = true, optional = true }
+# ADR-067: the state owner + seam types moved to the substrate crate; the
+# bot-driven shell resolves them directly.
+degenbot-substrate = { workspace = true, optional = true }
 # (5WTYYQ) The WS-ingestion event surface the bot-driven pump consumes.
 degenbot-ingestion = { workspace = true, optional = true }
 degenbot-solvers = { workspace = true, optional = true }
@@ -120,7 +123,7 @@ auto-initialize = ["pyo3/auto-initialize"]
 # the workers' typed BootError family onto the BootRefused exception at
 # the pyo3 leaf (the simulation feature already pulled the dep; bot-only
 # builds now name the type too).
-bot = ["dep:degenbot-bot", "dep:degenbot-ingestion", "dep:degenbot-solvers", "dep:degenbot-workers", "rpc", "decoders", "uniswap"]
+bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "dep:degenbot-solvers", "dep:degenbot-workers", "rpc", "decoders", "uniswap"]
 price = ["dep:degenbot-price", "rpc"]
 submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
 simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "rpc", "executor", "submission"]

@@ -191,7 +191,7 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use crate::bot_core::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
     use std::sync::Arc;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
     let deferred = path_ids[0];
@@ -286,7 +286,7 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use crate::bot_core::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);

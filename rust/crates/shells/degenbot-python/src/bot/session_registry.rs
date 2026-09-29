@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 
-use degenbot_bot::bot_core::session_registry::{
+use degenbot_substrate::session_registry::{
     ObjectRefusal, PoolIdentity, PoolObject, SessionObjectRegistry, TokenIdentity, TokenObject,
 };
 

@@ -29,10 +29,10 @@
 //! (out of scope for the flatten — a future `HopInfo::Solidly` /
 //! `HopInfo::Balancer` task).
 use super::ArbitrageEngine;
-use crate::bot_core::executor_hop::{v2_hop, v3_hop, v4_hop, V2Fee, V2FeeRefusal};
-use crate::bot_core::BotState;
 use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
 use degenbot_executor::composers::{HopInfo, PathInfo};
+use degenbot_substrate::executor_hop::{v2_hop, v3_hop, v4_hop, V2Fee, V2FeeRefusal};
+use degenbot_substrate::BotState;
 use thiserror::Error;
 /// Why [`ArbitrageEngine::path_info_for`] could not build a `PathInfo`.
 #[derive(Debug, Error)]
@@ -98,7 +98,7 @@ pub(crate) fn path_info_for(
     let path = engine.registry.get(path_id)?;
     let core = engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let mut hops = Vec::with_capacity(path.pools.len());
     for pool_ref in &path.pools {
         match build_hop_info(&core, pool_ref) {
@@ -496,7 +496,7 @@ mod tests {
     }
     #[test]
     fn unsupported_hop_type_is_refused_by_the_encoder_projection() {
-        let core = crate::bot_core::BotState::new();
+        let core = degenbot_substrate::BotState::new();
         let pools = [::degenbot_solvers::mixed::MixedPoolRef {
             hop_type: ::degenbot_solvers::mixed::HopType::SolidlyStable,
             pool_key: 0,

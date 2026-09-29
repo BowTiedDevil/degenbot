@@ -55,7 +55,7 @@ fn curve_stable_finds_profitable_arb() {
     let mut engine = ArbitrageEngine::new();
     let pool_a = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_curve_pool(&curve_stable_params(
             Address::from([0xe1u8; 20]),
             1000,
@@ -63,7 +63,7 @@ fn curve_stable_finds_profitable_arb() {
         ));
     let pool_b = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_curve_pool(&curve_stable_params(
             Address::from([0xe2u8; 20]),
             1000,
@@ -101,7 +101,7 @@ fn curve_stable_unprofitable_path_returns_none() {
     let mut engine = ArbitrageEngine::new();
     let pool_a = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_curve_pool(&curve_stable_params(
             Address::from([0xf1u8; 20]),
             1000,
@@ -109,7 +109,7 @@ fn curve_stable_unprofitable_path_returns_none() {
         ));
     let pool_b = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_curve_pool(&curve_stable_params(
             Address::from([0xf2u8; 20]),
             1000,
@@ -148,7 +148,7 @@ fn curve_stable_mixed_with_v2_finds_arb() {
     );
     let cs = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_curve_pool(&curve_stable_params(
             Address::from([0xa6u8; 20]),
             1000,
@@ -174,18 +174,18 @@ fn curve_stable_mixed_with_v2_finds_arb() {
 #[test]
 fn curve_stable_rejects_mixed_with_cl() {
     use std::sync::Arc;
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
-        crate::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     let cs = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_curve_pool(&curve_stable_params(
             Address::from([0xb4u8; 20]),
             1000,
             2000,
         ));
     let v3 = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xc4u8; 20]),
             token0: Address::repeat_byte(0x01),
@@ -297,8 +297,8 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
     let subscriber = tracing_subscriber::registry().with(capture);
     // Real registered paths (mirrors the 3780 concurrency fixture) so a
     // dirty marker produces genuine fan-out phase work.
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
-        crate::bot_core::BotState::new(),
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        degenbot_substrate::BotState::new(),
     ));
     let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
     let mut pool_ids = Vec::new();
@@ -346,7 +346,7 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
     // the seeds + marker ride the SHARED epoch ledger; the drain
     // consumes take_keys per cycle (deterministically dirty on the first
     // solve; the marker thread keeps landing NEW dirt in later cycles).
-    let marker_delta = std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64));
+    let marker_delta = std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64));
     {
         for pid in &pool_ids {
             marker_delta.record_affected(HopType::V2, *pid, 0u64);
@@ -378,7 +378,7 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
     });
     let handle = EngineStages::new(
         std::sync::Arc::clone(&engine),
-        std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     starter.wait();
     let block = 5000u64;
@@ -482,7 +482,7 @@ fn finalize_block_consumes_no_dirt_and_emits_no_solve() {
     let engine_state = Arc::new(parking_lot::Mutex::new(engine));
     let _handle = EngineStages::new(
         Arc::clone(&engine_state),
-        Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     tracing::subscriber::with_default(subscriber, || {
         finalize_for_test(&mut engine_state.lock(), 5, &BlockMetadata::default());
@@ -591,7 +591,7 @@ fn solve_spans_anchor_to_their_own_published_block() {
             oracle.insert(0x0BAD_F00D, HopType::V2);
             Arc::new(EngineStages::new(
                 engine,
-                Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+                Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
             ))
         })
         .collect();
@@ -678,7 +678,7 @@ fn solve_span_records_cycle_solve_block() {
     let engine_arc = Arc::clone(&engine);
     let handle = EngineStages::new(
         engine,
-        std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(
@@ -727,7 +727,7 @@ fn solve_cycle_emits_arb_solve_span_with_block_number() {
     oracle.insert(0x0BAD_F00D, HopType::V2);
     let handle = EngineStages::new(
         engine,
-        std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(
@@ -782,7 +782,7 @@ fn solve_cycle_skips_expire_spans_when_max_age_unset() {
     oracle.insert(0x0BAD_F00D, HopType::V2);
     let handle = EngineStages::new(
         engine,
-        std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(
@@ -908,7 +908,7 @@ fn solve_cycle_emits_expire_spans_with_phase_split() {
     crate::arb_engine::lifecycle::set_event_buffer_max_age(&mut engine.lock(), Some(100));
     let handle = EngineStages::new(
         engine,
-        std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(
@@ -977,7 +977,7 @@ fn solve_cycle_skips_span_when_nothing_dirty() {
     let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
     let handle = EngineStages::new(
         Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new())),
-        std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(&[], 1, &BlockMetadata::default());

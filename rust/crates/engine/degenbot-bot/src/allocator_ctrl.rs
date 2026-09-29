@@ -290,7 +290,7 @@ fn now_ms() -> u64 {
 /// Called once from the pump start (next to the hotpath guard).
 pub fn init_from_env_at_pump_start() {
     // typed schema section; the env read belongs to the loader.
-    let cfg = config_from_cfg(&crate::bot_core::stance::config().allocator);
+    let cfg = config_from_cfg(&degenbot_substrate::stance::config().allocator);
     if INIT_DONE.set(()).is_err() {
         return; // another pump in this process already configured the seam
     }
@@ -327,7 +327,7 @@ fn observe_at(now_ms: u64) {
         return; // poisoned/contended: skip this beat, try the next header
     };
     let state = guard.get_or_insert_with(|| {
-        let cfg = config_from_cfg(&crate::bot_core::stance::config().allocator);
+        let cfg = config_from_cfg(&degenbot_substrate::stance::config().allocator);
         CadenceState::new(cfg.mult, MIN_BLOCKS)
     });
     if let Some(delay_ms) = state.observe(now_ms) {

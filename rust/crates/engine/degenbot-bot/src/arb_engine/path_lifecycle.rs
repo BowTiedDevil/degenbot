@@ -26,8 +26,8 @@
 //! that can never self-heal. `register_path` REJECTS those loudly at
 //! construction — they never enter this machine as a state that could
 //! silently evade detection.
-use crate::bot_core::resolve::HopDeficit;
 use degenbot_solvers::mixed::HopType;
+use degenbot_substrate::resolve::HopDeficit;
 use hashbrown::HashSet;
 /// The set of pools a path is invalid because of (family, key). A
 /// `pool_dirty((ht, key))` clears its entry; the path un-blocks when the set
@@ -84,7 +84,7 @@ impl PathSolveStatus {
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
-    use crate::bot_core::resolve::MissingHopReason;
+    use degenbot_substrate::resolve::MissingHopReason;
     fn deficit(hop_type: HopType, pool_key: u64) -> HopDeficit {
         HopDeficit {
             hop_type,

@@ -891,7 +891,7 @@ macro_rules! live_scratch {
             weth_address: Address::ZERO,
             pool_manager_address: Address::ZERO,
         };
-        let anchor = degenbot_bot::bot_core::SimAnchorState::default();
+        let anchor = degenbot_substrate::SimAnchorState::default();
         let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
         let mut $handle = degenbot_simulation::BlockSimHandle::build(
             &alloy_provider,

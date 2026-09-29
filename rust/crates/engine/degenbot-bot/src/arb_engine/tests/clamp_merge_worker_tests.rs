@@ -122,7 +122,7 @@ fn overfed_v4_engine() -> (ArbitrageEngine, u64, Vec<std::sync::Arc<MixedPath>>)
     (engine, path_id, pool_refs)
 }
 fn worker_probe_ctx(
-    core: Arc<crate::bot_core::state_lock::StateLock<crate::bot_core::BotState>>,
+    core: Arc<degenbot_substrate::state_lock::StateLock<degenbot_substrate::BotState>>,
     pool_refs: Vec<std::sync::Arc<MixedPath>>,
 ) -> Arc<SolveCycleShared> {
     Arc::new(SolveCycleShared {

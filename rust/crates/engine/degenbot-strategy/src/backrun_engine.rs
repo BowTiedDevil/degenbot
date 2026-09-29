@@ -17,13 +17,11 @@ use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 use degenbot_solvers::mixed::SolvePathResult;
 
-use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2FeeRefusal, V2Fees};
-use degenbot_bot::bot_core::planning::{
-    ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace,
-};
-use degenbot_bot::bot_core::pool_ingress::{IngressV3Params, IngressV4Params, PoolIngress};
+use degenbot_substrate::executor_hop::{V2FeePair, V2FeeRefusal, V2Fees};
+use degenbot_substrate::planning::{ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace};
+use degenbot_substrate::pool_ingress::{IngressV3Params, IngressV4Params, PoolIngress};
 
-pub use degenbot_bot::bot_core::planning::PathReject;
+pub use degenbot_substrate::planning::PathReject;
 
 /// One admitted V2 pool: identity + the LIVE reserves the caller fetched
 /// (the adapter keeps this narrow; reserves come from `fetch_v2_reserves`).
@@ -184,7 +182,7 @@ impl Default for BackrunSolver {
 /// distinguishes a network/spec failure from a registration refusal (an
 /// `AlreadyRegistered` duplicate is a different beast from a dead
 /// archive-node call and must not share one opaque label).
-pub use degenbot_bot::bot_core::pool_ingress::IngressDecline as V3LadderReject;
+pub use degenbot_substrate::pool_ingress::IngressDecline as V3LadderReject;
 
 /// One executable hop of a lane candidate (executor-composer input). Both
 /// the declared solver key (`pool_id`) and the composer identity (`pool`)
@@ -532,7 +530,7 @@ mod tests {
             token1: WETH,
             reserve0: 500_000,
             reserve1: 1_000,
-            fees: degenbot_bot::bot_core::executor_hop::V2FeePair::from_discovered(
+            fees: degenbot_substrate::executor_hop::V2FeePair::from_discovered(
                 Some(3),
                 Some(3),
                 Some(0),
@@ -541,7 +539,7 @@ mod tests {
         assert_eq!(
             result,
             Err(V2AdmissionError::Fee(
-                degenbot_bot::bot_core::executor_hop::V2FeeRefusal::ZeroDenominator
+                degenbot_substrate::executor_hop::V2FeeRefusal::ZeroDenominator
             ))
         );
         let missing = solver.admit_v2(&BackrunV2Pool {
@@ -717,8 +715,8 @@ mod tests {
     #[test]
     fn settlement_and_backrun_project_v2_to_the_same_executor_bytes() {
         use crate::execution_context::ExecutionContext;
-        use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams};
         use degenbot_solvers::mixed::{HopType, MixedPoolRef};
+        use degenbot_substrate::{BotState, RegisterV2PoolParams};
 
         let mut core = BotState::new();
         let p_id = core
@@ -1039,13 +1037,13 @@ mod taxonomy_tests {
     //! graph kind. The lagging (unsupported) legs are pinned here too.
     use super::{LaneFamily, LaneFamilyTag};
     use alloy::primitives::{Address, B256};
-    use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
     use degenbot_pathfinding::PoolKind;
     use degenbot_pools::{
         BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
         ReservePairVariant,
     };
     use degenbot_solvers::mixed::HopType;
+    use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 
     fn v2_fees() -> V2Fees {
         V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))

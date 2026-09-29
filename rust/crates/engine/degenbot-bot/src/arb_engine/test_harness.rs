@@ -87,7 +87,7 @@ pub(crate) fn process_updates(
     {
         let mut core = engine
             .core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver);
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver);
         for &(addr, r0, r1) in v2_updates {
             if let Some(pool_id) = core.apply_v2_sync(addr, r0, r1, block_number) {
                 v2_affected.insert(pool_id);

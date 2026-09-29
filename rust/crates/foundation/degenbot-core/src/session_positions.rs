@@ -31,7 +31,7 @@
 //! new edge in one direction or the other, and neither the re-export facade nor
 //! the `PyO3` shell is a legitimate home for a domain adapter. The session
 //! reaches the trait from its own object registry
-//! (`degenbot_bot::bot_core::session_registry`); the integration implements it
+//! (`degenbot_substrate::session_registry`); the integration implements it
 //! in its own crate with no new edge.
 //!
 //! # No store, no default

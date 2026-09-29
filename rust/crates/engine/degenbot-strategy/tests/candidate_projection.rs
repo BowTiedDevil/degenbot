@@ -4,7 +4,6 @@
 )]
 
 use alloy::primitives::{address, Address, B256, U256};
-use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
 use degenbot_execution::solve_result::HopDescriptor;
 use degenbot_executor::composers::HopInfo;
 use degenbot_strategy::backrun_engine::{BackrunHopRef, LaneCandidate, LaneFamily};
@@ -14,6 +13,7 @@ use degenbot_strategy::cmd_executor_adapter::{
 };
 use degenbot_strategy::execution_context::ExecutionContext;
 use degenbot_strategy::project_candidate;
+use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 
 const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const TOK: Address = address!("0000000000000000000000000000000000000aa1");

@@ -210,7 +210,7 @@ impl ClSlotLayout {
 /// PRODUCTION registration either flows through [`RegisterV3PoolParams`]
 /// built from a roster edge or a CREATE2-verified builder — both of which
 /// set `slot_layout` from the fork table — or through
-/// `degenbot_bot::bot_core::planning::ExplicitPoolState::V3`, whose
+/// `degenbot_substrate::planning::ExplicitPoolState::V3`, whose
 /// `slot_layout` field is mandatory. A fixture defaulting to
 /// `ClSlotLayout::UniswapV3` must never reach a real fork pool.
 #[derive(Clone, Debug)]

@@ -32,6 +32,7 @@ degenbot-config.workspace = true
 # one-way (bot never depends on submission); default builds get the inert
 # stub twin so this adds no metrics code without the `otel` feature.
 degenbot-bot.workspace = true
+degenbot-substrate.workspace = true
 # `AlloyProvider` (the typed `eth_sendRawTransaction`/`eth_feeHistory`/
 # `eth_createAccessList` surfaces the N6 submit orchestration consumes —
 # ZUZANP typed, no `make_request` escape hatch).

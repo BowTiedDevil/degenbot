@@ -1252,9 +1252,9 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
     // The shared warm cache carries the cross-block bytecode/account caches
     // across rebuilds.
     let oracle_holder = runtime.registry().cloned();
-    let oracle: &dyn degenbot_bot::bot_core::SimAnchorOracle = match oracle_holder.as_deref() {
+    let oracle: &dyn degenbot_substrate::SimAnchorOracle = match oracle_holder.as_deref() {
         Some(registry) => registry,
-        None => &degenbot_bot::bot_core::NO_SIM_ANCHOR,
+        None => &degenbot_substrate::NO_SIM_ANCHOR,
     };
     let mut current_block = dispatcher
         .lock()

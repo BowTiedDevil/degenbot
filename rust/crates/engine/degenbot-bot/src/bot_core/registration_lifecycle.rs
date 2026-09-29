@@ -31,7 +31,7 @@ use std::future::Future;
 
 use alloy::primitives::Address;
 
-use crate::bot_core::state_lock::StateLock;
+use degenbot_substrate::state_lock::StateLock;
 
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_rpc::provider::AlloyProvider;
@@ -39,7 +39,8 @@ use degenbot_rpc::provider::AlloyProvider;
 use super::liquidity_verifier::{
     verify_v3_liquidity_map, verify_v4_liquidity_map, LiquidityVerifyError,
 };
-use super::{BotState, PoolTickCoverage, TickInfo};
+use super::{PoolTickCoverage, TickInfo};
+use degenbot_substrate::BotState;
 
 /// Error from a concrete registration-lifecycle run.
 ///
@@ -79,69 +80,6 @@ impl std::fmt::Display for RegistrationLifecycleError {
 }
 
 impl std::error::Error for RegistrationLifecycleError {}
-
-/// Single-acquisition fused lookups for the registration-lifecycle seed
-/// anchor.
-///
-/// Both chain the two-step lookup — V3 `address → pool_id → liquidity clock`,
-/// V4 `(pool_manager, pool_id) → pool_id → clock` — under ONE
-/// `read_at(LockSite::Registration)`, so a caller cannot hold read#1 while
-/// requesting read#2 on the same lock. That nested shape is the
-/// soak-2026-08-22 self-deadlock class (a writer queued between the two reads
-/// cycles the lock); see the `NEVER NEST ACQUISITIONS` note in
-/// [`crate::bot_core::state_lock`]. **Single acquisition is the invariant:**
-/// keep these fused rather than recomposing the single-step accessors at a
-/// call site.
-///
-/// Returns `0` when the pool is unregistered — the same unset-clock sentinel
-/// as [`BotState::pool_tick_data_block`] — so the caller's fallback to the
-/// aggregate snapshot block `S` is unchanged.
-impl StateLock<BotState> {
-    /// V3: pool address → `pool_id` → `tick_data_block` under one read.
-    #[must_use]
-    pub fn pool_tick_data_block_by_address(&self, address: &Address) -> u64 {
-        let state = self.read_at(crate::bot_core::state_lock::LockSite::Registration);
-        let Some(id) = state.pool_id_by_address(address) else {
-            return 0;
-        };
-        state.pool_tick_data_block(id)
-    }
-
-    /// V3: pool address → immutable tick spacing under one read.
-    #[must_use]
-    pub fn pool_tick_spacing_by_address(&self, address: &Address) -> Option<i32> {
-        let state = self.read_at(crate::bot_core::state_lock::LockSite::Registration);
-        let id = state.pool_id_by_address(address)?;
-        state
-            .get_v3_identity(id)
-            .map(|identity| identity.tick_spacing)
-    }
-
-    /// V4: `(pool_manager, pool_id)` → immutable tick spacing under one read.
-    #[must_use]
-    pub fn pool_tick_spacing_by_v4_key(
-        &self,
-        pool_manager: Address,
-        pool_id: &V4PoolId,
-    ) -> Option<i32> {
-        let state = self.read_at(crate::bot_core::state_lock::LockSite::Registration);
-        let id = state.v4_pool_id_by_key(pool_manager, pool_id)?;
-        state
-            .get_v4_identity(id)
-            .map(|identity| identity.pool_key.tick_spacing)
-    }
-
-    /// V4: `(pool_manager, pool_id)` → `pool_id` → `tick_data_block`
-    /// under one read.
-    #[must_use]
-    pub fn pool_tick_data_block_by_v4_key(&self, pool_manager: Address, pool_id: &V4PoolId) -> u64 {
-        let state = self.read_at(crate::bot_core::state_lock::LockSite::Registration);
-        let Some(id) = state.v4_pool_id_by_key(pool_manager, pool_id) else {
-            return 0;
-        };
-        state.pool_tick_data_block(id)
-    }
-}
 
 /// Drive a V3 CL pool through the registration verify-lifecycle, branching on
 /// coverage (D4 / DFQYM5): **Sparse → immediate no-op** (already `Live`, no
@@ -190,12 +128,12 @@ where
     // preserves the perm-V2-V2-V3 apply-buffer behavior. An unregistered /
     // non-V3 pool → no-op Ok.
     let coverage = core
-        .read_at(crate::bot_core::state_lock::LockSite::Registration)
+        .read_at(degenbot_substrate::state_lock::LockSite::Registration)
         .v3_pool_coverage(address);
     match coverage {
         None => return Ok(()),
         Some(PoolTickCoverage::Sparse) => {
-            let mut guard = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             guard.apply_backfill_buffer_v3(&address);
             guard.apply_pump_buffer_v3(&address);
             return Ok(());
@@ -206,7 +144,7 @@ where
     // Quarantine BEFORE the first RPC await (6N7XVR): defers the pool's live
     // Swap/Mint/Burn to the pump buffer so the pin's `update_block` cannot
     // outrun `last_complete_block` during the drain+pin+verify window.
-    core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+    core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
         .set_v3_pool_quarantined(address);
 
     // Step-1: verify the pinned snapshot SEED @ snapshot block. Only
@@ -225,7 +163,7 @@ where
     // between). Falls back to `S` only when the pool clock is unset (0).
     if let Some(snapshot_block) = snapshot_block {
         let seed = {
-            core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+            core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
                 .take_v3_snapshot_seed(address)
         };
         if let Some(seed) = seed {
@@ -244,7 +182,7 @@ where
     // pump buffer, then capture the frozen post-drain `(tick_data, block)`
     // pair atomically with the drain (the step-2 rolling-start race fix).
     {
-        let mut guard = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+        let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
         guard.apply_backfill_buffer_v3(&address);
         guard.apply_pump_buffer_v3(&address);
         guard.pin_v3_post_drain_snapshot(address);
@@ -255,7 +193,7 @@ where
     // against a caller-supplied constant would fabricate a mismatch on active
     // pools (the 2026-06-29 crash). The pin is consumed exactly once.
     let pin = {
-        core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+        core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
             .take_v3_post_drain_snapshot(address)
     };
     if let Some((tick_data, pinned_block)) = pin {
@@ -265,7 +203,7 @@ where
     // Tripwire passed (ADR-022 D2) — the final gate before `Live`. Reaching
     // here means a Tracked pool's verification succeeded; `Live` is the last
     // transition.
-    core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+    core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
         .set_v3_pool_live(address);
     Ok(())
 }
@@ -299,12 +237,12 @@ where
     // verification deferral / RPC, but its buffered events are still drained;
     // unregistered / non-V4 → no-op Ok.
     let coverage = core
-        .read_at(crate::bot_core::state_lock::LockSite::Registration)
+        .read_at(degenbot_substrate::state_lock::LockSite::Registration)
         .v4_pool_coverage(pool_manager, &pool_id);
     match coverage {
         None => return Ok(()),
         Some(PoolTickCoverage::Sparse) => {
-            let mut guard = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             guard.apply_backfill_buffer_v4(pool_manager, pool_id);
             guard.apply_pump_buffer_v4(pool_manager, pool_id);
             return Ok(());
@@ -313,7 +251,7 @@ where
     }
 
     // Quarantine before the first RPC await (6N7XVR).
-    core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+    core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
         .set_v4_pool_quarantined(pool_manager, pool_id);
 
     // Step-1: verify the pinned snapshot seed @ snapshot block.
@@ -322,7 +260,7 @@ where
     // commentary above.
     if let Some(snapshot_block) = snapshot_block {
         let seed = {
-            core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+            core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
                 .take_v4_snapshot_seed(pool_manager, &pool_id)
         };
         if let Some(seed) = seed {
@@ -337,7 +275,7 @@ where
 
     // Drain + pin under a SINGLE `core.write()` hold (step-2 race fix).
     {
-        let mut guard = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+        let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
         guard.apply_backfill_buffer_v4(pool_manager, pool_id);
         guard.apply_pump_buffer_v4(pool_manager, pool_id);
         guard.pin_v4_post_drain_snapshot(pool_manager, &pool_id);
@@ -345,7 +283,7 @@ where
 
     // Step-2: verify the pinned post-drain pair @ the pin's OWN block.
     let pin = {
-        core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+        core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
             .take_v4_post_drain_snapshot(pool_manager, &pool_id)
     };
     if let Some((tick_data, pinned_block)) = pin {
@@ -353,7 +291,7 @@ where
     }
 
     // Tripwire passed → Live.
-    core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+    core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
         .set_v4_pool_live(pool_manager, pool_id);
     Ok(())
 }
@@ -485,17 +423,18 @@ mod tests {
     use hashbrown::HashMap;
     use std::sync::Arc;
 
-    use crate::bot_core::state_lock::{LockSite, StateLock};
     use alloy::primitives::{Address, U128, U256};
+    use degenbot_substrate::state_lock::{LockSite, StateLock};
 
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_pools::v4_state::V4PoolKey;
 
     use super::{run_cl_v3_lifecycle, run_cl_v4_lifecycle, RegistrationLifecycleError};
     use crate::bot_core::{
-        BotState, PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams,
-        RegistrationLifecycle, TickInfo,
+        PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams, RegistrationLifecycle,
+        TickInfo,
     };
+    use degenbot_substrate::BotState;
 
     fn new_core() -> Arc<StateLock<BotState>> {
         Arc::new(StateLock::new(BotState::new()))
@@ -588,7 +527,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x10u8; 20]);
         let pid = {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Sparse)
         };
         // Both closures `unreachable!` — the invariant is that Sparse never
@@ -602,7 +541,7 @@ mod tests {
         )
         .await;
         assert!(result.is_ok(), "sparse lifecycle must be Ok");
-        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         assert_eq!(lifecycle_v3(&c, pid), RegistrationLifecycle::Live);
     }
 
@@ -613,7 +552,7 @@ mod tests {
         let pm = Address::from([0x44u8; 20]);
         let pid = [0xabu8; 32];
         {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v4(&mut c, pm, pid, PoolTickCoverage::Sparse);
         }
         let result = run_cl_v4_lifecycle::<_, _, _, _, ()>(
@@ -636,7 +575,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x20u8; 20]);
         let pid = {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -663,7 +602,7 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
-        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         assert_eq!(lifecycle_v3(&c, pid), RegistrationLifecycle::Live);
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 2, "both verify closures must run for Tracked");
@@ -695,7 +634,7 @@ mod tests {
             },
         );
         let _pid = {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             // DB-seeded Tracked pool whose liquidity clock is 100 (the DB
             // `liquidity_update_block`), far behind the global S = 200.
             c.register_v3_pool(&RegisterV3PoolParams {
@@ -750,7 +689,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x30u8; 20]);
         let pid = {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
         let result = run_cl_v3_lifecycle::<_, _, _, _, String>(
@@ -762,7 +701,7 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         assert_eq!(
             lifecycle_v3(&c, pid),
             RegistrationLifecycle::Quarantined,
@@ -777,7 +716,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x31u8; 20]);
         let pid = {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
         let result = run_cl_v3_lifecycle::<_, _, _, _, String>(
@@ -789,7 +728,7 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         assert_eq!(
             lifecycle_v3(&c, pid),
             RegistrationLifecycle::Quarantined,
@@ -808,14 +747,14 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x50u8; 20]);
         let pid = {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             // Seed tick -201000 with gross/net 100 (a snapshot seed).
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
         // A Burn during backfill, BEFORE the pool is live-registered: the pool
         // is Quarantined (Tracked) so this BUFFERS rather than applies.
         {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             c.buffer_backfill_v3_liquidity_update(addr, -201_000, -200_990, -100, 5);
             // Verify it buffered (Quarantined → not applied yet).
             assert_eq!(
@@ -833,7 +772,7 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
-        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         let state = c.get_v3_pool(pid).unwrap();
         // The burn zeroed gross → tick removed (not stranded in the buffer).
         assert!(
@@ -850,7 +789,7 @@ mod tests {
         let pm = Address::from([0x44u8; 20]);
         let pid = [0xbu8; 32];
         {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v4(&mut c, pm, pid, PoolTickCoverage::Tracked);
         }
         let result =
@@ -859,7 +798,7 @@ mod tests {
             result,
             Err(RegistrationLifecycleError::MissingProvider)
         ));
-        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         assert_eq!(
             c.v4_pool_id_by_key(pm, &pid).map(|id| lifecycle_v4(&c, id)),
             Some(RegistrationLifecycle::Quarantined),
@@ -880,13 +819,13 @@ mod tests {
         // A tracked V3 pool released per-path via the lifecycle.
         let tracked_addr = Address::from([0x60u8; 20]);
         let tracked_pid = {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, tracked_addr, PoolTickCoverage::Tracked)
         };
         // A sparse V3 pool (already Live, never quarantined).
         let sparse_addr = Address::from([0x61u8; 20]);
         let sparse_pid = {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, sparse_addr, PoolTickCoverage::Sparse)
         };
         // A genuinely orphaned tracked V4 (never released by any per-path
@@ -894,7 +833,7 @@ mod tests {
         let orphan_vm = Address::from([0x62u8; 20]);
         let orphan_pid = [0xcu8; 32];
         {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v4(&mut c, orphan_vm, orphan_pid, PoolTickCoverage::Tracked);
         }
 
@@ -911,7 +850,7 @@ mod tests {
 
         // Confirm the productive pools are Live BEFORE any batch runs.
         {
-            let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+            let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
             assert_eq!(lifecycle_v3(&c, tracked_pid), RegistrationLifecycle::Live);
             assert_eq!(lifecycle_v3(&c, sparse_pid), RegistrationLifecycle::Live);
         }
@@ -920,11 +859,11 @@ mod tests {
         // discovery completes). It must NOT re-touch the per-path Live pools
         // and must flush only the orphaned quarantined V4.
         {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             c.release_all_v3_v4_quarantined();
         }
 
-        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         // The per-path gate held: both productive pools are still Live (the
         // batch did not duplicate release nor silently quarantine them).
         assert_eq!(lifecycle_v3(&c, tracked_pid), RegistrationLifecycle::Live);
@@ -946,7 +885,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x40u8; 20]);
         {
-            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked);
         }
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -974,7 +913,7 @@ mod tests {
         let _ = started_rx.await;
         // Concurrent write must complete promptly (no guard held across await).
         let write = tokio::time::timeout(std::time::Duration::from_millis(500), async {
-            let c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
+            let c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             let n = c.v4_pool_count();
             std::hint::black_box(n);
         })
@@ -988,146 +927,9 @@ mod tests {
         // ONE read guard for the whole check: composing two `read_at` calls
         // is the nested-read cycle the fused accessors remove (see
         // `state_lock.rs`, "NEVER NEST ACQUISITIONS").
-        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
+        let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         let pid = c.pool_id_by_address(&addr).unwrap();
         assert_eq!(lifecycle_v3(&c, pid), RegistrationLifecycle::Live);
-    }
-
-    // ── Fused single-acquisition lookups ────────────────────────
-    //
-    // The two seed-anchor sites used to compose
-    // `pool_id_by_address`/`v4_pool_id_by_key` with `pool_tick_data_block`
-    // in ONE expression, holding read#1 as the expression temporary while the
-    // closure requested read#2 on the same `StateLock`. With a writer queued
-    // between them that is a cycle (soak-2026-08-22: read#2 parks behind the
-    // writer, the writer waits on read#1, and read#1 lives until the
-    // expression completes). The fused accessors take
-    // `read_at(Registration)` once; the tests below pin both the hazard and
-    // the single-acquisition invariant.
-
-    /// Register a V3 pool whose liquidity clock (`tick_data_block`) is
-    /// `clock` — the value a fused lookup must return.
-    fn reg_v3_with_clock(core: &mut BotState, address: Address, clock: u64) -> u64 {
-        core.register_v3_pool(&RegisterV3PoolParams {
-            address,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: clock + 1,
-            tick_data_block: Some(clock),
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: None,
-            ..Default::default()
-        })
-        .expect("test setup: V3 registration with a liquidity clock")
-    }
-
-    /// V4 twin of [`reg_v3_with_clock`], keyed by `(pool_manager, pool_id)`.
-    fn reg_v4_with_clock(core: &mut BotState, pm: Address, pid: V4PoolId, clock: u64) -> u64 {
-        core.register_v4_pool(&RegisterV4PoolParams {
-            pool_manager: pm,
-            pool_id: pid,
-            pool_key: V4PoolKey {
-                currency0: Address::ZERO,
-                currency1: Address::from([1u8; 20]),
-                fee: 500,
-                tick_spacing: 10,
-                hooks: Address::ZERO,
-            },
-            hook_flags: 0,
-            protocol_fee: 0,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: clock + 1,
-            tick_data_block: Some(clock),
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: None,
-        })
-        .expect("test setup: V4 registration with a liquidity clock")
-    }
-
-    /// A fused lookup takes `read_at(LockSite::Registration)` EXACTLY ONCE.
-    ///
-    /// Chosen test design (the task allowed either this or reproducing the
-    /// hang): the lock's test-only acquisition counter is the assertion,
-    /// because an in-process hang cannot be asserted cleanly. The pre-fusion
-    /// one-expression composition is measured alongside as calibration,
-    /// proving the counter can actually see a second (nested) acquisition.
-    #[test]
-    fn fused_lookups_acquire_the_registration_lock_exactly_once() {
-        let core = new_core();
-        let addr = Address::from([0x81u8; 20]);
-        let pm = Address::from([0x91u8; 20]);
-        let pid = [0xd1u8; 32];
-        {
-            let mut c = core.write_at(LockSite::Registration);
-            reg_v3_with_clock(&mut c, addr, 4242);
-            reg_v4_with_clock(&mut c, pm, pid, 7777);
-        }
-
-        // Calibration: the pre-fusion composition (read#1 held as the
-        // expression temporary, read#2 inside the `map_or` closure) takes
-        // TWO acquisitions. Single-threaded here, so it does not deadlock —
-        // the queued-writer cycle is pinned by the next test.
-        let before = core.read_acquires_for_tests();
-        let legacy = core
-            .read_at(LockSite::Registration)
-            .pool_id_by_address(&addr)
-            .map_or(0, |id| {
-                core.read_at(LockSite::Registration)
-                    .pool_tick_data_block(id)
-            });
-        assert_eq!(legacy, 4242);
-        assert_eq!(
-            core.read_acquires_for_tests() - before,
-            2,
-            "the pre-fusion composition takes two reads (counter calibration)"
-        );
-
-        let before = core.read_acquires_for_tests();
-        let v3 = core.pool_tick_data_block_by_address(&addr);
-        assert_eq!(
-            core.read_acquires_for_tests() - before,
-            1,
-            "the fused V3 lookup must take exactly one Registration read"
-        );
-        assert_eq!(
-            v3, 4242,
-            "fused V3 lookup returns the pool's liquidity clock"
-        );
-
-        let before = core.read_acquires_for_tests();
-        let v4 = core.pool_tick_data_block_by_v4_key(pm, &pid);
-        assert_eq!(
-            core.read_acquires_for_tests() - before,
-            1,
-            "the fused V4 lookup must take exactly one Registration read"
-        );
-        assert_eq!(
-            v4, 7777,
-            "fused V4 lookup returns the pool's liquidity clock"
-        );
-
-        // Unregistered keys keep the unset-clock sentinel 0, still one read.
-        let before = core.read_acquires_for_tests();
-        assert_eq!(
-            core.pool_tick_data_block_by_address(&Address::from([0xeeu8; 20])),
-            0
-        );
-        assert_eq!(core.pool_tick_data_block_by_v4_key(pm, &[0xeeu8; 32]), 0);
-        assert_eq!(
-            core.read_acquires_for_tests() - before,
-            2,
-            "one read per fused lookup, registered or not"
-        );
     }
 
     /// The soak-2026-08-22 cycle, modelled on the same `StateLock<BotState>`
@@ -1186,48 +988,6 @@ mod tests {
         assert!(
             acquired_at >= dropped_at,
             "read#2 only advanced after read#1 dropped ({blocked:?}) — that is the cycle"
-        );
-    }
-
-    /// The fused accessors stay live and coherent under a concurrent writer
-    /// stampede: a lookup that took two reads with a queued writer between
-    /// them would park (the cycle above). `recv_timeout` is the hang
-    /// watchdog — a regression fails the test instead of hanging the suite.
-    #[test]
-    fn fused_lookup_stays_live_under_concurrent_writer() {
-        let core = new_core();
-        let addr = Address::from([0x83u8; 20]);
-        {
-            let mut c = core.write_at(LockSite::Registration);
-            reg_v3_with_clock(&mut c, addr, 4242);
-        }
-
-        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
-        let reader_core = Arc::clone(&core);
-        let reader = std::thread::spawn(move || {
-            let observed: Vec<u64> = (0..2_000)
-                .map(|_| reader_core.pool_tick_data_block_by_address(&addr))
-                .collect();
-            observed_tx.send(observed).expect("send observations");
-        });
-        let writer_core = Arc::clone(&core);
-        let writer = std::thread::spawn(move || {
-            for block in 0..2_000 {
-                writer_core
-                    .write_at(LockSite::Registration)
-                    .advance_pump_complete_cutoff(block);
-            }
-        });
-
-        let observed = observed_rx
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .expect("fused lookup must complete under a concurrent writer (no nested-read cycle)");
-        writer.join().expect("writer joins");
-        reader.join().expect("reader joins");
-        assert_eq!(observed.len(), 2_000);
-        assert!(
-            observed.iter().all(|&clock| clock == 4242),
-            "every fused lookup observes the same registered liquidity clock"
         );
     }
 }

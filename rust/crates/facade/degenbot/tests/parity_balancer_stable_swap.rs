@@ -52,8 +52,8 @@
 #![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{address, I256, U256};
-use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::pools::balancer_stable_state::RegisterBalancerStablePoolParams;
+use degenbot::substrate::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::BotState;
 
 // ---- the shared canonical fixture (mirror in the Python parity test) ----

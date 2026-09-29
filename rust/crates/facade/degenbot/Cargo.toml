@@ -59,6 +59,7 @@ degenbot-batch-executor.workspace = true
 degenbot-solvers.workspace = true
 degenbot-strategy.workspace = true
 degenbot-submission.workspace = true
+degenbot-substrate.workspace = true
 degenbot-uniswap.workspace = true
 # The role-switching worker fleet (ADR-042): FSM, budget authority,
 # bounded priority dispatch, cordon posture — pyo3-free core for the

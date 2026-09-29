@@ -168,8 +168,8 @@ fn backrun_boot_resources(
 /// The registry a build without the submission feature mints: no hosted
 /// pending-transaction lane exists, so an empty snapshot answers membership.
 #[cfg(not(feature = "submission"))]
-fn hosted_route_registry() -> Arc<degenbot_bot::bot_core::RouteRegistry> {
-    Arc::new(degenbot_bot::bot_core::RouteRegistry::new(
+fn hosted_route_registry() -> Arc<degenbot_substrate::RouteRegistry> {
+    Arc::new(degenbot_substrate::RouteRegistry::new(
         degenbot_bot::connector_index::V2ConnectorIndex::default(),
     ))
 }

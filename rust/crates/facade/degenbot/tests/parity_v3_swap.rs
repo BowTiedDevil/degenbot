@@ -40,8 +40,8 @@
 #![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{I256, U256};
-use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
-use degenbot::bot_core::BotState;
+use degenbot::substrate::swap_simulation::{SwapRead, SwapRequest};
+use degenbot::substrate::BotState;
 use degenbot::RegisterV3PoolParams;
 use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::TickInfo;

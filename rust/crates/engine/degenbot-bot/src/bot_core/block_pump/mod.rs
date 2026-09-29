@@ -61,8 +61,8 @@ use std::time::Duration;
 // through the Executor seam (block_pump no longer reaches into the
 // engine's internal solve-executor module).
 use crate::bot_core::stage_machine::QuiesceParams;
-use crate::bot_core::stance;
 use crate::bot_core::{CompletenessDecision, StageDecision, StageMachine};
+use degenbot_substrate::stance;
 
 use alloy::primitives::B256;
 use alloy::rpc::types::Log;
@@ -80,8 +80,9 @@ use tracing::Instrument;
 use crate::bot_core::LogDecision;
 use crate::bot_core::{
     stage_handlers::{Finalize, GateOutcome, Publish, Resolve, Solve},
-    BlockMetadata, Bot, Epoch, PumpControl, StageHandlers,
+    Bot, PumpControl, StageHandlers,
 };
+use degenbot_substrate::{BlockMetadata, Epoch};
 // (the topic-import list, the backfill/idle + handshake constants, and the
 // header/log watchdog windows all live in degenbot-ingestion now — 5WTYYQ.)
 

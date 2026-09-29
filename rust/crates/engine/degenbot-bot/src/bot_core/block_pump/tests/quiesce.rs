@@ -374,7 +374,7 @@ async fn solve_gate_waits_for_buffered_log_before_solving() {
     let bot = Arc::new(Bot::new(1));
     {
         let arc = bot.state_arc();
-        let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = arc.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.register_v2_pool(&RegisterV2PoolParams {
             address: A::from([0xccu8; 20]),
             token0: A::from([0xa0u8; 20]),

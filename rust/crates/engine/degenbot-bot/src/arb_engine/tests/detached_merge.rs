@@ -23,7 +23,7 @@ fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
         .collect();
     let handle = crate::arb_engine::EngineStages::new(
         std::sync::Arc::clone(&engine),
-        std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     let t0 = std::time::Instant::now();
     handle.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
@@ -458,7 +458,7 @@ fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
 async fn detached_stragglers_do_not_block_inline_stage_work() {
     let (engine, pool_ids, path_ids) = detached_fixture(400);
     let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
-    let delta = std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64));
+    let delta = std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64));
     for &p in &pool_ids {
         delta.record_affected(HopType::V2, p, 0u64);
     }

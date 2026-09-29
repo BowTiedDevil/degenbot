@@ -51,15 +51,16 @@ use crate::bot::token::PyErc20Token;
 use crate::diagnostics::thread_registry::{
     note_state_intent, StateIntentGuard, StateLockMode, StateLockPhase,
 };
-use degenbot_bot::bot_core::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::RegisteredPoolFamily;
 use degenbot_bot::bot_core::{
-    Bot, BotState, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
+    Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
     RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
 use degenbot_pools::state_history::JournalError;
+use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
+use degenbot_substrate::BotState;
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
@@ -191,7 +192,7 @@ impl PyBot {
             // thread's last_span for the pymethod name.
             note_state_intent("with_state", StateLockMode::Read, StateLockPhase::Wants);
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let guard = core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+            let guard = core.read_at(degenbot_substrate::state_lock::LockSite::Python);
             let _intent = StateIntentGuard::held("with_state", StateLockMode::Read);
             f(&guard)
         })
@@ -215,7 +216,7 @@ impl PyBot {
                 StateLockPhase::Wants,
             );
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let mut guard = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+            let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
             let _intent = StateIntentGuard::held("with_state_mut", StateLockMode::Write);
             f(&mut guard)
         })
@@ -418,10 +419,10 @@ impl PyBot {
         // registration refusal would have raised (map_register_v4_err).
         if let Some(verdict) = self.with_state(py, |s| s.admission_verdict(pm, pid)) {
             let core_err = match verdict {
-                degenbot_bot::bot_core::registration_gate::AdmissionVerdict::DynamicFee { fee } => {
+                degenbot_substrate::registration_gate::AdmissionVerdict::DynamicFee { fee } => {
                     degenbot_bot::bot_core::RegisterV4PoolError::DynamicFee { fee }
                 }
-                degenbot_bot::bot_core::registration_gate::AdmissionVerdict::FeeExceedsEncoderLimit {
+                degenbot_substrate::registration_gate::AdmissionVerdict::FeeExceedsEncoderLimit {
                     fee,
                 } => degenbot_bot::bot_core::RegisterV4PoolError::FeeExceedsEncoderLimit { fee },
             };
@@ -626,7 +627,7 @@ impl PyBot {
         // violation. Correctness was already preserved by the held tx; the
         // canary only surfaces it.
         // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        let s_snapshot = self.with_state(py, degenbot_bot::bot_core::BotState::snapshot_seed_block);
+        let s_snapshot = self.with_state(py, degenbot_substrate::BotState::snapshot_seed_block);
         let chain_id = self.bot.chain_id();
         let snap = self.db.lock().take();
         if let Some(snap) = snap {
@@ -729,7 +730,7 @@ impl PyBot {
                         #[cfg(feature = "aave-updater")]
                         {
                             let observer: std::sync::Arc<
-                                dyn degenbot_bot::bot_core::session_registry::PositionObserver,
+                                dyn degenbot_substrate::session_registry::PositionObserver,
                             > = std::sync::Arc::new(degenbot_aave::AavePositionObserver::new(
                                 std::sync::Arc::clone(&db),
                             ));
@@ -783,7 +784,7 @@ impl PyBot {
     #[getter]
     fn snapshot_seed_block(&self, py: Python<'_>) -> Option<u64> {
         // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        self.with_state(py, degenbot_bot::bot_core::BotState::snapshot_seed_block)
+        self.with_state(py, degenbot_substrate::BotState::snapshot_seed_block)
     }
 
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
@@ -1702,7 +1703,7 @@ impl PyBot {
         // T1-scan-exempt: test-only seam (pure-Rust test callers, no GIL held).
         self.bot
             .state_arc()
-            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Python)
+            .write_at(degenbot_substrate::state_lock::LockSite::Python)
             .register_v2_pool(&RegisterV2PoolParams {
                 address: addr,
                 token0: t0,
@@ -1906,7 +1907,7 @@ impl PyBot {
     /// Number of registered pools.
     fn pool_count(&self, py: Python<'_>) -> usize {
         // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        self.with_state(py, degenbot_bot::bot_core::BotState::pool_count)
+        self.with_state(py, degenbot_substrate::BotState::pool_count)
     }
 
     /// The chain this `PyBot` orchestrates (ADR-006 D4). Wired from the
@@ -2076,7 +2077,7 @@ impl PyBot {
                     .and_then(|borrowed| crate::bot::pool::make_tick_bootstrap_rpc(&borrowed))
             });
         let result = py.detach(|| {
-            degenbot_bot::bot_core::tick_assembly::assemble_v3_tick_map(
+            degenbot_substrate::tick_assembly::assemble_v3_tick_map(
                 db.as_deref()
                     .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb),
                 addr,
@@ -2160,7 +2161,7 @@ impl PyBot {
                     .and_then(|borrowed| crate::bot::pool::make_tick_bootstrap_rpc(&borrowed))
             });
         let result = py.detach(|| {
-            degenbot_bot::bot_core::tick_assembly::assemble_v4_tick_map(
+            degenbot_substrate::tick_assembly::assemble_v4_tick_map(
                 db.as_deref()
                     .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb),
                 mgr,
@@ -3177,7 +3178,7 @@ impl PyBot {
                 format!("0x{}", bytes_to_hex(&call.data)),
                 call.value.to::<u64>(),
             ))),
-            Err(degenbot_bot::bot_core::EncodeSwapError::NotRegistered { .. }) => Ok(None),
+            Err(degenbot_substrate::EncodeSwapError::NotRegistered { .. }) => Ok(None),
             Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "encode_swap: {e}"
             ))),
@@ -4046,7 +4047,7 @@ mod tests {
     #[cfg(feature = "aave-updater")]
     #[test]
     fn a_booted_session_reads_a_position_no_test_installed_an_observer_for() {
-        use degenbot_bot::bot_core::session_registry::Freshness;
+        use degenbot_substrate::session_registry::Freshness;
 
         let db_path = position_db_path("position_boot_wiring");
         seed_aave_position(&db_path);
@@ -4087,7 +4088,7 @@ mod tests {
     #[cfg(feature = "aave-updater")]
     #[test]
     fn a_read_through_the_boot_bound_observer_sees_a_later_updater_commit() {
-        use degenbot_bot::bot_core::session_registry::Freshness;
+        use degenbot_substrate::session_registry::Freshness;
 
         let db_path = position_db_path("position_boot_live");
         seed_aave_position(&db_path);
@@ -4137,9 +4138,9 @@ mod tests {
     #[cfg(all(feature = "aave-updater", feature = "submission"))]
     #[test]
     fn the_settlement_and_backrun_arms_share_one_position_through_the_real_boot() {
-        use degenbot_bot::bot_core::session_registry::Freshness;
         use degenbot_config::BotConfig;
         use degenbot_strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
+        use degenbot_substrate::session_registry::Freshness;
 
         let db_path = position_db_path("position_cross_strategy");
         seed_aave_position(&db_path);

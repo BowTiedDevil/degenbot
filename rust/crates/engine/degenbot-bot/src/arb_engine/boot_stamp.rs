@@ -307,8 +307,8 @@ mod tests {
     /// into any parallel or later construction (R10).
     #[test]
     fn mixed_cfg_ride_is_illegal_in_tests() {
-        use crate::bot_core::state_lock::StateLock;
-        use crate::bot_core::BotState;
+        use degenbot_substrate::state_lock::StateLock;
+        use degenbot_substrate::BotState;
         use std::sync::Arc;
         // Non-leak snapshot #1: the process holder is (still) untouched.
         let installed_before = degenbot_config::holder::installed();
@@ -389,9 +389,9 @@ mod tests {
     )]
     #[test]
     fn same_cfg_ride_stays_legal() {
-        use crate::bot_core::state_lock::StateLock;
-        use crate::bot_core::BotState;
         use degenbot_solvers::mixed::PoolHop;
+        use degenbot_substrate::state_lock::StateLock;
+        use degenbot_substrate::BotState;
         use std::sync::Arc;
         let installed_before = degenbot_config::holder::installed();
         // Both engines: byte-identical default cfgs (the holder's schema

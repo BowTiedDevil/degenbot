@@ -10,17 +10,18 @@
 use crate::bot::token::PyErc20Token;
 use crate::prelude::*;
 use alloy::primitives::{I256, U256};
-use degenbot_bot::bot_core::InstallWordOutcome;
 use degenbot_pools::registry::PoolEntry;
+use degenbot_substrate::InstallWordOutcome;
 use hashbrown::HashMap;
 use std::sync::Arc;
 
 use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::bot::journal_err_to_py;
-use degenbot_bot::bot_core::state_lock::StateLock;
-use degenbot_bot::bot_core::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
-use degenbot_bot::bot_core::{BotState, TickInfo};
+use degenbot_bot::bot_core::TickInfo;
+use degenbot_substrate::state_lock::StateLock;
+use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
+use degenbot_substrate::BotState;
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -445,7 +446,7 @@ impl PyLiquidityPool {
     #[must_use]
     pub fn state_write_is_free(&self) -> bool {
         self.core
-            .try_write_at(degenbot_bot::bot_core::state_lock::LockSite::Python)
+            .try_write_at(degenbot_substrate::state_lock::LockSite::Python)
             .is_some()
     }
 
@@ -458,7 +459,7 @@ impl PyLiquidityPool {
         &self,
         py: Python<'_>,
         block: u64,
-        request: &degenbot_bot::bot_core::swap_simulation::SwapRequest,
+        request: &degenbot_substrate::swap_simulation::SwapRequest,
     ) -> bool {
         for pass in 0..3u8 {
             // no fetcher stored: non-CL or a Tracked pool - the sim body's
@@ -532,7 +533,7 @@ impl PyLiquidityPool {
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
             let guard = self
                 .core
-                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+                .read_at(degenbot_substrate::state_lock::LockSite::Python);
             f(&guard)
         })
     }
@@ -546,7 +547,7 @@ impl PyLiquidityPool {
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
             let mut guard = self
                 .core
-                .write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+                .write_at(degenbot_substrate::state_lock::LockSite::Python);
             f(&mut guard)
         })
     }
@@ -659,7 +660,7 @@ impl PyLiquidityPool {
             Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
             _ => None,
         };
-        let mut over = degenbot_bot::bot_core::swap_simulation::OverrideSwap {
+        let mut over = degenbot_substrate::swap_simulation::OverrideSwap {
             pool_id: self.pool_id,
             request: SwapRequest {
                 zero_for_one,
@@ -853,7 +854,7 @@ impl PyLiquidityPool {
             core.swap_simulation_disarmed(
                 0,
                 self.pool_id,
-                &degenbot_bot::bot_core::swap_simulation::SwapRequest {
+                &degenbot_substrate::swap_simulation::SwapRequest {
                     zero_for_one,
                     amount_specified,
                     sqrt_price_limit: None,
@@ -930,7 +931,7 @@ impl PyLiquidityPool {
         };
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let outcome = self.with_state(py, |core| {
-            use degenbot_bot::bot_core::swap_simulation::simulate_balancer_pair_out;
+            use degenbot_substrate::swap_simulation::simulate_balancer_pair_out;
             simulate_balancer_pair_out(
                 core,
                 self.pool_id,
@@ -992,7 +993,7 @@ impl PyLiquidityPool {
         };
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let outcome = self.with_state(py, |core| {
-            use degenbot_bot::bot_core::swap_simulation::simulate_balancer_pair_in_given_out;
+            use degenbot_substrate::swap_simulation::simulate_balancer_pair_in_given_out;
             simulate_balancer_pair_in_given_out(
                 core,
                 self.pool_id,
@@ -1025,7 +1026,7 @@ impl PyLiquidityPool {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         // ADR-037: exact-output request; required input = |consumed|. Legacy
         // silent-0 contract preserved here until the Python tail task.
-        let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
+        let request = degenbot_substrate::swap_simulation::SwapRequest {
             zero_for_one,
             amount_specified: I256::try_from(amount).map_err(|_| {
                 pyo3::exceptions::PyValueError::new_err(
@@ -1083,7 +1084,7 @@ impl PyLiquidityPool {
         block: u64,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
+        let request = degenbot_substrate::swap_simulation::SwapRequest {
             zero_for_one,
             amount_specified: -I256::try_from(amount).map_err(|_| {
                 pyo3::exceptions::PyValueError::new_err(
@@ -1131,7 +1132,7 @@ impl PyLiquidityPool {
             Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
             _ => None,
         };
-        let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
+        let request = degenbot_substrate::swap_simulation::SwapRequest {
             zero_for_one,
             amount_specified,
             sqrt_price_limit,
@@ -1153,7 +1154,7 @@ impl PyLiquidityPool {
         // amounts attached) instead of silently returning a wrong number.
         if payload
             .caveats
-            .contains(degenbot_bot::bot_core::swap_simulation::Caveats::HOOKED_POOL)
+            .contains(degenbot_substrate::swap_simulation::Caveats::HOOKED_POOL)
         {
             return Err(crate::bot::engine::PossibleInaccurateResult::new_err(
                 format!(
@@ -1201,7 +1202,7 @@ impl PyLiquidityPool {
             Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
             _ => None,
         };
-        let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
+        let request = degenbot_substrate::swap_simulation::SwapRequest {
             zero_for_one,
             // Exact-output request: POSITIVE user-perspective (pool delivers).
             // The V3/V4 engine sign conventions are handled inside the gate.
@@ -1233,7 +1234,7 @@ impl PyLiquidityPool {
         // amounts attached) instead of silently returning a wrong number.
         if payload
             .caveats
-            .contains(degenbot_bot::bot_core::swap_simulation::Caveats::HOOKED_POOL)
+            .contains(degenbot_substrate::swap_simulation::Caveats::HOOKED_POOL)
         {
             return Err(crate::bot::engine::PossibleInaccurateResult::new_err(
                 format!(
@@ -1362,7 +1363,7 @@ impl PyLiquidityPool {
             // The Python handle's own `encode_swap` resolves its pool id at
             // construction, so an unregistered id keeps the `None` not-found
             // contract.
-            Err(degenbot_bot::bot_core::EncodeSwapError::NotRegistered { .. }) => Ok(None),
+            Err(degenbot_substrate::EncodeSwapError::NotRegistered { .. }) => Ok(None),
             Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "encode_swap: {e}"
             ))),

@@ -44,7 +44,7 @@ fn test_pump_disables_ws_completeness_by_default() {
     // And the production default must be ON so drops surface loudly out
     // of the box (KAHU5W: typed schema default, loader owns env).
     assert!(
-        crate::bot_core::stance::config().pump.ws_completeness,
+        degenbot_substrate::stance::config().pump.ws_completeness,
         "production default for pump.ws_completeness must be ON"
     );
 }
@@ -63,7 +63,7 @@ async fn decoupled_drain_still_publishes_with_block_metadata() {
     let bot = Arc::new(Bot::new(1));
     {
         let arc = bot.state_arc();
-        let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = arc.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.register_v2_pool(&RegisterV2PoolParams {
             address: A::from([0xccu8; 20]),
             token0: A::from([0xa0u8; 20]),

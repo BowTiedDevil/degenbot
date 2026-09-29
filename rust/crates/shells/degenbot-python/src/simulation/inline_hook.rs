@@ -48,12 +48,12 @@ use degenbot_bot::arb_engine::inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
     InlineSwapFamily, SimulatedPathResult,
 };
-use degenbot_bot::bot_core::state_lock::StateLock;
-use degenbot_bot::bot_core::{BotState, SimAnchorState};
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::inspectors::SwapFamily;
 use degenbot_simulation::WarmCodeCacheInner;
+use degenbot_substrate::state_lock::StateLock;
+use degenbot_substrate::{BotState, SimAnchorState};
 use parking_lot::RwLock;
 use std::future::Future;
 
@@ -419,7 +419,7 @@ impl InlineSimulator for InlineSimHook {
         let path_info = {
             let core = self
                 .bot_state
-                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+                .read_at(degenbot_substrate::state_lock::LockSite::Python);
             match degenbot_bot::arb_engine::build_path_info(&core, &req.hops) {
                 Ok(pi) => pi,
                 Err(_) => return None,
@@ -431,7 +431,7 @@ impl InlineSimulator for InlineSimHook {
         let anchor = {
             let guard = self
                 .bot_state
-                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
+                .read_at(degenbot_substrate::state_lock::LockSite::Python);
             SimAnchorState::snapshot(&guard)
         };
 

@@ -22,9 +22,9 @@ partitions, the config-facet additions, and the test-surface pattern.
 | Simulation engine | `degenbot-simulation` | `BlockSimHandle`, `ScratchEvm`, replay seam, journal extraction (V2/V3/V4) |
 | Command grammar | `degenbot-executor` | `encode_cmd_stream`, `EncodeRequest` |
 | RPC spine | `degenbot-rpc` | provider, multicall3, head watch, pending-tx feeds, fee oracle |
-| State owner + admission | `degenbot-bot::bot_core` | live registry `BotState` (pump-fed) and the planning sandbox (`planning::Workspace` + `ExplicitPoolState`) |
-| Session object identity | `degenbot-bot::bot_core::session_registry` | the ONE per-session answer to "is this the same object?" — pools/tokens as typed `DashMap` + `Arc` behind get-or-create, paths reached through a `PathObjectAdapter` handle, positions reached through a `PositionObserver` handle. Identity only: no live state, no I/O, no solver, no submission. A strategy borrows an object reference and derives its own plan; it never holds a private object map. ADR-064 |
-| Pool ingress (`Db → Chain` tick-map precedence, sealed seed, verify policy) | `degenbot-bot::bot_core::pool_ingress` | the one V3/V4 pool-state admission seam; Db/Chain `TickMapSeed` provenance is minted only here, and V4 full-map verification targets `PoolManager` + `PoolId` rather than `StateView` |
+| State owner + admission | `degenbot-substrate` | live registry `BotState` (pump-fed) and the planning sandbox (`planning::Workspace` + `ExplicitPoolState`) — the substrate's one home since ADR-067; `degenbot-bot` composes it as a peer and re-exports it at the historical `bot_core::*` paths |
+| Session object identity | `degenbot-substrate::session_registry` | the ONE per-session answer to "is this the same object?" — pools/tokens as typed `DashMap` + `Arc` behind get-or-create, paths reached through a `PathObjectAdapter` handle, positions reached through a `PositionObserver` handle. Identity only: no live state, no I/O, no solver, no submission. A strategy borrows an object reference and derives its own plan; it never holds a private object map. ADR-064 |
+| Pool ingress (`Db → Chain` tick-map precedence, sealed seed, verify policy) | `degenbot-substrate::pool_ingress` | the one V3/V4 pool-state admission seam; Db/Chain `TickMapSeed` provenance is minted only here, and V4 full-map verification targets `PoolManager` + `PoolId` rather than `StateView` |
 | Strategy kit (boot-resolved composition) | `degenbot-strategy/src/strategy_kit.rs` | `StrategyKit::resolve` — the provision cell (ingress) + discovery handles a strategy composes |
 | Strategy plane + concrete compositions | `degenbot-strategy` | the backrun reaction arm (frame pipeline, anchored DFS, gap quarantine, pending-tx driver) and the settlement composition; capability implementations re-exported, never moved; hosted families drive the boot-resolved `StrategyKit` cells (`strategy_kit.rs`) |
 | Submission machinery | `degenbot-submission` | signer, fee/params/bundle, dispatcher, monitor, submission ledger, finality-liveness FSM |
@@ -56,7 +56,7 @@ A strategy picks exactly ONE:
    (`StrategyKit::resolve`) and hands it in, so a strategy composes
    `kit.provision.ingress` / `kit.discovery` and never an ingress it built
    itself. Tick maps enter the sandbox only through the sealed `TickMapSeed`
-   boundary — Db/Chain seeds are minted inside `bot_core` alone, and replay
+   boundary — Db/Chain seeds are minted inside `degenbot-substrate::pool_ingress` alone, and replay
    admission is an ingress operation; strategies do not construct a seed or
    register directly into the workspace. Verification is a typed `VerifyLevel`
    policy (default `bootstrap`) on the provisioning cell; the Tracked intake
@@ -135,7 +135,7 @@ now lands on top of it ([ADR-057](adr/ADR-057-strategy-host.md)).
 | Pending-tx driver (replay/extract/stages/gate) | `degenbot-strategy/src/frame_pipeline.rs` |
 | `SubmissionTarget` + `dispatch_and_submit` | `degenbot-submission/src/submit.rs` |
 | Journal extraction (V2/V3/V4) | `degenbot-simulation/src/sim/evm/journal_pools.rs` |
-| Sandbox + `ExplicitPoolState` | `degenbot-bot/src/bot_core/planning.rs` |
+| Sandbox + `ExplicitPoolState` | `degenbot-substrate/src/planning.rs` |
 | Strategy facets (activation + knobs) | `degenbot-config/src/schema.rs` (`strategy.*`) |
 | Strategy host (hub + registry + authority + FSM) | `degenbot-bot/src/strategy_host.rs` |
 | Nonce authority | `degenbot-bot/src/nonce_authority.rs` |

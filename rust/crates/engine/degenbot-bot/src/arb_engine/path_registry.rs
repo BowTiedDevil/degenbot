@@ -22,8 +22,8 @@
 //! did not allocate, and is withdrawn with the path in `remove`. It exists so
 //! the session can hand out one canonical path object per route without a
 //! second store that could disagree with this one about which route is which.
-use crate::bot_core::session_registry::{PathIdentity, PathObject};
 use ::degenbot_solvers::mixed::{HopType, MixedPath, MixedPoolRef};
+use degenbot_substrate::session_registry::{PathIdentity, PathObject};
 use hashbrown::HashMap;
 use std::sync::Arc;
 /// Typed refusal from `ArbitrageEngine::register_path` (PRG-4 — was a

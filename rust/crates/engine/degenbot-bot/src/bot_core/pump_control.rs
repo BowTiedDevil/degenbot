@@ -19,7 +19,7 @@
 //! split. `notify_block` stays raw `u64`: a `newHeads` tick is a chain fact
 //! forwarded to the delivery-to-Python block clock, not engine epoch work.
 
-use super::{BlockMetadata, Epoch};
+use degenbot_substrate::{BlockMetadata, Epoch};
 
 /// The driver-facing control seam: the seven pokes the pump drives between
 /// stage transitions (ADR-046). Implementors: `EngineStages` and the

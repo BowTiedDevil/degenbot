@@ -65,6 +65,9 @@ degenbot-rpc.workspace = true
 # structs BotStateDb reads. Depends on `degenbot-pools` (state structs) +
 # `degenbot-uniswap` (DexIdentity). Added in EGMSNS (option B).
 degenbot-bot.workspace = true
+# ADR-067: the state owner + seam types (BotState, executor_hop, sim_anchor,
+# divergence_probe, session registry) moved to the substrate crate.
+degenbot-substrate.workspace = true
 degenbot-pools.workspace = true
 # `V4PoolId` — the V4 pool identifier type (crossed from the decoders leaf for
 # the V4 swap-event decoder + the swap-capture inspector).

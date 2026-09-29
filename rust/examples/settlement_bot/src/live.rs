@@ -30,12 +30,12 @@ use degenbot::bot_core::construction_io::ConstructionIo;
 use degenbot::bot_core::pool_builder::builder::{
     build_v2, build_v3, build_v4, V4PoolBuildIdentity,
 };
-use degenbot::bot_core::state_lock::LockSite;
 use degenbot::bot_core::{Bot, RegisterV2PoolError, RegisterV3PoolError, RegisterV4PoolError};
 use degenbot::db::discovery_read::DiscoveryPoolRow;
 use degenbot::db::snapshot::TickMapDb;
 use degenbot::pathfinding::PoolKind;
 use degenbot::solvers::mixed::PoolHop;
+use degenbot::substrate::state_lock::LockSite;
 use degenbot::EngineDriver;
 
 /// The live construction context (constructed once per boot).

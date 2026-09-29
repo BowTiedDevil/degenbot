@@ -16,7 +16,6 @@ use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use crate::execution_context::ExecutionContext;
 use crate::project_candidate;
 use alloy::primitives::{address, Address, Bytes, U256};
-use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
 use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
@@ -27,6 +26,7 @@ use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
 use degenbot_simulation::sim::evm::{read_view_word, ScratchDb, ScratchEvm};
+use degenbot_substrate::connector_index::V2ConnectorIndex;
 use hashbrown::HashMap as HbMap;
 
 use crate::anchored_dfs::{resolve_hop, AnchorPool, DfsCycle, ResolvedHop};
@@ -270,7 +270,7 @@ pub async fn admit_extracted_verified(
                     token1,
                     reserve0: r0,
                     reserve1: r1,
-                    fees: degenbot_bot::bot_core::executor_hop::V2FeePair::new(
+                    fees: degenbot_substrate::executor_hop::V2FeePair::new(
                         fees.token0,
                         fees.token1,
                     ),

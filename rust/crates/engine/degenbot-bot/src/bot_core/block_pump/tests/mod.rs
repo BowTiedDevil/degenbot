@@ -301,7 +301,7 @@ impl StageHandlers for FakeStageEngine {
         _work: &crate::bot_core::Rewind,
     ) -> Result<crate::bot_core::RewindOutcome, crate::bot_core::StageError> {
         Ok(crate::bot_core::RewindOutcome {
-            restored_to: crate::bot_core::Epoch::at(0),
+            restored_to: degenbot_substrate::Epoch::at(0),
         })
     }
 }
@@ -465,7 +465,7 @@ fn gap_burst_stream(logs: u64, gap_ms: u64) -> stream::BoxStream<'static, WsEven
 fn register_burst_pool(bot: &Arc<Bot>) {
     use alloy::primitives::{aliases::U112, Address as A};
     let arc = bot.state_arc();
-    let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
+    let mut core = arc.write_at(degenbot_substrate::state_lock::LockSite::Pump);
     core.register_v2_pool(&RegisterV2PoolParams {
         address: A::from([0xccu8; 20]),
         token0: A::from([0xa0u8; 20]),
@@ -619,10 +619,11 @@ fn run_reorg_stream(capture: ReorgSpanCapture, pump: &mut BlockPump, events: Vec
 // sake).
 // -----------------------------------------------------------------
 
-use crate::bot_core::{BlockContext, RegisterV2PoolParams};
+use crate::bot_core::RegisterV2PoolParams;
 use alloy::primitives::{aliases::U112, Address, Bytes, U256};
 use degenbot_solvers::affected_keys::AffectedKey;
 use degenbot_solvers::mixed::HopType;
+use degenbot_substrate::BlockContext;
 
 /// Build a V2 `Sync` log for `pool_address` carrying
 /// `(reserve0, reserve1)`, at `block_number`, with `removed` set.
@@ -761,7 +762,7 @@ fn bot_with_registered_v2(pool_addr: Address, update_block: u64) -> (Arc<Bot>, u
     let bot = Arc::new(Bot::new(1));
     let pool_id = bot
         .state_arc()
-        .write_at(crate::bot_core::state_lock::LockSite::Pump)
+        .write_at(degenbot_substrate::state_lock::LockSite::Pump)
         .register_v2_pool(&RegisterV2PoolParams {
             address: pool_addr,
             token0: Address::from([0xa0u8; 20]),
@@ -864,7 +865,7 @@ fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<
     );
     {
         let state = bot.state_arc();
-        let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.register_v3_pool(&RegisterV3PoolParams {
             address: pool_addr,
             token0: Address::from([0xa0u8; 20]),

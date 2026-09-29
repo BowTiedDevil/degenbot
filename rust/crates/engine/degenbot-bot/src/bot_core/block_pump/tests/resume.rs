@@ -158,7 +158,7 @@ async fn resume_never_resets_pump_complete_cutoff() {
     pump1.run_test_loop(stream::iter(events).boxed(), w).await;
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .pump_complete_cutoff(),
         w,
         "run 1's tombstone of w must reach the state-owned cutoff"
@@ -172,7 +172,7 @@ async fn resume_never_resets_pump_complete_cutoff() {
         .await;
     assert_eq!(
         bot.state_arc()
-            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
             .pump_complete_cutoff(),
         w,
         "a resume must NOT reset the cutoff — the value outlives the run"
@@ -201,7 +201,7 @@ async fn resume_boundary_duplicate_dropped_live_block_applied() {
     let pool = Address::from([0xc0u8; 20]);
     let pool_id = {
         let arc = bot.state_arc();
-        let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = arc.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         let pool_id = core
             .register_v2_pool(&RegisterV2PoolParams {
                 address: pool,
@@ -249,7 +249,7 @@ async fn resume_boundary_duplicate_dropped_live_block_applied() {
     .await;
 
     let arc = bot.state_arc();
-    let core = arc.read_at(crate::bot_core::state_lock::LockSite::Pump);
+    let core = arc.read_at(degenbot_substrate::state_lock::LockSite::Pump);
     let st = core.get_v2_pool_state(pool_id).expect("v2 state");
     assert_eq!(
         st.reserve0,
@@ -278,7 +278,7 @@ async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
     let pool = Address::from([0xc1u8; 20]);
     let pool_id = {
         let arc = bot.state_arc();
-        let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = arc.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         let pool_id = core
             .register_v2_pool(&RegisterV2PoolParams {
                 address: pool,
@@ -328,7 +328,7 @@ async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
         "a reorg inside the backfilled range is recoverable — no shutdown"
     );
     let arc = bot.state_arc();
-    let core = arc.read_at(crate::bot_core::state_lock::LockSite::Pump);
+    let core = arc.read_at(degenbot_substrate::state_lock::LockSite::Pump);
     let st = core.get_v2_pool_state(pool_id).expect("v2 state");
     assert_eq!(
         st.reserve0,
@@ -357,7 +357,7 @@ async fn log_applied_pairing_forward_records_reorg_does_not() {
     let pool = Address::from([0xc2u8; 20]);
     {
         let arc = bot.state_arc();
-        let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
+        let mut core = arc.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         let _ = core
             .register_v2_pool(&RegisterV2PoolParams {
                 address: pool,
@@ -575,14 +575,14 @@ fn driver_drops_reorg_flying_stale_epoch_work() {
     // Pre-rewind (reorg-flying) work: an item minted BEFORE the bump in
     // generation 0 — dropped, never applied to the engine.
     let stale_ctx = BlockContext::new(
-        crate::bot_core::Epoch::with_generation(100, 0),
+        degenbot_substrate::Epoch::with_generation(100, 0),
         BlockMetadata::default(),
     );
     assert!(pump.reorg_flying_stale(&fsm, &stale_ctx));
     pump.drive_finalize(
         &fsm,
         BlockContext::new(
-            crate::bot_core::Epoch::with_generation(100, 0),
+            degenbot_substrate::Epoch::with_generation(100, 0),
             BlockMetadata::default(),
         ),
     );
@@ -598,8 +598,8 @@ fn driver_drops_reorg_flying_stale_epoch_work() {
     );
     pump.drive_finalize(
         &fsm,
-        crate::bot_core::BlockContext::new(
-            crate::bot_core::Epoch::with_generation(100, 1),
+        degenbot_substrate::BlockContext::new(
+            degenbot_substrate::Epoch::with_generation(100, 1),
             BlockMetadata::default(),
         ),
     );

@@ -21,14 +21,14 @@ use degenbot_arbitrage::{
     candidate_is_stale, dispatch_profitable_results, DispatchOutcome, FeeOnTransferRegistry,
     PoolDivergence, SimulateContext,
 };
-use degenbot_bot::bot_core::state_lock::{LockSite, StateLock};
-use degenbot_bot::bot_core::BotState;
 use degenbot_executor::composers::{EncodeOptions, PathInfo};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::{
     dispatch_and_submit, Dispatcher, NonceLane, PathSuppression, PipelineFailure, ReceiptProbe,
     SimFuture, SimLeaf, SimSubmitPipeline, SubmissionTarget, SubmitLeaf, SubmitRecord, TxSigner,
 };
+use degenbot_substrate::state_lock::{LockSite, StateLock};
+use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
 use crate::assembly::{

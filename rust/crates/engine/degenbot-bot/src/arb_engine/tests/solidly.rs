@@ -41,7 +41,7 @@ fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
     assert!(hop.as_int_sequence().is_none());
 }
 // The per-family Solidly projection tests live in
-// `crate::bot_core::resolve::solidly::tests` (moved in T3 of epic
+// `degenbot_substrate::resolve::solidly::tests` (moved in T3 of epic
 // MKRKNB; they assert the `MissingHopReason` variants directly
 // against `project_solidly`). This module keeps only the
 // engine-level classifier test (`solidly_hop_variant_is_not_v2_and_not_cl`).
@@ -58,13 +58,16 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
     // calc_d (which divides intermediate products by 1e18) does not
     // underflow to zero (small-magnitude reserves would panic on
     // divide-by-zero in get_y_solidly).
-    use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams};
+    use crate::bot_core::RegisterAerodromeV2PoolParams;
+    use degenbot_substrate::BotState;
     use std::sync::Arc;
     fn tokens(n: u64) -> U112 {
         (U256::from(n) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>()
     }
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
-    core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        BotState::new(),
+    ));
+    core.write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_token(
             Address::from([0x01u8; 20]),
             "Token0".into(),
@@ -72,7 +75,7 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
             18,
             1,
         );
-    core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+    core.write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_token(
             Address::from([0x02u8; 20]),
             "Token1".into(),
@@ -81,7 +84,7 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
             1,
         );
     let aero_a = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
             token0_decimals: 18,
             token1_decimals: 18,
@@ -97,7 +100,7 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
             update_block: 0,
         });
     let aero_b = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
             token0_decimals: 18,
             token1_decimals: 18,
@@ -184,13 +187,16 @@ fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
 }
 #[test]
 fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
-    use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
+    use crate::bot_core::{RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
+    use degenbot_substrate::BotState;
     use std::sync::Arc;
     fn tokens(n: u64) -> U112 {
         (U256::from(n) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>()
     }
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
-    core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        BotState::new(),
+    ));
+    core.write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_token(
             Address::from([0x01u8; 20]),
             "Token0".into(),
@@ -198,7 +204,7 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
             18,
             1,
         );
-    core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+    core.write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_token(
             Address::from([0x02u8; 20]),
             "Token1".into(),
@@ -211,7 +217,7 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
     // as V2 constant-product (more slippage than Solidly, but the cycle
     // is still profitable because Solidly hop0 emits ample token1).
     let aero_id = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
             token0_decimals: 18,
             token1_decimals: 18,
@@ -227,7 +233,7 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
             update_block: 0,
         });
     let v2_id = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v2_pool(&RegisterV2PoolParams {
             address: Address::from([0xb2u8; 20]),
             token0: Address::from([0x01u8; 20]),
@@ -320,10 +326,13 @@ fn solve_solidly_unprofitable_path_returns_none() {
 }
 #[test]
 fn solve_solidly_plus_cl_path_rejected_by_scope() {
-    use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV3PoolParams};
+    use crate::bot_core::{RegisterAerodromeV2PoolParams, RegisterV3PoolParams};
+    use degenbot_substrate::BotState;
     use std::sync::Arc;
-    let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
-    core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+    let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
+        BotState::new(),
+    ));
+    core.write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_token(
             Address::from([0x01u8; 20]),
             "Token0".into(),
@@ -331,7 +340,7 @@ fn solve_solidly_plus_cl_path_rejected_by_scope() {
             18,
             1,
         );
-    core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+    core.write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_token(
             Address::from([0x02u8; 20]),
             "Token1".into(),
@@ -340,7 +349,7 @@ fn solve_solidly_plus_cl_path_rejected_by_scope() {
             1,
         );
     let aero = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
             token0_decimals: 18,
             token1_decimals: 18,
@@ -358,7 +367,7 @@ fn solve_solidly_plus_cl_path_rejected_by_scope() {
     // Register a minimal V3 pool for the second hop using the same
     // ..Default::default() pattern as the existing V3 tests.
     let v3_id = core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver)
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xc1u8; 20]),
             token0: Address::from([0x02u8; 20]),

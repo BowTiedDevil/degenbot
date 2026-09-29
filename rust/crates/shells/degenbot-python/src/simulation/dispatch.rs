@@ -56,10 +56,10 @@ use degenbot_arbitrage::{CapturedSwap, SimulateContext};
 use degenbot_batch_executor::assembly::{join_sim_result, merge_payload_results, PayloadArm};
 use degenbot_batch_executor::row::{PayloadFailure, PayloadRow};
 use degenbot_batch_executor::PathResolver;
-use degenbot_bot::bot_core::state_lock::StateLock;
 use degenbot_core::op_info;
 use degenbot_executor::composers::PathInfo;
 use degenbot_submission::SubmitCandidate;
+use degenbot_substrate::state_lock::StateLock;
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::collections::HashMap;
@@ -203,7 +203,7 @@ pub fn dispatch_profitable_py<'py>(
     // `warm_cache` is the cross-block bytecode cache (`HDEG7H` Option A) —
     // cloned from the engine's `warm_code_cache_arc()` (one Arc clone, no
     // map copy). Same transitional `Option` shape as `bot_state`.
-    let bot_state: Option<Arc<StateLock<degenbot_bot::bot_core::BotState>>> =
+    let bot_state: Option<Arc<StateLock<degenbot_substrate::BotState>>> =
         engine.as_ref().map(|eng| eng.borrow(py).bot_state_arc());
     let warm_cache: Option<Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>>> =
         engine

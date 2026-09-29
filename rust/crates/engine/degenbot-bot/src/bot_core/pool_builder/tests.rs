@@ -1911,8 +1911,8 @@ async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
 // ── Construction route: route order + get-or-register + typed refusals ──
 
 use crate::bot_core::pool_builder::route;
-use crate::bot_core::state_lock::LockSite;
 use crate::bot_core::{Bot, RegisteredPoolFamily};
+use degenbot_substrate::state_lock::LockSite;
 
 fn v3_route() -> route::V3RouteInputs<'static> {
     route::V3RouteInputs::default()

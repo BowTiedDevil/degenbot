@@ -547,7 +547,7 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("load_snapshot_from_db on {}: {e}", db_path.display()))?;
     let seed_block = bot
         .state_arc()
-        .read_at(degenbot::bot_core::state_lock::LockSite::Core)
+        .read_at(degenbot::substrate::state_lock::LockSite::Core)
         .snapshot_seed_block();
     println!(
         "[boot] snapshot loaded from {} (chain {CHAIN_ID}) → S={:?}",

@@ -10,9 +10,9 @@
 //! The engine composes:
 //! - A [`BotState`] for V2 pool state and constant-product solving (ADR-003:
 //!   `BotState` is the single state owner; the engine is a consumer)
-//! - A [`BotState`](crate::bot_core::BotState) for V2+V3 pool state (ADR-003:
+//! - A [`BotState`](degenbot_substrate::BotState) for V2+V3 pool state (ADR-003:
 //!   `BotState` is the single state owner, peer to this engine)
-//! - A [`BotState`](crate::bot_core::BotState) for all pool state (V2+V3+V4 —
+//! - A [`BotState`](degenbot_substrate::BotState) for all pool state (V2+V3+V4 —
 //!   ADR-003), the single Rust state owner peer to this engine
 //!
 //! V4 pools share identical concentrated-liquidity math with V3. The solver
@@ -45,15 +45,15 @@ use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
 use self::solve_cycle::SolveCycle;
-use crate::bot_core::resolve::HopProjectionCache;
-use crate::bot_core::state_lock::StateLock;
-use crate::bot_core::BotState;
 use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
 #[cfg(test)]
 use alloy::primitives::Address;
 use dashmap::DashMap;
+use degenbot_substrate::resolve::HopProjectionCache;
+use degenbot_substrate::state_lock::StateLock;
+use degenbot_substrate::BotState;
 use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 // THE construction-stamped fleet boot carrier: the engine's own
@@ -102,7 +102,7 @@ pub mod session_end;
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;
 // the session's path-object ADAPTER over that registry — the owner side of
-// `bot_core::session_registry::PathObjectAdapter`, so the session names
+// `degenbot_substrate::session_registry::PathObjectAdapter`, so the session names
 // canonical paths without a second path store.
 pub mod path_objects;
 // 3WI4EO : the typed operator re-parameterization value crossing
@@ -325,7 +325,7 @@ pub use crate::bot_core::PoolTickCoverage;
 // `BlockMetadata` lives in `bot_core` (general block data); re-exported here so
 // engine code + external references (`crate::arb_engine::BlockMetadata`)
 // keep working (ADR-006 D4).
-pub use crate::bot_core::BlockMetadata;
+pub use degenbot_substrate::BlockMetadata;
 // ADR-027 completion (2026-08-20 review): the block-clock pipe is
 // coordinator-owned; the type moved to bot_core. Re-exported so external
 // references keep working (same pattern as BlockMetadata above).
@@ -518,7 +518,7 @@ impl ArbitrageEngine {
                 path_status: HashMap::new(),
                 hop_projection_cache: HopProjectionCache::new(),
                 hop_projection_count: 0,
-                cl_projection_memo: crate::bot_core::resolve::projection_memo_enabled(),
+                cl_projection_memo: degenbot_substrate::resolve::projection_memo_enabled(),
                 path_description_cache: parking_lot::Mutex::new(HashMap::new()),
                 resolved_update_snapshot: HashMap::new(),
                 cursor: BlockCursor::default(), // (0, None, 0, false) — the pre-cursor init, unchanged
@@ -587,10 +587,10 @@ impl ArbitrageEngine {
         if retune.event_buffer_max_age.is_some() || self.event_buffer_expiry_enabled {
             self.event_buffer_expiry_enabled = retune.event_buffer_max_age.is_some();
             self.core
-                .write_at(crate::bot_core::state_lock::LockSite::Solver)
+                .write_at(degenbot_substrate::state_lock::LockSite::Solver)
                 .set_v3_buffer_max_age(retune.event_buffer_max_age);
             self.core
-                .write_at(crate::bot_core::state_lock::LockSite::Solver)
+                .write_at(degenbot_substrate::state_lock::LockSite::Solver)
                 .set_v4_buffer_max_age(retune.event_buffer_max_age);
         }
         // The admission trio (QTZGFL).
@@ -708,7 +708,7 @@ impl ArbitrageEngine {
             ..Default::default()
         };
         self.core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver)
             .register_v2_pool(&params)
             .expect("test setup: V2 registration")
     }
@@ -726,7 +726,7 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
         self.core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver)
             .register_v3_pool(params)
             .expect("test setup: V3 registration")
     }
@@ -742,7 +742,7 @@ impl ArbitrageEngine {
         params: &crate::bot_core::RegisterV4PoolParams,
     ) -> Result<u64, crate::bot_core::RegisterV4PoolError> {
         self.core
-            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver)
             .register_v4_pool(params)
     }
 }

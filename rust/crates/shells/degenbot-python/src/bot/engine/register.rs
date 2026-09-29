@@ -11,8 +11,8 @@ use super::{
 };
 use crate::prelude::*;
 
-use degenbot_bot::bot_core::session_registry::SessionObjectRegistry;
-use degenbot_bot::bot_core::state_lock::StateLock;
+use degenbot_substrate::session_registry::SessionObjectRegistry;
+use degenbot_substrate::state_lock::StateLock;
 
 #[pymethods]
 impl PyArbEngine {
@@ -32,7 +32,7 @@ impl PyArbEngine {
             let bot = bot.borrow(py).bot_arc();
             (bot.state_arc(), bot)
         } else {
-            let core = Arc::new(StateLock::new(degenbot_bot::bot_core::BotState::new()));
+            let core = Arc::new(StateLock::new(degenbot_substrate::BotState::new()));
             // No `PyBot` to adopt, so THIS engine is the session owner: it
             // resolves the session's one object registry here and hands it to
             // the adopting `Bot` (`Bot::with_core` never mints one, so a second

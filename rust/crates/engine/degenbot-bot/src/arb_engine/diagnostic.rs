@@ -372,7 +372,7 @@ pub(crate) fn diagnostic_path_state(
     // block engines (disjoint fields, immutable borrows coexist).
     let core = engine
         .core
-        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let type_tags: Vec<&str> = path
         .pools
         .iter()
@@ -448,7 +448,7 @@ fn thread_solver_result_onto_snapshot(
 /// sub-engine — the caller records a "missing pool" placeholder in that case
 /// so the rest of the hops remain visible.
 fn build_engine_pool_state(
-    core: &crate::bot_core::BotState,
+    core: &degenbot_substrate::BotState,
     pool_ref: &MixedPoolRef,
 ) -> Option<DiagnosticPoolState> {
     match pool_ref.hop_type {
@@ -666,7 +666,7 @@ mod tests {
     /// `engine_processed_block == last_processed_block()`.
     #[test]
     fn diagnostic_path_state_includes_engine_processed_block() {
-        use crate::bot_core::BlockMetadata;
+        use degenbot_substrate::BlockMetadata;
         let mut engine = ArbitrageEngine::new();
         let v2_fwd = engine.register_v2_pool(
             Address::from([0x11u8; 20]),

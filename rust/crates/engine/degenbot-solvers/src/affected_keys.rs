@@ -8,7 +8,7 @@ use crate::mixed::HopType;
 /// index key (the "path-index role" of this module). The affected-path
 /// derivation is DELTA-DRIVEN: log application
 /// records `AffectedKey`s into the block's
-/// `degenbot_bot::bot_core::EpochDelta` as a byproduct of
+/// `degenbot_substrate::EpochDelta` as a byproduct of
 /// `dispatch_log`, and the drain's derivation consumes the delta's taken
 /// keys directly (no dirty-set intake, no subscriber-side classification).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

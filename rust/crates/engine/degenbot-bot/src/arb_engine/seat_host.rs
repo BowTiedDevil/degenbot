@@ -241,7 +241,7 @@ pub(crate) fn admission(inputs: AdmissionInputs) -> Admission {
 /// collapse into a busy-spin.
 pub(crate) fn intake_backstop() -> Duration {
     Duration::from_millis(
-        crate::bot_core::stance::config()
+        degenbot_substrate::stance::config()
             .fleet
             .intake_backstop_ms
             .max(1),
@@ -251,7 +251,7 @@ pub(crate) fn intake_backstop() -> Duration {
 /// config, clamped to >= 1 so a garbage value cannot trip on the first
 /// pass.
 pub(crate) fn intake_no_progress_ticks() -> usize {
-    crate::bot_core::stance::config()
+    degenbot_substrate::stance::config()
         .fleet
         .intake_no_progress_ticks
         .max(1)

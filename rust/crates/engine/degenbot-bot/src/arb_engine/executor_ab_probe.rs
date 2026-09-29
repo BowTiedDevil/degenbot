@@ -148,7 +148,9 @@ pub(in crate::arb_engine) fn probe_ctx() -> Arc<SolveCycleShared> {
         walk_grid_total: std::sync::atomic::AtomicU64::new(0),
         sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-        core: Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new())),
+        core: Arc::new(degenbot_substrate::state_lock::StateLock::new(
+            BotState::new(),
+        )),
         pool_refs: Vec::new(),
         worker_clamp: false,
         inline_sim: None,

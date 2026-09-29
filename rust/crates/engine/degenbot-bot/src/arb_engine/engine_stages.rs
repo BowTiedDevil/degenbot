@@ -37,20 +37,19 @@ use super::solve_cycle::CycleOutcome;
 use super::ArbitrageEngine;
 use super::EngineRetune;
 use super::PumpPhase;
-use crate::bot_core::session_registry::PathObjectAdapter;
 use crate::bot_core::stage_handlers::StageHandlers;
-use crate::bot_core::state_lock::StateLock;
-use crate::bot_core::BotState;
-use crate::bot_core::{
-    stage_handlers::{
-        AffectedPaths, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish, PublishOutcome,
-        QuiesceOutcome, Resolve, Simulate, SimulateOutcome, Solve, SolveOutcome, StageError,
-    },
-    BlockMetadata, Epoch, EpochDelta, PumpControl, Rewind, RewindOutcome,
+use crate::bot_core::stage_handlers::{
+    AffectedPaths, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish, PublishOutcome,
+    QuiesceOutcome, Resolve, Simulate, SimulateOutcome, Solve, SolveOutcome, StageError,
 };
+use crate::bot_core::{PumpControl, Rewind, RewindOutcome};
 use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
 use degenbot_core::diag;
 use degenbot_core::op_error;
+use degenbot_substrate::session_registry::PathObjectAdapter;
+use degenbot_substrate::state_lock::StateLock;
+use degenbot_substrate::BotState;
+use degenbot_substrate::{BlockMetadata, Epoch, EpochDelta};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -586,7 +585,7 @@ fn expire_buffered_events(engine: &ArbitrageEngine, block_number: u64) {
 fn expire_buffered_telemetry(
     engine: &ArbitrageEngine,
     kind: &'static str,
-    expire: impl FnOnce(&mut crate::bot_core::BotState),
+    expire: impl FnOnce(&mut degenbot_substrate::BotState),
 ) -> (u64, u64) {
     use std::time::Instant;
     let span = tracing::info_span!(
@@ -600,7 +599,7 @@ fn expire_buffered_telemetry(
     let lock_t0 = Instant::now();
     let mut core = engine
         .core
-        .write_at(crate::bot_core::state_lock::LockSite::Solver);
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver);
     let lock_wait_us = u64::try_from(lock_t0.elapsed().as_micros()).unwrap_or(u64::MAX);
     let work_t0 = Instant::now();
     expire(&mut core);
@@ -710,14 +709,14 @@ impl StageHandlers for EngineStages {
         // Authoritative per-family apply split (2SDIQW): hotpath labels do
         // not aggregate reliably in impl_type mode, so the atomics summarize
         // per block here. Format: calls:us per family.
-        let (apply_calls, apply_us) = crate::bot_core::apply_telemetry::snapshot_reset();
+        let (apply_calls, apply_us) = degenbot_substrate::apply_telemetry::snapshot_reset();
         if apply_calls.iter().any(|&c| c > 0) {
             let mut parts = Vec::with_capacity(5);
             for i in 0..5 {
                 if apply_calls[i] > 0 {
                     parts.push(format!(
                         "{}={}:{}us",
-                        crate::bot_core::apply_telemetry::FAMILY_NAMES[i],
+                        degenbot_substrate::apply_telemetry::FAMILY_NAMES[i],
                         apply_calls[i],
                         apply_us[i] / 1_000
                     ));
@@ -911,7 +910,7 @@ mod candidate2_seam_pins {
         is_pump_control::<super::EngineStages>();
         let stages = super::EngineStages::new(
             Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
-            Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+            Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
         );
         stages.solve_dirty(TwinProbeToken);
         stages.last_processed_block(TwinProbeToken);
@@ -1059,7 +1058,7 @@ mod candidate2_seam_pins {
         use tracing_subscriber::layer::SubscriberExt;
         let stages = super::EngineStages::new(
             Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
-            Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+            Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
         );
         let capture = LoudCloseCapture::default();
         let subscriber = tracing_subscriber::registry().with(capture.clone());
@@ -1085,7 +1084,7 @@ mod construction_ledger_pins {
     /// through the stage surface with no `set_delta` swap.
     #[test]
     fn construction_injects_the_one_ledger() {
-        let delta = Arc::new(crate::bot_core::EpochDelta::new(0u64));
+        let delta = Arc::new(degenbot_substrate::EpochDelta::new(0u64));
         let stages = super::EngineStages::new(
             Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
             Arc::clone(&delta),
@@ -1117,7 +1116,7 @@ mod construction_ledger_pins {
         }
         let stages = super::EngineStages::new(
             Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
-            Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+            Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
         );
         stages.set_delta(SwapProbeToken);
         stages.delta_for_test(SwapProbeToken);

@@ -27,8 +27,6 @@ use degenbot_simulation::sim::evm::journal_pools::{
 };
 use std::sync::Arc;
 
-use degenbot_bot::bot_core::executor_hop::{V2FeePair, V2Fees};
-use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
@@ -45,6 +43,8 @@ use degenbot_strategy::frame_pipeline::{
     DiscoverTrace, MarketContext, PipelineConfig, StageTrace,
 };
 use degenbot_strategy::project_candidate;
+use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge};
+use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
 
 fn v2_fee_pair() -> V2FeePair {
     V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
@@ -82,7 +82,7 @@ fn one_execution_context_names_the_authoritative_v4_manager() {
 /// fetch declines loudly rather than staging stale state.
 struct NoBackfill;
 
-impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
+impl degenbot_substrate::pool_ingress::LiquidityLogSource for NoBackfill {
     fn fetch_v3_liquidity_events(
         &self,
         _pool: alloy::primitives::Address,
@@ -104,17 +104,17 @@ impl degenbot_bot::bot_core::pool_ingress::LiquidityLogSource for NoBackfill {
 }
 
 fn market_context(
-    registry: Option<std::sync::Arc<degenbot_bot::bot_core::RouteRegistry>>,
+    registry: Option<std::sync::Arc<degenbot_substrate::RouteRegistry>>,
     db: Option<std::sync::Arc<degenbot_db::connection::DegenbotDb>>,
 ) -> MarketContext {
     let db_arm = db.clone().map(|db| {
-        degenbot_bot::bot_core::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
+        degenbot_substrate::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
     });
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
         registry,
         db_arm,
         None,
-        degenbot_bot::bot_core::pool_ingress::VerifyLevel::default(),
+        degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
     );
     MarketContext::new(1, db, kit, 8, 4)
@@ -171,15 +171,15 @@ fn runtime_fixture() -> (MarketContext, u64, u64) {
     let weth_id = db
         .get_or_create_erc20_token(1, &WETH.to_checksum(None), None, None, None)
         .unwrap();
-    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::default();
-    index.push_edge(degenbot_bot::connector_index::V2Edge {
+    let mut index = degenbot_substrate::connector_index::V2ConnectorIndex::default();
+    index.push_edge(degenbot_substrate::connector_index::V2Edge {
         pool_id: 101,
         token0_id: u64::try_from(tok_id).unwrap(),
         token1_id: u64::try_from(weth_id).unwrap(),
         address: P,
         fees: v2_fee_pair(),
     });
-    index.push_edge(degenbot_bot::connector_index::V2Edge {
+    index.push_edge(degenbot_substrate::connector_index::V2Edge {
         pool_id: 102,
         token0_id: u64::try_from(tok_id).unwrap(),
         token1_id: u64::try_from(weth_id).unwrap(),
@@ -189,9 +189,9 @@ fn runtime_fixture() -> (MarketContext, u64, u64) {
     // The pipeline's sidecars quote chains of 1 (mainnet).
     (
         market_context(
-            Some(std::sync::Arc::new(
-                degenbot_bot::bot_core::RouteRegistry::new(index),
-            )),
+            Some(std::sync::Arc::new(degenbot_substrate::RouteRegistry::new(
+                index,
+            ))),
             Some(std::sync::Arc::new(db)),
         ),
         u64::try_from(tok_id).unwrap(),
@@ -731,7 +731,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
         u64::try_from(weth_id).unwrap(),
         u64::try_from(usdc_id).unwrap(),
     );
-    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::default();
+    let mut index = degenbot_substrate::connector_index::V2ConnectorIndex::default();
     // P2 + Q2 trade (TOK, USDC); the normalizer edges trade (USDC, WETH) so
     // the quote actually connects back to the base quote in the index.
     for (pool_id, t0, t1, addr) in [
@@ -739,7 +739,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
         (104u64, tok_id, usdc_id, Q),
         (105u64, usdc_id, weth_id, P),
     ] {
-        index.push_edge(degenbot_bot::connector_index::V2Edge {
+        index.push_edge(degenbot_substrate::connector_index::V2Edge {
             pool_id,
             token0_id: t0,
             token1_id: t1,
@@ -748,9 +748,9 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
         });
     }
     let rt = market_context(
-        Some(std::sync::Arc::new(
-            degenbot_bot::bot_core::RouteRegistry::new(index),
-        )),
+        Some(std::sync::Arc::new(degenbot_substrate::RouteRegistry::new(
+            index,
+        ))),
         Some(std::sync::Arc::new(db)),
     );
     let outcome = usdc_frame_replay_outcome();
@@ -833,8 +833,8 @@ fn unsupported_family_observes_loudly_not_silently() {
         .unwrap();
     }
 
-    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::default();
-    index.push_edge(degenbot_bot::connector_index::V2Edge {
+    let mut index = degenbot_substrate::connector_index::V2ConnectorIndex::default();
+    index.push_edge(degenbot_substrate::connector_index::V2Edge {
         pool_id: 101,
         token0_id: tok_id,
         token1_id: weth_id,
@@ -910,8 +910,8 @@ fn known_v4_roster_extracts_the_typed_post_state() {
     let slot0 = v4_slot0_slot(state_base);
     let liq_slot = v4_liquidity_slot(state_base);
 
-    let mut index = degenbot_bot::connector_index::V2ConnectorIndex::default();
-    index.push_v4_edge(degenbot_bot::connector_index::V4Edge {
+    let mut index = degenbot_substrate::connector_index::V2ConnectorIndex::default();
+    index.push_v4_edge(degenbot_substrate::connector_index::V4Edge {
         pool_hash,
         manager: V4_MANAGER,
         state_view: None,
@@ -984,7 +984,7 @@ fn manager_without_roster_edges_stays_unsupported() {
     const V4_MANAGER: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
     let outcome =
         manager_journal_outcome(V4_MANAGER, &[(U256::from(0xdead_u64), U256::from(1u64))]);
-    let index = degenbot_bot::connector_index::V2ConnectorIndex::default();
+    let index = degenbot_substrate::connector_index::V2ConnectorIndex::default();
 
     let descriptors = build_descriptors(Some(&index), &outcome.touched, &test_execution());
     let Some(PoolFamily::V4PoolManager { pools }) = descriptors.by_address.get(&V4_MANAGER) else {
@@ -1123,12 +1123,12 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
 
     use alloy::primitives::address;
     use alloy::providers::ProviderBuilder;
-    use degenbot_bot::bot_core::SimAnchorState;
     use degenbot_strategy::backrun::{Decision, MevblockerBackrun};
     use degenbot_strategy::backrun_strategy::BackrunStrategy;
     use degenbot_strategy::frame_pipeline::{
         build_block_handle, load_fixture_frames, process_frame, PipelineConfig,
     };
+    use degenbot_substrate::SimAnchorState;
 
     // Arm the guard for the WHOLE run (this target never calls classify).
     std::env::set_var("DEGENBOT_CLASSIFIER_GUARD", "1");

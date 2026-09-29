@@ -31,8 +31,8 @@ use degenbot_eventhub::Hub;
 use indexmap::IndexMap;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::bot_core::route_registry::RouteRegistry;
 use crate::nonce_authority::{NonceAuthority, StrategyId};
+use degenbot_substrate::route_registry::RouteRegistry;
 
 /// The operator pose of one registered strategy driver: the host's
 /// authoritative lifecycle. It is distinct from the driver loop's own

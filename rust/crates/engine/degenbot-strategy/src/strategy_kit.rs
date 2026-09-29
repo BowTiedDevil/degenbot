@@ -27,11 +27,11 @@
 
 use std::sync::Arc;
 
-use degenbot_bot::bot_core::pool_ingress::{
+use degenbot_pools::tick_fetch::TickBootstrapRpc;
+use degenbot_substrate::pool_ingress::{
     DbArm, IngressWitness, PoolIngress, TickMapPoolIdentity, TickMapSampleVerifier, VerifyLevel,
 };
-use degenbot_bot::bot_core::RouteRegistry;
-use degenbot_pools::tick_fetch::TickBootstrapRpc;
+use degenbot_substrate::RouteRegistry;
 
 use crate::anchored_dfs::AnchoredGraph;
 use crate::strategy_plane::StrategyName;

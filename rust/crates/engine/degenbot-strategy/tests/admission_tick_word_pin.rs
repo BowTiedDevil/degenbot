@@ -12,7 +12,7 @@
 //!
 //! Textual scans keep the check compile-error-free (the `nonce_issuer_unified`
 //! pattern) while catching a re-introduced private ladder at the symbol level.
-//! The behavioral staging contract lives in `bot_core::pool_ingress` tests.
+//! The behavioral staging contract lives in `degenbot_substrate::pool_ingress` tests.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -51,7 +51,7 @@ fn no_tick_word_fetch_lives_in_the_strategy_crate() {
         for token in FORBIDDEN_TICK_FETCHES {
             assert!(
                 !text.contains(token),
-                "{} performs a raw tick-word fetch ({token}); route tick-map staging through bot_core::pool_ingress",
+                "{} performs a raw tick-word fetch ({token}); route tick-map staging through degenbot_substrate::pool_ingress",
                 file.display()
             );
         }
@@ -70,7 +70,7 @@ fn strategy_crate_cannot_mint_db_or_chain_seed_provenance() {
         ] {
             assert!(
                 !text.contains(token),
-                "{} claims Db/Chain seed provenance ({token}); only bot_core::pool_ingress may mint it",
+                "{} claims Db/Chain seed provenance ({token}); only degenbot_substrate::pool_ingress may mint it",
                 file.display()
             );
         }
