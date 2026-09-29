@@ -84,7 +84,5 @@ class FakePipelineContext:
     bot: object
     chain_id: int = 1
     database_path: Path = Path("unused.db")
-    uniswap_v3_tracker: object | None = None
-    sushiswap_v3_tracker: object | None = None
-    pancakeswap_v3_tracker: object | None = None
+    construction_route: object | None = None
     weth: object | None = None

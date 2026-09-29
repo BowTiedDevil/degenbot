@@ -22,6 +22,7 @@ from degenbot._ffi import (
     PoolAlreadyRegisteredError,
     PoolRegistrationError,
     SpecViolationError,
+    UnsupportedPoolFamilyError,
 )
 from degenbot.exceptions.arbitrage import (
     ArbCalculationError,
@@ -141,6 +142,7 @@ __all__ = (
     "UnknownPool",
     "UnknownPoolId",
     "Unprofitable",
+    "UnsupportedPoolFamilyError",
     "VerificationMismatchError",
     "VerificationRpcError",
 )

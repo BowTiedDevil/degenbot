@@ -29,9 +29,30 @@ class BuildPoolRequest:
     tick_bitmap: dict[int, Any] | None = None
     tick_data: dict[int, Any] | None = None
 
+    # The resolved construction route (CONTEXT.md, Construction route) — the
+    # cockpit's policy ordering the core route entry walks. `None` = the
+    # generic-only route (the behavior-preserving default).
+    construction_route: ConstructionRoute | None = None
+
     # Balancer options (flat fields matching existing pattern)
     bpt_idx: int | None = None  # Override BPT index detection
     invariant_version: int | None = None  # Override: INVARIANT_V1 or INVARIANT_V2
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ConstructionRoute:
+    """The resolved construction-route policy (CONTEXT.md, Construction route).
+
+    ONE ordered attempt policy for constructing a family-unknown single-address
+    pool: the factory rungs in policy order, terminating in the generic
+    builder rung. A driver VALUE the cockpit resolves — the core route entry
+    walks it and classifies every failure on the build-refusal taxonomy; the
+    driver never re-implements the chain (the retired tracker fallback chain
+    is the bug this replaces).
+    """
+
+    factories: tuple[str, ...] = ()
+    generic: bool = True
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)

@@ -23,12 +23,13 @@ from typing import TYPE_CHECKING, Any, cast
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool, get_checksum_address
 from degenbot.arbitrage import RetryPolicy
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.builders.request import BuildManagedPoolRequest
+from degenbot.builders.request import BuildManagedPoolRequest, ConstructionRoute
 from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
     DirectionResolutionError,
     PathRegistryFullError,
     PathRejectedError,
+    UnsupportedPoolFamilyError,
     VerificationMismatchError,
     VerificationRpcError,
 )
@@ -45,10 +46,7 @@ from degenbot.runner.identity import (
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
 )
-from degenbot.uniswap.trackers import UniswapV3PoolTracker
-from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS
-from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
@@ -242,48 +240,47 @@ class ConstructionContext:
     trim never severs — the decoupling seam for Sub-B (background registration
     on the pump runtime).
 
-    The three V3 trackers + the WETH token are built once here (at
-    :meth:`for_bot`), not re-derived per pool.
+    The context holds RESOLVED POLICY VALUES only: the construction route
+    (CONTEXT.md, Construction route — the ordered factory rungs + the generic
+    builder rung) and the WETH token, built once here. The core route entry
+    (``pool_builder::route``) owns the walk — route order, the DB two-step
+    identity, get-or-register into session state — and classifies every
+    failure on the build-refusal taxonomy, so no tracker or snapshot object
+    lives here (the retired three-tracker fallback chain was the bare
+    except-and-continue bug this replaces).
     """
 
     bot: Bot
     chain_id: int
     database_path: pathlib.Path
-    uniswap_v3_tracker: UniswapV3PoolTracker
-    sushiswap_v3_tracker: UniswapV3PoolTracker
-    pancakeswap_v3_tracker: UniswapV3PoolTracker
+    construction_route: ConstructionRoute
     weth: Any  # Erc20Token (WETH)
 
     @classmethod
     def for_bot(
         cls,
         bot: Bot,
-        v3_snapshot: UniswapV3LiquiditySnapshot | None,
     ) -> ConstructionContext:
-        """Build the construction context for a bot, creating the trackers + WETH once."""
-        uniswap_v3_tracker = bot.add_tracker(
-            UniswapV3PoolTracker,
-            factory_address=UNISWAP_V3_MAINNET_FACTORY,
-            snapshot=v3_snapshot,
-        )
-        sushiswap_v3_tracker = bot.add_tracker(
-            UniswapV3PoolTracker,
-            factory_address=SUSHISWAP_V3_MAINNET_FACTORY,
-            snapshot=v3_snapshot,
-        )
-        pancakeswap_v3_tracker = bot.add_tracker(
-            UniswapV3PoolTracker,
-            factory_address=PANCAKESWAP_V3_MAINNET_FACTORY,
-            snapshot=v3_snapshot,
+        """Build the construction context for a bot.
+
+        Resolves the route policy (the mainnet V3 fork factories in policy
+        order, generic builder rung armed) and builds WETH once. The core
+        route entry owns everything else about construction.
+        """
+        construction_route = ConstructionRoute(
+            factories=(
+                UNISWAP_V3_MAINNET_FACTORY,
+                SUSHISWAP_V3_MAINNET_FACTORY,
+                PANCAKESWAP_V3_MAINNET_FACTORY,
+            ),
+            generic=True,
         )
         weth = bot.build_erc20token(WETH_ADDRESS)
         return cls(
             bot=bot,
             chain_id=bot.chain_id,
             database_path=bot.database_path,
-            uniswap_v3_tracker=uniswap_v3_tracker,
-            sushiswap_v3_tracker=sushiswap_v3_tracker,
-            pancakeswap_v3_tracker=pancakeswap_v3_tracker,
+            construction_route=construction_route,
             weth=weth,
         )
 
@@ -334,9 +331,10 @@ class PathRegistrationPipeline:
         self.constr_bot = context.bot
         self.constr_chain_id = context.chain_id
         self.constr_database_path = context.database_path
-        self.uniswap_v3_tracker = context.uniswap_v3_tracker
-        self.sushiswap_v3_tracker = context.sushiswap_v3_tracker
-        self.pancakeswap_v3_tracker = context.pancakeswap_v3_tracker
+        # The resolved construction-route policy (CONTEXT.md, Construction
+        # route) — the core route entry walks it; the driver supplies values,
+        # never construction code.
+        self.construction_route = context.construction_route
         self.weth = context.weth
         self.engine_registry = engine_registry
         self.retry_policy_obj = retry_policy or RetryPolicy()
@@ -550,12 +548,28 @@ class PathRegistrationPipeline:
                 if pt == "V2":
                     pool = self.constr_bot.build_pool(step.address, silent=True)
                 elif pt == "V3":
-                    pool = self._build_v3_fallback_chain(step.address)
+                    # ONE core entry: the construction route (route order +
+                    # DB two-step identity + get-or-register) lives in
+                    # ``pool_builder::route`` — the cockpit supplies the
+                    # resolved policy value and receives the constructed,
+                    # registered pool or a typed refusal.
+                    pool = self.constr_bot.build_pool(
+                        step.address,
+                        silent=True,
+                        construction_route=self.construction_route,
+                    )
                 else:
                     pool = self.constr_bot.build_managed_pool(
                         UNISWAP_V4_POOL_MANAGER_ADDRESS,
                         BuildManagedPoolRequest(pool_id=step.hash, silent=True),
                     )
+            except UnsupportedPoolFamilyError:
+                # The route's loud arm (ADR-055 D4): a family-level stable
+                # refusal — no rung serves this pool's factory, no DEX preset,
+                # no identity selector, CREATE2 contradiction — aborts the
+                # unit LOUDLY. Never swallowed into the next rung (the retired
+                # bare except-and-continue), never counted as a benign skip.
+                raise
             except Exception as exc:
                 refusal = self._ledger.classify_build_refusal(exc, pool_type=pt)
                 if refusal.stable:
@@ -745,26 +759,6 @@ class PathRegistrationPipeline:
     ) -> int:
         """The engine hop key off a build handle (ADR-006 D3: one pool_id)."""
         return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
-
-    def _build_v3_fallback_chain(self, address: str) -> object:
-        """The V3 build chain: Uniswap, Sushi, Pancake trackers, generic Bot.
-
-        Runs inside ONE offloaded call (PRG-1: the Rust build path itself
-        single-flights duplicate same-family-keyed builds, so pool-identity
-        fallbacks cannot race the Rust registration across consumers); the
-        whole chain occupies one bounded-executor slot instead of
-        re-queueing per rung.
-        """
-        try:
-            return self.uniswap_v3_tracker.get_pool(pool_address=address, silent=True)
-        except Exception:
-            try:
-                return self.sushiswap_v3_tracker.get_pool(pool_address=address, silent=True)
-            except Exception:
-                try:
-                    return self.pancakeswap_v3_tracker.get_pool(pool_address=address, silent=True)
-                except Exception:
-                    return self.constr_bot.build_pool(address, silent=True)
 
     def _record_skip(
         self,
@@ -1088,12 +1082,14 @@ class BuildPathsOptions:
     configuration values, so the caller states what it resolved and no code
     path invents one. A caller that supplies ``pipeline`` already carries them
     on the pipeline it passes.
+
+    The snapshot fields are retired: per-pool tick data resolves core-side at
+    construction (the DB arm of the Rust builder, or the Chain arm), so a
+    driver-side snapshot object has no consumer in the construction route.
     """
 
     max_registered_paths: int
     discovery_batch_size: int
-    v3_snapshot: UniswapV3LiquiditySnapshot | None = None
-    v4_snapshot: UniswapV4LiquiditySnapshot | None = None
     retry_policy: RetryPolicy | None = None
     context: ConstructionContext | None = None
     pipeline: PathRegistrationPipeline | None = None
@@ -1125,9 +1121,7 @@ async def build_paths(
     one for a pipeline it builds itself.
     """
     constr_ctx = (
-        options.context
-        if options.context is not None
-        else ConstructionContext.for_bot(bot, options.v3_snapshot)
+        options.context if options.context is not None else ConstructionContext.for_bot(bot)
     )
 
     pipeline = options.pipeline or PathRegistrationPipeline(

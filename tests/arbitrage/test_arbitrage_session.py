@@ -22,6 +22,7 @@ import signal
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,12 +38,6 @@ from degenbot.runner.build_paths import (
     PathRegistrationPipeline,
 )
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
-from degenbot.runner.identity import (
-    PANCAKESWAP_V3_MAINNET_FACTORY,
-    SUSHISWAP_V3_MAINNET_FACTORY,
-    UNISWAP_V3_MAINNET_FACTORY,
-    WETH_ADDRESS,
-)
 from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.helpers.boot_actors import inline_registration_scheduler
@@ -903,37 +898,9 @@ class TestConstructionContext:
     database path + chain_id + WETH) so a background registration
     task owns them out of run()'s main-loop trim."""
 
-    def test_for_bot_builds_trackers_weth_db_once(self) -> None:
-        class _BuildBot:
-            def __init__(self) -> None:
-                self.chain_id = 1
-                self.database_path = Path("unused.db")
-                self.factory_addresses: list[str] = []
-                self.weth_addresses: list[str] = []
-
-            def add_tracker(self, _tracker_cls, *, factory_address, snapshot):
-                self.factory_addresses.append(factory_address)
-                return f"tracker:{factory_address}"
-
-            def build_erc20token(self, address: str):
-                self.weth_addresses.append(address)
-                return f"weth:{address}"
-
-        bot = _BuildBot()
-        ctx = ConstructionContext.for_bot(bot, v3_snapshot=None)
-
-        # All three V3 factories dispatched to the tracker builder.
-        assert sorted(bot.factory_addresses) == sorted([
-            UNISWAP_V3_MAINNET_FACTORY,
-            SUSHISWAP_V3_MAINNET_FACTORY,
-            PANCAKESWAP_V3_MAINNET_FACTORY,
-        ])
-        # Trackers + WETH + database path + chain_id are bundled into the context.
-        assert ctx.chain_id == 1
-        assert ctx.database_path is bot.database_path
-        assert ctx.weth == f"weth:{WETH_ADDRESS}"
-        # One construction pass: exactly one WETH token requested.
-        assert bot.weth_addresses == [WETH_ADDRESS]
+    # (The ConstructionContext contract test moved to
+    # tests/arbitrage/test_pool_construction_route.py with the pool-construction
+    # card: the context holds resolved policy values, not trackers.)
 
     def test_run_passes_context_only_for_real_build_paths(self) -> None:
         """With an injected (fake) path_builder, run() must NOT build a
@@ -1595,9 +1562,7 @@ class TestPathRegistrationPipeline:
             bot=bot,
             chain_id=1,
             database_path=bot.database_path,
-            uniswap_v3_tracker=object(),
-            sushiswap_v3_tracker=object(),
-            pancakeswap_v3_tracker=object(),
+            construction_route=SimpleNamespace(factories=(), generic=True),
             weth=weth,
         )
         pipeline = PathRegistrationPipeline(

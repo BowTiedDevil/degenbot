@@ -43,6 +43,21 @@ create_exception!(
     "An RPC/transport error during on-chain verification (e.g. provider construction failed)."
 );
 
+// The construction route's LOUD refusal (ADR-055 D4, pool-construction card):
+// a family-level stable construction refusal — no route rung serves the
+// pool's factory, the factory has no built-in DEX preset, no identity
+// selector answered, or CREATE2 verification failed. The registration unit
+// re-raises this type (never swallowed into the next route rung and never
+// counted as a benign skip): aborting loudly is the whole point of the
+// loud-abort rule. Distinct from `PoolRegistrationError` (admission refusals
+// of an OTHERWISE-served family keep skip semantics there).
+create_exception!(
+    degenbot._ffi,
+    UnsupportedPoolFamilyError,
+    pyo3::exceptions::PyRuntimeError,
+    "A construction route refused a pool whose factory no rung serves (no built-in DEX variant preset, no identity selector answered, or CREATE2 verification failed). Loud typed abort under the loud-abort rule (ADR-055 D4) — never a silent skip."
+);
+
 // V4 pool-admission refusals (Plan 102, slice 2). The Rust core refuses
 // amount-modifying-hook, dynamic-fee, and high-static-fee pools as a
 // *correctness floor* (the solver's V3-CL math assumes no hook
@@ -165,6 +180,35 @@ create_exception!(
     pyo3::exceptions::PyRuntimeError,
     "The fleet registration intake faulted: the sticky lane-death latch resolved held intake units terminally (they were never executed). Sticky until a fresh process."
 );
+
+/// Map the construction route's typed refusal onto the exception surface:
+/// the loud unsupported-family arm gets its own typed fatal; a skip rides
+/// the taxonomy-mapped existing exceptions so the use site's ledger
+/// classification (transient vs stable fact) is unchanged.
+pub(crate) fn map_construction_refusal(
+    err: degenbot_bot::bot_core::pool_builder::route::ConstructionRefusal,
+) -> PyErr {
+    use degenbot_bot::bot_core::pool_builder::route::ConstructionRefusal as Refusal;
+    match err {
+        Refusal::UnsupportedFamily { address, detail } => UnsupportedPoolFamilyError::new_err(
+            format!("construction route refused pool at {address}: {detail}"),
+        ),
+        Refusal::Skipped(degenbot_bot::bot_core::registration_ledger::BuildFailure::Transient(
+            detail,
+        )) => pyo3::exceptions::PyRuntimeError::new_err(detail),
+        Refusal::Skipped(degenbot_bot::bot_core::registration_ledger::BuildFailure::HighFee) => {
+            HighFeePoolRejectedError::new_err(
+                "pool refused: static fee exceeds the cmd_executor's 2-byte encoding limit",
+            )
+        }
+        Refusal::Skipped(degenbot_bot::bot_core::registration_ledger::BuildFailure::HookedPool) => {
+            HookedPoolRejectedError::new_err("pool refused: carries an amount-modifying hook")
+        }
+        Refusal::Skipped(degenbot_bot::bot_core::registration_ledger::BuildFailure::DynamicFee) => {
+            DynamicFeePoolRejectedError::new_err("pool refused: dynamic fee")
+        }
+    }
+}
 
 /// Map the bot-side typed `IntakeFault` onto the exception (ONE owner of the
 /// wording, mirroring `boot_refused`).

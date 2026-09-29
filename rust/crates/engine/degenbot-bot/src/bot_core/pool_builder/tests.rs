@@ -1907,3 +1907,159 @@ async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
         "expected MissingIdentity, got {err:?}"
     );
 }
+
+// ── Construction route: route order + get-or-register + typed refusals ──
+
+use crate::bot_core::pool_builder::route;
+use crate::bot_core::state_lock::LockSite;
+use crate::bot_core::{Bot, RegisteredPoolFamily};
+
+fn v3_route() -> route::V3RouteInputs<'static> {
+    route::V3RouteInputs::default()
+}
+
+#[tokio::test]
+async fn route_transient_rpc_failure_is_a_counted_skip() {
+    // A transient RPC failure ENDS the route — it is a typed skip, never a
+    // bare exception swallowed into the next rung (the retired driver chain's
+    // bug re-ran a full build per surviving rung).
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+    let mut f = FakeRpc::new();
+    f.set_error(
+        choreography::selector(b"factory()"),
+        ProviderError::ConnectionFailed {
+            message: "blip".to_owned(),
+        },
+    );
+    let io = io_with(f);
+    let bot = Bot::new(1);
+
+    let err = route::construct_pool(
+        &bot,
+        &route::ConstructionRoute::generic_only(),
+        &route::RequestedPool::V3 { address: pool },
+        &io,
+        v3_route(),
+        Some(9_000_000),
+    )
+    .await
+    .expect_err("an RPC blip is a skip, never a build");
+    assert!(
+        matches!(
+            &err,
+            route::ConstructionRefusal::Skipped(
+                crate::bot_core::registration_ledger::BuildFailure::Transient(_)
+            )
+        ),
+        "transient RPC classifies as a counted skip, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn route_unserved_factory_refuses_loud() {
+    // ADR-055 D4: a factory no route rung serves is a family-level stable
+    // refusal — the LOUD typed abort, never a silent skip.
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    let io = io_with(f);
+    let bot = Bot::new(1);
+
+    let served: Address = alloy::primitives::address!("0x9999999999999999999999999999999999999999");
+    let err = route::construct_pool(
+        &bot,
+        &route::ConstructionRoute {
+            factories: vec![served],
+            generic: false,
+        },
+        &route::RequestedPool::V3 { address: pool },
+        &io,
+        v3_route(),
+        Some(9_000_000),
+    )
+    .await
+    .expect_err("an unserved factory aborts loudly");
+    assert!(
+        matches!(err, route::ConstructionRefusal::UnsupportedFamily { .. }),
+        "unserved factory is the loud-abort class, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn route_matched_rung_builds_and_registers() {
+    // The route walk answers a served factory with a CONSTRUCTED, REGISTERED
+    // pool: one immutable batch, the seeded build, one registration.
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(choreography::selector(b"token0()"), addr_word(tok0));
+    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        choreography::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::encode_slot0()[..4].try_into().unwrap(),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::encode_liquidity()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    f.set(
+        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    let io = io_with(f);
+    let bot = Bot::new(1);
+
+    let built = route::construct_pool(
+        &bot,
+        &route::ConstructionRoute::generic_only(),
+        &route::RequestedPool::V3 { address: pool },
+        &io,
+        v3_route(),
+        Some(9_000_000),
+    )
+    .await
+    .expect("a served factory constructs and registers");
+    let identity = built.built.expect("a fresh build carries its identity");
+    assert_eq!(identity.address, pool);
+    assert_eq!(identity.token0, tok0);
+    assert_eq!(identity.token1, tok1);
+    assert_eq!(identity.factory, Some(factory));
+    assert_eq!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .registered_pool_by_address(&pool),
+        Some((built.pool_id, RegisteredPoolFamily::V3)),
+        "the entry registers into session state"
+    );
+
+    // Get-or-register: a second request answers from the registry with NO
+    // I/O — an all-erroring transport still succeeds with the same pool id.
+    let io_down = io_with(FakeRpc::new());
+    let again = route::construct_pool(
+        &bot,
+        &route::ConstructionRoute::generic_only(),
+        &route::RequestedPool::V3 { address: pool },
+        &io_down,
+        v3_route(),
+        Some(9_000_000),
+    )
+    .await
+    .expect("a registered pool answers from the registry");
+    assert_eq!(again.pool_id, built.pool_id);
+    assert!(again.built.is_none(), "the GET half re-derives no identity");
+}

@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -59,9 +60,7 @@ class _PipelineContext:
     bot: object
     chain_id: int = 1
     database_path: Path = Path("unused.db")
-    uniswap_v3_tracker: object | None = None
-    sushiswap_v3_tracker: object | None = None
-    pancakeswap_v3_tracker: object | None = None
+    construction_route: object | None = None
     weth: object | None = None
 
 
@@ -352,7 +351,9 @@ def test_legacy_stance_pipeline_construction_refuses() -> None:
     """The hard cutover: no fleet intake, no crawl (loud, actionable)."""
     ctx = _PipelineContext(bot=_ConstrBot(fleet_hosted=False))
     with pytest.raises(RuntimeError, match="fleet-hosted only"):
-        PathRegistrationPipeline(context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000)
+        PathRegistrationPipeline(
+            context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000
+        )
 
 
 def test_retired_skip_gate_pipeline_tests_upgraded_shape() -> None:
@@ -400,9 +401,7 @@ class _RecordingRegistry:
     def run_v3_verify_lifecycle_sync(self, address: str) -> None:
         self.verifies.append(address)
 
-    def run_v3_verify_lifecycle_sync_with_retry(
-        self, address: str, policy: object
-    ) -> None:
+    def run_v3_verify_lifecycle_sync_with_retry(self, address: str, policy: object) -> None:
         self.verifies.append(address)
 
     def register_crawl_path(self, engine_hops: list) -> tuple[int, bool]:
@@ -421,19 +420,12 @@ def _pipeline_over_registry(
         POOL_B: _FakeV3Pool(POOL_B, T1_CHECKSUM, WETH_CHECKSUM, pool_id=202),
     }
 
-    class _Tracker:
-        def get_pool(
-            self,
-            *,
-            pool_address: str,
-            silent: bool = True,
-        ) -> _FakeV3Pool:
-            return pools[pool_address]
-
-    bot = _ConstrBot()
+    # The V3 build is the ONE core entry now (the construction route): the
+    # construction bot answers the address -> pool map directly.
+    bot = _ConstrBot(build_pool=lambda address, *, silent=True, **_route: pools[address])
     ctx = _PipelineContext(
         bot=bot,
-        uniswap_v3_tracker=_Tracker(),
+        construction_route=SimpleNamespace(factories=(), generic=True),
         weth=FakeToken(address=WETH_CHECKSUM),
     )
     return PathRegistrationPipeline(
@@ -548,19 +540,12 @@ def _pipeline_over_registry_three_pools(
         POOL_C: _FakeV3Pool(POOL_C, WETH_CHECKSUM, T1_CHECKSUM, pool_id=303),
     }
 
-    class _Tracker:
-        def get_pool(
-            self,
-            *,
-            pool_address: str,
-            silent: bool = True,
-        ) -> _FakeV3Pool:
-            return pools[pool_address]
-
-    bot = _ConstrBot()
+    # The V3 build is the ONE core entry now (the construction route): the
+    # construction bot answers the address -> pool map directly.
+    bot = _ConstrBot(build_pool=lambda address, *, silent=True, **_route: pools[address])
     ctx = _PipelineContext(
         bot=bot,
-        uniswap_v3_tracker=_Tracker(),
+        construction_route=SimpleNamespace(factories=(), generic=True),
         weth=FakeToken(address=WETH_CHECKSUM),
     )
     return PathRegistrationPipeline(
@@ -894,7 +879,7 @@ def test_impostor_class_name_is_never_memoized() -> None:
     impostor = type("HighFeePoolRejectedError", (RuntimeError,), {})
     builds: list[str] = []
 
-    def _build_pool(address: str, *, silent: bool = True) -> None:
+    def _build_pool(address: str, *, silent: bool = True, **_route: object) -> None:
         builds.append(address)
         msg = "name matches, type does not"
         raise impostor(msg)
@@ -916,7 +901,7 @@ def test_real_typed_stable_refusal_is_memoized() -> None:
     """The real typed refusal IS a pool fact: the second sighting memoizes."""
     builds: list[str] = []
 
-    def _build_pool(address: str, *, silent: bool = True) -> None:
+    def _build_pool(address: str, *, silent: bool = True, **_route: object) -> None:
         builds.append(address)
         raise HighFeePoolRejectedError
 
@@ -938,7 +923,7 @@ def test_transient_build_skip_tag_uses_the_bounded_vocabulary() -> None:
     """
     from degenbot.runner._registration_ledger import RegistrationOutcome
 
-    def _build_pool(address: str, *, silent: bool = True) -> None:
+    def _build_pool(address: str, *, silent: bool = True, **_route: object) -> None:
         msg = "rpc blip"
         raise ConnectionError(msg)
 

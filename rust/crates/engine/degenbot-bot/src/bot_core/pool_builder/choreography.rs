@@ -78,7 +78,9 @@ pub struct V3Immutable {
 }
 
 /// Fetch a no-argument address-returning read (`factory()`, `token0()`, …).
-async fn fetch_address_returning(
+/// `pub(crate)`: the construction route's rung decision reads `factory()`
+/// alone (one call) before committing to the full immutable batch.
+pub(crate) async fn fetch_address_returning(
     io: &ConstructionIo,
     signature: &[u8],
     to: Address,

@@ -33,8 +33,8 @@ use std::sync::Arc;
 use alloy::primitives::{Address, I256};
 
 use crate::bot::engine::{
-    hex_string_to_pool_id, map_builder_err, map_register_v2_err, map_register_v3_err,
-    map_register_v4_err, SpecViolationError,
+    hex_string_to_pool_id, map_builder_err, map_construction_refusal, map_register_v2_err,
+    map_register_v3_err, map_register_v4_err, SpecViolationError,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -1237,7 +1237,8 @@ impl PyBot {
     /// # Errors
     ///
     /// As [`Self::build_v2_pool`].
-    #[pyo3(signature = (address, block=None, db=true, tick_data_fetcher=None, slot_layout=None))]
+    #[pyo3(signature = (address, block=None, db=true, tick_data_fetcher=None, slot_layout=None, factories=None))]
+    #[expect(clippy::too_many_arguments)] // the resolved construction route + the fetcher/layout hints are driver VALUES, not a struct-able choreography
     fn build_v3_pool(
         &self,
         py: Python<'_>,
@@ -1246,6 +1247,7 @@ impl PyBot {
         db: bool,
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
         slot_layout: Option<&str>,
+        factories: Option<Vec<String>>,
     ) -> PyResult<(u64, String, String, String, String)> {
         let addr = parse_address(address)?;
         let chain_id = self.bot.chain_id();
@@ -1263,7 +1265,7 @@ impl PyBot {
             &key,
             || Ok(self.registered_v3_payload(py, &addr, chain_id)),
             || {
-                use degenbot_bot::bot_core::pool_builder::builder;
+                use degenbot_bot::bot_core::pool_builder::route;
                 use degenbot_core::runtime::get_runtime;
                 let io = self.bot.construction_io_arc().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
@@ -1275,55 +1277,94 @@ impl PyBot {
                 let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
                     .as_deref()
                     .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
-                let mut params = py
-                    .detach(|| {
-                        get_runtime().block_on(builder::build_v3(chain_id, addr, db_ref, &io, block))
-                    })
-                    .map_err(map_builder_err)?;
-                // ADR-005 sparse-map parity: `build_v3` registers a single tick word
-                // (Sparse). The core builder leaves the backfill fetcher `None`; the
+                // The construction route (pool-construction card): ONE core
+                // entry — get-or-register + route order + build + register,
+                // classified on the registration taxonomy. The cockpit's
+                // resolved route (the ordered factory rungs) rides the call;
+                // `None` is the generic-only route (the behavior-preserving
+                // default), and the LOUD unsupported-family refusal surfaces
+                // as `UnsupportedPoolFamilyError` — never swallowed into
+                // another rung.
+                let route = route::ConstructionRoute {
+                    factories: factories
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|f| parse_address(f).ok())
+                        .collect(),
+                    generic: true,
+                };
+                // ADR-005 sparse-map parity: the core builder registers a single tick
+                // word (Sparse). The core builder leaves the backfill fetcher `None`; the
                 // Python driver injects a `PyTickWordFetcher` wrapping the legacy
                 // web3-sync `tick_data_fetcher` here (GIL held) so swap-time
                 // boundary-detection can pull neighbouring words without re-entering
                 // the asyncio runtime (a Rust `block_on` fetcher would deadlock).
-                if let Some(fetcher) = tick_data_fetcher.filter(|f| !f.is_none()) {
-                    params.fetcher = Some(crate::bot::pool::make_tick_fetcher(fetcher.unbind()));
-                }
+                let fetcher = tick_data_fetcher
+                    .filter(|f| !f.is_none())
+                    .map(|f| crate::bot::pool::make_tick_fetcher(f.unbind()));
                 // CL slot layout (VERIFY2 T4 / W32CAU): explicit override (the Python
                 // driver knows the pool class for non-JSON deployments) wins over the
                 // builder's deployment-table resolution.
-                match slot_layout {
-                    None => {}
-                    Some("pancakeswap") => {
-                        params.slot_layout = degenbot_pools::v3_state::ClSlotLayout::PancakeV3;
-                    }
-                    Some("uniswap") => {
-                        params.slot_layout = degenbot_pools::v3_state::ClSlotLayout::UniswapV3;
-                    }
+                let slot_override = match slot_layout {
+                    None => None,
+                    Some("pancakeswap") => Some(degenbot_pools::v3_state::ClSlotLayout::PancakeV3),
+                    Some("uniswap") => Some(degenbot_pools::v3_state::ClSlotLayout::UniswapV3),
                     Some(other) => {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "build_v3_pool: slot_layout must be 'uniswap' or 'pancakeswap', got {other:?}"
                         )));
                     }
-                }
-                // TF7RZB-S1 (builder return surface): return the core-computed identity
-                // alongside the pool_id. V3 has no per-pool `DexVariant`; the family is
-                // resolved from the builder-verified `factory` via the Rust-owned
-                // `resolve_dex_name` (kebab-case, e.g. "uniswap"), falling back to the
-                // generic "uniswap-v3" when the factory is not a known deployment.
-                let family = degenbot_uniswap::deployments::resolve_dex_name(chain_id, params.factory)
-                    .map_or_else(|| "uniswap-v3".to_string(), |d| d.as_str().to_string());
-                let identity = (
-                    params.token0.to_checksum(None),
-                    params.token1.to_checksum(None),
-                    params.address.to_checksum(None),
-                    family,
-                );
+                };
                 // Incident 2026-08-20 #2: never hold the GIL while parked on the
-                // BotState write - see `build_v2_pool`.
-                let pool_id = self
-                    .with_state_mut(py, |s| s.register_v3_pool(&params))
-                    .map_err(map_register_v3_err)?;
+                // core route (its registration write included) - see `build_v2_pool`.
+                let constructed = py
+                    .detach(|| {
+                        get_runtime().block_on(route::construct_pool(
+                            &self.bot,
+                            &route,
+                            &route::RequestedPool::V3 { address: addr },
+                            &io,
+                            route::V3RouteInputs {
+                                db: db_ref,
+                                fetcher,
+                                slot_layout: slot_override,
+                            },
+                            block,
+                        ))
+                    })
+                    .map_err(map_construction_refusal)?;
+                // TF7RZB-S1 (builder return surface): the core-computed identity
+                // echoes alongside the pool_id. A registry-GET race answer
+                // (`built == None`) echoes the already-registered payload instead.
+                let (pool_id, identity) = if let Some(built) = constructed.built {
+                    // V3 has no per-pool `DexVariant`; the family is resolved from
+                    // the builder-verified `factory` via the Rust-owned
+                    // `resolve_dex_name` (kebab-case, e.g. "uniswap"), falling back
+                    // to the generic "uniswap-v3" for an unknown deployment.
+                    let family = degenbot_uniswap::deployments::resolve_dex_name(
+                        chain_id,
+                        built.factory.unwrap_or_default(),
+                    )
+                    .map_or_else(|| "uniswap-v3".to_string(), |d| d.as_str().to_string());
+                    (
+                        constructed.pool_id,
+                        (
+                            built.token0.to_checksum(None),
+                            built.token1.to_checksum(None),
+                            built.address.to_checksum(None),
+                            family,
+                        ),
+                    )
+                } else {
+                    let payload = self
+                        .registered_v3_payload(py, &addr, chain_id)
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "build_v3_pool: registry GET answered {addr} with no readable V3 identity"
+                            ))
+                        })?;
+                    (payload.0, (payload.1, payload.2, payload.3, payload.4))
+                };
                 // Telemetry: see build_v2_pool — one Jaeger node per V3 registration.
                 let _reg = tracing::info_span!(
                     "degenbot.pool.register",

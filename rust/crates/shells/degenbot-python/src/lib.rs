@@ -705,6 +705,11 @@ mod _ffi {
                 "FleetIntakeFaultedError",
                 py.get_type::<crate::bot::engine::FleetIntakeFaultedError>(),
             )?;
+            // The construction route's loud refusal (ADR-055 D4).
+            m.add(
+                "UnsupportedPoolFamilyError",
+                py.get_type::<crate::bot::engine::UnsupportedPoolFamilyError>(),
+            )?;
             // Typed pool-admission exceptions (Plan 102, F2EVV6): a unified
             // `PoolRegistrationError` hierarchy so `build_paths` can classify
             // V2/V3/V4 admission refusals by type instead of fragile string

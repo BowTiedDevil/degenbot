@@ -20,7 +20,12 @@ from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
-from degenbot.builders.request import BuildManagedPoolRequest, BuildPoolRequest, BuildRequest
+from degenbot.builders.request import (
+    BuildManagedPoolRequest,
+    BuildPoolRequest,
+    BuildRequest,
+    ConstructionRoute,
+)
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -594,7 +599,7 @@ class Bot(AccountQueryMixin):
         """
         return self.build_erc20token(address)
 
-    def build_pool(
+    def build_pool(  # ruff: ignore[too-many-arguments] - one knob per resolved construction input, mirroring the retired keyword surface
         self,
         address: str,
         *,
@@ -602,10 +607,18 @@ class Bot(AccountQueryMixin):
         silent: bool = False,
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
+        construction_route: ConstructionRoute | None = None,
     ) -> AbstractLiquidityPool:
         """Build a pool from an address, automatically resolving its type.
 
         V4 managed pools should use ``build_managed_pool()`` instead.
+
+        ``construction_route`` is the resolved construction-route policy the
+        core route entry walks for the V3 arm (factory rungs + the generic
+        builder); ``None`` = the generic-only route. The route is a driver
+        VALUE — the core owns the walk and classifies every failure on the
+        build-refusal taxonomy (an unsupported family raises the typed
+        ``UnsupportedPoolFamilyError`` — the loud-abort rule).
 
         Returns:
             The computed value.
@@ -625,6 +638,7 @@ class Bot(AccountQueryMixin):
             # carries only the knobs in-tree callers actually set.
             tick_bitmap=tick_bitmap,
             tick_data=tick_data,
+            construction_route=construction_route,
         )
 
         # Check pool registry — return existing pool if already built
@@ -920,12 +934,17 @@ class Bot(AccountQueryMixin):
             # the engine's slot-index consumers (divergence probe, sim-anchor
             # projection) never misread a fork pool.
             slot_layout = "pancakeswap" if issubclass(pool_class, PancakeswapV3Pool) else "uniswap"
+            # The construction route: the cockpit's resolved policy value —
+            # the core route entry walks it (route order + get-or-register +
+            # build + register) and classifies every failure on the taxonomy.
+            route = request.construction_route or ConstructionRoute()
             b_res = self._py_bot.build_v3_pool(
                 address,
                 block=block,
                 db=True,
                 tick_data_fetcher=fetcher,
                 slot_layout=slot_layout,
+                factories=list(route.factories) or None,
             )
             return b_res[0], b_res
 

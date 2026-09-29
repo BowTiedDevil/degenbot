@@ -16,6 +16,11 @@
 //!   `build_curve_pool`, `build_balancer_*`).
 //! - [`curve_choreography`] — the Curve-specific primitives.
 //!
+//! - [`route`] — the construction route: the core's ONE entry from a
+//!   requested pool to a constructed, registered pool (route order + DB
+//!   two-step identity + get-or-register, classified on the registration
+//!   ledger's build-refusal taxonomy).
+//!
 //! Note: `build_curve_pool` / `build_balancer_*` are not yet re-exported from
 //! the `degenbot` umbrella nor exposed on `PyBot` (see ADR-023/D4 + epic
 //! `VK3YDM`); `build_v2`/`build_v3`/`build_v4` are the standalone-reachable set.
@@ -23,6 +28,7 @@
 pub mod builder;
 pub mod choreography;
 pub mod curve_choreography;
+pub mod route;
 
 #[cfg(test)]
 mod tests;

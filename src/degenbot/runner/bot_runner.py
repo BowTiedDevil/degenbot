@@ -69,10 +69,6 @@ if TYPE_CHECKING:
     from degenbot.strategy import StrategyReadinessView
 from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
-from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
-from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
-from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
-from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
 # ──────────────────────────────────────────────────────────────────
 # Direction resolver
@@ -371,8 +367,6 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         self._injected_stop_engine = injected.stop_engine
         self._scheduler = injected.scheduler
         # Snapshots for the registration pass (nulled by the trim).
-        self.v3_snapshot: Any = None
-        self.v4_snapshot: Any = None
         # The phase machine is the ONLY lifecycle state (no ``_started`` bool
         # — Started re-entry is the no-op; Running/Closed re-entry is the
         # phase error).
@@ -543,7 +537,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
 
         sim_ctx = self._build_sim_ctx(async_w3, cfg, engine_registry)
 
-        # ── Snapshots (V3 pool tracker pre-population only; the engine's DB
+        # ── Snapshots (the non-DB injected path only; the engine's DB
         # snapshot is loaded eagerly at Bot construction via
         # `Bot::load_snapshot_from_db`, and the snapshot→WS gap closes in
         # `resume_from_subscribe`). `engine_registry.start()` takes
@@ -551,9 +545,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         # non-DB (file/memory) — the `_injected` fast path. The production
         # DB path reads the snapshot at construction and `start()` takes no
         # snapshot kwargs.
-        v3_snap, v4_snap, start_v3, start_v4 = self._start_snapshots(bot)
-        self.v3_snapshot = v3_snap
-        self.v4_snapshot = v4_snap
+        start_v3, start_v4 = self._start_snapshots(bot)
 
         # ── Engine pre-resume ritual (subscribe → verify) ──
         # The snapshot→WS gap is closed automatically inside
@@ -731,20 +723,22 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         )
         return sim_ctx
 
-    def _start_snapshots(self, bot: Bot) -> tuple[Any, Any, Any, Any]:
-        """Resolve ``(v3, v4, start_v3, start_v4)`` for the pre-resume ritual.
+    def _start_snapshots(self, bot: Bot) -> tuple[Any, Any]:
+        """Resolve ``(start_v3, start_v4)`` for the pre-resume ritual.
 
         Injected snapshots (the ``_injected`` fast path) flow through
-        ``engine_registry.start()``; the production DB path reads them from the
-        bot's store and passes no start kwargs.
+        ``engine_registry.start()`` to seed the non-DB snapshot block ``S``.
+        The production DB path passes NO snapshot objects: the engine's DB
+        snapshot is loaded eagerly at ``Bot`` construction via
+        ``Bot::load_snapshot_from_db`` and per-pool tick data resolves
+        core-side at construction (the builder's Db/Chain arms), so a
+        driver-side snapshot object has no consumer (the retired V3 pool
+        tracker pre-population was its last one).
         """
         if self._injected_snapshots is not None:
             v3_snap, v4_snap, _v3_blk, _v4_blk = self._injected_snapshots
-            return v3_snap, v4_snap, v3_snap, v4_snap
-        # Production DB path: snapshot for the V3 pool tracker only
-        # (engine feeds from the core store, set at Bot construction).
-        v3_snap, v4_snap, _v3_blk, _v4_blk = get_snapshots(bot)
-        return v3_snap, v4_snap, None, None
+            return v3_snap, v4_snap
+        return None, None
 
     # ── Phase B: the rolling-start main loop ──────────────────────────
     async def run(self) -> SessionEndVerdict:
@@ -875,8 +869,6 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
 
         # Trim redundant Python state — Rust engine owns canonical pool state.
         bot.release_python_state()
-        self.v3_snapshot = None
-        self.v4_snapshot = None
         self.bot = None  # drop the only Python ref; engine keeps its own Bot ref
         gc.collect()
         self._injected_bot = None  # release the injected ref too
@@ -1113,55 +1105,3 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
             _flush_telemetry()
         except Exception as exc:
             bot_logger.debug(f"[shutdown] telemetry flush failed: {exc!r}")
-
-
-# get_snapshots
-
-
-def get_snapshots(
-    bot: Bot,
-) -> tuple[
-    UniswapV3LiquiditySnapshot | None,
-    UniswapV4LiquiditySnapshot | None,
-    int | None,
-    int | None,
-]:
-    """Load V3 and V4 liquidity snapshots from the database for the V3 pool
-    tracker pre-population.
-
-    The engine's DB snapshot is loaded eagerly at `Bot` construction by
-    `Bot::load_snapshot_from_db`, and the snapshot→WS gap is closed
-    automatically inside `BlockPump::resume_from_subscribe` — so these
-    snapshots feed only the V3 pool tracker, not the engine.
-
-    Returns (v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block).
-    """
-    v3_snapshot_block: int | None = None
-    v4_snapshot_block: int | None = None
-
-    # ── V3 snapshot ──────────────────────────────────────────────
-    v3_snapshot = None
-    try:
-        v3_snapshot = UniswapV3LiquiditySnapshot(
-            source=V3DatabaseSnapshot(chain_id=1, database_path=bot.database_path),
-        )
-    except ValueError:
-        bot_logger.info("[backfill] V3: no snapshot data in database, skipping")
-
-    if v3_snapshot is not None:
-        v3_snapshot_block = v3_snapshot.newest_block
-        bot_logger.info(f"[backfill] V3: DB snapshot at block {v3_snapshot_block}")
-
-    # ── V4 snapshot ──────────────────────────────────────────────
-    v4_snapshot = None
-    try:
-        v4_db_snapshot = V4DatabaseSnapshot(chain_id=1, database_path=bot.database_path)
-        v4_snapshot = UniswapV4LiquiditySnapshot(source=v4_db_snapshot)
-    except ValueError:
-        bot_logger.info("[backfill] V4: no snapshot data in database, skipping")
-
-    if v4_snapshot is not None:
-        v4_snapshot_block = v4_snapshot.newest_block
-        bot_logger.info(f"[backfill] V4: DB snapshot at block {v4_snapshot_block}")
-
-    return v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block

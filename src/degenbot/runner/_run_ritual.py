@@ -246,7 +246,7 @@ class RunRitual:
         session = host.session
         assert session is not None
         assert session.bot is not None
-        registration_context = ConstructionContext.for_bot(session.bot, host.v3_snapshot)
+        registration_context = ConstructionContext.for_bot(session.bot)
         session.registration_context = registration_context
         pipeline = PathRegistrationPipeline(
             context=registration_context,
@@ -291,8 +291,6 @@ class RunRitual:
                 options=BuildPathsOptions(
                     max_registered_paths=host.cfg.max_registered_paths,
                     discovery_batch_size=host.cfg.discovery_batch_size,
-                    v3_snapshot=host.v3_snapshot,
-                    v4_snapshot=host.v4_snapshot,
                     retry_policy=retry_policy,
                     context=registration_context,
                     pipeline=pipeline,
