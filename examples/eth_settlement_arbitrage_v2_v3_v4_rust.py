@@ -93,7 +93,7 @@ async def main() -> None:
                         bound = payload.get("bound")
                         n = await session.trigger_discovery(bound=bound)
                         return {"detail": f"discovery processed {n} paths"}
-                    if op in ("set_fleet_posture", "get_fleet_posture"):
+                    if op in {"set_fleet_posture", "get_fleet_posture"}:
                         # JCI2FW Part B: the live cordon-threshold re-tune
                         # + read, routed through the shared helper (the
                         # degenbot.fleet mirror home mints on first use).
@@ -104,7 +104,7 @@ async def main() -> None:
                 operator_task = asyncio.create_task(operator.serve(), name="operator-server")
                 bot_logger.info(f"[operator] listening on {args.operator_socket}")
             try:
-                await session.run()
+                bot_logger.info(f"[session] ended: {(await session.run()).name}")
             finally:
                 if operator_task is not None:
                     operator_task.cancel()

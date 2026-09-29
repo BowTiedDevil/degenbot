@@ -8,10 +8,11 @@ data it consumes, never branches tests select. It sits strictly behind the
 table already owns.
 
 The host is the :class:`~degenbot.runner.BotRunner` that owns the session:
-the ritual reads its collaborators and writes back the three handles the
-runner's other duties consume (the consumer/registration task refs and the
-registration-owned construction context). Ritual states are private;
-diagnostics read facts, never states.
+the ritual reads its collaborators and writes the three run-phase handles
+(the consumer/registration task refs and the registration-owned
+construction context) onto the session owner, where the runner's other
+duties read them. Ritual states are private; diagnostics read facts,
+never states.
 """
 
 from __future__ import annotations
@@ -109,7 +110,7 @@ class RunRitual:
         assert session.bot is not None
         consumer = host.consumer or consume_result_batches
         block_stream = session.bot.block_stream()
-        host.result_consumer_task = asyncio.create_task(
+        session.result_consumer_task = asyncio.create_task(
             consumer(session=session, block_stream=block_stream),
             name="result-consumer",
         )
@@ -119,8 +120,10 @@ class RunRitual:
         """Attach the consumer to the session watch the moment it exists."""
         self._expect(_RitualState.ATTACH_WATCH)
         host = self._host
+        session = host.session
+        assert session is not None
         host.session_watch.attach(
-            consumer_task=host.result_consumer_task,
+            consumer_task=session.result_consumer_task,
             watchdog_factory=host.pump_finished_watchdog,
         )
         self._state = _RitualState.RESUME
@@ -174,11 +177,11 @@ class RunRitual:
         )
         # The scheduler seam carries no name, but the registration background
         # task has carried this observable name since HEAD (the deterministic
-        # test double names its replay task the same way). A scheduler double
-        # that returns the bare coroutine has nothing to name.
-        if isinstance(task, asyncio.Task):
-            task.set_name("registration-background")
-        host.registration_task = task
+        # test double names its replay task the same way).
+        task.set_name("registration-background")
+        session = host.session
+        assert session is not None
+        session.registration_task = task
         # The optional registration member joins the watch-set.
         host.session_watch.attach_registration(task)
         self._state = _RitualState.MAIN_LOOP
@@ -240,7 +243,7 @@ class RunRitual:
         assert session is not None
         assert session.bot is not None
         registration_context = ConstructionContext.for_bot(session.bot, host.v3_snapshot)
-        host.registration_context = registration_context
+        session.registration_context = registration_context
         pipeline = PathRegistrationPipeline(
             context=registration_context,
             engine_registry=session.engine_registry,

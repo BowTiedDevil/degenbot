@@ -13,16 +13,16 @@ streams, dispatch leaf monkeypatched). No anvil, no live RPC.
 
 from __future__ import annotations
 
-import asyncio
 import signal
 
 import pytest
 
 from degenbot.runner import BotRunner
+from degenbot.runner._consume import consume_result_batches
 from degenbot.runner._relay_posture import RelayPosture
-from degenbot.runner.bot_runner import InjectedActors
+from degenbot.runner.bot_runner import InjectedActors, _SessionState
 from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
+from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
 from tests.helpers.boot_actors import inline_registration_scheduler
 from tests.helpers.identity_env import identity_env
@@ -41,13 +41,11 @@ def _restore_sigint() -> None:
 
 
 def _cfg() -> ArbitrageConfig:
-    with identity_env(
-        {
-            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-            "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-        }
-    ):
+    with identity_env({
+        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+        "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
+        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+    }):
         return ArbitrageConfig.build(live=True, permutation=None)
 
 
@@ -58,7 +56,9 @@ class _FakeBot:
         pass
 
     def block_stream(self):  # pragma: no cover - the capturing consumer never iterates it
-        async def _empty():
+        # The async feature here is generator-hood (the consumer awaits
+        # ``__anext__`` on the returned stream), which RUF029 does not count.
+        async def _empty():  # ruff: ignore[unused-async] -- async generator, not an await-less coroutine
             return
             yield {}  # pragma: no cover
 
@@ -160,7 +160,8 @@ class TestSessionOwner:
 
         session_runner = BotRunner(
             _cfg(),
-            actors=InjectedActors(settlement_arm=True, 
+            actors=InjectedActors(
+                settlement_arm=True,
                 bot=_FakeBot(),
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),
@@ -181,8 +182,6 @@ class TestSessionOwner:
 
     async def test_dispatch_leaf_receives_the_same_owner(self) -> None:
         """The loop and the dispatch leaf read one and the same owner."""
-        from degenbot.runner._consume import consume_result_batches
-        from degenbot.runner.bot_runner import _SessionState
 
         # SIMPIPE option A: the consumer path routes batches through the
         # pipeline — the owner flows into the pipeline at construction, which
@@ -217,8 +216,6 @@ class TestSessionOwner:
 
     async def test_owner_advances_with_the_block_clock(self) -> None:
         """The owner mirrors the newHeads clock as the loop applies it."""
-        from degenbot.runner._consume import consume_result_batches
-        from degenbot.runner.bot_runner import _SessionState
 
         # SIMPIPE option A: the session's pipeline factory constructs the
         # stub — keep the fake-engine session out of the real Rust seam.

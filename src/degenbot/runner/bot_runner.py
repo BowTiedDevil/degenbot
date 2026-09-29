@@ -60,6 +60,7 @@ from degenbot.runner.identity import (
 )
 
 if TYPE_CHECKING:
+    from degenbot.runner._session_watch import SessionEndVerdict
     from degenbot.strategy import StrategyReadinessView
 from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
@@ -171,11 +172,14 @@ class _SessionState:
     the sim/submit pipeline) read fields directly but mutate ONLY through the
     owner's mutator methods (``advance_block`` / ``attach_pipeline`` /
     ``attach_registration_pipeline``) — remote attribute pokes are forbidden.
-    The ``None`` fields are domain options, not phase options: ``sim_ctx`` is
-    ``None`` only for non-Alloy (test) providers, ``bot`` becomes ``None``
-    when the post-registration trim drops it, and the two pipelines attach
-    lazily through their mutators (their producers legitimately land after
-    ``start()``).
+    The one writer outside that set is the run ritual: it CREATES the three
+    run-phase handles (``result_consumer_task`` / ``registration_task`` /
+    ``registration_context``) during startup, so it writes them directly at
+    that boundary. The ``None`` fields are domain options, not phase
+    options: ``sim_ctx`` is ``None`` only for non-Alloy (test) providers,
+    ``bot`` becomes ``None`` when the post-registration trim drops it, and
+    the two pipelines attach lazily through their mutators (their producers
+    legitimately land after ``start()``).
 
     Mutable pieces (``current_block``) advance on the owner.
     """
@@ -214,6 +218,17 @@ class _SessionState:
     #: The per-session silent-veto smoke FSM (streak + throttle clock). Built
     #: with the session, so a streak can never leak into the next session.
     submission_smoke: SubmissionSmoke = field(default_factory=SubmissionSmoke)
+    #: The result-consumer drain task (written by the run ritual at
+    #: consumer-attach; read by the pump-finished watchdog and handed to the
+    #: session watch). ``None`` before ``run()``.
+    result_consumer_task: asyncio.Task | None = None
+    #: The scheduled registration hand-off (the run ritual's scheduler
+    #: output; the trim guard reads it to refuse a mid-climb outside
+    #: trim). ``None`` for a backrun-only boot, which schedules nothing.
+    registration_task: asyncio.Task | None = None
+    #: The registration-owned construction context (written by the run
+    #: ritual for the real builder; ``None`` for injected builders).
+    registration_context: ConstructionContext | None = None
 
     def advance_block(self, block_number: int) -> None:
         """Advance the session's block clock (the consumer's one mutation)."""
@@ -272,7 +287,7 @@ class InjectedActors:
     scheduler: Callable[[Coroutine[Any, Any, None]], asyncio.Task[Any]] = asyncio.create_task
 
 
-class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ritual host surface is deliberately wide
+class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ritual host surface is deliberately wide (still 21 > 20 after the run-phase handles moved to _SessionState)
     """Orchestrator that collapses the settlement-arbitrage startup ritual behind one facade.
 
     Owns the config and the lifecycle; the coordination state itself (the
@@ -347,13 +362,6 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         self._injected_settlement_endpoints = injected.settlement_endpoints
         self._injected_stop_engine = injected.stop_engine
         self._scheduler = injected.scheduler
-        # The registration-owned construction context (built by the run
-        # ritual for the real build_paths; None for injected builders).
-        self._registration_context: ConstructionContext | None = None
-        # The background registration task (the run ritual's scheduled
-        # hand-off). (The session WATCH owns the task set — the runner keeps
-        # these handles only to hand them over + drive the watchdog.)
-        self._registration_task: asyncio.Task | None = None
         # Snapshots for the registration pass (nulled by the trim).
         self.v3_snapshot: Any = None
         self.v4_snapshot: Any = None
@@ -370,8 +378,6 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         # ``None`` only before start() (there is no session yet; shutdown()'s
         # any-phase contract and the pre-start injection seams rely on that).
         self._session: _SessionState | None = None
-        # Created in run():
-        self._result_consumer_task: asyncio.Task | None = None
         # The one owner of the pump session's end-state — the
         # watch-set ({consumer} + optional {registration, watchdog}), the
         # SessionEndVerdict ranking, and the cancel/teardown duties for the
@@ -440,11 +446,10 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
 
     # ── Run-ritual host surface ──────────────────────────────────────
     # The run ritual (``_run_ritual``) is the one consumer of these: it reads
-    # the session's collaborators and writes back the three handles (the
+    # the session's collaborators and writes the three run-phase handles (the
     # consumer/registration tasks and the registration construction context)
-    # the runner's other duties (watchdog, trim guard, operator surface)
-    # consume. The reads are facade reads over the same owners the
-    # properties above expose.
+    # onto the session owner (``_SessionState``), where the runner's other
+    # duties (watchdog, trim guard, operator surface) read them.
 
     @property
     def session(self) -> _SessionState | None:
@@ -480,33 +485,6 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
     def scheduler(self) -> Callable[[Coroutine[Any, Any, None]], asyncio.Task[Any]]:
         """The registration hand-off scheduler (data; production ``create_task``)."""
         return self._scheduler
-
-    @property
-    def result_consumer_task(self) -> asyncio.Task | None:
-        """The result-consumer task the ritual creates (read by the watchdog)."""
-        return self._result_consumer_task
-
-    @result_consumer_task.setter
-    def result_consumer_task(self, task: asyncio.Task) -> None:
-        self._result_consumer_task = task
-
-    @property
-    def registration_task(self) -> asyncio.Task | None:
-        """The scheduled registration task (read by the trim guard)."""
-        return self._registration_task
-
-    @registration_task.setter
-    def registration_task(self, task: asyncio.Task) -> None:
-        self._registration_task = task
-
-    @property
-    def registration_context(self) -> ConstructionContext | None:
-        """The registration-owned construction context (built for the real builder)."""
-        return self._registration_context
-
-    @registration_context.setter
-    def registration_context(self, context: ConstructionContext | None) -> None:
-        self._registration_context = context
 
     @property
     def trim(self) -> Callable[..., None]:
@@ -761,7 +739,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         return v3_snap, v4_snap, None, None
 
     # ── Phase B: the rolling-start main loop ──────────────────────────
-    async def run(self) -> None:
+    async def run(self) -> SessionEndVerdict:
         """Run the cockpit main loop until the consumer task ends.
 
         Requires the ``Started`` phase — the session phase machine
@@ -769,6 +747,11 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         table) owns the lifecycle gate. The startup ordering itself is the
         run ritual's (:mod:`~degenbot.runner._run_ritual`): this method is
         the thin phase-gated drive over that machine.
+
+        Returns:
+            The session's end verdict (the session watch's ranking over how
+            the run ended). Consuming it is optional — callers that ignore
+            it behave exactly as before this return existed.
         """
         self._phase = self._phase.on_run()
         # The session's construction answers the actor asserts: the actors
@@ -776,7 +759,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         session = self._session
         assert session is not None
         assert session.bot is not None
-        await RunRitual(self).run()
+        return await RunRitual(self).run()
 
     # ── Operator add-a-path surface ─────────────────────────────────
     async def enqueue_path(
@@ -845,7 +828,8 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         # ConstructionContext. Only the registration task may trim while it is
         # live (its own completion hand-off, or its cancel branch); an outside
         # caller is mid-climb and would clobber them.
-        registration_task = self._registration_task
+        session = self._session
+        registration_task = session.registration_task if session is not None else None
         if registration_task is not None and not registration_task.done():
             try:
                 current = asyncio.current_task()
@@ -927,7 +911,8 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
             f"[shutdown] core session-end fact {cause} outside stop() — "
             "cancelling the consumer for a graceful teardown"
         )
-        main_task = self._result_consumer_task
+        session = self._session
+        main_task = session.result_consumer_task if session is not None else None
         if main_task is not None and not main_task.done():
             main_task.cancel()
 

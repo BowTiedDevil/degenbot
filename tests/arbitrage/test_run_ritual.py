@@ -66,6 +66,11 @@ class _StubSession:
         self.bot = _StubBot(events)
         self.engine_registry = _StubRegistry(events)
         self.attached_pipelines: list = []
+        # The run-phase handles the ritual writes (the stub mirrors
+        # the real _SessionState fields).
+        self.result_consumer_task = None
+        self.registration_task = None
+        self.registration_context = None
 
     def attach_registration_pipeline(self, pipeline: object) -> None:
         self.attached_pipelines.append(pipeline)
@@ -97,15 +102,24 @@ class _StubWatch:
 
 
 class _StubScheduler:
-    """Records scheduled coroutines; runs nothing (the stub watch never awaits)."""
+    """Records scheduled coroutines without driving them; returns a real Task.
+
+    The seam type promises a coroutine→Task factory, so the stub returns a
+    real ``asyncio.Task`` (a completed no-op) rather than the bare
+    coroutine; the RECORDED coroutine itself is never driven (the stub
+    watch never awaits it).
+    """
 
     def __init__(self) -> None:
         self.scheduled: list = []
+        self.tasks: list[asyncio.Task] = []
 
     def __call__(self, coro):
         self.scheduled.append(coro)
         coro.close()  # never driven: the SCHEDULED COUNT is the fact under test
-        return coro
+        task = asyncio.create_task(asyncio.sleep(0))
+        self.tasks.append(task)
+        return task
 
 
 class _StubConsumer:
@@ -157,9 +171,6 @@ class _StubHost:
         self.v4_snapshot = None
         self.bot = self.session.bot
         self.engine_registry = self.session.engine_registry
-        self.registration_context = None
-        self.result_consumer_task = None
-        self.registration_task = None
 
     def trim(self, *, close_read_tx: bool = True) -> None:
         self.events.append(("trim", close_read_tx))
@@ -209,7 +220,7 @@ class TestTransitionTable:
         ritual.attach_consumer()
         ritual.attach_watch()
 
-        assert host.session_watch.attached_consumer is host.result_consumer_task
+        assert host.session_watch.attached_consumer is host.session.result_consumer_task
         ritual.resume()
         assert host.events.index("consumer") < host.events.index("resume")
         assert host.events.index("watch-attach") < host.events.index("resume")
@@ -264,7 +275,7 @@ class TestSchedulerAsData:
         ritual.registration()
 
         assert len(scheduler.scheduled) == 1
-        assert host.session_watch.attached_registration is scheduler.scheduled[0]
+        assert host.session_watch.attached_registration is scheduler.tasks[0]
 
     async def test_production_scheduler_names_the_registration_task(self) -> None:
         """The production default scheduler cannot carry a task name through
@@ -278,7 +289,7 @@ class TestSchedulerAsData:
 
         ritual.registration()
 
-        task = host.registration_task
+        task = host.session.registration_task
         assert isinstance(task, asyncio.Task)
         assert task.get_name() == "registration-background"
         await task  # the fake builder completes without suspending: reap it

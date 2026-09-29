@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import signal
 import threading
 from dataclasses import dataclass
@@ -24,11 +25,24 @@ from pathlib import Path
 
 import pytest
 
+from degenbot.arbitrage.policy import NoOpPathPredicate
+from degenbot.exceptions import VerificationMismatchError, VerificationRpcError
+from degenbot.pathfinding import PoolKind
 from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner._run_ritual import RunRitual
 from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase
+from degenbot.runner.build_paths import (
+    ConstructionContext,
+    PathRegistrationPipeline,
+)
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+from degenbot.runner.identity import (
+    PANCAKESWAP_V3_MAINNET_FACTORY,
+    SUSHISWAP_V3_MAINNET_FACTORY,
+    UNISWAP_V3_MAINNET_FACTORY,
+    WETH_ADDRESS,
+)
 from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.helpers.boot_actors import inline_registration_scheduler
@@ -394,8 +408,8 @@ class TestBotRunnerRun:
                 await session.run()
 
         # the consumer task must have been cancelled by __aexit__
-        assert session._result_consumer_task is not None
-        assert session._result_consumer_task.cancelled()
+        assert session._session.result_consumer_task is not None
+        assert session._session.result_consumer_task.cancelled()
 
 
 class TestSessionPhaseMachine:
@@ -890,14 +904,6 @@ class TestConstructionContext:
     task owns them out of run()'s main-loop trim."""
 
     def test_for_bot_builds_trackers_weth_db_once(self) -> None:
-        from degenbot.runner.build_paths import ConstructionContext
-        from degenbot.runner.identity import (
-            PANCAKESWAP_V3_MAINNET_FACTORY,
-            SUSHISWAP_V3_MAINNET_FACTORY,
-            UNISWAP_V3_MAINNET_FACTORY,
-            WETH_ADDRESS,
-        )
-
         class _BuildBot:
             def __init__(self) -> None:
                 self.chain_id = 1
@@ -959,7 +965,7 @@ class TestConstructionContext:
 
         # Injected builder => run() must NOT construct a context, and must pass
         # context=None to the injected builder.
-        assert session._registration_context is None
+        assert session._session.registration_context is None
         assert "options" in seen["kwargs"]
         assert seen["kwargs"]["options"].context is None
         # The builder still receives the other construction kwargs.
@@ -980,8 +986,6 @@ class TestSubBBackgroundRegistration:
     async def test_background_fatal_verification_fail_fast(self) -> None:
         """A fatal verification error in the background registration cancels the
         main-loop consumer and re-raises loudly (never silently swallowed)."""
-        from degenbot.exceptions import VerificationMismatchError
-
         engine_registry = _FakeEngineRegistry()
 
         async def hanging_consumer(**_kwargs):
@@ -1015,8 +1019,8 @@ class TestSubBBackgroundRegistration:
 
         # Fail-fast cancelled the main-loop consumer so the session can't keep
         # trading on unverified state.
-        assert session._result_consumer_task is not None
-        assert session._result_consumer_task.cancelled()
+        assert session._session.result_consumer_task is not None
+        assert session._session.result_consumer_task.cancelled()
 
     async def test_background_run_trims_after_completion(self) -> None:
         """The state-trim runs after the background registration completes, not
@@ -1088,7 +1092,7 @@ class TestSubBBackgroundRegistration:
         run_task = asyncio.create_task(session.run())
         try:
             await asyncio.wait_for(started.wait(), timeout=1)
-            registration_task = session._registration_task
+            registration_task = session._session.registration_task
             assert registration_task is not None
             assert not registration_task.done()
 
@@ -1252,7 +1256,7 @@ class TestSubCBgRegistrationConcurrency:
         assert dispatch_work == list(range(25))
         assert climbed > 0, "registration must have actually climbed"
         # run()'s finally cancelled the still-climbing registration at teardown.
-        reg = session._registration_task
+        reg = session._session.registration_task
         assert reg is not None
         assert reg.cancelled()
 
@@ -1272,12 +1276,12 @@ class TestSubCBgRegistrationConcurrency:
         async def consumer(**_kwargs):
             # hot loop does not depend on a 'final' discovery state: advance
             # dispatch while registration drains, then finish with it complete.
-            # (``session._registration_task`` is already set by the time this
+            # (``session._session.registration_task`` is already set by the time this
             # coroutine runs — run() creates the reg task before the main loop.)
             for n in range(10):
                 dispatch_work.append(n)
                 await asyncio.sleep(0)  # yield stands in for one dispatch hot-loop await
-            registration_task = session._registration_task
+            registration_task = session._session.registration_task
             assert registration_task is not None
             await registration_task  # returns once the drain is done
 
@@ -1300,7 +1304,7 @@ class TestSubCBgRegistrationConcurrency:
         assert verify_steps == 40, "registration must have drained all verifies"
 
         assert dispatch_work == list(range(10))
-        reg = session._registration_task
+        reg = session._session.registration_task
         # Clean, deadlock-free completion: registration finished without error.
         assert reg is not None
         assert reg.done()
@@ -1310,8 +1314,6 @@ class TestSubCBgRegistrationConcurrency:
         """A fatal registration transport error cancels the main loop and is
         delivered exactly once through the cross-task fail-fast channel — never
         swallowed, never re-raised twice."""
-        from degenbot.exceptions import VerificationRpcError
-
         engine_registry = _FakeEngineRegistry()
 
         async def hanging_consumer(**_kwargs):
@@ -1343,9 +1345,9 @@ class TestSubCBgRegistrationConcurrency:
 
         # Fail-fast cancelled the hot loop and the fatal was surfaced exactly
         # once (retrieved from the task, not re-raised twice).
-        assert session._result_consumer_task is not None
-        assert session._result_consumer_task.cancelled()
-        reg = session._registration_task
+        assert session._session.result_consumer_task is not None
+        assert session._session.result_consumer_task.cancelled()
+        reg = session._session.registration_task
         assert reg is not None
         assert reg.done()
         assert isinstance(reg.exception(), VerificationRpcError)
@@ -1404,8 +1406,8 @@ class TestSubCBgRegistrationConcurrency:
         assert climbed > 0, "registration must have climbed concurrently with the main loop"
         # Main loop ended on the finite block stream; finally cancelled the
         # still-climbing registration.
-        assert session._registration_task is not None
-        assert session._registration_task.cancelled()
+        assert session._session.registration_task is not None
+        assert session._session.registration_task.cancelled()
 
 
 class Test6VZN7HOngoingDiscovery:
@@ -1452,7 +1454,7 @@ class Test6VZN7HOngoingDiscovery:
         # Main loop ended (finite consumer) → run()'s finally cancelled the
         # forever registration → trim ran on cancellation (shutdown-time).
         assert bot.released is True
-        reg = session._registration_task
+        reg = session._session.registration_task
         assert reg is not None
         assert reg.cancelled()
 
@@ -1554,8 +1556,6 @@ class TestPathRegistrationPipeline:
             self._seen: set[object] = set()
             # D7KMQO: the unit evaluates the path predicate before hop
             # building (the operator surface's register_path pre-check).
-            from degenbot.arbitrage.policy import NoOpPathPredicate
-
             self.path_predicate = NoOpPathPredicate()
 
         def register_v2_pool(self, pool: object) -> None:
@@ -1581,12 +1581,6 @@ class TestPathRegistrationPipeline:
 
     @staticmethod
     def _make_pipeline(fail_on_register: Exception | None = None):
-        from degenbot.pathfinding import PoolKind
-        from degenbot.runner.build_paths import (
-            ConstructionContext,
-            PathRegistrationPipeline,
-        )
-
         bot = TestPathRegistrationPipeline._FakeCtxBot()
 
         class _Reg(TestPathRegistrationPipeline._FakeReg):
@@ -1669,8 +1663,6 @@ class TestPathRegistrationPipeline:
         assert consumed == ["p0", "p1"]
 
     async def test_enqueue_path_preserves_fail_fast_tripwire(self) -> None:
-        from degenbot.exceptions import VerificationMismatchError
-
         pipeline, _reg, t_base = self._make_pipeline(
             fail_on_register=VerificationMismatchError("boom")
         )
@@ -1767,8 +1759,6 @@ class TestPathRegistrationPipeline:
         discovered, <1000 registered) never prints it and the skip/dup/reject
         reasons stay invisible. The new time-based summary must surface them.
         """
-        import logging
-
         pipeline, _reg, _t_base = self._make_pipeline()
         # Simulate a crawl that is skipping almost everything well below the
         # 1000-registration print threshold.

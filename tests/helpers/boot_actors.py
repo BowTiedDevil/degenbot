@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from degenbot.runner import BotRunner
 from degenbot.runner.bot_runner import InjectedActors
-from degenbot.runner.config import ArbitrageConfig
 from tests.fakes.engine import FakeEngineRegistry
+
+if TYPE_CHECKING:
+    from degenbot.runner.config import ArbitrageConfig
 
 
 def inline_registration_scheduler(coro: Any) -> Any:
@@ -42,7 +44,7 @@ def inline_registration_scheduler(coro: Any) -> Any:
             yielded = coro.send(None)
         except StopIteration:
             break
-        except BaseException as exc:  # ruff: ignore[blind-except] replayed on the task below
+        except BaseException as exc:  # ruff: ignore[blind-except] -- replayed (re-raised) on the task below, never swallowed
             outcome = exc
             break
         if yielded is not None:
