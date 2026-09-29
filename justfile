@@ -921,11 +921,88 @@ check-no-alembic:
 check-no-sqlalchemy:
     uv run --no-sync pytest -q tests/test_no_sqlalchemy_test_imports.py
 
-# ========== Stub-to-Runtime Drift Gate (ADR-053, ergo XNEJRD) ==========
+# ========== Stub Generation + Verification (ADR-066) ==========
+#
+# `just gen-stubs` regenerates the committed `src/degenbot/_ffi/` stub tree
+# from the seam's built cdylib (ADR-066 D1/D2): it (1) builds `degenbot_rs`
+# with the named `experimental-inspect` feature — a TEMPORARY toggle per
+# ADR-066 D1; release wheels never select it, and this build exists solely to
+# be introspected — (2) runs the `degenbot-stubgen` generator over that
+# cdylib, and (3) replaces the committed stub tree with the output.
+#
+# Regeneration is deterministic: the same cdylib produces a byte-identical
+# tree, so the second of two consecutive runs must be diff-empty (the drift
+# gate below asserts this continuously). After regenerating, the installed
+# development extension still carries the pre-toggle feature set; only its
+# cargo cache was disturbed — `just dev` restores the canonical build plan,
+# and the receipt gates stay green because the source fingerprint is
+# unchanged.
+#
+# `just gen-stubs --check` (used by tests/rust/test_ffi_stub_drift.py)
+# generates into a temp dir and FAILS on any diff against the committed tree
+# without writing; `REGEN_STUBS=1` opts the check into writing, mirroring
+# `REGEN_CONFIG_DOCS=1 cargo test -p degenbot-config` (the REGEN pattern of
+# docs/rust-config-keys.md). No hand edits over generated output, ever:
+# generator gaps live only in tests/rust/stubtest_allowlist.txt (ADR-066 D3).
+gen-stubs check="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # just does not pass recipe arguments as positional script arguments
+    # (`set positional-arguments` is off repo-wide), so the flag arrives only
+    # via `{{ check }}` interpolation — a `for arg in "$@"` loop here never
+    # executed and `--check` silently took the regenerate branch.
+    check=0
+    case "{{ check }}" in
+        "") ;;
+        --check) check=1 ;;
+        *) echo "usage: just gen-stubs [--check]" >&2; exit 2 ;;
+    esac
+    # The generator parses introspection chunks statically (object-file
+    # symbols), so the introspected build is never loaded or installed.
+    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot_rs --features experimental-inspect
+    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-stubgen
+    out="$(mktemp -d)"
+    trap 'rm -rf "$out"' EXIT
+    rust/target/debug/degenbot-stubgen \
+        rust/target/debug/libdegenbot_rs.so _ffi "$out"
+    # Pipeline step: ruff-format the generated tree BEFORE the diff/copy
+    # branch. The generator's raw signatures (long single-line defs, `X |None`)
+    # are not format-clean, and `just fmt-check-python` fails on them. Because
+    # the step sits above the branch, `gen-stubs --check` also applies it — the
+    # drift gate's contract (regeneration reproduces the committed tree
+    # byte-for-byte) holds only if the committed tree is pipeline output
+    # inclusive of formatting. `--config` pins the repo's pyproject: the temp
+    # out dir is outside the repo, so ruff's upward config discovery would
+    # otherwise fall back to defaults and the tree would not be reproducible.
+    uv run --no-sync ruff format --config pyproject.toml "$out"
+    if [ "$check" = 1 ] && [ -z "${REGEN_STUBS:-}" ]; then
+        if diff -ru src/degenbot/_ffi "$out"; then
+            echo "✓ committed stubs match generator output"
+        else
+            echo "ERROR: src/degenbot/_ffi has drifted from generator output; run \`just gen-stubs\`" >&2
+            exit 1
+        fi
+    else
+        rm -rf src/degenbot/_ffi
+        cp -R "$out" src/degenbot/_ffi
+        echo "✓ committed stubs regenerated (src/degenbot/_ffi)"
+    fi
+
+# ========== Stub-to-Runtime Drift Gate (ADR-053 stubs, ADR-066 D3 cutover) ==========
+#
+# mypy.stubtest is now GENERATOR VERIFICATION (ADR-066 D3): it introspects the
+# INSTALLED degenbot._ffi extension and compares it against the GENERATED
+# src/degenbot/_ffi/*.pyi stubs in BOTH directions, across every class member,
+# with no curated table. Its allowlist (tests/rust/stubtest_allowlist.txt)
+# carries only generator gaps — the enumerated PyO3-introspection limitations,
+# never hand-edits over generated output. The regenerate-and-diff gate against
+# the generator is tests/rust/test_ffi_stub_drift.py (via `just gen-stubs
+# --check`). What stubtest cannot see (Python-side surface in driver modules)
+# stays in tests/rust/test_ffi_registration_surface.py.
 #
 # mypy.stubtest replaces the bespoke drift gate's R1/R3/R4 mechanics (and R2,
 # verified below): it introspects the INSTALLED degenbot._ffi extension and
-# compares it against the hand-maintained src/degenbot/_ffi/*.pyi stubs in
+# compares it against the generated src/degenbot/_ffi/*.pyi stubs in
 # BOTH directions, across every class member, with no curated table. The
 # allowlist (tests/rust/stubtest_allowlist.txt) carries only PyO3-
 # introspection noise and stub-only type exemptions, each group annotated with

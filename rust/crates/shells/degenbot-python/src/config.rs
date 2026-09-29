@@ -22,20 +22,6 @@
 
 use crate::prelude::*;
 
-/// The shared core verification-retry policy defaults as a SELF-DESCRIBING
-/// value — a positional 4-tuple would silently mis-assign on a Rust-side
-/// field reorder.
-///
-/// The numbers come from the core `RetryPolicy::verification_default`, the one
-/// declaration site for both the driver shell and the pure-Rust example.
-#[pyclass(frozen, get_all, module = "degenbot._ffi")]
-pub struct RetryPolicyDefaults {
-    pub max_attempts: u32,
-    pub base_delay: f64,
-    pub max_delay: f64,
-    pub jitter: f64,
-}
-
 /// The verification-retry policy as it crosses the FFI seam — ONE value type
 /// from the driver shell to the core-owned retry dance.
 ///
@@ -163,17 +149,6 @@ impl StrategyReadinessView {
     }
 }
 
-/// Build the retry-policy defaults the verdict carries.
-fn verification_retry_defaults() -> RetryPolicyDefaults {
-    let policy = ::degenbot_core::retry::RetryPolicy::verification_default();
-    RetryPolicyDefaults {
-        max_attempts: policy.max_attempts,
-        base_delay: policy.base_delay,
-        max_delay: policy.max_delay,
-        jitter: policy.jitter,
-    }
-}
-
 // =============================================================================
 // Driver-domain resolution (ADR-062 D7/D10): thin readers of the layers the
 // boot load published, so the Python driver resolves a value through the same
@@ -287,21 +262,6 @@ pub(crate) fn install_verdict() {
     let _ = verdict();
 }
 
-/// Every declared key's value, keyed by its dotted TOML path.
-///
-/// Walked out of `degenbot_config::SCHEMA` through the generated
-/// `BotConfig::value` reader, so this is the schema and nothing beside it: a
-/// key declared in `config_schema!` appears here with no FFI edit, which is
-/// the property that keeps the seam from growing one accessor per key.
-fn values_by_path(
-    cfg: &::degenbot_config::BotConfig,
-) -> ::std::collections::BTreeMap<String, Option<::degenbot_config::ConfigValue<'_>>> {
-    ::degenbot_config::SCHEMA
-        .iter()
-        .map(|key| (key.toml_path.to_string(), cfg.value(key.section, key.field)))
-        .collect()
-}
-
 /// The winning layer per DECLARED key, keyed by its dotted TOML path.
 ///
 /// The projection is schema-driven so the vocabulary a caller reads is the
@@ -376,6 +336,96 @@ fn value_into_py<'py>(
     })
 }
 
+/// The typed seam projection over ONE resolved config: named-property access
+/// to every declared key — `values.dispatch.min_profit_margin_bps`,
+/// `values.session.chain_id` — the surface the Python driver reads instead of
+/// dotted-path strings.
+///
+/// A generic two-level view over `config_schema!`'s emitted tables
+/// (`VALUES_PROJECTION` names every declared (section path, field) pair;
+/// `SECTION_PATHS` includes the keyless facet namespaces), so the wrapper
+/// carries no per-key code: a key declared in `config_schema!` is readable
+/// here the moment it is declared, and a name outside the declaration raises
+/// `AttributeError` rather than projecting a default.
+#[pyclass(frozen, module = "degenbot._ffi")]
+pub struct ConfigValues {
+    config: ::std::sync::Arc<::degenbot_config::BotConfig>,
+}
+
+impl ConfigValues {
+    /// Project one resolved config.
+    pub(crate) fn of(config: ::std::sync::Arc<::degenbot_config::BotConfig>) -> Self {
+        Self { config }
+    }
+}
+
+#[pymethods]
+impl ConfigValues {
+    /// One declared section (or facet namespace) by name.
+    fn __getattr__(&self, section: &str) -> ::pyo3::PyResult<ConfigSectionValues> {
+        let declared = ::degenbot_config::SECTION_PATHS.iter().any(|path| {
+            *path == section
+                || path
+                    .strip_prefix(section)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        });
+        if declared {
+            Ok(ConfigSectionValues {
+                config: ::std::sync::Arc::clone(&self.config),
+                path: section.to_string(),
+            })
+        } else {
+            Err(::pyo3::exceptions::PyAttributeError::new_err(format!(
+                "no declared config section {section:?}"
+            )))
+        }
+    }
+}
+
+/// One declared section path's named keys and nested facet namespaces.
+#[pyclass(frozen, module = "degenbot._ffi")]
+pub struct ConfigSectionValues {
+    config: ::std::sync::Arc<::degenbot_config::BotConfig>,
+    path: String,
+}
+
+#[pymethods]
+impl ConfigSectionValues {
+    /// A declared key's typed value, or a nested facet namespace's view. An
+    /// unset-able key the operator left alone projects as `None`: "the
+    /// operator said nothing" and "the operator chose this" stay distinct.
+    fn __getattr__<'py>(
+        &self,
+        py: ::pyo3::Python<'py>,
+        name: &str,
+    ) -> ::pyo3::PyResult<::pyo3::prelude::Bound<'py, ::pyo3::PyAny>> {
+        if ::degenbot_config::VALUES_PROJECTION
+            .iter()
+            .any(|(section, field)| section == &self.path && *field == name)
+        {
+            return value_into_py(py, self.config.value(&self.path, name).as_ref());
+        }
+        let nested = format!("{}.{}", self.path, name);
+        if ::degenbot_config::SECTION_PATHS
+            .iter()
+            .any(|path| *path == nested)
+        {
+            let view = ::pyo3::Py::new(
+                py,
+                ConfigSectionValues {
+                    config: ::std::sync::Arc::clone(&self.config),
+                    path: nested,
+                },
+            )?;
+            return Ok(view.into_bound(py).into_any());
+        }
+        Err(::pyo3::exceptions::PyAttributeError::new_err(format!(
+            "no declared config key {:?}.{:?}",
+            self.path, name
+        )))
+    }
+}
+
 /// The whole resolved configuration for this process: the values, the layer
 /// each came from, and the resolutions that need a capability or an override.
 ///
@@ -434,35 +484,36 @@ impl ResolvedConfig {
         database_path_in(self.verdict.layers, database)
     }
 
-    /// The typed `pathfinding.discovery_batch_size` value (env
-    /// `DEGENBOT_DISCOVERY_BATCH_SIZE`), positive-clamped to `>= 1` so a zero /
-    /// garbage value degrades to the legacy per-path delivery instead of a busy
-    /// loop.
+    /// The core's fee-history percentile pair (`p10`, `p50`) the settlement
+    /// driver polls `eth_feeHistory` for, riding the verdict: the driver reads
+    /// the pair off the config object it already holds instead of through a
+    /// module-function side door, and the core table stays the one owner of
+    /// the numbers.
     #[getter]
-    fn discovery_batch_size(&self) -> usize {
-        self.verdict
-            .layers
-            .config
-            .pathfinding
-            .discovery_batch_size
-            .max(1)
+    #[expect(
+        clippy::unused_self,
+        reason = "a pyo3 getter reads the verdict by definition; the pair is core-owned, not verdict state"
+    )]
+    fn fee_percentiles(&self) -> (u64, u64) {
+        (
+            ::degenbot_core::fee_percentiles::PRIORITY_FEE_PERCENTILES
+                [::degenbot_core::fee_percentiles::P10_INDEX],
+            ::degenbot_core::fee_percentiles::PRIORITY_FEE_PERCENTILES
+                [::degenbot_core::fee_percentiles::P50_INDEX],
+        )
     }
 
-    /// Every declared key's typed value, keyed by its dotted TOML path.
+    /// Every declared key's typed value, as named properties:
+    /// `values.dispatch.min_profit_margin_bps`, `values.session.chain_id`, ...
     ///
-    /// The seam's whole schema surface in one object: a key added to
-    /// `config_schema!` appears here with no change to the FFI interface.
+    /// The typed seam projection over this verdict, walked out of
+    /// `config_schema!`'s emitted `VALUES_PROJECTION`/`SECTION_PATHS` tables
+    /// through the generated `BotConfig::value` reader — the same declaration
+    /// that produced the typed tree, so a key declared there is readable here
+    /// with no FFI edit and no dotted-path string in the consumer.
     #[getter]
-    fn values<'py>(
-        &self,
-        py: ::pyo3::Python<'py>,
-    ) -> ::pyo3::PyResult<
-        ::std::collections::BTreeMap<String, ::pyo3::prelude::Bound<'py, ::pyo3::PyAny>>,
-    > {
-        values_by_path(&self.verdict.layers.config)
-            .iter()
-            .map(|(path, value)| Ok((path.clone(), value_into_py(py, value.as_ref())?)))
-            .collect()
+    fn values(&self) -> ConfigValues {
+        ConfigValues::of(::std::sync::Arc::new(self.verdict.layers.config.clone()))
     }
 
     /// The layer that supplied each declared key, keyed by its dotted TOML path
@@ -630,18 +681,11 @@ pub struct HypotheticalConfig {
 
 #[pymethods]
 impl HypotheticalConfig {
-    /// Every declared key's typed value, keyed by its dotted TOML path.
+    /// Every declared key's typed value, as named properties — the same typed
+    /// seam projection the installed verdict exposes.
     #[getter]
-    fn values<'py>(
-        &self,
-        py: ::pyo3::Python<'py>,
-    ) -> ::pyo3::PyResult<
-        ::std::collections::BTreeMap<String, ::pyo3::prelude::Bound<'py, ::pyo3::PyAny>>,
-    > {
-        values_by_path(&self.layers.config)
-            .iter()
-            .map(|(path, value)| Ok((path.clone(), value_into_py(py, value.as_ref())?)))
-            .collect()
+    fn values(&self) -> ConfigValues {
+        ConfigValues::of(::std::sync::Arc::new(self.layers.config.clone()))
     }
 
     /// The layer that supplied each declared key, keyed by its dotted TOML path.
@@ -738,18 +782,6 @@ pub fn resolve_hypothetical_database_path(
     Ok(database_path_in(&layers, database))
 }
 
-/// The shared core verification-retry policy defaults: the numbers a driver
-/// seeds its retry policy from instead of carrying its own literal set.
-///
-/// A module function rather than a verdict member, because it answers a
-/// different question: nothing here was configured, so there is no layer to
-/// report and nothing for a cross-language comparison to compare.
-#[pyfunction]
-#[must_use]
-pub fn verification_retry_policy_defaults() -> RetryPolicyDefaults {
-    verification_retry_defaults()
-}
-
 /// [`ResolvedConfig::node_uri`] over an explicit set of layers (the shape a
 /// caller outside the process boot, or a test, resolves against).
 fn node_uri_in(
@@ -828,8 +860,8 @@ mod tests {
 
     use super::{
         chain_id_in, database_path_in, declared_database_path_of, entry_provenance_by_env,
-        node_uri_in, provenance_by_path, settlement_broadcast_endpoints_in, values_by_path,
-        ResolvedConfig, StrategyReadinessView,
+        node_uri_in, provenance_by_path, settlement_broadcast_endpoints_in, ResolvedConfig,
+        StrategyReadinessView,
     };
 
     /// The layers a `MapEnv` supplies, with no file layer and no process
@@ -934,21 +966,24 @@ mod tests {
         );
     }
 
-    /// The value projection carries every declared key and nothing else, so a
-    /// key added to `config_schema!` reaches the driver with no FFI edit — the
-    /// property that makes the verdict, not a per-key accessor, the interface.
+    /// The seam projection and `SCHEMA` agree one-to-one: every declared key
+    /// is name-addressable and the projection names nothing else — a key
+    /// declared in `config_schema!` reaches Python with no FFI edit, and a
+    /// name outside the declaration cannot appear.
     #[test]
-    fn the_projection_carries_every_declared_key_and_nothing_else() {
-        let cfg = ::degenbot_config::BotConfig::default();
-        let projected: BTreeSet<String> = values_by_path(&cfg).into_keys().collect();
-        let declared: BTreeSet<String> = ::degenbot_config::SCHEMA
+    fn values_projection_is_the_schema_one_to_one() {
+        let projected: BTreeSet<(&str, &str)> = ::degenbot_config::VALUES_PROJECTION
             .iter()
-            .map(|key| key.toml_path.to_string())
+            .copied()
+            .collect();
+        let declared: BTreeSet<(&str, &str)> = ::degenbot_config::SCHEMA
+            .iter()
+            .map(|key| (key.section, key.field))
             .collect();
         assert_eq!(
             projected, declared,
-            "the projection is walked out of SCHEMA, so a key declared without \
-             reaching it means the walk is no longer the schema"
+            "the projection is emitted from the same arms as SCHEMA, so a key \
+             declared without reaching it means the emitter drifted"
         );
     }
 
@@ -1032,20 +1067,51 @@ mod tests {
     #[test]
     fn the_installed_verdict_projects_the_installed_load() {
         ::pyo3::Python::attach(|py| {
+            use ::pyo3::types::PyAnyMethods as _;
+
             let verdict = ResolvedConfig::installed();
-            let values = verdict
-                .values(py)
-                .expect("every declared key projects into a Python object");
+
+            // The named projection answers every read with the declared kind:
+            // an unsigned floor reads as an int, and a nested facet namespace
+            // walks through the section view.
+            let values = verdict.values();
+            let dispatch = values
+                .__getattr__("dispatch")
+                .expect("dispatch is a declared section");
+            let margin = dispatch
+                .__getattr__(py, "min_profit_margin_bps")
+                .expect("the floor is a declared key");
             assert_eq!(
-                values.keys().cloned().collect::<BTreeSet<_>>(),
-                ::degenbot_config::SCHEMA
-                    .iter()
-                    .map(|key| key.toml_path.to_string())
-                    .collect::<BTreeSet<_>>()
+                margin.extract::<u64>().expect("the floor is an int"),
+                0,
+                "the default floor is the schema's, not a Python twin"
             );
+            let strategy = values
+                .__getattr__("strategy")
+                .expect("strategy is a declared section");
+            let facet = strategy
+                .__getattr__(py, "mevblocker_backrun")
+                .expect("the facet namespace is walkable");
+            let bid_mode = facet
+                .getattr("bid_mode")
+                .expect("the facet key is a declared key");
+            assert!(!bid_mode.extract::<bool>().expect("a flag is a bool"));
+
+            // A name outside the declaration is an AttributeError, not a
+            // projected default: the projection is closed.
+            let foreign = values
+                .__getattr__("dispatch")
+                .and_then(|dispatch| dispatch.__getattr__(py, "not_a_key"));
+            assert!(
+                foreign.err().is_some_and(
+                    |error| error.is_instance_of::<::pyo3::exceptions::PyAttributeError>(py)
+                ),
+                "an undeclared name must refuse"
+            );
+
             // This binary never runs the module init that publishes a load, so
             // the verdict stands on the floor: every declared key is still
-            // projected, and no key claims a layer nobody recorded.
+            // recorded, and no key claims a layer nobody recorded.
             assert!(
                 verdict.provenance().keys().all(|path| {
                     ::degenbot_config::SCHEMA
@@ -1053,10 +1119,6 @@ mod tests {
                         .any(|key| key.toml_path == path)
                 }),
                 "every projected layer must belong to a declared key"
-            );
-            assert!(
-                verdict.discovery_batch_size() >= 1,
-                "the forwarded batch size must never collapse to a busy loop"
             );
         });
     }

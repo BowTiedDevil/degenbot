@@ -551,8 +551,8 @@ crate::config_schema! {
     dispatch DispatchConfig {
         erc6909_profit [bool] = false, env = "DEGENBOT_ERC6909_PROFIT", def = "false",
             doc = "Capture profit through an ERC-6909 vault claim instead of a plain transfer; `1` opts in. The two capture paths need different executor bytecode, so this selects the whole post-profit seam.";
-        min_profit_margin_bps [i32] = 0, env = "DEGENBOT_MIN_PROFIT_MARGIN_BPS", def = "0",
-            doc = "Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other.";
+        min_profit_margin_bps [u64] = 0, env = "DEGENBOT_MIN_PROFIT_MARGIN_BPS", def = "0",
+            doc = "Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. A floor is a magnitude, so the key is unsigned end to end: a negative value is refused by the layer that supplied it, not clamped into a silent second default. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other.";
         contracts_dir [opt path] = None, env = "DEGENBOT_CONTRACTS_DIR", def = "(unset)",
             doc = "Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly).";
     }
@@ -1759,6 +1759,17 @@ mod tests {
             strmap_vocabulary::READABLE_KEYS.len(),
             strmap_vocabulary::SCHEMA.len()
         );
+        // The seam projection is emitted beside the reader census from the
+        // same arms, so the fixture exercises it in both key positions too.
+        assert_eq!(
+            strmap_vocabulary::VALUES_PROJECTION.len(),
+            strmap_vocabulary::SCHEMA.len()
+        );
+        assert!(strmap_vocabulary::VALUES_PROJECTION
+            .iter()
+            .any(
+                |(section, field)| (*section, *field) == ("strmap_fixture.endpoints", "probe_urls")
+            ));
         let mut config = strmap_vocabulary::BotConfig::default();
         let set =
             |cfg: &mut strmap_vocabulary::BotConfig, section: &str, field: &str, raw: &str| {

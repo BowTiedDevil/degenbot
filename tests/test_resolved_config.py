@@ -53,24 +53,36 @@ def test_the_verdict_is_one_frozen_object() -> None:
         verdict.chain_id = 1  # type: ignore[misc]
 
 
+def _read_named(values: object, path: str) -> object:
+    """One declared key read as a named property (``values.<section>.<field>``)."""
+    node: object = values
+    for part in path.split("."):
+        node = getattr(node, part)
+    return node
+
+
 def test_every_key_the_generated_reference_names_is_in_the_verdict() -> None:
     """The verdict carries every key the schema declares, with no accessor per key.
 
     The generated reference is the schema's own output, so this fails the
-    moment a key is declared and the verdict does not grow with it.
+    moment a key is declared and the named projection does not grow with it.
     """
     declared = _declared_toml_paths()
     assert declared, "the generated key reference must name the declared keys"
-    carried = set(_ffi.resolved_config().values)
-    assert carried == declared, (
-        "the verdict must carry exactly the declared keys: "
-        f"missing={sorted(declared - carried)} unexpected={sorted(carried - declared)}"
-    )
+    values = _ffi.resolved_config().values
+    missing = []
+    for path in sorted(declared):
+        try:
+            _read_named(values, path)
+        except AttributeError:
+            missing.append(path)
+    assert not missing, f"the verdict must carry every declared key: missing={missing}"
 
 
 def test_a_key_the_reference_does_not_name_is_not_in_the_verdict() -> None:
-    """The projection is closed: an undeclared path is absent, not defaulted."""
-    assert "database.not_a_key" not in _ffi.resolved_config().values
+    """The projection is closed: an undeclared name refuses, it does not default."""
+    with pytest.raises(AttributeError):
+        _ffi.resolved_config().values.database.not_a_key
 
 
 def test_a_declared_value_keeps_the_kind_its_key_declared() -> None:
@@ -82,14 +94,14 @@ def test_a_declared_value_keeps_the_kind_its_key_declared() -> None:
     number nobody configured.
     """
     values = _ffi.resolved_config().values
-    assert isinstance(values["pump.pump_debounce_ms"], int)
-    assert isinstance(values["solve.min_profit_wei"], int)
-    assert isinstance(values["allocator.mimalloc_purge_delay_mult"], float)
-    assert isinstance(values["telemetry.metrics_addr"], str)
-    assert isinstance(values["database.path"], str)
-    assert values["telemetry.otel"] is True
+    assert isinstance(values.pump.pump_debounce_ms, int)
+    assert isinstance(values.solve.min_profit_wei, int)
+    assert isinstance(values.allocator.mimalloc_purge_delay_mult, float)
+    assert isinstance(values.telemetry.metrics_addr, str)
+    assert isinstance(values.database.path, str)
+    assert values.telemetry.otel is True
     # An unset-able key projects as its kind or as None, never as a string.
-    assert values["logging.trace_jsonl"] is None or isinstance(values["logging.trace_jsonl"], str)
+    assert values.logging.trace_jsonl is None or isinstance(values.logging.trace_jsonl, str)
 
 
 def test_provenance_names_the_layer_that_won_each_key() -> None:
@@ -120,16 +132,19 @@ def test_the_database_path_getter_agrees_with_the_cascade() -> None:
     verdict = _ffi.resolved_config()
     assert verdict.database_path.path == resolve_database_path()
     assert verdict.resolve_database_path().path == verdict.database_path.path
-    assert verdict.declared_database_path == verdict.values["database.path"]
+    assert verdict.declared_database_path == verdict.values.database.path
 
 
-def test_discovery_batch_size_is_clamped_to_a_positive_batch() -> None:
-    """The batch size the discovery pipeline forwards is always >= 1.
+def test_the_declared_batch_size_projects_by_name_and_clamps_once() -> None:
+    """The named projection exposes the declared key; the clamp has one owner.
 
-    A zero would collapse the batched iterator into a per-path busy loop.
+    The FFI getter used to carry its own ``max(1)`` twin of the config
+    factory's; the twin is deleted and the clamp lives only at the factory
+    that hands the value to the discovery pipeline.
     """
-    assert _ffi.resolved_config().discovery_batch_size >= 1
-
+    assert isinstance(
+        _read_named(_ffi.resolved_config().values, "pathfinding.discovery_batch_size"), int
+    )
 
 
 class TestHypotheticalResolution:
@@ -145,15 +160,15 @@ class TestHypotheticalResolution:
     def test_it_resolves_the_environment_without_installing(self) -> None:
         """A hypothetical resolves its captured env and leaves the verdict alone."""
         installed = _ffi.resolved_config()
-        before_values = dict(installed.values)
+        before_chain_id = installed.values.session.chain_id
         before_provenance = dict(installed.provenance)
 
         hypothetical = _ffi.resolve_hypothetical({"DEGENBOT_DEFAULT_CHAIN_ID": "8453"}, None)
 
-        assert hypothetical.values["session.chain_id"] == 8453
+        assert hypothetical.values.session.chain_id == 8453
         assert hypothetical.provenance["session.chain_id"] == "env"
         # The install-once contract held: the verdict and its file did not move.
-        assert dict(_ffi.resolved_config().values) == before_values
+        assert _ffi.resolved_config().values.session.chain_id == before_chain_id
         assert dict(_ffi.resolved_config().provenance) == before_provenance
         assert _ffi.resolved_config().config_file_path == installed.config_file_path
 
@@ -161,9 +176,9 @@ class TestHypotheticalResolution:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A freeze is an in-process NEGATIVE assertion, not a fresh process."""
-        before = dict(_ffi.resolved_config().values)
+        before = _ffi.resolved_config().values.session.chain_id
         monkeypatch.setenv("DEGENBOT_DEFAULT_CHAIN_ID", "424242")
-        assert dict(_ffi.resolved_config().values) == before
+        assert _ffi.resolved_config().values.session.chain_id == before
 
     def test_it_is_unreachable_from_the_python_config_home(self) -> None:
         """The hypothetical lives on the raw FFI seam, not the driver home."""

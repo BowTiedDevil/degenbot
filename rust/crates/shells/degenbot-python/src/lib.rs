@@ -318,9 +318,9 @@ mod _ffi {
     #[pymodule_export]
     use crate::config::{
         resolve_hypothetical, resolve_hypothetical_chain_id, resolve_hypothetical_database_path,
-        resolve_hypothetical_node_uri, resolved_config, verification_retry_policy_defaults,
+        resolve_hypothetical_node_uri, resolved_config, ConfigSectionValues, ConfigValues,
         HypotheticalConfig, ResolvedChainId, ResolvedConfig, ResolvedDatabasePath, ResolvedNodeUri,
-        RetryPolicy, RetryPolicyDefaults, StrategyReadinessView,
+        RetryPolicy, StrategyReadinessView,
     };
 
     // Ambient-runtime driver seam: lets a Python driver satisfy the
@@ -408,13 +408,6 @@ mod _ffi {
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::session_registry::PySessionObject;
-
-    // The core fee-history percentile pair the settlement driver polls. A
-    // module function like `verification_retry_policy_defaults`: a core
-    // default, not a member of the resolved config verdict.
-    #[cfg(feature = "simulation")]
-    #[pymodule_export]
-    use crate::simulation::dispatch::fee_percentiles;
 
     // `QuantAMM` closed-form N-token Balancer weighted basket solver
     // (feature = "bot") — `solve_balancer_weighted_basket`.

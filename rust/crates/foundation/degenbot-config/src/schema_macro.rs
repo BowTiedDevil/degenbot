@@ -292,6 +292,18 @@ macro_rules! config_schema_impl {
             $( (concat!(stringify!($fs), ".", stringify!($fsu)), stringify!($ff)), )*
         ];
 
+        /// The typed seam projection: every declared key as a (section path,
+        /// field NAME) pair, in declaration order. Emitted from the same arms
+        /// as the typed tree, so the Python driver's
+        /// `values.<section>.<field>` read is walked out of THIS table — the
+        /// declaration itself — and a key becomes readable there the moment
+        /// it is declared, with no hand-written accessor beside it and no
+        /// dotted-path string in the consumer.
+        pub const VALUES_PROJECTION: &[(&str, &str)] = &[
+            $( (stringify!($as), stringify!($af)), )*
+            $( (concat!(stringify!($fs), ".", stringify!($fsu)), stringify!($ff)), )*
+        ];
+
         /// The self-describing key registry: one entry per declared key, in
         /// declaration order (which fixes doc + loader iteration order).
         pub const SCHEMA: &[$crate::schema::KeyDecl] = &[ $($schema)* ];

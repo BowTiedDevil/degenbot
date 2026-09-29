@@ -60,6 +60,7 @@ _OVERRIDE_NODE = "wss://probe.example"
 _SCRUBBED_PREFIXES = ("DEGENBOT_", "VERIFICATION_RETRY_")
 _SCRUBBED_NAMES = frozenset({"DEGENBOT_CONFIG", "INJECT_EXECUTOR_CODE"})
 
+
 def run(
     code: str,
     *,
@@ -107,6 +108,7 @@ def run(
             check=False,
         )
 
+
 @contextmanager
 def operator_file(body: str) -> Iterator[Path]:
     """A temporary operator file carrying ``body``, removed on exit.
@@ -127,6 +129,7 @@ def operator_file(body: str) -> Iterator[Path]:
         path.write_text(body, encoding="utf-8")
         yield path
 
+
 def hypothetical_values(
     env: Mapping[str, str] | None = None,
     *,
@@ -144,7 +147,9 @@ def hypothetical_values(
         operator_file: The file layer to resolve through, or ``None`` for none.
 
     Returns:
-        The declared values keyed by dotted TOML path.
+        The typed seam projection: every declared key as a named property
+        (``values.<section>.<field>``), read by attribute instead of a
+        dotted-path string.
 
     """
     hypothetical = _ffi.resolve_hypothetical(
@@ -152,6 +157,7 @@ def hypothetical_values(
         None if operator_file is None else str(operator_file),
     )
     return hypothetical.values
+
 
 def resolved_value(
     path: str,
@@ -176,11 +182,15 @@ def resolved_value(
         dict(env or {}),
         None if operator_file is None else str(operator_file),
     )
-    payload: dict[str, object] = {"value": hypothetical.values[path]}
+    value: object = hypothetical.values
+    for part in path.split("."):
+        value = getattr(value, part)
+    payload: dict[str, object] = {"value": value}
     source = hypothetical.provenance.get(path)
     if source is not None:
         payload["source"] = source
     return payload
+
 
 def build_config(
     *,
@@ -214,6 +224,7 @@ def build_config(
             rpc=RpcCascadeOverrides(chain_id=1, node=_OVERRIDE_NODE),
             values=values,
         )
+
 
 def config_values(
     fields: Sequence[str],

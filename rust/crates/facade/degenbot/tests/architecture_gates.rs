@@ -194,7 +194,7 @@ fn python_phrases(line: &str) -> Vec<(String, String, String)> {
 
 #[test]
 fn workspace_membership_is_exact_and_role_grouped() {
-    const EXPECTED_NAMES: [&str; 35] = [
+    const EXPECTED_NAMES: [&str; 36] = [
         "degenbot",
         "degenbot-aave",
         "degenbot-abi",
@@ -225,6 +225,7 @@ fn workspace_membership_is_exact_and_role_grouped() {
         "degenbot-simulation",
         "degenbot-solvers",
         "degenbot-strategy",
+        "degenbot-stubgen",
         "degenbot-submission",
         "degenbot-substrate",
         "degenbot-uniswap",
@@ -254,9 +255,13 @@ fn workspace_membership_is_exact_and_role_grouped() {
                 path.display()
             );
         } else {
+            // Non-role packages live in one of the two tool/sample homes;
+            // membership itself stays pinned by the exact EXPECTED_NAMES list.
+            let examples_root = workspace_root().join("examples");
+            let tools_root = workspace_root().join("tools");
             assert!(
-                path.starts_with(workspace_root().join("examples")),
-                "non-role package escaped the examples directory: {}",
+                path.starts_with(&examples_root) || path.starts_with(&tools_root),
+                "non-role package escaped the examples or tools directories: {}",
                 path.display()
             );
         }

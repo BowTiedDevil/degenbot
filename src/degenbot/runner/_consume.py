@@ -21,8 +21,8 @@ import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
-from degenbot.arbitrage import fee_percentiles
 from degenbot.calculations import next_base_fee
+from degenbot.config import resolved_config
 from degenbot.diagnostics import mark_progress
 from degenbot.dispatch import SubmittedRecord, typed_submit_record
 from degenbot.logging import logger as bot_logger
@@ -168,8 +168,8 @@ async def _apply_block_if_ready(
     """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved.
 
     ``reward_percentiles`` is the resolved core pair the caller hands down;
-    ``None`` (production) consults the Rust ``fee_percentiles`` reader per
-    tick, so the values can never be hardcoded, cached, or mirrored here.
+    ``None`` (production) reads the pair off the resolved verdict, so the
+    values can never be hardcoded, cached, or mirrored here.
     """
     if fut.cancelled() or fut.exception() is not None:
         return
@@ -197,7 +197,7 @@ async def _apply_block_if_ready(
     async_alloy = async_w3.as_async_alloy()
     if async_alloy is not None:
         if reward_percentiles is None:
-            reward_percentiles = fee_percentiles()
+            reward_percentiles = resolved_config().fee_percentiles
         await session.fee_history_fetcher(
             provider=async_alloy,
             dispatcher=dispatcher,

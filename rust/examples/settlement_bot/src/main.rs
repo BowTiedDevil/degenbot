@@ -1098,10 +1098,9 @@ fn build_batch_executor(
         None => alloy::primitives::Bytes::new(),
     };
     // The thin-margin floor is a declared driver-side stance
-    // (`dispatch.min_profit_margin_bps`); a negative value is a config error
-    // clamped to the disabled floor rather than a u64 wrap.
-    let min_profit_margin_bps =
-        u64::try_from(loaded.config.dispatch.min_profit_margin_bps.max(0)).unwrap_or(u64::MAX);
+    // (`dispatch.min_profit_margin_bps`); the key is unsigned end to end, so
+    // the declared value IS the floor the executor reads.
+    let min_profit_margin_bps = loaded.config.dispatch.min_profit_margin_bps;
     let cap = usize::try_from(cfg.max_simulate_concurrent)
         .unwrap_or(usize::MAX)
         .max(1);

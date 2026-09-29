@@ -53,15 +53,42 @@ _AMBIENT_FILE = Path(__file__).resolve().parent / "ambient_config.toml"
 _LAYERS = {"default", "file", "env", "cli"}
 
 
+def _declared_paths(oracle: dict) -> list[str]:
+    """Every declared dotted path the oracle records, across its environments."""
+    paths: set[str] = set()
+    for environment in oracle["environments"]:
+        paths.update(environment["values"])
+        paths.update(environment["provenance"])
+    return sorted(paths)
+
+
+def _walk_values(values: object, paths: list[str]) -> dict:
+    """The named projection, read path by path for the oracle comparison.
+
+    The verdict's values are named properties
+    (``values.dispatch.min_profit_margin_bps``), so this walk is the only
+    translation the comparator performs. Each read crosses the raw FFI, and a
+    path the projection does not carry raises ``AttributeError`` here instead
+    of comparing as a missing key.
+    """
+    out: dict[str, object] = {}
+    for path in paths:
+        node: object = values
+        for part in path.split("."):
+            node = getattr(node, part)
+        out[path] = node
+    return out
+
+
 # The comparison crosses the raw FFI hypothetical entry -- NOT the Python
 # `degenbot.config` wrapper and NOT the installed verdict. The hypothetical
 # resolves a captured environment + file without installing anything, so ONE
 # process can compare every environment the oracle recorded.
-def _hypothetical_verdict(environment: dict, operator_file: Path) -> dict:
+def _hypothetical_verdict(environment: dict, operator_file: Path, paths: list[str]) -> dict:
     """The whole hypothetical verdict for one oracle environment."""
     config = _ffi.resolve_hypothetical(dict(environment["env"]), str(operator_file))
     return {
-        "values": dict(config.values),
+        "values": _walk_values(config.values, paths),
         "provenance": dict(config.provenance),
         "entry_provenance": {
             key: dict(entries) for key, entries in config.entry_provenance.items()
@@ -119,8 +146,9 @@ def _load_oracle() -> dict:
 
 def _resolve_environments(oracle: dict) -> dict[str, dict]:
     """The whole hypothetical verdict for every recorded environment, in-process."""
+    paths = _declared_paths(oracle)
     return {
-        environment["id"]: _hypothetical_verdict(environment, _OPERATOR_FILE)
+        environment["id"]: _hypothetical_verdict(environment, _OPERATOR_FILE, paths)
         for environment in oracle["environments"]
     }
 
@@ -269,7 +297,7 @@ class TestCrossSurfaceParity:
         """Teeth proof: a mutated declared value must produce a non-empty diff."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE, _declared_paths(oracle))
         assert _verdict_diffs(expected, actual) == []
 
         mutated = json.loads(json.dumps(expected))
@@ -282,7 +310,7 @@ class TestCrossSurfaceParity:
         """Teeth proof: a mutated winning layer must produce a non-empty diff."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE, _declared_paths(oracle))
         assert _verdict_diffs(expected, actual) == []
 
         mutated = json.loads(json.dumps(expected))
@@ -295,7 +323,7 @@ class TestCrossSurfaceParity:
         """Teeth proof: a mutated per-entry layer must produce a non-empty diff."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE, _declared_paths(oracle))
         assert _verdict_diffs(expected, actual) == []
 
         mutated = json.loads(json.dumps(expected))
@@ -308,7 +336,7 @@ class TestCrossSurfaceParity:
         """An empty provenance map is a divergence, never an unknown layer."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE, _declared_paths(oracle))
 
         mutated = json.loads(json.dumps(expected))
         mutated["provenance"] = {}
@@ -320,7 +348,7 @@ class TestCrossSurfaceParity:
         """A layer the schema never reports is a divergence, not a synonym."""
         oracle = _load_oracle()
         expected = next(e for e in oracle["environments"] if e["id"] == "base")
-        actual = _hypothetical_verdict(expected, _OPERATOR_FILE)
+        actual = _hypothetical_verdict(expected, _OPERATOR_FILE, _declared_paths(oracle))
 
         mutated = json.loads(json.dumps(expected))
         mutated["provenance"]["session.chain_id"] = "elsewhere"

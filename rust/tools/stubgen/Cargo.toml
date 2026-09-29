@@ -1,0 +1,19 @@
+[package]
+name = "degenbot-stubgen"
+description = "ADR-066 D1/D2: generates the committed `src/degenbot/_ffi/` stub tree from the introspection chunks embedded in a cdylib built with the binding layer's `experimental-inspect` feature. Invoked by `just gen-stubs`."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+# Tracks the workspace `pyo3` pin in lockstep (ADR-066): a pyo3 bump implies a
+# generator bump and a fresh stub diff.
+pyo3-introspection = "0.29.2"

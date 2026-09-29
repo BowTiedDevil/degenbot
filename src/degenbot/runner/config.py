@@ -18,12 +18,10 @@ carries no filtering state.
 
 import dataclasses
 import os
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from degenbot.arbitrage import RetryPolicy
-from degenbot.config import resolve_rpc_uris, resolved_config
+from degenbot.config import ConfigValues, resolve_rpc_uris, resolved_config
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.runner.diag import DiagConfig
 from degenbot.runner.identity import (
@@ -37,33 +35,7 @@ from degenbot.runner.identity import (
 )
 
 
-def _declared(values: Mapping[str, Any] | None, path: str) -> Any:
-    """One declared key's resolved value, addressed by its dotted TOML path.
-
-    ``values`` is a resolved projection handed in by the construction
-    boundary — the installed verdict's projection in production, a
-    hypothetical projection in a test that resolves a cascade without
-    installing it. The projection is schema-driven, so a key added to the core
-    needs no edit in this file.
-
-    Args:
-        values: A resolved declared-key projection.
-        path: The declared key's dotted TOML path.
-
-    Returns:
-        The resolved value, in the Python type its declared kind names. The
-        static type is deliberately loose: the projection is schema-driven, so
-        a value's kind is a property of the declaration rather than of this
-        accessor, and each caller narrows it where it consumes it.
-
-    """
-    resolved_values = resolved_config().values if values is None else values
-    return resolved_values[path]
-
-
-def _verification_retry_policy(
-    values: Mapping[str, Any] | None,
-) -> RetryPolicy:
+def _verification_retry_policy(values: ConfigValues) -> RetryPolicy:
     """The bounded verification retry policy, from the resolved verdict.
 
     The four ``verify.verify_retry_*`` keys are declared in the core schema
@@ -79,11 +51,14 @@ def _verification_retry_policy(
         The resolved :class:`~degenbot.arbitrage.RetryPolicy`.
 
     """
+    # Named-property reads over the typed seam projection: each value arrives
+    # in the Python type its declared kind names, so there is no narrowing
+    # cast to hide a kind drift behind.
     return RetryPolicy(
-        max_attempts=int(_declared(values, "verify.verify_retry_max_attempts")),
-        base_delay=float(_declared(values, "verify.verify_retry_base_delay")),
-        max_delay=float(_declared(values, "verify.verify_retry_max_delay")),
-        jitter=float(_declared(values, "verify.verify_retry_jitter")),
+        max_attempts=values.verify.verify_retry_max_attempts,
+        base_delay=values.verify.verify_retry_base_delay,
+        max_delay=values.verify.verify_retry_max_delay,
+        jitter=values.verify.verify_retry_jitter,
     )
 
 
@@ -243,7 +218,7 @@ class ArbitrageConfig:
         live: bool,
         permutation: str | None,
         rpc: RpcCascadeOverrides | None = None,
-        values: Mapping[str, Any] | None = None,
+        values: ConfigValues | None = None,
     ) -> "ArbitrageConfig":
         """Build an ArbitrageConfig from the resolved verdict + CLI flags + process identity.
 
@@ -326,7 +301,8 @@ class ArbitrageConfig:
             msg = "EXECUTOR_CONTRACT_ADDRESS is the zero address"
             raise ValueError(msg)
 
-        inject_executor_code = bool(_declared(values, "simulation.inject_executor_code"))
+        resolved_values = resolved_config().values if values is None else values
+        inject_executor_code = bool(resolved_values.simulation.inject_executor_code)
         injected_address = _checksum_or_empty(
             os.environ.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
         )
@@ -361,18 +337,16 @@ class ArbitrageConfig:
         if inject_executor_code:
             executor_address = injected_address
 
-        verification_retry_policy = _verification_retry_policy(values)
+        verification_retry_policy = _verification_retry_policy(resolved_values)
         executor_runtime = os.environ.get("EXECUTOR_RUNTIME") or None
         # The incident probes' intervals come from the declared
         # `diagnostics.*` keys; zero is the declared default, so there is no
         # second "off" spelling here.
         diag = DiagConfig(
-            tracemalloc_secs=float(_declared(values, "diagnostics.tracemalloc_secs")),
-            procmem_secs=float(_declared(values, "diagnostics.procmem_secs")),
-            procmem_csv=str(_declared(values, "diagnostics.procmem_csv")),
-            faulthandler_timeout_secs=float(
-                _declared(values, "diagnostics.faulthandler_timeout_secs")
-            ),
+            tracemalloc_secs=resolved_values.diagnostics.tracemalloc_secs,
+            procmem_secs=resolved_values.diagnostics.procmem_secs,
+            procmem_csv=resolved_values.diagnostics.procmem_csv,
+            faulthandler_timeout_secs=resolved_values.diagnostics.faulthandler_timeout_secs,
         )
 
         return cls(
@@ -387,17 +361,18 @@ class ArbitrageConfig:
             injected_address=injected_address,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
-            erc6909_profit=bool(_declared(values, "dispatch.erc6909_profit")),
-            min_profit_margin_bps=int(_declared(values, "dispatch.min_profit_margin_bps")),
-            reg_progress_secs=float(_declared(values, "pathfinding.reg_progress_secs")),
-            max_registered_paths=int(_declared(values, "pathfinding.max_registered_paths")),
-            discovery_batch_size=max(1, int(_declared(values, "pathfinding.discovery_batch_size"))),
-            contracts_dir=str(_declared(values, "dispatch.contracts_dir") or ""),
-            sim_pipeline_concurrency=max(
-                1, int(_declared(values, "simulation.pipeline_concurrency"))
-            ),
-            sim_exit_on_fail=bool(_declared(values, "simulation.sim_exit_on_fail")),
-            sim_exit_ignore_buckets=str(_declared(values, "simulation.exit_ignore_buckets")),
+            erc6909_profit=resolved_values.dispatch.erc6909_profit,
+            min_profit_margin_bps=resolved_values.dispatch.min_profit_margin_bps,
+            reg_progress_secs=resolved_values.pathfinding.reg_progress_secs,
+            max_registered_paths=resolved_values.pathfinding.max_registered_paths,
+            # The ONE clamp owner for the batch size: the shell getter's twin
+            # is gone, so a zero/garbage value degrades to the legacy
+            # per-path delivery exactly once, here.
+            discovery_batch_size=max(1, resolved_values.pathfinding.discovery_batch_size),
+            contracts_dir=resolved_values.dispatch.contracts_dir or "",
+            sim_pipeline_concurrency=max(1, resolved_values.simulation.pipeline_concurrency),
+            sim_exit_on_fail=resolved_values.simulation.sim_exit_on_fail,
+            sim_exit_ignore_buckets=resolved_values.simulation.exit_ignore_buckets,
             verification_retry_policy=verification_retry_policy,
             executor_runtime=executor_runtime,
             diag=diag,

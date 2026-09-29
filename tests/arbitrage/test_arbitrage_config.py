@@ -35,6 +35,17 @@ _NODE = "wss://override.example"
 _OVERRIDE = RpcCascadeOverrides(chain_id=1, node=_NODE)
 
 
+def test_discovery_batch_size_clamps_to_a_positive_batch() -> None:
+    """ONE clamp owner: the config factory.
+
+    A zero (or garbage) declared batch size degrades to the legacy per-path
+    delivery exactly once, here — the deleted FFI getter twin must not come
+    back as a second owner.
+    """
+    cfg = probe.build_config(env={"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"})
+    assert cfg.discovery_batch_size == 1
+
+
 def _cfg(env=None, *, live=False, permutation=None, rpc=None) -> ArbitrageConfig:
     """Build a config with the identity installed and the RPC override pinned.
 
@@ -78,9 +89,7 @@ class TestFromEnvFull:
         assert cfg.executor_owner == "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 
     def test_inject_code_true_overrides_executor_to_injected(self) -> None:
-        """The stance swaps in the overlay address the sim injects bytecode at.
-
-        """
+        """The stance swaps in the overlay address the sim injects bytecode at."""
         values = probe.config_values(
             ["inject_executor_code", "executor_address", "injected_address"],
             identity=_full_env(),
@@ -91,9 +100,7 @@ class TestFromEnvFull:
         assert values["executor_address"] == values["injected_address"]
 
     def test_live_with_injection_is_refused(self) -> None:
-        """A live run cannot inject: the bytecode exists only in the overlay.
-
-        """
+        """A live run cannot inject: the bytecode exists only in the overlay."""
         with pytest.raises(ValueError, match="injection stance is active"):
             probe.build_config(
                 env={"DEGENBOT_INJECT_EXECUTOR_CODE": "1"},
@@ -141,9 +148,7 @@ class TestInjectExecutorCodeUnifiedResolution:
         assert "never submitted" in message
 
     def test_the_declared_key_resolves_from_the_typed_env_name(self) -> None:
-        """The honored spelling is the typed key env name, through the env layer.
-
-        """
+        """The honored spelling is the typed key env name, through the env layer."""
         values = probe.config_values(
             ["inject_executor_code"],
             identity=_full_env(),
@@ -322,7 +327,6 @@ class TestRunnerKnobResolution:
             _ffi.resolve_hypothetical({"DEGENBOT_MAX_PATHS": "not-a-number"}, None)
 
         assert "not-a-number" in str(excinfo.value)
-
 
     def test_the_declared_defaults_apply_when_no_layer_supplies_a_knob(self) -> None:
         values = self._probe()

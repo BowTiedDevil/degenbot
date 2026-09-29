@@ -336,6 +336,25 @@ impl SimLeaf<BatchWork, SimStageOutput> for EngineLeaves {
     }
 }
 
+/// Forensic capture (fork-replay): one INFO line per gate-clearing
+/// candidate BEFORE broadcast — the exact calldata + candidate economics —
+/// so any later tx can be replayed at its solve block. The `op_info!` field
+/// expressions evaluate only when a sink enabled the `exec` target's INFO
+/// level (hot-path cost flat: level check + no string building otherwise).
+fn log_submit_arm(candidates: &[degenbot_submission::SubmitCandidate], solve_block: u64) {
+    for c in candidates {
+        degenbot_core::op_info!(
+            domain = exec,
+            "path={} solve_block={} net_wei={} gas={} calldata={}",
+            c.path_id,
+            solve_block,
+            c.net_profit,
+            c.gas_used,
+            alloy::hex::encode(&c.execute_calldata),
+        );
+    }
+}
+
 impl SubmitLeaf<BatchWork, SimStageOutput> for EngineLeaves {
     fn submit<'a>(
         &'a self,
@@ -348,6 +367,10 @@ impl SubmitLeaf<BatchWork, SimStageOutput> for EngineLeaves {
         let candidates = outcome.submit_candidates.clone();
         let current_block = work.current_block;
         Box::pin(async move {
+            // Forensic capture BEFORE broadcast: one line per gate-clearing
+            // candidate, so any later tx can be replayed at its solve block.
+            log_submit_arm(&candidates, current_block);
+
             // Stage 3 — the production submit orchestration (sorts net-desc,
             // mutual exclusion, nonce lease, fee finalize, access list,
             // sign, broadcast, monitor). Its per-candidate RPC failures are
@@ -557,6 +580,8 @@ pub fn batch_counters(batch: &[BatchOutcome]) -> crate::record::BatchCounters {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    use tracing_subscriber::layer::SubscriberExt;
 
     use crate::record::{FailureDetail, PathInfoView, SimReceipt};
 
@@ -950,6 +975,110 @@ mod tests {
                 .cloned()
                 .collect::<HashSet<_>>(),
             std::iter::once("no-profit".to_string()).collect::<HashSet<_>>()
+        );
+    }
+
+    /// A gate-clearing candidate fixture for the forensic emission: the
+    /// economics the submit orchestration sorts on + the composed
+    /// `execute()` calldata.
+    fn forensic_candidate(
+        path_id: u64,
+        net_profit: u128,
+        calldata: &[u8],
+    ) -> degenbot_submission::SubmitCandidate {
+        degenbot_submission::SubmitCandidate {
+            path_id,
+            gross_profit: alloy::primitives::U256::from(net_profit + 1_000_000_000_u128),
+            net_profit: alloy::primitives::U256::from(net_profit),
+            gas_used: 200_000,
+            priority_fee: 1_000_000_000_u128,
+            base_fee_next: 1_000_000_000_u128,
+            execute_calldata: alloy::primitives::Bytes::copy_from_slice(calldata),
+            executor_address: degenbot_core::address_utils::parse_address(
+                "0x1111111111111111111111111111111111111111",
+            )
+            .unwrap(),
+            access_list: None,
+            path_pools: std::iter::once(degenbot_submission::PoolKey::new("0xpool")).collect(),
+        }
+    }
+
+    /// Captures each event's (target, formatted message) — the forensic-line
+    /// assertion surface (the same field visitation the Python log forwarder
+    /// performs).
+    struct EventCapture {
+        lines: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    struct MessageVisitor(String);
+
+    impl tracing::field::Visit for MessageVisitor {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0 = format!("{value:?}");
+            }
+        }
+    }
+
+    impl<S> tracing_subscriber::Layer<S> for EventCapture
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut visitor = MessageVisitor(String::new());
+            event.record(&mut visitor);
+            let message = visitor.0;
+            let message = message
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or(&message)
+                .to_string();
+            self.lines
+                .lock()
+                .unwrap()
+                .push((event.metadata().target().to_string(), message));
+        }
+    }
+
+    /// The submit-arm forensic emission: one INFO line per gate-clearing
+    /// candidate BEFORE broadcast, carrying the fork-replay fields (path,
+    /// solve block, net wei, gas, raw calldata hex) under the closed `exec`
+    /// domain target.
+    #[test]
+    fn submit_arm_forensic_line_captures_calldata_and_economics_per_candidate() {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry().with(EventCapture {
+            lines: Arc::clone(&lines),
+        });
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        log_submit_arm(
+            &[
+                forensic_candidate(7, 123, &[0xde, 0xad]),
+                forensic_candidate(9, 456, &[0xbe, 0xef]),
+            ],
+            4242,
+        );
+
+        let lines = lines.lock().unwrap().clone();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0],
+            (
+                "degenbot::exec".to_string(),
+                "path=7 solve_block=4242 net_wei=123 gas=200000 calldata=dead".to_string()
+            )
+        );
+        assert_eq!(
+            lines[1],
+            (
+                "degenbot::exec".to_string(),
+                "path=9 solve_block=4242 net_wei=456 gas=200000 calldata=beef".to_string()
+            )
         );
     }
 }

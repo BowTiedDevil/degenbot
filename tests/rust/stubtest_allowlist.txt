@@ -1,153 +1,102 @@
-# stubtest allowlist for the hand-maintained degenbot._ffi stubs (ADR-053).
+# stubtest allowlist for the GENERATED degenbot._ffi stubs (ADR-066 D3).
 #
-# stubtest owns the existence-direction checks the bespoke drift gate used to
-# hand-roll (R1 "runtime surface is stubbed", R3 "stub definitions exist at
-# runtime", R4 generalized class-member checking). Entries are EXACT matches
-# (fullmatch) against the errored object path, so a class-level entry never
-# suppresses member-level findings of another kind... except where noted the
-# generator emitted the narrowest object that carries the PyO3-introspection
-# limitation.
+# stubtest is GENERATOR VERIFICATION (`just lint-stubtest`): it introspects the
+# INSTALLED degenbot._ffi extension and compares it against the generated
+# src/degenbot/_ffi/*.pyi stubs in BOTH directions, across every class member,
+# with no curated table. Entries are EXACT matches (fullmatch) against the
+# errored object path. This file carries ONLY generator gaps — the enumerated
+# pyo3-introspection emission limitations below — never hand edits over
+# generated output (the committed stubs are `just gen-stubs` output; the
+# regenerate-and-diff gate is tests/rust/test_ffi_stub_drift.py).
 #
-# Structure: groups below each name the drift rule they serve. When PyO3
-# changes these runtime behaviors, entries can be re-triaged by running:
+# Re-triage after a PyO3/pyo3-introspection bump:
 #   uv run --no-sync stubtest --ignore-disjoint-bases --generate-allowlist degenbot._ffi
+#
+# The #2454 annotation frontier (PyO3 "a first step"; the rest of annotation
+# generation tracked upstream) is VISIBLE in the emitted stubs as `Any`
+# annotations on U256/I256-typed members, but produces no stubtest findings —
+# `Any` is compatible with everything — so it contributes no entries here.
+#
+# Re-gate delta vs the ADR-066 count: 18 create_exception! island types, not
+# 17 — fleet.rs registers PostureRetuneError on the same island (no
+# `_PYO3_DEF`, per its docstring), alongside the 17 registered in lib.rs.
 
-# ==== R4 / @final ====
-# Every #[pyclass] raises the cannot-be subclassed at runtime trait (PyO3 makes all
-# pyclasses un-subclassable unless #[pyclass(subclass)] is set); the stubs would
-# need a per-class @final boilerplate that adds no checking power. R4's
-# existence direction (members both ways) is unaffected by these entries.
-degenbot._ffi.ArbitrageEngine
-degenbot._ffi.backrun.BackrunFeed
-degenbot._ffi.BalanceVectorView
-degenbot._ffi.BlockStream
-degenbot._ffi.Bot
-degenbot._ffi.BotIo
-degenbot._ffi.ConcentratedLiquidityView
-degenbot._ffi.Erc20Token
-degenbot._ffi.Erc20TokenRow
-degenbot._ffi.IntakeReceipt
-degenbot._ffi.Pool
-degenbot._ffi.PathBatchIterator
-degenbot._ffi.PathIterator
-degenbot._ffi.ReservePairView
-degenbot._ffi.RetryPolicy
-degenbot._ffi.RetryPolicyDefaults
-degenbot._ffi.cancel.CancelHandle
-degenbot._ffi.contract.AsyncContract
-degenbot._ffi.contract.Contract
-degenbot._ffi.curve_dy.DyCalculationInputs
-degenbot._ffi.db.CollateralPositionData
-degenbot._ffi.db.DatabasePositionQuery
-degenbot._ffi.db.DatabaseSnapshot
-degenbot._ffi.db.DebtPositionData
-degenbot._ffi.db.ExchangeRow
-degenbot._ffi.db.LiquidityPoolRow
-degenbot._ffi.db.LiquidityUpdateEvent
-degenbot._ffi.db.PoolManagerRow
-degenbot._ffi.db.UserPositionSummary
-degenbot._ffi.db.V2PoolRowInput
-degenbot._ffi.db.V3PoolRowInput
-degenbot._ffi.db.V4PoolRowInput
-degenbot._ffi.dex_identity.DexIdentity
-degenbot._ffi.execution.SolveResult
-degenbot._ffi.fork.AnvilFork
-degenbot._ffi.price.AavePriceOracle
-degenbot._ffi.price.ChainlinkPriceFeed
-degenbot._ffi.provider.AlloyProvider
-degenbot._ffi.provider.AlloySubscription
-degenbot._ffi.provider.AsyncAlloyProvider
-degenbot._ffi.provider.LogFilter
-degenbot._ffi.simulation.CandidateAssembly
-degenbot._ffi.simulation.DispatchCandidate
-degenbot._ffi.simulation.DispatchOutcome
-degenbot._ffi.simulation.PayloadOutcome
-degenbot._ffi.simulation.PayloadVerdict
-degenbot._ffi.simulation.SimulateContext
-degenbot._ffi.submission.Dispatcher
-degenbot._ffi.submission.DivergentPool
-degenbot._ffi.submission.SimSubmitPipeline
-degenbot._ffi.submission.SubmitCandidate
-degenbot._ffi.submission.TxParams
-degenbot._ffi.submission.TxSigner
+# ==== pyo3 dunder `__getattr__` (2) ====
+# A pyo3 magic method installs into the type's getattro slot, not as a class
+# attribute, so introspection cannot see it and stubtest reports the stub
+# member MISSING at runtime. The read works (the typed seam projection's
+# named-property access is exercised by the config suites).
+degenbot._ffi.ConfigSectionValues.__getattr__
+degenbot._ffi.ConfigValues.__getattr__
 
-# ==== R4 / PyO3 constructor introspection ====
-# PyO3 exposes the #[new] constructor's signature on __new__ and leaves __init__
-# introspecting as a plain (self); the hand stubs document the true constructor
-# signature on __init__ (IDE surface). stubtest compares both sides and flags
-# __init__ (runtime has no params) and __new__ (stub has params) for the same class.
-degenbot._ffi.ArbitrageEngine.__init__
-degenbot._ffi.ArbitrageEngine.__new__
-degenbot._ffi.backrun.BackrunFeed.__init__
-degenbot._ffi.backrun.BackrunFeed.__new__
-degenbot._ffi.Bot.__init__
-degenbot._ffi.Bot.__new__
-degenbot._ffi.BotIo.__init__
-degenbot._ffi.BotIo.__new__
-degenbot._ffi.PathStepBuilder.__init__
-degenbot._ffi.PathStepBuilder.__new__
-degenbot._ffi.contract.Contract.__init__
-degenbot._ffi.contract.Contract.__new__
-degenbot._ffi.db.DatabasePositionQuery.__init__
-degenbot._ffi.db.DatabasePositionQuery.__new__
-degenbot._ffi.db.DatabaseSnapshot.__init__
-degenbot._ffi.db.DatabaseSnapshot.__new__
-degenbot._ffi.db.LiquidityUpdateEvent.__init__
-degenbot._ffi.db.LiquidityUpdateEvent.__new__
-degenbot._ffi.db.V2PoolRowInput.__init__
-degenbot._ffi.db.V2PoolRowInput.__new__
-degenbot._ffi.db.V3PoolRowInput.__init__
-degenbot._ffi.db.V3PoolRowInput.__new__
-degenbot._ffi.db.V4PoolRowInput.__init__
-degenbot._ffi.db.V4PoolRowInput.__new__
-degenbot._ffi.dex_identity.DexIdentity.__init__
-degenbot._ffi.dex_identity.DexIdentity.__new__
-degenbot._ffi.fork.AnvilFork.__init__
-degenbot._ffi.fork.AnvilFork.__new__
-degenbot._ffi.price.AavePriceOracle.__init__
-degenbot._ffi.price.AavePriceOracle.__new__
-degenbot._ffi.price.ChainlinkPriceFeed.__init__
-degenbot._ffi.price.ChainlinkPriceFeed.__new__
-degenbot._ffi.provider.AlloyProvider.__init__
-degenbot._ffi.provider.AlloyProvider.__new__
-degenbot._ffi.provider.AsyncAlloyProvider.__init__
-degenbot._ffi.provider.AsyncAlloyProvider.__new__
-degenbot._ffi.provider.LogFilter.__init__
-degenbot._ffi.provider.LogFilter.__new__
-degenbot._ffi.simulation.DispatchCandidate.__init__
-degenbot._ffi.simulation.DispatchCandidate.__new__
-degenbot._ffi.simulation.SimulateContext.__init__
-degenbot._ffi.simulation.SimulateContext.__new__
-degenbot._ffi.submission.SubmitCandidate.__init__
-degenbot._ffi.submission.SubmitCandidate.__new__
-degenbot._ffi.submission.TxParams.__init__
-degenbot._ffi.submission.TxParams.__new__
-degenbot._ffi.submission.TxSigner.__init__
-degenbot._ffi.submission.TxSigner.__new__
+# ==== create_exception! island types (18) ====
+# These runtime exceptions carry no embedded introspection data (no
+# `_PYO3_DEF`), so pyo3-introspection cannot emit them; stubtest sees the
+# runtime class without a stub declaration.
+degenbot._ffi.BootRefused
+degenbot._ffi.ChainMismatchError
+degenbot._ffi.DynamicFeePoolRejectedError
+degenbot._ffi.FleetIntakeFaultedError
+degenbot._ffi.HighFeePoolRejectedError
+degenbot._ffi.HookedPoolRejectedError
+degenbot._ffi.PathRegistryFullError
+degenbot._ffi.PoolAlreadyRegisteredError
+degenbot._ffi.PoolRegistrationError
+degenbot._ffi.PossibleInaccurateResult
+degenbot._ffi.SpecViolationError
+degenbot._ffi.StrategyHostError
+degenbot._ffi.UnconfiguredStrategyError
+degenbot._ffi.UnknownStrategyError
+degenbot._ffi.UnsupportedPoolFamilyError
+degenbot._ffi.VerificationMismatchError
+degenbot._ffi.VerificationRpcError
+degenbot._ffi.fleet.PostureRetuneError
 
-# ==== R4 / PyO3 signature introspection ====
-# The hand stubs encode keyword-only markers, default values, and parameter names
-# that the compiled module hides (PyO3 introspection lost them). stubtest checks
-# existence, not encoding; these are introspection limitations, not stub drift.
-degenbot._ffi.Bot.assemble_v3_tick_map
-degenbot._ffi.Bot.assemble_v4_tick_map
-degenbot._ffi.Bot.build_aerodrome_v2_pool
-degenbot._ffi.Bot.build_balancer_weighted_pool
-degenbot._ffi.Bot.register_aerodrome_pool
-degenbot._ffi.Bot.register_v4_pool
-degenbot._ffi.Bot.submit_registration_unit
-degenbot._ffi.call_blocking_on_ambient_runtime
-degenbot._ffi.call_on_ambient_runtime
-degenbot._ffi.db.DatabasePositionQuery.get_users_with_debt
-degenbot._ffi.diagnostics.failure_action
-degenbot._ffi.diagnostics.start_gil_probe
-degenbot._ffi.executor.pack_config
-degenbot._ffi.provider.AsyncAlloyProvider.get_logs
-degenbot._ffi.solady.flz_compress
-degenbot._ffi.solady.flz_decompress
+# ==== Imperative U256 attributes (2) ====
+# MIN_SQRT_RATIO / MAX_SQRT_RATIO are registered imperatively on the
+# concentrated-liquidity module, outside any declarative pymethods block
+# the introspection covers.
+degenbot._ffi.concentrated_liquidity_math.MAX_SQRT_RATIO
+degenbot._ffi.concentrated_liquidity_math.MIN_SQRT_RATIO
 
-# ==== R3 / annotation-only stub types ====
-# Stub-defined types that exist only for typing (annotation-only imports/aliases);
-# the bespoke R3 test exempted these explicitly.
-degenbot._ffi.ChecksummedAddress
-degenbot._ffi.executor.WarmupDict
+# ==== __all__ emission (3) ====
+# The generator emits `__all__` from the stub's top-level declarations
+# (ADR-066 D3), which collapses the former 27 per-pymodule entries to the
+# modules whose runtime `__all__` carries members outside introspection:
+# the root also exports the 18 create_exception! islands and the 26
+# submodules, fleet exports its PostureRetuneError island, and
+# concentrated_liquidity_math exports the 2 imperative boundary constants.
+degenbot._ffi.__all__
+degenbot._ffi.concentrated_liquidity_math.__all__
+degenbot._ffi.fleet.__all__
+
+# ==== Submodule declaration emission (26) ====
+# The generator emits one stub file per submodule but no `from . import
+# <name> as <name>` re-export in the parent stub, so stubtest reports each
+# runtime submodule object as absent from the stub namespace.
+degenbot._ffi.aave
+degenbot._ffi.abi
+degenbot._ffi.backrun
+degenbot._ffi.balancer_math
+degenbot._ffi.cancel
+degenbot._ffi.concentrated_liquidity_math
+degenbot._ffi.contract
+degenbot._ffi.curve_dy
+degenbot._ffi.curve_math
+degenbot._ffi.db
+degenbot._ffi.deployments
+degenbot._ffi.dex_identity
+degenbot._ffi.diagnostics
+degenbot._ffi.eip_1559
+degenbot._ffi.execution
+degenbot._ffi.executor
+degenbot._ffi.fleet
+degenbot._ffi.fork
+degenbot._ffi.pool
+degenbot._ffi.price
+degenbot._ffi.provider
+degenbot._ffi.simulation
+degenbot._ffi.solady
+degenbot._ffi.solidly_math
+degenbot._ffi.submission
+degenbot._ffi.v2_math

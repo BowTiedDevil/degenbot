@@ -2,9 +2,9 @@
 
 The compiled extension registers its Python-facing surface on
 ``degenbot._ffi`` and its ``add_submodule`` children — the runtime
-registration surface, whose hand-maintained stubs under
+registration surface, whose GENERATED stubs under
 ``src/degenbot/_ffi/*.pyi`` are the surface of record for type checking
-(ADR-013). ``mypy.stubtest`` owns the symbol-level stub-drift checks
+(ADR-013; generation + cutover per ADR-066 D2). ``mypy.stubtest`` owns the symbol-level stub-drift checks
 (``just lint-stubtest``, allowlist ``tests/rust/stubtest_allowlist.txt``);
 the checks stubtest cannot perform live here, all pinned against the same
 runtime registration surface:

@@ -2,7 +2,8 @@
 #
 # The workspace root holds ONLY the `[workspace]` declaration + the `[profile.*]`
 # blocks (Cargo only honors `[profile]` at the workspace root — keep them here).
-# The workspace contains 31 crates plus two non-publishable examples. Crates are
+# The workspace contains 31 crates, a non-publishable stub generator
+# (rust/tools/stubgen), and two non-publishable examples. Crates are
 # explicitly grouped by architectural role under
 # `crates/{foundation,engine,integrations,shells,facade}/`; examples live under
 # `examples/`. The Python binding is a shell beside the Rust-facing core rather
@@ -160,11 +161,13 @@ members = [
     "crates/shells/degenbot-cli",
     "crates/shells/degenbot-cli-core",
     "crates/shells/degenbot-python",
-    # Non-publishable samples live outside the role-grouped product crates.
+    # Non-publishable samples + the ADR-066 stub generator live outside the
+    # role-grouped product crates.
     "examples/degenbot-execution-sample",
     # The external umbrella-consumer example depends through `degenbot` like an
     # out-of-workspace `cargo add degenbot` user.
     "examples/settlement_bot",
+    "tools/stubgen",
 ]
 # Keep unqualified Cargo commands focused on the two first-class pure-Rust
 # entry points. The PyO3 binding and non-publishable samples remain workspace

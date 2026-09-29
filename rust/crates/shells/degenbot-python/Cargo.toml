@@ -119,6 +119,14 @@ dev-features = [
     "mimalloc",
 ]
 auto-initialize = ["pyo3/auto-initialize"]
+# ADR-066 D1 (named feature, not a manifest toggle): embeds PyO3
+# introspection chunks in the cdylib so `just gen-stubs` can read the
+# seam's surface out of the built artifact. This build exists solely to
+# be introspected — it is outside `default` and `dev-features`, so
+# release wheels never ship it. The generator (`degenbot-stubgen`) pins
+# `pyo3-introspection` in lockstep with the `pyo3` pin: a pyo3 bump
+# implies a generator bump and a fresh stub diff.
+experimental-inspect = ["pyo3/experimental-inspect"]
 # FF-T1: `bot` also names degenbot-workers — the intake seam maps
 # the workers' typed BootError family onto the BootRefused exception at
 # the pyo3 leaf (the simulation feature already pulled the dep; bot-only

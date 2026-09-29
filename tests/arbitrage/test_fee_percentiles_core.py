@@ -121,7 +121,8 @@ def test_engine_carries_no_second_percentile_literal() -> None:
     )
 
 
-def test_ffi_reader_matches_core_declaration() -> None:
-    from degenbot.arbitrage import fee_percentiles
+def test_the_verdict_carries_the_core_pair() -> None:
+    """The verdict is the one FFI door for the pair, not a module function."""
+    from degenbot.config import resolved_config
 
-    assert fee_percentiles() == _core_percentiles()
+    assert resolved_config().fee_percentiles == _core_percentiles()

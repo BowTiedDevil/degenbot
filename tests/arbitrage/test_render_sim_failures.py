@@ -392,8 +392,8 @@ def _arm_from(
     """
     values = probe.hypothetical_values(env, operator_file=operator_file)
     return (
-        bool(values["simulation.sim_exit_on_fail"]),
-        str(values["simulation.exit_ignore_buckets"]),
+        bool(values.simulation.sim_exit_on_fail),
+        str(values.simulation.exit_ignore_buckets),
     )
 
 

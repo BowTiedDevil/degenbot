@@ -9,9 +9,10 @@ The verdict is ONE frozen object -- :func:`resolved_config` -- built from the
 load published at FFI module init. The helpers here are translation (a wider
 ``int``/``str`` signature, the ``RpcNotConfiguredError`` the driver catches,
 the retired-keyword refusal) over that one object; none of them re-derives a
-layer or re-reads a key. A config key the driver wants that has no helper yet is
-``resolved_config().values["<dotted.path>"]`` -- reading one does not require an
-edit anywhere, which is the point of the verdict.
+layer or re-reads a key. A config key the driver wants that has no helper yet
+is a named property off the typed seam projection,
+``resolved_config().values.<section>.<field>`` -- reading one does not
+require an edit anywhere, which is the point of the verdict.
 
 The cascade has four layers -- an explicit override, the environment, the
 operator file, and a declared default -- and reports the layer that won. The
@@ -31,12 +32,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from degenbot import _ffi
-from degenbot._ffi import ResolvedChainId, ResolvedConfig, ResolvedDatabasePath, ResolvedNodeUri
+from degenbot._ffi import (
+    ConfigSectionValues,
+    ConfigValues,
+    ResolvedChainId,
+    ResolvedConfig,
+    ResolvedDatabasePath,
+    ResolvedNodeUri,
+)
 
 if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
 
 __all__ = [
+    "ConfigSectionValues",
+    "ConfigValues",
     "ResolvedChainId",
     "ResolvedConfig",
     "ResolvedDatabasePath",
