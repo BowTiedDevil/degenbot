@@ -23,7 +23,7 @@ use crate::prelude::*;
 use degenbot_db::DegenbotDb;
 use degenbot_pathfinding::directions::resolve_directions as core_resolve_directions;
 use degenbot_pathfinding::directions::DirectionHop as CoreDirectionHop;
-use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind as CorePoolKind};
+use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind as CorePoolKind, SearchSpec};
 use pyo3::exceptions::{PyKeyError, PyStopAsyncIteration, PyValueError};
 use pyo3::types::{PyDict, PyList, PyTuple};
 use std::collections::{HashMap, HashSet};
@@ -470,12 +470,14 @@ fn build_owned_finder(
 
     OwnedPathFinder::new(
         graph,
-        start_token_id,
-        end_token_id,
-        min_depth,
-        max_depth,
-        include_reverse,
-        rust_filter,
+        SearchSpec::new(
+            start_token_id,
+            end_token_id,
+            min_depth,
+            max_depth,
+            include_reverse,
+            rust_filter,
+        ),
     )
 }
 
@@ -973,7 +975,7 @@ mod tests {
             (2u64, 1u64, 200u64, CorePoolKind::V2),
         ]);
         let cancel = Arc::new(AtomicBool::new(false));
-        let finder = OwnedPathFinder::new(graph, 1, 1, 2, Some(2), false, None)
+        let finder = OwnedPathFinder::new(graph, SearchSpec::new(1, 1, 2, Some(2), false, None))
             .with_cancel(Arc::clone(&cancel));
         let iterator = PathBatchIterator::new(finder, Arc::clone(&cancel), 4);
         assert!(!cancel.load(Ordering::Acquire));

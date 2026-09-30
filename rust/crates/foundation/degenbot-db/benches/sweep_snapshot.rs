@@ -20,7 +20,7 @@ use std::hint::black_box;
 
 use alloy::primitives::{address, Address};
 use degenbot_db::DegenbotDb;
-use degenbot_pathfinding::{PathGraph, PoolKind};
+use degenbot_pathfinding::{PathGraph, PoolKind, SearchSpec};
 
 fn snapshot_db_path() -> PathBuf {
     // Read-only fixture: never auto-heal it (mirrors degenbot-db's parity harness).
@@ -70,12 +70,7 @@ fn sweep_paths(
     let mut hops = 0usize;
     let filter = depths.map(<[Option<Vec<PoolKind>>]>::to_vec);
     let mut iter = graph.find_paths_iter(
-        start,
-        end,
-        min_depth,
-        max_depth,
-        true,
-        filter.as_deref(),
+        SearchSpec::new(start, end, min_depth, max_depth, true, filter),
         nvd,
     );
     while let Some(path) = iter.next_path() {

@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use degenbot_pathfinding::{EdgeKey, PathGraph, PoolKind};
+use degenbot_pathfinding::{EdgeKey, PathGraph, PoolKind, SearchSpec};
 use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 
 /// One touched pool the frame's cycles anchor on: the connector-index
@@ -193,7 +193,10 @@ impl AnchoredGraph {
                 let pass_num = pass;
                 let mut finder = self
                     .graph
-                    .find_paths_iter(exit, entry, 1, Some(max_hops - 1), false, None, None)
+                    .find_paths_iter(
+                        SearchSpec::new(exit, entry, 1, Some(max_hops - 1), false, None),
+                        None,
+                    )
                     .with_progress(Duration::from_secs(1), move |tally| {
                         tracing::info!(
                             anchor_pool = anchor_pool_id,

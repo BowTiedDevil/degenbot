@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use degenbot::core::address_utils::address_to_checksum_string;
 use degenbot::db::discovery_read::DiscoveryPoolRow;
-use degenbot::pathfinding::{OwnedPathFinder, PathGraph, PoolKind};
+use degenbot::pathfinding::{OwnedPathFinder, PathGraph, PoolKind, SearchSpec};
 
 /// V4 graph-id namespace offset (mirrors
 /// `degenbot_db::pathfinding::V4_POOL_ID_OFFSET`).
@@ -334,12 +334,14 @@ impl BatchedPathFinder {
                 .map(|(start, end, reverse)| {
                     OwnedPathFinder::new(
                         graph.clone(),
-                        start,
-                        end,
-                        min_depth,
-                        params.max_depth,
-                        reverse,
-                        params.pool_type_per_depth.clone(),
+                        SearchSpec::new(
+                            start,
+                            end,
+                            min_depth,
+                            params.max_depth,
+                            reverse,
+                            params.pool_type_per_depth.clone(),
+                        ),
                     )
                 })
                 .collect();

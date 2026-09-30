@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use degenbot_pathfinding::{PathGraph, PoolKind};
+use degenbot_pathfinding::{PathGraph, PoolKind, SearchSpec};
 
 /// `find_paths_iter` filter arg for a per-depth allowed-kind list.
 fn kind_filter(depths: &[Option<Vec<PoolKind>>]) -> Vec<Option<Vec<PoolKind>>> {
@@ -36,12 +36,7 @@ fn sweep_paths(
     let mut hops = 0usize;
     let filter = depths.map(kind_filter);
     let mut iter = graph.find_paths_iter(
-        start,
-        end,
-        min_depth,
-        max_depth,
-        true,
-        filter.as_deref(),
+        SearchSpec::new(start, end, min_depth, max_depth, true, filter),
         nvd,
     );
     while let Some(path) = iter.next_path() {
