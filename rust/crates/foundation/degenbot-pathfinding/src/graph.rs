@@ -1,19 +1,20 @@
 //! The pathfinding multigraph and iterative depth-first search.
 //!
-//! This module is the pure-Rust core of the pathfinding algorithm. It
-//! replaces the Python `networkx.MultiGraph` + recursive `_dfs` with a lean
-//! adjacency-list graph and an iterative DFS using a `Vec<bool>` visited-set
-//! for O(1) cycle detection.
+//! This module is the pure-Rust core of the pathfinding algorithm: a lean
+//! CSR-backed multigraph and an iterative DFS whose cycle detection is a
+//! per-bundle use count rather than a pool visited set.
 //!
 //! # Performance design
 //!
 //! External token IDs (`u64`) are remapped to compact contiguous indices
-//! (`u32`) at construction. The adjacency list is a flat `Vec<Vec<CompactEdge>>`
-//! indexed by compact token index — a direct array lookup with no hashing.
-//! Pools are likewise remapped to compact indices so the visited set is a
-//! `Vec<bool>` (indexed by pool index) instead of a `HashSet`, eliminating
-//! hashing on every edge explored. Each `CompactEdge` is 8 bytes (two `u32`)
-//! versus the 24-byte `Edge`, improving cache density for the hot DFS loop.
+//! (`u32`) at construction. The adjacency list is CSR (`adj_offsets` /
+//! `adj_flat` of `CompactEdge`s) indexed by compact token index — a direct
+//! array lookup with no hashing. Pools are likewise remapped to compact
+//! indices: parallel pools between the same unordered token pair collapse
+//! into one bundle, and the walk tracks a use count per bundle instead of
+//! a visited set over pools, so no edge exploration hashes. Each
+//! `CompactEdge` is 8 bytes (two `u32`) versus the 24-byte `Edge`,
+//! improving cache density for the hot DFS loop.
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
@@ -148,7 +149,8 @@ pub struct Edge {
 /// A key uniquely identifying a pool within a traversal.
 pub type EdgeKey = (u64, PoolKind);
 
-/// Hasher for `u64` token IDs: single multiply-xor round (FxHash-style).
+/// Hasher for `u64` token IDs: the scheme and constants are rustc-hash's
+/// `FxHash`, inlined to preserve the zero-dependency-leaf constraint.
 /// Token-ID hashing runs ~1.5M times during graph construction; the default
 /// `SipHash` costs several instructions per byte for 8-byte keys with no
 /// security benefit here (keys are internal IDs, not adversarial input).
@@ -192,16 +194,18 @@ pub(crate) struct CompactEdge {
 
 /// A multigraph: token IDs are nodes, liquidity pools are edges.
 ///
-/// Stored as a compact adjacency list (`Vec<Vec<CompactEdge>>`) indexed by
-/// remapped contiguous token indices. External token IDs (`u64`) are mapped
-/// to compact indices (`u32`) via `token_index`, so the hot DFS loop does
-/// direct array indexing instead of hashing. Parallel edges (multiple pools
-/// connecting the same token pair) are naturally supported and preserve
-/// insertion order for deterministic traversal.
+/// Stored as CSR adjacency (`adj_offsets` / `adj_flat` of `CompactEdge`s)
+/// indexed by remapped contiguous token indices. External token IDs (`u64`)
+/// are mapped to compact indices (`u32`) via `token_index`, so the hot DFS
+/// loop does direct array indexing instead of hashing. Parallel edges
+/// (multiple pools connecting the same token pair) are naturally supported
+/// and preserve insertion order for deterministic traversal.
 ///
 /// Pools are also remapped to compact indices; the `pools` table maps each
-/// compact pool index back to its `(pool_id, PoolKind)` for yielding, and the
-/// visited set is an O(1) `Vec<bool>` indexed by pool index.
+/// compact pool index back to its `(pool_id, PoolKind)` for yielding. The
+/// bundle layer collapses parallel pools between the same unordered token
+/// pair into one bundle (see `bundle_pairs` / `bundle_pools_flat`), and the
+/// DFS tracks a per-bundle use count instead of a pool visited set.
 #[derive(Clone)]
 pub struct PathGraph {
     /// CSR adjacency: `adj_flat[adj_offsets[i]..adj_offsets[i + 1]]` is the
@@ -340,16 +344,14 @@ impl PathGraph {
 
     /// Build from a flat list of `(token0, token1, pool_id, pool_kind)` edges.
     ///
-    /// Each edge is added in both directions (the graph is undirected, like
-    /// the `networkx.MultiGraph` it replaces). Edge insertion order within
-    /// each node's adjacency list is preserved for deterministic traversal
-    /// (per-node cursor fill over the edge list = insertion order). External
-    /// token IDs are remapped to compact contiguous indices.
+    /// Each edge is added in both directions (the graph is undirected). Edge
+    /// insertion order within each node's adjacency list is preserved for
+    /// deterministic traversal (per-node cursor fill over the edge list =
+    /// insertion order). External token IDs are remapped to compact
+    /// contiguous indices.
     ///
     /// Two passes over the edge list into a flat CSR array: no per-node
-    /// `Vec` allocations, no reallocation churn (~1.5M heap operations on a
-    /// 742k-edge graph, down from ~750k edge pushes into growing per-node
-    /// vectors plus map-insert adjacency growth).
+    /// `Vec` allocations, no reallocation churn.
     ///
     /// # Panics
     ///
@@ -526,12 +528,9 @@ impl PathGraph {
         let n = self.nodes();
         // 2-core peel (degree array + work queue): a node is on a pruning
         // path iff iteratively reducing it drops its live degree to <= 1.
-        // This is the SAME fixpoint the previous round-based implementation
-        // computed (nodes on cycles always retain degree >= 2; a removed
-        // node's edges cannot re-connect anything), but it visits each edge
-        // O(1) times instead of rescanning the whole graph per round
-        // (O(V+E) total; the round-based version was O(rounds * (V+E)) and
-        // took ~55s on a 742k-edge mainnet graph).
+        // Nodes on cycles always retain degree >= 2; a removed node's edges
+        // cannot re-connect anything. Each edge is visited O(1) times
+        // (O(V+E) total).
         let node_count_u32 = expect_u32(self.nodes(), "node count exceeds u32::MAX");
         let mut degree: Vec<usize> = (0..node_count_u32).map(|i| self.adj_of(i).len()).collect();
         let mut removed = vec![false; n];
@@ -819,7 +818,7 @@ pub struct BundledSearch<B: Borrow<PathGraph>> {
     /// Concrete pool indices of the most recent yield, in walk order.
     emitted: Vec<u32>,
     done: bool,
-    /// Cooperative cancellation flag (4IOEVT). When set, [`Self::advance`]
+    /// Cooperative cancellation flag. When set, [`Self::advance`]
     /// stops the search at its next loop iteration and reports exhaustion.
     /// The async batch iterator's `Drop` impl sets it so a consumer that
     /// abandons a sweep (aclose / GC) releases a mid-grind DFS promptly
@@ -827,7 +826,7 @@ pub struct BundledSearch<B: Borrow<PathGraph>> {
     cancel: Option<Arc<AtomicBool>>,
     // --- discovery-phase heartbeat diagnostics ---
     // A silently-stalled DFS grinds here with the GIL released. On the async
-    // path (4IOEVT) that grind runs on a tokio worker, so the Python event
+    // path that grind runs on a tokio worker, so the Python event
     // loop keeps turning and a Python-side progress log cannot reflect the
     // DFS's internal progress. This heartbeat emits to stderr (GIL-free, zero
     // deps) so a future zero-yield hang is visible at a glance, not just
@@ -1531,9 +1530,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    // Token IDs for the synthetic 4-pool V2 fixture (mirrors the in-memory
-    // DB fixture from test_permutation_filter_min_depth.py).
-    // Graph:
+    // Token IDs for the synthetic 4-pool V2 fixture. Graph:
     //     WETH ===pool1=== A
     //     WETH ===pool2=== A      (parallel edge -> 2-hop cycle WETH-A-WETH)
     //     A     ===pool3=== B
@@ -1579,19 +1576,11 @@ mod tests {
 
     #[test]
     fn test_prune_dead_ends() {
-        // Build a graph with a dead-end chain: A-B-C where C only connects to B.
-        // After pruning, C (degree 1) is removed, then B (now degree 1) is removed.
-        let mut graph = PathGraph::from_edges(vec![
-            (A, B, 1, PoolKind::V2),
-            (B, 99, 2, PoolKind::V2), // 99 is a dead end (degree 1)
-        ]);
+        // The A-B-99 chain is entirely off-cycle: no node of it lies on a
+        // cycle, so the 2-core peel removes all three nodes.
+        let mut graph =
+            PathGraph::from_edges(vec![(A, B, 1, PoolKind::V2), (B, 99, 2, PoolKind::V2)]);
         graph.prune_dead_ends();
-        // 99 is removed (degree 1). Then B has degree 1 (only edge to A).
-        // Wait — A-B is bidirectional, so A has 1 edge (to B) and B has 1 edge
-        // (to A) after 99 is removed. Both get pruned.
-        // Actually: A has edges [B], B has edges [A, 99]. 99 has edges [B].
-        // 99 (degree 1) pruned. Now B has edges [A] (degree 1) pruned.
-        // Now A has edges [B] but B is removed, so A has 0 edges pruned.
         assert!(!graph.contains_node(99));
         assert!(!graph.contains_node(B));
         assert!(!graph.contains_node(A));
@@ -1906,10 +1895,9 @@ mod tests {
     /// or yield count. Two independent searches on the same graph must produce
     /// identical, stable output — the heartbeat is purely diagnostic stderr.
     /// A walk that grinds past the heartbeat checkpoint BEFORE its first
-    /// yield reports through the caller's hook: hub-rooted walks (the
-    /// production frame that anchored 0x1d8168b6…) run 9000 spokes before
-    /// reaching the closing leaf, so a zero-interval hook observes un-yielded
-    /// DFS work mid-walk with the running tally.
+    /// yield reports through the caller's hook: a hub-rooted walk traverses
+    /// all its spokes before reaching the closing leaf, so a zero-interval
+    /// hook observes un-yielded DFS work mid-walk with the running tally.
     #[test]
     fn test_progress_hook_fires_mid_walk_with_the_tally() {
         const SPOKES: u64 = 9000;
@@ -1993,17 +1981,27 @@ mod tests {
         }
     }
 
+    /// The A<->B bundle of `m` parallel pools plus single-pool B<->C and
+    /// C<->A: the triangle that forces walks to traverse the SAME bundle
+    /// two and four times, and 3-hop triangles closing before the max
+    /// budget. Serves `battery_parallel_hub_trio` and
+    /// `perf_core_parallel_hub` only — `test_parity_parallel_bundle_revisited_pair`
+    /// is a lone-bundle fixture with no triangle and must keep its literal.
+    fn parallel_hub(m: u64, base_pool_id: u64) -> Vec<(u64, u64, u64, PoolKind)> {
+        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::new();
+        for i in 0..m {
+            edges.push((1, 2, base_pool_id + i, PoolKind::V2));
+        }
+        edges.push((2, 3, base_pool_id + 99_001, PoolKind::V2));
+        edges.push((3, 1, base_pool_id + 99_002, PoolKind::V2));
+        edges
+    }
+
     /// A big parallel bundle on A<->B plus single-pool B<->C, C<->A: forces
     /// walks that traverse the SAME bundle two and four times, and 3-hop
     /// triangles closing before the max budget.
     fn battery_parallel_hub_trio() -> Vec<(u64, u64, u64, PoolKind)> {
-        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::new();
-        for i in 0..40u64 {
-            edges.push((1, 2, 700_000 + i, PoolKind::V2));
-        }
-        edges.push((2, 3, 799_001, PoolKind::V2));
-        edges.push((3, 1, 799_002, PoolKind::V2));
-        edges
+        parallel_hub(40, 700_000)
     }
 
     /// Reference enumerator: ALL edge-trails from `start` to `end` with
@@ -2229,12 +2227,7 @@ mod tests {
     #[expect(clippy::print_stderr)]
     fn perf_core_parallel_hub() {
         let m = 40u64;
-        let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::new();
-        for i in 0..m {
-            edges.push((1, 2, 700_000 + i, PoolKind::V2));
-        }
-        edges.push((2, 3, 799_001, PoolKind::V2));
-        edges.push((3, 1, 799_002, PoolKind::V2));
+        let edges = parallel_hub(m, 700_000);
 
         let n_runs = 5;
         let mut best = f64::MAX;

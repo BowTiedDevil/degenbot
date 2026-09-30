@@ -11,9 +11,13 @@
 //!
 //! The graph is a multigraph: nodes are token IDs and edges are liquidity
 //! pools, identified by `(pool_id, pool_kind)`. Parallel edges (multiple
-//! pools connecting the same token pair) are naturally supported. The
-//! [`PathGraph`] stores an adjacency list (`HashMap<u64, Vec<Edge>>`)
-//! preserving edge insertion order for deterministic DFS traversal.
+//! pools connecting the same token pair) are naturally supported.
+//! [`PathGraph`] remaps external `u64` token and pool IDs to compact `u32`
+//! indices and stores the adjacency as flat CSR arrays
+//! (`adj_offsets` / `adj_flat`), preserving edge insertion order for
+//! deterministic DFS traversal. Parallel pools between the same unordered
+//! token pair collapse into one bundle with a per-bundle use counter, and
+//! yielded walks expand to concrete pool IDs lazily at yield time.
 //!
 //! The [`PathGraph::find_paths`] method performs an iterative depth-first
 //! search for all valid cycles from a start token back to an end token,

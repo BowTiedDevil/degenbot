@@ -517,7 +517,6 @@ rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/two_hop_v4_le
 rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/two_hop_v4_led.rs:TGUZCT
 rust/crates/foundation/degenbot-math/src/curve/curve_dy_calculator.rs:BQM2OA
 rust/crates/foundation/degenbot-order-index/src/envelope.rs:GRFRXI
-rust/crates/foundation/degenbot-pathfinding/src/graph.rs:4IOEVT
 rust/crates/foundation/degenbot-pools/src/curve_state.rs:BOMDRK
 rust/crates/foundation/degenbot-pools/src/curve_state.rs:JFGCHJ
 rust/crates/foundation/degenbot-pools/src/curve_strategies.rs:CE7QVQ
