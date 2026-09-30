@@ -1,5 +1,5 @@
 //! The command-stream path-info projection: a hop list over `BotState` pool
-//! identities becomes the executor's `composers::PathInfo` (NXM2BF — the
+//! identities becomes the executor's `composers::PathInfo` (the
 //! encode-relay flatten).
 //!
 //! The projection resolves every hop's identity from the shared [`BotState`]
@@ -50,7 +50,7 @@ pub enum PathInfoBuildError {
 }
 
 /// Build the `composers::PathInfo` for a hop list straight off the shared
-/// core — the ENGINE-LOCK-FREE form (SIMPIPE2 T4): the inline-sim hook runs
+/// core — the ENGINE-LOCK-FREE form: the inline-sim hook runs
 /// in the SOLVE WORKER while the calling cycle holds the engine `Mutex`, so
 /// it must NEVER re-enter the engine lock. The projection resolves every
 /// hop's identity from the core (engine-then-core discipline: the caller

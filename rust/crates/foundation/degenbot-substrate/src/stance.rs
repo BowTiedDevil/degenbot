@@ -1,4 +1,4 @@
-//! KAHU5W: the process-wide typed `BotConfig` holder.
+//! The process-wide typed `BotConfig` holder.
 //!
 //! Exactly ONE site reads the environment for `DEGENBOT_*` keys: the
 //! degenbot-config loader. The owner (the Python driver / `Bot::new` /

@@ -1,6 +1,6 @@
 use super::*;
 
-/// ADR-040 / PJGMPK: the quarantine seam is idempotent, counts depth,
+/// ADR-040: the quarantine seam is idempotent, counts depth,
 /// and bumps the pool's `state_nonce` (dirties the pool) on BOTH transitions
 /// so cached projections and in-flight solver snapshots invalidate.
 #[test]
@@ -40,9 +40,9 @@ fn quarantine_pool_seam_is_idempotent_and_dirties_nonce() {
     assert!(!core.release_pool(pool_id), "double release is a no-op");
 }
 
-// ── 6N7XVR: pool-registration lifecycle FSM (Quarantined→Live) ────────
+// ── pool-registration lifecycle FSM (Quarantined→Live) ────────
 //
-// The rolling-start race the YLYJM2 `drain_pump_completed` buffer gate
+// The rolling-start race the `drain_pump_completed` buffer gate
 // does NOT cover: a registered pool's LIVE direct-apply path advances
 // `update_block` past `last_complete_block` during the drain+pin+verify
 // window, so the pin captures `(tick_data_without_burn, block_N)` while a
@@ -211,7 +211,7 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
 
 /// `set_v3/v4_pool_quarantined` is a no-op for non-`Tracked` pools: a
 /// `Sparse` pool has no pin / step-2 verify to protect, so it must stay
-/// `Live`/direct-apply (DFQYM5 carve-out). The driver calls `set_*_quarantined`
+/// `Live`/direct-apply (carve-out). The driver calls `set_*_quarantined`
 /// for every registered pool, so this guard is what keeps Sparse out of the
 /// `quarantine→buffer→set_live` round trip.
 #[test]
@@ -239,7 +239,7 @@ fn sparse_pool_ignores_set_quarantined() {
 fn release_all_quarantined_flushes_and_marks_live() {
     use alloy::primitives::U128;
     let mut core = BotState::new();
-    // Two Tracked pools — both register Quarantined under DFQYM5.
+    // Two Tracked pools — both register `Quarantined`.
     let tracked_v3 = register_v3_on_core(&mut core, Address::from([0x55u8; 20]), 0);
     // register_v3_on_core is Sparse — build a Tracked V3 explicitly.
     let mut tick_data = HashMap::new();
@@ -404,7 +404,7 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
     );
 }
 
-/// The 6N7XVR invariant: while `Quarantined`, the pin's source
+/// The invariant: while `Quarantined`, the pin's source
 /// `update_block` CANNOT outrun `last_complete_block`. A live Swap at
 /// block N+1 (in-progress, `last_complete_block == N`) is deferred, so
 /// `update_block` stays at N — the gated drain then yields only complete-
@@ -449,7 +449,7 @@ fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
     // The pin's `update_block` is 10 (the registration block) — the live
     // Swap at 11 was deferred and the gate retained it. `update_block` did
     // NOT advance to 11 (the in-progress block). This is the invariant
-    // YLYJM2's buffer gate alone could NOT guarantee (the live path was
+    // the buffer gate alone could NOT guarantee (the live path was
     // ungated).
     assert_eq!(
         pinned_block, 10,
@@ -540,7 +540,7 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
 }
 
 /// A `Live` (un-quarantined) registered pool applies events directly — the
-/// 6N7XVR change does NOT regress the steady-state live-apply path.
+/// The quarantine change does NOT regress the steady-state live-apply path.
 #[test]
 fn live_pool_applies_modify_liquidity_directly() {
     use alloy::primitives::U128;
@@ -548,7 +548,7 @@ fn live_pool_applies_modify_liquidity_directly() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
-    // A Tracked pool registers `Quarantined` under DFQYM5 — transition it
+    // A Tracked pool registers `Quarantined` — transition it
     // to `Live` (the driver's `set_v4_pool_live` is the sole path to the
     // steady-state direct-apply contract).
     core.set_v4_pool_live(pool_manager, pool_id_bytes);
@@ -580,7 +580,7 @@ fn live_pool_applies_modify_liquidity_directly() {
     );
 }
 
-// ── 6N7XVR robust suite (BWUHVX) ──────────────────────────────────────
+// ── quarantine robust suite ──────────────────────────────────────
 //
 // The lifecycle invariant under concurrency, dual-buffer drains, the
 // backfill-boundary regression, and the reorg-during-quarantine edge.
@@ -703,7 +703,7 @@ fn quarantined_pool_backfill_always_fully_drained() {
     // present. `update_block` is MONOTONIC (no rewind): the pool registered
     // at block 10 and the backfill event is at the older block 9, so the
     // seed block 10 is retained — applying an older event must not rewind
-    // the metadata to look stale (AV42C7: the backfill drain rewinding a
+    // the metadata to look stale (the backfill drain rewinding a
     // head-fresh pool's `update_block` to the backfill boundary produced
     // the solver-state false positives).
     assert_eq!(
@@ -860,7 +860,7 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
 /// live pool state does NOT corrupt the already-consumed pin; the
 /// reorg's effect on the retained tail is a known gap (the flush-at-Live
 /// would re-apply reorged-block events) that is mitigation-gated to the
-/// reorg coordinator (out of scope: 6N7XVR does not rewrite the reorg
+/// reorg coordinator (out of scope: the quarantine seam does not rewrite the reorg
 /// path). Here we assert the pin-independence property.
 #[test]
 fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {

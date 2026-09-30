@@ -10,11 +10,11 @@
 //! pre-check), short-circuiting the resolve + slot0/liquidity fetch +
 //! tick-map assembly with the same typed refusal.
 //!
-//! This dissolves the 2CBDPR-era Python `SkipGate` fatal memo: Rust-computed
+//! This dissolves the retired Python `SkipGate` fatal memo: Rust-computed
 //! verdicts no longer cross the FFI to be memoized on the Python heap and
 //! re-consulted (~20k skip-checks/block at mainnet scale). Raced duplicates
 //! and transient RPC errors are NEVER recorded — they are not pool facts
-//! (CXKACI semantics).
+//! .
 //!
 //! Hooked pools are NOT gate-recorded: per ADR-037 they are admitted
 //! with a simulation caveat (the `HookedPool` variant is reserved).

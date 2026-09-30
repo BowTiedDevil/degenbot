@@ -295,7 +295,7 @@ fn calculate_tokens_out_realistic_amounts() {
 /// low-level `apply_liquidity_to_tick_range` and NEVER adjusted the scalar,
 /// producing the staged-clock desync (fresh tick map, stale in-range
 /// liquidity). Now it routes through the shared, in-range-aware
-/// `apply_liquidity_update`. (Sparse → Live registration per DFQYM5.)
+/// `apply_liquidity_update`. (Sparse → Live registration.)
 #[test]
 fn backfill_live_in_range_post_seed_adjusts_in_range_liquidity() {
     let mut core = BotState::new();
@@ -777,7 +777,7 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
     assert_eq!(s_b.journal.len(), s_a.journal.len());
 }
 
-/// Regression (RAJ3PP, V4 `apply_liquidity_update` half): the liquidity
+/// Regression (V4 `apply_liquidity_update` half): the liquidity
 /// update previously routed V4 pools into `apply_v3_liquidity_update_by_pool
 /// _id` (V3-only, no-op on V4). The family dispatcher must apply a V4
 /// `ModifyLiquidity` to the tick range and journal it, matching
@@ -875,7 +875,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
 /// Regression (J63J3N, scalar read half): `PyLiquidityPool.snapshot_v3`
 /// and the per-field scalar getters all routed through `get_v3_pool`,
 /// which returns `None` for `PoolEntry::V4` — silently dropping V4 reads
-/// (the read-side twin of the RAJ3PP write-side bug). The fix is the
+/// (the read-side twin of the write-side bug). The fix is the
 /// family-dispatching `BotState::get_v3_or_v4_pool` accessor returning a
 /// `&dyn ConcentratedLiquidityPool`. This pins both halves of the AC: a V4 pool
 /// returns a non-`None` scalar view, and the scalars match a direct

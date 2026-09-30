@@ -16,7 +16,7 @@ use super::super::BotState;
 use super::MissingHopReason;
 use crate::PoolTickCoverage;
 
-/// The promoted fused-epoch table pair (cache-lab winner S1, KGXFT7): ONE
+/// The promoted fused-epoch table pair (cache-lab winner S1): ONE
 /// crossing build derives BOTH artifacts as a unit — the crossing table
 /// directly, the word profiles from that same table — and hands them back
 /// `Arc`'d, ready for the hop-projection memo's O(1) clone. This is the
@@ -61,7 +61,7 @@ pub(crate) fn project_v3(
     let identity = core
         .get_v3_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
-    // RLVDUP T2: build the sequence ONCE and Arc-share it - every path
+    // Build the sequence ONCE and Arc-share it - every path
     // reusing this (pool, direction) clones an Arc, not the ranges Vec.
     let int_seq = pool_state
         .build_int_v3_sequence(identity.tick_spacing, identity.fee, pool_ref.zero_for_one)

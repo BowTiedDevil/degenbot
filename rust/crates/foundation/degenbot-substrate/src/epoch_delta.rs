@@ -54,7 +54,7 @@ use degenbot_solvers::affected_keys::AffectedKey;
 ///   removal itself is an order-preserving `shift_remove` (O(n) in that
 ///   bucket's length), followed by an O(1) insert into the new bucket.
 ///
-/// Data-structure picks (7S4QAG): `indexmap::IndexSet` is the canonical
+/// Data-structure picks: `indexmap::IndexSet` is the canonical
 /// insertion-ordered hash set, and `hashbrown` ships no ordered variant — so
 /// the bucket set is `indexmap::IndexSet` while the reverse index stays on the
 /// already-vendored `hashbrown::HashMap` (foldhash). Bucket order is block
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(delta.take_keys().len(), 1);
     }
 
-    // --- 7S4QAG recency-ledger contract (red-first) ---
+    // --- recency-ledger contract (red-first) ---
 
     #[test]
     fn re_record_at_a_later_block_promotes_to_the_newest_bucket() {

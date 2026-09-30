@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn pool_update_block_tracks_forward_sync_and_returns_zero_for_unknown() {
-    // AV42C7 accessor: `pool_update_block` is the per-pool freshness
+    // The `pool_update_block` accessor is the per-pool freshness
     // signal the block-boundary FSM  will use to
     // re-solve at block completion. Registers a V2 pool at `update_block=0`,
     // applies a forward Sync, and asserts the accessor advances + returns 0
@@ -747,7 +747,7 @@ fn v4_post_drain_snapshot_is_none_for_sparse_pools() {
 // Asserts the WIRING the probes rely on: a tracked V3 pool's pump
 // Mint/Burn is counted by `v3_buffer.pump_count_at_or_below` through the
 // `BotState` field, `advance_pump_complete_cutoff` advances the shared
-// pump-completeness cutoff (the StageMachine tombstone, 3M5PO5), and
+// pump-completeness cutoff (the StageMachine tombstone), and
 // `pin_v3_post_drain_snapshot` +
 // `set_v3_pool_live` remain behavior-preserving under the buffered
 // tail (the apply path executes regardless of the gate — the
@@ -809,7 +809,7 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     core.set_v3_pool_live(pool_addr);
 }
 
-// ── pin clamp regression (DFQYM5 fabricated-mismatch fix) ──────────────
+// ── pin clamp regression (fabricated-mismatch fix) ──────────────
 //
 // The pin stores (tick_map, liquidity_clock) and step-2 verify compares
 // the map against on-chain @ that block. If the pump has any UNDRAINED

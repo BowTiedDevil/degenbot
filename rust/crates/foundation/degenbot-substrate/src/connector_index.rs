@@ -1,5 +1,5 @@
-//! DB-backed V2 connector index for the backrun frame solver (epic DFYDYI,
-//! task B3): one startup load of the unified `pools` table's V2 edges, an
+//! DB-backed V2 connector index for the backrun frame solver:
+//! one startup load of the unified `pools` table's V2 edges, an
 //! adjacency map by token id, and the two-hop candidate expansion the solver
 //! needs: "other pools trading TOKEN against WETH".
 //!
@@ -560,7 +560,7 @@ impl V2ConnectorIndex {
     }
 }
 
-// ───────────────────────── V3 edges (DFYDYI B2-CL) ─────────────────────────
+// ───────────────────────── V3 edges ─────────────────────────
 
 /// One V3 edge: identity + the seed facts admission needs (fee in the 1e6
 /// convention + tick spacing) without a second scan.
@@ -1290,7 +1290,7 @@ mod tests {
         );
     }
 
-    /// The edge carries the fork's slot layout (W32CAU replay twin): a
+    /// The edge carries the fork's slot layout (replay twin): a
     /// Pancake V3 pool indexed as Uniswap-layout stages a garbage tick map
     /// in the frame scratch and every anchored chain dies
     /// `sequence_unavailable`.

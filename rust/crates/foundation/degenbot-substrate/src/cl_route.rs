@@ -37,7 +37,7 @@ pub enum PoolPresence {
     /// No `BotState` entry yet — crawl has not reached this pool.
     Unregistered,
     /// Registered `Tracked` pool in the two-step verify-then-live lifecycle
-    /// (6N7XVR): events defer to the pump buffer so the pin cannot outrun
+    /// events defer to the pump buffer so the pin cannot outrun
     /// `last_complete_block`.
     Quarantined,
     /// Registered and verified: steady-state direct application.
@@ -73,7 +73,7 @@ pub enum EventKind {
 /// Which physical buffer receives a staged event. The dual-buffer split is
 /// load-bearing: backfill drains fully at registration while the pump buffer
 /// drains only up to the tombstone cutoff plus a `set_live` tail flush
-/// (3M5PO5/YLYJM2).
+/// .
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BufferKind {
     /// Never-expired snapshot-gap buffer; drained by `apply_backfill_buffer_*`

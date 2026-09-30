@@ -665,7 +665,7 @@ impl<T> Drop for StateReadGuard<'_, T> {
 }
 
 /// Write guard: with diagnostics ON, holds are registered so a slow WRITE
-/// hold is named at guard drop (XC7SWD: a long WRITE hold was invisible —
+/// hold is named at guard drop (a long WRITE hold was invisible —
 /// only waits and read holds had forensics).
 pub struct StateWriteGuard<'a, T> {
     inner: RwLockWriteGuard<'a, T>,

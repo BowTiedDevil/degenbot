@@ -133,7 +133,7 @@ impl DecodedPoolEvent {
         }
     }
 
-    /// 42FL35: displayable pool identity WITHOUT resolving against BotState -
+    /// Displayable pool identity WITHOUT resolving against BotState -
     /// used by the APPLY MISS trace so a failed lookup still names WHICH pool
     /// was missed (the whole point of that trace). V4 renders the
     /// `(pool_manager, pool_id)` key; V2/V3 render the pool address.
@@ -162,7 +162,7 @@ impl DecodedPoolEvent {
     /// Apply this event to `bot_state`, returning the affected `pool_id` (or
     /// `None` if the pool isn't registered / the event is a no-op).
     fn apply(self, bot_state: &mut BotState) -> ApplyOutcome {
-        // Family-cost telemetry (2SDIQW): self tropical atomic split of the
+        // Family-cost telemetry: self tropical atomic split of the
         // apply wall per family, surfaced on the block-end event.
         let family = match self {
             Self::V2Sync { .. } => crate::apply_telemetry::ApplyFamily::V2Sync,
@@ -634,7 +634,7 @@ impl LogDispatcher {
             );
             return;
         };
-        // 42FL35: capture displayable identity BEFORE apply consumes the event
+        // Capture displayable identity BEFORE apply consumes the event
         // - the APPLY MISS trace below needs to name WHICH pool was missed.
         let identity = decoded.display_identity();
         // Verdict-only fast path (cl_route contract): a decoded event whose
@@ -670,7 +670,7 @@ impl LogDispatcher {
         // the event's hop family must be read BEFORE `apply`
         // consumes the decoded event.
         let event_hop = decoded.hop_type();
-        // 7S4QAG: the ledger buckets by block, so the apply site carries the
+        // The ledger buckets by block, so the apply site carries the
         // decoded event's block into the record (read before `apply` consumes it).
         let event_block = decoded.block_number();
         let apply_start = std::time::Instant::now();
@@ -742,7 +742,7 @@ impl LogDispatcher {
     /// event's block number with `default_block` when the log carries none.
     /// The backfill chunk loop passes its chunk end so a malformed
     /// eth_getLogs row (missing `block_number`) never stamps block 0 into a
-    /// journal (3ECKWX family); the forward and reorg paths pass 0.
+    /// journal; the forward and reorg paths pass 0.
     pub fn try_decode_log_with_block(
         &self,
         log: &Log,
@@ -1190,7 +1190,7 @@ mod tests {
     /// The decode home the backfill path consumes. A backfill
     /// log whose `block_number` is absent (malformed) must be stamped with the
     /// chunk fallback the caller supplies, never block 0 — a block-0 journal
-    /// stamp silently corrupts reorg restores (3ECKWX family).
+    /// stamp silently corrupts reorg restores .
     #[test]
     fn try_decode_log_with_block_stamps_chunk_fallback() {
         use alloy::primitives::{Bytes, B256, U256};

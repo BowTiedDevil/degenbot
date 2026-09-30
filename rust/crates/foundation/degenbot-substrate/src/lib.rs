@@ -79,7 +79,7 @@ pub use ::degenbot_pools::v4_state::{
 };
 pub use ::degenbot_pools::TickInfo;
 pub use ::degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
-// (5WTYYQ) The subscription topic filter is transport knowledge; the
+// The subscription topic filter is transport knowledge; the
 // dispatcher's defensive re-check consumes the same list the ingestion crate
 // filters with.
 pub use ::degenbot_ingestion::RELEVANT_TOPICS;
@@ -155,12 +155,12 @@ pub struct BotState {
     registration_gate: registration_gate::RegistrationGate,
     /// The snapshot seed block `S = min(fetch_newest_update_block(V3), V4)`.
     /// Set by `Bot::load_snapshot_from_db` (or `load_snapshot_from_py`) when a
-    /// snapshot is loaded; consumed by the auto-backfill (B1/J3FMDO) that
+    /// snapshot is loaded; consumed by the auto-backfill that
     /// closes the `S+1..W-1` gap before resume. `None` when no snapshot was
     /// loaded (cold-start path — the pump anchors on `first_observed_block`).
     snapshot_seed_block: Option<u64>,
     /// The highest FULLY-DELIVERED block — the delivery cutoff (last complete
-    /// block, 3M5PO5). The registration drain reads this as the
+    /// block). The registration drain reads this as the
     /// `drain_pump_completed` cutoff instead of a buffer-local shadow marker;
     /// `0` means no block has been tombstoned → nothing drains. Owned here as
     /// a plain monotone value that outlives pump runs: the pump
@@ -395,7 +395,7 @@ impl BotState {
         }
     }
 
-    /// The pool's per-mutation state nonce (AV42C7 staleness gate). Returns
+    /// The pool's per-mutation state nonce (the staleness gate). Returns
     /// `0` for an unregistered pool (the dispatch seam treats an unknown
     /// pool as fresh — it will fail the path-validity check elsewhere).
     /// Used by the dispatch fan-out to detect a stale solve result: the
@@ -588,7 +588,7 @@ impl BotState {
     /// surface — the mutable scalars (`sqrt_price_x96`/`liquidity`/`tick`/
     /// `update_block`), the immutable fee/tick-spacing, and `tick_data`.
     ///
-    /// This is the reader twin of the RAJ3PP apply dispatchers: the prior
+    /// This is the reader twin of the apply dispatchers: the prior
     /// per-handle Python readers (`PyLiquidityPool.snapshot_v3`,
     /// `tick_data_snapshot`, the scalar getters, the restore/discard guards)
     /// went through `get_v3_pool`, which matches `PoolEntry::V3` only and
@@ -906,7 +906,7 @@ impl BotState {
     /// mutating anything. `None` when unregistered or the journal is empty.
     /// Used by `ReorgCoordinator` to label idempotent no-op restores
     /// (newest delta strictly below the reorg target) in its
-    /// `degenbot.reorg.restore` spans (WAJEQP T-R1).
+    /// `degenbot.reorg.restore` spans.
     #[must_use]
     pub fn newest_journal_block(&self, pool_id: u64) -> Option<u64> {
         self.pools
@@ -1146,7 +1146,7 @@ impl BotState {
         }
     }
 
-    /// solving (B3 move, FD7NFG). Applies each decoded event via the same
+    /// solving. Applies each decoded event via the same
     /// `apply_v3_swap` / `buffer_backfill_*_liquidity_update` / `apply_v4_swap`
     /// path the live loop uses; decode selection lives in the dispatcher
     /// registry, never here. After the chunk,
@@ -1172,7 +1172,7 @@ impl BotState {
         let mut v4_touched = false;
         for log in logs {
             // The chunk-end fallback stamps a malformed log (no `block_number`)
-            // at `chunk_end`, never block 0 (3ECKWX family). V2 Sync stays out
+            // at `chunk_end`, never block 0. V2 Sync stays out
             // of backfill scope (CL-only: scalar state arrives via snapshot).
             let Some(event) = dispatcher.try_decode_log_with_block(log, chunk_end) else {
                 continue;
@@ -1201,7 +1201,7 @@ impl BotState {
 
     /// Register a token.
     ///
-    /// Idempotent (35NMBX Guard 1 / concurrent registration workers): if the
+    /// Idempotent (safe under concurrent registration workers): if the
     /// token address is already registered, the existing entry is canonical and
     /// this is a no-op (no panic). A sibling registration worker may insert the
     /// same token concurrently; racing inserts must not take the process down.

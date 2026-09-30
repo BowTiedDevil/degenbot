@@ -219,7 +219,7 @@ pub enum ExplicitPoolState {
         seed: TickMapSeed,
         /// The fork's storage-slot family — the layout the producer READ;
         /// registration stores it on the identity so every later slot-index
-        /// consumer agrees. Never defaulted (VERIFY2 T4).
+        /// consumer agrees. Never defaulted.
         slot_layout: ClSlotLayout,
     },
     /// V4 CL state with its manager-keyed identity: the shared

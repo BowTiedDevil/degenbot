@@ -1,13 +1,13 @@
 use super::*;
 
-// --- T2 (FBJTUM): write-path sparse backfill — ensure_word_known ---
+// --- write-path sparse backfill — ensure_word_known ---
 #[test]
 #[expect(clippy::expect_used, clippy::too_many_lines)]
 fn staged_word_fetch_install_races_on_interleaved_pool_write() {
     use crate::InstallWordOutcome;
     use ::degenbot_pools::tick_fetch::{FetchedTickWord, TickWordFetcher};
 
-    // Scripted fetcher (RATR5A Finding-1 red shape): attempt 1 -> empty
+    // Scripted fetcher (red shape): attempt 1 -> empty
     // word (checked-empty, RACED); attempt 2 -> the stale tick-60 value
     // (block 99) the retried context returns.
     #[derive(Debug)]
@@ -78,7 +78,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
         .expect("test setup: V3 registration");
 
     // Stage under the (simulated) short write, then a pump event for the
-    // SAME pool lands during the fetch window (the RATR5A race shape).
+    // SAME pool lands during the fetch window (the race shape).
     let staged = core
         .stage_word_fetch_by_pool_id(pool_id, 0, 99, false)
         .expect("sparse pool stores a fetcher");
@@ -90,7 +90,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
         "an interleaved pool write must force a retry, never a clobbering overlay"
     );
 
-    // Retry shape (RATR5A Finding 1): the stage re-derives the fetch
+    // Retry shape: the stage re-derives the fetch
     // context from the pool clock - the companion block passed above is
     // deliberately bogus (9_999) so a failed re-derivation is loud - and
     // the scripted second fetch returns the stale tick-60 value (block
@@ -131,7 +131,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
     };
     assert!(
         known.contains(&0),
-        "the retry's install marks the word known (T2 FBJTUM parity)"
+        "the retry's install marks the word known"
     );
 }
 

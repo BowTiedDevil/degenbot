@@ -1,6 +1,6 @@
 //! Tests for `assemble_v3_tick_map` / `assemble_v4_tick_map` (Candidate 1).
 //!
-//! Six branches per family, per the ME7I5P acceptance criteria:
+//! Six branches per family, per the acceptance criteria:
 //!  1. Store hit  → `Ok(Some((ticks, Tracked)))`, store entry consumed.
 //!  2. Store miss + Db hit (non-empty)  → `Ok(Some((ticks, Tracked)))`.
 //!  3. Store miss + Db hit (empty map) → `Ok(Some((empty, Tracked)))` — a
@@ -141,7 +141,7 @@ fn v4_db_with_pool() -> (DegenbotDb, i64, [u8; 32]) {
 
 /// Seed V3 ticks (both the init map + the liquidity position) — the 1:1 shape
 /// a healthy DB carries. Bitmap bits are derived from each tick at `spacing`
-/// (T3 OMDCIY: the snapshot must pass the intake reconciliation).
+/// (the snapshot must pass the intake reconciliation).
 fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32], spacing: i32) {
     let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
     let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
@@ -173,7 +173,7 @@ fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32], spacing: i32) {
 }
 
 /// Seed V4 ticks (`managed_pool_id` version of `seed_v3_ticks`). Bitmap bits
-/// are derived from each tick at `spacing` (T3 OMDCIY intake reconciliation).
+/// are derived from each tick at `spacing` (intake reconciliation).
 fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32], spacing: i32) {
     let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
     let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
@@ -607,7 +607,7 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
 //  snapshot supplied, the on-chain invariant must hold — bit set ⟺ a tick
 //  row with liquidity_gross > 0 at that position. A corrupted snapshot is
 //  REJECTED at intake with a typed InconsistentTickMap error (the two-step
-//  verify IKGQ6F is the on-chain oracle; this is the cheap intake-time
+//  verify is the on-chain oracle; this is the cheap intake-time
 //  self-check). Sparse / Chain-arm data is indeterminate by construction and
 //  is never checked.
 

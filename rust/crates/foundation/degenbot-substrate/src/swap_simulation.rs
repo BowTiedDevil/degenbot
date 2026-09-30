@@ -765,7 +765,7 @@ impl BotState {
     /// Build the V3 discovery transient for a registered pool: it mirrors
     /// the REGISTERED pool's coverage (a Tracked pool never raises
     /// `MissingTickWord`, so the staging walk must not invent fetch work
-    /// for one) AND its checked-word set (T1 3WTDFK: `from_params` seeds
+    /// for one) AND its checked-word set (`from_params` seeds
     /// known words from tick ROWS only — a caller-CHECKED empty word has no
     /// rows yet must never become a fetch target).
     fn v3_discovery_transient(&self, identity: &V3PoolIdentity, st: &V3PoolState) -> TransientCl {

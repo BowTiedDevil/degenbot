@@ -57,7 +57,7 @@ impl CachedProjection {
     /// clone for `Ok`, the reason for an invalid entry. (Nonces are re-read
     /// from `core` by the caller — never trusted from a cached entry.)
     fn materialize(&self) -> Result<ResolvedHop, MissingHopReason> {
-        // RLVDUP T2: the clone is now cheap for CL hops - the tick-range
+        // The clone is now cheap for CL hops - the tick-range
         // sequence rides in an Arc built once per (pool, direction, nonce),
         // so N paths sharing a memo hit clone an enum of Arc bumps.
         match self {
@@ -248,7 +248,7 @@ impl HopProjectionCache {
     }
 }
 
-/// Runtime gate for the fused hop-projection memo (KGXFT7 winner promotion:
+/// Runtime gate for the fused hop-projection memo (winner promotion:
 /// the lab's S1 fused-epoch strategy, production-framed as whole-pool nonce
 /// invalidation + Arc-shared fused tables). Default-ON: env unset → enabled.
 /// `DEGENBOT_CL_PROJECTION_CACHE=0` (or off/false/disabled) disables the
@@ -609,7 +609,7 @@ mod tests {
         }
     }
 
-    /// ADR-040 / PJGMPK: a quarantined pool is INVISIBLE to solve resolution.
+    /// ADR-040: a quarantined pool is INVISIBLE to solve resolution.
     /// The gate sits BEFORE the projection memo read, so a cached valid hop can
     /// never serve a quarantined pool, and the quarantine + release transitions
     /// bump the pool's `state_nonce` so in-flight candidates (solver nonce
@@ -972,7 +972,7 @@ mod tests {
             .map(ResolvedHop::as_v2_state)
             .map(|opt| opt.cloned())
             .collect();
-        // RLVDUP T1: borrow - the walk reads the sequences only.
+        // Borrow: the walk reads the sequences only.
         let seqs: Vec<Option<&degenbot_solvers::cl::IntV3TickRangeSequence>> =
             r.hops.iter().map(ResolvedHop::as_int_sequence).collect();
         let crossings: Vec<Option<std::sync::Arc<degenbot_solvers::cl::ClCrossingTable>>> = r

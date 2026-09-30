@@ -30,7 +30,7 @@
 //! the current word — the caller registers with `tick_data=None,
 //! coverage="sparse"` (mirrors Python Branch 3 when `bitmap_at_word == 0`).
 //!
-//! //! # Lock protocol (A4YUYJ — must-read before editing)
+//! //! # Lock protocol (must-read before editing)
 //!
 //! The Db arm reads through `Option<&dyn TickMapDb>` (a handle to a
 //! *separate* `Mutex<Connection>` — the `SnapshotDb` held-tx or a per-call
@@ -42,7 +42,7 @@
 //! `build_paths` the live pump holds `state.write()` on the same `BotState`
 //! (`resume()` precedes `build_paths`), so NO `BotState` guard may be held
 //! across either the Db or Chain read. The Chain arm holds the same
-//! invariant: RPC I/O runs with NO `BotState` guard (A4YUYJ's protocol holds
+//! invariant: RPC I/O runs with NO `BotState` guard (the lock protocol holds
 //! end-to-end).
 //!
 //! # Db error handling (Decision 8 (A) — behavior change)
@@ -102,8 +102,8 @@ pub enum TickMapAssemblyError {
     #[error(transparent)]
     Chain(#[from] BootstrapTickError),
     /// A Tracked Db snapshot that contradicts itself: a bitmap bit and the
-    /// liquidity rows disagree about an initialization (T3 OMDCIY, epic
-    /// ). Registration is rejected AT INTAKE — the two-step verify
+    /// liquidity rows disagree about an initialization
+    /// Registration is rejected AT INTAKE — the two-step verify
     /// is the on-chain oracle, but a corrupted snapshot must never
     /// register. `tick` is the conflicting position (`i32::MIN` marks an
     /// out-of-range corrupted word position).
@@ -414,7 +414,7 @@ pub(crate) fn liquidity_map_to_tick_info(
     if map.tick_bitmap.is_empty() || map.tick_data.is_empty() {
         return Ok(None);
     }
-    // Tracked intake reconciliation (T3 OMDCIY) — a self-contradictory
+    // Tracked intake reconciliation — a self-contradictory
     // snapshot is rejected before registration, not discovered mid-solve.
     verify_tracked_tick_map(&map.tick_bitmap, &map.tick_data, tick_spacing)?;
     let ticks = convert_liquidity_at_tick(map.tick_data);

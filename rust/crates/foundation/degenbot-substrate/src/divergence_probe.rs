@@ -155,7 +155,7 @@ pub struct TrackedSlotProbe {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// The family verification-shape layer (VERIFY2 T4).
+// The family verification-shape layer.
 //
 // The tracked-slot knowledge — WHICH slots a pool family tracks, at WHICH
 // storage indices, packing WHICH fields — is a per-family invariant that
@@ -334,7 +334,7 @@ impl BotState {
                     }
                 }
                 PoolEntry::V3(p) => {
-                    // Family-aware (VERIFY2 T4 / W32CAU) — the row table owns
+                    // Family-aware — the row table owns
                     // the per-layout slot indices; probing a pancake pool at
                     // the canonical Uni indices reads a NON-tracked field and
                     // would fabricate a divergence (pool 0x1ac1A8FE, 19:03).
@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn pancake_v3_probe_at_canonical_uni_liquidity_slot4_is_none() {
-        // The W32CAU / VERIFY2-T4 contract: a PancakeSwap V3 pool probed with
+        // The verification contract: a PancakeSwap V3 pool probed with
         // the canonical Uniswap liquidity slot (4) must NOT classify — slot 4
         // holds a different field on the fork, and comparing it fabricated the
         // bogus [sim-divergence] on pool 0x1ac1A8FE.

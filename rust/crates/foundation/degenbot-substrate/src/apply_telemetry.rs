@@ -100,7 +100,7 @@ pub fn trace_ws_log_dispatch(
         log_index = ?log_index,
         tx_index = ?tx_index,
         topic0 = %first_topic, // full topic — greppable by short prefix
-        topic1 = ?topics.get(1), // 42FL35: V4 PoolId lives here - greppable
+        topic1 = ?topics.get(1), // V4 PoolId lives here - greppable
         removed,
         decision = %decision,
         "ws-log"

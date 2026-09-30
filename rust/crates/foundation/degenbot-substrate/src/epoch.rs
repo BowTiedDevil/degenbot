@@ -212,7 +212,7 @@ impl BlockContext {
         self.epoch.block()
     }
 
-    /// The block metadata (fees/gas/timestamp — the VTWCIG batch contract).
+    /// The block metadata (fees/gas/timestamp — the batch contract).
     #[must_use]
     pub const fn metadata(&self) -> &BlockMetadata {
         &self.metadata

@@ -71,7 +71,7 @@ impl StagedWordFetch {
     }
 }
 
-/// RATR5A install outcome: see [`BotState::install_word_fetch`].
+/// Install outcome: see [`BotState::install_word_fetch`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallWordOutcome {
     /// The word merged (checked-empty included) — the fetch window saw no
@@ -80,7 +80,7 @@ pub enum InstallWordOutcome {
     /// The pool was mutated during the fetch — the caller retries
     /// stage+fetch (bounded) rather than applying the overlay clobber.
     Raced,
-    /// Pool gone or merge refused — the T2 FBJTUM failure contract (the
+    /// Pool gone or merge refused — the failure contract (the
     /// companion gate raises).
     Failed,
 }
@@ -567,7 +567,7 @@ impl BotState {
                 .and_then(PoolEntry::v3_mut)
                 .map(|(_, s)| s)
             {
-                // 6N7XVR: a `Quarantined` pool defers ALL live/backfill events
+                // A `Quarantined` pool defers ALL live/backfill events
                 // to the buffer so the pin's `update_block` cannot outrun
                 // `last_complete_block`. `Live` pools apply directly (the
                 // steady-state contract). Backfill completes before
@@ -686,7 +686,7 @@ impl BotState {
             return;
         };
         // drain ONLY fully-completed blocks. The cutoff is the pump's
-        // `StageMachine` tombstone cutoff (3M5PO5) — a block is complete when
+        // `StageMachine` tombstone cutoff — a block is complete when
         // the first log of N+1 closes N; a drain mid-block would pin
         // `update_block=N` missing a later same-block log. Events for the
         // in-progress block stay buffered.
@@ -746,7 +746,7 @@ impl BotState {
     }
 
     /// Number of buffered V4 pool events for a `(pool_manager, pool_id)` key
-    /// (backfill + pump). 6N7XVR test/diagnostic seam.
+    /// (backfill + pump). Test and diagnostic seam.
     #[must_use]
     pub fn buffered_v4_event_count(
         &self,
@@ -767,7 +767,7 @@ impl BotState {
     }
 
     /// Apply one buffered V3 pool event (`Liquidity` or `Swap`) to a
-    /// registered pool's state. 6N7XVR: the V3 drain loops
+    /// registered pool's state. The V3 drain loops
     /// ([`apply_backfill_buffer_v3`] / [`apply_pump_buffer_v3`]) dispatch
     /// through here so cross-type arrival order within a block is preserved
     /// (a `Swap` at logIdx 1433 lands after a `Mint` at logIdx 120 if it
@@ -840,7 +840,7 @@ impl BotState {
     /// - DB path: `Bot::load_snapshot_from_db` sets `S = min(newest_update_block_v3, v4)`.
     /// - Non-DB path: the `PyArbitrageEngine::set_snapshot_seed_block` setter
     ///   (called by `engine_registry.start()` after `load_*_from_py`) records
-    ///   `S = min(newest_block)` from the file/memory snapshot (2SM4Y7).
+    ///   `S = min(newest_block)` from the file/memory snapshot.
     /// - Tests: inject `S` directly to drive the `S≥W` / `S=0` no-op branches
     ///   of `BlockPump::backfill_from_snapshot` without a DB.
     ///
@@ -917,7 +917,7 @@ impl BotState {
                 // step-2 verify compares `tick_data` against on-chain@the
                 // pinned block, so the pinned block must be the liquidity clock.
                 //
-                // DFQYM5 fabricated-mismatch clamp: the verify block is the
+                // Fabricated-mismatch clamp: the verify block is the
                 // block the tick map is CONFIRMED-complete at. If the pump has
                 // any UNDRAINED event at/below the pool's liquidity clock
                 // (`pump_count_at_or_below > 0` — an in-progress block the
@@ -1063,7 +1063,7 @@ impl BotState {
         }
     }
 
-    /// RATR5A stage half of the word backfill: clone the stored fetcher +
+    /// Stage half of the word backfill: clone the stored fetcher +
     /// capture the pool's tick fingerprint UNDER a short write, and release
     /// the caller's guard before the (multi-second, `Python::attach` + web3
     /// RPC) fetch runs. The old single-hold path fetched while the write
@@ -1081,7 +1081,7 @@ impl BotState {
             Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
             _ => None,
         }?;
-        // RATR5A Finding-1(b): the fetch context must reflect the CURRENT
+        // The fetch context must reflect the CURRENT
         // pool clock on a retry, not the (stale) companion block — a fetch
         // at the original context after an interleaved event snapshots the
         // word pre-event, and even the stamp guard cannot help a tick the
@@ -1114,12 +1114,12 @@ impl BotState {
         })
     }
 
-    /// RATR5A install half: merges the fetched word only if the pool was NOT
+    /// Install half: merges the fetched word only if the pool was NOT
     /// mutated while the fetch ran (fingerprint re-check). A mutation means
     /// the pump applied an event for this pool during the fetch window —
     /// the staged overlay would then clobber fresher tick writes, so the
     /// caller RETRIES the stage+fetch (bounded) instead of applying a lost
-    /// update. [`InstallWordOutcome::Failed`] keeps the T2 FBJTUM contract
+    /// update. [`InstallWordOutcome::Failed`] keeps the failure contract
     /// (fetch failed / pool gone → the companion gate raises).
     pub fn install_word_fetch(
         &mut self,
@@ -1141,7 +1141,7 @@ impl BotState {
     }
 
     /// Backfill an unknown tick-bitmap word for a registered V3/V4 pool
-    /// (T2 FBJTUM — the write-path twin of the fetch+retry calc seam).
+    /// (the write-path twin of the fetch+retry calc seam).
     ///
     /// Invokes the state's stored fetcher for `word` at `block` (the
     /// companion passes `state_block - 1` as the fetch context), and on
@@ -1581,7 +1581,7 @@ impl BotState {
                 .and_then(PoolEntry::v4_mut)
                 .map(|(_, s)| s)
             {
-                // 6N7XVR: a `Quarantined` pool defers ALL live/backfill events
+                // A `Quarantined` pool defers ALL live/backfill events
                 // to the buffer so the pin's `update_block` cannot outrun
                 // `last_complete_block`. `Live` pools apply directly (the
                 // steady-state contract). Backfill completes before
@@ -1662,7 +1662,7 @@ impl BotState {
             return;
         };
         // drain ONLY fully-completed blocks. The cutoff is the pump's
-        // `StageMachine` tombstone cutoff (3M5PO5) — a block is complete when
+        // `StageMachine` tombstone cutoff — a block is complete when
         // the first log of N+1 closes N; a drain mid-block would pin
         // `update_block=N` missing a later same-block log.
         let cutoff = self.pump_complete_cutoff;
@@ -1699,7 +1699,7 @@ impl BotState {
     }
 
     /// Apply one buffered V4 pool event (`Liquidity` or `Swap`) to a
-    /// registered pool's state. 6N7XVR: the V4 drain loops
+    /// registered pool's state. The V4 drain loops
     /// ([`apply_backfill_buffer_v4`] / [`apply_pump_buffer_v4`]) dispatch
     /// through here so cross-type arrival order within a block is preserved.
     /// V4 twin of [`apply_buffered_v3_event`] — the `Liquidity` variant narrows
@@ -1723,18 +1723,18 @@ impl BotState {
         }
     }
 
-    /// Set a V3 pool's registration lifecycle to `Quarantined` (6N7XVR). The
+    /// Set a V3 pool's registration lifecycle to `Quarantined`. The
     /// live pump then defers the pool's `Swap`/`Mint`/`Burn` events to the
     /// pump buffer until [`set_pool_live`] transitions it back. Call at the
     /// start of `register_v3_pool` (before the first RPC await). No-op for
     /// unregistered / non-V3 pools AND for non-`Tracked` pools (a `Sparse`
     /// pool has no pin / step-2 verify to protect, so quarantining it would
     /// only defer events with nothing to gain — it stays `Live`/direct-apply;
-    /// DFQYM5 coverage-aware carve-out).
+    /// coverage-aware carve-out).
     /// Coverage flag for a registered V3 pool (`Tracked` = complete tick data,
     /// `Sparse` = none). Returns `None` for unregistered / non-V3 pools. The
     /// registration-lifecycle module reads this up-front to branch the
-    /// verify-lifecycle (Sparse stays `Live`, no RPC — DFQYM5).
+    /// verify-lifecycle (Sparse stays `Live`, no RPC).
     #[must_use]
     pub fn v3_pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
         let &pool_id = self.pool_addresses.get(&address)?;
@@ -1776,10 +1776,10 @@ impl BotState {
         }
     }
 
-    /// Set a V4 pool's registration lifecycle to `Quarantined` (6N7XVR). V4
+    /// Set a V4 pool's registration lifecycle to `Quarantined`. V4
     /// twin of [`set_v3_pool_quarantined`]. Call at the start of
     /// `register_v4_pool` (before the first RPC await). No-op for unregistered
-    /// V4 pools and for non-`Tracked` pools (Sparse stays `Live`; DFQYM5).
+    /// V4 pools and for non-`Tracked` pools (Sparse stays `Live`).
     pub fn set_v4_pool_quarantined(
         &mut self,
         pool_manager: Address,
@@ -1800,7 +1800,7 @@ impl BotState {
         }
     }
 
-    /// Transition a V3 pool from `Quarantined` to `Live` (6N7XVR): flush any
+    /// Transition a V3 pool from `Quarantined` to `Live`: flush any
     /// remaining buffered pump events for the pool (the in-progress-block tail
     /// retained by `drain_pump_completed`) via the UNGUARDED `drain_pump` in
     /// insertion order, then mark `Live`. Applies under one `core.write()`
@@ -1855,7 +1855,7 @@ impl BotState {
         }
     }
 
-    /// Transition a V4 pool from `Quarantined` to `Live` (6N7XVR). V4 twin of
+    /// Transition a V4 pool from `Quarantined` to `Live`. V4 twin of
     /// [`set_v3_pool_live`] — flushes the retained pump tail via the
     /// unguarded `drain_pump`, then marks `Live`. No-op for unregistered V4
     /// pools or an already-`Live` pool.
@@ -1908,7 +1908,7 @@ impl BotState {
         }
     }
 
-    /// Batch-release every pool still `Quarantined` (DFQYM5 orphan sweep).
+    /// Batch-release every pool still `Quarantined` (orphan sweep).
     ///
     /// With Tracked pools now registering `Quarantined` by default, a Tracked
     /// pool built via `build_pool`/`build_managed_pool` but never reached by
@@ -2037,7 +2037,7 @@ impl BotState {
         })
     }
 
-    /// Read the pinned snapshot seed for a V4 pool (CBCH6H — V4 twin of
+    /// Read the pinned snapshot seed for a V4 pool (V4 twin of
     /// `v3_snapshot_seed`). Keyed by `(pool_manager, pool_id)`.
     #[must_use]
     pub fn v4_snapshot_seed(
@@ -2102,7 +2102,7 @@ impl BotState {
                 // Two-stamp rule (V4 twin): pin pairs tick_data with the
                 // LIQUIDITY clock, not the price clock.
                 let liquidity_clock = state.tick_data_block;
-                // DFQYM5 fabricated-mismatch clamp (V4 twin): verify only at
+                // Fabricated-mismatch clamp (V4 twin): verify only at
                 // the block the map is confirmed-complete at. `> 0` undrained
                 // pump events at/below the clock + a nonzero cutoff -> clamp
                 // down to the cutoff; the `pump_count == 0` benign-seed case

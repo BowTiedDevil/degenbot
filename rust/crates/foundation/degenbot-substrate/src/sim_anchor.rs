@@ -1,5 +1,5 @@
 //! `SimAnchorState` — the engine's owned snapshot of what the sim consults
-//! (ULUWNI, incident 2026-08-20 #1 root fix) — plus the [`SimAnchorOracle`]
+//! (incident 2026-08-20 #1 root fix) — plus the [`SimAnchorOracle`]
 //! seam the sim DB is generic over.
 //!
 //! Before this type, `BlockSimHandle::build` borrowed `&BotState` for the
@@ -24,7 +24,7 @@
 //! connector index).
 //!
 //! What the sim consults through [`super::BotState`] (the complete surface —
-//! verified by the ULUWNI audit):
+//! verified by the audit):
 //!
 //! 1. `pool_id_by_address` — the `basic_ref` code-less tripwire's tracked-
 //!    pool lookup. Snapshotted verbatim (`tracked_pools`) and exposed through
