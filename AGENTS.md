@@ -2,14 +2,16 @@
 
 `degenbot` has migrated from a pure-Python library to a Rust core composed of standalone crates. The end state has two equally first-class consumers:
 
-1. **Pure-Rust MEV bot.** Someone should be able to `cargo add degenbot` (the umbrella crate re-exporting the cores) and build a fully functional MEV bot using Rust components ONLY without involving Python. That core must own **everything** a functional MEV bot needs. The Rust core must be capable of performing every action the bot requires. **Rust is the engine; Python is a driver shell, not a co-implementation.**
+**Rust is the engine; Python is a driver shell, not a co-implementation.**
+
+1. **Pure-Rust MEV bot.** Someone should be able to `cargo add degenbot` (the umbrella crate re-exporting the cores) and build a fully functional MEV bot using Rust components ONLY without involving Python. That core must own **everything** a functional MEV bot needs. The Rust core must be capable of performing every action the bot requires.
 2. **Python-driven MEV bot.** Someone in Python should be able to build a functional MEV bot using the Python interface as a **driver** over the same Rust core, via a thin PyO3 layer that translates Python calls into Rust calls.
 
 ## Concurrent Work Coordination
-Check for other agents working concurrently before you begin work and any time you notice any edits, files, or changes in the working tree that are unrelated to your work. Use `/skill:pi-intercom` for instructions on using the inter-agent communication system. If another agent sends you a message, use `/skill:pi-intercom` to learn how to respond.
+Check for other agents working concurrently before you begin work and any time you notice any edits, files, or changes in the working tree that are unrelated to your work. Use `/skill:pi-intercom` for both proactive checks and responding to messages.
 
 ## Backwards Compatibility
-Design standalone features without a backwards compatibility layer. Implement add a feature flag to allow parallel implementations if necessary, followed by a hard cutover.
+Design standalone features without a backwards compatibility layer. Add a feature flag to allow parallel implementations if necessary, followed by a hard cutover and flag removal.
 
 ## Planning
 Use `ergo` for all planning. Discover usage with `ergo --help` and `ergo quickstart`. Include detailed implementation and planning notes in the body of each task.
@@ -23,22 +25,11 @@ Prefer enum-based finite state machines to manage transitions within systems. Wh
 ## Comment Hygiene
 Comments carry the *why* only if it outlives its lookup: no task/epic IDs (commits carry those), no "RED/merged/post-fix" narration, no refactor provenance. Sequencing rules belong in types, acceptance criteria in named tests, history in ADRs. Full rules and the first-home test: `docs/comments.md`.
 
-## Commands
-See the justfile.
-
 ## Web
 Use `agent-browser`.
 
 ## Dispatched-agent lane rules
-
-Workers arriving here by dispatch (one-shot agents, actors) work under a project
-manager: never commit or push; run only SCOPED gates (`cargo test -p <crate>`, the
-pytest files you touched) — whole-workspace ladders (`just test-rust-nextest`,
-`just test-python`) are the dispatcher's job. Run commands foreground: if one detaches
-past the harness bound, mark its result PENDING in your sign-off and end your run —
-never end a run waiting on a background task. Before editing, re-verify the tree
-matches your brief (other workers may share the workspace — leave unfamiliar files
-alone) and leave unfamiliar modifications untouched.
+Workers arriving here by dispatch (one-shot agents, actors) follow `/skill:dispatched-agent` before touching anything: never commit or push; run only scoped gates (`cargo test -p <crate>`, the pytest files you touched); run commands foreground and mark detached gates PENDING in the sign-off; and leave unfamiliar tree modifications untouched.
 
 ## Formatting and commit staging
 
@@ -133,10 +124,10 @@ remains meaningful even when the diagnostic is enabled.
 
 Hotpath's full Tokio `RuntimeMetrics` getters are behind Tokio's unstable API.
 The repository `.cargo/config.toml` intentionally has no global rustflag;
-`just check-rust-dev-features`, `just check-rust-all-features`, and `just dev`
-set `RUSTFLAGS=--cfg tokio_unstable` on those hotpath build paths. Direct hotpath
-Cargo/maturin builds must provide the same environment explicitly, for example
-`RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo test -p degenbot-bot --features hotpath`.
+`just check-rust-dev-features`, `just check-rust-all-features`, `just dev`, and
+`just test-hotpath` set `RUSTFLAGS=--cfg tokio_unstable` on those hotpath build
+paths. Direct hotpath Cargo/maturin builds must set the same environment
+explicitly — use `just test-hotpath` instead of hand-typing it.
 
 ## Rust test scope
 
@@ -146,141 +137,44 @@ Why: resolver v3 unifies features for `--workspace`, so its artifacts are the on
 
 ## Python test scope
 
-The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly). The suite carries pytest-timeout: a test exceeding the 300s global default (`thread` method — safe under asyncio/xdist) FAILS with a timeout report instead of parking its xdist worker; the slow-marked on-demand suites (live-RPC parity gates) get 900s via the collection hook in `tests/conftest.py`. The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.
+The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly). The suite carries pytest-timeout so a hung test fails with a timeout report instead of parking its xdist worker (timeouts and marker filters are configured in `tests/conftest.py`). The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.
 
 ## Build-Artifact Housekeeping
 
-`rust/target` is the Cargo target root, but it contains several independently
-rebuildable cache families. `just gc-target` reports them separately and treats
-them differently:
-
-- **Normal Cargo** — `target/debug`, `target/release`, and
-  `target/rust-analyzer`. Direct children of `deps`, `examples`, `build`, and
-  `.fingerprint` are age-swept; `incremental` is always selected; old large
-  duplicate-hash test binaries are reduced to the newest variant.
-- **Maturin** — `target/maturin` is intentionally warm and is always protected
-  from housekeeping. Do not fold it into the normal Cargo sweep.
-- **Coverage** — `target/coverage` contains report output and the isolated
-  instrumented PyO3 build. Stale direct children and stale top-level LCOV,
-  profdata, profraw, and `coverage.xml` files are reclaimable.
-- **LLVM coverage** — `target/llvm-cov-target` is the isolated
-  `cargo-llvm-cov` Cargo target and is age-swept independently of normal Cargo.
-- **Criterion** — `target/criterion` holds benchmark history and is age-swept.
-- **Wheels** — `target/wheels` holds generated wheels and is age-swept.
-- **Documentation** — `target/doc` holds rustdoc output and is age-swept.
-
-Preview before cleanup:
+`rust/target` holds several independently rebuildable cache families (normal
+Cargo, maturin, coverage, LLVM coverage, Criterion, wheels, rustdoc). The
+family policy lives in `scripts/gc-target.sh`; `just gc-target` reports and
+sweeps them per-family. Preview before cleanup:
 
 ```bash
-DRY_RUN=1 just gc-target       # report candidates; delete nothing
-AGE=0 DRY_RUN=1 just gc-target  # include artifacts older than 24 hours
+DRY_RUN=1 just gc-target        # report candidates; delete nothing
 AGE=7 just gc-target            # destructive seven-day sweep
 ```
 
 `AGE=N` uses `find -mtime +N`, so `AGE=0` means older than one day rather than
-literally every file. Both modes print exact apparent bytes for each family,
-the selected reclaimable bytes, and the target size before and after. The
-repository-root `.build-number` receipt lives outside the Cargo target root and
-is therefore outside the deletion boundary; `target/maturin` is also rejected
-explicitly by the candidate selector. The housekeeping implementation is
-`scripts/gc-target.sh`.
+literally every file. `target/maturin` and the repository-root `.build-number`
+receipt are always outside the deletion boundary.
 
 ## Rebuilding the Rust `.so` after edits
-The canonical local bootstrap path is `just bootstrap`; it calls `just dev`,
-which uses `uv run --no-sync maturin develop --features dev-features`.
 Maturin and Cargo can serve cached artifacts, so an apparently successful
-rebuild can still ship a **stale `.so`**. Use the receipt check rather than
-inferring freshness from command output.
+rebuild can still ship a **stale `.so`**. Verify with the build receipt rather
+than inferring freshness from command output:
 
-Workflow after any Rust edit — verify, don't guess:
-
-1. `just verify-build-fresh`. Exit 0 ⇒ the installed extension already
-   contains your edits; no rebuild needed.
-2. Exit 1 ⇒ run `just dev`, then verify again. Only trust a bot run (or a
-   pytest suite) once the check exits 0.
-
-### Verifying freshness with the build receipt
-
-Do not trust a silent "successful" rebuild — verify it. Every compile of
-`degenbot_rs` runs `rust/crates/shells/degenbot-python/build.rs`, which fingerprints
-the shell's sources **plus every crate under the explicit
-`rust/crates/{foundation,engine,integrations,shells,facade}` roles and the
-workspace manifests / repo-root `.cargo` config that its build could link**
-(via the shared `build_scan.rs` scanner, with per-file+per-tree
-`cargo:rerun-if-changed` re-triggering — the pre-63a362961 build emitted
-no rerun triggers, so dep-only edits never advanced the receipt and a
-stale wheel could pass). It writes `<count> <fingerprint>` to a receipt file
-(`.build-number`, gitignored, at the repo root), embedding both values in the
-compiled library. The counter advances only when the fingerprint (source
-content) changes, so test/feature-variant rebuilds never false-positive.
-
-```bash
-uv run --no-sync python -m degenbot.build_info   # exit 1 if stale
-# or:
-just verify-build-fresh
-# or from Python:
-from degenbot.build_info import verify_build_fresh; verify_build_fresh()
-# raw values: degenbot._ffi.build_number() / degenbot._ffi.build_fingerprint()
+```
+just rebuild-if-stale
 ```
 
-The check compares the installed fingerprint against the repo receipt, so any
-material built from different sources than the installed artifact (the
-cached-wheel failure mode) is caught, and no-change recompiles stay fresh.
-`pytest tests/test_build_info.py` gates on this too — a stale `.so` fails the
-suite. The receipt lives outside `rust/target` so `cargo clean` and
-`just gc-target` can never roll it back. After Rust edits expect the gate to
-flag staleness until you rebuild the extension (`just dev`) — that is the
-detector working, so run the rebuild, not a skip. A
-reported number of 0 (or a missing fingerprint) means `build.rs` did not run —
-investigate before trusting the build.
+The recipe checks the installed extension against current sources and runs
+`just dev` only when stale. Only trust a bot run (or a pytest suite) once the
+check exits 0. The receipt mechanics and failure modes: `/skill:rust-rebuild`.
 
 ## Python Environment
 Use `uv`.
 
 ## Local node identity
 
-The node this environment points at is **reth**, not anvil. `reth` is not on
-`PATH`; `anvil` is (`/home/dev/.foundry/bin/anvil`). Both exist, which is
-exactly how a test ends up reporting an anvil conclusion from a reth response.
-
-Identify a node by asking it, never by which binary is installed:
-
-```bash
-curl -s -X POST -H 'content-type: application/json' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' \
-  "$ETHEREUM_FULL_NODE_HTTP_URI"
-```
-
-`ETHEREUM_FULL_NODE_HTTP_URI` resolves to `reth/v2.6.0`. A locally spawned
-anvil (`AnvilFork`, `tests/standalone_anvil/`) is a separate process with its
-own socket; `AnvilFork()` without a `fork_url` does not talk to the default
-URI at all. This anvil build also takes only `--port <NUM>` - no `--ws-port`,
-and no `/ws` route - so it is HTTP plus IPC, with no WebSocket.
-
-Measured, both bundle shapes, over both transports:
-
-| node | transport | searcher-doc shape | mev-geth shape |
-| --- | --- | --- | --- |
-| reth v2.6.0 | HTTP | `-32602` map-where-sequence-expected | succeeds |
-| reth v2.6.0 | WS | identical `-32602` | identical success |
-| anvil v1.7.1 | HTTP | `-32601 Method not found` | `-32601` |
-| anvil v1.7.1 | IPC | `-32601` | `-32601` |
-
-Two things follow, and both are worth not re-deriving:
-
-- **Transport makes no difference.** reth's answers are byte-identical over
-  HTTP and WS, so there is no "use WS instead" workaround and no
-  transport-specific concern for the sim gate.
-- **The two-shape fallback is an endpoint-implementation difference, not a
-  transport one.** `degenbot_strategy::frame_pipeline::simulate_candidate`
-  tries the searcher-doc shape and then the mev-geth shape, because
-  MEVBlocker-family nodes and mev-getth/reth-lineage nodes disagree about
-  whether `params[0]` is the bundle or a list of blocks. Its comment is
-  explicit that a shape or method-missing error must never read as "the bundle
-  reverted". Reth accepts the second shape, so the sim path works there.
-
-`eth_callMany` is the pre-submission sim gate: it atomically simulates
-[victim tx, backrun] against post-target state, never broadcasts, and a
-`false` result drops the candidate. It therefore **fails closed** on a node
-that implements neither shape - anvil returns `-32601` for both, so nothing
-would be submitted against anvil.
+The node this environment points at is **reth**, not anvil. Identify a node by
+asking it, never by which binary is installed: `just node-identity`. A locally
+spawned anvil is a separate node, and anvil fails closed on both `eth_callMany`
+bundle shapes, so nothing would ever be submitted against it. The measured
+shape matrix and sim-gate implications: `/skill:node-identity`.

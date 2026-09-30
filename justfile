@@ -56,6 +56,14 @@ toolchain:
     @rustc --version
     @cargo --version
 
+# Resolves the reth-vs-anvil ambiguity behind tests reporting an anvil
+# conclusion from a reth response. Ask the node; never infer from PATH.
+# Measured shape matrix and sim-gate implications: /skill:node-identity
+node-identity:
+    @curl -s -X POST -H 'content-type: application/json' \
+        --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' \
+        "${ETHEREUM_FULL_NODE_HTTP_URI:?set ETHEREUM_FULL_NODE_HTTP_URI}"
+
 # Run the standalone-Rust-consumer smoke (ADR-005 standalone claim). Proves a
 # `cargo add degenbot` consumer reaches BotState/DexIdentity/calc math with no
 # Python in the build graph. `examples/standalone_consumer.rs` panic!s on any
@@ -124,8 +132,8 @@ test-rust: test-standalone
     python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     # vendored deployments.json (degenbot-uniswap) must match the canonical
-    # Python-tree registry file byte-for-byte (TGO5ZY: a crate can only
-    # embed in-tarball files, so the embed uses the in-crate mirror)
+    # Python-tree registry file byte-for-byte: a crate can only embed
+    # in-tarball files, so the embed uses the in-crate mirror
     cmp -s src/degenbot/registry/deployments.json rust/crates/foundation/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
     cargo test --locked --manifest-path rust/Cargo.toml --workspace
 
@@ -228,6 +236,14 @@ check-rust-extension-release:
 check-rust-all-features:
     RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo check --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml
 
+# Hotpath test lane. Tokio's full RuntimeMetrics getters sit behind the
+# unstable API and there is no global rustflag, so any direct hotpath
+# Cargo/maturin invocation must set the cfg explicitly. Extra args forward to
+# `cargo test` (e.g. `just test-hotpath -- frame_pipeline`).
+# Canonical form; do not hand-type the RUSTFLAGS.
+test-hotpath *args:
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-bot --features hotpath {{ args }}
+
 # Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
 # outer #[allow] form; this closes the historical inner-attribute loophole it
 # misses. One reasoned outer #[allow(..., reason = "...")] remains permitted for
@@ -312,8 +328,8 @@ verify-build-fresh:
 # incremental state, and dedupe old large test binaries. Separate rebuildable
 # families are age-swept too: coverage reports/builds, LLVM coverage, Criterion,
 # wheels, and rustdoc output. `target/maturin` is always protected, as is the
-# repository-root `.build-number` receipt outside the target root. See the
-# Build-Artifact Housekeeping section in AGENTS.md for the family policy.
+# repository-root `.build-number` receipt outside the target root. The family
+# policy is this script.
 gc-target:
     scripts/gc-target.sh
 
@@ -333,6 +349,20 @@ bootstrap:
 # the explicit development feature set with ordinary package defaults.
 dev:
     RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run --no-sync maturin develop --features dev-features
+
+# Verify the installed extension against current sources; rebuild (just dev)
+# only when stale.
+# The canonical post-Rust-edit step. Receipt mechanics: /skill:rust-rebuild
+rebuild-if-stale:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if just verify-build-fresh; then
+        echo "✓ installed extension is fresh"
+    else
+        echo "→ installed extension is stale; rebuilding via just dev"
+        just dev
+        just verify-build-fresh
+    fi
 
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the
