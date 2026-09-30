@@ -17,7 +17,7 @@ at the user layer.
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  USER LAYER — your contract, your investigation                          │
-│  · scripts/scaffold_revm_harness.py  →  investigations/<name>/  (standalone)│
+│  · hand-written per-contract driver  →  investigations/<name>/  (standalone)│
 │  · degenbot::investigation           →  degenbot's OWN path-fixture tool │
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │ builds on (thin, per-contract)
@@ -128,19 +128,10 @@ capability, extend the tier-3 oracle slice per
 
 ## Layer 2 — Scaffold your own contract (user layer)
 
-Don't hand-write a harness for each new contract. Generate it:
-
-```bash
-python3 scripts/scaffold_revm_harness.py \
-    --name my_executor \
-    --artifact /path/to/out/MyExecutor.sol/MyExecutor.json \
-    [--slot 0=0x… --slot 5=0x…]
-```
-
-This writes a standalone project to `investigations/my_executor/` with the
-`degenbot_simulation::oracle` plumbing pre-wired, the contract's real creation
-bytecode baked in, and `⬇ EDIT` markers where you drop in your contract's calls,
-constructor args, and storage slots. Then:
+Scaffold it as a thin per-contract standalone project at
+`investigations/my_executor/` building on `degenbot_simulation::oracle`: bake in
+the contract's real creation bytecode, seed the storage slots it reads, drive
+your call, and classify Revert-vs-Halt. Then:
 
 ```bash
 cd investigations/my_executor
@@ -182,7 +173,7 @@ instead.
 | You want to… | Use |
 |--------------|-----|
 | Sequence raw EVM transactions against a contract (any contract) | `degenbot_simulation::oracle` |
-| Investigate a specific new contract you don't want in the core | `scripts/scaffold_revm_harness.py` |
+| Investigate a specific new contract you don't want in the core | a standalone `investigations/<name>/` harness on `degenbot_simulation::oracle` |
 | Reproduce a degenbot captured backrun path (V2/V3/V4 hops) | `degenbot::investigation` |
 | Prove a pool-swap math change against real bytecode | tier-3 oracle slice (ADR-020) |
 

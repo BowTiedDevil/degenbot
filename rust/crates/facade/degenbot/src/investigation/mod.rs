@@ -8,8 +8,7 @@
 //! contract-agnostic EVM spine is [`degenbot_simulation::oracle`] — deploy a
 //! pinned contract into revm, seed storage slots, drive a call, classify
 //! Revert-vs-Halt — which any individual/a user's OWN contract harness builds on
-//! via `scripts/scaffold_revm_harness.py` (emits a standalone per-contract
-//! project at the user layer). This module's per-hop oracle checks currently use
+//! as a standalone per-contract project at the user layer. This module's per-hop oracle checks currently use
 //! the fast Rust twins; a deep bytecode-level probe would replace them with
 //! `degenbot_simulation::oracle` verds.
 //!
