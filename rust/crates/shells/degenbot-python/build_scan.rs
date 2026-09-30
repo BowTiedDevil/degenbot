@@ -44,19 +44,30 @@ pub struct WorkspaceScan {
 }
 
 /// Recursively collect `dir`'s files, keyed by path relative to `dir`.
+///
+/// The key must be the FULL tree-relative path, never the basename: callers
+/// fold these keys into identity tags, and same-named nested files (multiple
+/// `mod.rs` under one crate) would otherwise share one map slot and shadow
+/// each other out of the fingerprint.
 pub fn collect_source_files(dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
+    collect_tree_files(dir, "", out);
+}
+
+/// Walk `dir`, inserting each file under `prefix` + its name relative to the
+/// tree root. Directory separators are always `/`, so keys (and the tags
+/// derived from them) are stable across platforms.
+fn collect_tree_files(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Vec<u8>>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let rel = format!("{prefix}{name}");
         if path.is_dir() {
-            collect_source_files(&path, out);
-        } else if let (Some(rel), Ok(content)) = (
-            path.strip_prefix(dir).ok().and_then(|p| p.to_str()),
-            fs::read(&path),
-        ) {
-            out.insert(rel.to_owned(), content);
+            collect_tree_files(&path, &format!("{rel}/"), out);
+        } else if let Ok(content) = fs::read(&path) {
+            out.insert(rel, content);
         }
     }
 }

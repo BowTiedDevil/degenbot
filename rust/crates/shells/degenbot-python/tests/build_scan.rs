@@ -138,6 +138,55 @@ fn build_inputs_move_fingerprint_and_are_rerun_triggers() {
 }
 
 #[test]
+fn same_basename_files_each_move_fingerprint_independently() {
+    let root = workspace("basename-collision");
+    let nested_a = root.join("crates/engine/dep/src/nested/mod.rs");
+    let nested_b = root.join("crates/engine/dep/src/deeper/mod.rs");
+    fs::create_dir_all(nested_a.parent().unwrap()).unwrap();
+    fs::create_dir_all(nested_b.parent().unwrap()).unwrap();
+    fs::write(&nested_a, "pub fn nested_a() {}\n").unwrap();
+    fs::write(&nested_b, "pub fn nested_b() {}\n").unwrap();
+
+    let before = scan_app(&root);
+    let tag_of = |scan: &WorkspaceScan, path: &Path| {
+        scan.files
+            .iter()
+            .find(|file| file.path == path)
+            .map(|file| file.tag.clone())
+    };
+
+    // Both same-basename files must survive the scan as DISTINCT entries,
+    // each tagged by its full tree-relative path - a basename key would
+    // shadow one of them out of the fingerprint entirely.
+    assert_eq!(
+        tag_of(&before, &nested_a).as_deref(),
+        Some(b"crates/engine/dep/src/nested/mod.rs".as_slice()),
+        "the first nested file must be scanned under its path, not its basename"
+    );
+    assert_eq!(
+        tag_of(&before, &nested_b).as_deref(),
+        Some(b"crates/engine/dep/src/deeper/mod.rs".as_slice()),
+        "the second nested file must be scanned under its path, not its basename"
+    );
+
+    // Each file must move the emitted fingerprint on its own edit.
+    fs::write(&nested_a, "pub fn nested_a() { let _ = 1; }\n").unwrap();
+    let after_a = scan_app(&root);
+    assert_ne!(
+        before.fingerprint, after_a.fingerprint,
+        "an edit to the first same-basename file must move the fingerprint"
+    );
+
+    fs::write(&nested_a, "pub fn nested_a() {}\n").unwrap();
+    fs::write(&nested_b, "pub fn nested_b() { let _ = 2; }\n").unwrap();
+    let after_b = scan_app(&root);
+    assert_ne!(
+        before.fingerprint, after_b.fingerprint,
+        "an edit to the second same-basename file must move the fingerprint"
+    );
+}
+
+#[test]
 fn unchanged_workspace_is_stable() {
     let root = workspace("stable");
     let first = scan_app(&root).fingerprint;
