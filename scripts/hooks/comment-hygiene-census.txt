@@ -1,38 +1,26 @@
 # Comment-hygiene census — the bare-ID ratchet (scripts/hooks/comment-hygiene.sh)
 #
 # The anchored detector (ergo/epic/task/slice + RED/GREEN narration) cannot see
-# bare six-char tracker tokens with no anchor word. This census closes that
-# blind spot ratchet-style: the gate fails on any bare [A-Z0-9]{6} token NOT
-# accounted for here, so new citations cannot land while existing ones are
-# grandfathered until swept. Sweeping is a follow-up task, never part of an
-# unrelated change.
+# bare six-char tracker tokens with no anchor word. Detector 2 of the hook
+# closes that blind spot ratchet-style: it fails on any bare [A-Z0-9]{6} token
+# in the scanned tree that is NOT accounted for here, so a new citation cannot
+# land unnoticed. The whole tree is currently swept — this file is therefore
+# lexicon-only, and it must stay that way.
 #
-# The file has two sections:
-#
-# 1. Grandfathered citations — one "path:token" per line. The token is the bare
-#    six-char token as it appears in that file; the scan scope (src/, tests/,
-#    rust/crates with tests/benches/examples excluded) and the Rust
-#    comment-line rule live in the hook.
-#    SHRINK PROTOCOL — same voice as the waiver file: a census entry means
-#    "this file still carries pre-rule citations"; it NEVER licenses new ones.
-#    Remove the entry in the same commit that strips the citation from the
-#    file, and never add an entry for a token that is not already in the file.
-# 2. Lexicon — one bare token per line (no path): legit identifiers, English
-#    words, acronyms, and linter codes the sweep commits classified as
-#    non-citations (their vocabulary: SIGINT, BEFORE, STATIC, OUTPUT, INPUT,
-#    STABLE, WETH, USDC, pure-number tokens, hex tokens). Extend ONLY for a
-#    real word, acronym, or domain identifier; a tracker citation must never
-#    be added here.
+# Lexicon: one bare token per line, sorted. Legit identifiers, English words,
+# acronyms, EVM opcodes, and linter codes the bare-ID matcher would otherwise
+# flag (its vocabulary: SIGINT, BEFORE, STATIC, OUTPUT, INPUT, STABLE, WETH,
+# USDC). Extend ONLY for a real word, acronym, or domain identifier that the
+# matcher trips on; a tracker citation must NEVER be added here — strip the
+# citation from the code instead. A census line containing "/" would be read
+# by the hook as a grandfathered path:token citation; that form exists only
+# for a deliberate, explicitly reviewed exception and is currently unused.
 #
 # Pure-number tokens (tick values, block numbers) and hex-shaped tokens
-# ([0-9A-F]{6} selector/byte data) are matcher exclusions, not census entries;
-# a deliberate hex-spelled citation (E2B542) is ratcheted by its citation
-# entries below, which the matcher checks before the hex exclusion.
-
-# ---- Section 1: grandfathered citations (path:token) ----
-
-
-# ---- Section 2: lexicon (bare legit identifiers, no path) ----
+# ([0-9A-F]{6} selector/byte data) are matcher exclusions in the hook, not
+# census entries.
+#
+# ---- Lexicon (bare legit identifiers, sorted) ----
 
 ABORTS
 ABSENT
@@ -196,8 +184,8 @@ RETURN
 REUSED
 REVERT
 REWIND
-RUF029
 ROUTED
+RUF029
 SAFETY
 SAMPLE
 SCALAR
