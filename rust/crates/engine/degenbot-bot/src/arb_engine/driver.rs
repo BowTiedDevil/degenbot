@@ -59,7 +59,6 @@
 //!   consume/dispatch loop (ADR-050 D9).
 
 use crate::arb_engine::lifecycle::PathRegistrationError;
-use crate::arb_engine::path_info::PathInfoBuildError;
 use crate::arb_engine::{
     BlockNotification, EngineRetune, EngineStages, InlineSimulator, PumpPhase, ResultBatch,
 };
@@ -80,6 +79,7 @@ use degenbot_executor::composers::PathInfo;
 use degenbot_ingestion::IngestEvent as WsEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_solvers::mixed::{PoolHop, SolvePathResult};
+use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::session_registry::PoolIdentity;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
@@ -1289,8 +1289,8 @@ mod tests {
     #[test]
     fn a_host_minted_hub_wires_one_driver() {
         use crate::connector_index::V2ConnectorIndex;
-        use crate::nonce_authority::NonceAuthority;
         use crate::strategy_host::StrategyHost;
+        use degenbot_substrate::nonce::NonceAuthority;
         use degenbot_substrate::route_registry::RouteRegistry;
 
         let (host, attached) = StrategyHost::mint(

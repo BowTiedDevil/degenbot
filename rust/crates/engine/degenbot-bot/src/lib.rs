@@ -248,7 +248,6 @@ pub mod failure_policy;
 pub mod instruments;
 #[cfg(feature = "otel")]
 pub mod metrics;
-pub mod nonce_authority;
 #[cfg(feature = "otel")]
 pub mod otel;
 pub mod profiling;

@@ -22,16 +22,15 @@
 //! host-driven, so `start_driving` skips it rather than failing it.
 
 use std::fmt;
-use std::future::Future;
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use degenbot_eventhub::Hub;
 use indexmap::IndexMap;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::nonce_authority::{NonceAuthority, StrategyId};
+use degenbot_substrate::driver_spawn::{DriverExit, DriverSpawnFactory, LaneNamespace};
+use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
 use degenbot_substrate::route_registry::RouteRegistry;
 
 /// The operator pose of one registered strategy driver: the host's
@@ -328,65 +327,6 @@ pub enum HostError {
     StateRootUnset,
 }
 
-/// A lane's run-artifact namespace under the host state root.
-///
-/// A strategy that owns process-lifetime artifacts writes them under its own
-/// name so two drivers on one host cannot collide on a shared path. The value
-/// carries only the root; each consumer appends its own file names, so the
-/// host stays free of the submission crate's file vocabulary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaneNamespace {
-    root: PathBuf,
-}
-
-impl LaneNamespace {
-    /// The namespace `<state_root>/<id>`.
-    #[must_use]
-    pub fn under(state_root: impl Into<PathBuf>, id: &StrategyId) -> Self {
-        Self {
-            root: state_root.into().join(id.as_str()),
-        }
-    }
-
-    /// The lane's root directory.
-    #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// The lane's session directory.
-    #[must_use]
-    pub fn session_dir(&self) -> PathBuf {
-        self.root.join("session")
-    }
-
-    /// The lane's quarantine directory.
-    #[must_use]
-    pub fn quarantine_dir(&self) -> PathBuf {
-        self.root.join("quarantine")
-    }
-}
-
-/// Why a driver's loop returned, in the host's vocabulary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DriverExit {
-    /// The loop stopped on request; no tombstone.
-    Stopped,
-    /// The loop halted itself; the cause becomes the tombstone detail.
-    Halted(String),
-}
-
-/// A driver's loop future, minted by its spawn factory.
-///
-/// Not required to be `Send`: a lane whose replay stack is single-threaded (the
-/// backrun lane's `Rc`-backed buffers) is polled inline on one blocking thread
-/// using the ambient multi-thread runtime by [`StrategyHost::start_driving`],
-/// while the factory itself must be `Send` so it can travel to that thread.
-/// The ambient multi-thread runtime is what `revm`'s `WrapDatabaseAsync::new`
-/// requires; a dedicated current-thread runtime captures no handle and forbids
-/// block-in-place, failing every `BlockSimHandle::build`.
-pub type DriverFuture = Pin<Box<dyn Future<Output = DriverExit> + 'static>>;
-
 /// The typed fate of one submission, addressed to the strategy that owns it.
 ///
 /// This is the host's notice vocabulary for a head update. It mirrors the
@@ -476,14 +416,6 @@ pub trait HeadReconciler: Send + Sync {
         false
     }
 }
-
-/// The once-only factory that boots a driver's loop.
-///
-/// The host hands the factory the lane namespace for the driver it is starting
-/// (`None` when no state root is installed), so a lane that writes
-/// run-artifacts under its own name learns its scope at the driving edge and a
-/// lane that keeps the process-global root is told so explicitly.
-pub type DriverSpawnFactory = Box<dyn FnOnce(Option<LaneNamespace>) -> DriverFuture + Send>;
 
 /// A driver loop the host started, awaiting its terminal exit.
 pub struct DriverTask {
@@ -1051,6 +983,7 @@ impl fmt::Debug for StrategyHost {
 mod tests {
     use super::*;
     use crate::connector_index::V2ConnectorIndex;
+    use std::path::Path;
 
     fn sid(name: &str) -> StrategyId {
         StrategyId::new(name)

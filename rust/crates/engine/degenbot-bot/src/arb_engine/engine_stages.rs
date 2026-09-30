@@ -63,11 +63,11 @@ use super::lifecycle::{
     set_last_processed_block, set_path_cap, solve_all_paths, v2_pool_count, v3_pool_count,
     v4_pool_count,
 };
-use super::path_info::PathInfoBuildError;
 use super::path_registry::PathRegistrationError;
 use super::{DiagnosticPathState, ResultBatch};
 use ::degenbot_solvers::mixed::{MixedPoolRef, PoolHop, SolvePathResult};
 use degenbot_executor::composers::PathInfo;
+use degenbot_substrate::path_info::PathInfoBuildError;
 use hashbrown::HashMap;
 /// THE one arm-attribution wiring site (cold-start trace): the cycle span is
 /// tagged with `cycle.arm` (`detached` | `skipped_empty` | `shed`; `unset`

@@ -420,7 +420,7 @@ impl InlineSimulator for InlineSimHook {
             let core = self
                 .bot_state
                 .read_at(degenbot_substrate::state_lock::LockSite::Python);
-            match degenbot_bot::arb_engine::build_path_info(&core, &req.hops) {
+            match degenbot_substrate::path_info::build_path_info(&core, &req.hops) {
                 Ok(pi) => pi,
                 Err(_) => return None,
             }

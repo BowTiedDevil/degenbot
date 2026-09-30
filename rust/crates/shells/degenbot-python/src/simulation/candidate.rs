@@ -22,8 +22,8 @@
 use crate::bot::engine::PyArbEngine;
 use crate::prelude::*;
 use degenbot_arbitrage::DispatchCandidate;
-use degenbot_bot::arb_engine::path_info::PathInfoBuildError;
 use degenbot_executor::composers::{EncodeOptions, PathInfo};
+use degenbot_substrate::path_info::PathInfoBuildError;
 use pyo3::exceptions::PyValueError;
 
 /// The pre-simulation candidate builder — the engine result + the resolved

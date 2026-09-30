@@ -33,8 +33,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use alloy::primitives::B256;
-use degenbot_bot::nonce_authority::{DeclineKind, NonceAuthority, NonceLease, StrategyId};
 use degenbot_bot::strategy_host::{HeadNotice, HeadReconciler, StrategyNotice};
+use degenbot_substrate::nonce::{DeclineKind, NonceAuthority, NonceLease, StrategyId};
 use parking_lot::Mutex;
 
 /// The identity of the transaction a submitted record was built to follow.

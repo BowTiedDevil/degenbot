@@ -79,7 +79,9 @@ _Avoid_: "StrategyRuntime" (retired).
 **Strategy substrate**:
 The shared state-provisioning surface every strategy composes — the state owner
 (`BotState`), the planning workspace (`planning::Workspace`), pool ingress, the
-connector index, executor hop views, and the session object registry — with its one
+connector index, executor hop views, the sign-time nonce-lease mechanics (the
+`nonce` module: `StrategyId`/`NonceAuthority`/`NonceLease`/`DeclineKind`/
+`ReorgAdvisory`), the driver spawn seam, and the session object registry — with its one
 home in `degenbot-substrate` (ADR-067); `degenbot-bot` composes it as a peer, and every consumer imports it
 directly from `degenbot-substrate` — the historical `bot_core::*` path layer
 is deleted (hard cutover; no aliases).

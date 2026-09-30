@@ -962,7 +962,7 @@ mod tests {
     /// an empty ledger — the sole nonce source every dispatch path now takes.
     fn lane(operator_nonce: u64) -> Arc<NonceLane> {
         Arc::new(NonceLane::new(
-            Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(
+            Arc::new(degenbot_substrate::nonce::NonceAuthority::new(
                 operator_nonce,
             )),
             Arc::new(crate::submission_ledger::SubmissionLedger::new()),
@@ -1383,7 +1383,7 @@ mod tests {
         // Nonces come from the process-wide authority and each signed
         // submission is recorded in the per-head ledger.
         use crate::submission_ledger::{NonceLane, SubmissionLedger, SubmissionState};
-        use degenbot_bot::nonce_authority::StrategyId;
+        use degenbot_substrate::nonce::StrategyId;
 
         let asserter = Asserter::new();
         asserter.push_success(&empty_access_list_response());
@@ -1398,7 +1398,7 @@ mod tests {
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
 
         let strategy = StrategyId::new("settlement");
-        let authority = Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(42));
+        let authority = Arc::new(degenbot_substrate::nonce::NonceAuthority::new(42));
         let ledger = Arc::new(SubmissionLedger::new());
         let lane = Arc::new(NonceLane::new(
             Arc::clone(&authority),

@@ -150,7 +150,6 @@ pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
     InlineSwapFamily, SimulatedPathResult,
 };
-pub use path_info::build_path_info;
 pub use retune::EngineRetune;
 // ---------------------------------------------------------------------------
 // Constants

@@ -147,7 +147,7 @@ async fn offline_executor(
             ),
             probe: Arc::new(NoopProbe),
             nonce_lane: Arc::new(NonceLane::new(
-                Arc::new(degenbot::bot::nonce_authority::NonceAuthority::new(0)),
+                Arc::new(degenbot::substrate::nonce::NonceAuthority::new(0)),
                 Arc::new(SubmissionLedger::new()),
                 "settlement",
             )),

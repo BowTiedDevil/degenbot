@@ -92,7 +92,7 @@ pub struct PyArbEngine {
     pub(crate) head_lanes: Arc<
         parking_lot::Mutex<
             std::collections::HashMap<
-                degenbot_bot::nonce_authority::StrategyId,
+                degenbot_substrate::nonce::StrategyId,
                 Arc<degenbot_submission::NonceLane>,
             >,
         >,

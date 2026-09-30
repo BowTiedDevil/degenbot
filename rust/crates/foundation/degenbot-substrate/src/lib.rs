@@ -1,9 +1,10 @@
 //! The strategy substrate — the one home for the surface strategies compose
 //! (ADR-067): the live state owner [`BotState`], the planning workspace
 //! (`planning::Workspace`), pool ingress, the connector index, executor hop
-//! views, the sim-anchor oracle, the route registry, and the session object
-//! registry. Both consumers compose it as a peer: `degenbot-bot` (the pump +
-//! engine host) and `degenbot-strategy` (the strategy plane). PyO3-free by
+//! views, the sim-anchor oracle, the route registry, the session object
+//! registry, the sign-time nonce authority, the driver spawn seam, and the
+//! command-stream path-info projection. Both consumers compose it as a peer:
+//! `degenbot-bot` (the pump + engine host) and `degenbot-strategy` (the strategy plane). PyO3-free by
 //! role; the binding crate reaches it through `degenbot-bot` re-exports.
 //!
 //! Application-owned telemetry (the pipeline instruments registry) reaches
@@ -16,10 +17,13 @@ pub mod cl_orchestration;
 pub mod cl_route;
 pub mod connector_index;
 pub mod divergence_probe;
+pub mod driver_spawn;
 pub mod epoch;
 pub mod epoch_delta;
 pub mod executor_hop;
 pub mod log_dispatcher;
+pub mod nonce;
+pub mod path_info;
 pub mod planning;
 pub mod pool_ingress;
 pub mod registration_anchor;

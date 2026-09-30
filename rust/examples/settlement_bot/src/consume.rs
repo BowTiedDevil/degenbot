@@ -441,7 +441,6 @@ mod tests {
     use degenbot::arbitrage::{FeeOnTransferRegistry, PoolDivergence};
     use degenbot::batch_executor::{ExecutorConfig, ExecutorRuntime};
     use degenbot::bot::arb_engine::SimulatedPathResult;
-    use degenbot::bot::nonce_authority::NonceAuthority;
     use degenbot::cmd_executor::composers::{HopInfo, PathInfo, V2HopInfo};
     use degenbot::core::address_utils::parse_address;
     use degenbot::solvers::mixed::SolvePathResult;
@@ -449,6 +448,7 @@ mod tests {
         Dispatcher, NonceLane, PathSuppression, ReceiptProbe, SubmissionLedger, SubmissionTarget,
         TxSigner,
     };
+    use degenbot::substrate::nonce::NonceAuthority;
 
     /// A probe that never reports a receipt (unused under `dry_run`).
     struct NoopProbe;

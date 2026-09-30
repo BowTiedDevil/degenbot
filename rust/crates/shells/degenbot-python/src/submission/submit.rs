@@ -240,7 +240,7 @@ static LOCAL_SETTLEMENT_LANE: std::sync::OnceLock<Arc<NonceLane>> = std::sync::O
 fn local_settlement_lane() -> Arc<NonceLane> {
     Arc::clone(LOCAL_SETTLEMENT_LANE.get_or_init(|| {
         Arc::new(NonceLane::new(
-            Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(0)),
+            Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)),
             Arc::new(degenbot_submission::SubmissionLedger::new()),
             "settlement",
         ))
@@ -505,8 +505,8 @@ pub(crate) fn skip_reason_to_py(reason: &SkipReason) -> (&'static str, Option<St
 #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
 mod settlement_nonce_lane_tests {
     use super::*;
-    use degenbot_bot::nonce_authority::NonceAuthority;
     use degenbot_submission::SubmissionLedger;
+    use degenbot_substrate::nonce::NonceAuthority;
 
     fn lane() -> Arc<NonceLane> {
         Arc::new(NonceLane::new(

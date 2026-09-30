@@ -15,8 +15,11 @@
 //! *Who installs it, and where*), where the cross-strategy claim is also asserted
 //! against a real reader.
 //!
-//! Seam: `degenbot_substrate::session_registry` (the session side) +
+//! Seam: `degenbot::bot::arb_engine::EngineDriver` (the production boot) +
+//! `degenbot::substrate::session_registry` (the session side) +
 //! `Settlement` / `TxpoolBackrun` (the two arms' real policy values). The
+//! test spans the engine boot and the strategy plane, so it lives behind the
+//! umbrella crate where both are production dependencies. The
 //! identity-vs-projection split and the layer reasoning are in
 //! `docs/architecture/session-object-registry.md`.
 
@@ -27,16 +30,16 @@ use std::sync::Arc;
 
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, U256};
-use degenbot_bot::arb_engine::EngineDriver;
-use degenbot_bot::bot_core::Bot;
-use degenbot_config::BotConfig;
-use degenbot_strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
-use degenbot_substrate::session_registry::{
+use degenbot::bot::arb_engine::EngineDriver;
+use degenbot::bot::bot_core::Bot;
+use degenbot::config::BotConfig;
+use degenbot::strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
+use degenbot::substrate::session_registry::{
     Freshness, HealthFactor, PositionIdentity, PositionObserver, PositionReading, PositionRefusal,
     SessionObjectRegistry,
 };
-use degenbot_substrate::state_lock::LockSite;
-use degenbot_substrate::RegisterV2PoolParams;
+use degenbot::substrate::state_lock::LockSite;
+use degenbot::substrate::RegisterV2PoolParams;
 
 const CHAIN_ID: u64 = 1;
 
@@ -117,7 +120,7 @@ impl StrategySession {
                 ))
                 .expect("test setup: V2 pool A");
         }
-        let cfg = &degenbot_config::holder::config_arc();
+        let cfg = &degenbot::config::holder::config_arc();
         let driver = Arc::new(EngineDriver::new(bot, cfg));
         let registry = driver.bot().session_registry();
         let observer = Arc::new(AdvancingObserver::default());
@@ -169,7 +172,7 @@ fn arms_config() -> BotConfig {
 #[test]
 fn an_engine_booted_session_refuses_a_position_read_until_a_reader_is_installed() {
     let bot = Arc::new(Bot::new(CHAIN_ID));
-    let cfg = &degenbot_config::holder::config_arc();
+    let cfg = &degenbot::config::holder::config_arc();
     let driver = Arc::new(EngineDriver::new(bot, cfg));
     let registry = driver.bot().session_registry();
 

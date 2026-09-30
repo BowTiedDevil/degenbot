@@ -31,13 +31,13 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use degenbot::bot::nonce_authority::NonceAuthority;
 use degenbot::rpc::provider::AlloyProvider;
 use degenbot::submission::{
     dispatch_and_submit, monitor_pending_transaction, Dispatcher, MonitorOutcome, NonceLane,
     PoolKey, ReceiptProbe, SkipReason, SubmissionLedger, SubmissionTarget, SubmitCandidate,
     SubmitRecord, SubmittedTx, TxSigner,
 };
+use degenbot::substrate::nonce::NonceAuthority;
 
 /// The boxed future the signing seam returns: the core's ONE submit record
 /// for the one candidate handed in.

@@ -317,7 +317,7 @@ pub(super) async fn run_frame(
     // Every frame exits through exactly one counter bucket + one INFO line —
     // a silent drop (the frame that killed one path registration!) is no
     // longer observable (Regression for tx 0x3dcfe).
-    if let Some(pipeline) = degenbot_bot::instruments::pipeline() {
+    if let Some(pipeline) = degenbot_substrate::telemetry_port::pipeline() {
         pipeline.count_backrun_frame(decision_kind, decision_reason.as_deref().unwrap_or(""));
     }
     tracing::info!(
@@ -1420,10 +1420,10 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
             break;
         }
         // Scrape the feed's status into the engine instruments on the loop's
-        // own <=2s tick. The instruments live in `degenbot-bot`, which the
-        // feed crate deliberately does not depend on, so the sampler rides
-        // here rather than inside the feed pump.
-        if let Some(pipeline) = degenbot_bot::instruments::pipeline() {
+        // own <=2s tick. The instruments ride the substrate telemetry port,
+        // which the feed crate deliberately does not depend on, so the
+        // sampler rides here rather than inside the feed pump.
+        if let Some(pipeline) = degenbot_substrate::telemetry_port::pipeline() {
             let st = feed.status();
             #[expect(clippy::cast_precision_loss)]
             let seconds_since_event = (st.last_event_unix_ms != 0).then(|| {

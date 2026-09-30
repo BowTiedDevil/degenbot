@@ -20,9 +20,10 @@ use std::future::{ready, Future};
 use std::sync::Arc;
 
 use degenbot_bot::connector_index::V2ConnectorIndex;
-use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
-use degenbot_bot::strategy_host::{DriverExit, DriverSpawnFactory, FacetStatus, StrategyHost};
+use degenbot_bot::strategy_host::{FacetStatus, StrategyHost};
 use degenbot_eventhub::Hub;
+use degenbot_substrate::driver_spawn::{DriverExit, DriverSpawnFactory};
+use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
 use degenbot_substrate::RouteRegistry;
 use revm::database_interface::async_db::DatabaseAsyncRef;
 use revm::database_interface::{DatabaseRef, WrapDatabaseAsync};

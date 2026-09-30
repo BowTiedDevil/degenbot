@@ -1507,7 +1507,7 @@ fn submit_cfg(dry_run: bool) -> BackrunConfig {
 /// source every dispatch path takes).
 fn submit_lane() -> Arc<NonceLane> {
     Arc::new(NonceLane::new(
-        Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(0)),
+        Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)),
         Arc::new(degenbot_submission::submission_ledger::SubmissionLedger::new()),
         "spent-accounting-test",
     ))

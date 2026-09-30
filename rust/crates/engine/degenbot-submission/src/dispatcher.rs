@@ -18,7 +18,7 @@
 //! suppression — with **zero Python, zero `pyo3`**.
 //!
 //! Nonce coordination does **not** live here. Issuance and release are owned
-//! by the process-wide `degenbot_bot::nonce_authority::NonceAuthority`, and a
+//! by the process-wide `degenbot_substrate::nonce::NonceAuthority`, and a
 //! sign path obtains its nonce from the strategy's `NonceLane`. The dispatcher
 //! coordinates the pool mutual-exclusion set and the monitor task set only.
 //!

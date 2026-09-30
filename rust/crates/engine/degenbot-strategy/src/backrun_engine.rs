@@ -743,7 +743,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("registers settlement Q");
-        let settlement_path = degenbot_bot::arb_engine::path_info::build_path_info(
+        let settlement_path = degenbot_substrate::path_info::build_path_info(
             &core,
             &[
                 MixedPoolRef {

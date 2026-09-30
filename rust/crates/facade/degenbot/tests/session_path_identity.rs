@@ -9,11 +9,13 @@
 //! store, and neither arm's solver, dispatch, or submission policy reaches the
 //! canonical object.
 //!
-//! Seam: `degenbot_bot::arb_engine::EngineDriver` (the production boot that
+//! Seam: `degenbot::bot::arb_engine::EngineDriver` (the production boot that
 //! binds the engine's path registry to the session) +
-//! `degenbot_substrate::session_registry::SessionObjectRegistry` (the
+//! `degenbot::substrate::session_registry::SessionObjectRegistry` (the
 //! session side) + `Settlement` / `TxpoolBackrun` (the two arms' real policy
 //! values). Rationale: `docs/architecture/session-object-registry.md`.
+//! The test spans the engine boot and the strategy plane, so it lives behind
+//! the umbrella crate where both are production dependencies.
 
 #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
@@ -21,13 +23,13 @@ use std::sync::Arc;
 
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, U256};
-use degenbot_bot::arb_engine::EngineDriver;
-use degenbot_bot::bot_core::Bot;
-use degenbot_config::BotConfig;
-use degenbot_strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
-use degenbot_substrate::session_registry::{PathObject, PoolIdentity, SessionObjectRegistry};
-use degenbot_substrate::state_lock::LockSite;
-use degenbot_substrate::RegisterV2PoolParams;
+use degenbot::bot::arb_engine::EngineDriver;
+use degenbot::bot::bot_core::Bot;
+use degenbot::config::BotConfig;
+use degenbot::strategy::{Settlement, Strategy, StrategyName, TxpoolBackrun};
+use degenbot::substrate::session_registry::{PathObject, PoolIdentity, SessionObjectRegistry};
+use degenbot::substrate::state_lock::LockSite;
+use degenbot::substrate::RegisterV2PoolParams;
 
 const CHAIN_ID: u64 = 1;
 
@@ -107,7 +109,7 @@ impl StrategySession {
                 ))
                 .expect("test setup: V2 pool B");
         }
-        let cfg = &degenbot_config::holder::config_arc();
+        let cfg = &degenbot::config::holder::config_arc();
         let driver = Arc::new(EngineDriver::new(bot, cfg));
         let registry = driver.bot().session_registry();
         assert!(
@@ -165,7 +167,7 @@ fn txpool_backrun_plan(path: &PathObject, cfg: &BotConfig) -> ArmPlan {
         path_id: path.path_id(),
         solver: "frame",
         submission: match &arm.config().submission {
-            degenbot_strategy::SubmissionSlot::PublicFanOut { relays } => relays.join(","),
+            degenbot::strategy::SubmissionSlot::PublicFanOut { relays } => relays.join(","),
             other => format!("{other:?}"),
         },
     }

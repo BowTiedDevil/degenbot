@@ -287,61 +287,6 @@ fn submission_slots_diverge_on_private_first_and_target() {
     ));
 }
 
-/// Both per-ecosystem compositions ride one `StrategyHost`: each is
-/// independently activatable, and one config with both facets active binds
-/// the divergent submission slots (the `MEVBlocker` arm's private endpoint,
-/// the peer arm's public fan-out).
-#[test]
-fn both_backrun_compositions_host_independently_in_one_process() {
-    use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
-    use degenbot_bot::strategy_host::{DriverPose, FacetStatus, StrategyHost};
-    use degenbot_eventhub::Hub;
-    use degenbot_substrate::connector_index::V2ConnectorIndex;
-    use degenbot_substrate::RouteRegistry;
-
-    let mut cfg = degenbot_config::BotConfig::default();
-    cfg.strategy.mevblocker_backrun.active = true;
-    cfg.strategy.mevblocker_backrun.endpoints = Some(String::from("wss://searchers.mevblocker.io"));
-    cfg.strategy.mevblocker_backrun.mevblocker_url =
-        Some(String::from("http://private.local:8545"));
-    cfg.strategy.txpool_backrun.active = true;
-    cfg.strategy.txpool_backrun.endpoints = Some(String::from("http://relay.one:8545"));
-
-    let mevblocker = MevblockerBackrun::from_config(&cfg, String::new());
-    let peer = TxpoolBackrun::from_config(&cfg, String::new());
-    assert_eq!(
-        mevblocker.config().submission.raw_relay_urls(),
-        vec![String::from("http://private.local:8545")]
-    );
-    assert!(mevblocker.config().submission.names_private_endpoint());
-    assert!(
-        peer.config().submission.raw_relay_urls().is_empty(),
-        "the builder-relay slot names no raw fan-out: the bundle POST is the submission"
-    );
-    assert!(!peer.config().submission.names_private_endpoint());
-
-    let mut host = StrategyHost::new(
-        Arc::new(Hub::new()),
-        Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
-        Arc::new(NonceAuthority::new(1)),
-    );
-    let mevblocker_id = StrategyId::new("mevblocker_backrun");
-    let peer_id = StrategyId::new("txpool_backrun");
-    host.register(mevblocker_id.clone(), FacetStatus::Configured)
-        .expect("register mevblocker");
-    host.register(peer_id.clone(), FacetStatus::Configured)
-        .expect("register peer");
-
-    assert_eq!(host.enable(&mevblocker_id), Ok(DriverPose::Enabled));
-    assert_eq!(
-        host.state_of(&peer_id),
-        Some(DriverPose::Registered),
-        "enabling one facet leaves the other dormant"
-    );
-    assert_eq!(host.enable(&peer_id), Ok(DriverPose::Enabled));
-    assert_eq!(host.state_of(&mevblocker_id), Some(DriverPose::Enabled));
-}
-
 #[test]
 fn rescue_outcome_mapping_routes_transient_gap_and_terminal() {
     assert_eq!(

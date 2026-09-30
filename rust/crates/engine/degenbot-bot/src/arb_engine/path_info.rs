@@ -1,81 +1,21 @@
-//! Rust-owned `composers::PathInfo` projection for an engine-registered path
-//! (NXM2BF — the encode-relay flatten).
+//! The engine-side path-info seam: `ArbitrageEngine`-registered paths resolve
+//! to the executor's `composers::PathInfo` (NXM2BF — the encode-relay
+//! flatten).
 //!
-//! [`ArbitrageEngine::path_info_for`] builds the engine-facing
-//! [`degenbot_executor::composers::PathInfo`] directly from a registered
-//! `path_id`'s stored [`MixedPath`] + the shared [`BotState`] pool identities
-//! — eliminating the Python `build_hops_from_pools` → Python `PathInfo`
-//! dataclass → `extract_path_info` round-trip.
-//!
-//! This is the Rust-side mirror of the exact identity fields the (deleted)
-//! Python `build_hops_from_pools` read off the `PyPool` handles. Because the
-//! projection feeds the SAME `composers::PathInfo` to the SAME
-//! [`degenbot_executor::composers::encode_cmd_stream`], byte-for-byte
-//! encoder parity reduces to "does the projection build identical `HopInfo`
-//! field values?" — pinned by the `degenbot-executor` 59-fn golden suite +
-//! the `tests/rust-seam/` dispatch spy tests.
-//!
-//! # Unsupported hop families
-//!
-//! `composers::HopInfo` has only `V2`/`V3`/`V4` variants. The engine's
-//! `HopType` enum additionally covers `SolidlyStable`, `BalancerWeighted`,
-//! `BalancerStable`, `CurveStableswap` — for which the command-stream encoder
-//! has no arm (`composers.rs` "2-hop Solidly / mixed-V2-V3-with-Solidly: not
-//! supported"). The projection returns
-//! [`PathInfoBuildError::UnsupportedHopType`] for these — matching the
-//! pre-flatten `extract_hop` behavior, which rejected `SolidlyHopInfo` with
-//! "hop must be V2HopInfo/V3HopInfo/V4HopInfo". No new encoding capability is
-//! added; the pre-existing Solidly/Balancer/Curve encoding gap is preserved
-//! (out of scope for the flatten — a future `HopInfo::Solidly` /
-//! `HopInfo::Balancer` task).
+//! The pure projection (a hop list + `BotState` pool identities →
+//! `degenbot_executor::composers::PathInfo`) lives in
+//! `degenbot_substrate::path_info`, where the strategy plane can reach it
+//! without the engine. What stays here is the engine-registry lookup
+//! ([`path_info_for`]) and the telemetry hop description — both ride the
+//! engine's path registry and core read lock.
+
+use ::degenbot_solvers::mixed::HopType;
+use degenbot_executor::composers::PathInfo;
+
 use super::ArbitrageEngine;
-use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
-use degenbot_executor::composers::{HopInfo, PathInfo};
-use degenbot_substrate::executor_hop::{v2_hop, v3_hop, v4_hop, V2Fee, V2FeeRefusal};
+use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::BotState;
-use thiserror::Error;
-/// Why [`ArbitrageEngine::path_info_for`] could not build a `PathInfo`.
-#[derive(Debug, Error)]
-pub enum PathInfoBuildError {
-    /// A hop's `pool_key` is not registered in the associated `BotState`.
-    #[error("pool_id {pool_id} is not registered in the associated BotState")]
-    PoolNotRegistered { pool_id: u64 },
-    /// The hop's family has no command-stream encoder arm (Solidly /
-    /// Balancer / Curve). Matches the pre-flatten `extract_hop` rejection.
-    #[error(
-        "hop_type {hop_type:?} (pool_id {pool_id}) is not supported by the command-stream encoder"
-    )]
-    UnsupportedHopType { hop_type: HopType, pool_id: u64 },
-    /// The registered V2 fee cannot be represented by the executor.
-    #[error("pool_id {pool_id} has an invalid V2 fee: {reason}")]
-    InvalidV2Fee {
-        pool_id: u64,
-        #[source]
-        reason: V2FeeRefusal,
-    },
-}
-/// Build the `composers::PathInfo` for a hop list straight off the shared
-/// core — the ENGINE-LOCK-FREE form (SIMPIPE2 T4): the inline-sim hook runs
-/// in the SOLVE WORKER while the calling cycle holds the engine `Mutex`, so
-/// it must NEVER re-enter the engine lock. The projection (`build_hop_info`)
-/// resolves every hop's identity from the core (engine-then-core discipline:
-/// the caller takes the core read directly, holding no engine state).
-///
-/// # Errors
-/// A hop's pool identity is unregistered (or its family has no encoder arm)
-/// — the exact [`PathInfoBuildError`] the engine-side projection raises.
-///
-/// Re-exported via `crate::arb_engine` for the outer seam.
-pub fn build_path_info(
-    core: &BotState,
-    pools: &[MixedPoolRef],
-) -> Result<PathInfo, PathInfoBuildError> {
-    let mut hops = Vec::with_capacity(pools.len());
-    for pool_ref in pools {
-        hops.push(build_hop_info(core, pool_ref)?);
-    }
-    Ok(PathInfo::new(hops))
-}
+
 /// Build the engine-facing `composers::PathInfo` for `path_id` by
 /// resolving each registered hop's identity from the shared `BotState`.
 ///
@@ -99,15 +39,12 @@ pub(crate) fn path_info_for(
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    let mut hops = Vec::with_capacity(path.pools.len());
-    for pool_ref in &path.pools {
-        match build_hop_info(&core, pool_ref) {
-            Ok(hop) => hops.push(hop),
-            Err(e) => return Some(Err(e)),
-        }
-    }
-    Some(Ok(PathInfo::new(hops)))
+    Some(degenbot_substrate::path_info::build_path_info(
+        &core,
+        &path.pools,
+    ))
 }
+
 /// Telemetry helper: render one hop as `FAMILY:pool(zfo=N)`. Unresolvable
 /// identities degrade to the raw `pool_id` rather than failing — this only
 /// ever feeds trace fields, never solver or encoder logic.
@@ -141,89 +78,11 @@ pub(crate) fn describe_hop(
         other => format!("{other:?}:pool_id={pool_id}"),
     }
 }
-/// Resolve one registered hop to its encoder descriptor.
-///
-/// `pool_ref.pool_key` is the `BotState` `pool_id` (set at `register_path`
-/// time — see `lifecycle::register_path`: `pool_key: hop.pool_id`).
-fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, PathInfoBuildError> {
-    match pool_ref.hop_type {
-        HopType::V2 => {
-            let id = core.get_v2_identity(pool_ref.pool_key).ok_or(
-                PathInfoBuildError::PoolNotRegistered {
-                    pool_id: pool_ref.pool_key,
-                },
-            )?;
-            // The Python `build_hops_from_pools` computes
-            // `fee = int(pool.fee_token0 * 10000)` where the Python
-            // `fee_token0` is the FEE fraction `Fraction(denom - gamma, denom)`
-            // derived from the Rust `(gamma_numer, fee_denom)` pair (see
-            // `v2_liquidity_pool.py` — `self._fee_token0 = Fraction(denom - gamma, denom)`).
-            // `int()` truncates toward zero; both operands are non-negative so
-            // this is floor division. The projection matches by construction.
-            let (gamma, denom) = if pool_ref.zero_for_one {
-                id.fee_token0
-            } else {
-                id.fee_token1
-            };
-            let fee = V2Fee::from_retained(gamma, denom).map_err(|reason| {
-                PathInfoBuildError::InvalidV2Fee {
-                    pool_id: pool_ref.pool_key,
-                    reason,
-                }
-            })?;
-            Ok(v2_hop(
-                id.address,
-                id.token0,
-                id.token1,
-                fee,
-                pool_ref.zero_for_one,
-            ))
-        }
-        HopType::V3 => {
-            let id = core.get_v3_identity(pool_ref.pool_key).ok_or(
-                PathInfoBuildError::PoolNotRegistered {
-                    pool_id: pool_ref.pool_key,
-                },
-            )?;
-            Ok(v3_hop(
-                id.address,
-                id.token0,
-                id.token1,
-                id.fee,
-                pool_ref.zero_for_one,
-            ))
-        }
-        HopType::V4 => {
-            let id = core.get_v4_identity(pool_ref.pool_key).ok_or(
-                PathInfoBuildError::PoolNotRegistered {
-                    pool_id: pool_ref.pool_key,
-                },
-            )?;
-            Ok(v4_hop(
-                id.pool_manager,
-                alloy::primitives::B256::new(id.pool_id),
-                id.pool_key.currency0,
-                id.pool_key.currency1,
-                id.pool_key.fee,
-                id.pool_key.tick_spacing,
-                id.pool_key.hooks,
-                pool_ref.zero_for_one,
-            ))
-        }
-        HopType::SolidlyStable
-        | HopType::BalancerWeighted
-        | HopType::BalancerStable
-        | HopType::CurveStableswap => Err(PathInfoBuildError::UnsupportedHopType {
-            hop_type: pool_ref.hop_type,
-            pool_id: pool_ref.pool_key,
-        }),
-    }
-}
+
 #[expect(clippy::expect_used, clippy::panic, clippy::similar_names)]
 #[cfg(test)]
 mod tests {
     use crate::arb_engine::lifecycle::register_path;
-    use crate::arb_engine::path_info::PathInfoBuildError;
     use crate::arb_engine::ArbitrageEngine;
     use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams};
     use ::degenbot_decoders::v4_swap_decoder::V4PoolId;
@@ -232,15 +91,19 @@ mod tests {
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_executor::composers::HopInfo;
     use hashbrown::HashMap;
+
     fn usdc(amount: u64) -> U112 {
         (U256::from(amount) * U256::from(10u64).pow(U256::from(6))).to::<U112>()
     }
+
     fn weth(amount: u64) -> U112 {
         (U256::from(amount) * U256::from(10u64).pow(U256::from(18))).to::<U112>()
     }
+
     const GAMMA_03: u64 = 997;
     const FEE_DENOM_03: u64 = 1000;
     const SQRT_PRICE_1_1: u128 = 79_228_162_514_264_337_593_543_950_336;
+
     /// A V2 0.3% hop resolves to `V2HopInfo { fee: 30, zfo: true }` — the
     /// exact `int(Fraction(1000-997, 1000) * 10000)` value the Python
     /// `build_hops_from_pools` produced.
@@ -289,6 +152,7 @@ mod tests {
         assert_eq!(v2.fee, 30);
         assert!(v2.zfo);
     }
+
     /// Telemetry: `describe_path` names the CONCRETE pool addresses (the
     /// operator ask — "which pools are in the path"), degrading to raw
     /// `pool_id` for unregistered ids.
@@ -335,6 +199,7 @@ mod tests {
             "path_id=99999 (unregistered)"
         );
     }
+
     /// Reverse direction selects `fee_token1` (identical fee here) + `zfo: false`.
     #[test]
     fn v2_path_reverse_direction_sets_zfo_false() {
@@ -377,6 +242,7 @@ mod tests {
         assert!(!v2.zfo);
         assert_eq!(v2.fee, 30);
     }
+
     #[test]
     fn v3_path_projects_to_hop_info() {
         let mut engine = ArbitrageEngine::new();
@@ -431,6 +297,7 @@ mod tests {
         assert_eq!(v3.fee, 3000);
         assert!(v3.zfo);
     }
+
     #[test]
     fn v4_path_projects_to_hop_info_with_pool_id_hex() {
         let mut engine = ArbitrageEngine::new();
@@ -494,22 +361,6 @@ mod tests {
         assert_eq!(v4.hook_address, Address::ZERO);
         assert!(v4.zfo);
     }
-    #[test]
-    fn unsupported_hop_type_is_refused_by_the_encoder_projection() {
-        let core = degenbot_substrate::BotState::new();
-        let pools = [::degenbot_solvers::mixed::MixedPoolRef {
-            hop_type: ::degenbot_solvers::mixed::HopType::SolidlyStable,
-            pool_key: 0,
-            zero_for_one: true,
-        }];
-        assert!(matches!(
-            super::build_path_info(&core, &pools),
-            Err(PathInfoBuildError::UnsupportedHopType {
-                hop_type: ::degenbot_solvers::mixed::HopType::SolidlyStable,
-                pool_id: 0,
-            })
-        ));
-    }
 
     /// Unknown `path_id` → `None` (matches "no Python `PathInfo` in the registry").
     #[test]
@@ -517,6 +368,7 @@ mod tests {
         let engine = ArbitrageEngine::new();
         assert!(super::path_info_for(&engine, 999).is_none());
     }
+
     /// A multi-hop V2→V3 path projects to a two-hop `PathInfo` in order.
     #[test]
     fn multi_hop_path_projects_in_order() {

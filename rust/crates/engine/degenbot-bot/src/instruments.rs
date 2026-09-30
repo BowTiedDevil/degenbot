@@ -1269,6 +1269,30 @@ pub fn install_substrate_telemetry_port() {
                 p.count_log_applied();
             }
         },
+        count_backrun_frame: |kind: &str, reason: &str| {
+            if let Some(p) = pipeline() {
+                p.count_backrun_frame(kind, reason);
+            }
+        },
+        record_backrun_feed: |connected,
+                              seconds_since_event,
+                              frames,
+                              dropped_ring,
+                              rejected_parse,
+                              rejected_chain_id,
+                              reconnects| {
+            if let Some(p) = pipeline() {
+                p.record_backrun_feed(
+                    connected,
+                    seconds_since_event,
+                    frames,
+                    dropped_ring,
+                    rejected_parse,
+                    rejected_chain_id,
+                    reconnects,
+                );
+            }
+        },
     }));
 }
 

@@ -1161,7 +1161,7 @@ fn build_batch_executor(
                 provider: std::sync::Arc::new(provider.clone()),
             }),
             nonce_lane: std::sync::Arc::new(degenbot::submission::NonceLane::new(
-                std::sync::Arc::new(degenbot::bot::nonce_authority::NonceAuthority::new(0)),
+                std::sync::Arc::new(degenbot::substrate::nonce::NonceAuthority::new(0)),
                 std::sync::Arc::new(degenbot::submission::SubmissionLedger::new()),
                 "settlement",
             )),

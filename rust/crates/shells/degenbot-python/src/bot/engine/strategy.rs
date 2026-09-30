@@ -13,8 +13,8 @@ use super::{Arc, PyArbEngine, StrategyHostError, UnconfiguredStrategyError, Unkn
 use crate::prelude::*;
 
 use degenbot_bot::arb_engine::EngineChannelHandles;
-use degenbot_bot::nonce_authority::{NonceAuthority, StrategyId};
 use degenbot_bot::strategy_host::{FacetStatus, HostError, HostHub, StrategyHost};
+use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
 
 /// The Python-facing name of a driver's FSM state.
 fn state_name(state: degenbot_bot::strategy_host::DriverPose) -> &'static str {
@@ -472,7 +472,8 @@ mod tests {
     #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
     use super::*;
-    use degenbot_bot::strategy_host::{DriverExit, DriverPose};
+    use degenbot_bot::strategy_host::DriverPose;
+    use degenbot_substrate::driver_spawn::DriverExit;
 
     /// Point the boot's database layer at an absent path, so the engine boot
     /// skips the operator's real connector roster. The boot loads the whole

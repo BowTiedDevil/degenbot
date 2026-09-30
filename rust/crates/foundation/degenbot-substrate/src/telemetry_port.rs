@@ -26,6 +26,10 @@ pub struct PipelineInstruments {
     pub count_log_apply_missed: fn(),
     pub observe_state_apply: fn(f64),
     pub count_log_applied: fn(),
+    /// `MEVBlocker` searcher-feed family: one counter bucket per frame decision.
+    pub count_backrun_frame: fn(&str, &str),
+    /// Searcher-feed health sample (the closed 7-field status snapshot).
+    pub record_backrun_feed: fn(bool, Option<f64>, u64, u64, u64, u64, u64),
 }
 
 static PORT: OnceLock<Option<PipelineInstruments>> = OnceLock::new();
@@ -82,5 +86,34 @@ impl PipelineInstruments {
     /// Applied-log counter.
     pub fn count_log_applied(&self) {
         (self.count_log_applied)();
+    }
+    /// Backrun-frame decision bucket (`MEVBlocker` searcher-feed family).
+    pub fn count_backrun_frame(&self, kind: &str, reason: &str) {
+        (self.count_backrun_frame)(kind, reason);
+    }
+    /// Searcher-feed health sample.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one flat sample of a closed 7-field status snapshot"
+    )]
+    pub fn record_backrun_feed(
+        &self,
+        connected: bool,
+        seconds_since_event: Option<f64>,
+        frames: u64,
+        dropped_ring: u64,
+        rejected_parse: u64,
+        rejected_chain_id: u64,
+        reconnects: u64,
+    ) {
+        (self.record_backrun_feed)(
+            connected,
+            seconds_since_event,
+            frames,
+            dropped_ring,
+            rejected_parse,
+            rejected_chain_id,
+            reconnects,
+        );
     }
 }

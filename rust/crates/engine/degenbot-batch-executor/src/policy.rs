@@ -244,7 +244,7 @@ mod tests {
             ),
             probe: Arc::new(NoopProbe),
             nonce_lane: Arc::new(NonceLane::new(
-                Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(0)),
+                Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)),
                 Arc::new(degenbot_submission::SubmissionLedger::new()),
                 "settlement",
             )),

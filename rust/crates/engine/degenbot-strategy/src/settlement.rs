@@ -26,7 +26,7 @@
 //!   exists.
 //! - **Boot registration is unconditionally configured.** The hosted Python
 //!   boot is the settlement arm, so it registers the settlement facet as
-//!   [`FacetStatus::Configured`] even when `strategy.settlement.active` is
+//!   `FacetStatus::Configured` even when `strategy.settlement.active` is
 //!   false. Why: the runner resolves its live relay posture *after* the engine
 //!   exists, and a dry-run boot that never broadcasts must still enable the
 //!   arm (the live-mode gate lives in the runner, not in registration).
@@ -36,7 +36,7 @@
 //!   one hosted process, and every settlement submission must stamp through the
 //!   shared operator-account authority no matter which engine instance signs.
 //! - **Sole channel registrar.** `EngineChannelHandles::register_on` is the
-//!   closure [`StrategyHost::mint`] hands the exclusive `&mut Hub`, so the
+//!   closure `StrategyHost::mint` hands the exclusive `&mut Hub`, so the
 //!   engine's named channels register before the hub is shared. Why: named
 //!   channels are `&mut self`; the host cannot mint them after sharing.
 //! - **ADR-057 head-liveness coupling.** The hosted head feed runs from the
@@ -45,10 +45,8 @@
 //!   new chain read. Why: the settlement pump already watches heads, so a
 //!   second head source would double-read the chain nonce.
 //!
-//! [`DriverSpawnFactory`]: degenbot_bot::strategy_host::DriverSpawnFactory
-//! [`FacetStatus`]: degenbot_bot::strategy_host::FacetStatus
+//! [`DriverSpawnFactory`]: degenbot_substrate::driver_spawn::DriverSpawnFactory
 //! [`NonceLane`]: degenbot_submission::NonceLane
-//! [`StrategyHost::mint`]: degenbot_bot::strategy_host::StrategyHost::mint
 
 use degenbot_config::BotConfig;
 

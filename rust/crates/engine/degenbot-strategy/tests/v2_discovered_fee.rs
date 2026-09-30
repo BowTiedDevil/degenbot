@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use alloy::primitives::{address, aliases::U112, Address, Bytes, U256};
-use degenbot_bot::arb_engine::path_info::build_path_info;
 use degenbot_db::{DegenbotDb, V2PoolRowInput};
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 use degenbot_pools::slot_layout::V2ReservesParts;
@@ -25,6 +24,7 @@ use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::project_candidate;
 use degenbot_strategy::strategy_kit::StrategyKit;
 use degenbot_substrate::connector_index::V2ConnectorIndex;
+use degenbot_substrate::path_info::build_path_info;
 use degenbot_substrate::{
     pool_ingress::VerifyLevel, BotState, RegisterV2PoolParams, RouteRegistry,
 };
