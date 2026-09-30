@@ -31,6 +31,7 @@
 
 pub mod assembly;
 pub mod executor;
+pub mod policy;
 pub mod record;
 pub mod row;
 
@@ -40,6 +41,7 @@ pub use assembly::{
     RawRowClass,
 };
 pub use executor::{BatchDrain, BatchExecutor, BatchOutcomeSet, BatchWork, ExecutorConfig};
+pub use policy::{ExecutorPolicy, ExecutorRuntime};
 pub use record::{
     fold_counters, AssemblyVerdict, BatchCounters, BatchOutcome, FailureDetail, FailureKind,
     PathInfoView, SimReceipt, SimulateVerdict, SubmitVerdict,

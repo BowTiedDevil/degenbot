@@ -3,17 +3,21 @@
 The per-batch choreography — candidate assembly, the GIL-free sim fan-out,
 the payload merge, the ordered nonce-serial submission — is the Rust core
 (``degenbot-batch-executor``) behind ``degenbot._ffi.simulation.BatchExecutor``.
-This module is the CONSTRUCTION boundary only: it resolves the policy values
-once (the in-flight cap, the thin-margin floor, the relay posture's broadcast
-fan-out, the dry-run/inject guards) and builds the executor. The driver's
-remaining responsibility is display: the consumer drains the Batch outcome
-records (:meth:`~degenbot.runner._dispatch.MergedOutcome.from_records` is the
-render fold).
+This module is the CONSTRUCTION boundary only: it hands the FFI the session's
+runtime handles and the FFI converts the policy values (the in-flight cap,
+the thin-margin floor, the ERC6909 encode axis, the dry-run/inject guards)
+from the installed verdict through ONE typed conversion — the conversion owns
+every default and clamp, so this module resolves no policy value and carries
+no twin floor. The driver's remaining responsibility is display: the consumer
+drains the Batch outcome records
+(:meth:`~degenbot.runner._dispatch.MergedOutcome.from_records` is the render
+fold).
 
 Submission order is nonce order because the core lane drains batches in
 arrival order (FIFO). The cap VALUE (``DEGENBOT_SIM_PIPELINE_CONCURRENCY``,
-default 8, floored at 1) stays driver-side as a plain ``usize`` — resolved
-here, injected at construction, never re-read below.
+declared default 8, floored at 1 by the conversion) lives in the verdict —
+``degenbot.config.resolved_config().values.simulation.pipeline_concurrency``
+reads the same answer the executor was built from.
 """
 
 from __future__ import annotations
@@ -49,37 +53,16 @@ class BatchWork:
     payloads: dict[int, dict] | None = None
 
 
-def resolve_sim_concurrency(
-    session: _SessionState,
-    *,
-    concurrency: int | None = None,
-) -> int:
-    """The injected in-flight sim cap: the explicit value, else the config.
-
-    A cap of zero sims would wedge the pipeline, not serialize it — floored
-    at 1 (the config resolver already floors; the floor re-applies here so an
-    injected value obeys the same rule).
-    """
-    cap = concurrency if concurrency is not None else session.cfg.sim_pipeline_concurrency
-    return max(int(cap), 1)
-
-
-async def build_batch_executor(
-    session: _SessionState,
-    *,
-    concurrency: int | None = None,
-) -> BatchExecutor:
+async def build_batch_executor(session: _SessionState) -> BatchExecutor:
     """Build the core batch executor over this session's resolved policy.
 
-    ``concurrency`` is the injected in-flight cap; omitted, the session's
-    resolved config value is used. Every other policy value rides the
-    session's resolved config (thin-margin floor, the ERC6909 encode axis,
-    the dry-run/inject guards) and the resolved relay posture (the broadcast
-    fan-out — endpoints dialed ONCE here and cached module-side). The
-    construction-time chain read seeds the Rust nonce authority's lane; the
-    hosted per-head reconcile maintains it afterwards.
+    Every policy value (thin-margin floor, the ERC6909 encode axis, the
+    in-flight cap, the inject guards) converts from the installed verdict
+    inside the FFI; the driver injects only the runtime handles the verdict
+    cannot name (the run-mode stance, the relay posture's broadcast fan-out,
+    the nonce seed). The construction-time chain read seeds the Rust nonce
+    authority's lane; the hosted per-head reconcile maintains it afterwards.
     """
-    cap = resolve_sim_concurrency(session, concurrency=concurrency)
     sim_ctx = session.sim_ctx
     if sim_ctx is None:
         msg = "SimulateContext is required to dispatch (non-Alloy provider or sim context unbuilt)"
@@ -107,11 +90,6 @@ async def build_batch_executor(
         signer=signer,
         submit_provider=async_alloy,
         operator_nonce=operator_nonce,
-        sim_concurrency=cap,
-        min_profit_margin_bps=session.cfg.min_profit_margin_bps,
         dry_run=session.cfg.dry_run,
-        inject_code_guard=session.cfg.inject_executor_code,
-        erc6909_profit=session.cfg.erc6909_profit,
-        max_candidates=0,
         broadcast_providers=broadcast_providers,
     )

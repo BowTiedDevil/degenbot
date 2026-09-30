@@ -211,3 +211,50 @@ class TestHypotheticalResolution:
         database = _ffi.resolve_hypothetical_database_path({}, None, "/tmp/override.db")
         assert database.path == "/tmp/override.db"
         assert database.source == "cli"
+
+
+# ── The executor-policy parity extension ─────────────────────────────────────
+#
+# The core batch executor converts the verdict's policy knobs through ONE
+# typed boundary (`degenbot-batch-executor`'s `ExecutorPolicy::from`), so the
+# driver and the FFI construction carry no twin clamp. The conversion face
+# (`_ffi.simulation.executor_policy_py`) projects that same conversion, and
+# these tests pin the property: every executor knob equals the verdict value
+# the same load recorded — and the one clamp (the sim fan-out floor) lives in
+# the conversion, not in Python.
+
+_EXECUTOR_KNOBS = (
+    ("sim_concurrency", "simulation.pipeline_concurrency"),
+    ("min_profit_margin_bps", "dispatch.min_profit_margin_bps"),
+    ("erc6909_profit", "dispatch.erc6909_profit"),
+    ("inject_code", "simulation.inject_executor_code"),
+    ("inject_code_guard", "simulation.inject_executor_code"),
+)
+
+
+def test_every_executor_knob_is_the_verdict_value_the_same_load_recorded() -> None:
+    """Every executor knob converts from the SAME verdict Python projects."""
+    verdict = _ffi.resolved_config()
+    policy = _ffi.simulation.executor_policy_py(verdict.values)
+    mismatched = [
+        f"{knob}={getattr(policy, knob)} != {path}={_read_named(verdict.values, path)}"
+        for knob, path in _EXECUTOR_KNOBS
+        if getattr(policy, knob) != _read_named(verdict.values, path)
+    ]
+    assert not mismatched, f"the conversion must read the verdict: {mismatched}"
+
+
+def test_the_inject_guards_are_one_declared_key_converted_once() -> None:
+    """Both inject guards follow `simulation.inject_executor_code`."""
+    policy = _ffi.simulation.executor_policy_py(_ffi.resolved_config().values)
+    stance = _ffi.resolved_config().values.simulation.inject_executor_code
+    assert policy.inject_code is stance
+    assert policy.inject_code_guard is stance
+
+
+def test_the_sim_fanout_floor_is_the_conversions_not_pythons() -> None:
+    """The floor lives in the conversion; the verdict answers 0 unclamped."""
+    hypothetical = _ffi.resolve_hypothetical({"DEGENBOT_SIM_PIPELINE_CONCURRENCY": "0"}, None)
+    assert hypothetical.values.simulation.pipeline_concurrency == 0
+    policy = _ffi.simulation.executor_policy_py(hypothetical.values)
+    assert policy.sim_concurrency == 1

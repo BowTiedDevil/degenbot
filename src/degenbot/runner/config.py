@@ -188,8 +188,11 @@ class ArbitrageConfig:
     # The declared driver stances (the `dispatch.*` and `pathfinding.*` keys).
     # Each arrives from the resolved verdict, so the operator file and the
     # environment reach them through the one cascade `degenbot-config` owns.
+    # The executor's own policy knobs (the thin-margin floor, the in-flight
+    # cap, the inject guards) are NOT carried here: the core batch executor
+    # converts them from the verdict through its own typed boundary, so a
+    # driver-side copy would be a value the core ignores.
     erc6909_profit: bool
-    min_profit_margin_bps: int
     reg_progress_secs: float
     max_registered_paths: int
     # The runtime values the driver's leaves consume. Resolved once here, at
@@ -198,7 +201,6 @@ class ArbitrageConfig:
     # engine's instance-scoped `SolveRuntimeConfig`.
     discovery_batch_size: int
     contracts_dir: str
-    sim_pipeline_concurrency: int
     sim_exit_on_fail: bool
     sim_exit_ignore_buckets: str
     # Run mode
@@ -362,7 +364,6 @@ class ArbitrageConfig:
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
             erc6909_profit=resolved_values.dispatch.erc6909_profit,
-            min_profit_margin_bps=resolved_values.dispatch.min_profit_margin_bps,
             reg_progress_secs=resolved_values.pathfinding.reg_progress_secs,
             max_registered_paths=resolved_values.pathfinding.max_registered_paths,
             # The ONE clamp owner for the batch size: the shell getter's twin
@@ -370,7 +371,6 @@ class ArbitrageConfig:
             # per-path delivery exactly once, here.
             discovery_batch_size=max(1, resolved_values.pathfinding.discovery_batch_size),
             contracts_dir=resolved_values.dispatch.contracts_dir or "",
-            sim_pipeline_concurrency=max(1, resolved_values.simulation.pipeline_concurrency),
             sim_exit_on_fail=resolved_values.simulation.sim_exit_on_fail,
             sim_exit_ignore_buckets=resolved_values.simulation.exit_ignore_buckets,
             verification_retry_policy=verification_retry_policy,

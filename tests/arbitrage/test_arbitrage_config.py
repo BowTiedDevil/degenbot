@@ -246,10 +246,15 @@ class TestLiveOwnerOperatorTriangle:
 class TestRunnerKnobResolution:
     """The declared driver stances resolve through the core cascade.
 
-    Each knob is a ``config_schema!`` key now, so a value reaches the config
+    Each knob is a ``config_schema!`` key now, so a value reaches the bot
     from the environment OR the operator file, with the declared default as the
     only fallback — and a value the schema cannot parse is refused at boot by
     the loader rather than by this layer.
+
+    The faces differ by ownership: the three stances the driver carries are
+    probed off the built config, while the thin-margin floor converts inside
+    the core from the verdict (the driver carries no copy), so its cascade
+    claim probes the verdict face.
 
     The retired ``examples/mainnet.env`` is not one of those layers: it held
     the ``OPERATOR_*``/``EXECUTOR_*`` identity keys only, and a ``DEGENBOT_*``
@@ -260,10 +265,13 @@ class TestRunnerKnobResolution:
 
     _KNOB_FIELDS = (
         "max_registered_paths",
-        "min_profit_margin_bps",
         "erc6909_profit",
         "reg_progress_secs",
     )
+
+    #: The floor is core-owned: it converts from the verdict, so the cascade
+    #: claim names the declared key, not a config attribute.
+    _VERDICT_KNOB = "dispatch.min_profit_margin_bps"
 
     def _probe(self, **env: str) -> dict[str, object]:
         """Build the config in a child that declares exactly this env."""
@@ -271,15 +279,16 @@ class TestRunnerKnobResolution:
 
     def test_the_env_layer_reaches_every_knob(self) -> None:
         """One OS export each, all four honored."""
-        values = self._probe(
-            DEGENBOT_MAX_PATHS="50000",
-            DEGENBOT_MIN_PROFIT_MARGIN_BPS="25",
-            DEGENBOT_ERC6909_PROFIT="1",
-            DEGENBOT_REG_PROGRESS_SECS="15",
-        )
+        env = {
+            "DEGENBOT_MAX_PATHS": "50000",
+            "DEGENBOT_MIN_PROFIT_MARGIN_BPS": "25",
+            "DEGENBOT_ERC6909_PROFIT": "1",
+            "DEGENBOT_REG_PROGRESS_SECS": "15",
+        }
+        values = self._probe(**env)
 
         assert values["max_registered_paths"] == 50000
-        assert values["min_profit_margin_bps"] == 25
+        assert probe.resolved_value(self._VERDICT_KNOB, env=env)["value"] == 25
         assert values["erc6909_profit"] is True
         assert values["reg_progress_secs"] == pytest.approx(15.0)
 
@@ -296,9 +305,10 @@ class TestRunnerKnobResolution:
             "[pathfinding]\nmax_registered_paths = 40000\nreg_progress_secs = 12.5\n"
         ) as written:
             values = probe.config_values(self._KNOB_FIELDS, operator_file=written)
+            floor = probe.resolved_value(self._VERDICT_KNOB, operator_file=written)["value"]
 
         assert values["max_registered_paths"] == 40000
-        assert values["min_profit_margin_bps"] == 30
+        assert floor == 30
         assert values["erc6909_profit"] is True
         assert values["reg_progress_secs"] == pytest.approx(12.5)
 
@@ -332,7 +342,7 @@ class TestRunnerKnobResolution:
         values = self._probe()
 
         assert values["max_registered_paths"] == 100000
-        assert values["min_profit_margin_bps"] == 0
+        assert probe.resolved_value(self._VERDICT_KNOB)["value"] == 0
         assert values["erc6909_profit"] is False
         assert values["reg_progress_secs"] == pytest.approx(30.0)
 

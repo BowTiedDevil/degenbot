@@ -14,6 +14,11 @@ workspace = true
 
 [dependencies]
 alloy = { version = "^2.5", features = ["full"] }
+# The resolved verdict (`BotConfig`) the executor policy converts FROM: the
+# single configuration authority (ADR-065) lives in this foundation crate,
+# and the engine←foundation direction is the existing dependency edge (the
+# config crate depends only on the TOML stack — no cycle).
+degenbot-config.workspace = true
 # The sim fan-out + the typed sim-failure record (`SimFailure`) the outcome
 # records carry, plus the policy registries (divergence / FoT) the assembly
 # stage reads at its bookends.

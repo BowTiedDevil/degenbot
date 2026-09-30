@@ -262,6 +262,14 @@ pub(crate) fn install_verdict() {
     let _ = verdict();
 }
 
+/// The installed verdict's typed tree, for the executor construction seam:
+/// `build_batch_executor_py` converts the SAME load the Python verdict
+/// projects, so the executor's policy values cannot disagree with
+/// `resolved_config().values`.
+pub(crate) fn installed_bot_config() -> &'static ::degenbot_config::BotConfig {
+    &verdict().layers.config
+}
+
 /// The winning layer per DECLARED key, keyed by its dotted TOML path.
 ///
 /// The projection is schema-driven so the vocabulary a caller reads is the
@@ -356,6 +364,12 @@ impl ConfigValues {
     /// Project one resolved config.
     pub(crate) fn of(config: ::std::sync::Arc<::degenbot_config::BotConfig>) -> Self {
         Self { config }
+    }
+
+    /// The typed tree behind the projection (the executor-policy conversion
+    /// face reads it so the policy and the values share one verdict).
+    pub(crate) fn bot_config(&self) -> &::degenbot_config::BotConfig {
+        &self.config
     }
 }
 

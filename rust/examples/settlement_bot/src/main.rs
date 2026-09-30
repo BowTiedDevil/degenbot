@@ -213,7 +213,6 @@ struct SettlementBotConfig {
     fee_percentiles: [u64; 2],
     target_profit_ratio: f64,
     blocks_before_nonce_expires: u64,
-    max_simulate_concurrent: u64,
     age_decay_constant: f64,
     min_priority_fee_percentile: u64,
     max_priority_fee_percentile: u64,
@@ -364,7 +363,6 @@ impl SettlementBotConfig {
             fee_percentiles: PRIORITY_FEE_PERCENTILES,
             target_profit_ratio: TARGET_PROFIT_RATIO,
             blocks_before_nonce_expires: BLOCKS_BEFORE_NONCE_EXPIRES,
-            max_simulate_concurrent: MAX_SIMULATE_CONCURRENT,
             age_decay_constant: AGE_DECAY_CONSTANT,
             min_priority_fee_percentile: PRIORITY_FEE_PERCENTILES[P10_INDEX],
             max_priority_fee_percentile: PRIORITY_FEE_PERCENTILES[P50_INDEX],
@@ -501,14 +499,16 @@ fn run() -> Result<(), String> {
     );
     println!(
         "[config] fee_history_window={} fee_percentiles={:?} \
-        target_profit_ratio={} nonce_expires_blocks={} max_sim_concurrent={} \
+        target_profit_ratio={} nonce_expires_blocks={} sim_pipeline_concurrency={} \
         age_decay={} priority_fee_percentiles=[{},{}] path_suppress=[{},{}] \
         permutation={:?}",
         cfg.fee_history_window,
         cfg.fee_percentiles,
         cfg.target_profit_ratio,
         cfg.blocks_before_nonce_expires,
-        cfg.max_simulate_concurrent,
+        // The fan-out cap is a declared verdict value now (the conversion
+        // reads it), so the boot report prints the verdict's answer.
+        loaded.config.simulation.pipeline_concurrency,
         cfg.age_decay_constant,
         cfg.min_priority_fee_percentile,
         cfg.max_priority_fee_percentile,
@@ -1066,9 +1066,12 @@ fn run() -> Result<(), String> {
 /// parity twin of the hosted runner's stance-independent posture gate), and
 /// an activated pending-transaction facet belongs to its own binary or the
 /// hosted process, not this runner.
-/// Build the session-static core batch executor from the driver config —
-/// the value-configured construction (ledger rows 15 + 16): the plain caps,
-/// the policy values, the relay posture. The choreography itself (assembly
+/// Build the session-static core batch executor from the resolved verdict —
+/// the value-configured construction (ledger rows 15 + 16): the policy values
+/// convert from `loaded.config` through the core's ONE typed boundary
+/// (`ExecutorConfig::from_verdict`, which owns every default and clamp — the
+/// driver keeps no twin floor or cap), and the runtime carries the injected
+/// handles the verdict cannot name. The choreography itself (assembly
 /// policy, sim fan-out, ordered submit) is core-owned
 /// (`degenbot::batch_executor::BatchExecutor`).
 fn build_batch_executor(
@@ -1078,7 +1081,7 @@ fn build_batch_executor(
     bot: &std::sync::Arc<degenbot::bot_core::Bot>,
     driver: &std::sync::Arc<degenbot::EngineDriver>,
 ) -> Result<degenbot::batch_executor::BatchExecutor, String> {
-    use degenbot::batch_executor::ExecutorConfig;
+    use degenbot::batch_executor::{ExecutorConfig, ExecutorRuntime};
 
     let executor_address = degenbot::core::address_utils::parse_address(&cfg.executor_address)
         .map_err(|e| format!("executor address {}: {e}", cfg.executor_address))?;
@@ -1097,78 +1100,75 @@ fn build_batch_executor(
         ),
         None => alloy::primitives::Bytes::new(),
     };
-    // The thin-margin floor is a declared driver-side stance
-    // (`dispatch.min_profit_margin_bps`); the key is unsigned end to end, so
-    // the declared value IS the floor the executor reads.
-    let min_profit_margin_bps = loaded.config.dispatch.min_profit_margin_bps;
-    let cap = usize::try_from(cfg.max_simulate_concurrent)
-        .unwrap_or(usize::MAX)
-        .max(1);
-    let config = ExecutorConfig {
-        sim_concurrency: cap,
-        max_candidates: cap,
-        min_profit_margin_bps,
-        opts: degenbot::cmd_executor::composers::EncodeOptions::default(),
-        resolver: std::sync::Arc::new(dispatch::DriverResolver {
-            driver: std::sync::Arc::clone(driver),
-        }),
-        // The cross-block suppression registry is its OWN policy value —
-        // never merged with the batch-local payload-served set the executor
-        // derives from each `BatchWork`'s payload rows.
-        suppression: std::sync::Arc::new(std::sync::Mutex::new(
-            degenbot::submission::PathSuppression::new(),
-        )),
-        divergence: std::sync::Arc::new(std::sync::Mutex::new(
-            degenbot::arbitrage::PoolDivergence::new(),
-        )),
-        fot: std::sync::Arc::new(std::sync::Mutex::new(
-            degenbot::arbitrage::FeeOnTransferRegistry::new(),
-        )),
-        provider: std::sync::Arc::new(provider.clone()),
-        executor_owner,
-        executor_address,
-        weth_address,
-        pool_manager_address: degenbot::core::address_utils::parse_address(
-            UNISWAP_V4_POOL_MANAGER_ADDRESS,
-        )
-        .map_err(|e| format!("V4 PoolManager address: {e}"))?,
-        multicall3_address: degenbot::core::address_utils::parse_address(MULTICALL3_ADDRESS)
-            .map_err(|e| format!("Multicall3 address: {e}"))?,
-        inject_code: cfg.inject_executor_code,
-        injected_address: cfg
-            .inject_executor_code
-            .then(|| degenbot::core::address_utils::parse_address(&cfg.injected_address))
-            .transpose()
-            .map_err(|e| format!("injected executor address: {e}"))?,
-        runtime_bytecode,
-        warmup: degenbot::cmd_executor::compute_simulation_warmup_slots(
+    let config = ExecutorConfig::from_verdict(
+        &loaded.config,
+        ExecutorRuntime {
+            // The driver's own per-batch cap (a plain count) — the fan-out
+            // bound itself comes from the verdict's declared
+            // `simulation.pipeline_concurrency`, so both drivers size it the
+            // same way, and the thin-margin floor, the encode axis, and the
+            // inject guards convert inside the boundary.
+            max_candidates: usize::try_from(MAX_SIMULATE_CONCURRENT).unwrap_or(usize::MAX),
+            use_v4_batch: false,
+            dry_run: cfg.dry_run,
+            resolver: std::sync::Arc::new(dispatch::DriverResolver {
+                driver: std::sync::Arc::clone(driver),
+            }),
+            // The cross-block suppression registry is its OWN policy value —
+            // never merged with the batch-local payload-served set the executor
+            // derives from each `BatchWork`'s payload rows.
+            suppression: std::sync::Arc::new(std::sync::Mutex::new(
+                degenbot::submission::PathSuppression::new(),
+            )),
+            divergence: std::sync::Arc::new(std::sync::Mutex::new(
+                degenbot::arbitrage::PoolDivergence::new(),
+            )),
+            fot: std::sync::Arc::new(std::sync::Mutex::new(
+                degenbot::arbitrage::FeeOnTransferRegistry::new(),
+            )),
+            provider: std::sync::Arc::new(provider.clone()),
+            executor_owner,
             executor_address,
             weth_address,
-        ),
-        bot_state: Some(bot.state_arc()),
-        // No separate warm-code cache in this driver: the sim's cold-miss
-        // fallback DB (the provider) serves the reads.
-        warm_cache: None,
-        dispatcher: std::sync::Arc::new(std::sync::Mutex::new(
-            degenbot::submission::Dispatcher::for_block(0),
-        )),
-        signer: std::sync::Arc::new(
-            degenbot::submission::TxSigner::from_key_hex(&cfg.operator_private_key, CHAIN_ID)
-                .map_err(|e| format!("operator signer: {e}"))?,
-        ),
-        probe: std::sync::Arc::new(dispatch::ProviderReceiptProbe {
-            provider: std::sync::Arc::new(provider.clone()),
-        }),
-        nonce_lane: std::sync::Arc::new(degenbot::submission::NonceLane::new(
-            std::sync::Arc::new(degenbot::bot::nonce_authority::NonceAuthority::new(0)),
-            std::sync::Arc::new(degenbot::submission::SubmissionLedger::new()),
-            "settlement",
-        )),
-        dry_run: cfg.dry_run,
-        inject_code_guard: cfg.inject_executor_code,
-        extra_broadcast: Vec::new(),
-        target: degenbot::submission::SubmissionTarget::Public,
-    };
+            pool_manager_address: degenbot::core::address_utils::parse_address(
+                UNISWAP_V4_POOL_MANAGER_ADDRESS,
+            )
+            .map_err(|e| format!("V4 PoolManager address: {e}"))?,
+            multicall3_address: degenbot::core::address_utils::parse_address(MULTICALL3_ADDRESS)
+                .map_err(|e| format!("Multicall3 address: {e}"))?,
+            injected_address: cfg
+                .inject_executor_code
+                .then(|| degenbot::core::address_utils::parse_address(&cfg.injected_address))
+                .transpose()
+                .map_err(|e| format!("injected executor address: {e}"))?,
+            runtime_bytecode,
+            warmup: degenbot::cmd_executor::compute_simulation_warmup_slots(
+                executor_address,
+                weth_address,
+            ),
+            bot_state: Some(bot.state_arc()),
+            // No separate warm-code cache in this driver: the sim's cold-miss
+            // fallback DB (the provider) serves the reads.
+            warm_cache: None,
+            dispatcher: std::sync::Arc::new(std::sync::Mutex::new(
+                degenbot::submission::Dispatcher::for_block(0),
+            )),
+            signer: std::sync::Arc::new(
+                degenbot::submission::TxSigner::from_key_hex(&cfg.operator_private_key, CHAIN_ID)
+                    .map_err(|e| format!("operator signer: {e}"))?,
+            ),
+            probe: std::sync::Arc::new(dispatch::ProviderReceiptProbe {
+                provider: std::sync::Arc::new(provider.clone()),
+            }),
+            nonce_lane: std::sync::Arc::new(degenbot::submission::NonceLane::new(
+                std::sync::Arc::new(degenbot::bot::nonce_authority::NonceAuthority::new(0)),
+                std::sync::Arc::new(degenbot::submission::SubmissionLedger::new()),
+                "settlement",
+            )),
+            extra_broadcast: Vec::new(),
+            target: degenbot::submission::SubmissionTarget::Public,
+        },
+    );
     Ok(degenbot::batch_executor::BatchExecutor::new(config))
 }
 

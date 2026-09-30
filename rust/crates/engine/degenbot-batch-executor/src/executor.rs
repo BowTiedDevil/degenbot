@@ -34,78 +34,143 @@ use parking_lot::RwLock;
 use crate::assembly::{
     assemble_batch, join_sim_result, AssemblyError, AssemblyInputs, PathResolver,
 };
+use crate::policy::{ExecutorPolicy, ExecutorRuntime};
 use crate::record::{fold_counters, AssemblyVerdict, BatchOutcome, SimulateVerdict, SubmitVerdict};
 use crate::row::{PayloadRow, RawResult};
 
-/// The session-static executor configuration — every value a driver injects.
+/// The session-static executor configuration — the resolved verdict's policy
+/// values plus the injected runtime handles, assembled by
+/// [`ExecutorConfig::from_verdict`] and nothing else.
 ///
 /// Per-block facts (`base_fee_next`, `block_timestamp`, the priority-fee
 /// percentiles) ride [`BatchWork`]; everything session-scoped lives here.
+/// The fields are crate-private ON PURPOSE: the one construction boundary is
+/// the verdict conversion ([`crate::policy`]), so a driver cannot assemble a
+/// policy value a second authority named.
 pub struct ExecutorConfig {
-    /// The in-flight sim bound (a plain count, floor 1).
-    pub sim_concurrency: usize,
-    /// The per-batch sim cap (a plain count; clamped to the fan-out's
-    /// `MAX_SIMULATE_CONCURRENT` so the drop happens once, where the dropped
-    /// rows are known).
-    pub max_candidates: usize,
-    /// The thin-margin floor in bps (0 disables).
-    pub min_profit_margin_bps: u64,
-    /// The encode options stamped onto every assembled candidate.
-    pub opts: EncodeOptions,
+    /// The in-flight sim bound (a plain count, floor 1 — the conversion's
+    /// clamp, `simulation.pipeline_concurrency`).
+    pub(crate) sim_concurrency: usize,
+    /// The per-batch sim cap (a plain count; `0` = uncapped, clamped at the
+    /// boundary so the drop happens once, where the dropped rows are known).
+    pub(crate) max_candidates: usize,
+    /// The thin-margin floor in bps (0 disables;
+    /// `dispatch.min_profit_margin_bps`).
+    pub(crate) min_profit_margin_bps: u64,
+    /// The encode options stamped onto every assembled candidate
+    /// (`dispatch.erc6909_profit` + the runtime v4-batch axis).
+    pub(crate) opts: EncodeOptions,
     /// The path resolver (the engine registry projection).
-    pub resolver: Arc<dyn PathResolver>,
+    pub(crate) resolver: Arc<dyn PathResolver>,
     /// The cross-block suppression registry (decision b — its own policy
     /// value, never merged with the payload-served set).
-    pub suppression: Arc<Mutex<PathSuppression>>,
+    pub(crate) suppression: Arc<Mutex<PathSuppression>>,
     /// The per-pool solver-divergence memo.
-    pub divergence: Arc<Mutex<PoolDivergence>>,
+    pub(crate) divergence: Arc<Mutex<PoolDivergence>>,
     /// The per-token fee-on-transfer registry.
-    pub fot: Arc<Mutex<FeeOnTransferRegistry>>,
+    pub(crate) fot: Arc<Mutex<FeeOnTransferRegistry>>,
     // ── Simulate-stage session values (the `SimulateContext` projection) ──
     /// The typed RPC provider (cold-miss fallback DB).
-    pub provider: Arc<AlloyProvider>,
+    pub(crate) provider: Arc<AlloyProvider>,
     /// The operator key's address (the `execute()` `from`).
-    pub executor_owner: alloy::primitives::Address,
+    pub(crate) executor_owner: alloy::primitives::Address,
     /// The `cmd_executor` contract address (the `execute()` target + the join
     /// stamp).
-    pub executor_address: alloy::primitives::Address,
+    pub(crate) executor_address: alloy::primitives::Address,
     /// WETH9 contract address.
-    pub weth_address: alloy::primitives::Address,
+    pub(crate) weth_address: alloy::primitives::Address,
     /// The `Uniswap V4 PoolManager` contract address.
-    pub pool_manager_address: alloy::primitives::Address,
+    pub(crate) pool_manager_address: alloy::primitives::Address,
     /// Multicall3 contract address.
-    pub multicall3_address: alloy::primitives::Address,
-    /// Whether to inject the executor runtime bytecode in-sim.
-    pub inject_code: bool,
+    pub(crate) multicall3_address: alloy::primitives::Address,
+    /// Whether to inject the executor runtime bytecode in-sim
+    /// (`simulation.inject_executor_code`).
+    pub(crate) inject_code: bool,
     /// The injected executor address (used when `inject_code`).
-    pub injected_address: Option<alloy::primitives::Address>,
+    pub(crate) injected_address: Option<alloy::primitives::Address>,
     /// The executor runtime bytecode.
-    pub runtime_bytecode: alloy::primitives::Bytes,
+    pub(crate) runtime_bytecode: alloy::primitives::Bytes,
     /// The simulation warmup slots.
-    pub warmup: degenbot_executor::WarmupSlots,
+    pub(crate) warmup: degenbot_executor::WarmupSlots,
     /// The engine's shared state owner (the staleness gate + the per-block
     /// EVM anchor). `None` only for empty-input callers.
-    pub bot_state: Option<Arc<StateLock<BotState>>>,
+    pub(crate) bot_state: Option<Arc<StateLock<BotState>>>,
     /// The cross-block warm-code cache.
-    pub warm_cache: Option<Arc<RwLock<degenbot_simulation::WarmCodeCacheInner>>>,
+    pub(crate) warm_cache: Option<Arc<RwLock<degenbot_simulation::WarmCodeCacheInner>>>,
     // ── Submit-stage session values (the `dispatch_and_submit` projection) ──
     /// The coordination state (pool mutual exclusion, monitors, block clock).
-    pub dispatcher: Arc<Mutex<Dispatcher>>,
+    pub(crate) dispatcher: Arc<Mutex<Dispatcher>>,
     /// The operator key holder (constructed ONCE; the key never leaves Rust).
-    pub signer: Arc<TxSigner>,
+    pub(crate) signer: Arc<TxSigner>,
     /// The receipt probe the spawned monitors poll.
-    pub probe: Arc<dyn ReceiptProbe + Send + Sync>,
+    pub(crate) probe: Arc<dyn ReceiptProbe + Send + Sync>,
     /// The host-minted sign-time nonce lane.
-    pub nonce_lane: Arc<NonceLane>,
-    /// The live-submission skip (a safety policy value, S3).
-    pub dry_run: bool,
+    pub(crate) nonce_lane: Arc<NonceLane>,
+    /// The live-submission skip (a safety policy value, S3 — the driver's
+    /// run-mode stance).
+    pub(crate) dry_run: bool,
     /// The submit-side `inject_code` guard (the injected contract doesn't
-    /// exist on-chain — live submission is unsafe).
-    pub inject_code_guard: bool,
+    /// exist on-chain — live submission is unsafe). The SAME declared inject
+    /// stance as `inject_code`, converted once.
+    pub(crate) inject_code_guard: bool,
     /// Additional broadcast providers fanned out alongside the read provider.
-    pub extra_broadcast: Vec<Arc<AlloyProvider>>,
+    pub(crate) extra_broadcast: Vec<Arc<AlloyProvider>>,
     /// Where the signed transaction is sent (the relay posture value).
-    pub target: SubmissionTarget,
+    pub(crate) target: SubmissionTarget,
+}
+
+impl ExecutorConfig {
+    /// The ONE construction boundary: `verdict` (the resolved values,
+    /// `degenbot_config::BotConfig`) names every policy value — converted
+    /// through [`ExecutorPolicy::from`], which owns every default and clamp
+    /// — and `runtime` carries the injected handles the verdict cannot name.
+    ///
+    /// A driver never names a policy value itself: the twin clamps that used
+    /// to live at the Python and FFI construction sites died with this
+    /// boundary.
+    #[must_use]
+    pub fn from_verdict(verdict: &degenbot_config::BotConfig, runtime: ExecutorRuntime) -> Self {
+        let policy = ExecutorPolicy::from(verdict);
+        let max_candidates = if runtime.max_candidates == 0 {
+            usize::MAX
+        } else {
+            runtime.max_candidates
+        };
+        Self {
+            sim_concurrency: policy.sim_concurrency,
+            max_candidates,
+            min_profit_margin_bps: policy.min_profit_margin_bps,
+            opts: EncodeOptions {
+                erc6909_profit: policy.erc6909_profit,
+                use_v4_batch: runtime.use_v4_batch,
+                ..EncodeOptions::default()
+            },
+            resolver: runtime.resolver,
+            suppression: runtime.suppression,
+            divergence: runtime.divergence,
+            fot: runtime.fot,
+            provider: runtime.provider,
+            executor_owner: runtime.executor_owner,
+            executor_address: runtime.executor_address,
+            weth_address: runtime.weth_address,
+            pool_manager_address: runtime.pool_manager_address,
+            multicall3_address: runtime.multicall3_address,
+            inject_code: policy.inject_code,
+            injected_address: runtime.injected_address,
+            runtime_bytecode: runtime.runtime_bytecode,
+            warmup: runtime.warmup,
+            bot_state: runtime.bot_state,
+            warm_cache: runtime.warm_cache,
+            dispatcher: runtime.dispatcher,
+            signer: runtime.signer,
+            probe: runtime.probe,
+            nonce_lane: runtime.nonce_lane,
+            dry_run: runtime.dry_run,
+            inject_code_guard: policy.inject_code_guard,
+            extra_broadcast: runtime.extra_broadcast,
+            target: runtime.target,
+        }
+    }
 }
 
 /// One batch's per-block facts + the rows to run through the pipeline.

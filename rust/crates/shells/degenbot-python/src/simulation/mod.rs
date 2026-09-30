@@ -68,9 +68,9 @@ pub mod simulation {
 
     #[pymodule_export]
     use super::batch::{
-        build_batch_executor_py, PyAssemblyVerdict, PyBatchExecutor, PyBatchOutcome,
-        PyBatchOutcomeSet, PyFailureDetail, PyFailureKind, PySimReceipt, PySimulateVerdict,
-        PySubmitVerdict,
+        build_batch_executor_py, executor_policy_py, ExecutorPolicyValues, PyAssemblyVerdict,
+        PyBatchExecutor, PyBatchOutcome, PyBatchOutcomeSet, PyFailureDetail, PyFailureKind,
+        PySimReceipt, PySimulateVerdict, PySubmitVerdict,
     };
 
     #[pymodule_export]

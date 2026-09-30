@@ -8,7 +8,7 @@ dispatch/assembly/probe pyfunctions. The parent module registers the
 submodule itself and its `sys.modules` entry.
 """
 
-from . import ArbitrageEngine
+from . import ArbitrageEngine, ConfigValues
 from .provider import AsyncAlloyProvider
 from .submission import Dispatcher, TxSigner
 from _typeshed import Incomplete
@@ -350,6 +350,40 @@ class DispatchOutcome:
     def thin_dropped(self, /) -> int: ...
 
 @final
+class ExecutorPolicyValues:
+    """
+    The converted executor policy (see [`executor_policy_py`]). A frozen
+    read-only view: the conversion owns every default and clamp, so there is
+    nothing for a caller to set.
+    """
+    @property
+    def erc6909_profit(self, /) -> bool:
+        """
+        The ERC6909 encode axis: `dispatch.erc6909_profit`.
+        """
+    @property
+    def inject_code(self, /) -> bool:
+        """
+        The sim-injection stance: `simulation.inject_executor_code`.
+        """
+    @property
+    def inject_code_guard(self, /) -> bool:
+        """
+        The submit-side guard: the SAME inject stance, converted once.
+        """
+    @property
+    def min_profit_margin_bps(self, /) -> int:
+        """
+        The thin-margin floor: `dispatch.min_profit_margin_bps`.
+        """
+    @property
+    def sim_concurrency(self, /) -> int:
+        """
+        The in-flight sim bound: `simulation.pipeline_concurrency`, floored
+        at 1 by the conversion.
+        """
+
+@final
 class FailureDetail:
     """
     The per-candidate failure detail (the core's `FailureDetail`). The render
@@ -652,24 +686,20 @@ def build_batch_executor_py(
     submit_provider: AsyncAlloyProvider,
     operator_nonce: int,
     *,
-    sim_concurrency: int,
-    min_profit_margin_bps: int,
     dry_run: bool,
-    inject_code_guard: bool,
-    erc6909_profit: bool = False,
-    use_v4_batch: bool = False,
-    max_candidates: int = 0,
     broadcast_providers: Sequence[AsyncAlloyProvider] | None = None,
 ) -> BatchExecutor:
     """
-    Construct the session executor: the core's value-configured module with
-    every policy value the driver resolved (the cap as a plain count, the
-    thin-margin floor, the relay posture as the `SubmissionTarget` + the
-    broadcast fan-out, the safety guards). Choreography code NEVER crosses.
+    Construct the session executor: the core's value-configured module over
+    the INSTALLED verdict — the policy values (the cap, the thin-margin
+    floor, the ERC6909 encode axis, the inject guards) convert from the same
+    resolved config the Python verdict projects, with every default and
+    clamp owned by that conversion. The driver injects only the runtime
+    handles the verdict cannot name. Choreography code NEVER crosses.
 
     Args:
         `context`: the session `SimulateContext` (provider, addresses, the
-            inject flag, runtime bytecode, warmup slots).
+            inject stance's runtime facts, runtime bytecode, warmup slots).
         `dispatcher`: the session `Dispatcher` (the coordination arcs ride it:
             suppression, divergence, `FoT`, priority-fee ring).
         `engine`: the `ArbEngine` (the path resolver projection + the
@@ -680,13 +710,8 @@ def build_batch_executor_py(
         `operator_nonce`: the construction-time chain-read nonce seed (the
             lane's first stamp never re-issues a consumed nonce; the hosted
             per-head reconcile maintains it afterwards).
-        `sim_concurrency`: the in-flight sim cap (a plain count).
-        `min_profit_margin_bps`: the thin-margin floor (0 disables).
-        `dry_run`: skip live submission.
-        `inject_code_guard`: skip live submission (injected-code sessions).
-        `erc6909_profit`/`use_v4_batch`: the encode options stamped onto every
-            assembled candidate.
-        `max_candidates`: the per-batch sim cap; `0` = no cap.
+        `dry_run`: skip live submission (the driver's run-mode stance — a CLI
+            fact, not a declared key).
         `broadcast_providers`: the relay fan-out (the `RelayPosture` value's
             endpoints); `None`/empty = the public mempool (read provider
             only).
@@ -724,6 +749,21 @@ def dispatch_profitable_py(
     panicked while holding it). Cannot happen under normal operation; a poison
     indicates a bug in a sibling task (the dispatcher/suppression mutexes are
     only ever locked for short synchronous spans).
+    """
+
+def executor_policy_py(values: ConfigValues) -> ExecutorPolicyValues:
+    """
+    The verdict-named executor policy, as the resolution oracle reads it: the
+    SAME conversion the executor construction runs, exposed so a Python test
+    can pin every knob against the verdict's own values.
+
+    Args:
+        `values`: the typed projection (`resolved_config().values`, or a
+            hypothetical resolution's) the policy converts from.
+
+    Returns:
+        `ExecutorPolicyValues`: the converted policy (the cap with its floor,
+        the thin-margin floor, the ERC6909 axis, both inject guards).
     """
 
 def merge_payload_results_py(
@@ -846,6 +886,7 @@ __all__ = [
     "CandidateAssembly",
     "DispatchCandidate",
     "DispatchOutcome",
+    "ExecutorPolicyValues",
     "FailureDetail",
     "FailureKind",
     "PayloadOutcome",
@@ -857,6 +898,7 @@ __all__ = [
     "assemble_dispatch_candidates_py",
     "build_batch_executor_py",
     "dispatch_profitable_py",
+    "executor_policy_py",
     "merge_payload_results_py",
     "simulate_in_process_revert_probe",
     "simulate_in_process_success_probe",

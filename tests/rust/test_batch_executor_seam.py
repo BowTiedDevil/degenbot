@@ -66,12 +66,7 @@ def _executor(
         signer=TxSigner(key="0x" + "11" * 32, chain_id=1),
         submit_provider=AsyncAlloyProvider(AlloyProvider(_RPC_URL)),
         operator_nonce=5,
-        sim_concurrency=2,
-        min_profit_margin_bps=0,
         dry_run=dry_run,
-        inject_code_guard=False,
-        erc6909_profit=False,
-        max_candidates=0,
         broadcast_providers=None,
     )
 
@@ -107,9 +102,7 @@ class TestConstruction:
 class TestPayloadResolveMiss:
     """The loud payload-arm resolve miss (the pinned contract)."""
 
-    def test_unregistered_payload_path_fails_loud(
-        self, nxm2bf_v2_engine_and_path
-    ) -> None:
+    def test_unregistered_payload_path_fails_loud(self, nxm2bf_v2_engine_and_path) -> None:
         engine, _path_id = nxm2bf_v2_engine_and_path
         executor = _executor(engine)
         with pytest.raises(ValueError, match="not registered in this engine"):
@@ -127,9 +120,7 @@ class TestPayloadResolveMiss:
 class TestEnqueueDrainFold:
     """Enqueue → shutdown → drain → the render fold over real records."""
 
-    async def test_payload_batch_drains_records_and_folds(
-        self, nxm2bf_v2_engine_and_path
-    ) -> None:
+    async def test_payload_batch_drains_records_and_folds(self, nxm2bf_v2_engine_and_path) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
         executor = _executor(engine)
         executor.enqueue(

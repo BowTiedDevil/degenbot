@@ -150,9 +150,7 @@ def fake_session(
         cfg=resolved_cfg,
         dispatcher=FakeDispatcher(current_block=current_block),
         relay_posture=relay_posture,
-        submission_smoke=(
-            submission_smoke if submission_smoke is not None else SubmissionSmoke()
-        ),
+        submission_smoke=(submission_smoke if submission_smoke is not None else SubmissionSmoke()),
         engine_registry=engine_registry,
         pipeline=pipeline,
     )
@@ -173,7 +171,6 @@ class FakeRunnerConfig:
     """
 
     erc6909_profit: bool | None = None
-    sim_pipeline_concurrency: int | None = None
     operator_address: str | None = None
 
 

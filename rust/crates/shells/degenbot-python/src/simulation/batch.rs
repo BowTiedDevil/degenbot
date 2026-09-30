@@ -58,9 +58,10 @@ use degenbot_batch_executor::record::{
 };
 use degenbot_batch_executor::row::{PayloadRow, RawResult};
 use degenbot_batch_executor::{
-    BatchExecutor, BatchOutcome, BatchOutcomeSet, BatchWork, ExecutorConfig, PathResolver,
+    BatchExecutor, BatchOutcome, BatchOutcomeSet, BatchWork, ExecutorConfig, ExecutorRuntime,
+    PathResolver,
 };
-use degenbot_executor::composers::{EncodeOptions, PathInfo};
+use degenbot_executor::composers::PathInfo;
 use degenbot_submission::SubmissionTarget;
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyAny, PyDict, PyList};
@@ -615,14 +616,16 @@ impl PyBatchExecutor {
     }
 }
 
-/// Construct the session executor: the core's value-configured module with
-/// every policy value the driver resolved (the cap as a plain count, the
-/// thin-margin floor, the relay posture as the `SubmissionTarget` + the
-/// broadcast fan-out, the safety guards). Choreography code NEVER crosses.
+/// Construct the session executor: the core's value-configured module over
+/// the INSTALLED verdict — the policy values (the cap, the thin-margin
+/// floor, the ERC6909 encode axis, the inject guards) convert from the same
+/// resolved config the Python verdict projects, with every default and
+/// clamp owned by that conversion. The driver injects only the runtime
+/// handles the verdict cannot name. Choreography code NEVER crosses.
 ///
 /// Args:
 ///     `context`: the session `SimulateContext` (provider, addresses, the
-///         inject flag, runtime bytecode, warmup slots).
+///         inject stance's runtime facts, runtime bytecode, warmup slots).
 ///     `dispatcher`: the session `Dispatcher` (the coordination arcs ride it:
 ///         suppression, divergence, `FoT`, priority-fee ring).
 ///     `engine`: the `ArbEngine` (the path resolver projection + the
@@ -633,13 +636,8 @@ impl PyBatchExecutor {
 ///     `operator_nonce`: the construction-time chain-read nonce seed (the
 ///         lane's first stamp never re-issues a consumed nonce; the hosted
 ///         per-head reconcile maintains it afterwards).
-///     `sim_concurrency`: the in-flight sim cap (a plain count).
-///     `min_profit_margin_bps`: the thin-margin floor (0 disables).
-///     `dry_run`: skip live submission.
-///     `inject_code_guard`: skip live submission (injected-code sessions).
-///     `erc6909_profit`/`use_v4_batch`: the encode options stamped onto every
-///         assembled candidate.
-///     `max_candidates`: the per-batch sim cap; `0` = no cap.
+///     `dry_run`: skip live submission (the driver's run-mode stance — a CLI
+///         fact, not a declared key).
 ///     `broadcast_providers`: the relay fan-out (the `RelayPosture` value's
 ///         endpoints); `None`/empty = the public mempool (read provider
 ///         only).
@@ -656,19 +654,12 @@ impl PyBatchExecutor {
     submit_provider,
     operator_nonce,
     *,
-    sim_concurrency,
-    min_profit_margin_bps,
     dry_run,
-    inject_code_guard,
-    erc6909_profit = false,
-    use_v4_batch = false,
-    max_candidates = 0,
     broadcast_providers = None,
 ))]
 #[expect(
     clippy::too_many_arguments,
-    clippy::fn_params_excessive_bools,
-    reason = "the construction boundary carries every injected policy value"
+    reason = "the construction boundary carries every injected runtime handle"
 )]
 pub fn build_batch_executor_py(
     py: Python<'_>,
@@ -678,33 +669,19 @@ pub fn build_batch_executor_py(
     signer: &PyTxSigner,
     submit_provider: &PyAsyncAlloyProvider,
     operator_nonce: u64,
-    sim_concurrency: usize,
-    min_profit_margin_bps: u64,
     dry_run: bool,
-    inject_code_guard: bool,
-    erc6909_profit: bool,
-    use_v4_batch: bool,
-    max_candidates: usize,
     broadcast_providers: Option<Vec<PyRef<'_, PyAsyncAlloyProvider>>>,
 ) -> PyResult<PyBatchExecutor> {
     crate::ambient_runtime::ensure_async_runtime_bound();
     let engine_ref = engine.borrow(py);
     let paths = SharedPathMap::default();
-    let config = ExecutorConfig {
-        sim_concurrency: sim_concurrency.max(1),
-        // `0` = no cap: the pre-cut-over driver never carried a per-batch cap
-        // (the fan-out's own `MAX_SIMULATE_CONCURRENT` bound always applied).
-        max_candidates: if max_candidates == 0 {
-            usize::MAX
-        } else {
-            max_candidates
-        },
-        min_profit_margin_bps,
-        opts: EncodeOptions {
-            erc6909_profit,
-            use_v4_batch,
-            ..Default::default()
-        },
+    let runtime = ExecutorRuntime {
+        // `0` = no cap: the cockpit never carried a per-batch cap (the
+        // fan-out's own `MAX_SIMULATE_CONCURRENT` bound always applied).
+        max_candidates: 0,
+        // The v4-batch axis has no declared key yet (a runtime value).
+        use_v4_batch: false,
+        dry_run,
         resolver: Arc::new(SharedPathMap(Arc::clone(&paths.0))),
         // Decision b: the suppression registry is the dispatcher's
         // cross-block feedback arc, DISTINCT from the batch-local
@@ -718,7 +695,6 @@ pub fn build_batch_executor_py(
         weth_address: context.weth_address,
         pool_manager_address: context.pool_manager_address,
         multicall3_address: context.multicall3_address,
-        inject_code: context.inject_code,
         injected_address: context.injected_address,
         runtime_bytecode: context.runtime_bytecode.clone(),
         warmup: context.warmup,
@@ -728,8 +704,6 @@ pub fn build_batch_executor_py(
         signer: Arc::new(signer.signer().clone()),
         probe: Arc::new(PyReceiptProbe::new(&submit_provider.provider_arc())),
         nonce_lane: settlement_lane_for(settlement_lane(), operator_nonce),
-        dry_run,
-        inject_code_guard,
         extra_broadcast: broadcast_providers
             .unwrap_or_default()
             .iter()
@@ -741,6 +715,10 @@ pub fn build_batch_executor_py(
         target: SubmissionTarget::Public,
     };
     drop(engine_ref);
+    // The policy values convert from the INSTALLED verdict — the same load
+    // `resolved_config().values` projects — so the executor cannot disagree
+    // with the verdict Python reads.
+    let config = ExecutorConfig::from_verdict(crate::config::installed_bot_config(), runtime);
     // The core constructor spawns the ordered submit loop, so it must run
     // inside the shared ambient runtime (the Python event-loop thread is not
     // itself in a tokio context).
@@ -754,4 +732,65 @@ pub fn build_batch_executor_py(
         paths,
         dispatcher: dispatcher.inner_arc(),
     })
+}
+
+/// The verdict-named executor policy, as the resolution oracle reads it: the
+/// SAME conversion the executor construction runs, exposed so a Python test
+/// can pin every knob against the verdict's own values.
+///
+/// Args:
+///     `values`: the typed projection (`resolved_config().values`, or a
+///         hypothetical resolution's) the policy converts from.
+///
+/// Returns:
+///     `ExecutorPolicyValues`: the converted policy (the cap with its floor,
+///     the thin-margin floor, the ERC6909 axis, both inject guards).
+#[pyfunction]
+#[must_use]
+pub fn executor_policy_py(values: &crate::config::ConfigValues) -> ExecutorPolicyValues {
+    ExecutorPolicyValues {
+        inner: degenbot_batch_executor::ExecutorPolicy::from(values.bot_config()),
+    }
+}
+
+/// The converted executor policy (see [`executor_policy_py`]). A frozen
+/// read-only view: the conversion owns every default and clamp, so there is
+/// nothing for a caller to set.
+#[pyclass(frozen, module = "degenbot._ffi")]
+pub struct ExecutorPolicyValues {
+    inner: degenbot_batch_executor::ExecutorPolicy,
+}
+
+#[pymethods]
+impl ExecutorPolicyValues {
+    /// The in-flight sim bound: `simulation.pipeline_concurrency`, floored
+    /// at 1 by the conversion.
+    #[getter]
+    fn sim_concurrency(&self) -> usize {
+        self.inner.sim_concurrency
+    }
+
+    /// The thin-margin floor: `dispatch.min_profit_margin_bps`.
+    #[getter]
+    fn min_profit_margin_bps(&self) -> u64 {
+        self.inner.min_profit_margin_bps
+    }
+
+    /// The ERC6909 encode axis: `dispatch.erc6909_profit`.
+    #[getter]
+    fn erc6909_profit(&self) -> bool {
+        self.inner.erc6909_profit
+    }
+
+    /// The sim-injection stance: `simulation.inject_executor_code`.
+    #[getter]
+    fn inject_code(&self) -> bool {
+        self.inner.inject_code
+    }
+
+    /// The submit-side guard: the SAME inject stance, converted once.
+    #[getter]
+    fn inject_code_guard(&self) -> bool {
+        self.inner.inject_code_guard
+    }
 }

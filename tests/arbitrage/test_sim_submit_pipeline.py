@@ -3,13 +3,12 @@
 The mechanism itself (bounded concurrency, FIFO submit order, fail-loud on a
 leaf failure, counters) is Rust-owned and tested in the core crates
 (``degenbot-submission``'s ``sim_pipeline`` + ``degenbot-batch-executor``).
-Python keeps only the adapter contracts:
-
-- the knob VALUE parsing (``DEGENBOT_SIM_PIPELINE_CONCURRENCY``, default 8,
-  floored at 1) stays driver-side;
-- the construction boundary resolves the cap once and injects it into the FFI
-  executor (the FFI projection itself is pinned by the executor seam suite in
-  ``tests/rust/test_batch_executor_seam.py``).
+The cap's value resolution (``DEGENBOT_SIM_PIPELINE_CONCURRENCY``, declared
+default 8) is the verdict's; the conversion inside the FFI applies the only
+floor, so these tests pin the cascade ANSWER and the conversion's projection
+(``degenbot._ffi.simulation.executor_policy_py``) — the driver itself
+resolves no policy value and carries no twin clamp. The construction seam's
+kwargs are pinned by ``tests/rust/test_batch_executor_seam.py``.
 """
 
 from __future__ import annotations
@@ -19,57 +18,57 @@ from pathlib import Path
 
 import pytest
 
+from degenbot._ffi.simulation import executor_policy_py
 from degenbot.dispatch import SimSubmitPipeline
-from degenbot.runner._sim_submit import resolve_sim_concurrency
-from tests.fakes.session import FakeRunnerConfig, FakeRunnerSession
 from tests.helpers import verdict_probe as probe
 
 
-def _concurrency(**env: str) -> int:
-    """The resolved cap for a hypothetical environment."""
+def _policy(**env: str) -> object:
+    """The converted executor policy for a hypothetical environment."""
 
-    return probe.build_config(env=env).sim_pipeline_concurrency
-
-
-def _session(cap: int = 5) -> FakeRunnerSession:
-    """A session double carrying only the factory-read config value."""
-
-    return FakeRunnerSession(cfg=FakeRunnerConfig(sim_pipeline_concurrency=cap))
+    return executor_policy_py(probe.hypothetical_values(env))
 
 
 def test_the_declared_default_is_eight() -> None:
-    assert _concurrency() == 8
+    policy = _policy()
+    assert policy.sim_concurrency == 8
+    assert (
+        policy.sim_concurrency == probe.resolved_value("simulation.pipeline_concurrency")["value"]
+    )
 
 
 def test_one_reproduces_the_serial_reference() -> None:
-    assert _concurrency(DEGENBOT_SIM_PIPELINE_CONCURRENCY="1") == 1
+    assert _policy(DEGENBOT_SIM_PIPELINE_CONCURRENCY="1").sim_concurrency == 1
 
 
 def test_zero_is_floored_at_one() -> None:
-    """A cap of zero sims would wedge the pipeline, not serialize it."""
+    """A cap of zero sims would wedge the pipeline, not serialize it.
 
-    assert _concurrency(DEGENBOT_SIM_PIPELINE_CONCURRENCY="0") == 1
+    The verdict answers 0 (Python keeps no twin floor); the conversion in
+    the FFI is the ONE clamp owner, so the executor policy reads 1.
+    """
+
+    assert (
+        probe.resolved_value(
+            "simulation.pipeline_concurrency", env={"DEGENBOT_SIM_PIPELINE_CONCURRENCY": "0"}
+        )["value"]
+        == 0
+    )
+    assert _policy(DEGENBOT_SIM_PIPELINE_CONCURRENCY="0").sim_concurrency == 1
 
 
 def test_the_operator_file_reaches_the_cap(tmp_path: Path) -> None:
     """The A/B arm is a declared key, so the file layer arms it too."""
 
     with probe.operator_file("[simulation]\npipeline_concurrency = 3\n") as written:
-        assert probe.resolved_value("simulation.pipeline_concurrency", operator_file=written)[
-            "value"
-        ] == 3
-
-
-async def test_the_boundary_injects_the_configured_cap() -> None:
-    assert resolve_sim_concurrency(_session(cap=5)) == 5
-
-
-async def test_the_boundary_honors_an_injected_cap() -> None:
-    assert resolve_sim_concurrency(_session(cap=5), concurrency=3) == 3
-
-
-async def test_an_injected_zero_cap_is_floored_at_one() -> None:
-    assert resolve_sim_concurrency(_session(cap=5), concurrency=0) == 1
+        assert (
+            probe.resolved_value("simulation.pipeline_concurrency", operator_file=written)["value"]
+            == 3
+        )
+        assert (
+            executor_policy_py(probe.hypothetical_values(operator_file=written)).sim_concurrency
+            == 3
+        )
 
 
 async def test_ffi_pipeline_drives_the_python_leaves_in_order() -> None:

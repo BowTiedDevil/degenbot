@@ -427,3 +427,40 @@ class TestAmbientSuiteConfig:
         assert request == {"value": ws_uri, "source": "file"}
         assert subscription == {"value": ws_uri, "source": "file"}
         assert ws_uri != http_uri, "the ambient config declares both transports"
+
+
+class TestExecutorPolicyParity:
+    """Every executor knob converts to the SAME value the oracle recorded.
+
+    The core batch executor's policy conversion (`ExecutorPolicy::from`) is a
+    pure function of the verdict, so the FFI projection
+    (`_ffi.simulation.executor_policy_py`) over each recorded environment must
+    equal the oracle's verdict values — the "every knob -> same ExecutorValue"
+    property, pinned against the shared artifact instead of a Python copy of
+    the defaults.
+    """
+
+    _KNOBS = (
+        ("sim_concurrency", "simulation.pipeline_concurrency"),
+        ("min_profit_margin_bps", "dispatch.min_profit_margin_bps"),
+        ("erc6909_profit", "dispatch.erc6909_profit"),
+        ("inject_code", "simulation.inject_executor_code"),
+        ("inject_code_guard", "simulation.inject_executor_code"),
+    )
+
+    def test_every_executor_knob_matches_the_rust_oracle(self) -> None:
+        oracle = _load_oracle()
+        failures: list[str] = []
+        for environment in oracle["environments"]:
+            hypothetical = _ffi.resolve_hypothetical(dict(environment["env"]), str(_OPERATOR_FILE))
+            policy = _ffi.simulation.executor_policy_py(hypothetical.values)
+            for knob, path in self._KNOBS:
+                recorded = environment["values"][path]
+                actual = getattr(policy, knob)
+                if actual != recorded:
+                    failures.append(
+                        f"environment {environment['id']}: {knob}={actual} != oracle {path}={recorded}"
+                    )
+        assert not failures, "executor policy diverged from the Rust oracle:\n" + "\n".join(
+            failures
+        )

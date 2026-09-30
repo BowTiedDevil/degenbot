@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use degenbot::batch_executor::{BatchExecutor, BatchWork, ExecutorConfig};
+use degenbot::batch_executor::{BatchExecutor, BatchWork, ExecutorConfig, ExecutorRuntime};
 use degenbot::submission::{
     Dispatcher, NonceLane, PathSuppression, ReceiptProbe, SimFuture, SimLeaf, SimSubmitPipeline,
     SubmissionLedger, SubmissionTarget, SubmitFuture, SubmitLeaf, TxSigner,
@@ -108,49 +108,53 @@ async fn offline_executor(
     let provider = degenbot::rpc::provider::AlloyProvider::new("http://127.0.0.1:1", 0)
         .await
         .unwrap();
-    let config = ExecutorConfig {
-        sim_concurrency: 1,
-        max_candidates: 50,
-        min_profit_margin_bps: 0,
-        opts: degenbot::cmd_executor::composers::EncodeOptions::default(),
-        resolver: Arc::new(MapResolver(resolver)),
-        suppression: Arc::new(Mutex::new(PathSuppression::new())),
-        divergence: Arc::new(Mutex::new(degenbot::arbitrage::PoolDivergence::new())),
-        fot: Arc::new(Mutex::new(degenbot::arbitrage::FeeOnTransferRegistry::new())),
-        provider: Arc::new(provider),
-        executor_owner: degenbot::core::address_utils::parse_address(
-            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        )
-        .unwrap(),
-        executor_address,
-        weth_address: weth,
-        pool_manager_address: alloy::primitives::Address::ZERO,
-        multicall3_address: alloy::primitives::Address::ZERO,
-        inject_code: false,
-        injected_address: None,
-        runtime_bytecode: alloy::primitives::Bytes::new(),
-        warmup: degenbot::cmd_executor::compute_simulation_warmup_slots(executor_address, weth),
-        bot_state: None,
-        warm_cache: None,
-        dispatcher: Arc::new(Mutex::new(Dispatcher::for_block(0))),
-        signer: Arc::new(
-            TxSigner::from_key_hex(
-                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-                1,
+    // The verdict's declared defaults carry the policy floor (0) and the
+    // inject stance (off); the serial-reference cap is a fixture choice
+    // pinned on the verdict itself.
+    let mut verdict = degenbot::config::BotConfig::default();
+    verdict.simulation.pipeline_concurrency = 1;
+    let config = ExecutorConfig::from_verdict(
+        &verdict,
+        ExecutorRuntime {
+            max_candidates: 50,
+            use_v4_batch: false,
+            dry_run: true,
+            resolver: Arc::new(MapResolver(resolver)),
+            suppression: Arc::new(Mutex::new(PathSuppression::new())),
+            divergence: Arc::new(Mutex::new(degenbot::arbitrage::PoolDivergence::new())),
+            fot: Arc::new(Mutex::new(degenbot::arbitrage::FeeOnTransferRegistry::new())),
+            provider: Arc::new(provider),
+            executor_owner: degenbot::core::address_utils::parse_address(
+                "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
             )
             .unwrap(),
-        ),
-        probe: Arc::new(NoopProbe),
-        nonce_lane: Arc::new(NonceLane::new(
-            Arc::new(degenbot::bot::nonce_authority::NonceAuthority::new(0)),
-            Arc::new(SubmissionLedger::new()),
-            "settlement",
-        )),
-        dry_run: true,
-        inject_code_guard: false,
-        extra_broadcast: Vec::new(),
-        target: SubmissionTarget::Public,
-    };
+            executor_address,
+            weth_address: weth,
+            pool_manager_address: alloy::primitives::Address::ZERO,
+            multicall3_address: alloy::primitives::Address::ZERO,
+            injected_address: None,
+            runtime_bytecode: alloy::primitives::Bytes::new(),
+            warmup: degenbot::cmd_executor::compute_simulation_warmup_slots(executor_address, weth),
+            bot_state: None,
+            warm_cache: None,
+            dispatcher: Arc::new(Mutex::new(Dispatcher::for_block(0))),
+            signer: Arc::new(
+                TxSigner::from_key_hex(
+                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                    1,
+                )
+                .unwrap(),
+            ),
+            probe: Arc::new(NoopProbe),
+            nonce_lane: Arc::new(NonceLane::new(
+                Arc::new(degenbot::bot::nonce_authority::NonceAuthority::new(0)),
+                Arc::new(SubmissionLedger::new()),
+                "settlement",
+            )),
+            extra_broadcast: Vec::new(),
+            target: SubmissionTarget::Public,
+        },
+    );
     BatchExecutor::new(config)
 }
 

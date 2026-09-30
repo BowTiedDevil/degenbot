@@ -1,12 +1,14 @@
-"""The ERC6909 encode-axis projection at the executor construction boundary.
+"""The ERC6909 encode-axis authority at the executor construction boundary.
 
-The driver's ``dispatch.erc6909_profit`` operator knob projects into the
-core batch executor's construction (``build_batch_executor_py``), which
-stamps it onto every assembled candidate's ``EncodeOptions`` — the same
-``resolve_axes``/``config_for_options`` axis chain the pre-cut-over
-``assemble_dispatch_candidates(erc6909_profit=...)`` seam carried. The seam's
-kwarg acceptance itself is pinned by ``tests/rust/test_simulation_seam_classes.py``;
-this test pins the driver's projection of the knob into the construction.
+The driver's ``dispatch.erc6909_profit`` operator knob names the encode axis
+the core batch executor stamps onto every assembled candidate's
+``EncodeOptions`` — the same ``resolve_axes``/``config_for_options`` axis
+chain the pre-cut-over ``assemble_dispatch_candidates(erc6909_profit=...)``
+seam carried. The knob itself converts inside the FFI from the installed
+verdict (the conversion owns every default and clamp), so the construction
+boundary carries no driver-side copy of it; the conversion's projection is
+pinned by the resolution-oracle suites, and this file pins that the driver
+passes none of the verdict-named knobs.
 """
 
 from __future__ import annotations
@@ -83,8 +85,14 @@ def test_erc6909_default_is_off() -> None:
     assert _cfg().erc6909_profit is False
 
 
-async def test_construction_projects_the_erc6909_toggle(monkeypatch) -> None:
-    """The operator knob rides the construction boundary into the executor."""
+async def test_construction_injects_only_runtime_values(monkeypatch) -> None:
+    """The construction boundary carries NO driver-side policy copy.
+
+    The verdict-named knobs (the ERC6909 axis, the thin-margin floor, the
+    inject guard) convert inside the FFI from the installed verdict — a
+    driver-side kwarg for any of them would be a second authority. Only the
+    run-mode stance (a CLI fact) crosses.
+    """
     recorded: dict[str, Any] = {}
 
     def recorder(**kwargs: Any) -> str:
@@ -97,12 +105,17 @@ async def test_construction_projects_the_erc6909_toggle(monkeypatch) -> None:
     cfg = _cfg()
     await build_batch_executor(_session(engine_registry, cfg))
 
-    assert recorded["erc6909_profit"] is cfg.erc6909_profit, (
-        "the operator knob must project into the executor construction"
-    )
-    assert recorded["min_profit_margin_bps"] == cfg.min_profit_margin_bps
     assert recorded["dry_run"] is cfg.dry_run
-    assert recorded["inject_code_guard"] is cfg.inject_executor_code
+    for verdict_named in (
+        "sim_concurrency",
+        "min_profit_margin_bps",
+        "erc6909_profit",
+        "inject_code_guard",
+        "max_candidates",
+    ):
+        assert verdict_named not in recorded, (
+            f"{verdict_named} is the verdict's to name; the driver must not pass it"
+        )
 
 
 async def test_a_session_without_a_sim_context_refuses_construction() -> None:
