@@ -252,8 +252,8 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "eth-abi", specifier = ">=6.0.0" },
-    { name = "eth-hash", extras = ["pycryptodome"], specifier = ">=0.8.0" },
+    { name = "eth-abi" },
+    { name = "eth-hash", extras = ["pycryptodome"] },
     { name = "hypothesis" },
     { name = "maturin" },
     { name = "mypy" },
