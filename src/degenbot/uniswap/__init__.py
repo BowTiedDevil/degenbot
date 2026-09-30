@@ -25,9 +25,6 @@ from degenbot._ffi.deployments import (
 # `degenbot` package init via `register_from_deployments(load_deployments())`.
 from degenbot.registry.pool_type import pool_type_registry
 
-from . import (
-    abi as abi,
-)  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
 from .trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 from .v2_liquidity_pool import UniswapV2Pool
 from .v2_types import (

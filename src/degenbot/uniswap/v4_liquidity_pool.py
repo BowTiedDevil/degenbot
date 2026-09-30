@@ -48,7 +48,6 @@ from degenbot.uniswap.cl_companion import ConcentratedLiquidityCompanion
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
-    Pip,
     UniswapV4PoolKey,
     UniswapV4PoolState,
 )
@@ -104,7 +103,6 @@ class Slot0:
     lp_fee: int
 
 
-PIPS_DENOMINATOR = 1_000_000
 NATIVE_CURRENCY_ADDRESS = ZERO_ADDRESS
 
 
@@ -329,22 +327,6 @@ class UniswapV4Pool(
 
         """
         return self.name
-
-    @staticmethod
-    def _calculate_swap_fee(
-        protocol_fee: int,
-        lp_fee: int,
-    ) -> Pip:
-        """Calculate combined swap fee from protocol + LP fee.
-
-        Returns:
-            The combined fee in pips.
-
-        """
-        protocol_fee &= 0xFFF
-        lp_fee &= 0xFFFFFF
-        numerator = protocol_fee * lp_fee
-        return (protocol_fee + lp_fee) - (numerator // PIPS_DENOMINATOR)
 
     def calculate_tokens_in_from_tokens_out(
         self,

@@ -1,11 +1,13 @@
 """Tests for the `degenbot.abi` home — the stable mirror for ``_ffi.abi``.
 
-Exercises the three public functions (``encode``, ``decode``,
-``decode_single``). The Rust ``degenbot-abi`` core is the only backend;
-reference fixtures are byte-pinned from eth_abi 5.x (provenance noted
-inline).
+Exercises the public functions (``encode``, ``encode_packed``, ``decode``,
+``decode_single``). The Rust ``degenbot-abi`` core is the only backend.
+``encode``/``decode`` behavior is cross-checked live against the
+independent ``eth_abi`` implementation; ``encode_packed`` has no eth_abi
+equivalent, so its fixtures stay hand-pinned.
 """
 
+import eth_abi
 import pytest
 
 from degenbot.abi import (
@@ -16,28 +18,27 @@ from degenbot.abi import (
     encode,
     encode_packed,
 )
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.utils.bytes import to_bytes
 
 
 class TestEncode:
     """Round-trip and parity tests for ``encode``."""
 
-    def test_encode_uint256_address_rust_parity(self) -> None:
-        """Rust backend encodes byte-for-byte identically to eth_abi."""
+    def test_encode_uint256_address_eth_abi_parity(self) -> None:
+        """Encoding is byte-for-byte identical to eth_abi."""
         types = ["uint256", "address"]
         args = [100, "0x" + "00" * 20]
         result = encode(types, args)
         assert isinstance(result, bytes)
         assert len(result) == 64
-        assert result == bytes.fromhex("00" * 31 + "64" + "00" * 32)  # pinned eth_abi 5.x
+        assert result == eth_abi.encode(types, args)
 
     def test_encode_uint256(self) -> None:
         """Simple uint256 encoding."""
         result = encode(["uint256"], [42])
         assert len(result) == 32
-        assert result == bytes.fromhex(
-            "000000000000000000000000000000000000000000000000000000000000002a"
-        )  # pinned eth_abi 5.x
+        assert result == eth_abi.encode(["uint256"], [42])
 
     def test_encode_empty_types(self) -> None:
         """Empty types list produces empty bytes."""
@@ -125,40 +126,29 @@ class TestDecode:
 
     def test_decode_uint256(self) -> None:
         """Decode uint256 from eth_abi-encoded data."""
-        data = bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000000000000003039"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["uint256"], [12345])
         result = decode(["uint256"], data)
         assert result == (12345,)
 
     def test_decode_uint256_bytes(self) -> None:
         """Decode accepts bytes input."""
-        data = bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000000000000003039"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["uint256"], [12345])
         result = decode(["uint256"], to_bytes(data))
         assert result == (12345,)
 
     def test_decode_address_checksum(self) -> None:
         """Addresses are checksummed by default (the only supported mode)."""
-        from degenbot.checksum_cache import get_checksum_address
-
         addr = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
-        data = bytes.fromhex(
-            "000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["address"], [addr])
         result = decode(["address"], data)
         assert result[0] == get_checksum_address(addr)
 
     def test_decode_multiple_types(self) -> None:
         """Decode multiple types at once."""
-        from degenbot.checksum_cache import get_checksum_address
-
         addr = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
-        data = bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c2936010000000000000000000000000000000000000000000000000000000000000001"
-        )  # pinned eth_abi 5.x
-        result = decode(["uint256", "address", "bool"], data)
+        types = ["uint256", "address", "bool"]
+        data = eth_abi.encode(types, [100, addr, True])
+        result = decode(types, data)
         assert result[0] == 100
         assert result[1] == get_checksum_address(addr)
         assert result[2] is True
@@ -166,48 +156,36 @@ class TestDecode:
     def test_decode_bytes(self) -> None:
         """Decode dynamic bytes."""
         test_value = b"hello world"
-        data = bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000b68656c6c6f20776f726c64000000000000000000000000000000000000000000"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["bytes"], [test_value])
         result = decode(["bytes"], data)
         assert result[0] == test_value
 
     def test_decode_string(self) -> None:
         """Decode string."""
         test_value = "Hello, Ethereum!"
-        data = bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001048656c6c6f2c20457468657265756d2100000000000000000000000000000000"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["string"], [test_value])
         result = decode(["string"], data)
         assert result[0] == test_value
 
     def test_decode_dynamic_array(self) -> None:
         """Decode dynamic array."""
         test_value = [1, 2, 3, 4, 5]
-        data = bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000500000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000005"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["uint256[]"], [test_value])
         result = decode(["uint256[]"], data)
         assert list(result[0]) == test_value
 
     def test_decode_fixed_array(self) -> None:
         """Decode fixed-size array."""
         test_value = [10, 20, 30]
-        data = bytes.fromhex(
-            "000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000001e"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["uint256[3]"], [test_value])
         result = decode(["uint256[3]"], data)
         assert list(result[0]) == test_value
 
     def test_decode_address_array(self) -> None:
         """Decode address array."""
-        from degenbot.checksum_cache import get_checksum_address
-
         addr1 = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
         addr2 = "0x66f9664f97f2b50f62d13ea064982f936de76657"
-        data = bytes.fromhex(
-            "00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c29360100000000000000000000000066f9664f97f2b50f62d13ea064982f936de76657"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["address[]"], [[addr1, addr2]])
         result = decode(["address[]"], data)
         assert result[0][0] == get_checksum_address(addr1)
         assert result[0][1] == get_checksum_address(addr2)
@@ -219,9 +197,7 @@ class TestDecode:
 
     def test_decode_normalized_bytes_same_result(self) -> None:
         """bytes and plain bytes produce the same result."""
-        raw = bytes.fromhex(
-            "00000000000000000000000000000000000000000000000000000000000000640000000000000000000000000000000000000000000000000000000000000001"
-        )  # pinned eth_abi 5.x
+        raw = eth_abi.encode(["uint256", "bool"], [100, True])
         from_bytes = decode(["uint256", "bool"], raw)
         from_hex = decode(["uint256", "bool"], to_bytes(raw))
         assert from_bytes == from_hex
@@ -232,28 +208,20 @@ class TestDecodeSingle:
 
     def test_decode_single_uint256(self) -> None:
         """Decode a single uint256."""
-        data = bytes.fromhex(
-            "000000000000000000000000000000000000000000000000000000000000002a"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["uint256"], [42])
         result = decode_single("uint256", data)
         assert result == 42
 
     def test_decode_single_address(self) -> None:
         """Decode a single address (checksummed)."""
-        from degenbot.checksum_cache import get_checksum_address
-
         addr = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
-        data = bytes.fromhex(
-            "000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["address"], [addr])
         result = decode_single("address", data)
         assert result == get_checksum_address(addr)
 
     def test_decode_single_bytes(self) -> None:
         """Decode single with bytes input."""
-        data = bytes.fromhex(
-            "00000000000000000000000000000000000000000000000000000000000003e7"
-        )  # pinned eth_abi 5.x
+        data = eth_abi.encode(["uint256"], [999])
         result = decode_single("uint256", to_bytes(data))
         assert result == 999
 
@@ -266,10 +234,12 @@ class TestUnsupportedTypes:
     """
 
     def test_decode_fixed128x18_raises(self) -> None:
-        """fixed128x18 decode is not supported — raises AbiDecodeError."""
-        data = bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000de0b6b3a7640000"
-        )  # pinned eth_abi 5.x
+        """fixed128x18 decode is not supported — raises AbiDecodeError.
+
+        eth_abi encodes fixed128x18 happily, isolating the failure to our
+        decoder's intentionally unsupported type.
+        """
+        data = eth_abi.encode(["fixed128x18"], [1])
         with pytest.raises(AbiDecodeError, match="ABI decoding failed"):
             decode(["fixed128x18"], data)
 

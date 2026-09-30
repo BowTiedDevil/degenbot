@@ -49,9 +49,6 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
 
-type Token0Amount = int
-type Token1Amount = int
-
 
 class LiquidityAtTickAsDict(TypedDict):
     """Serialized form of ``LiquidityAtTick`` for tick data interchange."""

@@ -380,61 +380,6 @@ class EngineRegistry:
             or self.engine.pool_id_for_pool(_V3_FAMILY, address) is not None
         )
 
-    def knows_v4_pool(self, pool_manager: str, pool_id_hex: str) -> bool:
-        """Return whether a V4 pool is registered for the given pair.
-
-        A V4 pool is identified by its ``(PoolManager, pool_id)`` pair, so the
-        manager is part of the question: one manager hosts many pools.
-
-        Returns:
-            True if registered.
-
-        """
-        return self.engine.pool_id_for_v4_pool(pool_manager, pool_id_hex) is not None
-
-    @property
-    def verify_snapshot_block(self) -> int | None:
-        """The seeded snapshot block for the two-step verify (T1/T6).
-
-        PRG-5 seat-thread surface: the crawl units run on fleet seats (no
-        asyncio loop) and read this once per unit to pass into the blocking
-        lifecycle FFI — the same value the async register path stashes.
-        """
-        return self._verify_snapshot_block
-
-    def run_v3_verify_lifecycle_sync(self, address: str) -> None:
-        """Drive a V3 pool's core-owned verify lifecycle, BLOCKING (PRG-5).
-
-        The seat-thread twin of the lifecycle inside :meth:`register_v3_pool`:
-        same core choreography, the same session claim table (the seat and the
-        operator loop share one driver, so they share one at-most-once window),
-        and the same snapshot seed block — only the park shape differs (a fleet
-        seat owns no asyncio loop). The retry contract
-        (VerificationRpcError retried; VerificationMismatchError fatal) is
-        applied by the CALLER — the unit wraps this with the pipeline's
-        policy.
-
-        A failed lifecycle releases the claim, so a LATER caller re-runs it;
-        a completed one records a durable verified-pool fact on the shared
-        driver, so a later call for the same identity is a no-op.
-        """
-        self.engine.run_v3_registration_lifecycle_sync(
-            address,
-            self._verify_snapshot_block,
-        )
-
-    def run_v4_verify_lifecycle_sync(
-        self,
-        pool_manager: str,
-        pool_id_hex: str,
-    ) -> None:
-        """V4 seat-thread twin of :meth:`run_v3_verify_lifecycle_sync`."""
-        self.engine.run_v4_registration_lifecycle_sync(
-            pool_manager,
-            pool_id_hex,
-            self._verify_snapshot_block,
-        )
-
     def run_v3_verify_lifecycle_sync_with_retry(
         self,
         address: str,

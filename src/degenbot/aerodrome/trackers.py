@@ -152,34 +152,6 @@ class AerodromeV2PoolTracker(
         """
         return f"{self.__class__.__name__}(factory={self._factory_address})"
 
-    def get_stable_pool(
-        self,
-        token_addresses: tuple[str, str],
-        *,
-        silent: bool = False,
-        pool_class_kwargs: dict[str, Any] | None = None,
-    ) -> AerodromeV2Pool:
-        """Get a stable pool by its token addresses.
-
-        The token addresses may be passed in any order.
-
-        Returns:
-            The computed value.
-
-        """
-        pool_address = generate_aerodrome_v2_pool_address(
-            deployer_address=self._deployer_address,
-            token_addresses=sorted(token_addresses),
-            implementation_address=self._require_pool_implementation_address(),
-            stable=True,
-        )
-
-        return self.get_pool(
-            pool_address=pool_address,
-            silent=silent,
-            pool_class_kwargs=pool_class_kwargs,
-        )
-
     def get_volatile_pool(
         self,
         token_addresses: tuple[str, str],

@@ -15,10 +15,26 @@ Add to this file when vulture flags a name that is:
 
 Do **not** add to this file to silence real dead code — delete the code instead.
 Regenerate candidate entries from a clean tree with:
+
     vulture src/degenbot --min-confidence 80 --make-whitelist
 """
 
+
 dialect  # database/models/base.py: SQLAlchemy TypeDecorator.process_bind_param signature (framework-required)
-exc_type  # provider/__init__.py: __exit__ context-manager protocol parameter
-exc_val  # provider/__init__.py: __exit__ context-manager protocol parameter
-exc_tb  # provider/__init__.py: __exit__ context-manager protocol parameter
+exc_type  # provider/__init__.py + provider/sync.py: __exit__ context-manager protocol parameter
+exc_val  # provider/__init__.py + provider/sync.py: __exit__ context-manager protocol parameter
+exc_tb  # provider/__init__.py + provider/sync.py: __exit__ context-manager protocol parameter
+
+# uniswap/v4_liquidity_pool.py: ``Hooks`` is a faithful mirror of v4-core
+# Hooks.sol's caller bitmap. Members Python never reads still document the
+# protocol contract; dropping half the enum is worse than keeping it.
+BEFORE_INITIALIZE
+AFTER_INITIALIZE
+BEFORE_ADD_LIQUIDITY
+AFTER_ADD_LIQUIDITY
+BEFORE_REMOVE_LIQUIDITY
+AFTER_REMOVE_LIQUIDITY
+BEFORE_DONATE
+AFTER_DONATE
+AFTER_ADD_LIQUIDITY_RETURNS_DELTA
+AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA

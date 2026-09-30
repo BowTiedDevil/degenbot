@@ -1,13 +1,14 @@
-"""Tests for Rust → Python error propagation at the FFI boundary.
+"""Tests for Rust → Python error propagation through the public ABI homes.
 
-Every Rust Result<T, E> crosses the PyO3 boundary as a Python exception.
-These tests verify the mapping is correct for all boundary functions.
+Every Rust Result<T, E> crosses the PyO3 boundary as a Python exception;
+the public ``degenbot.abi`` home wraps it as ``AbiDecodeError`` /
+``AbiEncodeError``. These tests verify that end-to-end mapping.
 """
 
 import pytest
 
-from degenbot._ffi.abi import decode, decode_single, encode_single
-from degenbot._ffi.contract import encode_function_call
+from degenbot.abi import AbiDecodeError, AbiEncodeError, decode, decode_single, encode_single
+from degenbot.contract import encode_function_call
 from degenbot.uniswap.math import (
     MAX_SQRT_RATIO,
     MAX_TICK,
@@ -60,28 +61,28 @@ class TestAbiDecoderBoundaryErrors:
     """Test ABI decoder error propagation across the FFI boundary."""
 
     def test_decode_single_empty_data(self):
-        """Empty bytes should raise ValueError, not segfault."""
-        with pytest.raises(ValueError, match="Data cannot be empty"):
+        """Empty bytes should raise AbiDecodeError, not crash."""
+        with pytest.raises(AbiDecodeError, match="Data cannot be empty"):
             decode_single("uint256", b"")
 
     def test_decode_single_truncated_data(self):
-        """Truncated data should raise ValueError."""
-        with pytest.raises(ValueError, match="ABI decoding failed"):
+        """Truncated data should raise AbiDecodeError."""
+        with pytest.raises(AbiDecodeError, match="ABI decoding failed"):
             decode_single("uint256", b"\x00" * 16)  # only 16 bytes, need 32
 
     def test_decode_empty_types(self):
-        """Empty types list should raise ValueError."""
-        with pytest.raises(ValueError, match="Types list cannot be empty"):
+        """Empty types list should raise AbiDecodeError."""
+        with pytest.raises(AbiDecodeError, match="Types list cannot be empty"):
             decode([], b"\x00" * 32)
 
     def test_decode_unsupported_type(self):
-        """Unknown type string should raise ValueError."""
-        with pytest.raises(ValueError, match="Unsupported"):
+        """Unknown type string should raise AbiDecodeError."""
+        with pytest.raises(AbiDecodeError, match="Unsupported"):
             decode(["foobar"], b"\x00" * 32)
 
     def test_decode_wrong_type_count(self):
-        """Mismatched type/value count should raise ValueError."""
-        with pytest.raises(ValueError, match="ABI decoding failed"):
+        """Mismatched type/value count should raise AbiDecodeError."""
+        with pytest.raises(AbiDecodeError, match="ABI decoding failed"):
             decode(["uint256", "bool"], b"\x00" * 32)
 
 
@@ -103,11 +104,11 @@ class TestAbiEncoderBoundaryErrors:
             )
 
     def test_encode_single_invalid_type(self):
-        """Invalid type in encode_single should raise ValueError."""
-        with pytest.raises(ValueError, match="Unknown ABI type"):
+        """Invalid type in encode_single should raise AbiEncodeError."""
+        with pytest.raises(AbiEncodeError, match="Unknown ABI type"):
             encode_single("foobar", 42)
 
     def test_encode_single_bytes_too_large(self):
-        """bytes32 with > 32 bytes should raise ValueError."""
-        with pytest.raises(ValueError, match="requires exactly 32 bytes"):
+        """bytes32 with > 32 bytes should raise AbiEncodeError."""
+        with pytest.raises(AbiEncodeError, match="requires exactly 32 bytes"):
             encode_single("bytes32", b"\x00" * 33)

@@ -235,6 +235,7 @@ dev = [
     "sybil",
     "ty",
     "vulture",
+    "eth-abi>=6.0.0",
 ]
 
 [tool.ty.environment]

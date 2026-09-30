@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
-from degenbot.abi import decode as abi_decode
 from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
     AerodromeV2PoolState,
@@ -20,12 +19,10 @@ from degenbot.exceptions.pool import (
     ExternalUpdateError,
     NoPoolStateAvailable,
 )
-from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from degenbot.provider import AlloyProvider
     from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
@@ -214,93 +211,6 @@ class AerodromeV2Pool(
             update.reserves_token0,
             update.reserves_token1,
             update.block_number,
-        )
-
-    def get_pool_identity_values(
-        self,
-        provider: AlloyProvider,
-        state_block: BlockNumber,
-    ) -> tuple[
-        ChecksummedAddress,  # factory
-        tuple[ChecksummedAddress, ChecksummedAddress],  # tokens
-        bool,  # stable
-        int,  # fee
-        tuple[int, int],  # reserves
-    ]:
-        """Return pool identity values.
-
-        Returns:
-            The computed value.
-
-        """
-        immutable_calls = [
-            {
-                "to": self.address,
-                "data": encode_function_calldata(
-                    function_prototype="factory()",
-                    function_arguments=None,
-                ),
-            },
-            {
-                "to": self.address,
-                "data": encode_function_calldata(
-                    function_prototype="token0()",
-                    function_arguments=None,
-                ),
-            },
-            {
-                "to": self.address,
-                "data": encode_function_calldata(
-                    function_prototype="token1()",
-                    function_arguments=None,
-                ),
-            },
-            {
-                "to": self.address,
-                "data": encode_function_calldata(
-                    function_prototype="stable()",
-                    function_arguments=None,
-                ),
-            },
-        ]
-        factory_data, token0_data, token1_data, stable_data = provider.batch_call(immutable_calls)  # ty:ignore[invalid-argument-type]
-
-        # This call uses a specific block so the reserve values are consistent
-        reserves_data = provider.call_raw(
-            {
-                "to": self.address,
-                "data": encode_function_calldata(
-                    function_prototype="getReserves()",
-                    function_arguments=None,
-                ),
-            },
-            block=state_block,
-        )
-
-        (factory,) = abi_decode(["address"], factory_data)
-        (token0,) = abi_decode(["address"], token0_data)
-        (token1,) = abi_decode(["address"], token1_data)
-        (stable,) = abi_decode(["bool"], stable_data)
-        reserves0, reserves1, _ = abi_decode(["uint256", "uint256", "uint256"], reserves_data)
-
-        factory_checksum = get_checksum_address(cast("str", factory))
-        (fee,) = abi_decode(
-            ["uint256"],
-            provider.call_raw({
-                "to": factory_checksum,
-                "data": encode_function_calldata(
-                    function_prototype="getFee(address,bool)",
-                    function_arguments=[self.address, stable],
-                ),
-            }),
-        )
-
-        return (
-            factory_checksum,
-            (get_checksum_address(cast("str", token0)), get_checksum_address(cast("str", token1))),
-            cast("bool", stable),
-            cast("int", fee),
-            (cast("int", reserves0), cast("int", reserves1)),
         )
 
     def discard_states_before_block(

@@ -19,9 +19,6 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
 
-type FeeToProtocol = int
-type SwapFee = int
-
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class UniswapV4PoolState(AbstractPoolState):

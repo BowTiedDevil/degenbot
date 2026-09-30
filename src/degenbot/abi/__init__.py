@@ -1,7 +1,7 @@
 """ABI encode/decode — the stable mirror home for ``_ffi.abi``.
 
-Provides three public functions (``encode``, ``decode``, ``decode_single``)
-that delegate to the Rust ``degenbot-abi`` core. Addresses are EIP-55
+Provides public functions (``encode``, ``encode_packed``, ``encode_single``,
+``decode``, ``decode_single``) that delegate to the Rust ``degenbot-abi`` core. Addresses are EIP-55
 checksummed on decode.
 """
 
@@ -12,6 +12,7 @@ from degenbot._ffi.abi import decode as rs_decode
 from degenbot._ffi.abi import decode_single as rs_decode_single
 from degenbot._ffi.abi import encode as rs_encode
 from degenbot._ffi.abi import encode_packed as rs_encode_packed
+from degenbot._ffi.abi import encode_single as rs_encode_single
 from degenbot.exceptions.base import DegenbotError
 from degenbot.utils.bytes import to_bytes
 
@@ -26,6 +27,7 @@ __all__ = (
     "decode_single",
     "encode",
     "encode_packed",
+    "encode_single",
 )
 
 
@@ -79,6 +81,26 @@ def encode_packed(types: Sequence[str], args: Sequence[Any]) -> bytes:
         return rs_encode_packed(types=list(types), values=list(args))
     except (ValueError, NotImplementedError) as e:
         raise AbiEncodeError(message=f"ABI packed encoding failed: {e}") from e
+
+
+def encode_single(abi_type: str, value: Any) -> bytes:  # ruff:ignore[any-type] - value depends on abi_type
+    """Encode a single value into ABI-encoded bytes.
+
+    Args:
+        abi_type: ABI type string (e.g., ``"uint256"``).
+        value: The value to encode.
+
+    Returns:
+        The ABI-encoded bytes.
+
+    Raises:
+        AbiEncodeError: If encoding fails.
+
+    """
+    try:
+        return rs_encode_single(abi_type=abi_type, value=value)
+    except (ValueError, NotImplementedError) as e:
+        raise AbiEncodeError(message=f"ABI encoding failed: {e}") from e
 
 
 def decode(types: Sequence[str], data: BytesLike) -> tuple[Any, ...]:

@@ -433,23 +433,6 @@ class OfflineProvider(
             blocks=data["blocks"],
         )
 
-    @classmethod
-    def from_json_string(cls, json_str: str) -> OfflineProvider:
-        """Load recorded data from a JSON string.
-
-        Args:
-            json_str: JSON string containing recorded data
-
-        Returns:
-            An OfflineProvider instance with the loaded data
-
-        """
-        data = json.loads(json_str)
-        return cls(
-            chain_id=data["chain_id"],
-            blocks=data["blocks"],
-        )
-
 
 __all__ = [
     "OfflineProvider",
