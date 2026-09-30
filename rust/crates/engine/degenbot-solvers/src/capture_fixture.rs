@@ -53,6 +53,40 @@ fn read_fixture_inner(path: &Path) -> String {
     );
 }
 
+/// The committed-fixture path for `file_name` (relative to this crate's
+/// `tests/fixtures/`). Centralized so examples stop hand-rolling
+/// `CARGO_MANIFEST_DIR` joins.
+pub fn fixture_path(file_name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(file_name)
+}
+
+/// Parse fixture JSONL content into per-line JSON values.
+///
+/// Fatal by design like [`read_fixture`]: a malformed line is a capture-format
+/// violation, so the panic names the 1-based line number and its prefix
+/// instead of silently dropping rows out of a measurement.
+pub fn rows(content: &str) -> Vec<serde_json::Value> {
+    content
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(index, line)| {
+            let number = index + 1;
+            let preview: String = line.chars().take(80).collect();
+            serde_json::from_str(line).unwrap_or_else(|e| {
+                panic!("capture fixture line {number} is not valid JSON ({e}): {preview}…")
+            })
+        })
+        .collect()
+}
+
+/// [`read_fixture`] + [`rows`]: the whole corpus-read path in one call.
+pub fn load_rows<P: AsRef<Path>>(path: P) -> Vec<serde_json::Value> {
+    rows(&read_fixture(path))
+}
+
 fn zst_sibling(path: &Path) -> PathBuf {
     let mut s = path.as_os_str().to_owned();
     s.push(".zst");
@@ -69,6 +103,38 @@ fn decode_zst_file(path: &Path) -> String {
         .read_to_string(&mut out)
         .unwrap_or_else(|e| panic!("cannot read decoded {}: {e}", path.display()));
     out
+}
+
+#[cfg(test)]
+mod additions_tests {
+    use super::*;
+
+    #[test]
+    fn rows_parse_per_line_json() {
+        let rows = rows("{\"a\":1}\n\n{\"b\":2}\n");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["a"], 1);
+        assert_eq!(rows[1]["b"], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "line 2 is not valid JSON")]
+    fn rows_fail_loud_with_the_line_number() {
+        let _ = rows("{\"a\":1}\n{oops");
+    }
+
+    #[test]
+    fn fixture_path_resolves_under_the_crate() {
+        let path = fixture_path("heavy_mixed_solve_captures.jsonl");
+        assert!(path.ends_with("tests/fixtures/heavy_mixed_solve_captures.jsonl"));
+    }
+
+    #[test]
+    fn load_rows_reads_the_committed_corpus_through_the_zst_sibling() {
+        // The packaged corpus: transparent .zst sibling resolution + rows.
+        let rows = load_rows(fixture_path("heavy_mixed_solve_captures.jsonl"));
+        assert!(!rows.is_empty(), "the committed corpus must load rows");
+    }
 }
 
 #[cfg(test)]
