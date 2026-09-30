@@ -232,29 +232,6 @@ pub struct PathGraph {
     bundle_kinds: Vec<u32>,
 }
 
-/// Admissible prune data for ONE bounded search (start, end, budget).
-///
-/// `to_end[x]` is the fewest hops from `x` to the target — a lower bound on
-/// the trail hops still needed once `x` is reached, so a step onto `x` is
-/// cut only when no within-budget trail can close through it.
-///
-/// A start-side/ball mask (`d_start + d_end > budget` exclusion) would be
-/// redundant here: the DFS only ever reaches `start`-reachable nodes, and a
-/// node arrived at length `len` passes the cutoff only when
-/// `d_end[x] <= emd - len - 1 <= emd - d_start[x] - 1` — exactly the ball
-/// condition, enforced en route at zero extra cost.
-struct SearchPrune {
-    to_end: Vec<u32>,
-}
-
-impl SearchPrune {
-    fn build(graph: &PathGraph, end: u32) -> Self {
-        Self {
-            to_end: graph.hop_distances(&[end]),
-        }
-    }
-}
-
 impl PathGraph {
     /// Slice of the outgoing edges of a compact node.
     #[must_use]
@@ -510,9 +487,9 @@ impl PathGraph {
 
     /// Remove nodes with degree ≤ 1, repeating until no such nodes remain.
     ///
-    /// Mirrors Python `_prepare_graph`'s iterative dead-end pruning: pruning a
-    /// node may drop another node's live degree below 2, so peeling continues
-    /// to a fixpoint. Nodes on cycles always retain degree ≥ 2, so the
+    /// Iterative dead-end pruning: pruning a node may drop another node's
+    /// live degree below 2, so peeling continues to a fixpoint. Nodes on
+    /// cycles always retain degree ≥ 2, so the
     /// surviving subgraph (the 2-core) is identical regardless of peel order.
     ///
     /// Complexity: O(V + E) — a degree-array work queue visits each edge a
@@ -659,8 +636,8 @@ pub struct WalkerTally {
 /// One pending yield's expansion state: the walk's per-step candidate pool
 /// lists (kind-filtered), an odometer over those lists, and same-bundle
 /// injectivity validation. Each valid odometer state is one concrete pool
-/// assignment of the walk — the bundle-level equivalent of the per-pool
-/// DFS branching the old engine performed eagerly.
+/// assignment of the walk — the bundle-level equivalent of eager per-pool
+/// DFS branching.
 struct WalkExpansion {
     /// Step `i` of the walk used `slot_bundle[i]`'s bundle: assignments must
     /// choose distinct pools across all slots of one bundle (the trail's
@@ -669,10 +646,15 @@ struct WalkExpansion {
     /// Per step: candidate pool indices, limited to pools whose kind passes
     /// the depth's filter (full bundle list when unfiltered).
     slots: Vec<Vec<u32>>,
-    /// Odometer position per slot; `chosen[i] = slots[i][cursor[i]]`.
+    /// Odometer position per slot.
     cursor: Vec<usize>,
+    /// The pool currently assigned to slot `i` (`slots[i][cursor[i]]`).
     chosen: Vec<u32>,
+    /// Gate on the first odometer state: `false` until the initial
+    /// assignment is installed.
     started: bool,
+    /// Gate on the last odometer state: set once the odometer has advanced
+    /// past the final combination.
     finished: bool,
 }
 
@@ -757,15 +739,34 @@ enum AdvanceOutcome {
     Reversed,
 }
 
+/// One DFS stack frame: the bundle-graph node being expanded, the next
+/// unexplored entry in its sorted adjacency, and whether this arrival has
+/// already run the yield check (once per visit).
+struct DfsFrame {
+    node: u32,
+    edge_idx: usize,
+    yield_checked: bool,
+}
+
+/// Both search boundary tokens resolved against the graph, or proof that at
+/// least one is absent. An absent boundary admits no path, so the search
+/// starts exhausted — never a synthetic fallback index.
+#[derive(Clone, Copy)]
+enum Boundary {
+    Absent,
+    Present { start: u32, end: u32 },
+}
+
 /// Depth-first trail search over the **bundle graph**: all pools between the
 /// same unordered token pair form one bundle with multiplicity `m`, and the
 /// DFS walks token-pair BUNDLES (a per-bundle use counter instead of a
 /// per-pool visited mask), expanding each walk to its concrete pool
 /// assignments lazily at yield time.
 ///
-/// Why: a hub token with `m` parallel pools to the same neighbor used to
-/// branch the entire remaining DFS subtree `m` times — the subtrees are
-/// token-wise identical, differing only in which pool each step consumed.
+/// Why: without bundling, a hub token with `m` parallel pools to the same
+/// neighbor branches the entire remaining DFS subtree `m` times — the
+/// subtrees are token-wise identical, differing only in which pool each
+/// step consumed.
 /// The bundled walk explores the token shape once and enumerates the
 /// `m·(m-1)·…·(m-u+1)` ordered distinct-pool assignments (`u` = visits of
 /// that bundle) during expansion: exactly the multiset the per-pool DFS
@@ -775,14 +776,15 @@ enum AdvanceOutcome {
 /// reference enumerator):
 /// - a trail's constraint is DISTINCT POOLS, not distinct tokens or
 ///   bundles: a walk may revisit the same pair, consuming another pool;
-/// - the walk-level kind/nvd checks are necessary conditions only; exact
+/// - the walk-level kind/node-valid-depths checks are necessary conditions
+///   only; exact
 ///   per-step pool-kind feasibility is decided in the expansion;
 /// - hop-distance cutoffs, the sorted prefix break, `min_depth`, the
 ///   `include_reverse` interleave, cancellation, and the discovery
-///   heartbeat all behave as before.
+///   heartbeat all behave as specified.
 pub struct BundledSearch<B: Borrow<PathGraph>> {
     graph: B,
-    end: u32,
+    end: Option<u32>,
     min_depth: usize,
     effective_max_depth: Option<usize>,
     include_reverse: bool,
@@ -798,9 +800,10 @@ pub struct BundledSearch<B: Borrow<PathGraph>> {
     /// bundle layer (see `PathGraph::bundle_pools`).
     tok_bundle_offsets: Vec<u32>,
     tok_bundle_flat: Vec<(u32, u32)>,
-    /// Admissible cutoff data for the bounded search (None when unbounded).
-    prune: Option<SearchPrune>,
-    stack: Vec<(u32, usize, bool)>,
+    /// BFS hop distances to the search target (`u32::MAX` = unreachable): an admissible cutoff —
+    /// a start-side ball mask is subsumed since a node at length `len` survives only when `d_end[x] <= effective_max_depth - len - 1`, exactly the ball condition; `None` when unbounded.
+    prune: Option<Vec<u32>>,
+    stack: Vec<DfsFrame>,
     /// Bundle chosen at each walk step, parallel to the DFS path.
     walk_bundles: Vec<u32>,
     /// Active-walk use count per bundle: the `u`-th visit of a bundle
@@ -918,15 +921,15 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
         // remapping an absent end to compact index 0 made the DFS search for
         // cycles ending at an unrelated token (compact 0), yielding
         // non-closing paths that tripped the direction-resolution fail-stop.
-        let start_idx = src.compact_index(start);
-        let end_idx = src.compact_index(end);
-        let boundaries_present = matches!((start_idx, end_idx), (Some(_), Some(_)));
-        let end_idx = end_idx.unwrap_or(0);
+        let boundary = match (src.compact_index(start), src.compact_index(end)) {
+            (Some(s), Some(e)) => Boundary::Present { start: s, end: e },
+            _ => Boundary::Absent,
+        };
 
         // Admissible prune data (single BFS distance table). Only meaningful
         // for a bounded search; an unbounded one has no budget to cut against.
-        let prune = match effective_max_depth {
-            Some(_) if boundaries_present => Some(SearchPrune::build(src, end_idx)),
+        let prune = match (&boundary, effective_max_depth) {
+            (Boundary::Present { end, .. }, Some(_)) => Some(src.hop_distances(&[*end])),
             _ => None,
         };
 
@@ -952,27 +955,35 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
         // the graph (built once at construction); only the memcpy'd flat
         // array gets re-ordered per search.
         let (tok_bundle_offsets, mut tok_bundle_flat) = src.token_bundles_csr();
-        if let Some(prune_data) = prune.as_ref() {
+        if let Some(prune) = prune.as_ref() {
             for w in 0..src.nodes() {
                 let start = tok_bundle_offsets[w] as usize;
                 let stop = tok_bundle_offsets[w + 1] as usize;
-                tok_bundle_flat[start..stop]
-                    .sort_by_key(|(nbr, _)| prune_data.to_end[*nbr as usize]);
+                tok_bundle_flat[start..stop].sort_by_key(|(nbr, _)| prune[*nbr as usize]);
             }
         }
 
         let n_bundles = src.bundle_pairs.len();
         let bundle_mult: Vec<u32> = src.bundle_offsets.windows(2).map(|w| w[1] - w[0]).collect();
         let now = Instant::now();
-        let (stack, done) = if boundaries_present {
-            (vec![(start_idx.unwrap_or(0), 0, false)], false)
-        } else {
-            (Vec::new(), true)
+        let (stack, done) = match boundary {
+            Boundary::Present { start, .. } => (
+                vec![DfsFrame {
+                    node: start,
+                    edge_idx: 0,
+                    yield_checked: false,
+                }],
+                false,
+            ),
+            Boundary::Absent => (Vec::new(), true),
         };
 
         Self {
             graph,
-            end: end_idx,
+            end: match boundary {
+                Boundary::Present { end, .. } => Some(end),
+                Boundary::Absent => None,
+            },
             min_depth,
             effective_max_depth,
             include_reverse,
@@ -1057,7 +1068,7 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
         }
 
         let filter_slice = self.pool_type_per_depth.as_deref();
-        let nvd_ref = self.node_valid_depths.as_deref();
+        let node_valid_depths = self.node_valid_depths.as_deref();
         let masks: &[u32] = &self.allowed_masks;
         let prune_ref = self.prune.as_ref();
         let src: &PathGraph = self.graph.borrow();
@@ -1065,8 +1076,8 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
         loop {
             // 1. Emit from a live expansion before doing any further DFS
             //    work: forward and reversed assignments of the parked walk
-            //    interleave exactly as the old per-pool engine interleaved
-            //    forwards and reverses.
+            //    interleave — Forward, Reversed, Forward, Reversed, ... — as
+            //    pinned by the ordered golden tests.
             if self.expansion.is_some() {
                 if self.pending_reverse {
                     self.pending_reverse = false;
@@ -1146,8 +1157,11 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                     }
                 }
 
-                let frame = &mut self.stack[stack_len - 1];
-                let (node, edge_idx, yield_checked) = frame;
+                let DfsFrame {
+                    node,
+                    edge_idx,
+                    yield_checked,
+                } = &mut self.stack[stack_len - 1];
 
                 // Check yield condition (once per frame arrival): the walk
                 // reached the end token with enough pools. The expansion
@@ -1155,7 +1169,7 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                 // per call — starting on the next outer-loop iteration.
                 if !*yield_checked {
                     *yield_checked = true;
-                    if *node == self.end && self.walk_bundles.len() >= self.min_depth {
+                    if Some(*node) == self.end && self.walk_bundles.len() >= self.min_depth {
                         let expansion = self.build_expansion();
                         self.expansion = Some(expansion);
                         break;
@@ -1163,8 +1177,8 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                 }
 
                 // Stop recursion if the walk has reached the maximum depth.
-                if let Some(emd) = self.effective_max_depth {
-                    if self.walk_bundles.len() >= emd {
+                if let Some(effective_max_depth) = self.effective_max_depth {
+                    if self.walk_bundles.len() >= effective_max_depth {
                         // Backtrack.
                         self.stack.pop();
                         if let Some(bundle) = self.walk_bundles.pop() {
@@ -1176,21 +1190,23 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
 
                 // Remaining hop budget for the step chosen at THIS node
                 // visit. A trail extended by one bundle must still reach the
-                // target within `emd - len - 1` hops; the BFS hop distance is
-                // a lower bound on how many hops that takes, so the cutoff
-                // never discards a yieldable trail. Len < emd is guaranteed
-                // by the max-depth backtrack above, so the subtraction cannot
+                // target within `effective_max_depth - len - 1` hops; the BFS
+                // hop distance is a lower bound on how many hops that takes,
+                // so the cutoff never discards a yieldable trail. The walk
+                // length is below `effective_max_depth` (guaranteed by the
+                // max-depth backtrack above), so the subtraction cannot
                 // underflow. (At the closing depth the remaining budget is 0,
                 // and since `end` is the unique token at hop distance 0, the
-                // prefix break admits only target-adjacent bundles — the
-                // old engine's separate final-hop end-edge list is implicit.)
-                let remaining_budget = self.effective_max_depth.map(|emd| {
-                    // Saturating on purpose, NOT the panic helper: `emd`
-                    // derives from the caller's unchecked `max_depth`
-                    // (reachable FFI input), so the subtraction can exceed
-                    // `u32::MAX`. The clamp means "no cutoff" — the sorted
-                    // prefix break below never discards a yieldable trail.
-                    u32::try_from(emd - self.walk_bundles.len() - 1).unwrap_or(u32::MAX)
+                // prefix break admits only target-adjacent bundles.)
+                let remaining_budget = self.effective_max_depth.map(|effective_max_depth| {
+                    // Saturating on purpose, NOT the panic helper:
+                    // `effective_max_depth` derives from the caller's
+                    // unchecked `max_depth` (reachable FFI input), so the
+                    // subtraction can exceed `u32::MAX`. The clamp means
+                    // "no cutoff" — the sorted prefix break below never
+                    // discards a yieldable trail.
+                    u32::try_from(effective_max_depth - self.walk_bundles.len() - 1)
+                        .unwrap_or(u32::MAX)
                 });
                 let entry_base = self.tok_bundle_offsets[*node as usize] as usize;
                 let entries_len = self.tok_bundle_offsets[*node as usize + 1] as usize - entry_base;
@@ -1203,8 +1219,8 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                     // budget terminates the scan: every later neighbor is at
                     // least as far, and none of them can be on a yieldable
                     // trail.
-                    if let Some(prune_data) = prune_ref {
-                        if prune_data.to_end[nbr as usize] > remaining_budget.unwrap_or(u32::MAX) {
+                    if let Some(prune) = prune_ref {
+                        if prune[nbr as usize] > remaining_budget.unwrap_or(u32::MAX) {
                             break;
                         }
                     }
@@ -1235,7 +1251,9 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                         // can't continue at the next depth.
                         let next_depth = depth + 1;
                         if next_depth < self.filter_len {
-                            if let Some(valid) = nvd_ref.and_then(|nvd| nvd.get(nbr as usize)) {
+                            if let Some(valid) = node_valid_depths
+                                .and_then(|node_valid_depths| node_valid_depths.get(nbr as usize))
+                            {
                                 if !valid[next_depth] {
                                     continue;
                                 }
@@ -1244,7 +1262,11 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                     }
 
                     // Found a bundle — extend the walk and descend.
-                    self.stack.push((nbr, 0, false));
+                    self.stack.push(DfsFrame {
+                        node: nbr,
+                        edge_idx: 0,
+                        yield_checked: false,
+                    });
                     self.walk_bundles.push(bundle);
                     self.bundle_use[bundle as usize] += 1;
                     found_bundle = true;
@@ -1462,7 +1484,7 @@ impl PathGraph {
         node_valid_depths: Option<&'a [Vec<bool>]>,
     ) -> PathFinder<'a> {
         let filter = pool_type_per_depth.map(<[Option<Vec<PoolKind>>]>::to_vec);
-        let nvd = node_valid_depths.map(<[Vec<bool>]>::to_vec);
+        let node_valid_depths = node_valid_depths.map(<[Vec<bool>]>::to_vec);
         BundledSearch::with_params(
             self,
             start,
@@ -1471,7 +1493,7 @@ impl PathGraph {
             max_depth,
             include_reverse,
             filter,
-            nvd,
+            node_valid_depths,
         )
     }
 
@@ -1695,7 +1717,7 @@ mod tests {
             Some(vec![PoolKind::V2]),
             Some(vec![PoolKind::V2]),
         ];
-        let nvd = graph.compute_node_valid_depths(&filter);
+        let node_valid_depths = graph.compute_node_valid_depths(&filter);
         let paths = graph.find_paths(
             WETH,
             WETH,
@@ -1703,7 +1725,7 @@ mod tests {
             Some(3), // caller max_depth
             false,
             Some(&filter),
-            Some(&nvd),
+            Some(&node_valid_depths),
         );
         assert!(
             !paths.is_empty(),
@@ -1724,7 +1746,7 @@ mod tests {
         // cap at 2-hop paths.
         let graph = build_fixture_graph();
         let filter = vec![Some(vec![PoolKind::V2]), Some(vec![PoolKind::V2])];
-        let nvd = graph.compute_node_valid_depths(&filter);
+        let node_valid_depths = graph.compute_node_valid_depths(&filter);
         let paths = graph.find_paths(
             WETH,
             WETH,
@@ -1732,7 +1754,7 @@ mod tests {
             Some(3), // exceeds filter length
             false,
             Some(&filter),
-            Some(&nvd),
+            Some(&node_valid_depths),
         );
         for path in &paths {
             assert_eq!(
@@ -1748,7 +1770,7 @@ mod tests {
         // A 2-depth filter with max_depth=None must cap at 2-hop paths.
         let graph = build_fixture_graph();
         let filter = vec![Some(vec![PoolKind::V2]), Some(vec![PoolKind::V2])];
-        let nvd = graph.compute_node_valid_depths(&filter);
+        let node_valid_depths = graph.compute_node_valid_depths(&filter);
         let paths = graph.find_paths(
             WETH,
             WETH,
@@ -1756,7 +1778,7 @@ mod tests {
             None, // no explicit max
             false,
             Some(&filter),
-            Some(&nvd),
+            Some(&node_valid_depths),
         );
         for path in &paths {
             assert_eq!(path.len(), 2);
@@ -1768,11 +1790,19 @@ mod tests {
         // A filter with None at depth 0 allows all pool kinds.
         let graph = build_fixture_graph();
         let filter = vec![None, Some(vec![PoolKind::V4])];
-        let nvd = graph.compute_node_valid_depths(&filter);
+        let node_valid_depths = graph.compute_node_valid_depths(&filter);
         // The fixture has only V2 pools, and depth 1 requires V4.
         // So no V4 paths should be found (node_valid_depths will show A and B
         // are invalid at depth 1).
-        let paths = graph.find_paths(WETH, WETH, 2, Some(2), false, Some(&filter), Some(&nvd));
+        let paths = graph.find_paths(
+            WETH,
+            WETH,
+            2,
+            Some(2),
+            false,
+            Some(&filter),
+            Some(&node_valid_depths),
+        );
         // No V4 pools exist, so no paths match the filter.
         assert!(
             paths.is_empty(),
@@ -1828,8 +1858,16 @@ mod tests {
             Some(vec![PoolKind::V4]),
             Some(vec![PoolKind::V2]),
         ];
-        let nvd = graph.compute_node_valid_depths(&filter);
-        let paths = graph.find_paths(WETH, WETH, 3, Some(3), false, Some(&filter), Some(&nvd));
+        let node_valid_depths = graph.compute_node_valid_depths(&filter);
+        let paths = graph.find_paths(
+            WETH,
+            WETH,
+            3,
+            Some(3),
+            false,
+            Some(&filter),
+            Some(&node_valid_depths),
+        );
         assert!(!paths.is_empty(), "Should find a V2-V4-V2 path");
         for path in &paths {
             assert_eq!(path.len(), 3);
@@ -1957,6 +1995,184 @@ mod tests {
             run_one, run_two,
             "enumeration must be stable + unaffected by heartbeat wiring"
         );
+    }
+
+    // --- Ordered goldens ---------------------------------------------------
+    //
+    // The differential parity oracle compares `BTreeSet`s and cannot see a
+    // yield-ORDER change. These tests pin the exact `Vec` of yielded paths
+    // (pool-id sequences) across the filter x `include_reverse` matrix, so a
+    // reorder of `advance()`'s emission fails loudly even when the yielded
+    // set is unchanged.
+
+    /// Unfiltered, `include_reverse = false`: the exact yield order. The
+    /// parallel bundle's walk-expansion enumerates its ordered
+    /// distinct-pool assignments in lexicographic candidate order
+    /// ([100, 101] before [101, 100]); both 2-hop expansions complete
+    /// before the DFS resumes. The 3-hop cycle is walked in both token
+    /// directions (WETH-A-B-WETH before WETH-B-A-WETH), each direction
+    /// expanding its bundle assignments lexicographically.
+    #[test]
+    fn test_golden_ordered_yields_unfiltered_no_reverse() {
+        let graph = build_fixture_graph();
+        let paths: Vec<Vec<u64>> = graph
+            .find_paths(WETH, WETH, 2, Some(3), false, None, None)
+            .into_iter()
+            .map(|p| edges_to_pool_ids(&p))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                vec![POOL_WETH_A_1, POOL_WETH_A_2],
+                vec![POOL_WETH_A_2, POOL_WETH_A_1],
+                vec![POOL_WETH_A_1, POOL_A_B, POOL_B_WETH],
+                vec![POOL_WETH_A_2, POOL_A_B, POOL_B_WETH],
+                vec![POOL_B_WETH, POOL_A_B, POOL_WETH_A_1],
+                vec![POOL_B_WETH, POOL_A_B, POOL_WETH_A_2],
+            ]
+        );
+    }
+
+    /// Unfiltered, `include_reverse = true`: the Forward/Reversed interleave
+    /// contract — each yielded path is followed by its own reverse
+    /// (F, R, F, R, ...) and each walk-expansion's assignments stay in
+    /// lexicographic order.
+    #[test]
+    fn test_golden_ordered_yields_unfiltered_with_reverse() {
+        let graph = build_fixture_graph();
+        let paths: Vec<Vec<u64>> = graph
+            .find_paths(WETH, WETH, 2, Some(3), true, None, None)
+            .into_iter()
+            .map(|p| edges_to_pool_ids(&p))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                vec![POOL_WETH_A_1, POOL_WETH_A_2],         // F
+                vec![POOL_WETH_A_2, POOL_WETH_A_1],         // R
+                vec![POOL_WETH_A_2, POOL_WETH_A_1],         // F
+                vec![POOL_WETH_A_1, POOL_WETH_A_2],         // R
+                vec![POOL_WETH_A_1, POOL_A_B, POOL_B_WETH], // F
+                vec![POOL_B_WETH, POOL_A_B, POOL_WETH_A_1], // R
+                vec![POOL_WETH_A_2, POOL_A_B, POOL_B_WETH], // F
+                vec![POOL_B_WETH, POOL_A_B, POOL_WETH_A_2], // R
+                vec![POOL_B_WETH, POOL_A_B, POOL_WETH_A_1], // F
+                vec![POOL_WETH_A_1, POOL_A_B, POOL_B_WETH], // R
+                vec![POOL_B_WETH, POOL_A_B, POOL_WETH_A_2], // F
+                vec![POOL_WETH_A_2, POOL_A_B, POOL_B_WETH], // R
+            ]
+        );
+        // Structural interleave pin: the reverse-enabled stream is exactly
+        // the forward-only stream with each path followed by its reverse.
+        let forward: Vec<Vec<u64>> = build_fixture_graph()
+            .find_paths(WETH, WETH, 2, Some(3), false, None, None)
+            .into_iter()
+            .map(|p| edges_to_pool_ids(&p))
+            .collect();
+        let interleaved: Vec<Vec<u64>> = forward
+            .iter()
+            .flat_map(|p| {
+                let mut rev = p.clone();
+                rev.reverse();
+                [p.clone(), rev]
+            })
+            .collect();
+        assert_eq!(paths, interleaved);
+    }
+
+    /// Filter present (3-deep all-V2), `include_reverse = false`: the floor
+    /// pins the effective minimum at the filter length, so only the 3-hop
+    /// walks yield, in walk-expansion order.
+    #[test]
+    fn test_golden_ordered_yields_filtered_no_reverse() {
+        let graph = build_fixture_graph();
+        let filter = vec![
+            Some(vec![PoolKind::V2]),
+            Some(vec![PoolKind::V2]),
+            Some(vec![PoolKind::V2]),
+        ];
+        let node_valid_depths = graph.compute_node_valid_depths(&filter);
+        let paths: Vec<Vec<u64>> = graph
+            .find_paths(
+                WETH,
+                WETH,
+                2, // caller min_depth (floored at the filter length)
+                Some(3),
+                false,
+                Some(&filter),
+                Some(&node_valid_depths),
+            )
+            .into_iter()
+            .map(|p| edges_to_pool_ids(&p))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                vec![POOL_WETH_A_1, POOL_A_B, POOL_B_WETH],
+                vec![POOL_WETH_A_2, POOL_A_B, POOL_B_WETH],
+                vec![POOL_B_WETH, POOL_A_B, POOL_WETH_A_1],
+                vec![POOL_B_WETH, POOL_A_B, POOL_WETH_A_2],
+            ]
+        );
+    }
+
+    /// Filter present (2-deep all-V2), `include_reverse = true`: the same
+    /// Forward/Reversed interleave contract under a per-depth filter.
+    #[test]
+    fn test_golden_ordered_yields_filtered_with_reverse() {
+        let graph = build_fixture_graph();
+        let filter = vec![Some(vec![PoolKind::V2]), Some(vec![PoolKind::V2])];
+        let node_valid_depths = graph.compute_node_valid_depths(&filter);
+        let paths: Vec<Vec<u64>> = graph
+            .find_paths(
+                WETH,
+                WETH,
+                2,
+                Some(2),
+                true,
+                Some(&filter),
+                Some(&node_valid_depths),
+            )
+            .into_iter()
+            .map(|p| edges_to_pool_ids(&p))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                vec![POOL_WETH_A_1, POOL_WETH_A_2], // F
+                vec![POOL_WETH_A_2, POOL_WETH_A_1], // R
+                vec![POOL_WETH_A_2, POOL_WETH_A_1], // F
+                vec![POOL_WETH_A_1, POOL_WETH_A_2], // R
+            ]
+        );
+        // Structural interleave pin against the same search without reverse.
+        let forward: Vec<Vec<u64>> = {
+            let graph = build_fixture_graph();
+            let filter = vec![Some(vec![PoolKind::V2]), Some(vec![PoolKind::V2])];
+            let node_valid_depths = graph.compute_node_valid_depths(&filter);
+            graph
+                .find_paths(
+                    WETH,
+                    WETH,
+                    2,
+                    Some(2),
+                    false,
+                    Some(&filter),
+                    Some(&node_valid_depths),
+                )
+                .into_iter()
+                .map(|p| edges_to_pool_ids(&p))
+                .collect()
+        };
+        let interleaved: Vec<Vec<u64>> = forward
+            .iter()
+            .flat_map(|p| {
+                let mut rev = p.clone();
+                rev.reverse();
+                [p.clone(), rev]
+            })
+            .collect();
+        assert_eq!(paths, interleaved);
     }
 
     /// Token id -> compact index (tests live in-module, so the private
