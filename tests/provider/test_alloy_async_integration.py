@@ -8,7 +8,7 @@ import pytest
 
 from degenbot._ffi.provider import AsyncAlloyProvider
 from degenbot.abi import encode as abi_encode
-from degenbot.crypto import keccak256
+from degenbot.crypto import function_selector, keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.standalone_anvil import seed as seed_catalog
@@ -93,7 +93,7 @@ class TestAsyncProviderWithConnection:
         # SimpleToken.totalSupply() (matches the ERC20 totalSupply selector 0x18160ddd).
         result = await async_provider.call(
             to=seed_catalog.TOKEN,
-            data=bytes.fromhex("18160ddd"),
+            data=function_selector("totalSupply()"),
         )
         assert isinstance(result, bytes)
         assert len(result) == 32
@@ -107,7 +107,9 @@ class TestAsyncProviderWithConnection:
     async def test_async_get_balance_of(self, async_provider: AsyncAlloyProvider):
         """Async eth_call to balanceOf should decode correctly."""
         # balanceOf(address) selector 0x70a08231 + seeded waiter padded to 32 bytes.
-        calldata = bytes.fromhex("70a08231" + "00" * 12 + seed_catalog.FUNDED_EOA[2:])
+        calldata = function_selector("balanceOf(address)") + bytes.fromhex(
+            seed_catalog.FUNDED_EOA[2:]
+        ).rjust(32, b"\x00")
         result = await async_provider.call(
             to=seed_catalog.TOKEN,
             data=calldata,

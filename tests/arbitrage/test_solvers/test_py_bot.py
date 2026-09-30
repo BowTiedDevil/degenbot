@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from degenbot._ffi import Bot
+from degenbot.provider.call_helpers import encode_function_calldata
 
 
 class TestPyBotV2Pool:
@@ -364,7 +365,11 @@ class TestPoolHandleState:
         core2.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
         pool2 = core2.get_pool(pool_id2)
         assert pool2 is not None
-        assert (pool.reserve_pair().reserve0, pool.reserve_pair().reserve1, pool.reserve_pair().update_block) == (
+        assert (
+            pool.reserve_pair().reserve0,
+            pool.reserve_pair().reserve1,
+            pool.reserve_pair().update_block,
+        ) == (
             pool2.reserve_pair().reserve0,
             pool2.reserve_pair().reserve1,
             pool2.reserve_pair().update_block,
@@ -510,15 +515,14 @@ class TestV2SwapEncoding:
         assert result is not None
         _, calldata_hex, _ = result
 
-        # Pinned reference calldata: the ABI encoding of
-        # swap(amount0_out=0, amount1_out=181, recipient=RECIPIENT,
-        # data=b''). Pinned from eth_abi 5.x + Rust function_selector
-        # (keccak pinned at the sweep); bytes permanent.
+        # Oracle-built reference calldata: the ABI encoding of
+        # swap(uint256,uint256,address,bytes) with args 0, 181, self.RECIPIENT, b"".
         expected = (
-            "0x022c0d9f000000000000000000000000000000000000000000000000000000000000000000000000000000"
-            "000000000000000000000000000000000000000000000000b5000000000000000000000000bbbbbbbbbbbbbb"
-            "bbbbbbbbbbbbbbbbbbbbbbbbbb00000000000000000000000000000000000000000000000000000000000000"
-            "800000000000000000000000000000000000000000000000000000000000000000"
+            "0x"
+            + encode_function_calldata(
+                function_prototype="swap(uint256,uint256,address,bytes)",
+                function_arguments=[0, 181, self.RECIPIENT, b""],
+            ).hex()
         )
         assert calldata_hex == expected
 
@@ -532,15 +536,14 @@ class TestV2SwapEncoding:
         assert result is not None
         _, calldata_hex, _ = result
 
-        # Pinned reference calldata: the ABI encoding of
-        # swap(amount0_out=181, amount1_out=0, recipient=RECIPIENT,
-        # data=b''). Pinned from eth_abi 5.x + Rust function_selector
-        # (keccak pinned at the sweep); bytes permanent.
+        # Oracle-built reference calldata: the ABI encoding of
+        # swap(uint256,uint256,address,bytes) with args 0, 181, self.RECIPIENT, b"".
         expected = (
-            "0x022c0d9f00000000000000000000000000000000000000000000000000000000000000b500000000000000"
-            "00000000000000000000000000000000000000000000000000000000000000000000000000bbbbbbbbbbbbbb"
-            "bbbbbbbbbbbbbbbbbbbbbbbbbb00000000000000000000000000000000000000000000000000000000000000"
-            "800000000000000000000000000000000000000000000000000000000000000000"
+            "0x"
+            + encode_function_calldata(
+                function_prototype="swap(uint256,uint256,address,bytes)",
+                function_arguments=[181, 0, self.RECIPIENT, b""],
+            ).hex()
         )
         assert calldata_hex == expected
 
@@ -561,15 +564,14 @@ class TestV2SwapEncoding:
         assert result is not None
         _, calldata_hex, _ = result
 
-        # Pinned reference calldata: the ABI encoding of
-        # swap(amount0_out=0, amount1_out=181, recipient=RECIPIENT,
-        # data=b''). Pinned from eth_abi 5.x + Rust function_selector
-        # (keccak pinned at the sweep); bytes permanent.
+        # Oracle-built reference calldata: the ABI encoding of
+        # swap(uint256,uint256,address,bytes) with args 0, 181, self.RECIPIENT, b"".
         expected = (
-            "0x022c0d9f000000000000000000000000000000000000000000000000000000000000000000000000000000"
-            "000000000000000000000000000000000000000000000000b5000000000000000000000000bbbbbbbbbbbbbb"
-            "bbbbbbbbbbbbbbbbbbbbbbbbbb00000000000000000000000000000000000000000000000000000000000000"
-            "800000000000000000000000000000000000000000000000000000000000000000"
+            "0x"
+            + encode_function_calldata(
+                function_prototype="swap(uint256,uint256,address,bytes)",
+                function_arguments=[0, 181, self.RECIPIENT, b""],
+            ).hex()
         )
         assert calldata_hex == expected
 

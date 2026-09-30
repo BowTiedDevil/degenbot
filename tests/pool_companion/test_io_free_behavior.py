@@ -21,6 +21,7 @@ from degenbot._ffi.v2_math import calc_exact_in_v2, calc_exact_out_v2
 from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import function_selector
 from degenbot.curve.types import BasePoolPort, DyCalculationInputs
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import InvalidSwapInputAmount, LiquidityPoolError
@@ -428,7 +429,7 @@ class TestBotTokenIOMethods:
         database = make_test_database(tmp_path)
 
         balance_of_calldata = (
-            bytes.fromhex("70a08231") + abi_encode(types=["address"], args=[holder])
+            function_selector("balanceOf(address)") + abi_encode(types=["address"], args=[holder])
         ).hex()
         encoded_balance = abi_encode(types=["uint256"], args=[expected_balance])
         offline = OfflineProvider(

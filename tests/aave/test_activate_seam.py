@@ -16,16 +16,17 @@ from pathlib import Path
 from typing import Any
 
 from degenbot._ffi.aave import activate_aave_market, deactivate_aave_market
+from degenbot.crypto import function_selector
 from degenbot.db import db_upgrade_database
 from tests.aave.writer_parity.harness import mock_rpc_server
 from tests.helpers.database import sqlite_connection
 
-# The 4-byte selectors the activation path RPCs (keccak256 of the canonical
-# signatures, first 4 bytes).
-GET_MARKET_ID_SELECTOR = "0x568ef470"
-NAME_SELECTOR = "0x06fdde03"
-SYMBOL_SELECTOR = "0x95d89b41"
-DECIMALS_SELECTOR = "0x313ce567"
+# The 4-byte selectors the activation path RPCs, derived from the canonical
+# signatures so a transposed digit cannot survive review.
+GET_MARKET_ID_SELECTOR = "0x" + function_selector("getMarketId()").hex()
+NAME_SELECTOR = "0x" + function_selector("name()").hex()
+SYMBOL_SELECTOR = "0x" + function_selector("symbol()").hex()
+DECIMALS_SELECTOR = "0x" + function_selector("decimals()").hex()
 
 # Canonical Aave V3 Ethereum mainnet addresses (check the real deployments
 # module).

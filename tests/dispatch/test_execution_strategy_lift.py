@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 import pytest
 
+from degenbot.crypto import function_selector
+
 EXAMPLE_PATH = Path(__file__).resolve().parents[2] / "examples" / "execution_strategy_foreign.py"
 
 
@@ -96,7 +98,7 @@ class TestAbiEncodeCallHelper:
         )
         assert isinstance(payload, bytes)
         assert len(payload) == 4 + 64, "selector + two ABI words"
-        assert payload[:4] == bytes.fromhex("a9059cbb"), "ERC20 transfer selector"
+        assert payload[:4] == function_selector("transfer(address,uint256)")
 
     def test_rejects_returns_clause(self) -> None:
         with pytest.raises(ValueError, match="returns"):
@@ -117,7 +119,7 @@ class TestPythonForeignStrategySample:
         )
         payload = foreign_strategy_example.compose_simple_executor(result)
         # ABI shape distinct from cmd_executor: `execute(uint256,uint256,uint256[])`.
-        assert payload[:4] == bytes.fromhex("ead35cae"), "foreign execute() selector"
+        assert payload[:4] == function_selector("execute(uint256,uint256,uint256[])")
         assert len(payload) == 4 + 6 * 32, "selector + ABI head + 2 hop words"
         # dynamic uint256[] head — offset word after (selector, opt, final).
         offset = int.from_bytes(payload[68:100], "big")

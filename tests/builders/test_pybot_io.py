@@ -107,12 +107,9 @@ class _Erc20MetadataProvider:
 
     def __init__(self, *, name: str, symbol: str, decimals: int) -> None:
         self._responses: dict[bytes, bytes] = {
-            # keccak256("name()")[..4] = 0x06fdde03
-            bytes.fromhex("06fdde03"): abi_encode(types=["string"], args=[name]),
-            # keccak256("symbol()")[..4] = 0x95d89b41
-            bytes.fromhex("95d89b41"): abi_encode(types=["string"], args=[symbol]),
-            # keccak256("decimals()")[..4] = 0x313ce567
-            bytes.fromhex("313ce567"): abi_encode(types=["uint256"], args=[decimals]),
+            function_selector("name()"): abi_encode(types=["string"], args=[name]),
+            function_selector("symbol()"): abi_encode(types=["string"], args=[symbol]),
+            function_selector("decimals()"): abi_encode(types=["uint256"], args=[decimals]),
         }
         self.calls: list[bytes] = []  # data received
 
@@ -145,14 +142,10 @@ class _V2PoolProvider:
     ) -> None:
         # Selectors for the 4 reads this provider answers.
         self._responses: dict[bytes, bytes] = {
-            # keccak256("factory()")[..4] = 0xc45a0155
-            bytes.fromhex("c45a0155"): abi_encode(types=["address"], args=[factory]),
-            # keccak256("token0()")[..4] = 0x0dfe1681
-            bytes.fromhex("0dfe1681"): abi_encode(types=["address"], args=[token0]),
-            # keccak256("token1()")[..4] = 0xd21220a7
-            bytes.fromhex("d21220a7"): abi_encode(types=["address"], args=[token1]),
-            # keccak256("getReserves()")[..4] = 0x0902f1ac
-            bytes.fromhex("0902f1ac"): abi_encode(
+            function_selector("factory()"): abi_encode(types=["address"], args=[factory]),
+            function_selector("token0()"): abi_encode(types=["address"], args=[token0]),
+            function_selector("token1()"): abi_encode(types=["address"], args=[token1]),
+            function_selector("getReserves()"): abi_encode(
                 types=["uint112", "uint112", "uint32"], args=[reserves0, reserves1, 0]
             ),
         }
@@ -184,21 +177,16 @@ class _V3PoolProvider:
         liquidity: int,
     ) -> None:
         self._responses: dict[bytes, bytes] = {
-            # factory() / token0() / token1() selectors (same as V2).
-            bytes.fromhex("c45a0155"): abi_encode(types=["address"], args=[factory]),
-            bytes.fromhex("0dfe1681"): abi_encode(types=["address"], args=[token0]),
-            bytes.fromhex("d21220a7"): abi_encode(types=["address"], args=[token1]),
-            # keccak256("fee()")[..4] = 0xddca3f43
-            bytes.fromhex("ddca3f43"): abi_encode(types=["uint24"], args=[fee]),
-            # keccak256("tickSpacing()")[..4] = 0xd0c93a7c
-            bytes.fromhex("d0c93a7c"): abi_encode(types=["int24"], args=[tick_spacing]),
-            # keccak256("slot0()")[..4] = 0x3850c7bd
-            bytes.fromhex("3850c7bd"): abi_encode(
+            function_selector("factory()"): abi_encode(types=["address"], args=[factory]),
+            function_selector("token0()"): abi_encode(types=["address"], args=[token0]),
+            function_selector("token1()"): abi_encode(types=["address"], args=[token1]),
+            function_selector("fee()"): abi_encode(types=["uint24"], args=[fee]),
+            function_selector("tickSpacing()"): abi_encode(types=["int24"], args=[tick_spacing]),
+            function_selector("slot0()"): abi_encode(
                 types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
                 args=[sqrt_price_x96, tick, 0, 0, 0, 0, False],
             ),
-            # keccak256("liquidity()")[..4] = 0x1a686502
-            bytes.fromhex("1a686502"): abi_encode(types=["uint128"], args=[liquidity]),
+            function_selector("liquidity()"): abi_encode(types=["uint128"], args=[liquidity]),
         }
         self.calls: list[bytes] = []
 
@@ -256,9 +244,7 @@ def _probe_offline_provider(
     import json
 
     pool_addr = "aa" * 20
-    calls: dict[str, str | None] = {
-        f"0x{pool_addr}:0x{sel}": None for sel in _PROBE_SELECTORS
-    }
+    calls: dict[str, str | None] = {f"0x{pool_addr}:0x{sel}": None for sel in _PROBE_SELECTORS}
     for sel in succeed:
         calls[f"0x{pool_addr}:0x{sel}"] = "00" * 32
     calls[f"0x{pool_addr}:0x{_COINS_UINT_CALLDATA}"] = (
@@ -282,9 +268,7 @@ _GET_NORMALIZED_WEIGHTS = function_selector("getNormalizedWeights()").hex()
 
 _PROBE_SELECTORS = (_SLOT0, _GET_RESERVES, _GET_POOL_ID, _GET_NORMALIZED_WEIGHTS)
 # coins(uint256) with index 0 — the ABI decoder rejects a bare selector.
-_COINS_UINT_CALLDATA = (
-    function_selector("coins(uint256)") + (0).to_bytes(32, "big")
-).hex()
+_COINS_UINT_CALLDATA = (function_selector("coins(uint256)") + (0).to_bytes(32, "big")).hex()
 
 
 def test_pybot_io_probe_pool_type_returns_slot0_for_v3():

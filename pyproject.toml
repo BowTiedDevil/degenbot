@@ -219,6 +219,8 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "eth-abi",
+    "eth-hash[pycryptodome]",
     "hypothesis",
     "maturin",
     "mypy",
@@ -235,7 +237,6 @@ dev = [
     "sybil",
     "ty",
     "vulture",
-    "eth-abi>=6.0.0",
 ]
 
 [tool.ty.environment]

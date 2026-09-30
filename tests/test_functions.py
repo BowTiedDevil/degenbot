@@ -1,3 +1,4 @@
+import eth_abi
 import pytest
 
 from degenbot.calculations import next_base_fee
@@ -40,16 +41,15 @@ def test_extract_argument_types_from_function_prototype():
 def test_encode_function_calldata():
     assert (
         encode_function_calldata(function_prototype="factory()", function_arguments=[])
-        == to_bytes("0xc45a01550ceb4bc5c6b2e6f722b5033a03078f9bd6673457375ba94c26ac1cf0")[:4]
+        == keccak256(b"factory()")[:4]
     )
+    recipient = "0xA69babEF1cA67A37Ffaf7a485DfFF3382056e78C"
+    amount = 26535330612692929974
     assert encode_function_calldata(
         function_prototype="transfer(address,uint256)",
-        function_arguments=[
-            "0xA69babEF1cA67A37Ffaf7a485DfFF3382056e78C",
-            26535330612692929974,
-        ],
-    ) == to_bytes(
-        "0xa9059cbb000000000000000000000000a69babef1ca67a37ffaf7a485dfff3382056e78c00000000000000000000000000000000000000000000000170406e9a1f1c4db6",
+        function_arguments=[recipient, amount],
+    ) == keccak256(b"transfer(address,uint256)")[:4] + eth_abi.encode(
+        ["address", "uint256"], [recipient, amount]
     )
 
 

@@ -4,6 +4,7 @@ These tests demonstrate that the Rust-based Alloy integration is functional,
 covering provider operations, contract interactions, and connection management.
 """
 
+import eth_abi
 import pytest
 
 from degenbot._ffi.abi import decode_single, encode_single
@@ -94,40 +95,31 @@ class TestContractUtilities:
 
     def test_decode_return_data_uint256(self):
         """Test decoding uint256 return values."""
-        # 1000000000000000000 (1 ETH in wei) encoded as uint256
-        data = bytes.fromhex("0de0b6b3a7640000".rjust(64, "0"))
+        # 1 ETH in wei, encoded by the independent eth_abi oracle
+        data = eth_abi.encode(["uint256"], [10**18])
         decoded = decode_return_data(data, ["uint256"])
         assert decoded == ["1000000000000000000"]
 
     def test_decode_return_data_address(self):
         """Test decoding address return values."""
-        # Address 0x742d35Cc6634C0532925a3b8D4C9db96590d6B75 padded to 32 bytes
-        data = bytes.fromhex("000000000000000000000000742d35Cc6634C0532925a3b8D4C9db96590d6B75")
+        data = eth_abi.encode(["address"], ["0x742d35Cc6634C0532925a3b8D4C9db96590d6B75"])
         decoded = decode_return_data(data, ["address"])
         # Addresses are returned in lowercase, not checksummed
         assert decoded == ["0x742d35cc6634c0532925a3b8d4c9db96590d6b75"]
 
     def test_decode_return_data_bool(self):
         """Test decoding bool return values."""
-        # true encoded as bool
-        data_true = bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000000000000000001"
-        )
+        data_true = eth_abi.encode(["bool"], [True])
         decoded_true = decode_return_data(data_true, ["bool"])
         assert decoded_true == ["true"]
 
-        # false encoded as bool
-        data_false = bytes.fromhex("0" * 64)
+        data_false = eth_abi.encode(["bool"], [False])
         decoded_false = decode_return_data(data_false, ["bool"])
         assert decoded_false == ["false"]
 
     def test_decode_return_data_multiple_values(self):
         """Test decoding multiple return values."""
-        # Two uint256 values: 1000 and 2000
-        data = bytes.fromhex(
-            "00000000000000000000000000000000000000000000000000000000000003e8"  # 1000
-            "00000000000000000000000000000000000000000000000000000000000007d0"  # 2000
-        )
+        data = eth_abi.encode(["uint256", "uint256"], [1000, 2000])
         decoded = decode_return_data(data, ["uint256", "uint256"])
         assert decoded == ["1000", "2000"]
 
@@ -153,7 +145,7 @@ class TestContractRustBoundary:
         """Test Contract static utility methods (these don't require initialization)."""
         selector = Contract.get_function_selector("transfer(address,uint256)")
         assert selector == "0xa9059cbb"
-        data = bytes.fromhex("0de0b6b3a7640000".rjust(64, "0"))
+        data = eth_abi.encode(["uint256"], [10**18])
         decoded = Contract.decode_return_data(data, output_types=["uint256"])
         assert decoded == ["1000000000000000000"]
 
@@ -165,7 +157,7 @@ class TestContractRustBoundary:
             "balanceOf(address)", args=["0x742d35Cc6634C0532925a3b8D4C9db96590d6B75"]
         )
         assert len(calldata) == 36
-        data = bytes.fromhex("0de0b6b3a7640000".rjust(64, "0"))
+        data = eth_abi.encode(["uint256"], [10**18])
         decoded = decode_return_data(data, output_types=["uint256"])
         assert decoded == ["1000000000000000000"]
 
