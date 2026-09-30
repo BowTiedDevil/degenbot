@@ -60,7 +60,7 @@ _PUBLISHED_OPERATOR_PRIVATE_KEYS_PATH = Path(__file__).with_name(
 
 
 def _published_operator_private_keys() -> frozenset[str]:
-    """The lowercased, 0x-prefixed keys the repository publishes.
+    """Read the lowercased, 0x-prefixed keys the repository publishes.
 
     Blank lines and ``#`` comments are ignored, so the manifest can carry the
     classification's rationale beside the keys.

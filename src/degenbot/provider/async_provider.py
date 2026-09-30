@@ -16,13 +16,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from degenbot.provider._rust import RustAsyncAlloyProvider
 from degenbot.provider.block_helpers import block_timestamp_from, resolve_block_tag
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
-    # ADR-013: the Rust pyclass is imported only for annotations here; the
-    # runtime binding lives in the package ``__init__`` barrier.
-    from degenbot._ffi.provider import AsyncAlloyProvider as RustAsyncAlloyProvider
     from degenbot.types.rpc_types import (
         BlockData,
         LogData,
@@ -360,10 +358,6 @@ class AsyncAlloyProvider(
             An ``AsyncAlloyProvider`` instance.
 
         """
-        # The package barrier binds the Rust pyclass; retrieve it lazily so
-        # this module can be imported during package initialization.
-        from degenbot.provider import RustAsyncAlloyProvider
-
         rust = await RustAsyncAlloyProvider.create(
             rpc_url,
             max_retries,

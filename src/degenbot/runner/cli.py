@@ -20,6 +20,7 @@ def build_arbitrage_arg_parser() -> argparse.ArgumentParser:
 
     Returns:
         The configured ``ArgumentParser`` (caller invokes ``parse_args``).
+
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(

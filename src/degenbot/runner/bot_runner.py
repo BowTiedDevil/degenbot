@@ -34,7 +34,6 @@ import asyncio
 import contextlib
 import gc
 import signal
-from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self, cast
@@ -55,8 +54,6 @@ from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner._run_ritual import RunRitual
 from degenbot.runner._session_watch import SessionWatch
 from degenbot.runner._sim_submit import build_batch_executor
-from degenbot.runner.build_paths import ConstructionContext
-from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.diag import arm_diagnostics
 from degenbot.runner.identity import (
     MULTICALL3_ADDRESS,
@@ -65,7 +62,11 @@ from degenbot.runner.identity import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Coroutine
+
     from degenbot.runner._session_watch import SessionEndVerdict
+    from degenbot.runner.build_paths import ConstructionContext
+    from degenbot.runner.config import ArbitrageConfig
     from degenbot.strategy import StrategyReadinessView
 from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
@@ -88,6 +89,7 @@ class ActivationGateRefused(RuntimeError):
     """
 
     def __init__(self, refusal: ValueError) -> None:
+        """Bind the gate's ``ValueError`` text as the refusal message."""
         super().__init__(f"activation gate refused: {refusal}")
 
 
@@ -121,12 +123,26 @@ class _Phase(Enum):
     CLOSED = "closed"
 
     def _next(self, operation: str) -> _Phase | None:
-        """The host's verdict for ``operation`` (``None`` = refused)."""
+        """Return the host's verdict for ``operation`` (``None`` = refused).
+
+        Returns:
+            The admitted next phase, or ``None`` when the host refuses the
+            operation in this phase.
+
+        """
         next_name = session_phase_next(self.value, operation)
         return None if next_name is None else _Phase(next_name)
 
     def on_start(self) -> _Phase:
-        """The operator startup move; the host admits it from New/Started."""
+        """Apply the operator startup move; the host admits it from New/Started.
+
+        Returns:
+            The admitted next phase.
+
+        Raises:
+            PhaseError: When the current phase refuses the start move.
+
+        """
         next_phase = self._next("start")
         if next_phase is None:
             msg = f"start() in phase {self.value!r} - session can only start from New"
@@ -134,7 +150,15 @@ class _Phase(Enum):
         return next_phase
 
     def on_run(self) -> _Phase:
-        """The main-loop entry move; the host admits it from Started."""
+        """Apply the main-loop entry move; the host admits it from Started.
+
+        Returns:
+            The admitted next phase.
+
+        Raises:
+            PhaseError: When the current phase refuses the run move.
+
+        """
         next_phase = self._next("run")
         if next_phase is None:
             msg = f"run() requires phase 'started' (session phase is {self.value!r})"
@@ -142,7 +166,15 @@ class _Phase(Enum):
         return next_phase
 
     def on_query(self, method: str) -> _Phase:
-        """The add-a-path/discovery gate; the host admits it while Running."""
+        """Apply the add-a-path/discovery gate; the host admits it while Running.
+
+        Returns:
+            The admitted next phase.
+
+        Raises:
+            PhaseError: When the current phase refuses the query.
+
+        """
         next_phase = self._next("query")
         if next_phase is None:
             msg = f"{method}() needs 'running' (phase is {self.value!r})"
@@ -150,7 +182,15 @@ class _Phase(Enum):
         return next_phase
 
     def on_shutdown(self) -> _Phase:
-        """The teardown move; the host admits it from every phase."""
+        """Apply the teardown move; the host admits it from every phase.
+
+        Returns:
+            The admitted next phase.
+
+        Raises:
+            PhaseError: When the host table refuses the shutdown move.
+
+        """
         next_phase = self._next("shutdown")
         if next_phase is None:  # pragma: no cover - the host table is total
             msg = f"shutdown() refused in phase {self.value!r}"
@@ -410,7 +450,8 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
     def bot(self) -> Bot | None:
         """The session's Python-companion bot (``None`` once the trim dropped it).
 
-        Before ``start()``: the injected seam (a write is an injection)."""
+        Before ``start()``: the injected seam (a write is an injection).
+        """
         return self._session.bot if self._session is not None else self._injected_bot
 
     @bot.setter
@@ -507,6 +548,13 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         attach the consumer in the gap before ``resume()`` without a stale-backlog
         window. Idempotent via the phase alone: re-entry once Started
         is a no-op; Running/Closed re-entry raises :class:`PhaseError`.
+
+        Returns:
+            The started runner, stopped at ``Backfilled``.
+
+        Raises:
+            RuntimeError: If the latest-block fetch fails at session start.
+
         """
         if self._phase is _Phase.STARTED:
             return self
@@ -545,7 +593,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         # non-DB (file/memory) — the `_injected` fast path. The production
         # DB path reads the snapshot at construction and `start()` takes no
         # snapshot kwargs.
-        start_v3, start_v4 = self._start_snapshots(bot)
+        start_v3, start_v4 = self._start_snapshots()
 
         # ── Engine pre-resume ritual (subscribe → verify) ──
         # The snapshot→WS gap is closed automatically inside
@@ -621,7 +669,12 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
     async def _build_actors(
         self, cfg: ArbitrageConfig
     ) -> tuple[Bot, AsyncAlloyProvider, EngineRegistry]:
-        """Build (or adopt the injected) actor trio for a fresh session."""
+        """Build (or adopt the injected) actor trio for a fresh session.
+
+        Returns:
+            The ``(bot, async provider, engine registry)`` session actors.
+
+        """
         bot = self._injected_bot or self._build_bot(cfg)
         async_w3 = self._injected_async_w3 or await self._build_async_w3(cfg)
         engine_registry = self._injected_engine_registry or EngineRegistry(bot=bot)
@@ -637,6 +690,13 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         the single read: the resolved view is data the arms and the main loop
         consume, never a per-call re-decide. A caller that needs HOW a cascade
         would resolve an input uses the hypothetical seam instead.
+
+        Returns:
+            The resolved strategy-readiness view.
+
+        Raises:
+            ActivationGateRefused: When the Rust validation refuses the boot.
+
         """
         resolver = (
             self._injected_readiness
@@ -649,7 +709,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
             raise ActivationGateRefused(refusal) from refusal
 
     def _boot_relay_posture(self, *, live: bool) -> RelayPosture | None:
-        """The session's settlement broadcast posture for this boot.
+        """Resolve the session's settlement broadcast posture for this boot.
 
         The gate already refused an empty fleet and an unsettled arm, so this
         reads the resolved settlement arm as DATA: an active arm mints the
@@ -658,6 +718,14 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         that runs no settlement seam and mints no posture. Only a live,
         settlement-active boot mints the posture — a dry-run boot signs
         nothing.
+
+        Returns:
+            The settlement broadcast posture, or ``None`` for an inactive
+            arm or a dry-run boot.
+
+        Raises:
+            ActivationGateRefused: When the endpoint resolution refuses.
+
         """
         if not self._settlement_active:
             return None
@@ -685,6 +753,10 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         cross here. The AsyncAlloyProvider handle is taken from the session's
         provider so ``dispatch_profitable`` shares one provider with the rest
         of the pipeline. Inline-sim wiring rides the same call.
+
+        Returns:
+            The built sim context, or ``None`` for a non-Alloy provider.
+
         """
         async_alloy = async_w3.as_async_alloy()
         if async_alloy is None:
@@ -723,7 +795,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         )
         return sim_ctx
 
-    def _start_snapshots(self, bot: Bot) -> tuple[Any, Any]:
+    def _start_snapshots(self) -> tuple[Any, Any]:
         """Resolve ``(start_v3, start_v4)`` for the pre-resume ritual.
 
         Injected snapshots (the ``_injected`` fast path) flow through
@@ -734,6 +806,11 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         core-side at construction (the builder's Db/Chain arms), so a
         driver-side snapshot object has no consumer (the retired V3 pool
         tracker pre-population was its last one).
+
+        Returns:
+            The ``(start_v3, start_v4)`` snapshot pair for the injected
+            fast path, or ``(None, None)`` on the production DB path.
+
         """
         if self._injected_snapshots is not None:
             v3_snap, v4_snap, _v3_blk, _v4_blk = self._injected_snapshots
@@ -754,6 +831,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
             The session's end verdict (the session watch's ranking over how
             the run ended). Consuming it is optional — callers that ignore
             it behave exactly as before this return existed.
+
         """
         self._phase = self._phase.on_run()
         # The session's construction answers the actor asserts: the actors
@@ -781,6 +859,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         Raises:
             RuntimeError: if no live pipeline exists (injected fake builders
                 have no construction surface, or ``run()`` has not run).
+
         """
         self._phase = self._phase.on_query("enqueue_path")
         session = self._session
@@ -791,13 +870,17 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         await session.registration_pipeline.enqueue_path(path_steps, directions=directions)
 
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
-        """Trigger a bounded one-shot discovery sweep (on-demand trigger),
-        delegating to the session's live pipeline. Returns the number
-        of paths processed.
+        """Trigger a bounded one-shot discovery sweep (on-demand trigger).
+
+        Delegates to the session's live pipeline.
+
+        Returns:
+            The number of paths processed by the sweep.
 
         Raises:
             RuntimeError: if no live pipeline exists (injected fake builders,
                 or ``run()`` has not run).
+
         """
         self._phase = self._phase.on_query("trigger_discovery")
         session = self._session
@@ -824,6 +907,11 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         with ``Bot``
         at process teardown. Callers must keep the canary active whenever
         registration actually finished.
+
+        Raises:
+            RuntimeError: If a background registration is still climbing
+                (only the registration task may trim its own state).
+
         """
         # The shared tracker/pool/token registries this trim clears are also
         # held, mutably, by a still-climbing registration's
@@ -955,7 +1043,12 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
 
     # ── Async context manager ────────────────────────────────────────
     async def __aenter__(self) -> Self:
-        """Start the pump, then hand the started session back to the ``async with`` block."""
+        """Start the pump, then hand the started session back to the ``async with`` block.
+
+        Returns:
+            The started runner.
+
+        """
         await self.start()
         return self
 
@@ -1003,7 +1096,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         self._sigint_installed = True
 
     def _stop_engine(self) -> None:
-        """The ONE engine-stop entrypoint (``shutdown()`` + SIGINT funnel here).
+        """Stop the engine — the ONE entrypoint (``shutdown()`` + SIGINT funnel here).
 
         Mirrors the Rust ``stop()`` contract: idempotent, sets the shutdown
         flag, and aborts the pump task. Best-effort — a torn-down engine during
@@ -1030,6 +1123,11 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         even while the main thread is blocked in ``find_paths`` (the Rust DFS
         releases the GIL), then re-raises ``KeyboardInterrupt`` so the awaiting
         coroutine unwinds through ``__aexit__`` → ``shutdown()`` (idempotent).
+
+        Raises:
+            KeyboardInterrupt: Always — after the engine stop, so the awaiting
+                coroutine unwinds through the async-exit teardown.
+
         """
         self._stop_engine()
         raise KeyboardInterrupt

@@ -752,7 +752,7 @@ lint-markdown:
 
 # Lint Python files
 lint-python:
-    uv run --no-sync ruff check --fix src/
+    uv run --no-sync ruff check --fix src/ examples/
     uv run --no-sync ty check --fix --no-progress src/
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
@@ -762,7 +762,7 @@ lint-comment-hygiene:
     scripts/hooks/comment-hygiene.sh
 
 lint-python-check:
-    uv run --no-sync ruff check src/
+    uv run --no-sync ruff check src/ examples/
     uv run --no-sync ty check --no-progress src/
 
 # Dead-code detector (off the gate — output is a triage list). Each hit

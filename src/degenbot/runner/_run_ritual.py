@@ -18,11 +18,9 @@ never states.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from degenbot.arbitrage import RetryPolicy
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner._session_watch import SessionEndVerdict
@@ -34,6 +32,9 @@ from degenbot.runner.build_paths import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from degenbot.arbitrage import RetryPolicy
     from degenbot.runner.bot_runner import BotRunner
 
 
@@ -89,7 +90,12 @@ class RunRitual:
     # ── The transition table ──────────────────────────────────────────
 
     def _expect(self, expected: _RitualState) -> None:
-        """Admit only the transition whose state is current."""
+        """Admit only the transition whose state is current.
+
+        Raises:
+            RunRitualError: If the ritual is in any other state.
+
+        """
         if self._state is not expected:
             msg = f"run ritual move {expected.value} refused: the ritual is in {self._state.value}"
             raise RunRitualError(msg)
@@ -200,6 +206,10 @@ class RunRitual:
         per-pool gates are race-free (frozen-block pin); in-loop drift
         detection stays solver-side. The analyzer keys ``verify_basis`` on
         the per-pool ``[verify-seed]``/``[verify-drain]`` lines.
+
+        Returns:
+            The session-end verdict.
+
         """
         self._expect(_RitualState.MAIN_LOOP)
         host = self._host
@@ -217,7 +227,12 @@ class RunRitual:
         return verdict
 
     async def run(self) -> SessionEndVerdict:
-        """Drive the five transitions in order — the ritual's only legal driver."""
+        """Drive the five transitions in order — the ritual's only legal driver.
+
+        Returns:
+            The session-end verdict from the main loop.
+
+        """
         self.attach_consumer()
         self.attach_watch()
         self.resume()
@@ -239,6 +254,11 @@ class RunRitual:
         context keeps constructing through the Rust ``PoolBuilder``).
         Injected builders (tests) skip context construction (fakes lack the
         builder surface) and receive ``context=None``.
+
+        Returns:
+            The ``(construction context, registration pipeline)`` pair, or
+            ``(None, None)`` for an injected builder.
+
         """
         host = self._host
         if host.path_builder is not None:
@@ -278,10 +298,16 @@ class RunRitual:
         propagates out of ``build_paths`` and is surfaced by the fail-fast
         channel (the watch's ``RegistrationFailed`` verdict).
 
+        Raises:
+            asyncio.CancelledError: Re-raised after the partial trim when
+                registration is torn down mid-flight (main-loop shutdown,
+                Ctrl-C, or a fatal sim trap).
+
         Cooperative concurrency note: this coroutine runs on the asyncio loop,
         so it interleaves with the consumer only at ``await`` points
         (synchronous ``build_pool`` FFI calls still briefly occupy the loop
         thread). The pump itself solves on its own tokio thread regardless.
+
         """
         host = self._host
         try:

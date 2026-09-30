@@ -81,7 +81,7 @@ extend-select = [
     "SLF",      # flake8-self
     "SIM",      # flake8-simplify
     "TID",      # flake8-tidy-imports
-    "TCH",      # flake8-type-checking
+    "TC",       # flake8-type-checking
     "ARG",      # flake8-unused-arguments
     "PTH",      # flake8-use-pathlib
     "FLY",      # flynt
@@ -105,8 +105,8 @@ ignore = [
     "missing-trailing-comma",
     "error-suffix-on-exception-name",
     "docstring-in-stub", # required for IDE to show wrapped Rust code info
-    "non-empty-init-module", # asserts are used often, but not as input validation
-    "assert",
+    "non-empty-init-module",  # populated __init__.py facade modules are deliberate
+    "assert",  # asserts are used often, but not as input validation
 ]
 logger-objects = [
     "logging.logger",
@@ -117,26 +117,6 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/aave_replay_diff.py" = [
-    "any-type",   # the drive/compare JSON-report dicts are dict[str, Any]
-    "unused-function-argument",   # CLI dispatchers take unused `args` for argparse's set_defaults
-    "D",        # docstring strictness (Returns:/Raises:/imperative) not enforced on the CLI
-    "DOC",      # pydoclint Returns:/Raises: sections not enforced on the CLI
-    "f-string-in-exception",    # short f-string error messages are fine in a script
-    "import-outside-top-level",  # lazy imports avoid circular dependency with degenbot.provider
-    "too-many-statements-in-try-clause",  # the drive fn's broad try/except is intentional (log+re-raise)
-    "too-many-nested-blocks",  # the bisect loop nests deeply by design
-    "PTH",      # os.path + os.makedirs are fine for the bisect's file-copy logic
-    "unspecified-encoding",  # the JSON-dump file writes use utf-8 implicitly
-    "unnecessary-assign",   # unnecessary-assign for clarity in the drive fn
-    "hardcoded-password-string",     # "DEGENBOT_RPC_HTTP_CHAINID_1" is an envvar NAME, not a password
-    "try-except-pass",     # the optional event-fetcher import's try/except/pass is intentional
-    "hardcoded-sql-expression",     # the table-name is from a hardcoded _TABLE_ORDER list, not user input
-    "SIM",      # the compare dict-comprehensions are clarity over comprehension
-    "raise-vanilla-args",   # raise-vanilla-args on the SystemExit messages
-    "raise-within-try",   # re-raising the worker-thread error from within the try is intentional
-    "print",     # the CLI prints its summary to stdout by design
-]
 "tests/pathfinding/fixtures/generate_mainnet_snapshot.py" = [
     # The snapshot generator copies rows verbatim out of the live operator DB
     # with raw sql (ATTACH + INSERT SELECT): ORM re-inserts would
@@ -163,21 +143,6 @@ allow-star-arg-any = true
     "print",     # print
     "E402",      # tests/conftest.py pins DEGENBOT_CONFIG above the degenbot import (the FFI init installs the ambient holder config at import)
 ]
-"src/degenbot/provider/factory.py" = [
-    "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
-]
-"src/degenbot/provider/sync.py" = [
-    "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
-]
-"src/degenbot/provider/async_provider.py" = [
-    "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
-]
-"src/degenbot/provider/offline_provider.py" = [
-    "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
-]
-"src/degenbot/registry/deployment_loader.py" = [
-    "import-outside-top-level",  # lazy imports avoid circular dependency (pool classes → uniswap → this module)
-]
 "src/degenbot/operator/operator_channel.py" = [
     "import-outside-top-level",  # the fleet mirror home is lazy: the transport module stays independent of the compiled extension and the home mints on the first fleet-posture op
 ]
@@ -185,31 +150,19 @@ allow-star-arg-any = true
     "import-outside-top-level",  # the _ffi import is lazy so the receipt helpers work (and the module imports) even where the extension is stale/broken
     "print",     # python -m degenbot.build_info prints its summary to stdout/stderr by design
 ]
-"src/degenbot/uniswap/deployments.py" = [
-    "import-outside-top-level",  # lazy import avoids circular dependency (deployment_loader → pool classes → this module)
-]
 "src/degenbot/logging.py" = [
     "PLR6301",  # `logging.Formatter.format(self, record)` is the protocol-signature override; the body legitimately ignores `self`
 ]
 "src/degenbot/runner/**" = [
-    # These rules were carried forward from the ``examples/*`` accommodation the
-    # backrun driver was developed under (epic 5TSYKN relocates it un-rewritten).
-    # The driver is moved with no behavior change, so it inherits the same style
-    # exceptions; each can be re-enabled + cleaned incrementally.
+    # The surviving accommodations, each still live. The retired ones
+    # (docstring style + sections, typing-only imports, unused-argument, and
+    # the never-hit rules) were cleaned in code rather than exempted.
     "any-type",   # driver callables take `Any` (injected builders/consumers, hop dicts)
-    "ARG",      # signatures keep meaningful-but-unused slots (e.g. v4_snapshot symmetry)
-    "function-uses-loop-variable",     # registration _consume's lambdas capture the loop-bound `step`
     "blind-except",   # registration sim-loops catch broad Exception to log + continue per-path
-    "D",        # docstring strictness (imperative / blank-line-after-summary)
-    "DOC",      # pydoclint Return:/Raises: sections
-    "boolean-type-hint-positional-argument",   # boolean flag args (dry_run / live toggles)
     "import-outside-top-level",  # lazy imports where needed
-    "import-private-name",  # imports the private ``degenbot._ffi`` seam (mark_progress)
-    "too-many-positional-arguments",  # public dispatch/consume signatures carry many positional args
     "magic-value-comparison",  # driver constants (revert layout, block/fee thresholds) read cleaner inline
     "global-statement",  # module-top tunables / bytecode cache reassignment (intentional)
     "too-many-statements-in-try-clause",  # guarded verify try-blocks contain many statements by design
-    "TC",       # typing-only imports stay plain (cleaned by TC003 where trivial)
 ]
 # Generated stubs (ADR-066): the `_ffi/*.pyi` tree is machine-emitted from the
 # cdylib's PyO3 introspection chunks, then post-processed by the gen-stubs
@@ -229,18 +182,12 @@ allow-star-arg-any = true
     "A001",     # builtin-variable-shadowing: stub names mirror the Rust types verbatim (stubtest compares names), so a Rust `Exception` type stays `Exception`
 ]
 "examples/*" = [
-    "any-type",   # the FFI/live-bot callables take `Any` (e.g. injected builders/consumers)
-    "ARG",      # example function signatures keep meaningful-but-unused slots (logging, fakes)
-    "blind-except",   # example sim loops catch broad Exception to log + continue per-path
-    "D",        # docstring strictness (D100/D103/D104/D105/D107/D205/D413) not enforced on demo scripts
-    "DOC",      # pydoclint Return:/Raises: sections not enforced on demo scripts
-    "boolean-type-hint-positional-argument",   # boolean flag args (dry_run / live toggles) are fine in a CLI example
-    "import-outside-top-level",  # lazy imports avoid circular deps + resolve under script-mode sys.path
-    "import-private-name",  # the example intentionally imports the private `degenbot._ffi` seam
-    "too-many-positional-arguments",  # internal example functions carry many positional args (dispatcher plumbing)
-    "magic-value-comparison",  # example constants (revert layout, block/fee thresholds) read cleaner inline
-    "global-statement",  # module-top tunables are reassigned from CLI args (intentional)
-    "too-many-statements-in-try-clause",  # the guarded sim-verify try-blocks contain many statements by design
+    # Demo scripts over the private ``degenbot._ffi`` seam, folded into the
+    # lint gate with only these deliberate relaxations (each verified live):
+    "any-type",   # the FFI seam hands back `Any` (e.g. solve results)
+    "import-outside-top-level",  # lazy imports resolve under script-mode sys.path
+    "import-private-name",  # the demos intentionally import the private `degenbot._ffi` seam
+    "too-many-statements-in-try-clause",  # the demo main's one guarded body is broad by design
 ]
 
 [tool.pytest.ini_options]
@@ -348,4 +295,3 @@ profile = "dev"
 # wheels use `--release --features pyo3/extension-module` and likewise exclude
 # all development-only profiling, telemetry, allocator, and mimalloc features.
 python-packages = ["degenbot"]
-

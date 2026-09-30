@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.calculations import next_base_fee
@@ -36,7 +35,7 @@ from degenbot.runner._sim_submit import BatchWork
 from degenbot.utils.tasks import cancel_and_reap
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncIterator, Sequence
 
     from degenbot.runner.bot_runner import _SessionState
 
@@ -60,6 +59,12 @@ async def consume_result_batches(
     The block stream is always injected - the coordinator owns the once-only
     ``Bot.block_stream()`` handle (ADR-027) and passes it in. The result
     iterator is injectable for testing; production pulls it from the engine.
+
+    Raises:
+        RuntimeError: If the session's resolved state cannot serve dispatch
+            (missing sim-submit pipeline, unbuilt sim context, or a provider
+            that cannot submit).
+
     """
     bot_logger.info("[consumer] Starting - block stream + result batches from Rust pump")
     # SIMPIPE option A: K-way concurrent sims + single ordered submitter
@@ -152,7 +157,13 @@ def _reprime(
     fut: asyncio.Task[Any],
     label: str,
 ) -> tuple[asyncio.Task[Any] | None, bool]:
-    """Schedule the next pull; return (task_or_None, stream_ended)."""
+    """Schedule the next pull.
+
+    Returns:
+        The next-pull task (``None`` once the stream ended), and whether the
+        stream ended.
+
+    """
     try:
         fut.result()
     except StopAsyncIteration:
@@ -273,7 +284,12 @@ async def _drain_batch_outcomes(session: _SessionState, executor: Any) -> None:
 
 
 def _engine_result(item: Any, solve_block: int) -> RawEngineResult:
-    """Shape one solver-result row into the named assembly-seam record."""
+    """Shape one solver-result row into the named assembly-seam record.
+
+    Returns:
+        The typed engine-result row, amounts coerced from the wire values.
+
+    """
     path_id, opt_input, profit, hop_outs, consumed_ins, state_nonces = item
     return RawEngineResult(
         path_id=int(path_id),

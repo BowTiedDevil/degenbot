@@ -53,8 +53,13 @@ _POOL_KIND_LABEL: dict[PoolKind, str] = {
 
 
 def _family_label(family: Any) -> str:
-    """Render one HopFields family: the PoolKind label, or the lenient default."""
+    """Render one HopFields family: the PoolKind label, or the lenient default.
 
+    Returns:
+        The PoolKind label for a taxonomy member, else the ``str()`` of the
+        value.
+
+    """
     if isinstance(family, PoolKind):
         return _POOL_KIND_LABEL[family]
     return str(family)
@@ -97,6 +102,9 @@ def hop_fields(hop: dict[str, Any], *, default: Any = _UNSET) -> HopFields:
     ONE point; consumers compare members. With ``default`` the read is lenient
     (``dict.get`` semantics, every field falling back to that value) — the
     failure-fixture dump renders malformed hops instead of raising on them.
+
+    Returns:
+        The typed hop-fields view.
 
     Raises:
         ValueError: On a family string outside the PoolKind taxonomy in strict
@@ -143,11 +151,12 @@ def hop_fields(hop: dict[str, Any], *, default: Any = _UNSET) -> HopFields:
 def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> str:
     """One-line summary of hop input→output tokens for sim-fail diagnostics.
 
-
     Reads plain dicts (the ``outcome.path_infos`` render shape).
 
-    """
+    Returns:
+        The space-joined per-hop token summaries.
 
+    """
     parts: list[str] = []
 
     for h in hops:
@@ -161,7 +170,6 @@ def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) 
 def _render_sim_summary(outcome: _SimOutcome) -> None:
     """Render the ``[sim]`` line from ``DispatchOutcome`` fields (D4 stay-Python).
 
-
     Ports the prior ``[sim] N candidates: X ok (Y profitable, Z below
 
     threshold), W failed, V exceptions …`` summary. Appends the
@@ -169,7 +177,6 @@ def _render_sim_summary(outcome: _SimOutcome) -> None:
     suppressed/thin/divergent drops when non-zero.
 
     """
-
     profitable = outcome.gas_profitable
 
     best_net = max((c.net_profit for c in profitable), default=0)
@@ -211,7 +218,6 @@ def _render_sim_summary(outcome: _SimOutcome) -> None:
 
 def _render_profit_logs(outcome: _SimOutcome) -> None:
     """Render the ``[profit]`` per-path hop-detail log (D4 stay-Python)."""
-
     for cand in outcome.gas_profitable:
         path_info = outcome.path_infos.get(cand.path_id)
 
@@ -253,7 +259,6 @@ def _dump_failure_fixture(
     current_block: int,
 ) -> None:
     """Dump the full hop detail for a failing candidate — the sim-failure trap."""
-
     path_id = rec["path_id"]
 
     captured = rec.get("captured_swaps") or []
@@ -315,8 +320,9 @@ def _render_sim_failures(
     exit_ignore_buckets: str,
     sim_failure_action: FailureAction | None = None,
 ) -> None:
-    """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted / failed
-    candidate (D3). Capped at :data:`_SIM_FAIL_RENDER_CAP` records.
+    """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted or failed candidate (D3).
+
+    Capped at :data:`_SIM_FAIL_RENDER_CAP` records.
 
     ``sim_exit_on_fail`` and ``exit_ignore_buckets`` are the resolved
     ``simulation.*`` values the caller threads down: the tripwire never reads
@@ -489,7 +495,6 @@ def _enforce_sim_failure_policy(  # ruff:ignore[too-many-arguments]
 
 def _render_fot_tokens(dispatcher: Dispatcher, current_block: int) -> None:
     """Render one ``[fot]`` line per confirmed fee-on-transfer token."""
-
     fot_tokens = dispatcher.fot_tokens(current_block)
 
     for token in fot_tokens:
@@ -502,19 +507,16 @@ def _render_fot_tokens(dispatcher: Dispatcher, current_block: int) -> None:
 def format_failure_breakdown(buckets: dict[str, int]) -> str:
     """Render a ``name=count`` breakdown, highest count first (name breaks ties).
 
-
     Returns ``""`` for an empty tally so the caller can skip the suffix when no
 
     failures were classified.
 
 
     Returns:
-
         ``"name=count name=count…"`` ordered by descending count, or ``""``.
 
 
     """
-
     if not buckets:
         return ""
 
@@ -543,7 +545,6 @@ def format_sim_diag_line(
     window: SimDiagWindow,
 ) -> str:
     """Render one always-on ``[sim-diag]`` JSON line per reverted candidate.
-
 
     Compares the inspector's captured
 
@@ -582,12 +583,10 @@ def format_sim_diag_line(
 
 
     Returns:
-
         The full ``[sim-diag] ``-prefixed JSON line string.
 
 
     """
-
     payload = {
         "path_id": path_id,
         "path_type": path_type,

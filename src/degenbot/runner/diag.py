@@ -26,7 +26,8 @@ class DiagConfig:
 
     No field has a default: the core schema declaration owns them (zero is
     OFF, the production posture), so a second literal here could drift from
-    what an operator set."""
+    what an operator set.
+    """
 
     #: >0 arms the tracemalloc diff thread (one snapshot per interval).
     tracemalloc_secs: float
@@ -165,6 +166,10 @@ def arm_diagnostics(cfg: DiagConfig) -> list[str]:
     Zero-config arms nothing — production default. Called once per session
     from the cockpit's ``start()``; idempotent across runners (threads are
     daemon and probe-scoped).
+
+    Returns:
+        The armed probe names, in stable arm order.
+
     """
     armed: list[str] = []
     if cfg.tracemalloc_secs > 0:

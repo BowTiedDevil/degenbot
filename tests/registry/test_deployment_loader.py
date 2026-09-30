@@ -28,6 +28,7 @@ from degenbot.registry.deployment_loader import (
     load_deployments,
     register_from_deployments,
 )
+from degenbot.registry.deployment_records import KNOWN_POOL_TYPES
 from degenbot.registry.pool_type import pool_type_registry
 
 _RECORDS = load_deployments()
@@ -351,14 +352,14 @@ class TestOverlayConfigFailsLoudly:
 
     @staticmethod
     def _select_config_file(monkeypatch, path) -> None:
-        """Point the loader's raw-table read at a specific operator file.
+        """Point the raw-table read at a specific operator file.
 
         The installed verdict is frozen at FFI init (see the freeze test
-        above), so in-process tests swap the loader's ``config_file_path``
-        import — the same seam the loader itself reads through.
+        above), so in-process tests swap the data module's ``config_file_path``
+        import — the same seam ``load_deployments`` reads through.
         """
         monkeypatch.setattr(
-            "degenbot.registry.deployment_loader.config_file_path",
+            "degenbot.registry.deployment_records.config_file_path",
             lambda: None if path is None else str(path),
         )
 
@@ -486,3 +487,8 @@ class TestRegisterFromDeployments:
         identity = reg.get_v2_identity(1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
         assert identity is not None
         assert identity.variant == "uniswap-v2"
+
+
+def test_pool_type_map_keys_match_known_pool_types() -> None:
+    """The loader's companion class map covers exactly the leaf's declared keys."""
+    assert set(_pool_type_map()) == KNOWN_POOL_TYPES

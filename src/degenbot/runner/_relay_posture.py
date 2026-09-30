@@ -59,12 +59,16 @@ class RelayPosture:
 
     @staticmethod
     def reserve_base(local_nonce: int, *, size: int) -> int:
-        """Deprecated passthrough; nonces are issued by the Rust authority.
+        """Keep the legacy passthrough signature; nonces are issued by the Rust authority.
 
         Retained only so an out-of-tree caller does not silently lose the
         method. The caller's nonce is returned unchanged and no reservation
         is recorded: the settlement seam seeds the authority from the chain
         read and lets the authority lease the nonce.
+
+        Returns:
+            The caller's nonce, unchanged.
+
         """
         del size  # the reservation range no longer exists
         warnings.warn(

@@ -154,9 +154,9 @@ def test_a_v4_pool_is_one_companion_across_the_two_registry_views() -> None:
         )
         is pool
     )
-    assert (
-        pools.get(chain_id=CHAIN_ID, pool_address=V4_MANAGER, pool_id=V4_POOL_ID) is pool
-    ), "the V4 pool registered through the managed registry is visible in PoolRegistry"
+    assert pools.get(chain_id=CHAIN_ID, pool_address=V4_MANAGER, pool_id=V4_POOL_ID) is pool, (
+        "the V4 pool registered through the managed registry is visible in PoolRegistry"
+    )
     assert (
         managed.get(chain_id=CHAIN_ID, pool_manager_address=V4_MANAGER, pool_id=V4_POOL_ID) is pool
     )

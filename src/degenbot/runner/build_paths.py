@@ -16,13 +16,10 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import Counter, deque
-from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool
 from degenbot.arbitrage import RetryPolicy
-from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.builders.request import BuildManagedPoolRequest, ConstructionRoute
 from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
@@ -58,6 +55,10 @@ from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import AsyncGenerator, AsyncIterable, Callable
+
+    from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool
+    from degenbot.arbitrage.engine_registry import EngineRegistry
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -82,13 +83,19 @@ _POOL_KIND_TO_VERSION: dict[PoolKind, str] = {
 def _parse_permutation_filter(
     perms: set[str] | None,
 ) -> list[set[PoolKind] | None] | None:
-    """Convert a set of permutation strings like {'V3-V4-V3'} into a
-    pool_type_per_depth list suitable for find_paths_async.
+    """Convert permutation strings like {'V3-V4-V3'} into a pool_type list.
 
-    Returns None if perms is None/empty (no filter).
-    Returns a list of sets, one per depth, where each set contains the
-    allowed pool families at that depth. If all permutations agree
-    that any type is allowed at a depth, that entry is None.
+    The result is a pool_type_per_depth list suitable for ``find_paths_async``.
+
+    Returns:
+        The per-depth allowed-family list, or ``None`` when ``perms`` is
+        None/empty (no filter). An entry is ``None`` when every permutation
+        allows any type at that depth.
+
+    Raises:
+        ValueError: On an unknown version tag, or permutations of unequal
+            depth.
+
     """
     if not perms:
         return None
@@ -113,7 +120,13 @@ def _parse_permutation_filter(
 
 
 def _pool_types_from_filter(perms: set[str] | None) -> list[PoolKind]:
-    """Derive the typed pool families needed by the permutation filter."""
+    """Derive the typed pool families needed by the permutation filter.
+
+    Returns:
+        One entry per pool family the filter's permutations reference (all
+        families when there is no filter).
+
+    """
     if not perms:
         return list(_POOL_VERSION_MAP.values())
 
@@ -187,12 +200,15 @@ def resolve_directions(
     re-raises the core's refusal as :class:`DirectionResolutionError`.
     Resolution is kind-blind. V4
     pools use NATIVE_CURRENCY_ADDRESS (address(0)) for ETH, which the core
-    treats as equivalent to WETH — the profit token is always WETH.
+    treats as equivalent to WETH — the profit token is always WETH. The
+    core's refusal surfaces as :class:`DirectionResolutionError` — a hop
+    carries neither tracked token, or the cycle does not close: an invariant
+    violation (wrong pool built, stale subgraph, or a builder bug), never a
+    skip.
 
-    Raises:
-        DirectionResolutionError: a hop carries neither tracked token, or
-            the cycle does not close — an invariant violation (wrong pool
-            built, stale subgraph, or a builder bug), never a skip.
+    Returns:
+        One zero-for-one value per hop, in hop order.
+
     """
     hops = [(pool.token0.address, pool.token1.address, str(pool)) for pool in pools]
     return core_resolve_directions(hops, input_token_address, WETH_ADDRESS)
@@ -236,6 +252,10 @@ class ConstructionContext:
         Resolves the route policy (the mainnet V3 fork factories in policy
         order, generic builder rung armed) and builds WETH once. The core
         route entry owns everything else about construction.
+
+        Returns:
+            The construction context.
+
         """
         construction_route = ConstructionRoute(
             factories=(
@@ -297,6 +317,12 @@ class PathRegistrationPipeline:
         discovery_batch_size: int,
         progress_interval_secs: float | None = None,
     ) -> None:
+        """Bind the construction context, engine registry, and resolved budgets.
+
+        Raises:
+            RuntimeError: If a resolved budget is inconsistent at bind time.
+
+        """
         self.constr_ctx = context
         self.constr_bot = context.bot
         self.constr_chain_id = context.chain_id
@@ -406,7 +432,7 @@ class PathRegistrationPipeline:
         path_steps: Any,
         directions: list[bool] | None = None,
     ) -> RegistrationUnitOutcome:
-        """The per-path registration unit — SYNC, runs on a fleet seat.
+        """Run the per-path registration unit — SYNC, on a fleet seat.
 
         One unit = one path = one receipt. Hop builds ride the Rust
         single-flighted build path, the V3/V4 verify lifecycles run BLOCKING
@@ -414,6 +440,18 @@ class PathRegistrationPipeline:
         and the engine FFI owns the path dedup + cap. Counters are NEVER
         mutated here (concurrent seats): the returned outcome travels back to
         the single-loop driver, which folds it into the summary.
+
+        Returns:
+            The unit outcome (registered / skip / reject / cap).
+
+        Raises:
+            DirectionResolutionError: On a direction invariant violation —
+                the loud-abort contract.
+            VerificationMismatchError: On a verify truth mismatch — the
+                loud-abort contract.
+            VerificationRpcError: On a verify RPC failure — the loud-abort
+                contract.
+
         """
         steps = list(path_steps)
         pool_type_strs = self._hop_pool_types(steps)
@@ -467,7 +505,13 @@ class PathRegistrationPipeline:
 
     @staticmethod
     def _hop_pool_types(steps: list[Any]) -> list[str]:
-        """Map typed pool families to registration version labels."""
+        """Map typed pool families to registration version labels.
+
+        Returns:
+            The version label per step (``""`` when the step's family is
+            unknown to the map).
+
+        """
         return [_POOL_KIND_TO_VERSION.get(step.type, "") for step in steps]
 
     def _memoized_unregistrable_outcome(
@@ -479,6 +523,11 @@ class PathRegistrationPipeline:
 
         The pathological DFS region re-yielded one refused pool alongside
         thousands of candidate paths; the ledger owns the record.
+
+        Returns:
+            The memoized refusal outcome for the path, or ``None`` when no
+            hop carries a stable memoized refusal.
+
         """
         for step, pt in zip(steps, pool_type_strs, strict=True):
             memo = self._ledger.unregistrable_record(self._ledger.pool_memo_key(step, pt))
@@ -501,6 +550,15 @@ class PathRegistrationPipeline:
         pre-RPC by the FFI build call as a typed refusal; a stable refusal is a
         pool fact and memoizes its hop identity, while a transient failure
         stays retryable.
+
+        Returns:
+            The built pools, or a skip outcome for a malformed hop or an
+            already-classified build refusal.
+
+        Raises:
+            UnsupportedPoolFamilyError: On a family-level stable refusal —
+                the route's loud arm; never swallowed or counted as a skip.
+
         """
         pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] = []
         for step, pt in zip(steps, pool_type_strs, strict=True):
@@ -570,6 +628,15 @@ class PathRegistrationPipeline:
         (reject), or a hop signature already registered (registered dup).
         The deployment-policy gate and the dup fast-path both sit in front of
         ALL verify/RPC work.
+
+        Returns:
+            The ``(engine_hops, hop_sig)`` plan, or an early
+            ``RegistrationUnitOutcome``.
+
+        Raises:
+            PathRejectedError: When the deployment-policy gate denies the
+                path (the deny memoizes, then re-raises).
+
         """
         zfo_list = self._resolve_path_directions(pools, directions)
         if zfo_list is None:
@@ -692,6 +759,16 @@ class PathRegistrationPipeline:
         never downgraded to a register-fail, and a transient register failure
         is deliberately NOT negatively memoized (a raced build or blip must
         stay retryable).
+
+        Returns:
+            The registration outcome (registered / cap / register-fail).
+
+        Raises:
+            PathRejectedError: Re-raised after the deny memoizes.
+            DirectionResolutionError: The loud-abort contract.
+            VerificationMismatchError: The loud-abort contract.
+            VerificationRpcError: The loud-abort contract.
+
         """
         try:
             _path_id, created = reg.register_crawl_path(engine_hops)
@@ -727,7 +804,12 @@ class PathRegistrationPipeline:
     def _pool_engine_id(
         pool: UniswapV2Pool | UniswapV3Pool | UniswapV4Pool,
     ) -> int:
-        """The engine hop key off a build handle (ADR-006 D3: one pool_id)."""
+        """Return the engine hop key off a build handle (ADR-006 D3: one pool_id).
+
+        Returns:
+            The core pool id serving as the hop key.
+
+        """
         return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
     def _record_skip(
@@ -801,15 +883,14 @@ class PathRegistrationPipeline:
         that replaced the retired executor-drain: all cloned
         ``Arc<SnapshotDb>`` handles acquired inside units are dropped before
         ``build_paths`` returns, keeping the close_snapshot_tx()
-        Arc::try_unwrap canary quiet).
+        Arc::try_unwrap canary quiet). The unit's fatal exception
+        (VerificationMismatchError / VerificationRpcError /
+        DirectionResolutionError) propagates through the receipt and aborts
+        the crawl loudly — the "shut down" contract, unchanged. On a fatal
+        the crawl stops submitting immediately (outstanding units still
+        finish — fleet units are never cancelled, the Deferrable cordon
+        class).
 
-        Raises:
-            The unit's fatal exception (VerificationMismatchError /
-            VerificationRpcError / DirectionResolutionError) propagates
-            through the receipt and aborts the crawl loudly — the
-            "shut down" contract, unchanged. On a fatal the crawl stops
-            submitting immediately (outstanding units still finish — fleet
-            units are never cancelled, the Deferrable cordon class).
         """
         inflight: deque[Any] = deque()
 
@@ -863,10 +944,14 @@ class PathRegistrationPipeline:
 
         The candidate-cycle set is a pure function of the pool-row structure
         (never of pool state/prices), so the row count + max id of each pool
-        family for this chain suffices to detect structural change. Returns
-        None when no DB handle is attached or the probe fails for any reason
-        (fail-open): the latch stays disabled and every sweep runs — the
-        pre-latch behavior. A failed probe never blocks discovery.
+        family for this chain suffices to detect structural change.
+
+        Returns:
+            The structural edition, or ``None`` when no DB handle is attached
+            or the probe fails (fail-open): the latch stays disabled and
+            every sweep runs — the pre-latch behavior. A failed probe never
+            blocks discovery.
+
         """
         try:
             return db_fetch_graph_edition(str(self.constr_database_path), self.constr_chain_id)
@@ -883,6 +968,10 @@ class PathRegistrationPipeline:
         The latch re-arms itself when the edition changes (pool added or
         removed), when the probe is unavailable, and after any truncated
         sweep.
+
+        Returns:
+            The number of paths processed by the sweep.
+
         """
         edition = self._graph_edition()
         if edition is not None and edition == self._sweep_completed_edition:
@@ -915,11 +1004,15 @@ class PathRegistrationPipeline:
         *,
         find_paths_async: Callable[..., AsyncGenerator[object, None]] = find_paths_async,
     ) -> AsyncGenerator[object, None]:
-        """A single discovery sweep over the DB subgraph (V2/V3/V4 DFS).
+        """Run a single discovery sweep over the DB subgraph (V2/V3/V4 DFS).
 
         ``find_paths_async`` is the discovery producer seam (tests inject a
         recording producer to observe the forwarded batch size); the default
         is the production adapter.
+
+        Returns:
+            The async generator of discovered candidate paths.
+
         """
         return find_paths_async(
             request=PathfindingRequest(
@@ -945,7 +1038,13 @@ class PathRegistrationPipeline:
         pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
         directions: list[bool] | None,
     ) -> list[bool] | None:
-        """Return per-hop directions for `pools` (operator-pinned or resolved)."""
+        """Return per-hop directions for `pools` (operator-pinned or resolved).
+
+        Returns:
+            The per-hop zero-for-one values, or ``None`` when operator-pinned
+            directions disagree with the hop count.
+
+        """
         if directions is not None:
             if len(directions) != len(pools):
                 return None
@@ -964,14 +1063,12 @@ class PathRegistrationPipeline:
         per-path body itself is `_registration_unit` (a seat-thread unit);
         this coroutine is the thin submission + counter-fold seam, which is
         also what keeps the operator surface a "thin Rust submission" —
-        the work happens in Rust-coordinated fleet seats, not on
-        the event loop.
+        the work happens in Rust-coordinated fleet seats, not on the event
+        loop. The unit's fatal exceptions propagate through the receipt
+        (VerificationMismatchError / VerificationRpcError /
+        DirectionResolutionError — the loud shutdown contract), as does any
+        unit panic re-raised through the receipt.
 
-        Raises:
-            The unit's fatal exceptions propagate (VerificationMismatchError
-            / VerificationRpcError / DirectionResolutionError — the loud
-            shutdown contract), as does any unit panic re-raised through the
-            receipt.
         """
         await asyncio.sleep(0)
         # Time-throttled periodic progress summary — fire independently of the

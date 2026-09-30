@@ -43,6 +43,10 @@ def compose_simple_executor(result: Any) -> bytes:
     Reads the typed `SolveResult` view (integer fixed-point u256 amounts) and
     ABI-encodes a `execute(optimal_input, final_output, hop_outputs[])` call via
     the `degenbot.abi`-backed helper. Distinct ABI shape from `cmd_executor`.
+
+    Returns:
+        The ABI-encoded ``execute`` calldata for the foreign contract.
+
     """
     hop_outputs = list(result.hop_outputs)
     final_output = hop_outputs[-1]
@@ -67,6 +71,10 @@ def build_strategy() -> PayloadComposer:
     Probe/Assess/Fee defaults) — the foreign-contract path a Python user adopts.
     `PROBES` here is the declared-probe data a full driver hands the engine;
     nothing threads into the canonical dispatch fan-out.
+
+    Returns:
+        The composed ``PayloadComposer`` strategy for the foreign contract.
+
     """
     return PayloadComposer(compose_simple_executor)
 

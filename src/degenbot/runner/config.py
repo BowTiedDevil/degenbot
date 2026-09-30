@@ -36,7 +36,7 @@ from degenbot.runner.identity import (
 
 
 def _verification_retry_policy(values: ConfigValues) -> RetryPolicy:
-    """The bounded verification retry policy, from the resolved verdict.
+    """Build the bounded verification retry policy from the resolved verdict.
 
     The four ``verify.verify_retry_*`` keys are declared in the core schema
     (``VERIFICATION_RETRY_*`` in the env layer), so the operator file and the
@@ -232,6 +232,7 @@ class ArbitrageConfig:
 
         Raises:
             ValueError: operator identity is missing or a known placeholder in live mode.
+
         """
         operator_address_raw = os.environ.get("OPERATOR_ADDRESS") or ""
         operator_private_key = os.environ.get("OPERATOR_PRIVATE_KEY") or ""

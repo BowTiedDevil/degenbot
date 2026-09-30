@@ -105,6 +105,11 @@ class RegistrationLedger:
         V2/V3 key off the subgraph address; V4 off the pool id (the DB edge
         carries it pre-build, so a refused pool is recognizable without an
         RPC). ``None`` = not memoizable (no identity on this step).
+
+        Returns:
+            The memo key, or ``None`` when the step carries no memoizable
+            identity.
+
         """
         if pool_type == "V4":
             if not step.hash:
@@ -125,6 +130,10 @@ class RegistrationLedger:
         fact for every family. Any other exception is transient (retryable)
         even when its class name happens to match a stable refusal's. The
         detail text rides the record for logging and never becomes a label.
+
+        Returns:
+            The typed refusal view (kind label + detail text).
+
         """
         failure_kind = "transient"
         for exc_type, kind in _FAILURE_KINDS:
@@ -140,7 +149,12 @@ class RegistrationLedger:
     # ── registered-path memo ──
 
     def path_registered(self, hop_sig: HopSignature) -> bool:
-        """True when this exact hop signature already completed registration."""
+        """Return True when this exact hop signature already completed registration.
+
+        Returns:
+            True when the hop signature is in the registered-path memo.
+
+        """
         return self._core.path_registered(hop_sig)
 
     def memoize_registered_path(self, hop_sig: HopSignature) -> None:
@@ -150,7 +164,12 @@ class RegistrationLedger:
     # ── verify-once pool memo ──
 
     def pool_verified(self, key: str) -> bool:
-        """True when this pool's verify lifecycle already completed."""
+        """Return True when this pool's verify lifecycle already completed.
+
+        Returns:
+            True when the pool key is in the verify-once memo.
+
+        """
         return self._core.pool_verified(key)
 
     def memoize_verified_pool(self, key: str) -> None:
@@ -160,7 +179,12 @@ class RegistrationLedger:
     # ── unregistrable-pool memo ──
 
     def unregistrable_record(self, key: str | None) -> UnregistrablePoolRecord | None:
-        """The memoized stable refusal for a pool key, or None."""
+        """Return the memoized stable refusal for a pool key, or None.
+
+        Returns:
+            The stable refusal record, or ``None`` when the key has none.
+
+        """
         return self._core.unregistrable_record(key)
 
     def memoize_unregistrable(
@@ -176,7 +200,12 @@ class RegistrationLedger:
     # ── rejected-path memo ──
 
     def path_rejected(self, hop_sig: HopSignature) -> bool:
-        """True when this hop signature already hit a deterministic deny."""
+        """Return True when this hop signature already hit a deterministic deny.
+
+        Returns:
+            True when the hop signature is in the rejected-path memo.
+
+        """
         return self._core.path_rejected(hop_sig)
 
     def memoize_rejected_path(self, hop_sig: HopSignature) -> None:

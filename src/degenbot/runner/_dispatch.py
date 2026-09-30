@@ -27,10 +27,10 @@ from degenbot.runner._render import (
     _render_sim_summary,
     _SimOutcome,
 )
-from degenbot.runner.config import ArbitrageConfig
 
 if TYPE_CHECKING:
     from degenbot.runner.bot_runner import _SessionState
+    from degenbot.runner.config import ArbitrageConfig
 
 from degenbot.dispatch import (
     AssemblyVerdict,
@@ -82,6 +82,10 @@ def _resolve_executor_runtime_path(cfg: ArbitrageConfig) -> pathlib.Path:
        (``<root>/src/degenbot/runner/dispatch.py`` -> ``<root>``), then
        ``contracts/<file>``. A wheel install has no such candidate — the
        operator must pass ``executor_runtime`` explicitly.
+
+    Returns:
+        The resolved bytecode-file path (existence is not checked here).
+
     """
     if cfg.executor_runtime is not None:
         return pathlib.Path(cfg.executor_runtime)
@@ -98,6 +102,14 @@ def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
     The bytecode has all 5 immutable slots baked in: OWNER_ADDR, WETH_ADDR,
     POOL_MANAGER_ADDR, and 2 precomputed delta slots (WETH, NATIVE).
     See contracts/recompile.py for the full layout.
+
+    Returns:
+        The 0x-prefixed hex runtime bytecode text.
+
+    Raises:
+        RuntimeError: If the bytecode file does not exist.
+        ValueError: If the file's contents are not 0x-prefixed hex text.
+
     """
     bytecode_path = _resolve_executor_runtime_path(cfg)
     if not bytecode_path.exists():
@@ -179,6 +191,10 @@ class MergedOutcome:
         the pool-key derivation and threshold categorization the renderers
         display are Rust-owned end to end. The pre-assembly skip verdicts
         carry their display-only ``[sim-none]`` log here.
+
+        Returns:
+            The merged render view for the batch.
+
         """
         gas_profitable: list[_RenderCandidate] = []
         gas_unprofitable_count = 0
@@ -257,7 +273,7 @@ def _render_outcome(
     outcome: _SimOutcome,
     current_block: int,
 ) -> None:
-    """The display-only renderers over a sim outcome (``stays-python``)."""
+    """Render the display-only view over a sim outcome (``stays-python``)."""
     _render_sim_summary(outcome)
     _render_sim_failures(
         outcome,
@@ -305,7 +321,13 @@ class SubmissionSmoke:
     last_warn: float | None = None
 
     def observe(self, *, vetoed: bool, now: float) -> SubmissionSmokeVerdict:
-        """Advance the smoke FSM by one batch and return the typed verdict."""
+        """Advance the smoke FSM by one batch and return the typed verdict.
+
+        Returns:
+            The smoke verdict for this batch (``QUIET``, ``WARN``, or
+            ``STREAK``).
+
+        """
         if not vetoed:
             self.streak = 0
             return SubmissionSmokeVerdict.QUIET
@@ -323,7 +345,13 @@ async def _resolve_relay_providers(
     relay_urls: list[str],
     relay_providers: Any,
 ) -> list[Any]:
-    """Resolve this batch's relay broadcast providers."""
+    """Resolve this batch's relay broadcast providers.
+
+    Returns:
+        One Alloy-backed broadcast provider per relay URL (the cached
+        fan-out rebuilt when the URL list changes).
+
+    """
     if relay_providers is not None:
         broadcast_providers = [
             relay_provider.as_async_alloy() for relay_provider in relay_providers
@@ -353,7 +381,12 @@ def _render_submit_records(
     *,
     logger: Any = bot_logger,
 ) -> dict[str, int]:
-    """Render one log line per submit record; return the skip-reason histogram."""
+    """Render one log line per submit record.
+
+    Returns:
+        The skip-reason histogram over the batch's submit records.
+
+    """
     skip_histogram: dict[str, int] = {}
     for record in records:
         if isinstance(record, SkippedRecord):

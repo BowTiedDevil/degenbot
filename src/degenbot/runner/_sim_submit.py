@@ -62,6 +62,14 @@ async def build_batch_executor(session: _SessionState) -> BatchExecutor:
     cannot name (the run-mode stance, the relay posture's broadcast fan-out,
     the nonce seed). The construction-time chain read seeds the Rust nonce
     authority's lane; the hosted per-head reconcile maintains it afterwards.
+
+    Returns:
+        The constructed batch executor.
+
+    Raises:
+        RuntimeError: If the session has no sim context or the provider is
+            not Alloy-backed (nothing can submit).
+
     """
     sim_ctx = session.sim_ctx
     if sim_ctx is None:

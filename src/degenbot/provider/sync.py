@@ -16,15 +16,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self
 
+from degenbot.provider._rust import RustAlloyProvider
 from degenbot.provider.block_helpers import block_timestamp_from, resolve_block_tag
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
-    # ADR-013: the Rust pyclass is imported only for annotations here; the
-    # runtime binding lives in the package ``__init__`` barrier.
     from collections.abc import Callable
 
-    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.rpc_types import (
         BlockData,
@@ -560,10 +558,6 @@ class AlloyProvider(
         chain_id: int | None = None,
     ) -> None:
         """Initialize the instance."""
-        # The package barrier binds the Rust pyclass; retrieve it lazily so
-        # this module can be imported during package initialization.
-        from degenbot.provider import RustAlloyProvider
-
         # Initialize Rust provider
         self._provider = RustAlloyProvider(
             rpc_url=rpc_url,

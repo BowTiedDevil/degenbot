@@ -20,12 +20,12 @@ from typing import TYPE_CHECKING
 from degenbot.config import resolve_chain_id, resolve_http_rpc_uri
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider import ChainMismatchError
+from degenbot.provider.async_provider import AsyncAlloyProvider
+from degenbot.provider.sync import AlloyProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
-
-    from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 
 
 class ChainIdentityMismatchError(DegenbotValueError, ValueError):
@@ -109,8 +109,6 @@ def get_provider_from_config(
     session_chain_id = resolve_chain_id(chain_id)
     endpoint = resolve_uri(session_chain_id, node=node)
     if provider_factory is None:
-        from degenbot.provider import AlloyProvider
-
         provider_factory = AlloyProvider
     try:
         return provider_factory(endpoint, chain_id=session_chain_id)
@@ -157,8 +155,6 @@ async def get_async_provider_from_config(
     session_chain_id = resolve_chain_id(chain_id)
     endpoint = resolve_uri(session_chain_id, node=node)
     if provider_factory is None:
-        from degenbot.provider import AsyncAlloyProvider
-
         provider_factory = AsyncAlloyProvider.create
     try:
         return await provider_factory(endpoint, chain_id=session_chain_id)

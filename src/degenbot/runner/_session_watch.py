@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from degenbot.utils.tasks import cancel_and_reap
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
 
 
 class SessionEndVerdict(Enum):
@@ -72,14 +74,25 @@ class _WatchSet:
     registration: asyncio.Task[Any] | None = None
 
     def members(self) -> set[asyncio.Task[Any]]:
-        """The tasks to wait on this batch."""
+        """Collect the tasks to wait on this batch.
+
+        Returns:
+            The still-watchable member tasks (registration drops out once
+            it finishes).
+
+        """
         members: set[asyncio.Task[Any]] = {self.consumer, self.watchdog}
         if self.registration is not None:
             members.add(self.registration)
         return members
 
     def on_task_done(self, done: set[asyncio.Task[Any]]) -> _WatchTransition:
-        """Decide the session's next move from one completed wait batch."""
+        """Decide the session's next move from one completed wait batch.
+
+        Returns:
+            The watch transition (next watch-set + verdict kind).
+
+        """
         registration = self.registration
         if registration is not None and registration in done:
             exc = registration.exception()
@@ -131,8 +144,9 @@ class SessionWatch:
         consumer_task: asyncio.Task[Any],
         watchdog_factory: Callable[[], Coroutine[Any, Any, None]],
     ) -> None:
-        """Attach the always-on watch members: the consumer task and the
-        pump-finished watchdog factory.
+        """Attach the always-on watch members.
+
+        The members are the consumer task and the pump-finished watchdog factory.
 
         Called the moment the consumer task exists, so a teardown after any
         later ``run()`` failure (e.g. an inline ``build_paths`` raise) still
@@ -142,15 +156,19 @@ class SessionWatch:
         self._watchdog_factory = watchdog_factory
 
     def attach_registration(self, registration_task: asyncio.Task[Any]) -> None:
-        """Attach the optional registration member (the Sub-B background
-        task). Inline/injected sessions never call this — the watch-set is
-        then exactly {consumer, watchdog}."""
+        """Attach the optional registration member (the Sub-B background task).
+
+        Inline/injected sessions never call this — the watch-set is
+        then exactly {consumer, watchdog}.
+        """
         self._registration_task = registration_task
 
     @property
     def registration_error(self) -> BaseException | None:
-        """The fatal registration error behind the ``RegistrationFailed``
-        verdict (``None`` until then)."""
+        """The fatal registration error behind the ``RegistrationFailed`` verdict.
+
+        ``None`` until then.
+        """
         return self._registration_error
 
     # ── The wait ──────────────────────────────────────────────────────
@@ -165,12 +183,10 @@ class SessionWatch:
 
         Returns:
             The end-state verdict — ``RegistrationFailed`` (caller must
-            re-raise :attr:`registration_error`), ``WatchdogTripped`` (graceful
-            teardown), or ``PumpEnded`` (the session ran to its own end).
+            re-raise :attr:`registration_error`), ``WatchdogTripped``
+            (graceful teardown; a raising watchdog future surfaces here via
+            ``result()``), or ``PumpEnded`` (the session ran to its own end).
 
-        Raises:
-            BaseException: the consumer task's own exception when the session
-                ends through the consumer (the ``PumpEnded`` path).
         """
         consumer_task = self._consumer_task
         assert consumer_task is not None
@@ -243,7 +259,7 @@ class SessionWatch:
             await cancel_and_reap(registration_task)
 
     async def teardown(self) -> None:
-        """The idempotent end-of-session teardown.
+        """Tear down the session idempotently at end-of-session.
 
         Folds the cancel/teardown duties the ``run()`` finally and
         ``__aexit__`` hand-rolled: the registration drain (a no-op once

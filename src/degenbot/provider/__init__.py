@@ -39,7 +39,7 @@ Example:
 """
 
 from degenbot._ffi import ChainMismatchError
-from degenbot._ffi import provider as _ffi_provider
+from degenbot.provider._rust import RustAlloyProvider, RustAsyncAlloyProvider
 from degenbot.provider.async_provider import AsyncAlloyProvider
 from degenbot.provider.factory import (
     ChainIdentityMismatchError,
@@ -50,10 +50,8 @@ from degenbot.provider.offline_provider import OfflineProvider
 from degenbot.provider.sync import AlloyProvider, LogFilter
 
 # ADR-013 barrier: the Rust pyclasses the submodule trees (and
-# offline_provider) construct are bound here so ``degenbot._ffi`` stays
-# importable only from this package ``__init__``.
-RustAlloyProvider = _ffi_provider.AlloyProvider
-RustAsyncAlloyProvider = _ffi_provider.AsyncAlloyProvider
+# offline_provider) construct are bound in :mod:`degenbot.provider._rust` —
+# the one module that imports ``degenbot._ffi`` — and re-exported here.
 
 __all__ = [
     "AlloyProvider",
@@ -62,6 +60,8 @@ __all__ = [
     "ChainMismatchError",
     "LogFilter",
     "OfflineProvider",
+    "RustAlloyProvider",
+    "RustAsyncAlloyProvider",
     "get_async_provider_from_config",
     "get_provider_from_config",
 ]
