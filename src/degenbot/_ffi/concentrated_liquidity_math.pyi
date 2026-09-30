@@ -19,8 +19,9 @@ The companion `src/degenbot/uniswap/math.py` re-exports these as the
 stable import path, decoupling Python consumers from `degenbot._ffi`.
 """
 
-from _typeshed import Incomplete
 from typing import Any, Final
+
+from _typeshed import Incomplete
 
 MAX_TICK: Final[int]
 MIN_TICK: Final[int]

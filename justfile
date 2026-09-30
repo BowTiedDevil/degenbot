@@ -968,16 +968,21 @@ gen-stubs check="":
     trap 'rm -rf "$out"' EXIT
     rust/target/debug/degenbot-stubgen \
         rust/target/debug/libdegenbot_rs.so _ffi "$out"
-    # Pipeline step: ruff-format the generated tree BEFORE the diff/copy
-    # branch. The generator's raw signatures (long single-line defs, `X |None`)
-    # are not format-clean, and `just fmt-check-python` fails on them. Because
-    # the step sits above the branch, `gen-stubs --check` also applies it — the
-    # drift gate's contract (regeneration reproduces the committed tree
-    # byte-for-byte) holds only if the committed tree is pipeline output
-    # inclusive of formatting. `--config` pins the repo's pyproject: the temp
-    # out dir is outside the repo, so ruff's upward config discovery would
-    # otherwise fall back to defaults and the tree would not be reproducible.
+    # Pipeline steps: ruff-format then ruff-check-fix the generated tree
+    # BEFORE the diff/copy branch. The generator's raw signatures (long
+    # single-line defs, `X |None`, unsorted imports) are not format- or
+    # lint-clean, and `just fmt-check-python` / `just lint-python-check` fail
+    # on them. Because the steps sit above the branch, `gen-stubs --check`
+    # also applies them — the drift gate's contract (regeneration reproduces
+    # the committed tree byte-for-byte) holds only if the committed tree is
+    # pipeline output inclusive of formatting and lint fixing. `--config`
+    # pins the repo's pyproject: the temp out dir is outside the repo, so
+    # ruff's upward config discovery would otherwise fall back to defaults
+    # and the tree would not be reproducible. The generated-stub rules the
+    # check pass cannot fix (Rust doc-comment prose) are exempted under the
+    # bare `"*.pyi"` per-file-ignores key, which matches the temp dir too.
     uv run --no-sync ruff format --config pyproject.toml "$out"
+    uv run --no-sync ruff check --fix --config pyproject.toml "$out"
     if [ "$check" = 1 ] && [ -z "${REGEN_STUBS:-}" ]; then
         if diff -ru src/degenbot/_ffi "$out"; then
             echo "✓ committed stubs match generator output"

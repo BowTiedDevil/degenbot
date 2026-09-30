@@ -7,9 +7,10 @@ carrying the price-reader pyclasses. The parent module registers the
 submodule itself and its `sys.modules` entry.
 """
 
-from .provider import AlloyProvider
 from collections.abc import Sequence
 from typing import Any, final
+
+from .provider import AlloyProvider
 
 @final
 class AavePriceOracle:

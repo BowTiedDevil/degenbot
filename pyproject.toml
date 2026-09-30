@@ -211,6 +211,23 @@ allow-star-arg-any = true
     "too-many-statements-in-try-clause",  # guarded verify try-blocks contain many statements by design
     "TC",       # typing-only imports stay plain (cleaned by TC003 where trivial)
 ]
+# Generated stubs (ADR-066): the `_ffi/*.pyi` tree is machine-emitted from the
+# cdylib's PyO3 introspection chunks, then post-processed by the gen-stubs
+# pipeline (ruff format + ruff check --fix). Only rules the pipeline cannot
+# mechanically fix are exempted here. The key is a bare basename glob, not the
+# committed path, because the pipeline's ruff pass runs on the temp output dir
+# outside the repo — a path-anchored pattern would not match there and the
+# drift gate's byte-for-byte contract would break. There are no other .pyi
+# trees in the repository.
+"*.pyi" = [
+    "D",        # pydocstyle prose rules: docstrings are Rust doc-comment prose (IDE hover is the consumer — ADR-053), not Python docstring style
+    "DOC",      # pydoclint Returns:/Raises: sections: the prose is inherited verbatim from Rust
+    "E501",     # line-too-long: prose lines; ruff format wraps code, never docstring text
+    "ANN401",   # any-type: the seam surface is Any exactly where Rust is dynamic
+    "RUF002",   # ambiguous-unicode-character-docstring: Rust prose characters
+    "PYI034",   # non-self-return-type: __new__ mirrors the Rust constructor's declared return
+    "A001",     # builtin-variable-shadowing: stub names mirror the Rust types verbatim (stubtest compares names), so a Rust `Exception` type stays `Exception`
+]
 "examples/*" = [
     "any-type",   # the FFI/live-bot callables take `Any` (e.g. injected builders/consumers)
     "ARG",      # example function signatures keep meaningful-but-unused slots (logging, fakes)

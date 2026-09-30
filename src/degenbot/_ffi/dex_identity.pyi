@@ -57,7 +57,6 @@ class DexIdentity:
         )
         ```
         """
-    def __repr__(self, /) -> str: ...
     @property
     def deployer(self, /) -> str:
         """

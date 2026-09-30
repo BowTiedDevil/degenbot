@@ -54,9 +54,11 @@ def _chain_mismatch_message(exc: ChainMismatchError) -> str:
         The message naming the endpoint and both chain ids.
 
     """
+    # The refusal's typed attributes are set by the Rust core and are absent
+    # from the generated stub (the stubtest-allowlist class of generator gaps).
     return (
-        f"the endpoint {exc.endpoint} serves chain {exc.actual}, but the session "
-        f"targets chain {exc.expected}: refusing to start a provider against the wrong chain"
+        f"the endpoint {exc.endpoint} serves chain {exc.actual}, but the session "  # ty: ignore[unresolved-attribute]
+        f"targets chain {exc.expected}: refusing to start a provider against the wrong chain"  # ty: ignore[unresolved-attribute]
     )
 
 

@@ -58,7 +58,6 @@ class AnvilFork:
         via the registered `set_balance` / `set_code` / `set_nonce` /
         `set_storage_at` methods. See module-level note.
         """
-    def __repr__(self, /) -> str: ...
     @property
     def http_url(self, /) -> str:
         """

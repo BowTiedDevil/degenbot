@@ -38,6 +38,8 @@ from degenbot.pathfinding import (
     PathfindingRequest,
     PoolKind,
     find_paths_async,
+)
+from degenbot.pathfinding import (
     resolve_directions as core_resolve_directions,
 )
 from degenbot.runner._registration_ledger import (

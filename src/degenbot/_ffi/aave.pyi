@@ -18,8 +18,9 @@ the submodule itself and its `sys.modules` entry. `CancelHandle` is
 registered separately by `crate::cancel::cancel` (shared).
 """
 
-from .cancel import CancelHandle
 from collections.abc import Sequence
+
+from .cancel import CancelHandle
 
 def activate_aave_market(
     database_path: str,

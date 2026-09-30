@@ -9,9 +9,10 @@ pyfunctions. The parent module registers the submodule itself and its
 `sys.modules` entry.
 """
 
-from .provider import AsyncAlloyProvider
 from collections.abc import Sequence
 from typing import Any, final
+
+from .provider import AsyncAlloyProvider
 
 @final
 class Dispatcher:

@@ -8,12 +8,14 @@ dispatch/assembly/probe pyfunctions. The parent module registers the
 submodule itself and its `sys.modules` entry.
 """
 
+from collections.abc import Sequence
+from typing import Any, Final, final
+
+from _typeshed import Incomplete
+
 from . import ArbitrageEngine, ConfigValues
 from .provider import AsyncAlloyProvider
 from .submission import Dispatcher, TxSigner
-from _typeshed import Incomplete
-from collections.abc import Sequence
-from typing import Any, Final, final
 
 @final
 class AssemblyVerdict:
@@ -30,7 +32,6 @@ class AssemblyVerdict:
     SkipSuppressed: Final[AssemblyVerdict]
     SkipThinMargin: Final[AssemblyVerdict]
     def __int__(self, /) -> int: ...
-    def __repr__(self, /) -> str: ...
 
 @final
 class BatchExecutor:
@@ -420,7 +421,6 @@ class FailureKind:
     RpcFailed: Final[FailureKind]
     Stale: Final[FailureKind]
     def __int__(self, /) -> int: ...
-    def __repr__(self, /) -> str: ...
 
 @final
 class PayloadOutcome:

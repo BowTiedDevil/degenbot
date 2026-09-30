@@ -251,7 +251,10 @@ def find_paths(
             traversal.pool_kind_filter,
         )
         for raw_path in path_iter:
-            yield traversal.prepared.step_builder.build(raw_path)
+            # The generated PathIterator.__next__ stub types the item as
+            # `list | None` (the Rust Option return), but PyO3 maps exhaustion
+            # to StopIteration, so a None item never reaches this loop.
+            yield traversal.prepared.step_builder.build(raw_path)  # ty: ignore[invalid-argument-type]
         logger.debug(
             f"Completed structured generic search (max depth {request.max_depth}) "
             f"at +{time.perf_counter() - start:.1f}s",

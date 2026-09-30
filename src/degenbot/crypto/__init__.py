@@ -79,4 +79,4 @@ def event_topic(event_abi_entry: ABIEvent) -> bytes:
         The 32-byte topic as plain ``bytes``.
 
     """
-    return _ffi_event_topic(event_abi_entry)
+    return _ffi_event_topic(dict(event_abi_entry))

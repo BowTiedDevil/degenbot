@@ -214,6 +214,50 @@ class ArbitrageConfig:
     executor_runtime: str | Path | None = None
 
     @classmethod
+    def _resolve_operator(cls, *, live: bool) -> tuple[str, str]:
+        """Resolve the operator identity from the process environment.
+
+        - live mode requires both OPERATOR_ADDRESS/OPERATOR_PRIVATE_KEY from
+          the process environment and refuses a known placeholder key (raises
+          ValueError); dry-run defaults to a valid throwaway key + its derived
+          address.
+        - dry-run: a missing operator falls back to a valid throwaway key (must
+          be a real secp256k1 scalar so the eagerly constructed ``TxSigner``
+          doesn't reject it — see the constants' docstring). The key never
+          signs: the leaf's ``dry_run`` guard skips every candidate before
+          reaching ``sign_eip1559``.
+
+        Returns:
+            The ``(operator_address, operator_private_key)`` pair.
+
+        Raises:
+            ValueError: operator identity is missing or a known placeholder in live mode.
+        """
+        operator_address_raw = os.environ.get("OPERATOR_ADDRESS") or ""
+        operator_private_key = os.environ.get("OPERATOR_PRIVATE_KEY") or ""
+        operator_address = _checksum_or_empty(operator_address_raw) if operator_address_raw else ""
+        if not live:
+            if not operator_address:
+                operator_address = _DRY_RUN_OPERATOR_ADDRESS
+            if not operator_private_key:
+                operator_private_key = _DRY_RUN_OPERATOR_PRIVATE_KEY
+        else:
+            if not operator_address or not operator_private_key:
+                msg = (
+                    "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in the process "
+                    "environment (the launch shell exports them from bot.env) for live mode"
+                )
+                raise ValueError(msg)
+            if operator_private_key.lower() in _PLACEHOLDER_OPERATOR_PRIVATE_KEYS:
+                msg = (
+                    "OPERATOR_PRIVATE_KEY is a known placeholder (the dry-run throwaway or "
+                    "the all-zero scalar): refusing to run live with a key the repository "
+                    "publishes. Set the real operator key in the process environment."
+                )
+                raise ValueError(msg)
+        return operator_address, operator_private_key
+
+    @classmethod
     def build(
         cls,
         *,
@@ -263,33 +307,7 @@ class ArbitrageConfig:
         overrides = rpc if rpc is not None else RpcCascadeOverrides()
 
         # ── Operator ──
-        operator_address_raw = os.environ.get("OPERATOR_ADDRESS") or ""
-        operator_private_key = os.environ.get("OPERATOR_PRIVATE_KEY") or ""
-        operator_address = _checksum_or_empty(operator_address_raw) if operator_address_raw else ""
-        if not live:
-            # dry-run: allow missing operator → a valid throwaway key + its
-            # derived address (must be a real secp256k1 scalar so the eagerly
-            # constructed `TxSigner` doesn't reject it — see the constants'
-            # docstring). The key never signs: the leaf's `dry_run` guard
-            # skips every candidate before reaching `sign_eip1559`.
-            if not operator_address:
-                operator_address = _DRY_RUN_OPERATOR_ADDRESS
-            if not operator_private_key:
-                operator_private_key = _DRY_RUN_OPERATOR_PRIVATE_KEY
-        else:
-            if not operator_address or not operator_private_key:
-                msg = (
-                    "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in the process "
-                    "environment (the launch shell exports them from bot.env) for live mode"
-                )
-                raise ValueError(msg)
-            if operator_private_key.lower() in _PLACEHOLDER_OPERATOR_PRIVATE_KEYS:
-                msg = (
-                    "OPERATOR_PRIVATE_KEY is a known placeholder (the dry-run throwaway or "
-                    "the all-zero scalar): refusing to run live with a key the repository "
-                    "publishes. Set the real operator key in the process environment."
-                )
-                raise ValueError(msg)
+        operator_address, operator_private_key = cls._resolve_operator(live=live)
 
         # ── Node URLs — delegated to the library cascade (resolve_rpc_uris) ──
 

@@ -32,7 +32,7 @@ class AlloyProvider:
         Automatically detects connection type from URL:
         - HTTP/HTTPS URLs use HTTP transport with connection pooling
         - WS/WSS URLs use WebSocket transport
-        - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
+        - File paths (Unix: /path, Windows: \\.\\pipe\\...) use IPC transport
 
         # Retry Behavior
 
@@ -57,7 +57,6 @@ class AlloyProvider:
         once at construction and raises `ValueError` when the endpoint serves
         another chain. `None` constructs the provider with no binding.
         """
-    def __repr__(self, /) -> str: ...
     def call(self, /, to: str, data: bytes, block_number: int | None = None) -> Any:
         """
         Execute an `eth_call` to a contract.
@@ -269,7 +268,6 @@ class AlloySubscription:
         correctly. The fast path (items already in local batch or
         Rust buffer) resolves the future immediately.
         """
-    def __repr__(self, /) -> str: ...
     def drain(self, /) -> list[Any]:
         """
         Drain accumulated items from the subscription.
@@ -309,7 +307,6 @@ class AsyncAlloyProvider:
         around it. The async provider uses Python's asyncio event loop instead
         of creating its own runtime.
         """
-    def __repr__(self, /) -> str: ...
     def call(self, /, to: str, data: Sequence[int], block_number: int | None = None) -> Any:
         """
         Execute an `eth_call` to a contract asynchronously.
@@ -434,7 +431,6 @@ class LogFilter:
         """
         Create a new `LogFilter`.
         """
-    def __repr__(self, /) -> str: ...
     @property
     def addresses(self, /) -> list[str]: ...
     @property
