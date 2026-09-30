@@ -346,10 +346,10 @@ fn run_static(
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/heavy_cl_solve_captures.jsonl")
-        .to_string_lossy()
-        .into_owned();
+    let mut fixture =
+        degenbot_solvers::capture_fixture::fixture_path("heavy_cl_solve_captures.jsonl")
+            .to_string_lossy()
+            .into_owned();
     let mut cap = usize::MAX;
     let mut serial_passes = 2usize;
     let mut bare_only = false;
@@ -414,17 +414,10 @@ fn main() {
     let mut items: Vec<Arc<ResolvedMixedPath>> = Vec::new();
     let mut golden: Vec<Option<u128>> = Vec::new();
     let mut pids: Vec<u64> = Vec::new();
-    for line in content.lines().filter(|l| !l.trim().is_empty()) {
+    for doc in degenbot_solvers::capture_fixture::rows(&content) {
         if items.len() >= cap {
             break;
         }
-        let doc: Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("bad capture line: {e}");
-                continue;
-            }
-        };
         match reconstruct(&doc) {
             Ok((pid, p, gp)) => {
                 items.push(p);

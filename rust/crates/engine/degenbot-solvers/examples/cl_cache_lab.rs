@@ -125,8 +125,7 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).cloned().unwrap_or_else(|| {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/heavy_cl_solve_captures.jsonl")
+        degenbot_solvers::capture_fixture::fixture_path("heavy_cl_solve_captures.jsonl")
             .to_string_lossy()
             .into_owned()
     });
@@ -152,11 +151,13 @@ fn main() {
     let mut micro_seqs: Option<Vec<IntV3TickRangeSequence>> = None;
     let mut micro_best: usize = 0;
 
-    for (line_no, line) in content.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+    for (line_no, doc) in degenbot_solvers::capture_fixture::rows(&content)
+        .into_iter()
+        .enumerate()
+    {
         if n_paths >= max_paths {
             break;
         }
-        let doc: Value = serde_json::from_str(line).expect("capture line is JSON");
         let pid: u64 = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
         let baseline: Vec<IntV3TickRangeSequence> = {
             let hops = doc.get("hops").and_then(Value::as_array).expect("hops");

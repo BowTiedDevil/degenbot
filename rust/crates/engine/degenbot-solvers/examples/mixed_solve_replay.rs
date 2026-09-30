@@ -181,8 +181,7 @@ fn pct(sorted: &[u128], p: f64) -> u128 {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).cloned().unwrap_or_else(|| {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/heavy_mixed_solve_captures.jsonl")
+        degenbot_solvers::capture_fixture::fixture_path("heavy_mixed_solve_captures.jsonl")
             .to_string_lossy()
             .into_owned()
     });
@@ -214,14 +213,7 @@ fn main() {
         "status"
     );
 
-    for line in content.lines().filter(|l| !l.trim().is_empty()) {
-        let doc: Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("bad capture line: {e}");
-                continue;
-            }
-        };
+    for doc in degenbot_solvers::capture_fixture::rows(&content) {
         let pid: u64 = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
         let n_hops = doc.get("n_hops").and_then(Value::as_u64).unwrap_or(0);
         let live_us: u128 = doc

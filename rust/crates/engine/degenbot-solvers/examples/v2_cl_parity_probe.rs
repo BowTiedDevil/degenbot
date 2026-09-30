@@ -310,18 +310,12 @@ fn main() {
     let repo_root = manifest.join("../../../..");
 
     // ── real corpus: heavy mixed captures ────────────────────────────────
-    let capture_path = manifest.join("tests/fixtures/heavy_mixed_solve_captures.jsonl");
+    let capture_path =
+        degenbot_solvers::capture_fixture::fixture_path("heavy_mixed_solve_captures.jsonl");
     let content = degenbot_solvers::capture_fixture::read_fixture(&capture_path);
     let mut unique = BTreeMap::<String, V2State>::new();
     let mut occurrences = 0u64;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(doc) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for doc in degenbot_solvers::capture_fixture::rows(&content) {
         let Some(hops) = doc.get("hops").and_then(Value::as_array) else {
             continue;
         };

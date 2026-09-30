@@ -96,10 +96,7 @@ fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).cloned().unwrap_or_else(|| {
-        // CWD-independent: resolve from the crate root so the default works
-        // regardless of where `cargo run --example` is launched from.
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/heavy_cl_solve_captures.jsonl")
+        degenbot_solvers::capture_fixture::fixture_path("heavy_cl_solve_captures.jsonl")
             .to_string_lossy()
             .into_owned()
     });
