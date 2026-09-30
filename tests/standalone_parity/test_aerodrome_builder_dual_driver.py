@@ -1,4 +1,4 @@
-"""Tier-2 behavioral dual-driver parity — Aerodrome V2 builder identity+state (SSSXG6).
+"""Tier-2 behavioral dual-driver parity — Aerodrome V2 builder identity+state.
 
 The behavioral companion to `rust/crates/facade/degenbot/tests/parity_aerodrome_builder.rs`.
 Proves the **same** canonical Aerodrome V2 identity+state fixture, driven through
@@ -11,7 +11,7 @@ emits after its on-chain `stable()`+`getFee()`+reserves I/O), registers the
 The fixture + expected outputs are loaded from the SHARED file
 `tests/standalone_parity/fixtures/aerodrome_pool_builder.json`, which the Rust
 parity test (`parity_aerodrome_builder.rs`) ALSO loads — a one-sided fixture
-edit fails BOTH sides mechanically (the shared-fixture contract, HRT356).
+edit fails BOTH sides mechanically (the shared-fixture contract).
 
 The factory is a fixture (not in any shipped deployments), so the EIP-1167
 CREATE2 verify in `register_aerodrome_pool` skips (ad-hoc path) — this parity

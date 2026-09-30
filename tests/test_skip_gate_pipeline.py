@@ -1,4 +1,4 @@
-"""Pipeline-side skip recording for path registration (INN6TK + PRG-2).
+"""Pipeline-side skip recording for path registration.
 
 The reason-tagged skip breakdown ([build_paths] Progress lines) records every
 candidate skip; PRG-2 additionally lands each skip in the Rust

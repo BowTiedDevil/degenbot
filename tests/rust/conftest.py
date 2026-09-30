@@ -26,7 +26,7 @@ def checksummed_random_addresses(random_addresses) -> list[ChecksummedAddress]:
     return [to_checksum_address(addr) for addr in random_addresses]
 
 
-# NXM2BF: `DispatchCandidate.__new__` resolves its `composers::PathInfo` from
+# `DispatchCandidate.__new__` resolves its `composers::PathInfo` from
 # a registered `path_id` via `PyArbitrageEngine::path_info_for_core` (no Python
 # `PathInfo` dataclass round-trip). Seam tests must hand the candidate a real
 # engine + a registered path_id. The engine's `register_and_solve_path`
@@ -38,10 +38,10 @@ def checksummed_random_addresses(random_addresses) -> list[ChecksummedAddress]:
 # eager-solves. The two pools use a 0.3% fee (gamma=997, denom=1000) so the
 # projected `V2HopInfo.fee == 30` (bips-of-10000), matching the Python
 # `build_hops_from_pools` value the projection replaces.
-_NXM2BF_WETH = "0xC02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2"
-_NXM2BF_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-_NXM2BF_POOL_A = "0x1100000000000000000000000000000000000000"  # WETH↔USDC
-_NXM2BF_POOL_B = "0x1200000000000000000000000000000000000000"  # USDC↔WETH
+_WETH = "0xC02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2"
+_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+_POOL_A = "0x1100000000000000000000000000000000000000"  # WETH↔USDC
+_POOL_B = "0x1200000000000000000000000000000000000000"  # USDC↔WETH
 
 
 @pytest.fixture
@@ -54,11 +54,11 @@ def nxm2bf_v2_engine_and_path() -> tuple[ArbitrageEngine, int]:
     """
     py_bot = Bot()
     weth = make_erc20(
-        py_bot, _NXM2BF_WETH, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
+        py_bot, _WETH, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
     )
-    usdc = make_erc20(py_bot, _NXM2BF_USDC, chain_id=1, name="USD Coin", symbol="USDC", decimals=6)
+    usdc = make_erc20(py_bot, _USDC, chain_id=1, name="USD Coin", symbol="USDC", decimals=6)
     pool_a = make_v2_pool(
-        address=_NXM2BF_POOL_A,
+        address=_POOL_A,
         token0=weth,
         token1=usdc,
         factory=ZERO_ADDRESS,
@@ -70,7 +70,7 @@ def nxm2bf_v2_engine_and_path() -> tuple[ArbitrageEngine, int]:
         py_bot=py_bot,
     )
     pool_b = make_v2_pool(
-        address=_NXM2BF_POOL_B,
+        address=_POOL_B,
         token0=usdc,
         token1=weth,
         factory=ZERO_ADDRESS,

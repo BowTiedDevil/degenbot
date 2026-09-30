@@ -1,4 +1,4 @@
-"""Discovery delivery batching (4IOEVT): red/green behavioral tests.
+"""Discovery delivery batching: red/green behavioral tests.
 
 find_paths_async is a thin async adapter over the Rust batched async iterator
 (`degenbot._ffi.find_paths_async_rust` -> `PathBatchIterator`): the DFS runs
@@ -394,14 +394,14 @@ async def test_aclose_leaves_no_worker_threads(db: pathlib.Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Prep is lifted off the event loop (FYZMAF).
+# Prep is lifted off the event loop.
 # ---------------------------------------------------------------------------
 
 
 async def test_prep_never_blocks_the_event_loop() -> None:
     """A slow prep must not stall the asyncio loop (canary keeps ticking).
 
-    Pre-FYZMAF the one-time prep (`_prepare_traversals`: Rust token
+    Previously the one-time prep (`_prepare_traversals`: Rust token
     resolution + the `build_path_graph` bulk read) ran INLINE on the event
     loop at first `__anext__`, so a canary coroutine made no progress for the
     whole prep. It now runs on the Rust async seam's blocking pool, so the

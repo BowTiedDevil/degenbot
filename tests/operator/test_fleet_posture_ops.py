@@ -1,4 +1,4 @@
-"""Fleet-posture operator ops (JCI2FW Part B): wire round-trip over a live socket.
+"""Fleet-posture operator ops: wire round-trip over a live socket.
 
 Covers the `set_fleet_posture` / `get_fleet_posture` ops through
 :func:`handle_fleet_posture_op` — the helper the runner's operator handler

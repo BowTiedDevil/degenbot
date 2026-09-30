@@ -45,7 +45,7 @@ class _FakeSnapshot:
 def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     """start() derives snapshot_block = min(snap.newest_block) across supplied
     snapshots and stashes it for the per-pool verify, never passing it to
-    a backfill call (J3FMDO: the snapshot→WS gap closes automatically inside
+    a backfill call (the snapshot→WS gap closes automatically inside
     `resume()` via the core `BlockPump::resume_from_subscribe`, not from
     `start()`).
 
@@ -58,7 +58,7 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    # XEANMB: `start()` no longer ingests snapshot dicts (the
+    # `start()` no longer ingests snapshot dicts (the
     # `load_*_from_py` surface is retired); it derives `S = min(newest_block)`
     # + sets `snapshot_seed_block` BEFORE `subscribe()` so `after_subscribe`
     # advances the phase to `SnapshotLoaded`.
@@ -72,7 +72,7 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
         v4_snapshot=v4_snap,
     )
 
-    # XEANMB: the snapshot seed block is set BEFORE subscribe (so the engine
+    # The snapshot seed block is set BEFORE subscribe (so the engine
     # phase advances to SnapshotLoaded via after_subscribe), then
     # verify-config. No stream/load_*_from_py calls remain.
     assert fake.calls == [
@@ -142,9 +142,9 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     the shared PumpState). The Bot is the D4 pump owner; these methods drive
     the SAME PumpState the engine reads.
 
-    2SM4Y7: `backfill_from_snapshot` is retired — the snapshot→WS gap is
+    `backfill_from_snapshot` is retired — the snapshot→WS gap is
     closed automatically inside the core `BlockPump::resume_from_subscribe`
-    (J3FMDO). The non-DB path uses the `snapshot_seed_block` setter to record
+   . The non-DB path uses the `snapshot_seed_block` setter to record
     `S` so the core auto-backfill picks it up.
     """
     from degenbot._ffi import Bot
@@ -155,18 +155,18 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     engine = ArbitrageEngine(py_bot=bot)
     for method in ("subscribe", "resume"):
         assert hasattr(bot, method), f"Bot must expose {method} after engine attach"
-    # 2SM4Y7: backfill_from_snapshot is retired.
+    # backfill_from_snapshot is retired.
     assert not hasattr(bot, "backfill_from_snapshot"), (
-        "Bot::backfill_from_snapshot retired (2SM4Y7)"
+        "Bot::backfill_from_snapshot retired"
     )
     # The engine still exposes subscribe/resume too (reads the same shared state).
     for method in ("subscribe", "resume"):
         assert hasattr(engine, method)
     assert not hasattr(engine, "backfill_from_snapshot"), (
-        "ArbitrageEngine::backfill_from_snapshot retired (2SM4Y7)"
+        "ArbitrageEngine::backfill_from_snapshot retired"
     )
     # The non-DB path uses the snapshot_seed_block setter.
-    assert hasattr(engine, "snapshot_seed_block")  # getter+setter (2SM4Y7)
+    assert hasattr(engine, "snapshot_seed_block")  # getter+setter
 
 
 def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypatch) -> None:

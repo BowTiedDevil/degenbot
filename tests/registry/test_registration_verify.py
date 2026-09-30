@@ -1,4 +1,4 @@
-"""Rust-builder CREATE2 verification at registration (Fork A, JC6OFG).
+"""Rust-builder CREATE2 verification at registration (Fork A.
 
 The `register_v2_pool` / `register_v3_pool` Bot seams now recompute the
 CREATE2 address from the JSON-sourced deployer + init hash and reject a

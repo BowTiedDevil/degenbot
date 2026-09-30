@@ -1,4 +1,4 @@
-"""T2 (FBJTUM, epic OU4SYZ) — the companion's sparse-word backfill gate.
+"""The the companion's sparse-word backfill gate.
 
 A Mint/Burn on boundary ticks that live in an un-fetched Sparse word must
 backfill the word via the RUST-stored fetcher at ``state_block - 1`` BEFORE

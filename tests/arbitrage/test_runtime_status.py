@@ -1,4 +1,4 @@
-"""FF-T5 (NT7HJC): the runtime fleet status - budget, plan, census.
+"""The runtime fleet status - budget, plan, census.
 
 "degenbot.runtime_status()" is the operator's live-process view. These
 tests pin the FF-T5 contract, PARAMETRIZED over the fleet profile (the CI

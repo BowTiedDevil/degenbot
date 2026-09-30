@@ -94,7 +94,7 @@ def test_register_tracked_v3_pool_without_provider_fails_fast() -> None:
     The drain invariant this test historically pinned (buffered backfill events
     drained onto the snapshot seed — the perm-V2-V2-V3 class, incl. the tick's
     removal when a Burn zeroes its liquidity) moved core-side with the
-    registration-lifecycle (IKGQ6F / ADR-022 D1) and is now asserted by the
+    registration-lifecycle (ADR-022 D1) and is now asserted by the
     Rust unit test `bot_core::registration_lifecycle::tests::
     tracked_v3_lifecycle_drains_buffered_backfill`.
     """

@@ -1,6 +1,6 @@
 """§4.2 parity + §4.5 delegation tests for the V3/V4 snapshot DB seam.
 
-Driven by SLHSM4's frozen `parity_expected.json` oracle (dumped from the
+Driven by the frozen `parity_expected.json` oracle (dumped from the
 prior legacy reader-backed `DatabaseSnapshot`) + a freshly-regenerated
 `parity.db` fixture: the Rust-backed `DatabaseSnapshot` (delegating through
 `DatabaseSnapshot`) produces identical results to the frozen legacy reader

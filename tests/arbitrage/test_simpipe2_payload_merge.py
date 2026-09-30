@@ -1,13 +1,13 @@
 """SIMPIPE2 T3 acceptance — payload entries degrade to render+submit-only.
 
-NUUJFA revision: the payload arm routes through the SAME sim seam the FFI
+Revision: the payload arm routes through the SAME sim seam the FFI
 batch uses — :func:`merge_payload_results` (Rust) — so the mutual-exclusion
 pool keys (``derive_path_pools`` over the engine's typed hops) and the net
 profitability threshold (the Rust-owned ``MIN_PROFIT_NET``) are evaluated
 exactly once, Rust-side, for BOTH entry arms. Python only renders/stitches
 the returned record rows.
 
-The contract (unchanged by NUUJFA):
+The contract::
 
 - per-entry presence decides: payload entries NEVER enter the FFI sim batch;
 - a payload success yields a ``SubmitCandidate`` built by the Rust
@@ -205,7 +205,7 @@ class TestPayloadSeamArms:
         assert [c.path_id for c in out.candidates] == [v2_pid]
 
 
-# ── THE NUUJFA PARITY GATE: one rule, byte-identical on both arms ────────
+# ── THE PARITY GATE: one rule, byte-identical on both arms ───────
 
 
 class TestPathPoolsParityAcrossEntryArms:

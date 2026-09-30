@@ -1,4 +1,4 @@
-"""Rust handle exposes verified V3 identity (Fork A, P62DKO).
+"""Rust handle exposes verified V3 identity (Fork A.
 
 `register_v3_pool` now resolves the JSON-sourced deployer + init_hash at
 registration and stores them on the pool identity. The `Pool`

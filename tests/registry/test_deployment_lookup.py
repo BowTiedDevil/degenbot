@@ -1,4 +1,4 @@
-"""Rust-side ``(chain_id, factory)`` deployment-identity lookup (Fork A, 7FA5EZ).
+"""Rust-side ``(chain_id, factory)`` deployment-identity lookup (Fork A.
 
 The canonical ``deployments.json`` is embedded into the Rust binary via
 ``include_str!`` + parsed once into a ``OnceLock<HashMap<(u64, Address), Record>>``.

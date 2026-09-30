@@ -146,7 +146,7 @@ def make_v3_pool(
             block_number=state_block_int,
         )
 
-    # ADR-006 (OGTTCS D1): the pool's tokens must live in the SAME Bot as
+    # ADR-006: the pool's tokens must live in the SAME Bot as
     # the pool — ``from_handle`` recovers them via ``py_pool.get_token0``/
     # ``get_token1``, which look up ``token0_address``/``token1_address`` in
     # the pool's own ``BotState``. The token companions passed in may have been

@@ -6,7 +6,7 @@ canned ``eth_getLogs`` + ``eth_blockNumber`` + ``eth_call`` responses, into a
 temp SQLite DB. The resulting ``aave_*`` rows are asserted against expectations
 (or compared against on-chain truth via the Rust ``verify_*`` seams).
 
-§4.2 retirement (CZM7TI): the Python oracle
+§4.2 retirement: the Python oracle
 (``cli/aave.py::update_aave_market``) + the byte-for-byte Rust-vs-
 Python parity tests that lived here have been DELETED — the Rust writer is
 proven GREEN to the live chain tip. The mock-RPC infrastructure survives
@@ -617,7 +617,7 @@ def make_discount_rate_strategy_updated_log(
 # `newDiscountPercent` is topic[2] (indexed); `oldDiscountPercent` is the
 # non-indexed data word. The Rust config path's `dispatch_discount_percent_updated`
 # builds a `GhoDiscountPercentUpdated` chunk event → `apply_gho_discount_percent_updated`
-# writes `aave_v3_users.gho_discount = newDiscountPercent` (the U5YIBG #5
+# writes `aave_v3_users.gho_discount = newDiscountPercent` (rule #5
 # Rust-written column the `verify_gho_discount_amounts` invariant reads).
 _DISCOUNT_PERCENT_UPDATED_TOPIC = (
     "0x74ab9665e7c36c29ddb78ef88a3e2eac73d35b8b16de7bc573e313e320104956"
@@ -672,7 +672,7 @@ def make_asset_source_updated_log(
     )
 
 
-# ── GHO ops-parser fixtures (YTRUEW — the multi-tx-within-chunk flag #1 proof) ─
+# ── GHO ops-parser fixtures (the multi-tx-within-chunk flag #1 proof) ─
 # The Pool `Borrow` / `Repay` events + the variableDebtToken `Mint` / `Burn`
 # (scaled-token) events + the plain ERC20 `Transfer` companion the ops parser
 # asserts (the Borrow requires a Transfer from ZERO_ADDRESS to the borrower on
@@ -782,7 +782,7 @@ def make_supply_log(
 
     `user` defaults to `on_behalf_of` (the common self-supply case) but should
     be set DISTINCT from `on_behalf_of` + `referral_code ≠ 0` in tests that
-    exercise the topic-indexing decode path (the 7UFMZX bug class).
+    exercise the topic-indexing decode path.
     """
     user = user or on_behalf_of
     words = [_pad_address(user)[2:], _u256(amount)[2:]]
@@ -1032,7 +1032,7 @@ def make_erc20_transfer_log(
 # `transaction_processor` processes the coinciding ERC20 Transfer on the discount
 # token. For a stake, both increment `onBehalfOf`; for a redeem, both decrement
 # `from` (the redeemer). Topic hashes match the Rust decoder's STAKED_TOPIC /
-# REDEEM_TOPIC byte-exact (YMWN5V — wired the dispatch arms).
+# REDEEM_TOPIC byte-exact.
 STK_AAVE_ADDRESS = "0x" + "ee" * 20
 _STAKED_TOPIC = "0x6c86f3fd5118b3aa8bb4f389a617046de0a3d3d477de1a1673d227f802f616dc"
 _REDEEM_TOPIC = "0x3f693fff038bb8a046aa76d9516190ac7444f7d69cf952c4cbdc086fdef2d6fc"

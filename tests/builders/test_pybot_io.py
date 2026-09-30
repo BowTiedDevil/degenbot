@@ -5,8 +5,7 @@ of the Python `SyncPoolIO` adapter. It holds a Python provider (the
 `AlloyProvider` the `Bot` was constructed with) + an optional file-backed DB path, and
 exposes the 3-method RPC-primitive surface still on `BotIo`
 (`get_block_number`, `get_code`, `get_balance`) by delegating to the held
-provider (the raw `call`/`get_block`/`get_block_timestamp` primitives retired
-with LWKLMP-S5).
+provider (the raw `call`/`get_block`/`get_block_timestamp` primitives)
 
 These tests pin the *seam* -- that delegating through the Rust pyclass yields
 the same observable result as calling the provider directly. They do NOT yet
@@ -65,7 +64,7 @@ def test_pybot_io_satisfies_pool_io_protocol(method: str):
     """BotIo exposes the surviving 3-method PoolIO surface (runtime check).
 
     The raw `call`/`call_raw`/`get_block`/`get_block_timestamp` primitives were
-    retired with LWKLMP-S5 (no live `src/` caller); the remaining primitives
+    retired (no live `src/` caller); the remaining primitives
     are checked here.
     """
     io = BotIo(provider=_min_offline_provider())

@@ -16,10 +16,10 @@ doubles (the same scripted shape the intake-station tests use):
   counter shapes the retired inline `_consume` produced.
 
 All work runs through the SAME `_consume` body the operator surfaces use,
-so behavior cannot diverge by input source (the NWTUM3 bar).
+so behavior cannot diverge by input source.
 
 Adapted from the retired pipeline tests (the shell tests back to
-5TSYKN/JKYVST, retargeted at the fleet intake by epic IRUMXD PRG-5).
+
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ class _PoolIdentity:
 
 @dataclass
 class _PathPredicate:
-    """Engine path-predicate double: the D7KMQO policy-gate surface."""
+    """Engine path-predicate double: the policy-gate surface."""
 
     evaluate: Callable[[object], None] = lambda pools_and_zfos: None
 
@@ -480,7 +480,7 @@ def test_duplicate_candidate_short_circuits_before_verify_and_engine() -> None:
 
 
 def test_path_predicate_evaluates_before_verify() -> None:
-    """D7KMQO policy enforcement happens before any verify choreography.
+    """Policy enforcement happens before any verify choreography.
 
     The predicate docstring promises "before any work"; PRG-4 left it after
     the verify loop, so a policy-rejected path paid lifecycles first. A
@@ -490,7 +490,7 @@ def test_path_predicate_evaluates_before_verify() -> None:
     pipeline = _pipeline_over_registry(registry)
 
     class _PolicyRejection(Exception):
-        """The recorded D7KMQO refusal."""
+        """The recorded refusal."""
 
     def _refuse(pools_and_zfos: object) -> None:
         msg = "policy: not deployed"
@@ -505,9 +505,9 @@ def test_path_predicate_evaluates_before_verify() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cold-soak negative-memoization (2026-09-11 follow-up to W73FVY): the dup
+# Cold-soak negative-memoization (2026-09-11 follow-up): the dup
 # memo only answers candidates whose registration COMPLETED. Stable-negative
-# outcomes - pool-level build refusals and the D7KMQO policy gate - returned
+# outcomes - pool-level build refusals and the policy gate - returned
 # unmemoized, so the DFS re-paid full build+verify choreographies on every
 # re-sighting (measured live: 1206 verify lifecycles / 132 unique pools,
 # top pools ~50x, registered paths flat at the boot value for 1h+). Three
@@ -641,7 +641,7 @@ def test_stable_build_refusal_memoizes_the_pool() -> None:
 
 
 def test_policy_gate_denial_memoizes_the_path() -> None:
-    """A D7KMQO policy deny is deterministic per hop signature.
+    """A policy deny is deterministic per hop signature.
 
     The gate evaluates before any work (order preserved), and its denial is
     stable: re-yielded candidates answer from the rejected-path memo without
@@ -784,7 +784,7 @@ async def test_intake_fault_propagates_through_run_registration() -> None:
 
 
 # ---------------------------------------------------------------------------
-# N3IRYT: the cockpit-private registration outcome ledger owns the one memo
+# The cockpit-private registration outcome ledger owns the one memo
 # concept. The four ad-hoc collections retire from the pipeline; build-refusal
 # stability is classified by exception TYPE (never the exception class name),
 # and the metric tag path draws from a bounded outcome vocabulary.
@@ -820,7 +820,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
     assert pipeline._ledger.pool_verified(f"v3:{POOL_A}"), "verify-once memo"
     assert pipeline._ledger.pool_verified(f"v3:{POOL_B}")
 
-    # Rejected-path concept (the D7KMQO deny memoizes per hop signature).
+    # Rejected-path concept (the deny memoizes per hop signature).
     denied = _RecordingRegistry()
     denied.path_predicate = _PathPredicate(evaluate=_raise_path_rejected)
     pipeline2 = _pipeline_over_registry(denied)

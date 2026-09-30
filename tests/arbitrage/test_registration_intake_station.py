@@ -1,4 +1,4 @@
-"""PRG-3 (IRUMXD): the fleet registration intake station.
+"""The fleet registration intake station.
 
 Under the fleet stance (`fleet.stance=fleet`) the crawl's pool-build
 consumers ride the fleet's duty-counted `PoolStateUpdater` seats (census
@@ -143,7 +143,7 @@ def work(i: int) -> int:
 receipts = [probe.submit_registration_unit(lambda i=i: work(i)) for i in range(16)]
 assert [r.wait(timeout=30.0) for r in receipts] == [i * 2 for i in range(16)]
 assert names, 'units executed'
-# FF-T4 (Z6XTDX): the seat names are BINDING-dependent — the pinned
+# The seat names are BINDING-dependent — the pinned
 # binding runs the pooled PoolStateUpdater seats (work-fleet-poolupd-{n});
 # the serial binding (2-5-core hosts) runs the ONE named cycle seat
 # (work-fleet-serial-0). Both are fleet seats: the units must never run
@@ -158,10 +158,10 @@ print('FLEET-OK')
 """
 
 
-# FF-T1 (BPHR6F) kept this strict-xfail while the serial arm was pending:
+# This strict-xfail was kept while the serial arm was pending:
 # on a sub-floor host the station subprocess surfaced the TYPED
-# BootRefused refusal instead of SIGABRT-ing the worker. FF-T4 (Z6XTDX)
-# LANDED the serial binding — the 2-5-core tier now boots (the ONE named
+# BootRefused refusal instead of SIGABRT-ing the worker.
+# The serial binding landed — the 2-5-core tier now boots (the ONE named
 # cycle seat above), so the strict mark is RETIRED: the station runs (and
 # must pass) on every tier the plan admits. FF-T5 folds the
 # profile-parametrized rewrite over this same shape.
@@ -174,7 +174,7 @@ def test_fleet_station_executes_callables_on_named_fleet_seats() -> None:
         text=True,
         cwd=str(Path(__file__).parents[2]),
         # PRG-3 test originally injected DEGENBOT_FLEET=fleet; that env var was
-        # retired loudly by the CQLMM2 stance cutover (config cutover JLFE2F,
+        # retired loudly by the stance cutover (config cutover
         # commit 2729b52bf) — the worker fleet is now the ONLY behavior, so the
         # subprocess just inherits the env and boots fleet-hosted by default.
         timeout=120,

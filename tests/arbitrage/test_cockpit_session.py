@@ -1,6 +1,6 @@
 """Cockpit session state — the one owner of pump-session coordination state.
 
-Epic Y7PA5A, task UKXADE. The block loop (``consume``) and the dispatch
+The block loop (``consume``) and the dispatch
 leaf (``dispatch``) must read the SAME ``_SessionState`` owned by the
 runner, instead of the session travelling as a 10-parameter signature
 + 9 kwargs.

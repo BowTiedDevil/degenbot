@@ -1,4 +1,4 @@
-"""Smoke tests for the simulation-seam pyclasses (A2 / TCZ47Z).
+"""Smoke tests for the simulation-seam pyclasses.
 
 These are constructor-shape tests, not behavioral parity tests — A4
 (``dispatch_profitable_py``) and A6 (parity) cover behavior. The goal here is
@@ -46,7 +46,7 @@ def _make_async_provider() -> AsyncAlloyProvider:
 class TestPyDispatchCandidate:
     """The per-path builder — `path_id` resolution + the encode-options flags.
 
-    NXM2BF: the candidate resolves its `composers::PathInfo` from a registered
+    The candidate resolves its `composers::PathInfo` from a registered
     `path_id` via `PyArbitrageEngine::path_info_for_core` — no Python `PathInfo`
     dataclass is threaded. The fixture builds a 2-hop V2 cycle (the engine's
     `register_and_solve_path` requires a ≥2-hop cycle); `hop_outputs` must match

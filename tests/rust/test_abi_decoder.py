@@ -1,7 +1,7 @@
 """Tests for the Rust-based ABI decoder.
 
 This module tests the Rust decoder against pinned byte vectors pinned
-from eth_abi 5.x at EMAU46 time, plus Hypothesis round-trips for the
+from eth_abi 5.x at pin time, plus Hypothesis round-trips for the
 fuzz-widths (cross-encoder comparison retired with eth_abi).
 """
 
@@ -287,7 +287,7 @@ class TestEthAbiCompatibility:
 
     def test_all_basic_types(self):
         """Decode pinned eth_abi 5.x vectors for all basic static types."""
-        # (type, pinned data hex, expected) - pinned from eth_abi 5.x at EMAU46 time
+        # (type, pinned data hex, expected) - pinned from eth_abi 5.x at pin time
         pinned_cases = [
             (
                 "uint256",

@@ -219,12 +219,12 @@ def verify_touched_positions_on_chain(
 
     Returns a list of divergence dicts (empty = GREEN). Each dict has:
     `kind`, `position_id`, `user_address`, `token_address`, `block_number`,
-    `field`, `expected`, `actual` — the same shape the JGQHBX drive harness's
+    `field`, `expected`, `actual` — the same shape the drive harness's
     compare divergences emit, so it's bisect-able.
 
     Per-position `eth_call`s — acceptable for the touched-users-per-chunk case
     (small set). Multicall3 batching for the market-wide verify is the natural
-    extension (BE474R-full, post-HLYWI6).
+    extension .
 
     The GIL is released across the whole call (`py.detach`); the orchestrator
     drives its RPC fetches/verifies on the process-wide shared runtime
@@ -241,7 +241,7 @@ def verify_touched_positions_on_chain(
     - `block_number` — the block to verify against (`chunk_end` in the
       per-chunk gate).
     - `touched_users` — `None` (default) verifies ALL positions;
-      `["0x...", ...]` verifies only those users (the JGQHBX drive harness's
+      `["0x...", ...]` verifies only those users (the drive harness's
       per-chunk path passes the `touched_user_addresses` from
       `run_aave_update`'s progress dict for efficiency).
     """

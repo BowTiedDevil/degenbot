@@ -108,7 +108,7 @@ def test_rust_info_record_is_visible() -> None:
         )
 
 
-# ── GTOD23-YBEYKY (T4): arbitrage-subtree visibility ──────────────────────
+# ── (T4): arbitrage-subtree visibility ──────────────────────────
 
 #: Python modules under ``degenbot.arbitrage.*`` (e.g. ``recurring_verify``)
 #: use ``logging.getLogger("degenbot.arbitrage.recurring_verify")`` — they
@@ -126,7 +126,7 @@ _SAMPLE_ARBITRAGE_TARGETS = (
 def test_degenbot_arbitrage_loggers_configured_at_info_or_lower() -> None:
     """Base config lowers the ``degenbot`` package subtree to <= INFO.
 
-    S2 (GTOD23-PB24RX) found the recurring verifier's ``[verify] (recurring)``
+    The S2 probe found the recurring verifier's ``[verify] (recurring)``
     lines were dropped: the module logs under
     ``logging.getLogger("degenbot.arbitrage.recurring_verify")`` which inherits
     from ``degenbot`` — but base config only configured the Rust bridge roots +
@@ -158,7 +158,7 @@ def test_degenbot_arbitrage_info_record_reaches_handler() -> None:
         visible = [r for r in capture.records if r.levelno == logging.INFO]
         assert any("[verify] (recurring)" in r.getMessage() for r in visible), (
             f"INFO record on {target} did NOT reach the `degenbot` package handler "
-            "— recurring-verify lines are silenced (GTOD23-YBEYKY regression)"
+            "— recurring-verify lines are silenced"
         )
 
 

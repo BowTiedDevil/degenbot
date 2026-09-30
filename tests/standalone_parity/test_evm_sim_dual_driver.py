@@ -33,7 +33,7 @@ reads return real ETH values.
 (the byte-exact gas accounting + the lossy f64 priority-fee path have no closed
 form). The parity contract is: both drivers produce the same recorded
 constants. A deliberately-wrong fixture edit fails BOTH halves (the fixture is
-the shared contract, not copied constants — the HRT356 guard).
+the shared contract, not copied constants — the guard).
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def test_deliberately_wrong_fixture_fails_both_halves() -> None:
     expected `gas_used` in a mutated fixture copy must fail the Python assertion
     (and, by symmetry, the Rust `parity_evm_sim.rs` guard).
 
-    Guards against the V3/V4 fixture-drift regression (HRT356): copied
+    Guards against the V3/V4 fixture-drift regression: copied
     constants with no mechanical link left both tests green but testing
     *different* fixtures. The shared JSON file is the single source of truth.
     """

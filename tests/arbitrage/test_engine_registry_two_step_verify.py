@@ -1,11 +1,11 @@
-"""IKGQ6F / ADR-022: registry delegation + D1 core-owned verify-lifecycle.
+"""ADR-022: registry delegation + D1 core-owned verify-lifecycle.
 
 `engine_registry.register_v3_pool` / `register_v4_pool` are now THIN
 delegating shells: each makes ONE call to the core-owned
 `run_v3_registration_lifecycle(pool_addr, snapshot_block)` /
 `run_v4_registration_lifecycle(pm, pool_id, snapshot_block)`, which sequences
-the D4 lifecycle in Rust — quarantine (6N7XVR) → seed-verify @ snapshot block
-(CBCH6H) → drain+pin (single core.write() hold) → post-drain-verify @ the
+the D4 lifecycle in Rust — quarantine → seed-verify @ snapshot block
+→ drain+pin (single core.write() hold) → post-drain-verify @ the
 pin's own block → set_live, with the mismatch tripwire as the final gate.
 
 The step ordering / quarantine-before-verify / live-after-drain semantics are
@@ -60,7 +60,7 @@ class _FakeV4Pool:
 def _registry_started_with_snapshots() -> tuple[runner.EngineRegistry, _RecordingVerifyEngine]:
     fake = _RecordingVerifyEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
-    # XEANMB: `load_*_from_py` is retired; `start()` sets `snapshot_seed_block`
+    # `load_*_from_py` is retired; `start()` sets `snapshot_seed_block`
     # from `min(newest_block)` directly. `S = min(newest_block)` across the
     # supplied snapshots is stashed as `_verify_snapshot_block` and passed to
     # the core lifecycle (step-1 seed verify @ snapshot block).

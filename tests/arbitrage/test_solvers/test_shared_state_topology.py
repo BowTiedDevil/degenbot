@@ -46,7 +46,7 @@ V3_SQRT_PRICE = 2_198_666_895_605_149_686_863  # ~2000 USDC per WETH
 V3_TICK = -76020
 V3_LIQUIDITY = 1_234_567_890
 
-# ─── V4 topology round-trip fixtures (RAJ3PP public-interface regression) ─
+# ─── V4 topology round-trip fixtures(public-interface regression) ─
 # A V4 pool registered via ArbitrageEngine.register_v4_pool (with its core
 # shared from a Bot) and read back through a Pool handle. The
 # handle is family-agnostic — the same getters/apply methods used for V3.
@@ -518,7 +518,7 @@ class TestSharedStateTopologyV3:
         assert handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
         assert handle.concentrated_liquidity().liquidity == V3_LIQUIDITY + 7_500
         assert handle.concentrated_liquidity().tick == V3_TICK
-        # OB7UNY two clocks: the tick-map full-sync advances only the LIQUIDITY
+        # Two clocks: the tick-map full-sync advances only the LIQUIDITY
         # clock (tick_data_block); the PRICE clock (update_block) moves only on
         # scalar/liquidity events, so it stays at 3 (the apply_liquidity_update).
         assert handle.concentrated_liquidity().tick_data_block == 9
@@ -532,7 +532,7 @@ class TestSharedStateTopologyV3:
         assert set(bitmap.keys()) == {word_of(new_tick_a), word_of(new_tick_b)}
 
         # NOTE: a backward-block full-sync (sync block < current tick_data_block)
-        # is deliberately NOT exercised here — OB7UNY makes it a hard panic on the
+        # is deliberately NOT exercised here — it is a hard panic on the
         # liquidity clock (see `V3PoolState::replace_tick_data_backward_block_panics`
         # + `_does_not_rewind_block` Rust unit tests), and a background-thread Rust
         # panic is not a catchable Python exception.
@@ -661,10 +661,10 @@ class TestSharedStateTopologyV3:
 
 
 class TestSharedStateTopologyV4:
-    """Uniswap V4 over Pool — V4-specific RAJ3PP closure.
+    """Uniswap V4 over Pool — V4-specific closure.
 
     Mirrors ``TestSharedStateTopologyV3`` for the V4 family. The headline
-    regression: before RAJ3PP, ``Pool.apply_swap``/
+    regression: previously, ``Pool.apply_swap``/
     ``apply_liquidity_update`` routed unconditionally into V3-only
     ``apply_v3_*_by_pool_id`` methods that match ``PoolEntry::V3`` only and
     return ``None`` for ``PoolEntry::V4`` — so every Python-side V4 update
@@ -691,7 +691,7 @@ class TestSharedStateTopologyV4:
             currency1=TOKEN1,
             fee=V4_FEE,
             tick_spacing=V4_TICK_SPACING,
-            # MTMPQB: the seam takes the real hook address (None = no hook,
+            # The seam takes the real hook address (None = no hook,
             # derived flag mask 0) instead of pre-computed flags.
             hook_address=None,
             sqrt_price_x96=V4_SQRT_PRICE,
@@ -704,7 +704,7 @@ class TestSharedStateTopologyV4:
     def test_v4_handle_apply_swap_is_visible_to_handle_reads(self) -> None:
         """A V4 ``apply_swap`` through the handle lands on the shared BotState.
 
-        RAJ3PP headline regression via the public interface: pre-fix,
+        Headline regression via the public interface: pre-fix,
         ``Pool.apply_swap`` called ``apply_v3_swap_by_pool_id``
         unconditionally, which no-op'd on a ``PoolEntry::V4`` and silently left
         the V4 scalars at their registration values. After the family-dispatch
@@ -738,7 +738,7 @@ class TestSharedStateTopologyV4:
     def test_v4_handle_apply_liquidity_update_inits_ticks(self) -> None:
         """A V4 ``apply_liquidity_update`` through the handle inits tick entries.
 
-        The other half of RAJ3PP: pre-fix ``Pool.apply_liquidity_update``
+        The other half: pre-fix ``Pool.apply_liquidity_update``
         routed to ``apply_v3_liquidity_update_by_pool_id`` unconditionally, which
         no-op'd on ``PoolEntry::V4`` and silently dropped the ModifyLiquidity
         tick mutation. After the fix the dispatch reaches the V4 path and the
@@ -781,10 +781,10 @@ class TestSharedStateTopologyV4:
         The family-agnostic twin of
         ``test_v3_handle_update_tick_data_replaces_tick_map``: the V4 arm of
         ``BotState::sync_tick_data_by_pool_id`` mirrors the V3 path (both
-        store an identical ``tick_data: HashMap<i32, TickInfo>`` — J63J3N).
+        store an identical ``tick_data: HashMap<i32, TickInfo>``).
         Pins that the V3-paid-for family-agnostic write path actually reaches
         a V4 pool (a future maintainer narrowing it to V3-only would re-open
-        the RAJ3PP silent-drop footgun shape).
+        the silent-drop footgun shape).
         """
         core = Bot()
         engine = ArbitrageEngine(py_bot=core)
@@ -827,7 +827,7 @@ class TestSharedStateTopologyV4:
 
         # V4 scalars UNCHANGED. The earlier apply_liquidity_update(+7500)
         # position spans the current tick, so the current-liquidity baseline is
-        # V4_LIQUIDITY + 7500. OB7UNY two clocks: the full-sync advances the
+        # V4_LIQUIDITY + 7500. Two clocks: the full-sync advances the
         # LIQUIDITY clock (tick_data_block); the PRICE clock (update_block)
         # stays at 3 (the apply_liquidity_update).
         assert handle.concentrated_liquidity().sqrt_price_x96 == V4_SQRT_PRICE

@@ -219,7 +219,7 @@ class DispatchCandidate:
                 case, surfaced as `ValueError`.
             `solve_block`: the block the solver produced the result on.
             `state_nonces`: per-hop state nonces captured at solve time
-                (AV42C7 staleness gate — the dispatch seam skips candidates
+                (the staleness gate — the dispatch seam skips candidates
                 whose pool state has advanced since the solve).
             `erc6909_profit`: encode the V4 profit as an ERC6909 transfer
                 (default `False`).
@@ -317,7 +317,7 @@ class DispatchOutcome:
         `path_infos[cand.path_id]` per survivor; preserved here (Decision 1=B,
         A5) so the cockpit doesn't thread a separate map.
 
-        Each value is a plain `dict` (WEFVGE — the Python `hop_info`
+        Each value is a plain `dict` (the Python `hop_info`
         dataclass render type retired):
           - `path_type` (`str`) — the combined pool-type label,
           - `hops` (`list[dict]`) — one dict per hop, carrying a `family`
@@ -425,7 +425,7 @@ class FailureKind:
 @final
 class PayloadOutcome:
     """
-    The merged inline-sim payload record set (NUUJFA) — the payload arm of
+    The merged inline-sim payload record set — the payload arm of
     `PyDispatchOutcome`, built by `merge_payload_results_py`. Rust owns every
     policy fact; Python renders + stitches these getters into the merged
     outcome view.
@@ -770,7 +770,7 @@ def merge_payload_results_py(
     payloads: list, engine: ArbitrageEngine, executor_address: str
 ) -> PayloadOutcome:
     """
-    The payload arm of the sim seam (NUUJFA): derive the dispatch-policy
+    The payload arm of the sim seam: derive the dispatch-policy
     facts for the engine's inline-sim payload records Rust-side, through the
     SAME row builder the FFI batch join uses.
 

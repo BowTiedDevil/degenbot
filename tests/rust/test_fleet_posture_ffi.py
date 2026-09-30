@@ -1,4 +1,4 @@
-"""Fleet posture re-tune verb through the compiled FFI (JCI2FW Part B).
+"""Fleet posture re-tune verb through the compiled FFI.
 
 The validation rules live ONCE in the Rust core
 (`PosturePolicyPatch::validate`, unit-tested in

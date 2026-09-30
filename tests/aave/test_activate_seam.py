@@ -1,4 +1,4 @@
-"""Rust-path market-activation tests (MPI6Q3).
+"""Rust-path market-activation tests.
 
 Exercises the PyO3 seam `degenbot._ffi.activate_aave_market` /
 `deactivate_aave_market` against the mock JSON-RPC harness — verifies the

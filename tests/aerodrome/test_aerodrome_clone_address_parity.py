@@ -128,7 +128,7 @@ def test_bytes_inputs_match_hex_inputs() -> None:
     # The delegation preserves the original bytes-based contract: a
     # str|bytes input pair must produce the same address as the hex-string
     # form. Regression guard for the `str(bytes)` cast that would yield a
-    # `"b'...'""` parse failure (WLJD2Y cleanup).
+    # `"b'...'""` parse failure.
     from_hex = generate_aerodrome_v2_pool_address(
         deployer_address=AERODROME_V2_DEPLOYER,
         token_addresses=(BASE_WETH, BASE_AERO),
@@ -151,9 +151,9 @@ def test_bytes_inputs_match_hex_inputs() -> None:
 class TestRegisterTimeVerification:
     """register_aerodrome_pool recomputes the EIP-1167 address and rejects a mismatch.
 
-    The Fork-A JC6OFG parity gap for Aerodrome: registering against the real
+    The Fork-A parity gap for Aerodrome: registering against the real
     Base factory verifies the declared address against the JSON-sourced deployer
-    + implementation (WLJD2Y). Non-JSON factories skip verification.
+    + implementation. Non-JSON factories skip verification.
     """
 
     def test_correct_address_accepts(self) -> None:

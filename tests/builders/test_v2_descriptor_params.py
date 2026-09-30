@@ -1,4 +1,4 @@
-"""FMO2GE: make_v2_pool + builders pass descriptor params into register_v2_pool.
+"""make_v2_pool + builders pass descriptor params into register_v2_pool.
 
 ``register_v2_pool`` gained ``variant`` / ``stable_swap`` / ``fee_denominator``
 params (Rust commit e80f7574). The builder + test factory must thread these

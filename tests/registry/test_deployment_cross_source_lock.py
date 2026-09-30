@@ -1,4 +1,4 @@
-"""Cross-source lock: Rust embedded JSON == Python loader (K2SM4O).
+"""Cross-source lock: Rust embedded JSON == Python loader.
 
 The ``include_str!`` embed in ``degenbot-uniswap::deployments`` parses the
 *same* file ``load_deployments()`` reads at runtime. This test asserts the two

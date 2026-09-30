@@ -130,7 +130,7 @@ def test_dispatch_all_pins_public_surface() -> None:
 
     ``SubmitCandidate`` joined the surface with the inline-sim seam
     (SIMPIPE2 T3): the runner builds submit records from payload batches,
-    so it is a public name alongside the FFI leaf wrappers. NUUJFA added
+    so it is a public name alongside the FFI leaf wrappers. Added
     the payload seam (``merge_payload_results`` + the two pyclasses) when
     the payload arm started routing through the same Rust sim join.
     """

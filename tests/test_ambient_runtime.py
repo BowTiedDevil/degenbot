@@ -1,4 +1,4 @@
-"""Pin for the VJGZJ2 ambient-runtime driver seam (`call_on_ambient_runtime`).
+"""Pin for the ambient-runtime driver seam (`call_on_ambient_runtime`).
 
 The verify seams (`verify_touched_positions_on_chain`, `verify_v3/v4_liquidity_map`)
 refuse to build a per-call tokio runtime (the dead-worker churn source) and
@@ -22,7 +22,7 @@ _UNROUTABLE_RPC = "http://127.0.0.1:1"
 
 
 def test_missing_ambient_runtime_is_typed_value_error(tmp_path: Any) -> None:
-    """VJGZJ2: with NO ambient runtime the seam must fail loudly BEFORE any
+    """With NO ambient runtime the seam must fail loudly BEFORE any
     per-call runtime build (or DB work) — the policy the Rust side pins."""
     with pytest.raises(ValueError, match="no ambient tokio runtime"):
         verify_touched_positions_on_chain(

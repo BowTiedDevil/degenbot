@@ -2,7 +2,7 @@
 
 Slimmed from the legacy shell-wiring parity test: the Python
 `BalancerMultiTokenSolver` delegating shell + its `Solver` ABC plumbing +
-the f64 `hop_types` taxonomy were retired (audit `6C32UV` →
+the f64 `hop_types` taxonomy were retired (see the
 the parity-oracle-retirement-cutover guide, removed in the stale-docs cleanup `71ec78b2`). What survives is
 the ADR-005 Tier-2 dual-driver assertion on the `solve_balancer_weighted_basket`
 pyfunction itself — driving the Rust core's closed-form N-token Balancer

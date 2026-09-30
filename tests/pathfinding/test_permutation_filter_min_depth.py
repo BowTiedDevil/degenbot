@@ -56,7 +56,7 @@ POOL_B_WETH_ADDR = "0x3100000000000000000000000000000000000000"
 def _build_file_db(db_path: pathlib.Path) -> pathlib.Path:
     """Build a file-backed temp SQLite DB with a synthetic 4-pool V2 graph.
 
-    ZNWXNC: the Rust build_path_graph seam opens its own connection, so the
+    The Rust build_path_graph seam opens its own connection, so the
     fixture uses a temp file instead of :memory:.
 
     Graph (nodes = tokens, edges = V2 pools):

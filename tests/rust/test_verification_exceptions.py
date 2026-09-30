@@ -81,7 +81,7 @@ def test_both_exceptions_caught_by_runtime_error_handler() -> None:
 
 
 def test_rpc_transport_failure_message_is_not_a_mismatch() -> None:
-    """VP42BP: a per-call RPC transport failure surfaces as
+    """A per-call RPC transport failure surfaces as
     ``VerificationRpcError`` — the type a retry/backoff policy would branch on
     — NOT as ``VerificationMismatchError`` (the fatal mismatch type).
 
@@ -98,7 +98,7 @@ def test_rpc_transport_failure_message_is_not_a_mismatch() -> None:
     mismatch_exc = VerificationMismatchError("V3 pool 0x.. at snapshot block 1: tick data mismatch")
     # A transport failure raises the Rpc type, not the Mismatch type — the
     # two are distinguishable by isinstance (the contract build_paths relies
-    # on, per VP42BP).
+    # on.
     assert isinstance(rpc_exc, VerificationRpcError)
     assert not isinstance(rpc_exc, VerificationMismatchError)
     assert isinstance(mismatch_exc, VerificationMismatchError)

@@ -1,4 +1,4 @@
-"""Smoke tests for ``dispatch_profitable_py`` (A4 / QQFTB4).
+"""Smoke tests for ``dispatch_profitable_py``.
 
 These are orchestrations-shape tests, not parity tests — A6
 (``[sim] A6 — Sim-seam parity tests``) covers behavioral parity against the
@@ -266,10 +266,10 @@ class TestDispatchWithCandidateButNoRpc:
         # to survivors. Exercises the Rust->Python PathInfo converter
         # (Rust V2HopInfo -> plain dict) end-to-end WITHOUT an RPC.
         #
-        # NXM2BF: the candidate resolved its `PathInfo` from `path_id` via
+        # The candidate resolved its `PathInfo` from `path_id` via
         # `path_info_for_core` at `__new__` time — the 2-hop V2 cycle the
         # fixture registered projects to two `V2HopInfo`s (`fee=30`,
-        # `zfo=(True, False)`). WEFVGE: `path_infos` returns plain dicts
+        # `zfo=(True, False)`). `path_infos` returns plain dicts
         # (`{path_type, hops: [hop_dict, …]}`), not the retired `*HopInfo`
         # dataclasses.
         assert isinstance(outcome.path_infos, dict)

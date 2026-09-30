@@ -1,4 +1,4 @@
-"""Tier-2 behavioral dual-driver parity — Rust pool builder identity+state (A2QRWO).
+"""Tier-2 behavioral dual-driver parity — Rust pool builder identity+state.
 
 The behavioral companion to `rust/crates/facade/degenbot/tests/parity_pool_builder.rs`.
 Proves the **same** canonical V3 identity+state fixture, driven through the
@@ -10,7 +10,7 @@ state as the **Rust consumer** (`BotState` directly).
 The fixture + expected outputs are loaded from the SHARED file
 `tests/standalone_parity/fixtures/pool_builder.json`, which the Rust parity
 test (`parity_pool_builder.rs`) ALSO loads — a one-sided fixture edit fails
-BOTH sides mechanically (the shared-fixture contract, HRT356).
+BOTH sides mechanically (the shared-fixture contract).
 """
 
 from __future__ import annotations

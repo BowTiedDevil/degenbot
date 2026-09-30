@@ -8,12 +8,12 @@ from `examples/eth_backrun_helpers.py` and `examples/cmd_stream.py`. The
 example (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`) must source these from the
 Rust extension `degenbot_rs`.
 
-WEFVGE: the standalone `encode_cmd_stream` / `v4_input_is_native` /
+The standalone `encode_cmd_stream` / `v4_input_is_native` /
 `v4_output_is_native` PyO3 pyfunctions are retired too — the encode path
 moved to the Rust core (`dispatch_profitable_py` calls
 `composers::encode_cmd_stream` internally per A5), and the candidate
 resolves its `composers::PathInfo` from `path_id` via `path_info_for_core`
-(NXM2BF). The seam now exposes only the warmup/config/slot helpers; the
+The seam now exposes only the warmup/config/slot helpers; the
 DelegateSpy pins those as Rust-bound. The Python `hop_info` dataclasses are
 deleted (no consumer remains — `path_infos` returns plain dicts).
 
@@ -66,12 +66,12 @@ class TestPythonEncoderRetired:
 class TestRustSeamPresent:
     """The Rust extension must expose every kept seam symbol.
 
-    WEFVGE: the standalone ``encode_cmd_stream`` / ``v4_input_is_native`` /
+    The standalone ``encode_cmd_stream`` / ``v4_input_is_native`` /
     ``v4_output_is_native`` pyfunctions are retired (the encode path moved
     to the Rust core — ``dispatch_profitable_py`` calls
     ``composers::encode_cmd_stream`` internally per A5; the candidate
     resolves ``composers::PathInfo`` from ``path_id`` via
-    ``path_info_for_core`` per NXM2BF). Only the warmup/config/slot helpers
+    ``path_info_for_core``. Only the warmup/config/slot helpers
     remain on the seam.
     """
 
@@ -94,10 +94,10 @@ class TestRustSeamPresent:
         assert hasattr(self.rs, "nested_mapping_slot")
 
     def test_retired_encode_symbols_absent(self) -> None:
-        """WEFVGE: the standalone encode/v4 pyfunctions are gone."""
+        """The standalone encode/v4 pyfunctions are gone."""
         for retired in ("encode_cmd_stream", "v4_input_is_native", "v4_output_is_native"):
             assert not hasattr(self.rs, retired), (
-                f"degenbot_rs.{retired} must be retired (WEFVGE — encode moved "
+                f"degenbot_rs.{retired} must be retired (encode moved "
                 f"to the Rust core; the candidate resolves PathInfo from path_id)"
             )
 
@@ -183,12 +183,12 @@ class TestExampleRoutesThroughRust:
         logic moved to the ``degenbot_simulation`` Rust crate
         (``dispatch_profitable_py`` owns simulate + the warmup/payload
         helpers ``compute_simulation_warmup_slots`` / ``mapping_slot``, now
-        called INTERNALLY by the seam, not from the example). WEFVGE: the
-        standalone
+        called INTERNALLY by the seam, not from the example).
+        the standalone
         ``encode_cmd_stream`` / ``v4_input_is_native`` /
         ``v4_output_is_native`` PyO3 pyfunctions are retired too (the encode
         path is core-internal; the candidate resolves ``composers::PathInfo``
-        from ``path_id`` via ``path_info_for_core`` per NXM2BF).
+        from ``path_id`` via ``path_info_for_core``.
         ``format_failure_breakdown`` is kept (a pure renderer
         ``_render_sim_summary`` plugs into).
         """
@@ -237,7 +237,7 @@ class TestDelegateSpyEncodeCall:
     """Confirm the kept seam symbols are Rust-bound builtins (not Python
     re-implementations) — proving delegation to the Rust core.
 
-    WEFVGE: the ``encode_cmd_stream`` spy case is retired (the standalone
+    The ``encode_cmd_stream`` spy case is retired (the standalone
     pyfunction is gone — the encode path moved to the Rust core per A5).
     The remaining warmup/config/slot helpers stay Rust-bound.
     """

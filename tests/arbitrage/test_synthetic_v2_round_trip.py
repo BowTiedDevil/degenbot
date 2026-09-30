@@ -159,7 +159,7 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
             )
 
     # The engine adopts the shared core (ADR-006 D1). The synthetic test's job
-    # is registration/solve, not the bot= production path (covered by VQURUB's
+    # is registration/solve, not the bot= production path (covered by the
     # FakeBot test) — use the engine seam directly with a bare shared Bot.
     registry = EngineRegistry(
         bot=None,

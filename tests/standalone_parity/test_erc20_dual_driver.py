@@ -6,12 +6,12 @@ consumer** (`Bot.build_erc20_token`, the PyO3 binding) resolves the **same**
 `(name, symbol, decimals)` as the Rust consumer (`build_erc20_metadata` against
 a `ConstructionIo`).
 
-VK3YDM-S2 moved the ERC-20 *assembly* (DB-first metadata lookup, on-chain read,
+The ERC-20 *assembly* moved (DB-first metadata lookup, on-chain read,
 UNKNOWN fallback, write-back, `BotState` registration) into the Rust core, so
 both this test and its Rust twin must agree — divergence = a lossy FFI seam on
 the metadata resolution that the pool-family parities cannot catch.
 
-## The shared contract (HRT356 — single source of truth)
+## The shared contract
 
 The plain canonical metadata is loaded from the SHARED file
 `tests/standalone_parity/fixtures/erc20_build.json`, which the Rust parity test

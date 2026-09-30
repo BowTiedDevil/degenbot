@@ -1,4 +1,4 @@
-"""§4.2 W2S3WH: scaled-token fetch staleness — ReserveInitialized + first
+"""§4.2: scaled-token fetch staleness — ReserveInitialized + first
 Supply in the SAME chunk (the "missing CollateralMint" crash).
 
 `build_fetch_spec` (`run.rs:1234`) reads `fetch_aave_scaled_token_addresses`
@@ -13,7 +13,7 @@ so it's LESS stale (chunk N+1 sees chunk N's commits), but it ALSO can't
 handle the same-chunk case (the Python crashes at 16496792 first, so its
 behavior here is untestable as a parity reference).
 
-W2S3WH fixes (both required — see the orchestrator's direction):
+Both fixes (required — see the orchestrator's direction):
 * **(a)** rebuild `scaled_token_addresses` from conn at the START of each
   chunk (matches the Python's per-chunk rebuild). Fixes cross-chunk + run-
   spanning staleness. (This single-chunk test doesn't exercise (a); the
@@ -27,9 +27,9 @@ W2S3WH fixes (both required — see the orchestrator's direction):
 RED state (before the fix): the Rust raises `ValueError … missing
 CollateralMint`. GREEN (after (a)+(b)): the collateral position lands under
 the onBehalfOf (`USER_ADDRESS`), NOT under the referralCode-as-address or a
-garbage slot — the same byte-IDENTITY guarantee as 7UFMZX's parity test.
+garbage slot — the same byte-IDENTITY guarantee as the parity test.
 
-Per §4.3, TEMPORARY — retired with the Python oracle in CZM7TI.
+Per §4.3, TEMPORARY — retired with the Python oracle.
 """
 
 from __future__ import annotations
@@ -66,9 +66,9 @@ _SUPPLY_AMOUNT = 1000 * 10**18
 
 # The Supply's `user` (data word 0) — DISTINCT from `on_behalf_of` so the
 # topic[2] (onBehalfOf) + topic[3] (referralCode) slots don't collide (the
-# 7UFMZX topic-indexing parity test's mask-removal, reused here).
+# the topic-indexing parity test's mask-removal, reused here).
 _DEPOSITOR = "0x" + "cc" * 20
-# A NON-ZERO referral code — exercises the 7UFMZX-corrected topic[3] decode.
+# A NON-ZERO referral code — exercises the corrected topic[3] decode.
 _REFERRAL_CODE = 42
 
 # The new reserve (WETH underlying) + its aToken/vToken — created mid-chunk
@@ -171,7 +171,7 @@ def test_supply_same_chunk_as_reserve_init_lands_collateral(tmp_path: Path) -> N
     indexed aToken (topic[2]) == the Mint's emitter, + the balance == the
     supply amount.
 
-    RED (pre-fix, the regression guard): reverting W2S3WH makes the Rust
+    Regression guard: reverting the fix makes the Rust
     crash `missing CollateralMint` (the aWETH Mint withheld by the frozen
     run-start fetch spec — verified manually during development).
     """
@@ -210,21 +210,21 @@ def test_supply_same_chunk_as_reserve_init_lands_collateral(tmp_path: Path) -> N
     pos = positions[0]
     # The balance is the aToken's scaled balance — NON-NULL + positive (the
     # Mint credited the supply). The exact scaled value depends on the
-    # aToken's liquidity-index accounting (out of W2S3WH's scope — the fetch
+    # aToken's liquidity-index accounting (out of scope — the fetch
     # fix is the concern here; the on-chain-truth re-drive is the balance
-    # validation). The load-bearing W2S3WH/7UFMZX checks are the user + a_token
+    # validation).The load-bearing checks are the user + a_token
     # identities below.
     # The balance equals the supply amount — at liquidityIndex = RAY
     # (= 1.0), the aToken scaled balance equals the underlying amount; the
-    # Mint credits exactly _SUPPLY_AMOUNT. Pre-NMWPI6 (the
+    # Mint credits exactly _SUPPLY_AMOUNT. Previously (the
     # `extract_pool_amount_word0` bug), the credit was the user ADDRESS as a
     # U256 (~10^48); the value assertion here locks down the corrected
-    # extraction (the W2S3WH test's existence-only gap that previously masked
+    # extraction (the existence-only gap that previously masked
     # the ~10^69 oddity).
     assert pos["balance"] is not None, "collateral balance is NULL"
     assert int(pos["balance"]) == _SUPPLY_AMOUNT, (
         f"collateral balance {pos['balance']!r} ≠ supply amount {_SUPPLY_AMOUNT} "
-        f"(NMWPI6: extract_pool_amount_word1 for Supply)"
+        f"(extract_pool_amount_word1 for Supply)"
     )
     # The asset's a_token == the ReserveInitialized's indexed aToken (topic[2])
     # == the Mint's emitter — confirming the (b) re-fetch found the right token.
@@ -233,10 +233,10 @@ def test_supply_same_chunk_as_reserve_init_lands_collateral(tmp_path: Path) -> N
         f"a_token {a_token_addr!r} ≠ {_A_WETH!r} (the WETH aToken)"
     )
     # Exactly one user row (the onBehalfOf); no garbage referralCode-as-address
-    # user (the 7UFMZX topic-indexing + this fix's combined guard).
+    # user (the topic-indexing + this fix's combined guard).
     assert len(users) == 1, (
         f"expected 1 user (onBehalfOf); got {len(users)} (a garbage "
-        f"referralCode-as-address user would be the 7UFMZX topic[3] bug)"
+        f"referralCode-as-address user would be the topic[3] bug)"
     )
     assert users[0]["address"].lower() == USER_ADDRESS.lower(), (
         f"user_address {users[0]['address']!r} is not onBehalfOf {USER_ADDRESS!r}"

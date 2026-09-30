@@ -1,4 +1,4 @@
-"""Operator command channel (NWTUM3): wire round-trip, family mapping, errors.
+"""Operator command channel: wire round-trip, family mapping, errors.
 
 Covers :mod:`degenbot.operator.operator_channel` — the Unix-domain-socket
 JSON-lines channel an operator uses to add a path / trigger discovery on a live

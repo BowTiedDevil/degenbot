@@ -298,7 +298,7 @@ class TestErrors:
             decode_single("uint256", b"\x00" * 10)
 
 
-# Pinned tuple vectors from eth_abi 5.x (MS2FIV parity probe).
+# Pinned tuple vectors from eth_abi 5.x.
 _SINGLE_TUP_HEX = (
     "000000000000000000000000000000000000000000000000000000000000002000000000000000000000"
     "000011111111111111111111111111111111111111110000000000000000000000000000000000000000"
@@ -338,7 +338,7 @@ _TUP_ADDR = "0x1111111111111111111111111111111111111111"
 
 
 class TestTuples:
-    """Solidity tuple type strings (MS2FIV) with pinned byte vectors.
+    """Solidity tuple type strings with pinned byte vectors.
 
     Value shapes follow Solidity semantics: one outer value per type;
     an array's value is a list whose elements are themselves tuples

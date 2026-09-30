@@ -1,4 +1,4 @@
-"""Python-side §4.2 parity test for the pool discovery writers seam (WR7EA6).
+"""Python-side §4.2 parity test for the pool discovery writers seam.
 
 Builds a fresh Alembic-stamped SQLite DB, seeds an exchange + a PoolManager,
 then applies a `PoolCreated` event sequence through the Python
@@ -428,7 +428,7 @@ def test_set_exchange_last_update_block_seam(seeded_db: pathlib.Path) -> None:
 
 
 # ---------------------------------------------------------------------
-# Exchange write substrate (NWU4KH — split out of HYUYTN).
+# Exchange write substrate.
 # Round-trips the three PyO3 seams over a fresh Alembic-stamped DB:
 # `db_upsert_exchange` → `ExchangeRow` (`active=False`); `db_set_exchange_active`
 # flips active + `db_fetch_exchange` reads it back; `db_upsert_pool_manager`

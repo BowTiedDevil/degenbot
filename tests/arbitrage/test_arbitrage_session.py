@@ -8,7 +8,7 @@ that enforces the phase ordering: subscribe→backfill→verify
 
 The full handshake is I/O-bound (live RPC/WS/DB), so these tests inject fakes
 for bot/engine_registry/async_w3 + the two module functions (path_builder,
-consumer) — the OLKZ3L ``engine=`` seam pattern scaled up. The production
+consumer) — the ``engine=`` seam pattern scaled up. The production
 path (all None) builds from cfg and calls the real functions; verified by the
 example running (the example IS the integration test).
 """
@@ -111,7 +111,7 @@ class _FakeBot:
 
 class _RecordingPyBot:
     """A stand-in for the Rust ``Bot._py_bot`` whose ``close_snapshot_tx``
-    records invocation (and optionally trips the XEANMB canary RuntimeError,
+    records invocation (and optionally trips the canary RuntimeError,
     as the real one does when in-flight build workers hold an ``Arc`` clone)."""
 
     def __init__(
@@ -151,7 +151,7 @@ class _FakeEth:
 
 
 class _FakeAsyncW3:
-    """Fake ``AsyncAlloyProvider`` for BotRunner tests (PAGQCK).
+    """Fake ``AsyncAlloyProvider`` for BotRunner tests.
 
     The dispatch hot loop was routed off raw ``AsyncWeb3`` onto
     ``AsyncAlloyProvider`` — this fake exposes the SAME flat surface
@@ -542,8 +542,8 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
     The real `Bot.block_stream()` is once-only — a second call raises
     `RuntimeError("block_stream() can only be called once")`. This test uses
     a bot whose `block_stream()` raises on the second call (mimicking the
-    real once-only seam — the block-clock pipe is coordinator-owned, ergo
-    6VGMLY) and asserts the single consumer receives every block.
+    real once-only seam — the block-clock pipe is coordinator-owned) and asserts
+    the single consumer receives every block.
     """
 
     async def test_run_acquires_block_stream_once_for_single_consumer(
@@ -1076,7 +1076,7 @@ class TestSubBBackgroundRegistration:
 
     async def test_background_completion_closes_snapshot_tx(self) -> None:
         """A *healthy* (non-cancelled) registration must still close the
-        snapshot read-tx after `build_paths` completes — the XEANMB canary stays
+        snapshot read-tx after `build_paths` completes — the canary stays
         active in the normal path (WAL reclamation preserved)."""
         calls: list[str] = []
         bot = _FakeBot(events=calls)
@@ -1117,7 +1117,7 @@ class TestSubBBackgroundRegistration:
         `Arc<SnapshotDb>`) onto a ThreadPoolExecutor; on cancel those worker
         threads may still hold their clones, so `close_snapshot_tx`'s
         `Arc::try_unwrap` canary false-positives and would raise
-        ``RuntimeError: SnapshotDb Arc still held`` during teardown (EZOKDR).
+        ``RuntimeError: SnapshotDb Arc still held`` during teardown.
         The cancel branch must instead drop the Arc naturally and stay quiet —
         the teardown stays clean and CancelledError propagates unadorned.
         """
@@ -1177,7 +1177,7 @@ class TestSubCBgRegistrationConcurrency:
     draining RPC-verify awaits, a growing block stream, and a fatal
     registration error — and assert the hot loop keeps progressing throughout.
     The genuine tokio-runtime parallel registration + real-pump no-deadlock
-    belongs to the Sub-A2 Rust port / rolling smoke (U6TKNU)."""
+    belongs to the Sub-A2 Rust port / rolling smoke."""
 
     async def test_forever_registration_does_not_stall_main_loop(self) -> None:
         """Discovery that never exhausts must not stall the main loop / dispatch:
@@ -1377,8 +1377,8 @@ class TestSubCBgRegistrationConcurrency:
         assert session._session.registration_task.cancelled()
 
 
-class Test6VZN7HOngoingDiscovery:
-    """6VZN7H: the run()-level wiring when discovery never "completes".
+class TestOngoingDiscovery:
+    """The run()-level wiring when discovery never "completes".
 
     The unbounded production discovery producer (``_discovery_producer_forever``
     re-sweeping the subgraph) was stripped back to a single discovery pass, so
@@ -1473,7 +1473,7 @@ def _pool_id_for(address: str) -> int:
 
 
 class TestPathRegistrationPipeline:
-    """NWTUM3 S1: the reusable, pump-concurrent `PathRegistrationPipeline`.
+    """The reusable, pump-concurrent `PathRegistrationPipeline`.
 
     Covers the operator-facing surface that discovery previously ran inline:
     enqueue one specific path (`enqueue_path`), bounded on-demand discovery
@@ -1521,7 +1521,7 @@ class TestPathRegistrationPipeline:
             # PRG-4: the engine dedups by construction — first registration
             # of a signature is created, repeats answer the existing id.
             self._seen: set[object] = set()
-            # D7KMQO: the unit evaluates the path predicate before hop
+            # The unit evaluates the path predicate before hop
             # building (the operator surface's register_path pre-check).
             self.path_predicate = NoOpPathPredicate()
 
@@ -1568,7 +1568,7 @@ class TestPathRegistrationPipeline:
         pipeline = PathRegistrationPipeline(
             context=ctx, engine_registry=reg, max_paths=0, discovery_batch_size=1000
         )
-        # The pipeline retains its own context (NWTUM3 trimmed-state guarantee):
+        # The pipeline retains its own context(trimmed-state guarantee):
         # a call-site that drops run()'s bot (and even the local `ctx` ref)
         # still has everything construction needs.
         assert pipeline.constr_bot is bot
@@ -1582,7 +1582,7 @@ class TestPathRegistrationPipeline:
         # One explicit path registered through the shared consume body.
         assert pipeline.path_count == 1
         assert reg.register_path_calls == 1
-        # W73FVY: the pipeline dup memo answers the repeat (asserted by
+        # The pipeline dup memo answers the repeat (asserted by
         # test_enqueue_path_dedups_repeat); the engine registry stays the
         # source of truth behind it.
 
@@ -1594,7 +1594,7 @@ class TestPathRegistrationPipeline:
 
         # Second add of the identical (pools, directions) path is a duplicate,
         # not a second registration — the pipeline memo answers it BEFORE the
-        # verify/registration stage (W73FVY: behind the memo, every duplicate
+        # verify/registration stage (behind the memo, every duplicate
         # re-paid the verify choreography; the engine's own dedup remains the
         # source of truth for memo misses).
         assert pipeline.path_count == 1
@@ -1638,7 +1638,7 @@ class TestPathRegistrationPipeline:
             await pipeline.enqueue_path([step], directions=[True])
 
     async def test_forever_discovery_plus_mid_run_add_compose_without_stall(self) -> None:
-        """U6TKNU terminal composition: the unbounded forever discovery producer
+        """Terminal composition: the unbounded forever discovery producer
         and a mid-run operator path-add flow through the SAME live pipeline's
         `_consume` concurrently — the add registers while forever discovery
         keeps climbing, and neither stalls the other (cooperative scheduling
@@ -1717,10 +1717,10 @@ class TestPathRegistrationPipeline:
     async def test_periodic_progress_surfaces_skip_reasons_below_1000(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """INN6TK observability: the registration counters + a top skip-reason
+        """Observability: the registration counters + a top skip-reason
         breakdown must be visible even when ``path_count < 1000``. The legacy
         ``[build_paths] Progress`` line only fires at ``path_count % 1000 == 0``,
-        so a discovery-heavy crawl that registers few paths (INN6TK: 12M
+        so a discovery-heavy crawl that registers few paths (12M
         discovered, <1000 registered) never prints it and the skip/dup/reject
         reasons stay invisible. The new time-based summary must surface them.
         """
@@ -1746,7 +1746,7 @@ class TestPathRegistrationPipeline:
 
 
 class TestSessionOperatorSurface:
-    """NWTUM3: the programmatic add-a-path-at-any-time surface exposed on the
+    """The programmatic add-a-path-at-any-time surface exposed on the
     session (`BotRunner.enqueue_path` / `trigger_discovery`), which routes
     into the long-lived `PathRegistrationPipeline`. These inject a fake pipeline
     (consistent with the suite's fake-injection pattern); the pipeline-level
@@ -1773,7 +1773,7 @@ class TestSessionOperatorSurface:
         )
         await session.start()
         await session.run()
-        # FJA2Z7: the pipeline lives on the session owner (None for fake runs).
+        # The pipeline lives on the session owner (None for fake runs).
         assert session._session is not None
         assert session._session.registration_pipeline is None
         with pytest.raises(RuntimeError, match="no live registration pipeline"):
@@ -1830,7 +1830,7 @@ class TestSessionOperatorSurface:
         )
         await session.start()
         # A live (fake) pipeline is reachable on the running session —
-        # attached through the owner's mutator (FJA2Z7).
+        # attached through the owner's mutator.
         assert session._session is not None
         session._session.attach_registration_pipeline(fake_pipeline)
         await session.run()

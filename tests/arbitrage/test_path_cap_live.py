@@ -1,4 +1,4 @@
-"""PRG-4 / IRUMXD live validation: the registered-path cap lives in the
+"""Live validation: the registered-path cap lives in the
 engine path registry and the refusal is a typed benign stop.
 
 Runs on the mainnet full fork tier (``online_rpc``): two REAL Uniswap V2

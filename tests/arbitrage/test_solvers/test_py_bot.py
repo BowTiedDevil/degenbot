@@ -513,7 +513,7 @@ class TestV2SwapEncoding:
         # Pinned reference calldata: the ABI encoding of
         # swap(amount0_out=0, amount1_out=181, recipient=RECIPIENT,
         # data=b''). Pinned from eth_abi 5.x + Rust function_selector
-        # (keccak pinned in 5JKNQH) at the EC6ZXG sweep; bytes permanent.
+        # (keccak pinned at the sweep); bytes permanent.
         expected = (
             "0x022c0d9f000000000000000000000000000000000000000000000000000000000000000000000000000000"
             "000000000000000000000000000000000000000000000000b5000000000000000000000000bbbbbbbbbbbbbb"
@@ -535,7 +535,7 @@ class TestV2SwapEncoding:
         # Pinned reference calldata: the ABI encoding of
         # swap(amount0_out=181, amount1_out=0, recipient=RECIPIENT,
         # data=b''). Pinned from eth_abi 5.x + Rust function_selector
-        # (keccak pinned in 5JKNQH) at the EC6ZXG sweep; bytes permanent.
+        # (keccak pinned at the sweep); bytes permanent.
         expected = (
             "0x022c0d9f00000000000000000000000000000000000000000000000000000000000000b500000000000000"
             "00000000000000000000000000000000000000000000000000000000000000000000000000bbbbbbbbbbbbbb"
@@ -564,7 +564,7 @@ class TestV2SwapEncoding:
         # Pinned reference calldata: the ABI encoding of
         # swap(amount0_out=0, amount1_out=181, recipient=RECIPIENT,
         # data=b''). Pinned from eth_abi 5.x + Rust function_selector
-        # (keccak pinned in 5JKNQH) at the EC6ZXG sweep; bytes permanent.
+        # (keccak pinned at the sweep); bytes permanent.
         expected = (
             "0x022c0d9f000000000000000000000000000000000000000000000000000000000000000000000000000000"
             "000000000000000000000000000000000000000000000000b5000000000000000000000000bbbbbbbbbbbbbb"

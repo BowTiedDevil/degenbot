@@ -1,4 +1,4 @@
-"""Cold-boot bootstrap tests for `run_aave_update` (O4BOST).
+"""Cold-boot bootstrap tests for `run_aave_update`.
 
 Verifies the Rust updater self-bootstraps the `POOL`/`POOL_CONFIGURATOR`
 contract rows on a fresh market (only `POOL_ADDRESS_PROVIDER` + the GHO token
@@ -80,7 +80,7 @@ def _seed_cold_boot_db(db_path: Path, *, market_id: int = 1, last_update_block: 
     """Seed a fresh schema with ONLY the market + POOL_ADDRESS_PROVIDER + GHO.
 
     Mirrors `aave activate ethereum_aave_v3`'s thin seed (no POOL/
-    POOL_CONFIGURATOR — the cold-boot gap O4BOST closes).
+    POOL_CONFIGURATOR — the cold-boot gap this closes).
     """
     db_upgrade_database(str(db_path))
     with sqlite_connection(db_path) as connection:

@@ -1,4 +1,4 @@
-"""Guard-1 tests for 35NMBX: build-path registries are idempotent.
+"""Guard-1 tests: build-path registries are idempotent.
 
 The registration build path is offloaded onto a bounded thread pool
 (``asyncio.to_thread``/``run_in_executor``), so two workers can build the SAME

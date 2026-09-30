@@ -1,4 +1,4 @@
-"""Python-side parity test for the V3/V4 DB-aware liquidity updater seam (QJSCA5 §4.3).
+"""Python-side parity test for the V3/V4 DB-aware liquidity updater seam.
 
 Loads the §4.2 fixture DBs (committed by
 `rust/crates/foundation/degenbot-db/tests/fixtures/generate_liquidity_updater_parity.py`),

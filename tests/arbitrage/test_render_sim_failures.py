@@ -10,7 +10,7 @@ path reverted against WHICH pools.
 These tests stub the ``DispatchOutcome`` shape (the PyO3 pyclass is too
 heavy to instantiate without a full simulate round-trip; the renderer only
 reads the two attributes — ``failures: list[dict]`` and ``path_infos:
-dict[int, dict]`` — so ``FakeDispatchOutcome`` carries exactly those attrs). WEFVGE:
+dict[int, dict]`` — so ``FakeDispatchOutcome`` carries exactly those attrs)..
 ``path_infos`` values are plain dicts (``{path_type, hops: [hop_dict, …]}``),
 not the retired ``*HopInfo`` dataclasses.
 """
@@ -46,7 +46,7 @@ USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 def _hops() -> list[dict[str, Any]]:
     """A 2-hop WETH→USDC→WETH path for the hop-token-summary check.
 
-    WEFVGE: plain dicts (the ``outcome.path_infos`` render shape) — the
+    Plain dicts (the ``outcome.path_infos`` render shape) — the
     retired ``V2HopInfo`` dataclass is gone. The renderer reads ``family``
     + ``token0/1_address`` / ``zfo`` off the dict directly.
     """
@@ -314,7 +314,7 @@ def test_failure_action_wire_drift_raises(
 def test_sim_failures_continue_by_default(caplog: pytest.LogCaptureFixture) -> None:
     """ADR-040: the default ``sim_failure`` bucket action is ``event`` - the
     renderer logs the keyed loud event and the bot KEEPS RUNNING. The
-    D63GSE-era fail-fast-by-default is retired; exit is now an explicit
+    Fail-fast-by-default is retired; exit is now an explicit
     per-bucket operator override (``[failure_policy]`` in config.toml), not an
     implicit default.
     """

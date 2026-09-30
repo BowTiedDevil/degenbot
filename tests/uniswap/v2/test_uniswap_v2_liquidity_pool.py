@@ -699,7 +699,7 @@ def test_swap_for_all(
 
     # cdbc03bb/banded: 2**250 fits the I256 input conversion (2**250 < 2**255)
     # but overflows the constant-product mul (amount * 997 >= 2**256).
-    # The disarm conversion (RATR5A/CXRHW3 review finding) collapsed
+    # The disarm conversion (review finding) collapsed
     # NotComputable (this math-overflow class) into the U256::ZERO miss class,
     # breaking on-chain parity. The NotComputable => ValueError raise is
     # restored in pool.rs; this test Guards the raise survives the disarm.

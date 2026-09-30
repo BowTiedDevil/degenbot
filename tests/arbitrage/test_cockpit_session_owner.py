@@ -1,4 +1,4 @@
-"""FJA2Z7: session state as the cockpit's one owner (candidate 5).
+"""Session state as the cockpit's one owner (candidate 5).
 
 The ``_SessionState`` built in ``start()`` is the ONE owner of the cockpit's
 coordination values — the actors, the dispatcher, the block clock, the sim

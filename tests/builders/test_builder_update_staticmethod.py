@@ -5,7 +5,7 @@ Plan 074: Verifies that all remaining builder update() methods are
 patterns. Also verifies the I/O flows exclusively through the io parameter,
 not through self.
 
-T4 / 4GQWZ4: the V2/V3/V4 builders are retired — their refresh logic now lives
+The V2/V3/V4 builders are retired — their refresh logic now lives
 in `Bot.update()` → `_update_pool` (degenbot.bot._bot), so the V2 behavioral
 integration test exercises that dispatcher directly rather than a builder.
 

@@ -1,4 +1,4 @@
-"""Permutation flows from config, not a module global (epic Y7PA5A, task SDFQLL).
+"""Permutation flows from config, not a module global.
 
 The example used to mutate ``driver_constants.PATH_PERMUTATION_FILTER``
 before construction while ALSO passing ``permutation=`` into

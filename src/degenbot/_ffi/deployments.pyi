@@ -6,7 +6,7 @@ Register the `init_hash_for` / `deployer_for` free functions on the
 `degenbot._ffi.deployments` submodule.
 The `degenbot._ffi.deployments` Python submodule (declarative
 `#[pymodule]`), carrying the deployment-identity lookup over the
-embedded deployments.json (Fork A, 7FA5EZ). The parent module registers
+embedded deployments.json (Fork A). The parent module registers
 the submodule itself and its `sys.modules` entry.
 """
 
@@ -44,7 +44,7 @@ def resolve_deployer(chain_id: int, factory: str) -> str:
     """
     Resolve the effective CREATE2 deployer for a ``(chain_id, factory)`` pair,
     with the `None -> factory` convention applied. Returns the factory itself
-    when the ``(chain, factory)`` is not in the shipped JSON (Fork A, P62DKO).
+    when the ``(chain, factory)`` is not in the shipped JSON (Fork A).
     """
 
 def resolve_v2_init_hash(chain_id: int, factory: str) -> str:
@@ -52,7 +52,7 @@ def resolve_v2_init_hash(chain_id: int, factory: str) -> str:
     Resolve the CREATE2 init code hash for a V2 ``(chain_id, factory)`` pair,
     with a documented fallback. Returns the JSON row's `init_hash` when shipped
     with a CREATE2 init hash; otherwise the Uniswap V2 mainnet fallback (the
-    retired Python `ClassVar`'s default for non-JSON V2 pools) (Fork A, NSAZ4X).
+    retired Python `ClassVar`'s default for non-JSON V2 pools) (Fork A).
     """
 
 def resolve_v3_init_hash(chain_id: int, factory: str) -> str:
@@ -60,7 +60,7 @@ def resolve_v3_init_hash(chain_id: int, factory: str) -> str:
     Resolve the CREATE2 init code hash for a V3 ``(chain_id, factory)`` pair,
     with a documented fallback. Returns the JSON row's `init_hash` when shipped
     with a CREATE2 init hash; otherwise the Uniswap V3 mainnet fallback (the
-    retired Python `ClassVar`'s default for non-JSON V3 pools) (Fork A, P62DKO).
+    retired Python `ClassVar`'s default for non-JSON V3 pools) (Fork A).
     """
 
 __all__ = [

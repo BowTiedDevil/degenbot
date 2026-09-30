@@ -1,4 +1,4 @@
-"""End-to-end IPC transport proof (R2DALC).
+"""End-to-end IPC transport proof.
 
 The suite's only prior IPC coverage is ``test_ipc_kwargs`` in
 ``tests/test_anvil_fork.py``, which asserts nothing about a socket. This module

@@ -22,7 +22,7 @@ ANVIL_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
 # The exact raw signed bytes the eth_account oracle produced for this key +
 # tx_params (captured once, pinned here — the Rust seam must reproduce them
-# exactly). eth_account is retired from the dev deps (2DMR4V); this fixed
+# exactly). eth_account is retired from the dev deps; this fixed
 # byte string is the permanent record of the §4.2 HARD gate oracle.
 ETH_ACCOUNT_RAW_HEX = (
     "02f870010784773594008506fc23ac008303d09094"

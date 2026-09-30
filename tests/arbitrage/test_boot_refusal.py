@@ -1,4 +1,4 @@
-"""FF-T1 (BPHR6F) — boot refusal is a typed error, never a process abort.
+"""Boot refusal is a typed error, never a process abort.
 
 Red-first: at HEAD, booting the fleet on a host below the pinned-role floor
 aborts the host process ([fleet-reg] unrecoverable — aborting, the
@@ -8,7 +8,7 @@ error instead.
 
 The child shrinks its own affinity to 1 CPU — the fleet quota is
 min(cgroup quota, affinity), floored at 1.0 — simulating the
-sub-SERIAL-floor condition (FF-T4, Z6XTDX: the 2-5-core tier now boots the
+sub-SERIAL-floor condition (the 2-5-core tier now boots the
 serial binding, so the typed refusal fires only below the tier floor).
 The intake station boot is lazy: the first submit is what
 triggers the fleet budget check.
@@ -36,7 +36,7 @@ import sys
 # at the child seam).
 os.environ.pop("DEGENBOT_FLEET", None)
 
-# Simulate a sub-SERIAL-floor host (FF-T4, Z6XTDX): the 2-5-core tier
+# Simulate a sub-SERIAL-floor host: the 2-5-core tier
 # now boots the serial binding, so the typed refusal fires only below
 # the tier floor — one CPU floors the quota at 1.0 (< HOST_FLOOR_CORES).
 os.sched_setaffinity(0, {0})

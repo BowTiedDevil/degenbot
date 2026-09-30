@@ -1,7 +1,7 @@
-"""§4.2 + §4.3 VV5OTV — `verify_touched_positions_on_chain` value-correctness
+"""§4.2 + §4.3 — `verify_touched_positions_on_chain` value-correctness
 gate.
 
-The per-chunk value-correctness gate (the minimal BE474R slice — port of
+The per-chunk value-correctness gate (the minimal slice — port of
 Python `verification.py::verify_scaled_token_positions`). Mirrors the
 Python's assertion contract: `scaledBalanceOf(user)` +
 `getPreviousIndex(user)` at `block_number` MUST equal the DB position row's
@@ -14,12 +14,12 @@ field, expected, actual) BEFORE the chunk's wrong balance could compile-up
 into a future "balance would go negative" crash somewhere downstream.
 
 The GREEN case proves the gate stays clean when the DB matches on-chain
-truth — so a future regression that re-introduces the NMWPI6/3MF5QM-class
+truth — so a future regression that re-introduces the
 masked bugs (which left balances SILENTLY wrong, never negative) would be
 caught RED by this gate, not just-green.
 
 Login: the fixture is one Supply at `liquidity_index = 2 * _RAY` (so the
-scaled balance != underlying — the NMWPI6-shaped discriminator). The
+scaled balance != underlying — the). The
 MockRpcServer's `eth_call_responses` are keyed by selector — sufficient for
 this one-user fixture: `scaledBalanceOf` + `getPreviousIndex` both serve the
 canonical on-chain truth = the Rust writer's scaled-balance output.
@@ -187,7 +187,7 @@ def _drive_rust(rust_path: str, rpc_url: str) -> dict[str, object]:
 def _verify_all(database_path: str, rpc_url: str) -> list[dict[str, object]]:
     """Run the standalone verify seam in verify-all mode (`touched_users=None`).
 
-    The seam is an ambient-runtime-only consumer (VJGZJ2: a missing ambient
+    The seam is an ambient-runtime-only consumer (a missing ambient
     tokio runtime is a typed ValueError, never a per-call runtime spawn), so
     the direct call goes through the Rust ambient-runtime driver seam, which
     enters the shared degenbot-core runtime around the callable — the same
@@ -268,7 +268,7 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
 
         if corrupt_db:
             # RED arm: corrupt the DB balance to a wrong value (simulating a
-            # masked wrong-value bug — e.g. the pre-NMWPI6 user-as-int U256
+            # masked wrong-value bug — e.g. the earlier user-as-int U256
             # would have left balance = a wildly wrong but always-positive
             # value, structurally invisible to the crash-gate).
             _corrupt_balance(str(rust_path), _SENDER, db_balance + 1)
@@ -276,7 +276,7 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
         # The gate fires: verify_touched_positions_on_chain.
         # NOTE: `None` for `touched_users` instructs the verify fn to check
         # ALL nonzero positions (verify-all mode — the orchestrator-required
-        # surface-44JTVN-before-crash path: positions whose divergence was
+        # surface-before-crash path: positions whose divergence was
         # introduced in EARLIER chunks surface before their
         # crash-cycle chunk commits). The touched-filter would miss p534
         # here (it wasn't touched in THIS chunk).
@@ -301,7 +301,7 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
 
 
 # ─┐
-# │ EIWEPM — LiquidationCall double-debit (shared writer-spec MATH bug).    │
+# │ LiquidationCall double-debit (shared writer-spec MATH bug).             │
 # │                                                                        │
 # │ Class: inside `collect_collateral_events` (ops_parser.rs:1906-1941),   │
 # │ the LiquidationCall op's `scaled_events` ends up containing BOTH the   │
@@ -496,7 +496,7 @@ def test_liquidation_burn_side_pair_single_debit(
     GREEN post-fix: `collect_collateral_events` calls `is_part_of_burn` to
     filter the paired ERC20 Transfer-to-0x0 out of `collateral_transfers` →
     `dispatch_liquidation` applies only the Burn event → single-debit ==
-    on-chain truth → VV5OTV gate reports no divergence.
+    on-chain truth → the gate reports no divergence.
     """
     logs = _build_liquidation_burn_side_chunk_logs()
     with (

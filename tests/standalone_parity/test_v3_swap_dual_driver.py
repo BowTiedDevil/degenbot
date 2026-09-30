@@ -13,7 +13,7 @@ recorded constant, plus monotonicity + direction-symmetry sanity checks.
 Divergence = a lossy FFI seam on the CL swap path, which the V2-only gate
 cannot catch.
 
-## The shared contract (HRT356 — single source of truth)
+## The shared contract
 
 The fixture + expected output are loaded from the SHARED file
 `tests/standalone_parity/fixtures/v3_swap.json`, which the Rust parity test

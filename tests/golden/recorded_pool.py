@@ -216,7 +216,7 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
         # IncompleteSwap). ``update_tick_data`` replays the recorded words
         # (Sparse pools record them as checked words in Rust — the bitmap
         # itself derives from the tick rows), restoring fork parity (T1
-        # 3WTDFK: the companion override is retired).
+        # The companion override is retired).
         tick_data = state.get("tick_data")
         tick_bitmap = state.get("tick_bitmap")
         if tick_bitmap or tick_data:

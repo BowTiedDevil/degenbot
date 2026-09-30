@@ -1,14 +1,14 @@
-"""Bot pool-admission exceptions through the Python seam (F2EVV6).
+"""Bot pool-admission exceptions through the Python seam.
 
 Companion to ``test_v4_admission_exceptions.py`` (which pins the class
 hierarchy shape) — this file exercises the *actual* PyO3 seam so a typed
 ``PoolRegistrationError`` subclass surfaces when a caller registers an
 out-of-spec or duplicate pool via ``Bot.register_v{2,3,4}_pool``.
 
-The WOYYS2 epic (MSTAT2 / 24KNGF / K3IICB) made every
+The admission epic made every
 ``register_vx_pool`` a typed ``Result<u64, RegisterVxPoolError>`` and gave
 every variant set a ``SpecViolation`` that wraps the shared
-``spec_bounds::SpecViolation { field, value, bound }``. F2EVV6 promoted the
+``spec_bounds::SpecViolation { field, value, bound }``. It promoted the
 stop-gap ``PyValueError`` mappers to a typed ``PoolRegistrationError``
 hierarchy shared across V2/V3/V4:
 
@@ -16,7 +16,7 @@ hierarchy shared across V2/V3/V4:
     └─ PoolRegistrationError
        ├─ HookedPoolRejectedError       (V4 admission — amount-modifying hook)
        ├─ DynamicFeePoolRejectedError    (V4 admission — dynamic fee)
-       ├─ HighFeePoolRejectedError      (V4 admission — static fee > 65535, DPODAZ)
+       ├─ HighFeePoolRejectedError      (V4 admission — static fee > 65535)
        ├─ PoolAlreadyRegisteredError     (V2/V3/V4 duplicate at registration)
        └─ SpecViolationError            (V2/V3/V4 out-of-spec field)
 
@@ -66,7 +66,7 @@ V2_RESERVE_OVER_112BIT = 1 << 112
 
 
 # -----------------------------------------------------------------------
-# Hierarchy shape — pins the F2EVV6 class tree + the reparenting of the
+# Hierarchy shape — pins the class tree + the reparenting of the
 # V4-specific names under the new shared base.
 # -----------------------------------------------------------------------
 
@@ -84,7 +84,7 @@ def test_spec_violation_error_and_already_registered_are_exposed() -> None:
 
 
 def test_v4_admission_errors_reparented_under_pool_registration_error() -> None:
-    """F2EVV6 reparents the V4-specific names under `PoolRegistrationError`.
+    """The V4-specific names are reparented under `PoolRegistrationError`.
 
     A broad `except PoolRegistrationError:` must now catch V4 admission
     rejections too, not just the new V2/V3 spec/dup variants.
@@ -114,7 +114,7 @@ def test_admission_errors_catchable_as_value_error(exc_name: str) -> None:
 
 # -----------------------------------------------------------------------
 # Seam-triggered tests — exercise the actual Bot.register_v{2,3,4}_pool
-# path so the F2EVV6 typed mappers surface the right subclass at the boundary.
+# path so the typed mappers surface the right subclass at the boundary.
 # -----------------------------------------------------------------------
 
 
@@ -135,7 +135,7 @@ class TestV2SeamAdmission:
         )
         # Second registration at the same address: the Rust core's
         # `AlreadyRegistered` rejection now surfaces (was an `assert!` panic
-        # pre-MSTAT2) as the typed `PoolAlreadyRegisteredError`.
+        # as the typed `PoolAlreadyRegisteredError`.
         with pytest.raises(PoolAlreadyRegisteredError) as exc_info:
             bot.register_v2_pool(
                 address=V2_DAI_WETH_ADDR,
@@ -154,7 +154,7 @@ class TestV2SeamAdmission:
 
     def test_overlarge_reserve0_raises_spec_violation_error(self) -> None:
         """V2 reserves are `uint112` on-chain; > `uint112(-1)` is rejected up
-        front (MSTAT2 admission floor)."""
+        front."""
         bot = Bot(chain_id=1)
         with pytest.raises(SpecViolationError) as exc_info:
             bot.register_v2_pool(
@@ -284,9 +284,9 @@ class TestV4SeamAdmission:
         assert "fee" in str(exc_info.value)
 
     def test_hooked_pool_admitted_with_reserved_typed_error(self) -> None:
-        """X4EU3J: amount-modifying-hook V4 pools are admitted at registration
+        """Amount-modifying-hook V4 pools are admitted at registration
         (simulations carry Caveats::HOOKED_POOL; hop projection excludes them
-        from solving). The F2EVV6 typed HookedPoolRejectedError stays exposed
+        from solving). The typed HookedPoolRejectedError stays exposed
         for API compatibility, but register_v4_pool no longer raises it."""
         bot = Bot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e3" * 32)
@@ -295,7 +295,7 @@ class TestV4SeamAdmission:
         bot.register_v4_pool(**kw)  # admitted; no HookedPoolRejectedError raised
 
     def test_high_static_fee_raises_high_fee_pool_rejected_error(self) -> None:
-        """DPODAZ: a static ``fee > 65535`` (u16::MAX) is protocol-valid but
+        """A static ``fee > 65535`` (u16::MAX) is protocol-valid but
         exceeds the cmd_executor's 2-byte fee field, so it is rejected at
         admission as ``HighFeePoolRejectedError`` (a distinct variant from the
         dynamic-fee refusal + the ``fee >= 1<<24`` spec violation).

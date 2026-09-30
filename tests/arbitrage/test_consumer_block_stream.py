@@ -34,7 +34,7 @@ class _Eth:
         self._nonce = nonce
         self.fee_history_blocks: list[int] = []
 
-    # PAGQCK: the dispatch hot loop now routes ``eth_feeHistory`` via
+    # The dispatch hot loop now routes ``eth_feeHistory`` via
     # ``make_request`` (raw JSON shape with hex-string rewards) instead of
     # ``async_w3.eth.fee_history(block_count=, newest_block=, ...)``. The
     # fake records the requested ``newest_block`` from the make_request params
@@ -49,7 +49,7 @@ class _Eth:
 
 
 class _FakeW3:
-    """Fake ``AsyncAlloyProvider`` for the dispatch-path tests (PAGQCK).
+    """Fake ``AsyncAlloyProvider`` for the dispatch-path tests.
 
     The dispatch hot loop was routed off raw ``AsyncWeb3`` onto
     ``AsyncAlloyProvider`` — this fake exposes the SAME flat surface
@@ -259,7 +259,7 @@ class TestBlockClockFromStream:
         )
 
     async def test_fee_history_keys_off_block_stream_numbers(self) -> None:
-        # 7UIYJ6: the fee-history RPC + record-priority-fees now run in the
+        # The fee-history RPC + record-priority-fees now run in the
         # Rust submit leaf (`fetch_fee_history_py`), keyed off the block-stream
         # number passed by `_apply_block_if_ready`. The RPC-parity (that the
         # leaf queries the block-stream number's reward percentiles) is
@@ -288,7 +288,7 @@ class TestBlockClockFromStream:
         batch = dict(_empty_batch(999))
         batch["fresh"] = [
             (1, 100, 50, (1, 2), (3,), (0,))
-        ]  # one profitable result (state_nonces=(0,) — AV42C7)
+        ]  # one profitable result (state_nonces=(0,))
         _dispatcher, _w3, dispatched = await _run(
             blocks=[_block(301), _block(302)],
             batches=[batch],

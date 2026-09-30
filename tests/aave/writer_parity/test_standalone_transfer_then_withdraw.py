@@ -1,4 +1,4 @@
-"""§4.2 YUPSIB: standalone aToken Transfer-credit stolen by the deficit_coverage
+"""§4.2: standalone aToken Transfer-credit stolen by the deficit_coverage
 scavenger → the recipient's Withdraw crashes "balance would go negative".
 
 Aave V3 moves collateral between users via aToken `Transfer` (+ the
@@ -20,7 +20,7 @@ case) is marked assigned WITHOUT creating a DeficitCoverage op. Then
 BalanceTransfer op → the recipient's credit isn't applied → balance stays 0 →
 the recipient's Withdraw's `CollateralBurn` goes negative → crash.
 
-Surfaced by the W2S3WH re-drive `--to 16596000`: block 16496928 (chunk 21),
+Surfaced by the re-drive `--to 16596000`: block 16496928 (chunk 21),
 user `0x872f…30995` received aWETH via a standalone Transfer (from
 `0xe4217…`) then withdrew — the credit wasn't applied → "balance would go
 negative (current=0, delta=-1000000000000000)".
@@ -33,7 +33,7 @@ probes (the (ii) gate): the user's aWETH balanceOf was 0 at block 16496927,
 + the Withdraw tx 0x4a88 contains the incoming Transfer (li=104/107)
 crediting the user before the Burn (li=111).
 
-Per §4.3, TEMPORARY — retired with the Python oracle in CZM7TI.
+Per §4.3, TEMPORARY — retired with the Python oracle.
 """
 
 from __future__ import annotations
@@ -233,7 +233,7 @@ def test_standalone_transfer_credit_then_withdraw(tmp_path: Path) -> None:
     standalone aToken Transfer's credit was stolen by the deficit_coverage
     scavenger (marked assigned without creating an op).
 
-    GREEN (post-fix YUPSIB): the standalone Transfer op is created → USER is
+    GREEN: the standalone Transfer op is created → USER is
     credited → the Withdraw debits → non-negative → no crash + the positions
     land (SENDER + USER both settle to balance 0; the a_token == aWETH).
     """

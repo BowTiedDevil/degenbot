@@ -27,7 +27,7 @@ EVM run is the truth). A deliberately-wrong fixture edit fails BOTH the
 Rust + Python halves (the fixture is the shared contract, not copied
 constants).
 
-V4 slice is deferred (gated on `5RI47E`, the transient V4 pool seeder).
+V4 slice is deferred (the transient V4 pool seeder).
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ def test_deliberately_wrong_fixture_fails_both_halves() -> None:
     expected bucket in a mutated fixture copy must fail the Python assertion
     (and, by symmetry, the Rust `parity_inspector.rs` test).
 
-    Guards against the V3/V4 fixture-drift regression (HRT356): copied
+    Guards against the V3/V4 fixture-drift regression: copied
     constants with no mechanical link left both tests green but testing
     *different* fixtures. The shared JSON file is the single source of truth.
     """

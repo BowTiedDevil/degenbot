@@ -53,7 +53,7 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-# ADR-032 grandfather list — EMPTY as of VD5MD5 (2026-08-17): all 27 census
+# ADR-032 grandfather list — EMPTY (2026-08-17): all 27 census
 # names were renamed to clean Python-facing names (the collision set took
 # Rust-prefixed or role-specific clean names — see the ADR-032 post-adoption
 # note). Any new Py-prefixed registration now fails test 1 outright.
@@ -168,7 +168,7 @@ def test_every_runtime_submodule_has_a_stub() -> None:
 # so the decision is reviewed rather than silent.
 # ---------------------------------------------------------------------------
 _RETIRED_NAMES: tuple[tuple[str, str], ...] = (
-    # DADWUP: the retired pure-Python yield-per loops.
+    # The retired pure-Python yield-per loops.
     ("degenbot.uniswap.snapshot_binary", "stream_v3_snapshot_to_engine"),
     ("degenbot.uniswap.snapshot_binary", "stream_v4_snapshot_to_engine"),
 )
@@ -178,7 +178,7 @@ _RETIRED_NAMES: tuple[tuple[str, str], ...] = (
 def test_retired_names_stay_absent(owner: str, name: str) -> None:
     """R5: tombstoned driver-module surface never returns to the runtime."""
     assert not hasattr(importlib.import_module(owner), name), (
-        f"{owner} exposes retired name {name!r} — it was deleted by DADWUP. "
+        f"{owner} exposes retired name {name!r} — it was deleted. "
         f"If resurrecting it deliberately, remove the R5 tombstone row in "
         f"tests/rust/test_ffi_registration_surface.py with justification in the "
         f"same change."

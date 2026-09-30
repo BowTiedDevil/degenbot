@@ -1,4 +1,4 @@
-"""WKKMJM step-1: recorded-RPC parity harness for the Rust Curve builder.
+"""Recorded-RPC parity harness for the Rust Curve builder.
 
 Drives the Rust ``Bot.build_curve_pool`` (the FFI adapter over core
 ``builder::build_curve_pool`` + ``RpcCurveDataProvider``) through a

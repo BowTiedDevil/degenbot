@@ -262,7 +262,7 @@ class ArbitrageEngine:
     def last_processed_block(self, /) -> int | None:
         """
         Last block number processed by the pump's drain phase. Routes through
-        the engine's stage surface (`EngineStages`, SZJUKL): the engine's own
+        the engine's stage surface (`EngineStages`): the engine's own
         cursor. The dissolved coordinator cursor (`last_drained_block` under
         `drain_lock`) is gone — solve/finalize/publish work runs INLINE in the
         single-writer pump driver, so the engine cursor IS the drained cursor
@@ -349,7 +349,7 @@ class ArbitrageEngine:
         """
     def release_all_v3_v4_quarantined(self, /) -> None:
         """
-        Batch-release every pool still `Quarantined` (DFQYM5 orphan sweep).
+        Batch-release every pool still `Quarantined` (orphan sweep).
         With Tracked pools now registering `Quarantined` by default, call once
         after `build_paths` finishes so a Tracked pool built but never reached
         by `register_v3/v4_pool` (path skipped before registration) is released
@@ -378,7 +378,7 @@ class ArbitrageEngine:
     def run_v3_registration_lifecycle(self, /, address: str, snapshot_block: int | None) -> Any:
         """
         Run a single V3 pool's registration verify-lifecycle end-to-end
-        (IKGQ6F / ADR-022 D1) — the core-owned
+        (ADR-022 D1) — the core-owned
         `quarantine → seed-verify → drain+pin → post-drain-verify → set_live`
         choreography, delegating to the shared `PumpState`. **Sparse** →
         immediate no-op (`Live`, no RPC); **Tracked** → verified with the
@@ -495,30 +495,30 @@ class ArbitrageEngine:
         """
     def set_v3_pool_live(self, /, pool_address: str) -> None:
         """
-        Transition a V3 pool from `Quarantined` to `Live` (6N7XVR): flush the
+        Transition a V3 pool from `Quarantined` to `Live`: flush the
         retained in-progress-block pump tail via the unguarded `drain_pump`
         in insertion order, then mark `Live`. Call after step-2 post-drain
         verify passes. No-op for unregistered / already-`Live` pools.
         """
     def set_v3_pool_quarantined(self, /, pool_address: str) -> None:
         """
-        Set a V3 pool's registration lifecycle to `Quarantined` (6N7XVR). The
+        Set a V3 pool's registration lifecycle to `Quarantined`. The
         live pump then defers the pool's Swap/Mint/Burn events to the pump
         buffer until [`set_v3_pool_live`] transitions it back. Call at the
         start of `register_v3_pool` (before the first RPC await) so a live
         event landing during the drain+pin+verify window cannot advance
         `update_block` past `last_complete_block` (the live direct-apply gap
-        YLYJM2's `drain_pump_completed` buffer gate does NOT cover). No-op for
+        the `drain_pump_completed` buffer gate does NOT cover). No-op for
         unregistered pools.
         """
     def set_v4_pool_live(self, /, pool_manager: str, pool_id_hex: str) -> None:
         """
-        Transition a V4 pool from `Quarantined` to `Live` (6N7XVR). V4 twin
+        Transition a V4 pool from `Quarantined` to `Live`. V4 twin
         of [`set_v3_pool_live`]. Call after step-2 post-drain verify passes.
         """
     def set_v4_pool_quarantined(self, /, pool_manager: str, pool_id_hex: str) -> None:
         """
-        Set a V4 pool's registration lifecycle to `Quarantined` (6N7XVR). V4
+        Set a V4 pool's registration lifecycle to `Quarantined`. V4
         twin of [`set_v3_pool_quarantined`]. Call at the start of
         `register_v4_pool` (before the first RPC await).
         """
@@ -540,7 +540,7 @@ class ArbitrageEngine:
         The snapshot seed block `S` — set at `Bot.__init__` time by
         `Bot::load_snapshot_from_db` for the DB path, OR via
         [`set_snapshot_seed_block`](Self::set_snapshot_seed_block) for the
-        non-DB (file/memory) path (2SM4Y7 — the pyo3 `backfill_from_snapshot`
+        non-DB (file/memory) path (the pyo3 `backfill_from_snapshot`
         is retired; the core auto-backfill inside `BlockPump::resume_from_subscribe`
         reads `S` from the shared `BotState`). `None` = cold-start (no snapshot
         loaded).
@@ -549,7 +549,7 @@ class ArbitrageEngine:
     def snapshot_seed_block(self, /, block: int | None) -> None:
         """
         Set the snapshot seed block `S` on the shared `BotState` for the
-        non-DB (file/memory) snapshot path (2SM4Y7).
+        non-DB (file/memory) snapshot path.
 
         The DB path (`Bot::load_snapshot_from_db`) sets `S` itself; the
         non-DB path calls this once after `load_v3_snapshot_from_py` /
@@ -847,7 +847,7 @@ class Bot:
     ) -> int:
         """
         Build + register a Curve `StableSwap` pool through the Rust `PoolBuilder`
-        (WKKMJM delegation adapter) — the Curve twin of [`Self::build_v2_pool`].
+        — the Curve twin of [`Self::build_v2_pool`].
         The core `builder::build_curve_pool` runs the full detection
         choreography (coins + balances, `A`/`fee`/`admin_fee`, A-ramping,
         lending, crypto params, `lp_token`, metapool base + underlying coins,
@@ -869,7 +869,7 @@ class Bot:
     ) -> Erc20Token:
         """
         Build + register an ERC-20 token, resolving metadata DB-first, then
-        on-chain (the core twin of `Erc20Builder.build`, VK3YDM-S2).
+        on-chain (the core twin of `Erc20Builder.build`).
 
         `builder::build_erc20_metadata` resolves `name`/`symbol`/`decimals`
         (DB row → on-chain batched read → alternate-prototype fallback →
@@ -916,7 +916,7 @@ class Bot:
         Build + register a V3 pool through the Rust `PoolBuilder` (
         delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
         map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the
-        IKGQ6F quarantine→verify lifecycle; `db=false` forces the Chain-arm
+        quarantine→verify lifecycle; `db=false` forces the Chain-arm
         Sparse path). `block` defaults to the current chain head.
 
         # Errors
@@ -1078,7 +1078,7 @@ class Bot:
         """
     def load_snapshot_from_db(self, /, db_path: str, chain_id: int) -> None:
         """
-        Load the V3 + V4 DB snapshot into the core `BotState` (B3OROH, JUCFCB).
+        Load the V3 + V4 DB snapshot into the core `BotState` .
 
         Called at Python `Bot.__init__` time when a DB path is configured
         (Shape 2: eager construction-time load). Opens a read-only
@@ -1385,7 +1385,7 @@ class Bot:
         registered hook address at hop projection / simulation-caveat time),
         and the `HookedPoolRejectedError` raise site is reserved (no longer
         fires). The FULL `hook_address` rides into the registered pool key so
-        the identity round-trips `keccak(abi.encode(pool_key))` (MTMPQB).
+        the identity round-trips `keccak(abi.encode(pool_key))`.
 
         ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
         INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
@@ -1484,7 +1484,7 @@ class Bot:
 
         The snapshot→WS gap is closed automatically inside the core
         `BlockPump::resume_from_subscribe`; the pyo3
-        `backfill_from_snapshot` method is retired (2SM4Y7). Delegates to the
+        `backfill_from_snapshot` method is retired. Delegates to the
         shared `PumpState`.
         """
     def run_v3_registration_lifecycle(self, /, address: str, snapshot_block: int | None) -> Any:
@@ -1676,7 +1676,7 @@ class BotIo:
         legacy-double fallback) yield `alloy = None` and every RPC + choreography
         method errors loudly (ADR-023 D1).
 
-        `database_path` (QVMWQC) is the on-disk `SQLite` path; when set, the
+        `database_path` is the on-disk `SQLite` path; when set, the
         DB-query methods (`fetch_erc20_token`, `update_erc20_token_metadata`, …)
         open a `degenbot_db::DegenbotDb` handle from it + route the
         construction-time DB reads/writes through Rust (the `SQLAlchemy`
@@ -1693,7 +1693,7 @@ class BotIo:
     @property
     def database_path(self, /) -> str | None:
         """
-        The on-disk `SQLite` database path, if any (QVMWQC). The DB-query methods
+        The on-disk `SQLite` database path, if any. The DB-query methods
         open a `degenbot_db::DegenbotDb` handle from this path; `None` when the
         `Bot` has no DB.
         """
@@ -1797,7 +1797,7 @@ class BotIo:
     ) -> list[tuple[str, str, int] | None]:
         """
         Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
-        Multicall3 `aggregate3` `eth_call` (CDJEPJ-2), falling back to the
+        Multicall3 `aggregate3` `eth_call` , falling back to the
         per-token `fetch_erc20_metadata` path if the multicall itself errors.
 
         Returns one `Option<(name, symbol, decimals)>` per input address, in
@@ -1810,7 +1810,7 @@ class BotIo:
     def fetch_erc20_token(self, /, chain_id: int, address: str) -> Erc20TokenRow | None:
         """
         Fetch an ERC-20 token row from the DB by `(chain_id, address)` — the
-        construction-time read in `Erc20Builder.build` (QVMWQC). Replaces the
+        construction-time read in `Erc20Builder.build`. Replaces the
         `SQLAlchemy` `session.scalar(select(Erc20TokenTable).where(...))` call.
 
         Returns a [`PyErc20TokenRow`] with `(id, chain, address, name, symbol,
@@ -1823,7 +1823,7 @@ class BotIo:
         """
     def fetch_exchange(self, /, exchange_id: int) -> ExchangeRow | None:
         """
-        Fetch an `exchanges` row by its FK id (QVMWQC) — hydrates the
+        Fetch an `exchanges` row by its FK id — hydrates the
         `pool.exchange` relationship (`factory` / `deployer`). `None` when absent
         or no path.
         """
@@ -1847,7 +1847,7 @@ class BotIo:
     def fetch_pool_row(self, /, chain_id: int, address: str) -> LiquidityPoolRow | None:
         """
         Fetch a `pools` row by `(chain_id, address)` — the pool builder's
-        construction-time read (QVMWQC). Replaces the `SQLAlchemy`
+        construction-time read. Replaces the `SQLAlchemy`
         `session.scalar(select(LiquidityPoolTable).where(...))`. Returns a
         [`PyLiquidityPoolRow`] carrying the scalar + FK-id columns
         (`exchange_id` / `token0_id` / `token1_id` / `kind`); the caller hydrates
@@ -2084,7 +2084,7 @@ class BotIo:
         """
         Write back an ERC-20 token row's metadata (`name` / `symbol` / `decimals`)
         by `(chain_id, address)` — the construction-time write-back in
-        `Erc20Builder.build` (QVMWQC). Replaces the `SQLAlchemy`
+        `Erc20Builder.build`. Replaces the `SQLAlchemy`
         `token_from_db.decimals = …; token_from_db.name = …;
         token_from_db.symbol = …; session.commit()` block. Each `None` field
         writes `NULL` (matches the ORM attribute assignment).
@@ -2667,7 +2667,7 @@ class Erc20TokenRow:
     ```
     then pass `io` where a builder expects an `io: PoolIO`.
     A typed ERC-20 token DB row returned by [`PyBotIo::fetch_erc20_token`]
-    (QVMWQC). Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
+    . Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
     attributes (`.id` / `.chain` / `.address` / `.name` / `.symbol` /
     `.decimals`) so the builder's downstream attribute reads stay unchanged
     after the cutover from `session.scalar(select(Erc20TokenTable)...)`.
@@ -2762,7 +2762,7 @@ class IntakeReceipt:
 @final
 class PathBatchIterator:
     """
-    A batched **async** iterator over the lazy DFS (4IOEVT).
+    A batched **async** iterator over the lazy DFS.
 
     `__anext__` returns `list[list[tuple[int, int]]]`: up to `batch_size`
     paths per call, computed on the shared tokio runtime with the GIL released
@@ -3194,7 +3194,7 @@ class Pool:
     def curve_has_data_provider(self, /) -> bool:
         """
         Whether a Curve data-provider I/O trait object is stored on this
-        pool's state (ADR-005 JFGCHJ). `False` for non-Curve pools or Curve
+        pool's state (ADR-005). `False` for non-Curve pools or Curve
         pools registered without a provider (the no-I/O fixture case).
         """
     @property
@@ -3282,7 +3282,7 @@ class Pool:
     def dex(self, /) -> DexIdentity | None:
         """
         The resolved `DexIdentity` for this pool's registered variant, with the
-        JSON-sourced deployer + `init_hash` merged in (Fork A, NSAZ4X). `None` if
+        JSON-sourced deployer + `init_hash` merged in (Fork A). `None` if
         not a V2 pool. The Python companion reads this to recover deployer /
         init-hash without taking constructor args. Protocol-const fields
         (fees/ABI shape) come from the variant preset; `factory`/`deployer` /
@@ -3300,7 +3300,7 @@ class Pool:
     ) -> tuple[str, str, int] | None: ...
     def ensure_word_known(self, /, word: int, block: int) -> bool:
         """
-        Backfill an unknown tick-bitmap word for this pool (T2 FBJTUM — the
+        Backfill an unknown tick-bitmap word for this pool (the
         write-path gate's fetch seam).
         STAGED fetch — the multi-second fetch (`Python::attach` + the
         companion's serial web3 RPC) runs with the `BotState` write guard
@@ -3578,7 +3578,7 @@ class Pool:
         """
     def update_tick_data(self, /, tick_bitmap: Any, tick_data: dict, block: int) -> bool:
         """
-        The pool's tick-map coverage (T2 FBJTUM): `"sparse"` or `"tracked"`
+        The pool's tick-map coverage: `"sparse"` or `"tracked"`
         for a registered V3/V4 pool, `None` for any other pool family. The
         Python companion's sparse-word gate reads this — Rust's coverage is
         sparse-map backfill). Mirrors the Python `UniswapV3Pool.update_tick_data`
@@ -4117,7 +4117,7 @@ def call_on_ambient_runtime(fn_work: Any) -> Any:
     calling thread.
 
     Python drivers + tests that call an ambient-runtime-only verify seam
-    (the VJGZJ2 policy) wrap the call in this helper:
+    (the policy) wrap the call in this helper:
 
     ```python
     divergences = call_on_ambient_runtime(
@@ -4293,7 +4293,7 @@ def find_paths_async_rust(
     batch_size: int = 1000,
 ) -> PathBatchIterator:
     """
-    Create a batched **async** iterator over the lazy arbitrage DFS (4IOEVT).
+    Create a batched **async** iterator over the lazy arbitrage DFS.
 
     The async twin of [`find_paths_rust`]: it builds the same owning lazy DFS
     but returns a [`PathBatchIterator`] whose `__anext__` yields up to

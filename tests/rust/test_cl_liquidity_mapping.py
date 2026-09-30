@@ -1,4 +1,4 @@
-"""Parity test: the `cl_get_tick_word_and_bit_position` PyO3 seam (ZJEL3N).
+"""Parity test: the `cl_get_tick_word_and_bit_position` PyO3 seam.
 
 The Rust seam (``degenbot._ffi.cl_get_tick_word_and_bit_position``) wraps
 the pure-Rust core ``degenbot_concentrated_liquidity_math::liquidity_mapping::get_tick_word_

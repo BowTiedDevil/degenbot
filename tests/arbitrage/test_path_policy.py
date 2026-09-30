@@ -1,4 +1,4 @@
-"""Tests for the path-composition rejection predicate (Plan 102, D7KMQO).
+"""Tests for the path-composition rejection predicate.
 
 A bot can refuse an ``EngineRegistry.register_path`` candidate by *policy*
 (token denylist/allowlist, hop-count min/max, min-liquidity gate,

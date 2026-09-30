@@ -118,7 +118,7 @@ def make_v2_pool(
 
     py_bot = py_bot if py_bot is not None else Bot()
 
-    # Descriptor params (ADR-005 / FMO2GE): ``variant`` defaults from the dex
+    # Descriptor params (ADR-005): ``variant`` defaults from the dex
     # preset (if provided) or "uniswap-v2". ``stable_swap``/``fee_denominator``
     # default to False/None — callers building a Camelot stable pool pass them
     # explicitly. These flow into Rust as a ``V2PoolDescriptor`` on the
@@ -143,7 +143,7 @@ def make_v2_pool(
         stable_swap=stable_swap,
         fee_denominator=fee_denominator,
     )
-    # ADR-006 (OGTTCS D1): the pool's tokens must live in the SAME Bot as
+    # ADR-006: the pool's tokens must live in the SAME Bot as
     # the pool — ``from_handle`` recovers them via ``py_pool.get_token0``/
     # ``get_token1``, which look up ``token0_address``/``token1_address`` in
     # the pool's own ``BotState``. The token companions passed in may have been

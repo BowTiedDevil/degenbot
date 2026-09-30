@@ -12,7 +12,7 @@ invariant is a Newton solve), so — like V3/V4 — the oracle is the recorded
 constant in the shared fixture; the Python and Rust sides independently
 re-derive it from the same inputs.
 
-## The shared contract (HRT356 — single source of truth)
+## The shared contract
 
 The fixture + expected outputs are loaded from the SHARED file
 `tests/standalone_parity/fixtures/curve_swap.json`, which the Rust parity test

@@ -10,18 +10,18 @@ the Rust core refuses such pools — and the refusal must surface as a typed
 Python exception (subclassing ``ValueError`` so existing broad
 ``except ValueError`` handlers still catch it) so Python classifies by type.
 
-F2EVV6 reparented the V4-specific admission names under a unified
+The V4-specific admission names are reparented under a unified
 ``PoolRegistrationError`` hierarchy, shared across V2/V3/V4:
 
 .. code-block:: text
 
     ValueError
-    └─ PoolRegistrationError                       (F2EVV6 base)
+    └─ PoolRegistrationError
        ├─ HookedPoolRejectedError                    (V4 admission —
        │                                              amount-modifying hook)
        ├─ DynamicFeePoolRejectedError                (V4 admission — dynamic fee)
        ├─ HighFeePoolRejectedError                  (V4 admission — static
-       │                                              fee > 65535, DPODAZ)
+       │                                              fee > 65535)
        ├─ PoolAlreadyRegisteredError                (V2/V3/V4 — duplicate
        │                                              address at registration)
        └─ SpecViolationError                        (V2/V3/V4 — out-of-spec
@@ -70,7 +70,7 @@ def test_dynamic_fee_pool_rejected_error_is_exposed() -> None:
 
 
 def test_high_fee_pool_rejected_error_is_exposed() -> None:
-    """``HighFeePoolRejectedError`` is exported and sub-``ValueError`` (DPODAZ).
+    """``HighFeePoolRejectedError`` is exported and sub-``ValueError``.
 
     Mirrors the dynamic-fee floor: a static fee > 65535 exceeds the
     cmd_executor's 2-byte fee field and is un-encodable, so it is refused at
@@ -86,7 +86,7 @@ def test_admission_errors_are_distinct_value_errors() -> None:
 
     All three subclass ``ValueError`` (broad handlers keep working), but none
     is a subclass of another, so ``build_paths`` can route them to separate
-    counters without re-introducing string matching. F2EVV6 reparented them
+    counters without re-introducing string matching. The names were reparented
     under ``PoolRegistrationError``; they stay distinct from each other.
     """
     hooked = HookedPoolRejectedError
@@ -104,7 +104,7 @@ def test_admission_errors_are_distinct_value_errors() -> None:
 
 
 def test_v4_admission_errors_are_pool_registration_errors() -> None:
-    """F2EVV6: the V4 admission variants now subclass ``PoolRegistrationError``.
+    """The V4 admission variants now subclass ``PoolRegistrationError``.
 
     ``build_paths`` can scope its broad ``except PoolRegistrationError:`` (or
     narrow to the V4-specific subclasses). Reparenting is the unified
@@ -129,7 +129,7 @@ def test_dynamic_fee_pool_rejected_error_carries_message() -> None:
 
 
 def test_high_fee_pool_rejected_error_carries_message() -> None:
-    """A raised ``HighFeePoolRejectedError`` mentions the fee (DPODAZ)."""
+    """A raised ``HighFeePoolRejectedError`` mentions the fee."""
     exc = HighFeePoolRejectedError("V4 pool fee (fee=320000) exceeds 65535")
     assert "fee" in str(exc).lower()
     assert "65535" in str(exc)

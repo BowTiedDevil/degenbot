@@ -2,7 +2,7 @@
 
 register_path takes a sequence of (pool, zero_for_one) pairs, resolves each
 pool's engine key from the registry's key maps, + dispatches (key, zfo) pairs
-to the engine's register_and_solve_path. NXM2BF: the Python PathInfo relay is
+to the engine's register_and_solve_path. The Python PathInfo relay is
 retired — register_path no longer builds/stores a Python PathInfo; the candidate
 resolves the encoder's composers::PathInfo from the returned path_id via
 PyArbitrageEngine.path_info_for_core. These tests assert the key-dispatch
@@ -59,7 +59,7 @@ class FakeArbitrageEngine:
 
 
 def test_register_path_dispatches_keys_and_directions() -> None:
-    """register_path maps each pool to its engine key + direction. NXM2BF: no
+    """register_path maps each pool to its engine key + direction. No
     Python PathInfo is built/stored — the returned path_id is the handle the
     candidate resolves composers::PathInfo from."""
     fake = FakeArbitrageEngine()
@@ -76,7 +76,7 @@ def test_register_path_dispatches_keys_and_directions() -> None:
 
     assert fake.calls == [[(100, True), (200, False)]]
     assert isinstance(path_id, int)
-    # NXM2BF: the Python PathInfo relay is retired — no `paths` attribute.
+    # The Python PathInfo relay is retired — no `paths` attribute.
     assert not hasattr(registry, "paths")
 
 
@@ -194,7 +194,7 @@ def test_register_path_dispatches_aerodrome_key() -> None:
 
     register_aerodrome_pool caches the pool_id (the engine's derive_hop_type
     classifies it as HopType::SolidlyStable at register_path time, so no engine-
-    side tag passes through the (key, zfo) tuple). NXM2BF: the Solidly HopInfo
+    side tag passes through the (key, zfo) tuple). The Solidly HopInfo
     build moved to the Rust projection (path_info_for_core returns
     UnsupportedHopType for Solidly — matching the pre-flatten encode gap), so
     the Python relay no longer classifies the hop family. Key-dispatch only.

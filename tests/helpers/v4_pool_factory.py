@@ -99,7 +99,7 @@ def make_v4_pool(
         fee=fee,
         tick_spacing=tick_spacing,
         # The REAL hook address — registered in the pool key in full so the
-        # identity round-trips keccak(abi.encode(pool_key)) (MTMPQB).
+        # identity round-trips keccak(abi.encode(pool_key)).
         hook_address=hook_address,
         sqrt_price_x96=sqrt_price_x96,
         liquidity=liquidity,
@@ -129,7 +129,7 @@ def make_v4_pool(
     )
     pool.lp_fee = lp_fee
     # ``tick_bitmap`` keys are recorded Rust-side as checked words at the
-    # construction seed (T1 3WTDFK — the companion override is retired);
+    # construction seed (the companion override is retired);
     # nothing to overlay here.
     return pool
 

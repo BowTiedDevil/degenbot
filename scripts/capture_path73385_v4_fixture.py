@@ -142,7 +142,7 @@ def load_v4_pool(cur):
     tick_data = {t: {"liquidity_net": n, "liquidity_gross": g} for t, n, g in tick_rows}
     # hooks is captured IN FULL so replay registration round-trips the pool_id
     # hash (keccak(abi.encode(pool_key))) — a hooked pool captured without it
-    # would reconstruct with a corrupted identity (MTMPQB).
+    # would reconstruct with a corrupted identity.
     return {"family": "uniswap_v4", "pool_manager":
             "0x000000000004444c5dc75cb358380d2e3de08a90", "pool_id": V4_PID,
             "currency0": t0, "currency1": t1, "fee_currency0": f0, "fee_currency1": f1,

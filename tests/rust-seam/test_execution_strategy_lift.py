@@ -107,7 +107,7 @@ class TestAbiEncodeCallHelper:
 
 
 class TestPythonForeignStrategySample:
-    """OULU5O — the Python driver's foreign Encode blob, exercised end-to-end."""
+    """The Python driver's foreign Encode blob, exercised end-to-end."""
 
     def test_foreign_encode_via_abi_helper(self, foreign_strategy_example: ModuleType) -> None:
         result = _StrategyResult(
@@ -136,7 +136,7 @@ class TestPythonForeignStrategySample:
     def test_cross_layer_oracle_matches_recorded_corpus(
         self, foreign_strategy_example: ModuleType
     ) -> None:
-        """UQ6WOG — the Python foreign path reproduces the SAME recorded corpus
+        """The Python foreign path reproduces the SAME recorded corpus
         the Rust sample pins (byte-identical across layers), and that corpus is
         distinct from `cmd_executor`."""
         corpus = bytes.fromhex(

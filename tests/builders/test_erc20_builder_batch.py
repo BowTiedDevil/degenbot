@@ -1,4 +1,4 @@
-"""CDJEPJ-2: Erc20Builder.build_many batches per-pool token metadata reads.
+"""Erc20Builder.build_many batches per-pool token metadata reads.
 
 `_build_v4_managed` used to call `_erc20_builder.build(currency0)` then
 `_erc20_builder.build(currency1)` — two SERIAL network `fetch_erc20_metadata`
@@ -6,7 +6,7 @@ round-trips (each 3 eth_calls on a metadata miss). `build_many` collapses the
 network-missing set into ONE `io.fetch_erc20_metadata_batch([a, b])` Multicall3
 `aggregate3` eth_call.
 
-RED: before CDJEPJ-2 there was no `build_many` (and two separate
+Previously there was no `build_many` (and two separate
 `fetch_erc20_metadata` reads); GREEN: one `fetch_erc20_metadata_batch` call.
 """
 

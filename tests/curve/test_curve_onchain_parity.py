@@ -376,7 +376,7 @@ def _build_metapool_io_free(
 
     The base pool + metapool share a single local ``Bot`` so the metapool
     handle's go-between (``curve_base_pool()``) resolves the base pool within
-    the same ``BotState`` (ADR-005 BQM2OA). A fresh bot per call keeps each
+    the same ``BotState``. A fresh bot per call keeps each
     build isolated (the multiblock parity test rebuilds per block).
     """
     bot = Bot()

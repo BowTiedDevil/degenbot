@@ -1,4 +1,4 @@
-"""Survey C7 (TD-enum-coverage, epic HUDOHI) — typed coverage at the FFI seam.
+"""Survey C7 (TD-enum-coverage) — typed coverage at the FFI seam.
 
 ``ConcentratedLiquidityView.coverage`` returns the registered pyclass enum
 ``degenbot._ffi.PoolTickCoverage`` — never the retired stringified form — and

@@ -1,4 +1,4 @@
-"""T1 (3WTDFK): the FFI checked-word invariant — known words in, checked-empty words out.
+"""The FFI checked-word invariant — known words in, checked-empty words out.
 
 ``Pool.update_tick_data`` (the FFI boundary) must record the checked
 bitmap words the caller passes into Rust ``known_bitmap_words`` (Sparse pools
@@ -146,7 +146,7 @@ def test_v4_sparse_checked_zero_word_survives_in_snapshot() -> None:
     assert snap.get(1) == (0, 100), f"V4 checked-empty word must survive: {snap}"
 
 
-# ── T3 (OMDCIY) — Tracked intake consistency rejection ──────────────────────
+# ── T3 — Tracked intake consistency rejection ────────────────────────────
 # A Db snapshot whose bitmap and tick rows contradict each other must be
 # rejected AT INTAKE with a ValueError that names the conflict — never
 # registered as Tracked (Q3': Tracked pools carry no bitmap in memory, so

@@ -7,7 +7,7 @@ the PyO3 binding) produces the **same** `amount_out` as the Rust consumer
 (`calculate_tokens_out` inverts `zero_for_one` before delegating to
 `v4_simulate_swap`); this fixture exercises that inversion.
 
-## The shared contract (HRT356 — single source of truth)
+## The shared contract
 
 The fixture + expected output are loaded from the SHARED file
 `tests/standalone_parity/fixtures/v4_swap.json`, which the Rust parity test
