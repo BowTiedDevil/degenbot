@@ -21,9 +21,11 @@
 
 use std::collections::BTreeMap;
 
-use degenbot::pathfinding::PoolKind;
+use degenbot::pathfinding::{
+    resolve_directions as core_resolve_directions, DirectionHop, PoolKind,
+};
 
-use crate::discovery::{BuiltGraph, DiscoveryParams, PoolNode, NATIVE_CURRENCY};
+use crate::discovery::{BuiltGraph, DiscoveryParams};
 use crate::policy::{HopView, PathPolicy};
 use degenbot::bot::bot_core::registration_ledger::{
     HopSignature, RegistrationLedger, RegistrationOutcome,
@@ -151,59 +153,6 @@ impl RegistrationPipeline {
         }
     }
 
-    /// Resolve per-hop directions so the cycle closes (mirrors
-    /// `resolve_directions`).
-    ///
-    /// V4 native currency (`address(0)`) is treated as WETH for matching.
-    /// Returns `Err(message)` when a mid-path token mismatch or a
-    /// non-closing cycle is found (the fatal invariant).
-    ///
-    /// # Errors
-    ///
-    /// Returns the Python `DirectionResolutionError` message on mismatch.
-    pub fn resolve_directions(
-        nodes: &[PoolNode],
-        pool_indices: &[usize],
-        input_token_lower: &str,
-        weth_lower: &str,
-    ) -> Result<Vec<bool>, String> {
-        let start = input_token_lower;
-        let mut addr = start.to_string();
-        let mut zfos: Vec<bool> = Vec::with_capacity(pool_indices.len());
-        let len = pool_indices.len();
-        for (i, idx) in pool_indices.iter().enumerate() {
-            let node = &nodes[*idx];
-            let mut token0 = normalize_native(node, &node.token0, weth_lower);
-            let mut token1 = normalize_native(node, &node.token1, weth_lower);
-            if node.kind == PoolKind::V4 {
-                if token0 == NATIVE_CURRENCY {
-                    token0 = weth_lower.to_string();
-                }
-                if token1 == NATIVE_CURRENCY {
-                    token1 = weth_lower.to_string();
-                }
-            }
-            let zfo = if token0 == addr {
-                true
-            } else if token1 == addr {
-                false
-            } else {
-                return Err(format!(
-                    "hop {i}/{len}: pool {} has token0={token0} token1={token1}; expected either to carry the tracked input token {addr} (path starts at {start})",
-                    node.identity,
-                ));
-            };
-            addr = if zfo { token1 } else { token0 };
-            zfos.push(zfo);
-        }
-        if addr != start {
-            return Err(format!(
-                "cycle does not close: final output {addr} != input {start}"
-            ));
-        }
-        Ok(zfos)
-    }
-
     /// Run the pre-registration stages (mirrors `_registration_unit` up to the
     /// build/verify/register turns).
     #[must_use]
@@ -256,14 +205,20 @@ impl RegistrationPipeline {
             }
         }
 
-        let zfos = match Self::resolve_directions(
-            &built.nodes,
-            &pool_indices,
-            input_token_lower,
-            weth_lower,
-        ) {
+        let direction_hops: Vec<DirectionHop<'_>> = pool_indices
+            .iter()
+            .map(|idx| {
+                let node = &built.nodes[*idx];
+                DirectionHop {
+                    token0: &node.token0,
+                    token1: &node.token1,
+                    identity: &node.identity,
+                }
+            })
+            .collect();
+        let zfos = match core_resolve_directions(&direction_hops, input_token_lower, weth_lower) {
             Ok(zfos) => zfos,
-            Err(message) => return PrepareOutcome::DirectionFatal(message),
+            Err(error) => return PrepareOutcome::DirectionFatal(error.to_string()),
         };
 
         let hops: Vec<HopView> = pool_indices
@@ -391,14 +346,6 @@ impl RegistrationPipeline {
                 }
             }
         }
-    }
-}
-
-fn normalize_native(node: &PoolNode, token: &str, weth_lower: &str) -> String {
-    if node.kind == PoolKind::V4 && token == NATIVE_CURRENCY {
-        weth_lower.to_string()
-    } else {
-        token.to_string()
     }
 }
 

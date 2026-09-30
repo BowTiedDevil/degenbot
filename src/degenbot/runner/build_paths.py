@@ -20,7 +20,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool, get_checksum_address
+from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, UniswapV4Pool
 from degenbot.arbitrage import RetryPolicy
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.builders.request import BuildManagedPoolRequest, ConstructionRoute
@@ -34,7 +34,12 @@ from degenbot.exceptions import (
     VerificationRpcError,
 )
 from degenbot.logging import logger as bot_logger
-from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths_async
+from degenbot.pathfinding import (
+    PathfindingRequest,
+    PoolKind,
+    find_paths_async,
+    resolve_directions as core_resolve_directions,
+)
 from degenbot.runner._registration_ledger import (
     RegistrationLedger,
     RegistrationOutcome,
@@ -168,64 +173,27 @@ class RegistrationUnitOutcome:
 def resolve_directions(
     pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
     input_token_address: str,
-) -> list[bool] | None:
+) -> list[bool]:
     """Determine zero_for_one for each hop so the cycle closes.
 
     The cycle: input_token → hop_0 → intermediate → hop_1 → ... → input_token.
-    Returns a list of zfo values (one per hop), or None if the cycle cannot
-    close (token mismatch).
+    Returns a list of zfo values (one per hop).
 
-    V4 pools use NATIVE_CURRENCY_ADDRESS (address(0)) for ETH. For direction
-    resolution, we treat NATIVE_CURRENCY_ADDRESS as equivalent to WETH — since
-    our profit token is always WETH.
+    The mechanic lives in the core
+    (`degenbot_pathfinding::directions::resolve_directions`); this adapter
+    flattens the constructed pools into the typed seam's hop tuples and
+    re-raises the core's refusal as :class:`DirectionResolutionError`.
+    Resolution is kind-blind. V4
+    pools use NATIVE_CURRENCY_ADDRESS (address(0)) for ETH, which the core
+    treats as equivalent to WETH — the profit token is always WETH.
+
+    Raises:
+        DirectionResolutionError: a hop carries neither tracked token, or
+            the cycle does not close — an invariant violation (wrong pool
+            built, stale subgraph, or a builder bug), never a skip.
     """
-    addr = get_checksum_address(input_token_address)
-    start_addr = addr
-    zfo_list: list[bool] = []
-
-    for i, pool in enumerate(pools):
-        token0_addr = get_checksum_address(pool.token0.address)
-        token1_addr = get_checksum_address(pool.token1.address)
-
-        # V4: treat NATIVE_CURRENCY_ADDRESS as WETH for matching
-        if token0_addr == NATIVE_CURRENCY_ADDRESS:
-            token0_addr = WETH_ADDRESS
-        if token1_addr == NATIVE_CURRENCY_ADDRESS:
-            token1_addr = WETH_ADDRESS
-
-        if token0_addr == addr:
-            zfo = True  # selling token0 (input) for token1
-        elif token1_addr == addr:
-            zfo = False  # selling token1 (input) for token0
-        else:
-            # Fatal: the pathfinder contract guarantees every yielded path's
-            # hops chain from a requested boundary token, so a mid-path token
-            # mismatch means the constructed pool object disagrees with the DB
-            # subgraph edge (wrong pool built, stale subgraph, or a builder
-            # bug). This is an invariant violation — skip-and-continue would
-            # silently drop every path touching that pool (observed live:
-            # 85k skips, 0 registrations), so fail-stop loudly instead.
-            raise DirectionResolutionError(
-                message=(
-                    f"hop {i}/{len(pools)}: pool {pool} has "
-                    f"token0={token0_addr} token1={token1_addr}; expected either "
-                    f"to carry the tracked input token {addr} "
-                    f"(path starts at {start_addr})"
-                )
-            )
-
-        addr = token1_addr if zfo else token0_addr
-        zfo_list.append(zfo)
-
-    if addr != get_checksum_address(input_token_address):
-        raise DirectionResolutionError(
-            message=(
-                f"cycle does not close: final output {addr} != input "
-                f"{start_addr}; pools={[str(pool) for pool in pools]}"
-            )
-        )
-
-    return zfo_list
+    hops = [(pool.token0.address, pool.token1.address, str(pool)) for pool in pools]
+    return core_resolve_directions(hops, input_token_address, WETH_ADDRESS)
 
 
 @dataclass

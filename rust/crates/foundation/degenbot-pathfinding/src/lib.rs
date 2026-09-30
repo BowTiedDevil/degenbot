@@ -27,8 +27,10 @@
 //! crate via the `PyO3` binding layer. Address resolution stays in Python
 //! (where `SQLAlchemy` lives); the graph algorithm lives here.
 
+pub mod directions;
 pub mod graph;
 pub mod plan;
 
+pub use directions::{resolve_directions, DirectionError, DirectionHop};
 pub use graph::{Edge, EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind};
 pub use plan::{prepare_traversal_plan, TraversalSpec};

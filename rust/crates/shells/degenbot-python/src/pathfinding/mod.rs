@@ -21,6 +21,8 @@ use crate::prelude::*;
 // downstream helper here regains an `Address`-typed surface.
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use degenbot_db::DegenbotDb;
+use degenbot_pathfinding::directions::resolve_directions as core_resolve_directions;
+use degenbot_pathfinding::directions::DirectionHop as CoreDirectionHop;
 use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind as CorePoolKind};
 use pyo3::exceptions::{PyKeyError, PyStopAsyncIteration, PyValueError};
 use pyo3::types::{PyDict, PyList, PyTuple};
@@ -81,6 +83,61 @@ impl PoolKind {
 #[pyfunction]
 pub fn classify_pool_kind<'py>(py: Python<'py>, kind: &Bound<'py, PyAny>) -> PyResult<PoolKind> {
     extract_pool_kind(py, kind)
+}
+
+/// Resolve per-hop directions so the cycle closes — the typed-FFI seam over
+/// `degenbot_pathfinding::directions::resolve_directions`.
+///
+/// Each hop is `(token0, token1, identity)`. Raises the Python
+/// `DirectionResolutionError` on a mid-path mismatch or a non-closing cycle
+/// (the fatal invariant); returns one `zero_for_one` per hop otherwise.
+///
+/// # Errors
+///
+/// Raises `degenbot.exceptions.arbitrage.DirectionResolutionError` when the
+/// core refuses the cycle.
+#[pyfunction]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "PyO3 extracts owned argument values"
+)]
+pub fn resolve_directions(
+    py: Python<'_>,
+    hops: Vec<(String, String, String)>,
+    input_token: &str,
+    weth: &str,
+) -> PyResult<Vec<bool>> {
+    let core_hops: Vec<CoreDirectionHop<'_>> = hops
+        .iter()
+        .map(|(token0, token1, identity)| CoreDirectionHop {
+            token0,
+            token1,
+            identity,
+        })
+        .collect();
+    core_resolve_directions(&core_hops, input_token, weth)
+        .map_err(|error| direction_resolution_error(py, error.to_string()))
+}
+
+/// Build a `degenbot.exceptions.arbitrage.DirectionResolutionError(message=..)`.
+fn direction_resolution_error(py: Python<'_>, message: String) -> PyErr {
+    let exc_type = py
+        .import("degenbot.exceptions.arbitrage")
+        .and_then(|module| module.getattr("DirectionResolutionError"));
+    match exc_type {
+        Ok(exc_type) => {
+            let kwargs = PyDict::new(py);
+            // set_item on a fresh dict cannot fail with these key/value types.
+            let _ = kwargs.set_item("message", message);
+            match exc_type.call((), Some(&kwargs)) {
+                Ok(exc) => PyErr::from_value(exc),
+                Err(err) => err,
+            }
+        }
+        // The exceptions module is always importable inside the package; an
+        // import failure here means a broken install, so surface it directly.
+        Err(err) => err,
+    }
 }
 
 fn extract_pool_kind<'py>(py: Python<'py>, kind: &Bound<'py, PyAny>) -> PyResult<PoolKind> {

@@ -20,6 +20,7 @@ from degenbot._ffi import (
     find_paths_async_rust,
     find_paths_rust,
     prepare_traversal_plan,
+    resolve_directions,
 )
 
 from ._pathfinding import PathfindingRequest, PathStep, find_paths, find_paths_async
@@ -39,4 +40,5 @@ __all__ = [
     "find_paths_async_rust",
     "find_paths_rust",
     "prepare_traversal_plan",
+    "resolve_directions",
 ]

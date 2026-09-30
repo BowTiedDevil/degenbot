@@ -350,8 +350,8 @@ mod _ffi {
     #[pymodule_export]
     use crate::pathfinding::{
         classify_pool_kind, classify_pool_kinds, convert_pool_type_filter, find_paths_async_rust,
-        find_paths_rust, prepare_traversal_plan, PathBatchIterator, PathIterator, PathStepBuilder,
-        PoolKind,
+        find_paths_rust, prepare_traversal_plan, resolve_directions, PathBatchIterator,
+        PathIterator, PathStepBuilder, PoolKind,
     };
     // The build_path_graph seam choreographs a degenbot-db read + a
     // degenbot-pathfinding graph build, so it needs BOTH features.

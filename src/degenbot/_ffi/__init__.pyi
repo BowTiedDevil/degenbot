@@ -4434,6 +4434,23 @@ def registration_pool_memo_key(
     no identity.
     """
 
+def resolve_directions(
+    hops: Sequence[tuple[str, str, str]], input_token: str, weth: str
+) -> list[bool]:
+    """
+    Resolve per-hop directions so the cycle closes — the typed-FFI seam over
+    `degenbot_pathfinding::directions::resolve_directions`.
+
+    Each hop is `(token0, token1, identity)`. Raises the Python
+    `DirectionResolutionError` on a mid-path mismatch or a non-closing cycle
+    (the fatal invariant); returns one `zero_for_one` per hop otherwise.
+
+    # Errors
+
+    Raises `degenbot.exceptions.arbitrage.DirectionResolutionError` when the
+    core refuses the cycle.
+    """
+
 def resolve_hypothetical(env: dict[str, str], file: str | None = None) -> HypotheticalConfig:
     """
     The whole resolved configuration a cascade WOULD produce for `env` + `file`,
@@ -4679,6 +4696,7 @@ __all__ = [
     "prepare_traversal_plan",
     "registration_outcome_tags",
     "registration_pool_memo_key",
+    "resolve_directions",
     "resolve_hypothetical",
     "resolve_hypothetical_chain_id",
     "resolve_hypothetical_database_path",
