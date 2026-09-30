@@ -3,6 +3,7 @@
 //! Domain `#[pyfunction]` surface over `degenbot-solvers`; registration stays
 //! exported declaratively from the root `#[pymodule]` in `lib.rs`.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 /// `QuantAMM` closed-form N-token Balancer weighted basket arbitrage solver.
@@ -27,8 +28,10 @@ use pyo3::prelude::*;
 ///
 /// # Errors
 ///
-/// Returns `ValueError` if reserves and `market_prices` lengths don't match,
-/// or if reserves/weights can't be converted to u128/u64.
+/// Raises `ValueError` when the token-count vectors disagree with `reserves`:
+/// `weights` and `market_prices` must match its length, and `decimals` must
+/// be empty (no scaling) or match it. Value conversions that overflow raise
+/// `OverflowError`.
 #[expect(clippy::needless_pass_by_value, clippy::type_complexity)]
 #[pyfunction]
 #[pyo3(signature = (
@@ -43,6 +46,25 @@ pub fn solve_balancer_weighted_basket(
     market_prices: Vec<f64>,
     max_input: Option<f64>,
 ) -> PyResult<(Vec<i128>, f64, bool, Vec<i8>, usize)> {
+    let n = reserves.len();
+    if weights.len() != n {
+        return Err(PyValueError::new_err(format!(
+            "weights length {} does not match reserves length {n}",
+            weights.len()
+        )));
+    }
+    if !decimals.is_empty() && decimals.len() != n {
+        return Err(PyValueError::new_err(format!(
+            "decimals length {} must be empty (no scaling) or match reserves length {n}",
+            decimals.len()
+        )));
+    }
+    if market_prices.len() != n {
+        return Err(PyValueError::new_err(format!(
+            "market_prices length {} does not match reserves length {n}",
+            market_prices.len()
+        )));
+    }
     let pool = degenbot_solvers::basket::BalancerMultiTokenState {
         reserves,
         weights,

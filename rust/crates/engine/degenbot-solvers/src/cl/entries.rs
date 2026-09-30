@@ -16,6 +16,11 @@ use crate::runtime::SolveRuntimeConfig;
 pub struct ClSolveTables {
     pub crossings: std::sync::Arc<ClCrossingTable>,
     pub profiles: std::sync::Arc<ClProfileTable>,
+    /// [`walk_path_fingerprint`] of the sequence these tables were derived
+    /// from, recorded at derivation so the solve entries can refuse a pair
+    /// whose claimed source disagrees with the sequence at its position
+    /// instead of trusting positional pairing.
+    pub source_fingerprint: u128,
 }
 
 impl ClSolveTables {
@@ -24,6 +29,7 @@ impl ClSolveTables {
         Self {
             crossings: std::sync::Arc::new(build_cl_crossing_table(seq)),
             profiles: std::sync::Arc::new(build_word_profiles(&build_cl_crossing_table(seq))),
+            source_fingerprint: walk_path_fingerprint(&[seq]),
         }
     }
 }
@@ -71,6 +77,13 @@ pub fn solve_cl_piecewise(
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
     if sequences.is_empty() || prepared.len() != sequences.len() {
+        return WalkOutcome::none();
+    }
+    if prepared
+        .iter()
+        .zip(sequences)
+        .any(|(tables, seq)| tables.source_fingerprint != walk_path_fingerprint(&[*seq]))
+    {
         return WalkOutcome::none();
     }
 
@@ -159,6 +172,11 @@ pub fn solve_mixed_piecewise(
             let Some(seq) = cl_sequences[i] else {
                 return WalkOutcome::none();
             };
+            if let Some(tables) = cl_prepared[i].as_ref() {
+                if tables.source_fingerprint != walk_path_fingerprint(&[seq]) {
+                    return WalkOutcome::none();
+                }
+            }
             hops.push(cl_hop_view(seq, cl_prepared[i].as_ref()));
         }
     }

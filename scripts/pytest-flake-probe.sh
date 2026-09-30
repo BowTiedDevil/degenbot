@@ -60,19 +60,41 @@ for i in $(seq 1 "$RUNS"); do
 
     failed=$((failed + 1))
     mapfile -t fail_lines < <(grep -E '^(FAILED|ERROR) ' "$log" || true)
-    if [ "${#fail_lines[@]}" -eq 0 ]; then
+    mapfile -t header_lines < <(grep -E '^_+ ERROR at (setup|teardown) of ' "$log" || true)
+    if [ "${#fail_lines[@]}" -eq 0 ] && [ "${#header_lines[@]}" -eq 0 ]; then
         printf 'run %d (%ds): FAIL (no FAILED line; log: %s)\n' "$i" "$elapsed" "$log"
         failure_counts["<unparsed>"]=$(( ${failure_counts["<unparsed>"]:-0} + 1 ))
         continue
     fi
 
     printf 'run %d (%ds): FAIL\n' "$i" "$elapsed"
+    summary_ids=()
     for line in "${fail_lines[@]}"; do
         printf '    %s\n' "$line"
         id="${line#FAILED }"
         id="${id#ERROR }"
         id="${id%% *}"
+        summary_ids+=("$id")
         failure_counts["$id"]=$(( ${failure_counts["$id"]:-0} + 1 ))
+    done
+    # A failure surfacing only as the section header — an unraisable at setup
+    # prints no short-summary line — is labeled by the header's test id. A
+    # header whose failure a summary line already names stays out, so one
+    # failure is never counted twice.
+    for line in "${header_lines[@]}"; do
+        name="${line#* of }"
+        name="$(sed -E 's/[ _]+$//' <<<"$name")"
+        already=0
+        for seen in ${summary_ids[@]+"${summary_ids[@]}"}; do
+            case "$seen" in
+                "$name"|*"::$name") already=1; break ;;
+            esac
+        done
+        if [ "$already" -eq 1 ]; then
+            continue
+        fi
+        printf '    %s\n' "$line"
+        failure_counts["$name"]=$(( ${failure_counts["$name"]:-0} + 1 ))
     done
 done
 

@@ -35,8 +35,9 @@ os.environ.setdefault(
 # wants the real DB for an on-demand run sets ``DEGENBOT_DB_PATH`` explicitly
 # (``setdefault`` honors it). The directory is removed at exit so repeated
 # runs leave no state behind.
-_pytest_state_dir = tempfile.mkdtemp(prefix="degenbot-pytest-state-")
-atexit.register(shutil.rmtree, _pytest_state_dir, ignore_errors=True)
+_pytest_state_dir_ctx = tempfile.TemporaryDirectory(prefix="degenbot-pytest-state-")
+atexit.register(_pytest_state_dir_ctx.cleanup)
+_pytest_state_dir = _pytest_state_dir_ctx.name
 os.environ.setdefault(
     "DEGENBOT_DB_PATH",
     str(Path(_pytest_state_dir) / "degenbot.db"),

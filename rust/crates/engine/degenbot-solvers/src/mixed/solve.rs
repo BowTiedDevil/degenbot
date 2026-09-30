@@ -440,9 +440,11 @@ fn solve_walkable_path_int(
             if is_v2 {
                 None
             } else {
+                let seq = int_v3_sequences[i]?;
                 Some(crate::cl::ClSolveTables {
                     crossings: Arc::clone(resolved.hops[i].as_crossing_table()?),
                     profiles: Arc::clone(resolved.hops[i].as_word_profiles()?),
+                    source_fingerprint: crate::cl::walk_path_fingerprint(&[seq]),
                 })
             }
         })

@@ -66,9 +66,11 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
     }
     let prepared_hops: Vec<degenbot_solvers::cl::ClSolveTables> = prepared
         .iter()
-        .map(|(c, p)| degenbot_solvers::cl::ClSolveTables {
+        .zip(seq_refs.iter())
+        .map(|((c, p), seq)| degenbot_solvers::cl::ClSolveTables {
             crossings: std::sync::Arc::clone(c),
             profiles: std::sync::Arc::clone(p),
+            source_fingerprint: degenbot_solvers::cl::walk_path_fingerprint(&[*seq]),
         })
         .collect();
     solve_cl_piecewise(

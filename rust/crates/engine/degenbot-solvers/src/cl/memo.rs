@@ -206,8 +206,9 @@ fn mix_u256(acc: &mut u64, v: U256) {
 }
 
 /// 128-bit content fingerprint of the path composition: one lane folds hop
-/// order + per-range liquidity/prices/gamma, the other folds the derived
-/// capacity fields (gross/output pairs) so two distinct compositions that
+/// order and the full per-range state (liquidity, prices, gamma, swap
+/// direction), the other folds the derived capacity fields (gross/output
+/// pairs) and every word-boundary price, so two distinct compositions that
 /// collapse one lane cannot collapse both. The crossing tables + word
 /// profiles are pure deterministic derivations of the sequence, so this
 /// fingerprint is the EXACT correctness key for a cached result.
@@ -232,19 +233,16 @@ pub fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
             mix_u256(&mut lane_a, r.sqrt_price_upper_x96);
             mix_u256(&mut lane_a, U256::from(r.liquidity));
             mix_u256(&mut lane_a, r.sqrt_price_x96);
+            mix_u256(&mut lane_a, U256::from(u64::from(r.zero_for_one)));
             gross = gross.wrapping_add(U256::from(r.liquidity));
             cross = cross.wrapping_add(r.sqrt_price_x96);
             mix_u256(&mut lane_b, gross);
             mix_u256(&mut lane_b, cross);
         }
         for r in &seq.ranges {
-            let mut gf = U256::from(r.gamma_numer)
-                .saturating_mul(U256::from(r.word_boundary_prices.len() as u64))
-                .saturating_add(U256::from(r.liquidity));
-            if !r.word_boundary_prices.is_empty() {
-                gf = gf.saturating_add(r.word_boundary_prices[0]);
+            for price in &r.word_boundary_prices {
+                mix_u256(&mut lane_b, *price);
             }
-            mix_u256(&mut lane_b, gf);
         }
     }
     (u128::from(lane_a) << 64) | u128::from(lane_b)

@@ -940,9 +940,10 @@ mod tests {
             .iter()
             .zip(crossings.iter())
             .zip(profiles.iter())
-            .map(|((_, c), p)| degenbot_solvers::cl::ClSolveTables {
+            .map(|((seq, c), p)| degenbot_solvers::cl::ClSolveTables {
                 crossings: std::sync::Arc::clone(c),
                 profiles: std::sync::Arc::clone(p),
+                source_fingerprint: degenbot_solvers::cl::walk_path_fingerprint(&[*seq]),
             })
             .collect();
         degenbot_solvers::cl::solve_cl_piecewise(
@@ -993,9 +994,11 @@ mod tests {
                 if is_v2 {
                     None
                 } else {
+                    let seq = seqs[i]?;
                     Some(degenbot_solvers::cl::ClSolveTables {
                         crossings: std::sync::Arc::clone(crossings[i].as_ref()?),
                         profiles: std::sync::Arc::clone(profiles[i].as_ref()?),
+                        source_fingerprint: degenbot_solvers::cl::walk_path_fingerprint(&[seq]),
                     })
                 }
             })

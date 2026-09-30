@@ -4580,8 +4580,10 @@ def solve_balancer_weighted_basket(
 
     # Errors
 
-    Returns `ValueError` if reserves and `market_prices` lengths don't match,
-    or if reserves/weights can't be converted to u128/u64.
+    Raises `ValueError` when the token-count vectors disagree with `reserves`:
+    `weights` and `market_prices` must match its length, and `decimals` must
+    be empty (no scaling) or match it. Value conversions that overflow raise
+    `OverflowError`.
     """
 
 def to_checksum_address(address: Any) -> str:

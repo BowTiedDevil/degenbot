@@ -12,7 +12,6 @@ mock server).
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -58,9 +57,8 @@ def _activate_responses(market_name: str = "Aave Ethereum Market") -> dict[str, 
     }
 
 
-def _fresh_db() -> Path:
-    tmp = Path(tempfile.mkdtemp(prefix="activate-"))
-    db_path = tmp / "act.db"
+def _fresh_db(tmp_path: Path) -> Path:
+    db_path = tmp_path / "act.db"
     db_upgrade_database(str(db_path))
     return db_path
 
@@ -82,9 +80,9 @@ def _count_rows(db_path: Path, table_and_where: str) -> int:
         return int(row[0])
 
 
-def test_activate_seeds_market_contract_gho_token() -> None:
+def test_activate_seeds_market_contract_gho_token(tmp_path: Path) -> None:
     """activate_aave_market seeds all 4 row types in one transaction."""
-    db_path = _fresh_db()
+    db_path = _fresh_db(tmp_path)
     responses = _activate_responses()
     with mock_rpc_server(logs=[], block_number=100, eth_call_responses=responses) as rpc_url:
         result = activate_aave_market(
@@ -139,9 +137,9 @@ def test_activate_seeds_market_contract_gho_token() -> None:
     )
 
 
-def test_activate_reactivation_is_idempotent() -> None:
+def test_activate_reactivation_is_idempotent(tmp_path: Path) -> None:
     """Re-activating an existing market flips active=true + inserts no dup rows."""
-    db_path = _fresh_db()
+    db_path = _fresh_db(tmp_path)
     responses = _activate_responses()
     with mock_rpc_server(logs=[], block_number=100, eth_call_responses=responses) as rpc_url:
         first = activate_aave_market(
@@ -191,9 +189,9 @@ def test_activate_reactivation_is_idempotent() -> None:
     )
 
 
-def test_deactivate_sets_active_false() -> None:
+def test_deactivate_sets_active_false(tmp_path: Path) -> None:
     """deactivate_aave_market flips active to 0."""
-    db_path = _fresh_db()
+    db_path = _fresh_db(tmp_path)
     responses = _activate_responses()
     with mock_rpc_server(logs=[], block_number=100, eth_call_responses=responses) as rpc_url:
         result = activate_aave_market(

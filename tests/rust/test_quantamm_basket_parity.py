@@ -21,6 +21,7 @@ Fixture: 3-token WETH/USDC/DAI 50/25/25 weighted pool (the QuantAMM doctest).
 
 from __future__ import annotations
 
+import pytest
 from fractions import Fraction
 
 from degenbot._ffi import solve_balancer_weighted_basket
@@ -91,18 +92,29 @@ class TestQuantAMMBasketPyfunctionSeam:
         _deposit, _profit, _success, _sig, iters = _solve()
         assert iters == 12, f"expected 12 iterations for N=3, got {iters}"
 
-    def test_empty_market_prices_finds_no_trade(self) -> None:
-        """With no market prices, the Rust core cannot price a basket trade —
-        success is False (no profitable trade found). This pins the
-        pyfunction's behavior on the missing-prices contract that the deleted
-        shell used to guard in Python."""
-        _trades, _profit, success, _sig, _iters = solve_balancer_weighted_basket(
-            reserves=list(_FIXTURE_RESERVES),
-            weights=list(_FIXTURE_WEIGHTS),
-            fee_numer=_FIXTURE_FEE.numerator,
-            fee_denom=_FIXTURE_FEE.denominator,
-            decimals=list(_FIXTURE_DECIMALS),
-            market_prices=[],
-            max_input=None,
-        )
-        assert success is False, "no market prices → no profitable trade"
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            pytest.param({"market_prices": []}, id="empty-prices"),
+            pytest.param({"market_prices": list(_FIXTURE_PRICES)[:2]}, id="short-prices"),
+            pytest.param({"weights": list(_FIXTURE_WEIGHTS)[:2]}, id="short-weights"),
+            pytest.param({"decimals": [18, 18]}, id="short-decimals"),
+        ],
+    )
+    def test_vector_length_mismatch_raises_value_error(self, overrides: dict) -> None:
+        """The token-count vectors must cohere with ``reserves``: ``weights``
+        and ``market_prices`` match its length, and ``decimals`` is either
+        empty (the no-scaling default) or the same length. Disagreement is a
+        ``ValueError`` — never a panic and never a silent no-trade."""
+        kwargs: dict = {
+            "reserves": list(_FIXTURE_RESERVES),
+            "weights": list(_FIXTURE_WEIGHTS),
+            "fee_numer": _FIXTURE_FEE.numerator,
+            "fee_denom": _FIXTURE_FEE.denominator,
+            "decimals": list(_FIXTURE_DECIMALS),
+            "market_prices": list(_FIXTURE_PRICES),
+            "max_input": None,
+        }
+        kwargs.update(overrides)
+        with pytest.raises(ValueError):
+            solve_balancer_weighted_basket(**kwargs)

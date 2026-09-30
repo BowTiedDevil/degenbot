@@ -122,12 +122,9 @@ def _stamp(db_path: Path) -> int | None:
         return None if row is None else row[0]
 
 
-def test_cold_boot_creates_pool_and_configurator_rows() -> None:
+def test_cold_boot_creates_pool_and_configurator_rows(tmp_path: Path) -> None:
     """A fresh market self-bootstraps POOL/POOL_CONFIGURATOR via ProxyCreated."""
-    import tempfile
-
-    tmp = Path(tempfile.mkdtemp(prefix="cold-boot-"))
-    db_path = tmp / "cand.db"
+    db_path = tmp_path / "cand.db"
     _seed_cold_boot_db(db_path, last_update_block=1000)
     # from_block = 1001; the bootstrap fetches [1001, 3001]. The ProxyCreated
     # events land at 1001 (within the window). to_block = 1002 so the chunk
@@ -192,7 +189,7 @@ def test_cold_boot_creates_pool_and_configurator_rows() -> None:
     assert _stamp(db_path) == 1002, _stamp(db_path)
 
 
-def test_max_chunks_caps_loop_at_n_committed_chunks() -> None:
+def test_max_chunks_caps_loop_at_n_committed_chunks(tmp_path: Path) -> None:
     """``max_chunks=1`` stops the Rust loop after committing ONE chunk.
 
     The Rust core owns chunking; before the ``max_chunks`` cap the Python
@@ -201,10 +198,7 @@ def test_max_chunks_caps_loop_at_n_committed_chunks() -> None:
     after the Nth committed chunk + ``last_update_block`` is stamped to that
     chunk's end (so the next run resumes from there).
     """
-    import tempfile
-
-    tmp = Path(tempfile.mkdtemp(prefix="max-chunks-"))
-    db_path = tmp / "cand.db"
+    db_path = tmp_path / "cand.db"
     # from_block = 1001; to_block = 1009; chunk_size = 2 → would be
     # chunks [1001-1002],[1003-1004],[1005-1006],[1007-1008],[1009] (5 chunks).
     # max_chunks=1 → must stop after the FIRST committed chunk (1001-1002).

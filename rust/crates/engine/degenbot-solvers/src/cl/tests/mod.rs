@@ -989,6 +989,74 @@ fn walk_fingerprint_is_content_stable_and_separates_compositions() {
 }
 
 #[test]
+fn walk_fingerprint_separates_swap_direction() {
+    let hop = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
+    let mut flipped = hop.clone();
+    flipped.zero_for_one = !hop.zero_for_one;
+    let seq = IntV3TickRangeSequence::new(vec![hop]).unwrap();
+    let seq_flipped = IntV3TickRangeSequence::new(vec![flipped]).unwrap();
+    assert_ne!(
+        walk_path_fingerprint(&[&seq]),
+        walk_path_fingerprint(&[&seq_flipped]),
+        "a direction flip must change the key"
+    );
+}
+
+#[test]
+fn walk_fingerprint_separates_word_boundary_lists() {
+    let hop = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
+    let mut tail_a = hop.clone();
+    let mut tail_b = hop.clone();
+    // Same length, same first boundary — only a later boundary differs.
+    tail_a.word_boundary_prices = vec![U256::from(123u64), U256::from(456u64)];
+    tail_b.word_boundary_prices = vec![U256::from(123u64), U256::from(789u64)];
+    let seq_a = IntV3TickRangeSequence::new(vec![tail_a]).unwrap();
+    let seq_b = IntV3TickRangeSequence::new(vec![tail_b]).unwrap();
+    assert_ne!(
+        walk_path_fingerprint(&[&seq_a]),
+        walk_path_fingerprint(&[&seq_b]),
+        "a later word boundary must change the key"
+    );
+}
+
+#[test]
+fn solve_cl_piecewise_refuses_prepared_tables_of_another_sequence() {
+    // The late-liquidity 2-hop cycle below solves profitably — so an outcome
+    // of `None` from the same sequences proves refusal, not an unprofitable
+    // walk.
+    let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+    let mut liquidities = vec![1_000_000_000u128; 10];
+    liquidities.push(10_000_000_000_000u128);
+    liquidities.push(1_000_000_000u128);
+    let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+
+    let aligned = solve_cl_piecewise(
+        &[&seq1, &seq2],
+        &[ClSolveTables::derive(&seq1), ClSolveTables::derive(&seq2)],
+        None,
+        &SolveRuntimeConfig::default(),
+        None,
+    );
+    assert!(aligned.result.is_some(), "the aligned control must solve");
+
+    // The sibling differs by one wei of liquidity: trusted positionally, its
+    // tables still walk this profitable cycle to a result — only the identity
+    // check distinguishes refusal from that silent solve.
+    let wrong = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_001]);
+    let misaligned = solve_cl_piecewise(
+        &[&seq1, &seq2],
+        &[ClSolveTables::derive(&wrong), ClSolveTables::derive(&seq2)],
+        None,
+        &SolveRuntimeConfig::default(),
+        None,
+    );
+    assert!(
+        misaligned.result.is_none(),
+        "tables derived from another sequence must be refused, not walked"
+    );
+}
+
+#[test]
 fn test_solve_cl_piecewise_2hop_prepared_matches_derived() {
     // Prepared projection tables and per-call derivation must walk the same
     // 2-hop CL path byte-identically.
@@ -1193,10 +1261,12 @@ fn cl_path_cached_crossings_match_profile_only_solve() {
         ClSolveTables {
             crossings: Arc::clone(&c1),
             profiles: Arc::clone(&p1),
+            source_fingerprint: walk_path_fingerprint(&[&seq1]),
         },
         ClSolveTables {
             crossings: Arc::clone(&c2),
             profiles: Arc::clone(&p2),
+            source_fingerprint: walk_path_fingerprint(&[&seq2]),
         },
     ];
     let cached = solve_cl_piecewise(
@@ -1236,6 +1306,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
         Some(ClSolveTables {
             crossings: crossing,
             profiles: profile,
+            source_fingerprint: walk_path_fingerprint(&[&cl_seq]),
         }),
     ];
 
@@ -1339,6 +1410,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
         Some(ClSolveTables {
             crossings: crossing,
             profiles: profile,
+            source_fingerprint: walk_path_fingerprint(&[&v3_seq]),
         }),
         None,
     ];

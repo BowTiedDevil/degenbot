@@ -353,10 +353,19 @@ pub fn isqrt_u2048(n: U2048) -> U2048 {
         x = next;
     }
 
-    while x * x > n {
+    // The correction walks square their probe, and near the domain ceiling
+    // the exact square lands past `U2048` (for `n` just under `2^2048` the
+    // probe stands at `2^1024`, whose square is `2^2048`). A wrapped product
+    // compares as tiny and the upward walk never terminates; an overflowing
+    // square is by definition `> n`, so checked squares decide both walks.
+    while x.checked_mul(x).is_none_or(|sq| sq > n) {
         x -= U2048::from(1u64);
     }
-    while (x + U2048::from(1u64)) * (x + U2048::from(1u64)) <= n {
+    while x
+        .checked_add(U2048::from(1u64))
+        .and_then(|next| next.checked_mul(next))
+        .is_some_and(|sq| sq <= n)
+    {
         x += U2048::from(1u64);
     }
 
@@ -749,6 +758,18 @@ mod tests {
         }
         let n = U512::from(U256::MAX);
         assert_eq!(u2048_to_u512(isqrt_u2048(u512_to_u2048(n))), isqrt_u512(n));
+    }
+
+    #[test]
+    fn isqrt_u2048_is_exact_on_the_upper_type_domain() {
+        let ceil_root = (U2048::from(1u64) << 1024) - U2048::from(1u64);
+        let ceil_sq = ceil_root * ceil_root;
+        assert_eq!(isqrt_u2048(ceil_sq), ceil_root);
+        assert_eq!(
+            isqrt_u2048(ceil_sq - U2048::from(1u64)),
+            ceil_root - U2048::from(1u64)
+        );
+        assert_eq!(isqrt_u2048(U2048::MAX), ceil_root);
     }
 }
 

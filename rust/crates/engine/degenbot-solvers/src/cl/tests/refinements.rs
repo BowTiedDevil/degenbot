@@ -168,11 +168,13 @@ fn cp_seq_tables(
         .collect();
     let prep: Vec<crate::cl::ClSolveTables> = tables
         .iter()
-        .map(|t| crate::cl::ClSolveTables {
+        .zip(seqs)
+        .map(|(t, seq)| crate::cl::ClSolveTables {
             crossings: t.clone(),
             profiles: std::sync::Arc::new(crate::cl::build_cl_word_profiles_from_crossings(
                 t.as_slice(),
             )),
+            source_fingerprint: crate::cl::walk_path_fingerprint(&[*seq]),
         })
         .collect();
     (tables, prep)
@@ -677,6 +679,7 @@ fn clone_tables(t: &crate::cl::ClSolveTables) -> crate::cl::ClSolveTables {
     crate::cl::ClSolveTables {
         crossings: std::sync::Arc::clone(&t.crossings),
         profiles: std::sync::Arc::clone(&t.profiles),
+        source_fingerprint: t.source_fingerprint,
     }
 }
 
