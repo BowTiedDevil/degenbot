@@ -423,6 +423,23 @@ The maximum `update_block` across all registered pools — the state clock. Duri
 backfill/drain desync it can run ahead of the pump's header clock; the solve anchor takes
 the max of the two.
 
+## Verification idioms
+
+**Drift gate**:
+The regenerate-and-diff family (`docs/rust-config-keys.md`'s `REGEN_*` test, `just
+gen-stubs --check`): a committed artifact that is machine-emitted must fail a plain
+test run the moment source and artifact disagree. The pipeline that WRITES the
+artifact is the same one the gate runs — if those diverge, the gate is theater.
+_Avoid_: a gate whose argument forwarding is inert (a vacuous green); hand edits over
+generated output.
+
+**Negative probe**:
+The acceptance test for a gate itself: its red path demonstrated once by deliberate
+fault injection (edit the artifact, rerun, observe the failure) before a green run is
+treated as evidence. Cheap insurance against inert pass-throughs, stale comparisons,
+and accidentally-dead checks.
+_Avoid_: trusting an unprobed pass; running a gate whose failure branch is unknown.
+
 ## Piecewise CL solving
 
 **Piecewise walker**:

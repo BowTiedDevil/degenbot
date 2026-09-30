@@ -29,6 +29,26 @@ See the justfile.
 ## Web
 Use `agent-browser`.
 
+## Dispatched-agent lane rules
+
+Workers arriving here by dispatch (one-shot agents, actors) work under a project
+manager: never commit or push; run only SCOPED gates (`cargo test -p <crate>`, the
+pytest files you touched) — whole-workspace ladders (`just test-rust-nextest`,
+`just test-python`) are the dispatcher's job. Run commands foreground: if one detaches
+past the harness bound, mark its result PENDING in your sign-off and end your run —
+never end a run waiting on a background task. Before editing, re-verify the tree
+matches your brief (other workers may share the workspace — leave unfamiliar files
+alone) and leave unfamiliar modifications untouched.
+
+## Formatting and commit staging
+
+Run `cargo fmt` only through the justfile recipes (`just fmt-check`) — a bare
+`cargo fmt` on PATH may bind a rustfmt that disagrees with the pinned toolchain, and
+the pre-commit formatter is the authority. Commit with the whole tree staged
+(`git add -A` before `git commit`): partial staging makes the pre-commit stash dance
+conflict with hook-side formatting changes and the commit aborts. The drift-gate and
+negative-probe idioms govern every machine-emitted artifact (see CONTEXT.md).
+
 ## Rust toolchain policy
 
 The repository-root `rust-toolchain.toml` pins local development and release
