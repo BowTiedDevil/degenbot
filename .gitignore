@@ -216,8 +216,9 @@ logs/*
 # Scratch dir
 .scratch/*
 
-# Pi extensions
-.pi
+# Pi extensions (project prompt templates stay tracked)
+.pi/*
+!.pi/prompts/
 
 # Standalone anvil Solidity build artifacts
 tests/standalone_anvil/cache/
