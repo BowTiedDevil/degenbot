@@ -24,8 +24,7 @@
 //! enqueue path fills (one engine projection call per DISTINCT id per batch
 //! — the payload arm's resolve miss is the loud `ValueError` the
 //! `merge_payload_results_py` contract pins; a RAW-row miss is left
-//! unresolved and the core folds it as the typed `SkipResolveMiss`, decision
-//! (a) of task A6SXEH).
+//! unresolved and the core folds it as the typed `SkipResolveMiss`).
 //!
 //! # GIL discipline (ADR-005 §3 C)
 //!

@@ -4,8 +4,8 @@
 //! drain ... One record vocabulary, so a driver's remaining responsibility is
 //! display.").
 //!
-//! Field set = the union of what the two drains read (the spike IIDYXK
-//! attribution): the Python renderers read every stage + `path_info`; the
+//! Field set = the union of what the two drains read: the Python renderers
+//! read every stage + `path_info`; the
 //! Rust bot's `HeartbeatSink` reads only `block`. Batch-level counters are
 //! NOT record fields — they are exact folds ([`fold_counters`]).
 
@@ -49,7 +49,7 @@ pub enum AssemblyVerdict {
     SkipEmptyHops,
     /// The row's `path_id` did not resolve to a registered `PathInfo`.
     ///
-    /// Decision (task A6SXEH a): the two consumers disagreed — the `PyO3` seam
+    /// Decision: the two consumers disagreed — the `PyO3` seam
     /// raised `ValueError`, the settlement bot folded the miss into
     /// `SkipEmptyHops`. Unified: a resolve miss is a TYPED SKIP + counted,
     /// never an abort. It is not batch corruption: a path de-registered

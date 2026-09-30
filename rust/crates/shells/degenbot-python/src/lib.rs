@@ -258,7 +258,7 @@ fn driver_boot(_py: Python<'_>) {
 
 // The declarative root of the `degenbot._ffi` module tree.
 //
-// Declarative `#[pymodule] mod` form (ADR-066 prerequisite, task TGFHFG):
+// Declarative `#[pymodule] mod` form (ADR-066 prerequisite):
 // the fn-based `#[pymodule]` expansion passed empty member lists and the
 // incomplete flag to `experimental-inspect` introspection, so the generated
 // stubs could not see any member. Every root function/class below is a

@@ -1,4 +1,4 @@
-"""The BatchExecutor construction + drain seam (the 2VMQRD cut-over).
+"""The BatchExecutor construction + drain seam (the cut-over).
 
 Pins the PyO3 surface over ``degenbot-batch-executor`` offline: construction
 with resolved policy values, the loud payload-arm resolve miss (the pinned

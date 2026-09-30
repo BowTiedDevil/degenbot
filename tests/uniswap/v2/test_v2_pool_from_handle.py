@@ -1,4 +1,4 @@
-"""UniswapV2Pool.from_handle is the Polars-style slim seam (ADR-005 / OGTTCS).
+"""UniswapV2Pool.from_handle is the Polars-style slim seam (ADR-005).
 
 ``from_handle(cls, py_pool) -> Self`` takes ONLY the Rust handle. Every
 identity field is recovered off the handle — the Polars ``_from_pydf`` end
