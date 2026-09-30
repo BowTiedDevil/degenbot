@@ -221,7 +221,7 @@ impl Admission {
         matches!(self, Admission::Admit)
     }
 }
-/// THE pure admission predicate:: a
+/// THE pure admission `predicate::` a
 /// total function of [`AdmissionInputs`] ALONE. It is the ONLY gate on the
 /// backlog → role-queue move; `try_enqueue`'s `PostureHeld` hand-back
 /// stays the TOCTOU backstop for a cordon onset between the consult and the

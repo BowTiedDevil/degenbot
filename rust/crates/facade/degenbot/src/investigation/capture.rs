@@ -35,7 +35,7 @@ pub enum CaptureError {
     UnknownPool(String),
     /// A pool entry is not a JSON object.
     PoolNotAnObject(String),
-    /// A required identity field (family / address / pool_id) is absent.
+    /// A required identity field (family / address / `pool_id`) is absent.
     MissingField(&'static str),
 }
 
@@ -112,6 +112,7 @@ fn tick_data_json(ticks: &BTreeMap<i32, (i128, u128)>) -> Value {
 
 impl FetchedState {
     /// The refreshable state keys of this pool family, with their fresh values.
+    #[must_use]
     pub fn state_json(&self) -> Map<String, Value> {
         let mut m = Map::new();
         match self {
@@ -173,6 +174,7 @@ impl FetchedState {
 
 /// The state keys one pool family refreshes in a fixture entry. Must stay in
 /// lockstep with [`FetchedState::state_json`] (pinned by a test).
+#[must_use]
 pub fn state_keys_for_family(family: &str) -> &'static [&'static str] {
     if family.ends_with("_v4") {
         &[
@@ -198,6 +200,12 @@ pub fn state_keys_for_family(family: &str) -> &'static [&'static str] {
 }
 
 /// Extract the recapture identity from one fixture pool entry.
+///
+/// # Errors
+///
+/// Errors ([`CaptureError`]) when the entry is missing the `family` field,
+/// an address or `pool_id` field is present but unparseable, or (via the
+/// caller's entry lookup) the entry is not a JSON object.
 pub fn pool_spec(entry: &Value) -> Result<PoolSpec, CaptureError> {
     let family = entry
         .get("family")
@@ -229,6 +237,12 @@ pub fn pool_spec(entry: &Value) -> Result<PoolSpec, CaptureError> {
 /// existing entry and leave everything else — narrative fields, recorded
 /// identity, and per-recorder extras — untouched. A recapture of unchanged
 /// sources is therefore an exact identity on the document.
+///
+/// # Errors
+///
+/// Errors ([`CaptureError`]) when the document root is not a JSON object, a
+/// fetched pool key names no pool in the document's `pools` map, or a pool
+/// entry is not a JSON object.
 pub fn refresh_fixture(
     original: &Value,
     fetched: &BTreeMap<String, FetchedState>,
@@ -283,9 +297,16 @@ pub fn diff_state(original: &Value, refreshed: &Value) -> Vec<String> {
     drifted
 }
 
-/// Canonical fixture text: serde_json pretty printing with a trailing newline.
-/// Key order is serde_json's canonical (sorted) form — a recapture normalizes
-/// whatever order the recorder used.
+/// Canonical fixture text: `serde_json` pretty printing with a trailing
+/// newline. Key order is `serde_json`'s canonical (sorted) form — a recapture
+/// normalizes whatever order the recorder used.
+///
+/// # Panics
+///
+/// Panics if `doc` fails to serialize — structurally unreachable for a
+/// `serde_json::Value`.
+#[must_use]
+#[expect(clippy::expect_used)]
 pub fn emit_json(doc: &Value) -> String {
     format!(
         "{}\n",
@@ -295,6 +316,8 @@ pub fn emit_json(doc: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, clippy::cast_possible_truncation)]
+
     use super::*;
     use crate::investigation::{build_v3_state, build_v4_state, PathFixture};
 

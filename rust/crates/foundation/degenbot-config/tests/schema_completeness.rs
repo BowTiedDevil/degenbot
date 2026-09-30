@@ -30,6 +30,10 @@ const SWEEP_ARTIFACTS: &[&str] = &[
     // ADR-051 D8: the family wildcard in the cli-core operator doc comment
     // (the loader owns the four concrete DEGENBOT_FLEET_CORDON_* keys).
     "DEGENBOT_FLEET_CORDON_",
+    // ADR-062: the family wildcard in the capture-recapture example's doc
+    // comment (the schema owns the concrete DEGENBOT_RPC_*_CHAINID_<id>
+    // keys and the loader owns their per-chain expansion).
+    "DEGENBOT_RPC_",
     // The retired click per-flag envvar fallback named in the argv doc
     // comment; the console models these inputs as argv only.
     "DEGENBOT_CHUNK_SIZE",

@@ -82,7 +82,7 @@ impl std::fmt::Display for RegistrationLifecycleError {
 impl std::error::Error for RegistrationLifecycleError {}
 
 /// Drive a V3 CL pool through the registration verify-lifecycle, branching on
-/// coverage:: **Sparse → immediate no-op** (already `Live`, no
+/// `coverage::` **Sparse → immediate no-op** (already `Live`, no
 /// verification deferral, no RPC); **Tracked → quarantine → (step-1 seed
 /// verify) → drain+pin → (step-2 post-drain verify) → `set_live`**.
 ///

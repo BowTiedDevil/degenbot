@@ -163,6 +163,11 @@ pub struct PathFixture {
 
 impl PathFixture {
     /// Load + parse a captured-path fixture JSON (see the `capture_path_fixture` example).
+    ///
+    /// # Errors
+    ///
+    /// Errors when the file is unreadable or its text is not valid fixture
+    /// JSON.
     pub fn load(path: &str) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
         serde_json::from_str(&text).map_err(|e| format!("parse {path}: {e}"))

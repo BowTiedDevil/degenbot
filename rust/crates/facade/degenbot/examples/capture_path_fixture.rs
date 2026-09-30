@@ -23,6 +23,17 @@
 //! `--check` reports drifted state keys and exits 1 on any; the default mode
 //! rewrites each fixture with canonical serde_json formatting.
 
+// Run-once diagnostic example: stdout/stderr reports ARE its interface, its
+// prose names CLI flags and deployments that pedantry would backtick, and the
+// main loop reads clearer as one body than behind extraction helpers.
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::doc_markdown,
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation
+)]
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;

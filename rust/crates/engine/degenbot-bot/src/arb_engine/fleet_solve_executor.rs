@@ -383,7 +383,7 @@ fn host_loop(
     }
     .run(rx);
 }
-/// The solve host's seat model:: per-seat
+/// The solve host's seat `model::` per-seat
 /// keyed mailboxes — a seat is a persistent pin (T3/T6 warm arenas), so a
 /// granted unit routes POSITIONALLY to the grant slot's mailbox:
 /// seat i <-> `SlotLayout::solver.start` + i).

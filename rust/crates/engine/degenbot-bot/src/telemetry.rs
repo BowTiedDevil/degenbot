@@ -211,7 +211,7 @@ pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
 }
 
 /// Detach a span from the ambient `OTel` context so it becomes its own trace
-/// ROOT:: a span created while another is still current —
+/// `ROOT::` a span created while another is still current —
 /// e.g. the pump's per-block beat when the previous block's loop-context
 /// span is still entered under a backfill `.instrument()` future — would
 /// otherwise chain every block of a session into one ever-growing

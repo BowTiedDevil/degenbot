@@ -4,18 +4,30 @@
 //! Two retrieval vehicles for initialized ticks, both word-oriented and batched
 //! through [`degenbot_rpc::multicall3`] `aggregate3`:
 //!
-//! - **TickLens** ([`ITickLens::getPopulatedTicksInWord`]): one call per bitmap
+//! - **`TickLens`** ([`ITickLens::getPopulatedTicksInWord`]): one call per bitmap
 //!   word returns every initialized tick in the word with its
 //!   (`liquidity_net`, `liquidity_gross`) — no waterfall.
 //! - **Direct pool reads** (`tickBitmap(word)` + `ticks(tick)`), the lens-free
 //!   path over the pool itself (and the natural cross-check of a lens).
 //!
-//! V4 pools have no periphery lens: their word scan rides the pool's StateView
+//! V4 pools have no periphery lens: their word scan rides the pool's `StateView`
 //! (`getTickBitmap` / `getTickLiquidity`) — the V4-native twin of the lens.
 //!
 //! Scan math mirrors `TickLens.sol` exactly:
 //! `initialized tick = ((word << 8) + bit) * tick_spacing`, with words covering
 //! the usable range [`tick_math::min_usable_tick`..=`max_usable_tick`].
+
+// Run-once investigation tooling: the word/bit arithmetic deliberately mirrors
+// `TickLens.sol`'s C-style casts, the batch-degradation notes intentionally go
+// to stderr, and the encoder pairing reads clearer inline than behind a type
+// alias.
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::print_stderr,
+    clippy::type_complexity
+)]
 
 use std::collections::BTreeMap;
 
@@ -73,6 +85,7 @@ const fn word_of_index(index: i32) -> i16 {
 
 /// The bitmap word and bit that index an initialized tick — the inverse of
 /// `TickLens`'s `((word << 8) + bit) * spacing`.
+#[must_use]
 pub fn word_and_bit(tick: i32, tick_spacing: i32) -> (i16, u8) {
     let index = tick / tick_spacing;
     let word = word_of_index(index);
@@ -81,6 +94,7 @@ pub fn word_and_bit(tick: i32, tick_spacing: i32) -> (i16, u8) {
 }
 
 /// Every bitmap word that can hold initialized ticks for this spacing.
+#[must_use]
 pub fn word_positions(tick_spacing: i32) -> std::ops::RangeInclusive<i16> {
     let min_index = min_usable_tick(tick_spacing) / tick_spacing;
     let max_index = max_usable_tick(tick_spacing) / tick_spacing;
@@ -88,6 +102,7 @@ pub fn word_positions(tick_spacing: i32) -> std::ops::RangeInclusive<i16> {
 }
 
 /// The initialized ticks a bitmap word holds (mirrors `TickLens`'s inner loop).
+#[must_use]
 pub fn ticks_from_bitmap_word(word: i16, bitmap: U256, tick_spacing: i32) -> Vec<i32> {
     let mut ticks = Vec::new();
     for bit in 0..256usize {
@@ -184,6 +199,11 @@ async fn aggregate3(
 /// `getReserves()` at `block`. The V2 `block_number` field of the corpus is the
 /// pair's `blockTimestampLast` (a timestamp — the key name the corpus records
 /// it under, misleading but load-bearing).
+///
+/// # Errors
+///
+/// Errors when the `getReserves` call or its decode fails at `block`, or the
+/// recorded timestamp does not parse as `u64`.
 pub async fn scrape_v2_state(
     provider: &AlloyProvider,
     pair: Address,
@@ -209,6 +229,11 @@ pub async fn scrape_v2_state(
 
 /// A V3-family pool's state at `block`: scalars plus the full initialized-tick
 /// set fetched word-wise. The snapshot is exact at `block` by construction.
+///
+/// # Errors
+///
+/// Errors when any scalar or tick sub-call fails, a decode returns failure, or
+/// no batch contract is usable at `block`.
 pub async fn scrape_v3_state(
     provider: &AlloyProvider,
     pool: Address,
@@ -337,9 +362,14 @@ async fn scan_v3_direct(
     Ok(out)
 }
 
-/// A V4 pool's state at `block` via its StateView: scalars in one helper pair,
-/// ticks word-wise (`getTickBitmap`) then per initialized tick
+/// A V4 pool's state at `block` via its `StateView`: scalars in one helper
+/// pair, ticks word-wise (`getTickBitmap`) then per initialized tick
 /// (`getTickLiquidity`). The snapshot is exact at `block` by construction.
+///
+/// # Errors
+///
+/// Errors when any scalar or tick sub-call fails, a decode returns failure, or
+/// no batch contract is usable at `block`.
 pub async fn scrape_v4_state(
     provider: &AlloyProvider,
     state_view: Address,
@@ -426,6 +456,13 @@ pub async fn scrape_v4_state(
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::expect_used,
+        clippy::doc_markdown,
+        clippy::too_many_lines,
+        clippy::cast_lossless
+    )]
+
     use super::*;
     use alloy::primitives::I256;
     use degenbot_rpc::abi::{IUniswapV3Pool, IUniswapV4StateView};

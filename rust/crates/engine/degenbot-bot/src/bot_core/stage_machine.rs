@@ -558,7 +558,7 @@ impl StageMachine {
         self.last_header_at_ms = now_ms;
     }
 
-    /// The watchdog tick:: the driver's interval fires
+    /// The watchdog `tick::` the driver's interval fires
     /// and feeds a synthetic `now_ms`; the windows enter as data
     /// (`header_staleness_ms`, `log_silence_ms`). Decides, from elapsed-time
     /// only: `Recover` when headers have been stale >= the staleness window

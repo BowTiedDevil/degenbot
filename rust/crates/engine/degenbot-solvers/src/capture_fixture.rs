@@ -56,6 +56,7 @@ fn read_fixture_inner(path: &Path) -> String {
 /// The committed-fixture path for `file_name` (relative to this crate's
 /// `tests/fixtures/`). Centralized so examples stop hand-rolling
 /// `CARGO_MANIFEST_DIR` joins.
+#[must_use]
 pub fn fixture_path(file_name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -67,6 +68,11 @@ pub fn fixture_path(file_name: &str) -> PathBuf {
 /// Fatal by design like [`read_fixture`]: a malformed line is a capture-format
 /// violation, so the panic names the 1-based line number and its prefix
 /// instead of silently dropping rows out of a measurement.
+///
+/// # Panics
+///
+/// Panics when any non-empty line is not valid JSON.
+#[must_use]
 pub fn rows(content: &str) -> Vec<serde_json::Value> {
     content
         .lines()

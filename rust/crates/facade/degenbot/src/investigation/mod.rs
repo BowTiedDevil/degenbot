@@ -34,9 +34,6 @@
 //! files' own lint gates) — these are run-once diagnostic helpers, not library
 //! surface that future API consumers depend on.
 
-/// Ignore pedantic doc/must_use/hasher nits for this run-once tooling (see
-/// module comment for rationale).
-#[expect(clippy::missing_errors_doc)]
 pub mod capture;
 pub mod chain_capture;
 pub mod fixture;
