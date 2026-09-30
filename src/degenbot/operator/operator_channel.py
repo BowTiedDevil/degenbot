@@ -287,7 +287,7 @@ class OperatorServer:
         self._socket_path = socket_path
         self._request_timeout = request_timeout
         self._server: asyncio.AbstractServer | None = None
-        self._serving: asyncio.Future[None] | None = None
+        self._serving: asyncio.Task[None] | None = None
         self._ready = asyncio.Event()
 
     async def serve(self) -> None:

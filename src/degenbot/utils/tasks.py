@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import Any
 
 
-async def cancel_and_reap(task: asyncio.Future[object]) -> None:
+async def cancel_and_reap(task: asyncio.Task[Any]) -> None:
     """Cancel ``task``, await its unwind, and OBSERVE the cancellation.
 
     The corpus discipline for teardown reaps: ``task.cancel()`` + ``await`` +
