@@ -14,6 +14,11 @@ workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
+# The typed config projection's declaration tables: `config_schema!` emits
+# SCHEMA (every key with its kind) and SECTION_PATHS from the same arms as the
+# runtime machinery in the binding layer, and the generator splices the typed
+# `__getattr__` overload face from them (ADR-066 D3; see src/config_projection.rs).
+degenbot-config = { workspace = true }
 # Tracks the workspace `pyo3` pin in lockstep (ADR-066): a pyo3 bump implies a
 # generator bump and a fresh stub diff.
 pyo3-introspection = "0.29.2"

@@ -4,7 +4,9 @@
 // symbols only), so the cdylib is never loaded or executed here.
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+
+mod config_projection;
 use pyo3_introspection::{introspect_cdylib, module_stub_files};
 
 // The header prepended to every generated stub: marks the tree as generator
@@ -250,27 +252,36 @@ fn append_dunder_all(stub: &str) -> String {
 // The name exported by a top-level declaration line: `def name(`, `class
 // name` (generics or `:`), or an attribute (`NAME: T` / `NAME = ...`).
 // Imports (`from x import y`, `import x`) never match: their identifier
-// is followed by whitespace instead of `:` or ` =`.
+// is followed by whitespace instead of `:` or ` =`. Private declarations
+// (a leading underscore, e.g. the config projection's `@type_check_only`
+// face classes) are skipped: `__all__` carries public exports, and mypy
+// treats names absent from `__all__` as non-public.
 fn exported_name(line: &str) -> Option<&str> {
-    if let Some(rest) = line.strip_prefix("def ") {
+    let name = if let Some(rest) = line.strip_prefix("def ") {
         let end = rest.find('(')?;
-        return Some(rest[..end].trim());
-    }
-    if let Some(rest) = line.strip_prefix("class ") {
+        rest[..end].trim()
+    } else if let Some(rest) = line.strip_prefix("class ") {
         let end = rest.find([':', '(', ' '])?;
-        return Some(rest[..end].trim());
+        rest[..end].trim()
+    } else {
+        let ident_len = line
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(line.len());
+        if ident_len == 0 {
+            return None;
+        }
+        let rest = &line[ident_len..];
+        if rest.starts_with(':') || rest.starts_with(" =") {
+            &line[..ident_len]
+        } else {
+            return None;
+        }
+    };
+    if name.starts_with('_') {
+        None
+    } else {
+        Some(name)
     }
-    let ident_len = line
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .unwrap_or(line.len());
-    if ident_len == 0 {
-        return None;
-    }
-    let rest = &line[ident_len..];
-    if rest.starts_with(':') || rest.starts_with(" =") {
-        return Some(&line[..ident_len]);
-    }
-    None
 }
 
 // CLI progress diagnostics go to stderr; the tool is a recipe helper, not a
@@ -324,9 +335,11 @@ fn main() -> Result<()> {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create dir {}", parent.display()))?;
         }
+        let projected = config_projection::apply(content)
+            .map_err(|err| anyhow!("config projection splice failed: {err}"))?;
         let stamped = format!(
             "{GENERATED_HEADER}{}",
-            append_dunder_all(&rewrite_orphan_setters(&mangle_keyword_params(content)))
+            append_dunder_all(&rewrite_orphan_setters(&mangle_keyword_params(&projected)))
         );
         std::fs::write(&dest, &stamped).with_context(|| format!("write {}", dest.display()))?;
         eprintln!("wrote {} ({} bytes)", dest.display(), stamped.len());
@@ -471,5 +484,18 @@ mod tests {
         assert_eq!(exported_name("import sys"), None);
         assert_eq!(exported_name("from typing import Any"), None);
         assert_eq!(exported_name(""), None);
+    }
+
+    #[test]
+    fn exported_name_skips_private_declarations() {
+        // The config projection's face classes are stub-only privates; they
+        // must not enter `__all__`.
+        assert_eq!(exported_name("@type_check_only"), None);
+        assert_eq!(exported_name("class _ConfigValuesFace:"), None);
+        assert_eq!(exported_name("_hidden: int"), None);
+        assert_eq!(
+            exported_name("def __getattr__(name: str) -> Incomplete: ..."),
+            None
+        );
     }
 }

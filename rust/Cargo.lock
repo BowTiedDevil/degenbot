@@ -2746,6 +2746,7 @@ name = "degenbot-stubgen"
 version = "0.6.0-alpha.14"
 dependencies = [
  "anyhow",
+ "degenbot-config",
  "pyo3-introspection",
 ]
 

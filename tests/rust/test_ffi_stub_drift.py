@@ -19,6 +19,7 @@ the running extension.
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import subprocess
 
@@ -69,3 +70,89 @@ def test_committed_stubs_match_generator_output() -> None:
     assert proc.returncode == 0, (
         f"`just gen-stubs --check` failed (rc={proc.returncode});\n{proc.stdout}\n{proc.stderr}"
     )
+
+# The typed seam projection's stub face: the generator emits
+# per-section `@type_check_only` face classes with one typed property per
+# declared key, and `ConfigValues` inherits a face base carrying one property
+# per top-level section (rust/tools/stubgen/src/config_projection.rs, spliced
+# from the schema macro's SCHEMA/SECTION_PATHS tables). These assertions pin
+# the committed tree's face; the regenerate-and-diff gate above proves the
+# face regenerates byte-for-byte, and these checks make a silent fall-back to
+# the machinery face (`__getattr__(name: str) -> Any`) a named failure instead
+# of a quiet de-typing.
+def _projection_class(tree: ast.Module, name: str) -> ast.ClassDef:
+    classes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == name
+    ]
+    assert len(classes) == 1, f"expected exactly one {name} class in the stub"
+    return classes[0]
+
+
+def _properties(cls: ast.ClassDef) -> dict[str, ast.expr]:
+    """{name: return annotation} for the class's read-only property members."""
+    properties: dict[str, ast.expr] = {}
+    for node in cls.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        decorator_names = {getattr(d, "attr", None) for d in node.decorator_list}
+        assert "setter" not in decorator_names, (
+            f"{cls.name}.{node.name} carries a setter — the projection is read-only"
+        )
+        if any(getattr(d, "id", None) == "property" for d in node.decorator_list):
+            annotation = node.returns
+            assert annotation is not None, f"{cls.name}.{node.name} lacks a return type"
+            properties[node.name] = annotation
+    return properties
+
+
+def test_config_projection_stubs_are_typed() -> None:
+    """The config projection's stub face is typed, not machinery."""
+    tree = ast.parse((_STUB_DIR / "__init__.pyi").read_text(encoding="utf-8"))
+
+    # values.<section>: ConfigValues inherits the machine-emitted face base and
+    # carries no __getattr__ of its own — the machinery face is gone.
+    values = _projection_class(tree, "ConfigValues")
+    assert len(values.bases) == 1 and values.bases[0].id == "_ConfigValuesFace", (
+        "ConfigValues must inherit the machine-emitted face base"
+    )
+    assert not [
+        node
+        for node in values.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__getattr__"
+    ], "ConfigValues still carries the machinery __getattr__"
+
+    base = _projection_class(tree, "_ConfigValuesFace")
+    base_properties = _properties(base)
+    assert base_properties["dispatch"].id == "_ConfigDispatchFace"
+    assert base_properties["strategy"].id == "_ConfigStrategyFace"
+
+    # values.<section>.<field>: every declared key typed to its declared kind.
+    dispatch = _properties(_projection_class(tree, "_ConfigDispatchFace"))
+    assert dispatch["min_profit_margin_bps"].id == "int"
+    assert dispatch["erc6909_profit"].id == "bool"
+    # the closed projection: a name outside the declaration is not typed
+    assert "not_a_key" not in dispatch
+
+    diagnostics = _properties(_projection_class(tree, "_ConfigDiagnosticsFace"))
+    assert diagnostics["tracemalloc_secs"].id == "float"
+
+    # facet namespaces stay navigable: strategy.settlement projects its own face
+    strategy = _properties(_projection_class(tree, "_ConfigStrategyFace"))
+    assert strategy["settlement"].id == "_ConfigStrategySettlementFace"
+    settlement = _properties(_projection_class(tree, "_ConfigStrategySettlementFace"))
+    assert settlement, "the nested section face carries no declared keys"
+
+    # the runtime section view keeps its honest machinery signature — the one
+    # documented stubtest residual (runtime getattro slot, invisible to
+    # introspection; see tests/rust/stubtest_allowlist.txt)
+    section = _projection_class(tree, "ConfigSectionValues")
+    machinery = [
+        node
+        for node in section.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__getattr__"
+    ]
+    assert len(machinery) == 1, "ConfigSectionValues must keep its machinery __getattr__"
+    param = (machinery[0].args.posonlyargs or machinery[0].args.args)[1]
+    assert isinstance(param.annotation, ast.Name) and param.annotation.id == "str"

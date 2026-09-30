@@ -167,7 +167,6 @@ def __getattr__(name: str) -> Incomplete: ...
 __all__ = [
     "MAX_TICK",
     "MIN_TICK",
-    "__getattr__",
     "compute_swap_step_v3",
     "compute_swap_step_v4",
     "get_sqrt_ratio_at_tick",

@@ -49,7 +49,6 @@ def set_posture_policy(patch: dict) -> dict:
 def __getattr__(name: str) -> Incomplete: ...
 
 __all__ = [
-    "__getattr__",
     "current_posture_policy",
     "set_posture_policy",
 ]

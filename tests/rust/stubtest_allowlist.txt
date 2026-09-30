@@ -21,13 +21,19 @@
 # 17 — fleet.rs registers PostureRetuneError on the same island (no
 # `_PYO3_DEF`, per its docstring), alongside the 17 registered in lib.rs.
 
-# ==== pyo3 dunder `__getattr__` (2) ====
+# ==== pyo3 dunder `__getattr__` (1) — PERMANENT RESIDUAL ====
 # A pyo3 magic method installs into the type's getattro slot, not as a class
 # attribute, so introspection cannot see it and stubtest reports the stub
 # member MISSING at runtime. The read works (the typed seam projection's
-# named-property access is exercised by the config suites).
+# named-property access is exercised by the config suites). The projection's
+# typed face (rust/tools/stubgen/src/config_projection.rs, spliced from the
+# schema macro's SCHEMA/SECTION_PATHS tables) removed ConfigValues' stub
+# `__getattr__` entirely — its entry CLOSED; its sections are typed properties
+# on an inherited `@type_check_only` face base. ConfigSectionValues keeps the
+# machinery `__getattr__` in its stub (it is the path-agnostic runtime view),
+# so this one entry covers the getattro-slot invisibility, which no
+# introspection bump can close.
 degenbot._ffi.ConfigSectionValues.__getattr__
-degenbot._ffi.ConfigValues.__getattr__
 
 # ==== create_exception! island types (18) ====
 # These runtime exceptions carry no embedded introspection data (no
