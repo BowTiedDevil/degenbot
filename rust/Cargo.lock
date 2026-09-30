@@ -2747,6 +2747,7 @@ version = "0.6.0-alpha.14"
 dependencies = [
  "anyhow",
  "degenbot-config",
+ "goblin",
  "pyo3-introspection",
 ]
 

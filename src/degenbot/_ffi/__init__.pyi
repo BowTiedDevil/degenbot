@@ -9,6 +9,91 @@ from _typeshed import Incomplete
 from collections.abc import Sequence
 from typing import Any, Final, final, type_check_only
 
+class BootRefused(RuntimeError):
+    """
+    The fleet host refused to boot: the detected CPU budget is below the pinned-role floor, or a boot invariant failed. The library never aborts the host process on this arm; the message carries the detected budget, the floor, and one operator hint.
+    """
+
+class ChainMismatchError(ValueError):
+    """
+    The endpoint serves a different chain than the one it was bound to.
+    """
+
+class DynamicFeePoolRejectedError(PoolRegistrationError):
+    """
+    A V4 pool with a dynamic fee was rejected at registration: the solver assumes a fixed fee.
+    """
+
+class FleetIntakeFaultedError(RuntimeError):
+    """
+    The fleet registration intake faulted: the sticky lane-death latch resolved held intake units terminally (they were never executed). Sticky until a fresh process.
+    """
+
+class HighFeePoolRejectedError(PoolRegistrationError):
+    """
+    A V4 pool whose static fee exceeds the cmd_executor's 2-byte encoding limit (fee > 65535) was rejected at registration: the executor encodes fee as u16 in both V4_SWAP_COMPACT and V4_SWAP_DYNAMIC, so such pools cannot be encoded. They are also unprofitable (32%+ per swap).
+    """
+
+class HookedPoolRejectedError(PoolRegistrationError):
+    """
+    A V4 pool with an amount-modifying hook was rejected at registration: the solver's CL math assumes no hook intervention.
+    """
+
+class PathRegistryFullError(ValueError):
+    """
+    The engine path registry is at its configured registered-path cap. Benign stop: discovery must stop offering new candidate paths.
+    """
+
+class PoolAlreadyRegisteredError(PoolRegistrationError):
+    """
+    A pool at this address is already registered. Subclasses PoolRegistrationError (a wiring/programming error surfaced at admission time, distinct from per-field spec violations / V4 admission categories).
+    """
+
+class PoolRegistrationError(ValueError):
+    """
+    A pool was refused at registration (duplicate address, out-of-spec field, V4 amount-modifying hook, V4 dynamic fee, or V4 high static fee > 65535). Subclasses classify the specific admission reason so build_paths skips rejected pools by type, not string matching.
+    """
+
+class PossibleInaccurateResult(ValueError):
+    """
+    The simulated swap crosses a pool whose amount-modifying hook may have invalidated the result; the attached amounts are the standard-math approximation.
+    """
+
+class SpecViolationError(PoolRegistrationError):
+    """
+    A field on the pool registration params violates its on-chain Solidity bound (e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range). The message identifies the offending field, its value, and the bound it violates.
+    """
+
+class StrategyHostError(RuntimeError):
+    """
+    A strategy-host operator verb was refused (a lifecycle transition the FSM does not allow).
+    """
+
+class UnconfiguredStrategyError(StrategyHostError):
+    """
+    The named strategy is registered but unconfigured: no config facet with its required keys was booted, so it cannot be enabled.
+    """
+
+class UnknownStrategyError(StrategyHostError):
+    """
+    The named strategy is not registered on the host: the operator named a driver the host never admitted.
+    """
+
+class UnsupportedPoolFamilyError(RuntimeError):
+    """
+    A construction route refused a pool whose factory no rung serves (no built-in DEX variant preset, no identity selector answered, or CREATE2 verification failed). Loud typed abort under the loud-abort rule (ADR-055 D4) — never a silent skip.
+    """
+
+class VerificationMismatchError(RuntimeError):
+    """
+    A verification mismatch: the engine's tick data does not match on-chain state.
+    """
+
+class VerificationRpcError(RuntimeError):
+    """
+    An RPC/transport error during on-chain verification (e.g. provider construction failed).
+    """
+
 @final
 class ArbitrageEngine:
     """
@@ -4527,22 +4612,32 @@ __all__ = [
     "ArbitrageEngine",
     "BalanceVectorView",
     "BlockStream",
+    "BootRefused",
     "Bot",
     "BotIo",
     "BuildRefusalView",
+    "ChainMismatchError",
     "ConcentratedLiquidityView",
     "ConfigSectionValues",
     "ConfigValues",
+    "DynamicFeePoolRejectedError",
     "Erc20Token",
     "Erc20TokenRow",
+    "FleetIntakeFaultedError",
+    "HighFeePoolRejectedError",
+    "HookedPoolRejectedError",
     "HypotheticalConfig",
     "IntakeReceipt",
     "PathBatchIterator",
     "PathIterator",
+    "PathRegistryFullError",
     "PathStepBuilder",
     "Pool",
+    "PoolAlreadyRegisteredError",
     "PoolKind",
+    "PoolRegistrationError",
     "PoolTickCoverage",
+    "PossibleInaccurateResult",
     "RegistrationLedger",
     "ReservePairView",
     "ResolvedChainId",
@@ -4551,8 +4646,15 @@ __all__ = [
     "ResolvedNodeUri",
     "RetryPolicy",
     "SessionObject",
+    "SpecViolationError",
+    "StrategyHostError",
     "StrategyReadinessView",
+    "UnconfiguredStrategyError",
+    "UnknownStrategyError",
     "UnregistrablePoolRecord",
+    "UnsupportedPoolFamilyError",
+    "VerificationMismatchError",
+    "VerificationRpcError",
     "build_fingerprint",
     "build_number",
     "build_path_graph",

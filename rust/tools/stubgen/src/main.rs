@@ -7,6 +7,9 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 
 mod config_projection;
+mod exception_manifest;
+use exception_manifest::EXCEPTION_ISLANDS;
+use pyo3_introspection::model::Module;
 use pyo3_introspection::{introspect_cdylib, module_stub_files};
 
 // The header prepended to every generated stub: marks the tree as generator
@@ -284,6 +287,40 @@ fn exported_name(line: &str) -> Option<&str> {
     }
 }
 
+// The dotted Python module path of one emitted stub file: `__init__.pyi` is
+// the module itself, `<name>.pyi` (at any depth) the leaf submodule of the
+// same shape `module_stub_files` emits.
+fn stub_file_module(rel: &Path, root: &str) -> String {
+    let mut segments: Vec<String> = rel
+        .iter()
+        .map(|part| part.to_string_lossy().to_string())
+        .collect();
+    let file = segments.pop().unwrap_or_default();
+    let stem = file.strip_suffix(".pyi").unwrap_or(file.as_str());
+    if stem != "__init__" {
+        segments.push(stem.to_owned());
+    }
+    if segments.is_empty() {
+        root.to_owned()
+    } else {
+        format!("{root}.{}", segments.join("."))
+    }
+}
+
+// The introspected module tree's dotted paths, rooted at the distribution
+// package (`degenbot`): the manifest gate's module-existence half.
+fn collect_module_paths(
+    module: &Module,
+    prefix: &str,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    let path = format!("{prefix}.{}", module.name);
+    out.insert(path.clone());
+    for sub in &module.modules {
+        collect_module_paths(sub, &path, out);
+    }
+}
+
 // CLI progress diagnostics go to stderr; the tool is a recipe helper, not a
 // library, so the workspace-wide print_stderr denial is scoped to this binary.
 #[expect(clippy::print_stderr)]
@@ -321,6 +358,19 @@ fn main() -> Result<()> {
         .with_context(|| format!("introspect {binary} as {module_name}"))?;
     dump(&module, 0);
 
+    // Manifest-vs-runtime gate (ADR-066 D3): the exception-island manifest
+    // below only describes islands the runtime actually exports. A drifted
+    // manifest entry (renamed create_exception! arm, dropped m.add) fails
+    // generation here instead of emitting a class the runtime never had;
+    // stubtest gates the reverse direction.
+    let root_path = format!("degenbot.{module_name}");
+    let mut module_paths = std::collections::BTreeSet::new();
+    collect_module_paths(&module, "degenbot", &mut module_paths);
+    let symbols = exception_manifest::symbol_blob(Path::new(&binary))
+        .map_err(|err| anyhow!("exception manifest gate: {err}"))?;
+    exception_manifest::validate(EXCEPTION_ISLANDS, &module_paths, &symbols)
+        .map_err(|err| anyhow!("{err}"))?;
+
     let stubs = module_stub_files(&module);
     let out = Path::new(&outdir);
     std::fs::create_dir_all(out).with_context(|| format!("create output dir {}", out.display()))?;
@@ -337,9 +387,16 @@ fn main() -> Result<()> {
         }
         let projected = config_projection::apply(content)
             .map_err(|err| anyhow!("config projection splice failed: {err}"))?;
+        let islands: Vec<exception_manifest::ExceptionIsland> = EXCEPTION_ISLANDS
+            .iter()
+            .filter(|island| island.python_module == stub_file_module(rel, &root_path))
+            .copied()
+            .collect();
+        let spliced = exception_manifest::splice(&projected, &islands)
+            .map_err(|err| anyhow!("exception island splice failed: {err}"))?;
         let stamped = format!(
             "{GENERATED_HEADER}{}",
-            append_dunder_all(&rewrite_orphan_setters(&mangle_keyword_params(&projected)))
+            append_dunder_all(&rewrite_orphan_setters(&mangle_keyword_params(&spliced)))
         );
         std::fs::write(&dest, &stamped).with_context(|| format!("write {}", dest.display()))?;
         eprintln!("wrote {} ({} bytes)", dest.display(), stamped.len());

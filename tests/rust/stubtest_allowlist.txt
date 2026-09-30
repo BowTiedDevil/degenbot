@@ -17,9 +17,12 @@
 # annotations on U256/I256-typed members, but produces no stubtest findings —
 # `Any` is compatible with everything — so it contributes no entries here.
 #
-# Re-gate delta vs the ADR-066 count: 18 create_exception! island types, not
-# 17 — fleet.rs registers PostureRetuneError on the same island (no
-# `_PYO3_DEF`, per its docstring), alongside the 17 registered in lib.rs.
+# The 18 `create_exception!` island types (17 registered in lib.rs, one in
+# fleet.rs) once carried entries here; the stubgen declaration manifest
+# (rust/tools/stubgen/src/exception_manifest.rs) now splices their
+# `class <Name>(<Base>):` declarations into the generated stubs, and the
+# manifest-vs-runtime gate validates every manifested name against the
+# cdylib before generation.
 
 # ==== pyo3 dunder `__getattr__` (1) — PERMANENT RESIDUAL ====
 # A pyo3 magic method installs into the type's getattro slot, not as a class
@@ -35,29 +38,6 @@
 # introspection bump can close.
 degenbot._ffi.ConfigSectionValues.__getattr__
 
-# ==== create_exception! island types (18) ====
-# These runtime exceptions carry no embedded introspection data (no
-# `_PYO3_DEF`), so pyo3-introspection cannot emit them; stubtest sees the
-# runtime class without a stub declaration.
-degenbot._ffi.BootRefused
-degenbot._ffi.ChainMismatchError
-degenbot._ffi.DynamicFeePoolRejectedError
-degenbot._ffi.FleetIntakeFaultedError
-degenbot._ffi.HighFeePoolRejectedError
-degenbot._ffi.HookedPoolRejectedError
-degenbot._ffi.PathRegistryFullError
-degenbot._ffi.PoolAlreadyRegisteredError
-degenbot._ffi.PoolRegistrationError
-degenbot._ffi.PossibleInaccurateResult
-degenbot._ffi.SpecViolationError
-degenbot._ffi.StrategyHostError
-degenbot._ffi.UnconfiguredStrategyError
-degenbot._ffi.UnknownStrategyError
-degenbot._ffi.UnsupportedPoolFamilyError
-degenbot._ffi.VerificationMismatchError
-degenbot._ffi.VerificationRpcError
-degenbot._ffi.fleet.PostureRetuneError
-
 # ==== Imperative U256 attributes (2) ====
 # MIN_SQRT_RATIO / MAX_SQRT_RATIO are registered imperatively on the
 # concentrated-liquidity module, outside any declarative pymethods block
@@ -65,16 +45,17 @@ degenbot._ffi.fleet.PostureRetuneError
 degenbot._ffi.concentrated_liquidity_math.MAX_SQRT_RATIO
 degenbot._ffi.concentrated_liquidity_math.MIN_SQRT_RATIO
 
-# ==== __all__ emission (3) ====
+# ==== __all__ emission (2) ====
 # The generator emits `__all__` from the stub's top-level declarations
 # (ADR-066 D3), which collapses the former 27 per-pymodule entries to the
 # modules whose runtime `__all__` carries members outside introspection:
-# the root also exports the 18 create_exception! islands and the 26
-# submodules, fleet exports its PostureRetuneError island, and
+# the root also exports the 26 submodules, and
 # concentrated_liquidity_math exports the 2 imperative boundary constants.
+# (The create_exception! islands are spliced from the stubgen declaration
+# manifest, so they now land in the root's and fleet's emitted `__all__`
+# and no longer gap here.)
 degenbot._ffi.__all__
 degenbot._ffi.concentrated_liquidity_math.__all__
-degenbot._ffi.fleet.__all__
 
 # ==== Submodule declaration emission (26) ====
 # The generator emits one stub file per submodule but no `from . import

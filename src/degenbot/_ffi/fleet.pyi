@@ -19,6 +19,11 @@ it stays on the submodule's one imperative registration line in `init`.
 
 from _typeshed import Incomplete
 
+class PostureRetuneError(ValueError):
+    """
+    The fleet posture re-tune channel refused the patch (unknown key, non-dict patch, empty patch, or a threshold outside its typed range).
+    """
+
 def current_posture_policy() -> dict:
     """
     `degenbot._ffi.fleet.current_posture_policy() -> dict`
@@ -49,6 +54,7 @@ def set_posture_policy(patch: dict) -> dict:
 def __getattr__(name: str) -> Incomplete: ...
 
 __all__ = [
+    "PostureRetuneError",
     "current_posture_policy",
     "set_posture_policy",
 ]
