@@ -86,7 +86,6 @@ extend-select = [
     "PTH",      # flake8-use-pathlib
     "FLY",      # flynt
     "I",        # isort
-    "NPY",      # numpy-specific
     "N",        # pep8-naming
     "PERF",     # perflint
     "E", "W",   # pycodestyle
@@ -104,7 +103,6 @@ ignore = [
     "multi-line-summary-second-line",
     "missing-trailing-comma",
     "error-suffix-on-exception-name",
-    "docstring-in-stub", # required for IDE to show wrapped Rust code info
     "non-empty-init-module",  # populated __init__.py facade modules are deliberate
     "assert",  # asserts are used often, but not as input validation
 ]
@@ -126,7 +124,6 @@ allow-star-arg-any = true
     # fixed table names — no user input reaches a query.
     "hardcoded-sql-expression",
     "print",     # the generator prints its summary to stdout by design
-    "unspecified-encoding",  # fixture file writes use utf-8 implicitly
     "shebang-not-executable",  # invoked as `uv run python ...`, not directly
 ]
 "tests/*" = [
@@ -136,12 +133,10 @@ allow-star-arg-any = true
     "DOC",
     "import-private-name",  # tests may need to import private modules
     "PLR",
-    "suspicious-pickle-usage",
     "suspicious-non-cryptographic-random-usage",
-    "suspicious-pickle-import",
     "private-member-access",   # tests may need to access private attributes to test implementation
     "print",     # print
-    "E402",      # tests/conftest.py pins DEGENBOT_CONFIG above the degenbot import (the FFI init installs the ambient holder config at import)
+    "module-import-not-at-top-of-file",
 ]
 "src/degenbot/operator/operator_channel.py" = [
     "import-outside-top-level",  # the fleet mirror home is lazy: the transport module stays independent of the compiled extension and the home mints on the first fleet-posture op
@@ -151,7 +146,7 @@ allow-star-arg-any = true
     "print",     # python -m degenbot.build_info prints its summary to stdout/stderr by design
 ]
 "src/degenbot/logging.py" = [
-    "PLR6301",  # `logging.Formatter.format(self, record)` is the protocol-signature override; the body legitimately ignores `self`
+    "no-self-use",  # `logging.Formatter.format(self, record)` is the protocol-signature override; the body legitimately ignores `self`
 ]
 "src/degenbot/runner/**" = [
     # The surviving accommodations, each still live. The retired ones
@@ -173,13 +168,14 @@ allow-star-arg-any = true
 # drift gate's byte-for-byte contract would break. There are no other .pyi
 # trees in the repository.
 "*.pyi" = [
-    "D",        # pydocstyle prose rules: docstrings are Rust doc-comment prose (IDE hover is the consumer — ADR-053), not Python docstring style
-    "DOC",      # pydoclint Returns:/Raises: sections: the prose is inherited verbatim from Rust
-    "E501",     # line-too-long: prose lines; ruff format wraps code, never docstring text
-    "ANN401",   # any-type: the seam surface is Any exactly where Rust is dynamic
-    "RUF002",   # ambiguous-unicode-character-docstring: Rust prose characters
-    "PYI034",   # non-self-return-type: __new__ mirrors the Rust constructor's declared return
-    "A001",     # builtin-variable-shadowing: stub names mirror the Rust types verbatim (stubtest compares names), so a Rust `Exception` type stays `Exception`
+    "D",        # prose rules: docstrings are Rust doc-comment prose (IDE hover is the consumer — ADR-053), not Python docstring style
+    "DOC",      # Returns:/Raises: sections: the prose is inherited verbatim from Rust
+    "line-too-long",     # prose lines; ruff format wraps code, never docstring text
+    "any-type",   # the seam surface is Any exactly where Rust is dynamic
+    "ambiguous-unicode-character-docstring",   # Rust prose characters
+    "docstring-in-stub",   # the docstrings are Rust doc-comment prose for IDE hover, not Python docstrings
+    "non-self-return-type",   # __new__ mirrors the Rust constructor's declared return
+    "builtin-variable-shadowing", # stub names mirror the Rust types verbatim (stubtest compares names), so a Rust `Exception` type stays `Exception`
 ]
 "examples/*" = [
     # Demo scripts over the private ``degenbot._ffi`` seam, folded into the
