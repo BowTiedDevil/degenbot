@@ -18,7 +18,7 @@ by a bespoke AST gate.
 
 - **Stubs**: 27 `.pyi` files totaling **4,178 lines** under
   `src/degenbot/_ffi/` (largest: `__init__.pyi` at 65.6 KB / ~1,672 lines).
-- **Drift gate**: `tests/rust/test_ffi_stub_drift.py` — **369 lines** of
+- **Drift gate**: `tests/ffi/test_ffi_stub_drift.py` — **369 lines** of
   AST/introspection code encoding rules R0–R4 (test module docstring):
   - **R0** — every runtime `degenbot._ffi.*` submodule has a stub file.
   - **R1** — every public runtime symbol appears in its stub.
@@ -209,14 +209,14 @@ R1/R3/R4 to `mypy.stubtest` with an in-repo allowlist; reject
 
 1. Add `mypy` to the `dev` dependency group (toolchain addition only; the
    repo's type checker remains `ty`).
-2. Add `tests/rust/stubtest_allowlist.txt` plus a `just` recipe
+2. Add `tests/ffi/stubtest_allowlist.txt` plus a `just` recipe
    (e.g. `lint-stubtest: uv run stubtest --allowlist
-   tests/rust/stubtest_allowlist.txt degenbot._ffi ...`) wired into the
+   tests/ffi/stubtest_allowlist.txt degenbot._ffi ...`) wired into the
    pre-push / CI Python gate mirroring `lint-python-check`.
 3. Run stubtest once; triage its findings. Expected bulk: PyO3-synthetic
    dunders and R3's annotation-only-import exemptions — encode both in
    the allowlist with comments mapping each entry to the rule it serves.
-4. Delete from `tests/rust/test_ffi_stub_drift.py`: R1
+4. Delete from `tests/ffi/test_ffi_stub_drift.py`: R1
    (`test_runtime_symbols_are_stubbed`), R3
    (`test_stub_definitions_exist_at_runtime`), and **all** R4 machinery
    (`_DEFAULT_PY_DUNDERS`, `_CLASS_STUBS`, `_stub_class_defs`,

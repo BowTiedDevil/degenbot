@@ -6,8 +6,7 @@ fairly, the verifier errors) are **direct aliases**
 of the ``degenbot._ffi`` pyclasses — never Python subclasses: Rust raises
 the pyclass instances, so ``except`` / ``isinstance`` matching requires the
 exact same class object. The identity contract is pinned by
-``tests/rust/test_exception_reexport_identity.py`` and
-``tests/rust/test_updater_reexport_identity.py``.
+``tests/ffi/test_companion_alias_identity.py``.
 """
 
 from degenbot._ffi import (

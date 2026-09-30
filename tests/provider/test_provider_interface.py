@@ -1,4 +1,8 @@
-"""Tests for the AlloyProvider interface."""
+"""Behavior tests for the AlloyProvider interface over standalone anvil.
+
+Static surface checks live in ``test_alloy_provider_api.py``; the online-RPC
+fork-delegation classes are run on demand (``-m online_rpc``).
+"""
 
 from collections.abc import Iterator
 
@@ -56,42 +60,6 @@ def emitted_block(standalone_anvil: AnvilFork) -> int:
         ).block
     finally:
         provider.close()
-
-
-class TestAlloyProviderAdapter:
-    """Test AlloyProvider direct interface."""
-
-    @pytest.mark.online_rpc
-    def test_adapter_properties(self, alloy_provider: AlloyProvider):
-        """Test that the provider exposes the expected interface."""
-        adapter = alloy_provider
-
-        assert adapter.provider_type == "alloy"
-        assert adapter.is_connected() is True
-        assert "AlloyProvider" in repr(adapter)
-
-    @pytest.mark.online_rpc
-    def test_fork_provider_is_alloy(self, fork_mainnet_full: AnvilFork):
-        """Test that the fork provider is an AlloyProvider."""
-        adapter = fork_mainnet_full.provider
-
-        assert adapter.provider_type == "alloy"
-        assert adapter.is_connected() is True
-
-    @pytest.mark.online_rpc
-    def test_adapter_has_required_interface(self, alloy_provider: AlloyProvider):
-        """Test that adapter satisfies the provider interface."""
-        adapter = alloy_provider
-
-        # Should have all required properties and methods
-        assert hasattr(adapter, "chain_id")
-        assert hasattr(adapter, "block_number")
-        assert hasattr(adapter, "get_block_number")
-        assert hasattr(adapter, "get_block")
-        assert hasattr(adapter, "get_logs")
-        assert hasattr(adapter, "call")
-        assert hasattr(adapter, "get_code")
-        assert hasattr(adapter, "is_connected")
 
 
 class TestAlloyProviderWithLiveConnection:
@@ -167,30 +135,6 @@ class TestAlloyProviderWithLiveConnection:
         assert standalone_provider.chain_id == seed_catalog.CHAIN_ID
         assert standalone_provider.block_number > 0
         assert standalone_provider.provider_type == "alloy"
-
-
-class TestAlloyProviderDirect:
-    """Test AlloyProvider direct interface (no nested eth namespace)."""
-
-    def test_provider_has_direct_interface(self):
-        """Test that AlloyProvider exposes methods directly."""
-        assert hasattr(AlloyProvider, "chain_id")
-        assert hasattr(AlloyProvider, "block_number")
-        assert hasattr(AlloyProvider, "get_block_number")
-        assert hasattr(AlloyProvider, "get_block")
-        assert hasattr(AlloyProvider, "get_logs")
-        assert hasattr(AlloyProvider, "call")
-        assert hasattr(AlloyProvider, "get_code")
-        assert hasattr(AlloyProvider, "is_connected")
-
-    def test_provider_direct_access(self, standalone_provider: AlloyProvider):
-        """Test accessing methods directly on AlloyProvider."""
-        assert standalone_provider.chain_id == seed_catalog.CHAIN_ID
-        assert standalone_provider.block_number > 0
-
-        block = standalone_provider.get_block(1)
-        assert block is not None
-        assert block.get("number") == 1
 
 
 class TestForkProvider:

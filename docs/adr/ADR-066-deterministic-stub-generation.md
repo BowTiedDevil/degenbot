@@ -8,7 +8,7 @@ generation proves unable to cover the seam surface.
 
 ADR-053 evaluated `pyo3-stub-gen` — a proc-macro rewriter of the seam's source —
 rejected it, and kept the 27 hand-maintained stub files under `src/degenbot/_ffi/`,
-policed by `mypy.stubtest` (`tests/rust/stubtest_allowlist.txt`) and a bespoke AST drift
+policed by `mypy.stubtest` (`tests/ffi/stubtest_allowlist.txt`) and a bespoke AST drift
 gate. The ecosystem has since moved: PyO3's `experimental-inspect` feature (documented
 at `pyo3.rs` v0.29.2) embeds introspection data in the built cdylib, and the first-party
 `pyo3-introspection` crate (0.29.2, released in lockstep with the workspace's
@@ -35,7 +35,7 @@ stubs may only agree: the `REGEN_*`-pattern drift gate already used for
 
 **D3 — The existing gates become generator verification.** `mypy.stubtest` against the
 running extension and the AST drift gate stay in place, re-read as checks on the
-generator's output. Generator gaps live in `tests/rust/stubtest_allowlist.txt` and only
+generator's output. Generator gaps live in `tests/ffi/stubtest_allowlist.txt` and only
 there — nobody hand-edits a generated stub on top, because that re-enters the drift
 blind spot this ADR closes.
 

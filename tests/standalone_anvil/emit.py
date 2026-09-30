@@ -2,7 +2,7 @@
 
 Anvil's default dev accounts are unlocked server-side, so a plain
 ``eth_sendTransaction`` works: the anvil node signs, and the Python side sends
-no keys. The tests/rust provider suites need one real, mined transaction (a
+no keys. The tests/provider suites need one real, mined transaction (a
 Ping log) before they can assert on real block/log/tx shapes, so they all
 funnel through ``emit_tx``.
 """

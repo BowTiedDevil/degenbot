@@ -4,7 +4,7 @@ What this suite guards against: the boot gate minting a settlement posture
 only where a live signing surface exists, and a live session never booting
 without a settled endpoint set. The nonce-forwarding contract moved to the
 executor construction boundary (the one chain read seeds the Rust authority's
-lane — see ``tests/rust/test_batch_executor_seam.py``); the retired Python
+lane — see ``tests/dispatch/test_batch_executor_seam.py``); the retired Python
 reservation ledger is a loud deprecation shim only.
 """
 

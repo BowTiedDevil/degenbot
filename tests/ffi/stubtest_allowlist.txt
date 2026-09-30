@@ -7,7 +7,7 @@
 # errored object path. This file carries ONLY generator gaps — the enumerated
 # pyo3-introspection emission limitations below — never hand edits over
 # generated output (the committed stubs are `just gen-stubs` output; the
-# regenerate-and-diff gate is tests/rust/test_ffi_stub_drift.py).
+# regenerate-and-diff gate is tests/ffi/test_ffi_stub_drift.py).
 #
 # Re-triage after a PyO3/pyo3-introspection bump:
 #   uv run --no-sync stubtest --ignore-disjoint-bases --generate-allowlist degenbot._ffi

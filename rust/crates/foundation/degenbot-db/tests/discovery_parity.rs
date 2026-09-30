@@ -5,7 +5,7 @@
 //! multi-table state matches the Python ORM trajectory field-for-field.
 //!
 //! The cross-DB byte-comparison vs a Python-written fixture lives in
-//! `tests/rust/test_discovery_seam.py`; this Rust test pins the Rust
+//! `tests/database/test_discovery_seam.py`; this Rust test pins the Rust
 //! trajectory so that the Python oracle gate has a stable reference.
 
 #![expect(clippy::unwrap_used)]

@@ -1,29 +1,14 @@
 from __future__ import annotations
 
-import random
 from fractions import Fraction
-from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot._ffi import Bot, to_checksum_address
+from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.constants import ZERO_ADDRESS
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
-
-if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
-
-
-@pytest.fixture(scope="module")
-def random_addresses() -> list[bytes]:
-    return [random.getrandbits(160).to_bytes(20, byteorder="big") for _ in range(10_000)]
-
-
-@pytest.fixture(scope="module")
-def checksummed_random_addresses(random_addresses) -> list[ChecksummedAddress]:
-    return [to_checksum_address(addr) for addr in random_addresses]
 
 
 # `DispatchCandidate.__new__` resolves its `composers::PathInfo` from
@@ -53,9 +38,7 @@ def nxm2bf_v2_engine_and_path() -> tuple[ArbitrageEngine, int]:
     `fee=30`, `zfo=(True, False)`).
     """
     py_bot = Bot()
-    weth = make_erc20(
-        py_bot, _WETH, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
-    )
+    weth = make_erc20(py_bot, _WETH, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18)
     usdc = make_erc20(py_bot, _USDC, chain_id=1, name="USD Coin", symbol="USDC", decimals=6)
     pool_a = make_v2_pool(
         address=_POOL_A,

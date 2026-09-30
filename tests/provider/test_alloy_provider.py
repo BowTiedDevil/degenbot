@@ -1,7 +1,9 @@
-"""Tests for AlloyProvider's direct interface.
+"""Behavior tests for AlloyProvider against the seeded standalone anvil.
 
-These tests verify that AlloyProvider exposes the AlloyProvider
-interface with correct method signatures and default values.
+The static API surface (properties, callable methods, call/get_code/storage
+signatures) is pinned by ``tests/provider/test_alloy_provider_api.py``; these
+tests cover what that pin cannot: return-type mapping, default-parameter
+behavior, connection semantics, and revert → ContractLogicError classification.
 """
 
 import inspect
@@ -21,87 +23,8 @@ def alloy_provider(standalone_anvil: AnvilFork) -> AlloyProvider:
     return AlloyProvider(standalone_anvil.http_url)
 
 
-class TestAlloyProviderInterface:
-    """Test AlloyProvider's direct interface."""
-
-    def test_provider_has_required_properties(self, alloy_provider: AlloyProvider):
-        """Test that AlloyProvider has required properties."""
-        assert hasattr(type(alloy_provider), "chain_id")
-        assert hasattr(type(alloy_provider), "block_number")
-        assert isinstance(inspect.getattr_static(type(alloy_provider), "chain_id"), property)
-        assert isinstance(inspect.getattr_static(type(alloy_provider), "block_number"), property)
-
-    def test_provider_has_required_methods(self, alloy_provider: AlloyProvider):
-        """Test that AlloyProvider has required methods."""
-        assert callable(alloy_provider.get_block_number)
-        assert callable(alloy_provider.get_block)
-        assert callable(alloy_provider.get_logs)
-        assert callable(alloy_provider.call)
-        assert callable(alloy_provider.get_code)
-        assert callable(alloy_provider.is_connected)
-
-    def test_provider_has_all_rust_methods(self, alloy_provider: AlloyProvider):
-        """Test that all Rust-exposed methods are callable from Python."""
-        # Methods with full Rust implementations
-        assert callable(alloy_provider.get_gas_price)
-        assert callable(alloy_provider.get_chain_id)
-        assert callable(alloy_provider.get_transaction)
-        assert callable(alloy_provider.get_transaction_receipt)
-        assert callable(alloy_provider.get_storage_at)
-        assert callable(alloy_provider.estimate_gas)
-        assert callable(alloy_provider.close)
-        # Stub methods (raise NotImplementedError)
-        assert callable(alloy_provider.get_balance)
-        assert callable(alloy_provider.get_transaction_count)
-
-    def test_provider_has_rpc_url_property(self, alloy_provider: AlloyProvider):
-        """Test that rpc_url is exposed as a property."""
-        assert hasattr(type(alloy_provider), "rpc_url")
-        assert isinstance(inspect.getattr_static(type(alloy_provider), "rpc_url"), property)
-
-
-class TestAlloyProviderMethodSignatures:
-    """Test method signatures match the expected interface."""
-
-    def test_get_code_signature(self, alloy_provider: AlloyProvider):
-        """Test get_code accepts address and block parameter."""
-        sig = inspect.signature(alloy_provider.get_code)
-        params = list(sig.parameters.keys())
-        assert "address" in params
-        assert "block" in params
-
-    def test_call_signature(self, alloy_provider: AlloyProvider):
-        """Test call accepts to, data, and block parameter."""
-        sig = inspect.signature(alloy_provider.call)
-        params = list(sig.parameters.keys())
-        assert "to" in params
-        assert "data" in params
-        assert "block" in params
-
-    def test_get_block_signature(self, alloy_provider: AlloyProvider):
-        """Test get_block accepts a block identifier (number or tag)."""
-        sig = inspect.signature(alloy_provider.get_block)
-        params = list(sig.parameters.keys())
-        assert "block_identifier" in params
-
-    def test_get_logs_signature(self, alloy_provider: AlloyProvider):
-        """Test get_logs accepts LogFilter or keyword arguments."""
-        sig = inspect.signature(alloy_provider.get_logs)
-        params = sig.parameters
-        assert "filter_param" in params
-        # from_block and to_block should be keyword-only
-        assert "from_block" in params
-        assert params["from_block"].kind == inspect.Parameter.KEYWORD_ONLY
-        assert "to_block" in params
-        assert params["to_block"].kind == inspect.Parameter.KEYWORD_ONLY
-
-    def test_get_storage_at_signature(self, alloy_provider: AlloyProvider):
-        """Test get_storage_at accepts address, position, block."""
-        sig = inspect.signature(alloy_provider.get_storage_at)
-        params = list(sig.parameters.keys())
-        assert "address" in params
-        assert "position" in params
-        assert "block" in params
+class TestAlloyProviderTransactionSignatures:
+    """Transaction-fetch signatures (not pinned by the API-surface test)."""
 
     def test_get_transaction_signature(self, alloy_provider: AlloyProvider):
         """Test get_transaction accepts tx_hash parameter."""
@@ -194,10 +117,6 @@ class TestAlloyProviderConnection:
     def test_is_connected_returns_true(self, alloy_provider: AlloyProvider):
         """Test is_connected returns True for AlloyProvider."""
         assert alloy_provider.is_connected() is True
-
-    def test_close_method_exists(self, alloy_provider: AlloyProvider):
-        """Test close method exists."""
-        assert callable(alloy_provider.close)
 
 
 class TestAlloyProviderContextManager:

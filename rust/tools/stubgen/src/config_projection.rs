@@ -16,7 +16,7 @@
 // The face base is a type-checking-only inheritance shim: at runtime the
 // sections resolve through the getattro slot, which introspection cannot see
 // (the same gap that keeps one `__getattr__` residual entry in
-// `tests/rust/stubtest_allowlist.txt` for `ConfigSectionValues`). stubtest
+// `tests/ffi/stubtest_allowlist.txt` for `ConfigSectionValues`). stubtest
 // skips `@type_check_only` classes, so the shim costs no allowlist entries,
 // and the drift gate (`just gen-stubs --check`) regenerates the whole face
 // from the declaration tables — machine-emitted only, per ADR-066 D3.

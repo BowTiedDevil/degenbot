@@ -1,3 +1,9 @@
+"""Fixed-vector and boundary tests for the Rust tick-math seam.
+
+Vectors pin `degenbot.uniswap.math` (the companion over
+`degenbot-concentrated-liquidity-math`) at the TickMath boundary constants.
+"""
+
 from degenbot.uniswap.math import (
     MAX_SQRT_RATIO as RS_MAX_SQRT_RATIO,
 )
@@ -75,14 +81,6 @@ def test_tick_math_constants_exposed_from_rust_seam():
     assert RS_MAX_TICK == 887272
     assert RS_MIN_SQRT_RATIO == 4295128739
     assert RS_MAX_SQRT_RATIO == 1461446703485210103287273052203988822378723970342
-
-
-def test_tick_math_constants_match_package_reexport():
-    """The companion re-export and the seam constant are the same object."""
-    assert MIN_TICK is RS_MIN_TICK or MIN_TICK == RS_MIN_TICK
-    assert MAX_TICK is RS_MAX_TICK or MAX_TICK == RS_MAX_TICK
-    assert MIN_SQRT_RATIO == RS_MIN_SQRT_RATIO
-    assert MAX_SQRT_RATIO == RS_MAX_SQRT_RATIO
 
 
 def test_tick_boundaries():

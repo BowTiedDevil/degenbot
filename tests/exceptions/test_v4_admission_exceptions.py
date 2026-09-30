@@ -39,7 +39,7 @@ the three admission outcomes documented in the original Plan 102 work:
   ``ValueError``).
 
 The seam-triggered companions across V2/V3/V4 live in
-``tests/rust/test_pybot_admission_exceptions.py``.
+``tests/exceptions/test_pybot_admission_exceptions.py``.
 """
 
 from __future__ import annotations

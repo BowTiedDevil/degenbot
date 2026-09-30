@@ -8,7 +8,7 @@ default 8) is the verdict's; the conversion inside the FFI applies the only
 floor, so these tests pin the cascade ANSWER and the conversion's projection
 (``degenbot._ffi.simulation.executor_policy_py``) — the driver itself
 resolves no policy value and carries no twin clamp. The construction seam's
-kwargs are pinned by ``tests/rust/test_batch_executor_seam.py``.
+kwargs are pinned by ``tests/dispatch/test_batch_executor_seam.py``.
 """
 
 from __future__ import annotations

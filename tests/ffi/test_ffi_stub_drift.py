@@ -12,7 +12,7 @@ the deliberate-regeneration opt-in.
 Any seam-source change that reaches the Python surface therefore fails a
 plain test run until `just gen-stubs` re-records the generator's verdict.
 Hand edits over generated output never reconcile a failure: generator gaps
-live only in `tests/rust/stubtest_allowlist.txt` (ADR-066 D3), and
+live only in `tests/ffi/stubtest_allowlist.txt` (ADR-066 D3), and
 `mypy.stubtest` (`just lint-stubtest`) verifies the generated stubs against
 the running extension.
 """
@@ -146,7 +146,7 @@ def test_config_projection_stubs_are_typed() -> None:
 
     # the runtime section view keeps its honest machinery signature — the one
     # documented stubtest residual (runtime getattro slot, invisible to
-    # introspection; see tests/rust/stubtest_allowlist.txt)
+    # introspection; see tests/ffi/stubtest_allowlist.txt)
     section = _projection_class(tree, "ConfigSectionValues")
     machinery = [
         node

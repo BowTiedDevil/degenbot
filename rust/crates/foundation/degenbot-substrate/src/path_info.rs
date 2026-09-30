@@ -7,7 +7,7 @@
 //! `degenbot_executor::composers::encode_cmd_stream`, so byte-for-byte
 //! encoder parity reduces to "does the projection build identical `HopInfo`
 //! field values?" — pinned by the `degenbot-executor` 59-fn golden suite +
-//! the `tests/rust-seam/` dispatch spy tests.
+//! the `tests/dispatch/` dispatch spy tests.
 //!
 //! # Unsupported hop families
 //!

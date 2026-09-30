@@ -1,6 +1,22 @@
+"""Behavior tests for the Rust-backed checksum address conversion."""
+
+from __future__ import annotations
+
+import random
+
 import pytest
 
 from degenbot.checksum_cache import to_checksum_address
+
+
+@pytest.fixture(scope="module")
+def random_addresses() -> list[bytes]:
+    return [random.getrandbits(160).to_bytes(20, byteorder="big") for _ in range(10_000)]
+
+
+@pytest.fixture(scope="module")
+def checksummed_random_addresses(random_addresses) -> list[str]:
+    return [to_checksum_address(addr) for addr in random_addresses]
 
 
 def test_rust_checksum(random_addresses, checksummed_random_addresses):

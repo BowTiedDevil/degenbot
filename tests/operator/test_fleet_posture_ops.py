@@ -8,7 +8,7 @@ unknown-key rejection, empty-patch rejection, typed-refusal surfacing, and
 the `effective` passthrough of :func:`wrap_handler`. The validation rules
 themselves live ONCE in the Rust core (`PosturePolicyPatch::validate`,
 unit-tested in `rust/crates/engine/degenbot-workers/src/posture.rs`) and are
-exercised through the compiled verb in `tests/rust/test_fleet_posture_ffi.py`.
+exercised through the compiled verb in `tests/dispatch/test_fleet_posture_ffi.py`.
 """
 
 from __future__ import annotations

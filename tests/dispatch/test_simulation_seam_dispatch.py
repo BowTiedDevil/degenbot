@@ -29,7 +29,7 @@ from degenbot._ffi.simulation import (
 from degenbot._ffi.submission import Dispatcher, SubmitCandidate
 
 # Canonical mainnet addresses (parity corpus constants — match the A2 test
-# scaffolding in tests/rust/test_simulation_seam_classes.py).
+# scaffolding in tests/dispatch/test_simulation_seam_classes.py).
 OWNER = "0x9c56a29c7231974c269e24f9fb3c29203039089e"
 EXECUTOR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"

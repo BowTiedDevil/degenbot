@@ -50,7 +50,7 @@ a convention by drift, not by policy.
    import sites updated in-repo, no backward-compat aliases). Each rename
    removes the name from this list and from the gate test's grandfather set
    in the same commit.
-5. **Enforcement**: `tests/rust/test_ffi_registration_surface.py` walks the
+5. **Enforcement**: `tests/ffi/test_ffi_registration_surface.py` walks the
    runtime `degenbot._ffi` module tree and asserts, in both directions, that
    the set of registered `Py`-prefixed class names equals the grandfather
    list. A new `Py`-prefixed registration — or a dead list entry — fails the
@@ -63,7 +63,7 @@ a convention by drift, not by policy.
   without alias churn until the rename lands; after it, prefix-stripping
   aliases become the vestige to remove.
 - The gate is a runtime test over the built extension: it runs in the same
-  `tests/rust` suite as the registration↔stub drift gate (task `DSWX6Z`),
+  `tests/ffi` suite as the registration↔stub drift gate (task `DSWX6Z`),
   so a renamed class that skips its stub update fails both gates.
 
 ## Post-adoption: VD5MD5 rename complete (2026-08-17)

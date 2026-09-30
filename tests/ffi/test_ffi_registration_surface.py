@@ -5,7 +5,7 @@ The compiled extension registers its Python-facing surface on
 registration surface, whose GENERATED stubs under
 ``src/degenbot/_ffi/*.pyi`` are the surface of record for type checking
 (ADR-013; generation + cutover per ADR-066 D2). ``mypy.stubtest`` owns the symbol-level stub-drift checks
-(``just lint-stubtest``, allowlist ``tests/rust/stubtest_allowlist.txt``);
+(``just lint-stubtest``, allowlist ``tests/ffi/stubtest_allowlist.txt``);
 the checks stubtest cannot perform live here, all pinned against the same
 runtime registration surface:
 
@@ -180,6 +180,6 @@ def test_retired_names_stay_absent(owner: str, name: str) -> None:
     assert not hasattr(importlib.import_module(owner), name), (
         f"{owner} exposes retired name {name!r} — it was deleted. "
         f"If resurrecting it deliberately, remove the R5 tombstone row in "
-        f"tests/rust/test_ffi_registration_surface.py with justification in the "
+        f"tests/ffi/test_ffi_registration_surface.py with justification in the "
         f"same change."
     )

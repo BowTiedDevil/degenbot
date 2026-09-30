@@ -79,7 +79,7 @@ test-standalone:
 # "Run the tests" is no longer a language choice: Python is a driver shell over
 # the Rust core, so the default gate runs BOTH the native Rust suite and the
 # full pytest suite (which itself drives the core through the PyO3 seam, golden
-# on-chain-oracle replay, and the wrapped `tests/rust`) under one entrypoint.
+# on-chain-oracle replay, and the relocated seam suites) under one entrypoint.
 # CI and the pre-push hook still address the language tracks directly
 # (`test-rust` / `test-python`) so the python-version matrix and job
 # partitioning keep working. Deliberately excluded from `test` (run on demand):
@@ -367,8 +367,8 @@ rebuild-if-stale:
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the
 # default offline marker filter (`-m "not slow and not base and not online_rpc"`)
-# this covers the PyO3 seam, golden on-chain-oracle replay, AND the wrapped
-# `tests/rust` suite. A focused parity-only run is `uv run --no-sync pytest -m onchain_oracle`.
+# this covers the PyO3 seam, golden on-chain-oracle replay, AND the relocated
+# seam suites. A focused parity-only run is `uv run --no-sync pytest -m onchain_oracle`.
 test-python:
     uv run --no-sync pytest -x -q --no-header
 
@@ -971,12 +971,12 @@ check-no-sqlalchemy:
 # and the receipt gates stay green because the source fingerprint is
 # unchanged.
 #
-# `just gen-stubs --check` (used by tests/rust/test_ffi_stub_drift.py)
+# `just gen-stubs --check` (used by tests/ffi/test_ffi_stub_drift.py)
 # generates into a temp dir and FAILS on any diff against the committed tree
 # without writing; `REGEN_STUBS=1` opts the check into writing, mirroring
 # `REGEN_CONFIG_DOCS=1 cargo test -p degenbot-config` (the REGEN pattern of
 # docs/rust-config-keys.md). No hand edits over generated output, ever:
-# generator gaps live only in tests/rust/stubtest_allowlist.txt (ADR-066 D3).
+# generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 gen-stubs check="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1031,21 +1031,21 @@ gen-stubs check="":
 # mypy.stubtest is now GENERATOR VERIFICATION (ADR-066 D3): it introspects the
 # INSTALLED degenbot._ffi extension and compares it against the GENERATED
 # src/degenbot/_ffi/*.pyi stubs in BOTH directions, across every class member,
-# with no curated table. Its allowlist (tests/rust/stubtest_allowlist.txt)
+# with no curated table. Its allowlist (tests/ffi/stubtest_allowlist.txt)
 # carries only generator gaps — the enumerated PyO3-introspection limitations,
 # never hand-edits over generated output. The regenerate-and-diff gate against
-# the generator is tests/rust/test_ffi_stub_drift.py (via `just gen-stubs
+# the generator is tests/ffi/test_ffi_stub_drift.py (via `just gen-stubs
 # --check`). What stubtest cannot see (Python-side surface in driver modules)
-# stays in tests/rust/test_ffi_registration_surface.py.
+# stays in tests/ffi/test_ffi_registration_surface.py.
 #
 # mypy.stubtest replaces the bespoke drift gate's R1/R3/R4 mechanics (and R2,
 # verified below): it introspects the INSTALLED degenbot._ffi extension and
 # compares it against the generated src/degenbot/_ffi/*.pyi stubs in
 # BOTH directions, across every class member, with no curated table. The
-# allowlist (tests/rust/stubtest_allowlist.txt) carries only PyO3-
+# allowlist (tests/ffi/stubtest_allowlist.txt) carries only PyO3-
 # introspection noise and stub-only type exemptions, each group annotated with
 # the drift rule it serves. What stubtest cannot see (Python-side surface in
-# driver modules) stays in tests/rust/test_ffi_registration_surface.py.
+# driver modules) stays in tests/ffi/test_ffi_registration_surface.py.
 lint-stubtest:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1054,4 +1054,4 @@ lint-stubtest:
     # introspected .so is owned by the receipt gates (verify-build-fresh,
     # AGENTS.md) — stubtest simply checks whatever is installed.
     uv run --no-sync stubtest --ignore-disjoint-bases \
-        --allowlist tests/rust/stubtest_allowlist.txt degenbot._ffi
+        --allowlist tests/ffi/stubtest_allowlist.txt degenbot._ffi

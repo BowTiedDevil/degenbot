@@ -111,27 +111,3 @@ class TestAbiEncoderBoundaryErrors:
         """bytes32 with > 32 bytes should raise ValueError."""
         with pytest.raises(ValueError, match="requires exactly 32 bytes"):
             encode_single("bytes32", b"\x00" * 33)
-
-
-def test_roundtrip_tick_to_ratio_and_back():
-    """Test that tick -> sqrt_ratio -> tick roundtrip is consistent."""
-    for tick in [
-        -500000,
-        -100000,
-        -10000,
-        -1000,
-        -100,
-        -10,
-        -1,
-        0,
-        1,
-        10,
-        100,
-        1000,
-        10000,
-        100000,
-        500000,
-    ]:
-        sqrt_ratio = get_sqrt_ratio_at_tick(tick)
-        tick_back = get_tick_at_sqrt_ratio(sqrt_ratio)
-        assert tick_back == tick, f"Roundtrip failed for tick={tick}: got {tick_back}"
