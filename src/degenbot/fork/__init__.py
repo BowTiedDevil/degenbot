@@ -21,7 +21,7 @@ The breaking change vs the pre-0.7 Python `AnvilFork` is `self.w3` →
 `self.provider` (and the dropped capture-file / middlewares / free-port
 management).
 
-`PyAnvilFork` exposes the IPC path the rust core resolved for the spawned
+`_FFIAnvilFork` exposes the IPC path the rust core resolved for the spawned
 anvil process. Former callers using `fork.w3.eth.X` are migrated to
 `fork.provider.X` — the legacy attribute is gone.
 """
@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import validate_call
 
-from degenbot._ffi.fork import AnvilFork as PyAnvilFork
+from degenbot._ffi.fork import AnvilFork as _FFIAnvilFork
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.infrastructure import AnvilError
 from degenbot.logging import logger
@@ -212,7 +212,7 @@ class AnvilFork:
         # `ValueError` on failure — let those propagate unchanged
         # (`ValueError` for the `mining_mode` parse; `RuntimeError` for
         # the spawn / IPC connect).
-        self._fork: PyAnvilFork | None = PyAnvilFork(**self._init_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        self._fork: _FFIAnvilFork | None = _FFIAnvilFork(**self._init_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
         # General-RPC `AlloyProvider` over the fork's HTTP endpoint. The
         # rust core's dev-RPC (`mine`/`reset`/`anvil_*`) runs over its own
@@ -329,7 +329,7 @@ class AnvilFork:
         """Drop the rust-owned subprocess + IPC handle.
 
         The rust core (`degenbot_fork::AnvilFork`) owns the subprocess via
-        alloy's `AnvilInstance`; dropping the `PyAnvilFork` pyclass handle
+        alloy's `AnvilInstance`; dropping the `_FFIAnvilFork` pyclass handle
         terminates the anvil process + closes the IPC transport. This
         method just clears the Python-side reference so the GC finalizes
         the rust handle — there is no separate IPC-socket cleanup needed
@@ -353,21 +353,21 @@ class AnvilFork:
         """Drop the rust core handle on instance finalization (best-effort).
 
         The rust-side `Drop` (`AnvilInstance::drop`) kills the spawned
-        anvil subprocess; Python's GC handles `PyAnvilFork` cleanup. The
+        anvil subprocess; Python's GC handles `_FFIAnvilFork` cleanup. The
         explicit :meth:`close` is the canonical lifecycle primitive —
         `__del__` factories no-defensive cleanup because alloy's
         `AnvilInstance` already implements `Drop` correctly.
         """
 
     # ------------------------------------------------------------------
-    # Dev-RPC methods (delegate to PyAnvilFork, translate exceptions)
+    # Dev-RPC methods (delegate to _FFIAnvilFork, translate exceptions)
     # ------------------------------------------------------------------
 
-    def _require_fork(self) -> PyAnvilFork:
-        """Return the open `PyAnvilFork` handle.
+    def _require_fork(self) -> _FFIAnvilFork:
+        """Return the open `_FFIAnvilFork` handle.
 
         Returns:
-            The open `PyAnvilFork` handle.
+            The open `_FFIAnvilFork` handle.
 
         Raises:
             AnvilError: If the fork was closed (the rust handle was dropped).
@@ -437,7 +437,7 @@ class AnvilFork:
             # listening on.
             self._provider = None
             self._fork = None
-            self._fork = PyAnvilFork(**new_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            self._fork = _FFIAnvilFork(**new_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             self._fork_url = new_kwargs["fork_url"]  # type: ignore[assignment]
             # Replace the general-RPC provider over the new fork's HTTP
             # endpoint (HTTP: no IPC/WS pubsub, so consumers that borrow it

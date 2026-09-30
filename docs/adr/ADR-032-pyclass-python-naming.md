@@ -19,11 +19,13 @@ has two coexisting conventions for registered `#[pyclass]` types:
 - **`Py`-prefixed visible names**: the grandfather list in the Decision
   below (27 names at census time).
 
-The consumer layer already splits policy on this: `degenbot/dispatch/__init__.py`
-strips the prefix via alias re-exports (stable companion names for driver
-code), while `degenbot/bot/__init__.py` *recommends* the prefixed names
-(`from degenbot.bot import Bot, PyBot, PyBotIo`). New types have been picking
-a convention by drift, not by policy.
+At adoption time the consumer layer split policy:
+`degenbot/dispatch/__init__.py` stripped the prefix via alias re-exports
+(stable companion names for driver code), while `degenbot/bot/__init__.py`
+*recommended* the prefixed names (`from degenbot.bot import Bot, PyBot,
+PyBotIo`). New types had been picking a convention by drift, not by policy.
+(The post-adoption VD5MD5 rename below removed the prefixed companion
+names; the dispatch aliases now map clean FFI names.)
 
 ## Decision
 
