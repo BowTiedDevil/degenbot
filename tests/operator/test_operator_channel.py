@@ -186,6 +186,27 @@ async def test_malformed_request_returns_ok_false(tmp_path) -> None:
         await server.close()
 
 
+async def test_close_observes_serve_cancellation(tmp_path) -> None:
+    """``close()`` asserts the serve_forever cancellation it requested: a
+    serve future that absorbs the cancel fails loudly instead of being
+    reaped silently by the ``contextlib.suppress`` reap."""
+    handler, _seen = _stub_handler()
+    server = OperatorServer(handler, socket_path=str(tmp_path / "obs.sock"))
+
+    async def absorbing_serve_forever() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            return  # the swallow the reap assertion must catch
+
+    server._serving = asyncio.ensure_future(absorbing_serve_forever())
+    server._server = None  # no real socket: close() only reaps the future
+    await asyncio.sleep(0)  # start the body so the cancel lands mid-await
+
+    with pytest.raises(AssertionError, match="cancellation"):
+        await server.close()
+
+
 def test_wrap_handler_normalizes_detail_and_error() -> None:
     """The wrapper turns detail->ok and error->ok:false spellings into wire shape."""
 

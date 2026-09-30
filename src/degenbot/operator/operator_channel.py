@@ -63,7 +63,6 @@ discover replies after the bounded sweep is consumed).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -72,6 +71,7 @@ from typing import Any
 
 from degenbot.logging import logger
 from degenbot.pathfinding import PoolKind
+from degenbot.utils.tasks import cancel_and_reap
 
 #: Map the public wire labels to the typed pool families used by pathfinding.
 _FAMILY_TO_POOL_KIND: dict[str, PoolKind] = {
@@ -380,9 +380,7 @@ class OperatorServer:
         cancelled by the host, or is running on another thread's event loop.
         """
         if self._serving is not None and not self._serving.done():
-            self._serving.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._serving
+            await cancel_and_reap(self._serving)
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()

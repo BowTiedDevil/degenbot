@@ -1435,3 +1435,251 @@ fn replay_reasons_split() {
         });
     assert_eq!(r, "replay_failed");
 }
+
+// ─────────── the dispatch submit ordering: spent accounting (offline) ──────
+//
+// The frame's submit ordering is fully owned by `dispatch_frame`; the fake
+// submit seam is the mocked node transport under `AlloyProvider`. Each
+// queued response is one wire call: the target-receipt probe, the head read,
+// the access-list re-computation, then the raw broadcast.
+
+use alloy::primitives::Bytes;
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::client::ClientBuilder;
+use alloy::transports::mock::{Asserter, MockTransport};
+use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+use degenbot_rpc::provider::AlloyProvider;
+use degenbot_strategy::backrun::{BackrunConfig, Decision, SubmissionSlot};
+use degenbot_strategy::frame_pipeline::{
+    dispatch_frame, BidEconomics, FrameArtifacts, FrameSubmit, StageTimings,
+};
+use degenbot_submission::dispatcher::Dispatcher;
+use degenbot_submission::signer::TxSigner;
+use degenbot_submission::submission_ledger::NonceLane;
+use std::sync::Mutex;
+
+/// The node under the dispatch seam: no receipts, no head block, but the
+/// access-list and the raw broadcast succeed. The empty head read exercises
+/// the documented base-fee fallback rather than a fabricated block.
+fn submit_provider(asserter: &Asserter) -> AlloyProvider {
+    let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
+    let inner = ProviderBuilder::new().connect_client(client).erased();
+    AlloyProvider::from_provider(Arc::new(inner) as Arc<dyn Provider<alloy::network::Ethereum>>)
+}
+
+/// The one queue slot pair every bid-path frame consumes before the submit
+/// leaf: the mined-target receipt probe and the head/base-fee read.
+fn queue_bid_gate(asserter: &Asserter) {
+    asserter.push_success(&serde_json::Value::Null); // eth_getTransactionReceipt
+    asserter.push_success(&serde_json::Value::Null); // eth_getBlockByNumber
+}
+
+/// The public fan-out over the mocked node: no relays, so the read provider
+/// is the sole broadcast destination and every queue slot is deterministic.
+fn submit_cfg(dry_run: bool) -> BackrunConfig {
+    BackrunConfig {
+        feed_url: String::new(),
+        rpc_url: String::from("http://mock-node.local"),
+        key_file: None,
+        bid_mode: true,
+        budget_wei: U256::from(1_000_000_000_000_000_000u64),
+        max_bundle_wei: U256::from(1_000_000_000_000_000_000u64),
+        stop_file: std::path::PathBuf::from("/nonexistent/degenbot-stop"),
+        dry_run,
+        bribe_bips: 2_000,
+        bundle_gas_est: 300_000,
+        gas_floor_wei: 0,
+        verify_ticks: degenbot_substrate::pool_ingress::VerifyLevel::default(),
+        priority_fee_gwei: 1,
+        sim_url: None,
+        rank_evidence: false,
+        connectors: 8,
+        cycle_max_hops: 4,
+        fixture_head: None,
+        executor: String::from("0x00000000000000000000000000000000000000e1"),
+        operator: None,
+        dry_run_jsonl: None,
+        submission: SubmissionSlot::PublicFanOut { relays: Vec::new() },
+    }
+}
+
+/// A sign-time lane over a fresh authority and empty ledger (the sole nonce
+/// source every dispatch path takes).
+fn submit_lane() -> Arc<NonceLane> {
+    Arc::new(NonceLane::new(
+        Arc::new(degenbot_bot::nonce_authority::NonceAuthority::new(0)),
+        Arc::new(degenbot_submission::submission_ledger::SubmissionLedger::new()),
+        "spent-accounting-test",
+    ))
+}
+
+/// A deterministic test key (the alloy test default — never use on mainnet).
+fn submit_signer() -> TxSigner {
+    TxSigner::from_key_hex(
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        1,
+    )
+    .unwrap()
+}
+
+/// The wallet's gas burn for one composed bundle: the value the budget is
+/// supposed to track per submitted bid.
+const FRAME_GAS_WEI: u128 = 7_000_000_000_000;
+
+fn submit_pl() -> PipelineConfig {
+    PipelineConfig {
+        execution: test_execution(),
+        owner: address!("00000000000000000000000000000000000000d2"),
+        bribe_bips: 2_000,
+        wallet_gas_cost_wei: Arc::new(std::sync::atomic::AtomicU64::new(
+            u64::try_from(FRAME_GAS_WEI).unwrap(),
+        )),
+        gas_floor_wei: U256::ZERO,
+        fixture_mode: false,
+    }
+}
+
+/// A decided frame: the bid ladder cleared and the candidate composed, so
+/// `dispatch_frame` reaches the submit leaf.
+fn bid_artifacts(bid_wei: U256) -> FrameArtifacts {
+    FrameArtifacts {
+        decision: Decision::Bid { bid_wei },
+        requested_bid: bid_wei,
+        submit_calldata: Some(Bytes::from(vec![0x01, 0x02, 0x03])),
+        economics: Some(BidEconomics {
+            gross_profit_wei: FRAME_GAS_WEI * 10,
+            wallet_gas_cost_wei: FRAME_GAS_WEI,
+            bribe_bips: 2_000,
+            bid_wei,
+        }),
+        stages: StageTimings::default(),
+        replay_frame_error: None,
+    }
+}
+
+fn submit_event(hash_byte: u8, nonce: u64) -> BackrunFeedEvent {
+    BackrunFeedEvent {
+        chain_id: 1,
+        from: Address::with_last_byte(7),
+        to: Some(Address::with_last_byte(9)),
+        value: U256::from(123u64),
+        data: Bytes::from(vec![0xab, 0xcd]),
+        gas: 300_000,
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        nonce,
+        hash: B256::repeat_byte(hash_byte),
+        access_list: serde_json::json!([]),
+        tx_type: 2,
+        received_unix_ms: 1_700_000_000_000,
+        raw_signed_tx: None,
+    }
+}
+
+/// The spent budget tracks what the wallet can actually lose: the gas burn of
+/// each candidate that actually SUBMITTED, observable in the terminal
+/// decision the driver routes on. A candidate the submit leaf skipped (here:
+/// the dry-run mode) never spends, and submitted frames accumulate across the
+/// driver loop.
+#[tokio::test]
+async fn spent_accounting_accumulates_per_submitted_candidate() {
+    let bid = U256::from(123_000_000_000_000_000u64);
+    let pl = submit_pl();
+
+    let asserter = Asserter::new();
+    // Two submitted frames: bid-gate probe + head read, then the submit
+    // leaf's access-list re-computation and the accepted raw broadcast.
+    for i in 0..2 {
+        queue_bid_gate(&asserter);
+        asserter.push_success(&serde_json::json!({"accessList": [], "gasUsed": "0x0"}));
+        asserter.push_success(&serde_json::json!(format!(
+            "0x{}",
+            format!("{i:02x}").repeat(32)
+        )));
+    }
+    // The dry-run frame is probed and head-read, then SKIPPED by the submit
+    // leaf — no access-list, no broadcast.
+    queue_bid_gate(&asserter);
+
+    let provider = Arc::new(submit_provider(&asserter));
+    let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(100)));
+    let lane = submit_lane();
+    let signer = submit_signer();
+
+    let mut spent = U256::ZERO;
+
+    // Frame 1: the candidate submits → the wallet's true outflow (the gas)
+    // lands on the budget.
+    let frame_1 = dispatch_frame(
+        &submit_cfg(false),
+        &pl,
+        &submit_event(1, 0),
+        100,
+        bid_artifacts(bid),
+        FrameSubmit {
+            provider: &provider,
+            dispatcher: &dispatcher,
+            nonce_lane: &lane,
+            signer: Some(&signer),
+        },
+        &mut spent,
+    )
+    .await;
+    assert!(
+        matches!(frame_1, Decision::Bid { bid_wei } if bid_wei == bid),
+        "the driver routes on the post-gate decision"
+    );
+    assert_eq!(
+        spent,
+        U256::from(FRAME_GAS_WEI),
+        "one submitted bid spends exactly its wallet gas burn"
+    );
+
+    // Frame 2: another submitted candidate ACCUMULATES — the budget is
+    // cumulative across the driver loop, not per-frame state.
+    let frame_2 = dispatch_frame(
+        &submit_cfg(false),
+        &pl,
+        &submit_event(2, 1),
+        100,
+        bid_artifacts(bid),
+        FrameSubmit {
+            provider: &provider,
+            dispatcher: &dispatcher,
+            nonce_lane: &lane,
+            signer: Some(&signer),
+        },
+        &mut spent,
+    )
+    .await;
+    assert!(matches!(frame_2, Decision::Bid { bid_wei } if bid_wei == bid));
+    assert_eq!(
+        spent,
+        U256::from(FRAME_GAS_WEI * 2),
+        "the second submitted bid adds its own gas burn"
+    );
+
+    // Frame 3: the submit leaf SKIPS the dry-run candidate. The decision
+    // still routes Bid, but a skipped candidate never spends.
+    let frame_3 = dispatch_frame(
+        &submit_cfg(true),
+        &pl,
+        &submit_event(3, 2),
+        100,
+        bid_artifacts(bid),
+        FrameSubmit {
+            provider: &provider,
+            dispatcher: &dispatcher,
+            nonce_lane: &lane,
+            signer: Some(&signer),
+        },
+        &mut spent,
+    )
+    .await;
+    assert!(matches!(frame_3, Decision::Bid { bid_wei } if bid_wei == bid));
+    assert_eq!(
+        spent,
+        U256::from(FRAME_GAS_WEI * 2),
+        "a candidate the submit leaf skipped never spends"
+    );
+}

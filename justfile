@@ -136,12 +136,15 @@ test-rust: test-standalone
 # embedded the older receipt — the build-receipt gate then fails once until
 # the next compile re-embeds it (fail-fast would abort the whole run there).
 # Requires cargo-nextest: cargo install --locked cargo-nextest
-test-rust-nextest:
+# Extra args forward to `cargo nextest run` (e.g. `just test-rust-nextest -E 'test(foo)'`).
+# Via {{ args }} interpolation, not "$@": just never passes recipe arguments as
+# positional script arguments (set positional-arguments is off repo-wide; see gen-stubs).
+test-rust-nextest *args:
     #!/usr/bin/env bash
     set -euo pipefail
     python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo nextest run --locked --manifest-path rust/Cargo.toml --workspace --profile ci --no-fail-fast "$@"
+    cargo nextest run --locked --manifest-path rust/Cargo.toml --workspace --profile ci --no-fail-fast {{ args }}
 
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':

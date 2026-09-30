@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import asyncio
+
 import pytest
 
 from degenbot.dispatch import Dispatcher
@@ -168,13 +170,11 @@ async def _run(
     # the dispatch clock at enqueue. That clock is what `dispatched` proves —
     # the stub stands in for the serial leaf's own dispatch clock capture.
     StubPipeline.instances.clear()
-    with identity_env(
-        {
-            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-            "OPERATOR_PRIVATE_KEY": "0x" + "11" * 32,
-            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-        }
-    ):
+    with identity_env({
+        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+        "OPERATOR_PRIVATE_KEY": "0x" + "11" * 32,
+        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+    }):
         cfg = ArbitrageConfig.build(
             live=False,
             permutation=None,
@@ -197,6 +197,52 @@ async def _run(
     )
     for stub in StubPipeline.instances:
         dispatched.extend(stub.enqueue_clock)
+    return dispatcher, w3, dispatched
+
+
+async def _run_with_pipeline_factory(
+    factory: Any,
+    *,
+    blocks: list[dict[str, int]],
+    batches: list[dict[str, Any]],
+    allow_quiet_end: bool = True,
+) -> tuple[Dispatcher, _FakeW3, list[int]]:
+    """Drive the consumer with an injected pipeline factory (drain tests)."""
+    dispatcher = Dispatcher.for_block(0)
+    w3 = _FakeW3()
+    dispatched: list[int] = []
+
+    from degenbot.runner.bot_runner import _SessionState
+    from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+
+    StubPipeline.instances.clear()
+    with identity_env({
+        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+        "OPERATOR_PRIVATE_KEY": "0x" + "11" * 32,
+        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+    }):
+        cfg = ArbitrageConfig.build(
+            live=False,
+            permutation=None,
+            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
+        )
+    owner = _SessionState(
+        engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
+        async_w3=w3,  # type: ignore[arg-type]
+        sim_ctx=None,
+        dispatcher=dispatcher,
+        cfg=cfg,
+        current_block=dispatcher.current_block,
+        pipeline_factory=factory,
+    )
+    await consume_result_batches(
+        owner,
+        block_stream=_Blocks(blocks),
+        result_iter=_Results(batches),
+        allow_quiet_end=allow_quiet_end,
+    )
+    for stub in StubPipeline.instances:
+        dispatched.extend(getattr(stub, "enqueue_clock", []))
     return dispatcher, w3, dispatched
 
 
@@ -281,3 +327,56 @@ class TestPumpDeathVisible:
             allow_quiet_end=True,
         )
         assert dispatcher.current_block == 101
+
+
+class _AbsorbingDrainPipeline:
+    """A pipeline whose outcome stream absorbs the drain task's cancellation."""
+
+    def __init__(self, session: object, **kwargs: object) -> None:
+        self.session = session
+        StubPipeline.instances.append(self)
+
+    def enqueue(self, work: object) -> None:
+        return None
+
+    def raise_if_failed(self) -> None:
+        return None
+
+    async def next_outcome(self) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            return None  # the swallow the drain reap must catch
+
+    async def shutdown(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+
+class _LoudAbortPipeline(_AbsorbingDrainPipeline):
+    """A pipeline whose outcome stream dies with the loud-abort failure."""
+
+    async def next_outcome(self) -> None:
+        msg = "loud abort from the submit lane"
+
+        raise RuntimeError(msg)
+
+
+class TestDrainReapDiscipline:
+    """The outcome-drain teardown at consumer stream end.
+
+    The drain's lifetime is the consumer loop's: at stream end the loop
+    cancels + reaps it, and the reap must OBSERVE the cancellation (a drain
+    that absorbed its cancel cannot pass silently) while a drain that
+    already died with the loud-abort failure still surfaces it.
+    """
+
+    async def test_stream_end_observes_drain_cancellation(self) -> None:
+        with pytest.raises(AssertionError, match="cancellation"):
+            await _run_with_pipeline_factory(_AbsorbingDrainPipeline, blocks=[], batches=[])
+
+    async def test_ended_drain_still_surfaces_loud_abort(self) -> None:
+        with pytest.raises(RuntimeError, match="loud abort"):
+            await _run_with_pipeline_factory(_LoudAbortPipeline, blocks=[], batches=[])

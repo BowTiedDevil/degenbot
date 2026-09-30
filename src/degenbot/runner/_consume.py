@@ -15,7 +15,6 @@ Rust solve-time solver-state verifier, not a Python whole-batch re-check.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import inspect
 import time
 from collections.abc import AsyncIterator
@@ -34,6 +33,7 @@ from degenbot.runner._dispatch import (
     _track_submission_smoke,
 )
 from degenbot.runner._sim_submit import BatchWork
+from degenbot.utils.tasks import cancel_and_reap
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -122,12 +122,16 @@ async def consume_result_batches(
     # point, so this only fires on a natural stream end.
     # The drain task's lifetime is the consumer loop's: stop it at stream
     # end (the records still in flight die with the loop, exactly as the
-    # pre-cut-over pipeline's leaves did). A cancelled drain never masks the
-    # loud-abort raise below.
+    # pre-cut-over pipeline's leaves did). The reap asserts the drain
+    # observed its cancellation, so a drain that outlives its cancel()
+    # cannot pass silently before the loud-abort raise below.
     if outcome_drain is not None:
-        outcome_drain.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await outcome_drain
+        if not outcome_drain.done():
+            await cancel_and_reap(outcome_drain)
+        elif not outcome_drain.cancelled():
+            # The drain ended on its own; surface a stored loud-abort
+            # failure (the loud-abort rule) rather than reaping it away.
+            outcome_drain.result()
 
     if (block_ended or result_ended) and not allow_quiet_end:
         bot_logger.error(

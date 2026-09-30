@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
+from degenbot.utils.tasks import cancel_and_reap
+
 
 class SessionEndVerdict(Enum):
     """How a pump session's main loop ended (the *session watch* verdict).
@@ -190,10 +192,9 @@ class SessionWatch:
                 step = watch.on_task_done(done)
                 watch = step.watch
                 if step.kind is _WatchKind.REGISTRATION_FAILED:
-                    # Fatal registration error → fail loudly: stop the hot loop.
-                    consumer_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await consumer_task
+                    # Fatal registration error → fail loudly: stop the hot
+                    # loop; the reap asserts the cancellation was observed.
+                    await cancel_and_reap(consumer_task)
                     self._registration_error = step.error
                     return SessionEndVerdict.RegistrationFailed
                 if step.kind is _WatchKind.WATCHDOG_TRIPPED:
@@ -207,15 +208,23 @@ class SessionWatch:
                     pump_ended = True
                     break
             if pump_ended:
+                # No local cancel: the watchdog (or the pump's own stop)
+                # already ended the consumer, so its unwind here is the
+                # graceful end — an externally requested cancellation is
+                # teardown noise, not a lost failure.
                 with contextlib.suppress(asyncio.CancelledError):
                     await consumer_task
                 return SessionEndVerdict.WatchdogTripped
             await consumer_task
             return SessionEndVerdict.PumpEnded
         finally:
-            watchdog_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watchdog_task
+            if not watchdog_task.done():
+                # A watchdog still pending at exit is cancelled + reaped;
+                # the reap asserts its cancellation was observed. A done
+                # watchdog was already consumed in the loop (its fault
+                # surfaced via result()) — reaping it here would re-raise
+                # or mask the in-flight exception.
+                await cancel_and_reap(watchdog_task)
 
     # ── Teardown ──────────────────────────────────────────────────────
     async def teardown_registration(self) -> None:
@@ -231,9 +240,7 @@ class SessionWatch:
             and not registration_task.done()
             and not registration_task.cancelled()
         ):
-            registration_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await registration_task
+            await cancel_and_reap(registration_task)
 
     async def teardown(self) -> None:
         """The idempotent end-of-session teardown.
@@ -250,11 +257,13 @@ class SessionWatch:
         await self.teardown_registration()
         watchdog_task = self._watchdog_task
         if watchdog_task is not None and not watchdog_task.done():
-            watchdog_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watchdog_task
+            await cancel_and_reap(watchdog_task)
         consumer_task = self._consumer_task
         if consumer_task is not None and not consumer_task.done():
+            # Best-effort, deliberately without the cancelled() assertion:
+            # the consumer may unwind with a real error after the pump
+            # stop, and teardown must never mask the original in-flight
+            # exception (the __aexit__ contract).
             consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await consumer_task

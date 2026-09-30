@@ -73,6 +73,26 @@ def _watch(
     return watch
 
 
+async def _cancellation_absorbing_consumer() -> None:
+    """A task that absorbs its cancellation and ends un-cancelled."""
+    try:
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        return
+
+
+def _absorbing_watchdog_factory() -> Coroutine[Any, Any, None]:
+    """A watchdog that absorbs the reap's cancel instead of unwinding."""
+
+    async def _watchdog() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            return
+
+    return _watchdog()
+
+
 class TestVerdictEnum:
     def test_verdict_members_pin_the_end_state(self) -> None:
         """The settled enum: exactly the three end-state members."""
@@ -282,6 +302,50 @@ class TestWatchSetTransitions:
         consumer.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await consumer
+
+
+class TestCancellationObservation:
+    """The reap discipline: a cancel the watch requested must be OBSERVED.
+
+    The watch reaps used ``contextlib.suppress(CancelledError)`` with no
+    assertion, so a task that absorbed its cancellation and returned
+    normally was reaped silently. Each reap now ends in
+    ``assert task.cancelled()`` (via ``cancel_and_reap``), so a swallowed
+    cancel fails loudly instead of leaving a lost cancellation invisible.
+    """
+
+    async def test_fail_fast_observes_consumer_cancellation(self) -> None:
+        """The fail-fast reap asserts the consumer's cancellation: a consumer
+        that absorbs the cancel cannot exit ``wait()`` silently."""
+        consumer = asyncio.create_task(_cancellation_absorbing_consumer())
+        boom = ValueError("verification mismatch")
+
+        async def failing_registration() -> None:
+            raise boom
+
+        registration = asyncio.create_task(failing_registration())
+        watch = _watch(consumer, _never_watchdog, registration)
+
+        with pytest.raises(AssertionError, match="cancellation"):
+            await watch.wait()
+
+    async def test_watchdog_reap_observes_cancellation(self) -> None:
+        """``wait()``'s exit reap asserts the watchdog's cancellation."""
+        consumer = asyncio.create_task(_quick_consumer())
+        watch = _watch(consumer, _absorbing_watchdog_factory)
+
+        with pytest.raises(AssertionError, match="cancellation"):
+            await watch.wait()
+
+    async def test_teardown_registration_observes_cancellation(self) -> None:
+        """The registration drain asserts the cancellation it requested."""
+        consumer = asyncio.create_task(_hanging_consumer())
+        registration = asyncio.create_task(_cancellation_absorbing_consumer())
+        watch = _watch(consumer, _never_watchdog, registration)
+        await asyncio.sleep(0)  # start the body so the cancel lands mid-await
+
+        with pytest.raises(AssertionError, match="cancellation"):
+            await watch.teardown_registration()
 
 
 class TestTeardown:
