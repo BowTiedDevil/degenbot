@@ -1,254 +1,36 @@
-
-#
-#    "this file still carries pre-rule citations"; it NEVER licenses new ones.
-#    Remove the entry in the same commit that strips the citation from the
-#    SHRINK PROTOCOL — same voice as the waiver file: a census entry means
-#    STABLE, WETH, USDC, pure-number tokens, hex tokens). Extend ONLY for a
-#    be added here.
-#    comment-line rule live in the hook.
-#    file, and never add an entry for a token that is not already in the file.
-#    non-citations (their vocabulary: SIGINT, BEFORE, STATIC, OUTPUT, INPUT,
-#    real word, acronym, or domain identifier; a tracker citation must never
-#    rust/crates with tests/benches/examples excluded) and the Rust
-#    six-char token as it appears in that file; the scan scope (src/, tests/,
-#    words, acronyms, and linter codes the sweep commits classified as
-# ([0-9A-F]{6} selector/byte data) are matcher exclusions, not census entries;
-# ---- Section 1: grandfathered citations (path:token) ----
-# ---- Section 2: lexicon (bare legit identifiers, no path) ----
-# 1. Grandfathered citations — one "path:token" per line. The token is the bare
-# 2. Lexicon — one bare token per line (no path): legit identifiers, English
 # Comment-hygiene census — the bare-ID ratchet (scripts/hooks/comment-hygiene.sh)
-# Pure-number tokens (tick values, block numbers) and hex-shaped tokens
+#
 # The anchored detector (ergo/epic/task/slice + RED/GREEN narration) cannot see
-# The file has two sections:
-# a deliberate hex-spelled citation (E2B542) is ratcheted by its citation
-# accounted for here, so new citations cannot land while existing ones are
 # bare six-char tracker tokens with no anchor word. This census closes that
 # blind spot ratchet-style: the gate fails on any bare [A-Z0-9]{6} token NOT
-# entries below, which the matcher checks before the hex exclusion.
+# accounted for here, so new citations cannot land while existing ones are
 # grandfathered until swept. Sweeping is a follow-up task, never part of an
 # unrelated change.
-ABORTS
-ABSENT
-ACROSS
-ACTIVE
-ACTUAL
-ADMITS
-AGENTS
-ALWAYS
-ANN003
-ANN202
-ATTACH
-BEFORE
-BEHIND
-BENIGN
-BINARY
-BINDER
-BLE001
-BLOCKS
-BOOTED
-BORROW
-BRANCH
-BUCKET
-CALLER
-CANNOT
-CENSUS
-CHANGE
-CLAIMS
-CLEARS
-CLIENT
-CLONED
-CLONES
-CLOSED
-COMMIT
-COMMON
-CONFIG
-CORDON
-COUNTS
-CREATE
-CRYPTO
-CTOKEN
-DECAYS
-DECODE
-DELETE
-DELTAS
-DENIES
-DESIGN
-DETACH
-DIFFER
-DIRECT
-DOMAIN
-DOUBLE
-DRIVEN
-DRIVER
-EITHER
-ENGINE
-ENTERS
-ENTIRE
-ESCAPE
-EXCEPT
-EXEMPT
-EXISTS
-EXPIRY
-EXPORT
-FACADE
-FAILED
-FAMILY
-FIRING
-FLIGHT
-FLOORS
-FORCED
-FROZEN
-GAINED
-GLOBAL
-HALFUP
-HANDLE
-HAVING
-HEADER
-HEALED
-HIGHER
-HOLDER
-HOSTED
-IERC20
-IGNORE
-IMPORT
-INLINE
-INSERT
-INSIDE
-INTAKE
-ISSUED
-ITSELF
-LABELS
-LACKED
-LANDED
-LATEST
-LAYERS
-LAZILY
-LEDGER
-LEGACY
-LOADER
-LOGGED
-LONGER
-LOOKED
-LOUDLY
-MARKED
-MERGED
-MERGES
-METRIC
-MIDDLE
-MIRROR
-MISSED
-MODULE
-MSTORE
-NATIVE
-NEWEST
-NORMAL
-NULLIF
-OLDEST
-OPTION
-ORACLE
-ORIGIN
-ORPHAN
-OUTPUT
-OWNING
-PANICS
-PARAMS
-PARENT
-PARITY
-PINNED
-POLICY
-POOLED
-PRAGMA
-PREFIX
-PRICES
-PROVEN
-PROVES
-PUBLIC
-PUSH20
-PYTHON
-RAISED
-RAISES
-RANKED
-RARELY
-READER
-README
-REASON
-RECENT
-RECORD
-REFUSE
-REJECT
-REMOTE
-RENDER
-REPAYS
-RESIZE
-RETAIN
-RETUNE
-RETURN
-REUSED
-REVERT
-REWIND
-ROUTED
-SAFETY
-SAMPLE
-SCALAR
-SCALED
-SCHEMA
-SCOPED
-SCRIPT
-SEATED
-SECOND
-SELECT
-SENDER
-SERIAL
-SERVED
-SETTLE
-SHARED
-SHOULD
-SIGINT
-SIGNED
-SINGLE
-SOLELY
-SOLVED
-SOLVER
-SOLVES
-SPARSE
-SSTORE
-STABLE
-STAGED
-STATIC
-STATUS
-STICKY
-STREAK
-STREAM
-STRICT
-STRING
-SUBMIT
-SUFFIX
-SUPPLY
-SYMBOL
-TARGET
-THREAD
-TIMING
-TOCTOU
-TOKEN0
-TOKEN1
-TSTORE
-TUNING
-UNIQUE
-UPDATE
-UPSERT
-UPWARD
-USABLE
-V2V4V3
-VACUUM
-VALUES
-VTOKEN
-WINDOW
-WIRING
-WITHIN
-WORKER
-YTOKEN
-ZEROED
+#
+# The file has two sections:
+#
+# 1. Grandfathered citations — one "path:token" per line. The token is the bare
+#    six-char token as it appears in that file; the scan scope (src/, tests/,
+#    rust/crates with tests/benches/examples excluded) and the Rust
+#    comment-line rule live in the hook.
+#    SHRINK PROTOCOL — same voice as the waiver file: a census entry means
+#    "this file still carries pre-rule citations"; it NEVER licenses new ones.
+#    Remove the entry in the same commit that strips the citation from the
+#    file, and never add an entry for a token that is not already in the file.
+# 2. Lexicon — one bare token per line (no path): legit identifiers, English
+#    words, acronyms, and linter codes the sweep commits classified as
+#    non-citations (their vocabulary: SIGINT, BEFORE, STATIC, OUTPUT, INPUT,
+#    STABLE, WETH, USDC, pure-number tokens, hex tokens). Extend ONLY for a
+#    real word, acronym, or domain identifier; a tracker citation must never
+#    be added here.
+#
+# Pure-number tokens (tick values, block numbers) and hex-shaped tokens
+# ([0-9A-F]{6} selector/byte data) are matcher exclusions, not census entries;
+# a deliberate hex-spelled citation (E2B542) is ratcheted by its citation
+# entries below, which the matcher checks before the hex exclusion.
+
+# ---- Section 1: grandfathered citations (path:token) ----
+
 rust/crates/engine/degenbot-bot/src/arb_engine/block_cursor.rs:KNEUQX
 rust/crates/engine/degenbot-bot/src/arb_engine/boot_stamp.rs:7KAPBB
 rust/crates/engine/degenbot-bot/src/arb_engine/boot_stamp.rs:KAHU5W
@@ -646,3 +428,227 @@ tests/test_v3_rust_swap_parity.py:FBJTUM
 tests/uniswap/v2/test_uniswap_v2_liquidity_pool.py:CXRHW3
 tests/uniswap/v2/test_uniswap_v2_liquidity_pool.py:RATR5A
 tests/uniswap/v2/test_v2_pool_from_py_pool.py:OGTTCS
+
+# ---- Section 2: lexicon (bare legit identifiers, no path) ----
+
+ABORTS
+ABSENT
+ACROSS
+ACTIVE
+ACTUAL
+ADMITS
+AGENTS
+ALWAYS
+ANN003
+ANN202
+ATTACH
+BEFORE
+BEHIND
+BENIGN
+BINARY
+BINDER
+BLE001
+BLOCKS
+BOOTED
+BORROW
+BRANCH
+BUCKET
+CALLER
+CANNOT
+CENSUS
+CHANGE
+CLAIMS
+CLEARS
+CLIENT
+CLONED
+CLONES
+CLOSED
+COMMIT
+COMMON
+CONFIG
+CORDON
+COUNTS
+CREATE
+CRYPTO
+CTOKEN
+DECAYS
+DECODE
+DELETE
+DELTAS
+DENIES
+DESIGN
+DETACH
+DIFFER
+DIRECT
+DOMAIN
+DOUBLE
+DRIVEN
+DRIVER
+EITHER
+ENGINE
+ENTERS
+ENTIRE
+ESCAPE
+EXCEPT
+EXEMPT
+EXISTS
+EXPIRY
+EXPORT
+FACADE
+FAILED
+FAMILY
+FIRING
+FLIGHT
+FLOORS
+FORCED
+FROZEN
+GAINED
+GLOBAL
+HALFUP
+HANDLE
+HAVING
+HEADER
+HEALED
+HIGHER
+HOLDER
+HOSTED
+IERC20
+IGNORE
+IMPORT
+INLINE
+INSERT
+INSIDE
+INTAKE
+ISSUED
+ITSELF
+LABELS
+LACKED
+LANDED
+LATEST
+LAYERS
+LAZILY
+LEDGER
+LEGACY
+LOADER
+LOGGED
+LONGER
+LOOKED
+LOUDLY
+MARKED
+MERGED
+MERGES
+METRIC
+MIDDLE
+MIRROR
+MISSED
+MODULE
+MSTORE
+NATIVE
+NEWEST
+NORMAL
+NULLIF
+OLDEST
+OPTION
+ORACLE
+ORIGIN
+ORPHAN
+OUTPUT
+OWNING
+PANICS
+PARAMS
+PARENT
+PARITY
+PINNED
+POLICY
+POOLED
+PRAGMA
+PREFIX
+PRICES
+PROVEN
+PROVES
+PUBLIC
+PUSH20
+PYTHON
+RAISED
+RAISES
+RANKED
+RARELY
+READER
+README
+REASON
+RECENT
+RECORD
+REFUSE
+REJECT
+REMOTE
+RENDER
+REPAYS
+RESIZE
+RETAIN
+RETUNE
+RETURN
+REUSED
+REVERT
+REWIND
+ROUTED
+SAFETY
+SAMPLE
+SCALAR
+SCALED
+SCHEMA
+SCOPED
+SCRIPT
+SEATED
+SECOND
+SELECT
+SENDER
+SERIAL
+SERVED
+SETTLE
+SHARED
+SHOULD
+SIGINT
+SIGNED
+SINGLE
+SOLELY
+SOLVED
+SOLVER
+SOLVES
+SPARSE
+SSTORE
+STABLE
+STAGED
+STATIC
+STATUS
+STICKY
+STREAK
+STREAM
+STRICT
+STRING
+SUBMIT
+SUFFIX
+SUPPLY
+SYMBOL
+TARGET
+THREAD
+TIMING
+TOCTOU
+TOKEN0
+TOKEN1
+TSTORE
+TUNING
+UNIQUE
+UPDATE
+UPSERT
+UPWARD
+USABLE
+V2V4V3
+VACUUM
+VALUES
+VTOKEN
+WINDOW
+WIRING
+WITHIN
+WORKER
+YTOKEN
+ZEROED
