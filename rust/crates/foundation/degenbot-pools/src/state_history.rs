@@ -1452,7 +1452,7 @@ mod v3_delta_priors_tests {
         );
     }
 
-    /// F7HX73 (end-to-end, public interface): pushing two same-block Swap
+    /// End-to-end (public interface): pushing two same-block Swap
     /// deltas at block B with different scalars, then `restore_before_block(B)`
     /// must return the EARLIEST (pre-B) scalar priors — not post-first-Swap.
     /// Exercising the coalesce-then-restore path through the public

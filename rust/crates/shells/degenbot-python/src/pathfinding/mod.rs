@@ -376,7 +376,7 @@ pub fn find_paths_rust(
     }
 }
 
-/// Create a batched **async** iterator over the lazy arbitrage DFS (4IOEVT).
+/// Create a batched **async** iterator over the lazy arbitrage DFS.
 ///
 /// The async twin of [`find_paths_rust`]: it builds the same owning lazy DFS
 /// but returns a [`PathBatchIterator`] whose `__anext__` yields up to
@@ -828,7 +828,7 @@ struct AsyncPathState {
     pool_keys: Vec<Option<Py<PyTuple>>>,
 }
 
-/// A batched **async** iterator over the lazy DFS (4IOEVT).
+/// A batched **async** iterator over the lazy DFS.
 ///
 /// `__anext__` returns `list[list[tuple[int, int]]]`: up to `batch_size`
 /// paths per call, computed on the shared tokio runtime with the GIL released

@@ -48,7 +48,7 @@ pub const MAX_FEE_HEADROOM: f64 = 1.5;
 /// - `tx_params.max_priority_fee_per_gas = priority_fee`
 /// - `tx_params.max_fee_per_gas = int(1.5 * base_fee_next) + priority_fee`
 ///
-/// `base_fee_next` is the *next-block* base fee (`JTLWA3`'s `next_base_fee`,
+/// `base_fee_next` is the *next-block* base fee (`next_base_fee`,
 /// already computed — this crate consumes it, no edge). `priority_fee` is
 /// the Simulation leaf's `_compute_priority_fee` output (consumed off
 /// `tx_params` — no hard edge; for §4.2 parity it is a fixture value).

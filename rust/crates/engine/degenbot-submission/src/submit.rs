@@ -1,6 +1,5 @@
 //! The `dispatch_and_submit` orchestration + `eth_sendRawTransaction`
-//! broadcast + `eth_feeHistory` percentile fetch (the N6 + I1/I2 rows of the
-//! `SHT6GE` submission epic).
+//! broadcast + `eth_feeHistory` percentile fetch.
 //!
 //! Ports `examples/eth_backrun_v2_v3_v4_rust.py::dispatch_profitable_results`
 //! submit tail (L2608–L2660 — the `dry_run` guard L2608, `INJECT_EXECUTOR_CODE`
@@ -14,7 +13,7 @@
 //! cockpit"). Owning the sign+broadcast in Rust releases the GIL across the
 //! per-tx RPCs (the §2.1 "GIL?" win).
 //!
-//! # Dispositions (per the `P7AMWR` scope rubric)
+//! # Dispositions
 //!
 //! - **N6 `port-now`** — the submit orchestration (this leaf). Sorts by net
 //!   profit descending; for each: mutual-exclusivity guard → `dry_run`/
@@ -22,9 +21,9 @@
 //!   re-compute access list → sign → broadcast → reserve pools → spawn
 //!   monitor.
 //! - **I1 `done`-reference** — [`AlloyProvider::eth_send_raw_transaction`] (the
-//!   ZUZANP typed `bytes → B256` surface — committed `d26b8248`). CONSUMED,
+//!   typed `bytes → B256` surface — committed `d26b8248`). CONSUMED,
 //!   no `make_request` escape hatch (the interim is over).
-//! - **I2 `done`-reference** — [`AlloyProvider::eth_fee_history`] (the ZUZANP
+//! - **I2 `done`-reference** — [`AlloyProvider::eth_fee_history`] (the
 //!   typed surface) + [`AlloyProvider::eth_create_access_list`]
 //!   (consumed by the N6 access-list re-computation).
 //! - **S3 `stays-python`** — the `dry_run`/`INJECT_EXECUTOR_CODE` POLICY (the
@@ -98,7 +97,7 @@ pub struct SubmitCandidate {
     pub path_pools: HashSet<PoolKey>,
 }
 
-/// Per-candidate `MEVBlocker` bundle context (the `GSUF22` bid wiring).
+/// Per-candidate `MEVBlocker` bundle context (the bid wiring).
 ///
 /// docs.mevblocker.io/how-to/searchers/bid: the backrun leaves ONLY via
 /// `eth_sendBundle` on `wss://searchers.mevblocker.io`, carrying the pending
@@ -319,7 +318,7 @@ pub async fn dispatch_and_submit(
     // relays); `Public` fans the SAME signed bytes across the relays.
     target: SubmissionTarget,
 ) -> Result<SubmitOutcome, crate::SubmissionError> {
-    // RMHQAR  + ZHVXW2: one Jaeger node per dispatch batch
+    // One Jaeger node per dispatch batch
     // (degenbot.bundle.dispatch).
     // - NO span for an EMPTY batch: the observed failure shape was 20
     //   consecutive single-span root traces, candidates=0, pure noise.
@@ -824,7 +823,7 @@ fn percentile_key(p: f64) -> Option<u64> {
 }
 
 /// Fetch the per-block priority-fee percentiles via `eth_feeHistory` (typed
-/// ZUZANP surface) + record them into the dispatcher's `block_priority_fees`
+/// surface) + record them into the dispatcher's `block_priority_fees`
 /// ring (ports L2907–L2923).
 ///
 /// Requests `block_count` blocks ending at `last_block` with the given
@@ -1596,7 +1595,7 @@ mod tests {
             Box::pin(async { Ok(false) })
         }
     }
-    /// RMHQAR : the `dispatch_and_submit` span records the
+    /// The `dispatch_and_submit` span records the
     /// candidate count and outcome counts (`dry_run` marker path: 1 candidate
     /// -> 0 submitted, 1 skipped).
     /// The unique `block.number` creation field filters this test's span from the
@@ -1657,7 +1656,7 @@ mod tests {
         );
     }
 
-    /// ZHVXW2 (traces of block 25913390): the 20 most-recent Jaeger traces
+    /// Traces of block 25913390: the 20 most-recent Jaeger traces
     /// were ALL single-span `degenbot.bundle.dispatch` roots with
     /// candidates=0 and every counter 0 - empty batches export a span AND
     /// the Python-driven task has no ambient block context, so it also
@@ -1707,7 +1706,7 @@ mod tests {
         );
     }
 
-    // ── MEVBlocker bundle channel (GSUF22 wiring, doc how-to/searchers/bid) ──
+    // ── MEVBlocker bundle channel (wiring, doc how-to/searchers/bid) ──
 
     /// A one-shot in-process WS relay: accepts one connection, captures the
     /// first frame, answers with a bundle id, closes.

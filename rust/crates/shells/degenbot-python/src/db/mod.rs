@@ -237,7 +237,7 @@ pub mod db {
         PyV2PoolRowInput, PyV3PoolRowInput, PyV4PoolRowInput,
     };
 
-    // Aave analysis seam (Step B of GAXGCR): the pure `analyze_user_position`
+    // Aave analysis seam: the pure `analyze_user_position`
     // math over `degenbot-aave::analysis`. Gated on `aave-updater` (the
     // feature that brings in the `degenbot-aave` dep).
     #[cfg(feature = "aave-updater")]

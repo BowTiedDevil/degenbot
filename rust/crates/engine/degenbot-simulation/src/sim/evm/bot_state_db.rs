@@ -64,7 +64,7 @@ where
     ExtDb: DatabaseRef,
 {
     /// The typed oracle backing the code-less tripwire (membership) and the
-    /// divergence observer's engine words. ULUWNI: the engine's snapshot is
+    /// divergence observer's engine words. The engine's snapshot is
     /// OWNED, taken under a short read — no `BotState` guard is held across
     /// the RPC fetches this wrapper performs.
     pub oracle: &'bot dyn SimAnchorOracle,

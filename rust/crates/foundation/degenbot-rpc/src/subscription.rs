@@ -42,8 +42,7 @@ use tokio::time::timeout;
 /// Maximum elapsed time with no header before the watchdog tears down + reconnects
 /// a stalled `newHeads` subscription.
 ///
-/// ~4× the ~12s Ethereum mainnet block time = ~48s, within the ≤~60s target of
-/// O3JW5S. A silently half-open socket (NAT idle timeout, provider stall with no
+/// ~4× the ~12s Ethereum mainnet block time = ~48s, within the ≤~60s target. A silently half-open socket (NAT idle timeout, provider stall with no
 /// close frame) makes `stream.next()` never resolve and never return `None`; this
 /// watchdog bounds that window so the pump reconnects instead of hanging forever.
 pub(crate) const HEADER_WATCHDOG_SECS: u64 = 48;

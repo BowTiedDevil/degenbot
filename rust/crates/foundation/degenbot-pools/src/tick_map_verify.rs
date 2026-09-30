@@ -1,4 +1,4 @@
-//! The tick-map verification seam (ADR-021 D3 slice 2, X6I3LN).
+//! The tick-map verification seam (ADR-021 D3 slice 2).
 //!
 //! One pure per-tick comparison shared by every consumer that asks
 //! "does the stored CL tick-map state match the chain at block B?"

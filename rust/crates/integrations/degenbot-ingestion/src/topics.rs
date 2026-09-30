@@ -1,6 +1,6 @@
 //! The subscription’s Rust-side topic filter.
 //!
-//! The WS `logs` subscription is UNFILTERED server-side (see the MJXP5Z
+//! The WS `logs` subscription is UNFILTERED server-side (see the
 //! one-stream handshake — no resubscribe) so the hot pre-filter in the
 //! runtime skips lock + decode work for irrelevant logs. `RELEVANT_TOPICS`
 //! is the single source of truth for that filter, the backfill filter's

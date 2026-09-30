@@ -735,7 +735,7 @@ pub fn build_descriptors(
             out.by_address.insert(
                 *addr,
                 PoolFamily::V3 {
-                    // The edge carries the fork layout (W32CAU): a Pancake
+                    // The edge carries the fork layout: a Pancake
                     // pool replayed with Uniswap slots stages a garbage map
                     // and every anchored chain dies sequence_unavailable.
                     layout: e3.layout,

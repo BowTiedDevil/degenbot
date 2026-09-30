@@ -9,7 +9,7 @@
 //!
 //! Every read connection runs, in order:
 //! 1. `PRAGMA journal_mode=WAL;`  — file-persistent, idempotent; matches the
-//!    Python open path (Phase 0, `2KUI3M`) so production DBs are WAL-on by the
+//!    Python open path (Phase 0) so production DBs are WAL-on by the
 //!    time any Rust read touches them.
 //! 2. `PRAGMA busy_timeout=5000;` — per-connection.
 //! 3. `PRAGMA synchronous=NORMAL;` — per-connection.
@@ -106,13 +106,13 @@ impl DegenbotDb {
         Self::open_with(Path::new(":memory:"), auto_heal_enabled(), true)
     }
 
-    /// Open a file-backed **write-capable** handle (RQXEKH writer substrate).
+    /// Open a file-backed **write-capable** handle (the writer substrate).
     /// Same `PRE_SCHEMA_PRAGMAS` + ADR-052 D1 heal-at-open as [`Self::open`]
     /// (an Alembic-stamped DB heals to [`SchemaState::RustOwned`]; the
     /// `DEGENBOT_DB_AUTO_HEAL=0` killswitch restores the pre-D1 posture), but
     /// `query_only` is **NEVER** set — the connection can `INSERT`/`UPDATE`.
     ///
-    /// This does NOT violate SLHSM4 binding #2 ("every **read** connection
+    /// This does NOT violate binding #2 ("every **read** connection
     /// opened by degenbot-db MUST set `query_only=on`"): the *read* constructors
     /// ([`Self::open`] / [`Self::open_in_memory`]) stay read-only; this is the
     /// explicit opt-in writer path used by the Aave writer substrate

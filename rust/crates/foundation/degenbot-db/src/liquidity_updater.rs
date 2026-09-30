@@ -1274,7 +1274,7 @@ fn persist_v4(
 /// can issue the bare `DELETE FROM {table} WHERE {id_col} = ?1` (drop ALL rows),
 /// matching the Python `db_keys - helper_keys` complement-delete-all semantics
 /// (helper empty → drop all). The bare form avoids the SQL syntax error of an
-/// empty `NOT IN ()` placeholder list. (6SRJRL)
+/// empty `NOT IN ()` placeholder list.
 fn delete_stale_rows(
     conn: &rusqlite::Connection,
     table: &str,
@@ -1438,7 +1438,7 @@ mod tests {
         assert_eq!(sql_placeholders_for(3), "?, ?, ?");
     }
 
-    // ── 6SRJRL: full-drain deletes ALL rows on empty `live_keys` ────────
+    // ── full-drain deletes ALL rows on empty `live_keys` ────────
     //
     // A fully-drained pool (every position burned to gross=0 → every tick
     // pruned from `tick_data`) produces `live_ticks = []` / `live_words = []`
@@ -1565,12 +1565,12 @@ mod tests {
         assert_eq!(
             count_rows(&db, "liquidity_positions", "pool_id", pool_id),
             0,
-            "empty live set must drop ALL position rows (6SRJRL)"
+            "empty live set must drop ALL position rows"
         );
         assert_eq!(
             count_rows(&db, "initialization_maps", "pool_id", pool_id),
             0,
-            "empty live set must drop ALL init-map rows (6SRJRL)"
+            "empty live set must drop ALL init-map rows"
         );
     }
 
@@ -1638,12 +1638,12 @@ mod tests {
         assert_eq!(
             count_rows(&db, "liquidity_positions", "pool_id", pool_id),
             0,
-            "fully-drained pool must have NO ghost position rows (6SRJRL)"
+            "fully-drained pool must have NO ghost position rows"
         );
         assert_eq!(
             count_rows(&db, "initialization_maps", "pool_id", pool_id),
             0,
-            "fully-drained pool must have NO ghost init-map rows (6SRJRL)"
+            "fully-drained pool must have NO ghost init-map rows"
         );
         // The marker is still stamped even on a full drain (last event wins).
         let conn = db.lock();

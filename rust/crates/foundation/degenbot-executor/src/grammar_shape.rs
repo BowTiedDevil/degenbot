@@ -1,5 +1,5 @@
 //! Builders — the **per-family dispatch surface** + validator gate
-//! (`grammar_shape.rs` split, ERP6ES / candidate 2 of
+//! (`grammar_shape.rs` split, candidate 2 of
 //! `architecture-review-1786663110.html`).
 //!
 //! [`derive_shape`] dispatches every well-formed family through
@@ -14,17 +14,17 @@
 //! is isolated in `grammar_plan`.
 //!
 //! ---
-//! **Status after RVNIPD / EYQ6UF:** the hand-written
+//! **Current status:** the hand-written
 //! `derive_2hop_*` / `derive_3hop_*` byte-assembling emitters and their
 //! parity-oracle are **deleted** — the Plan is the sole production producer
 //! for every 2/3-hop family. The revm runtime matrix (`degenbot-simulation`
 //! `harness_declarative` full-matrix, exact delta) is the ADR-029 D5 source of
 //! truth; the primitive wire format is pinned by `tests/encoders_parity.rs`
-//! and the native bridge by `tests/native_eth_3hop_bridge.rs`. N4TJSZ
-//! (SPVEIE + KO5NNB + 4JOWO5): the all-V2 family (2-hop, 3-hop, any-N) routes
+//! and the native bridge by `tests/native_eth_3hop_bridge.rs`. The all-V2
+//! family (2-hop, 3-hop, any-N) routes
 //! through the single pipeline + the
 //! [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate — the
-//! sole all-V2 producer. PPPHES: the 35-arm dispatch collapsed to the single
+//! sole all-V2 producer. The 35-arm dispatch collapsed to the single
 //! `build_walk` pipeline.
 
 use alloy::primitives::Address;
@@ -42,7 +42,7 @@ pub use crate::grammar_plan::{
 // builders + the V4 scaffold.
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Cross-protocol V2/V3 scaffold (GLOPCN). The pure V2/V3 families (2-hop,
+// Cross-protocol V2/V3 scaffold. The pure V2/V3 families (2-hop,
 // 3-hop, any-N all-V2) duplicate the same skeleton inline: the guard ladder
 // (arity, zeroed-output, `fits_int128` on the entry + hop swap-ins), the
 // sentinel AddressTable (weth/executor, no PoolManager — a V2/V3 family
@@ -64,7 +64,7 @@ pub use crate::grammar_plan::{
 // to `derive_plan`, which inlines the equivalent guards.
 
 // ═══════════════════════════════════════════════════════════════════════════// ═══════════════════════════════════════════════════════════════════════════
-// 3-hop Plan scaffolding (W7FQN6 pilot). The shared topology pieces every
+// 3-hop Plan scaffolding (pilot). The shared topology pieces every
 // V4-crossing 3-hop builder (this pilot) calls: the sentinel
 // AddressTable scaffold, per-hop currency/orientation, the ADR-029 D1 capture
 // guard, the terminal-capture steps, and the native↔WETH bridge steps. The
@@ -259,7 +259,7 @@ fn build_plan_bytes(path: &PathInfo, build: BuildPlan, inputs: &ComposerInputs<'
     Derive::Encoded(out)
 }
 
-/// Public all-V2 entry (KO5NNB cutover): the any-N (≥2) all-V2 family through
+/// Public all-V2 entry: the any-N (≥2) all-V2 family through
 /// the single pipeline + validator gate — `build_walk` → the
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] → `plan_to_bytes`
 /// (A3 routes it through the shared [`derive_shape_detailed`] dispatch).
@@ -293,8 +293,7 @@ fn prot_of(h: Option<&HopInfo>) -> Option<Prot> {
 
 /// Public entry: derive a family's command bytes through the single pipeline
 /// (`build_walk` → [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
-/// gate → `plan_to_bytes`) — the sole production producer since RVNIPD removed
-/// the hand-written emitters. Returns `None` on a routine decline (an unsupported
+/// gate → `plan_to_bytes`) — the sole production producer. Returns `None` on a routine decline (an unsupported
 /// family → the strategy skips); a validator `Reject` is **fatal** (panics,
 /// ADR-030). See [`derive_shape_detailed`] for the tri-state.
 #[must_use]
@@ -330,7 +329,7 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
     Derive::Encoded(out)
 }
 
-/// Public accessor (candidate 4, `3BTR22`): the declared stream-varying axes
+/// Public accessor (candidate 4): the declared stream-varying axes
 /// for a path's family, **derived from the hop-protocol facts** (not a
 /// per-row table) — the family's walker branches `FundingSource` only for the
 /// `v2_v3` / any-N all-V2 families, and `ProfitCapture` only for the pure-V4
@@ -694,7 +693,7 @@ mod tests {
         }
     }
 
-    // POC (6SRC23): the v2_v3 InPathFlash flash-credit chain exercises the
+    // POC: the v2_v3 InPathFlash flash-credit chain exercises the
     // executor-ledger credit-before-debit invariant the runtime matrix can't
     // see. The derived trace must validate clean; a misordering must reject.
     fn v2_v3_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
@@ -733,7 +732,7 @@ mod tests {
         (path, inputs)
     }
 
-    // BP7KIR Checkpoint 1: the Plan tree is the primary artifact for v2_v3.
+    // Checkpoint 1: the Plan tree is the primary artifact for v2_v3.
     #[test]
     fn v2_v3_plan_projects_a_validating_trace() {
         let (path, inputs) = v2_v3_path_inputs();
@@ -858,7 +857,7 @@ mod tests {
             },
         )
     }
-    /// RVNIPD/EYQ6UF: build the Plan and assert it projects a trace that
+    /// Build the Plan and assert it projects a trace that
     /// validates clean through the gate. The byte-level `derive_shape`
     /// comparison this used to make is gone — `derive_shape` IS the same
     /// Plan path now, so it was a self-comparison (the runtime matrix is the
@@ -1020,12 +1019,12 @@ mod tests {
             .collect()
     }
 
-    // KO5NNB gate proof: an InPathFlash all-V2 stream whose terminal output
+    // Gate proof: an InPathFlash all-V2 stream whose terminal output
     // cannot cover the flash repayment is REJECTED by the LedgerValidator
     // (the flash-repay `Erc20Transfer` would over-debit `erc20[weth]`, so
     // credit-before-debit fires). The retired hand-written speedrail emitted
     // this stream unvalidated (and the revm harness's 2× WETH buffer let it
-    // "execute but lose"); the gate now makes it unrepresentable — N4TJSZ's
+    // "execute but lose"); the gate now makes it unrepresentable — which is the
     // entire point. The SAME losing stream under SelfFund still validates
     // (no flash debt to repay — the executor eats the loss from held capital,
     // which is what a negative-control delta assert should measure).
@@ -1099,7 +1098,7 @@ mod tests {
 
     #[test]
     fn v3_v2_plan_terminal_v2_before_seed_rejected() {
-        // The terminal-V2 pre-fund rule (`2PT5HH`): a `V2SwapCalc` before its
+        // The terminal-V2 pre-fund rule: a `V2SwapCalc` before its
         // `Erc20Transfer` pair-seed must be rejected (the über-draw class).
         let (path, inputs) = v3_v2_path_inputs();
         let (_preamble, mut plan, _at) = build_v3v2_plan(&path, &inputs).expect("v3_v2 build None");
@@ -1125,7 +1124,7 @@ mod tests {
         let _ = U256::ZERO;
     }
 
-    // BP7KIR Increment 3: the V4 container (`v4_v4`) on the Plan — the
+    // Increment 3: the V4 container (`v4_v4`) on the Plan — the
     // PM-net-zero master invariant + D0 take-before-credit on the PM ledger.
     fn v4_v4_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
         // WETH terminal (the spike's proven slice): weth→t1→weth.
@@ -1199,7 +1198,7 @@ mod tests {
         let _ = U256::ZERO;
     }
 
-    // ── BP7KIR opts: `use_v4_batch` + `erc6909_profit` (within the WETH-only
+    // ── opts: `use_v4_batch` + `erc6909_profit` (within the WETH-only
     //    slice) — byte-parity with `derive_2hop_v4v4` AND gate validation. ──
 
     fn v4_v4_opts_inputs(
@@ -1292,10 +1291,10 @@ mod tests {
 
     #[test]
     fn v4_v4_batch_and_erc6909_capture_weth_terminal_composes() {
-        // TGUZCT/SW42JA: on the deployed artifact the `V4_BATCH_OPEN_WETH`
+        // On the deployed artifact the `V4_BATCH_OPEN_WETH`
         // (0x43) variant leaves the positive WETH delta OPEN at the batch's
         // end, so the follow-up `V4_MINT_COMPACT` converts it into the
-        // ERC6909 vault. The former decline (SMOZG3, pre-deployment artifact)
+        // ERC6909 vault. The former pre-deployment-artifact decline
         // is lifted: the stream composes as [V4Batch(open_weth), V4Mint,
         // V4SettleAll] and the pairing gate accepts it.
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
@@ -1303,8 +1302,8 @@ mod tests {
             use_v4_batch: true,
             ..Default::default()
         });
-        let (_preamble, plan, _at) = build_v4v4_plan(&path, &inputs)
-            .expect("batch + erc6909 WETH-terminal must build (TGUZCT)");
+        let (_preamble, plan, _at) =
+            build_v4v4_plan(&path, &inputs).expect("batch + erc6909 WETH-terminal must build");
         let PlanStep::V4Unlock { inner, .. } = &plan[0] else {
             panic!("expected outer V4Unlock");
         };
@@ -1368,7 +1367,7 @@ mod tests {
         let _ = U256::ZERO;
     }
 
-    // ── BP7KIR slice-broaden: the v4_v4 Plan across all 3 terminal currencies
+    // ── slice-broaden: the v4_v4 Plan across all 3 terminal currencies
     //    (WETH / tok / native) × all 4 opt modes. Byte-parity with the proven
     //    `derive_2hop_v4v4` emitter AND gate validation in every cell. ──
     #[test]
@@ -1410,7 +1409,7 @@ mod tests {
             for (m_name, opts) in modes {
                 let label = format!("v4_v4 {t_name}+{m_name}");
                 let (path, inputs) = v4_v4_inputs(terminal, opts);
-                // TGUZCT/SW42JA: the WETH-terminal batch+erc6909 cell composes
+                // The WETH-terminal batch+erc6909 cell composes
                 // (0x43 open-weth batch feeds the mint) — no decline special case.
                 plan_builds_and_validates(build_v4v4_plan, &path, &inputs, &label);
             }
@@ -1447,7 +1446,7 @@ mod tests {
         let _ = U256::ZERO;
     }
 
-    // ── BP7KIR currency-gap slice: native↔WETH bridge at the mid. Byte-parity
+    // ── currency-gap slice: native↔WETH bridge at the mid. Byte-parity
     //    with derive_2hop_v4v4's gap branch AND gate validation. ──
     #[test]
     fn v4_v4_gap_byte_parity_and_validates() {
@@ -1467,7 +1466,7 @@ mod tests {
         // The gap branch is opt-invariant (use_v4_batch + erc6909_profit are
         // inoperative across a gap — the derive forces individual swaps + a
         // physical take). Sweep all 4 opt modes for both gap topologies.
-        // TGUZCT gap adjudication (3JNVM3): the 0x43 open-weth batch can never
+        // Gap adjudication: the 0x43 open-weth batch can never
         // apply here — (a) a gap forces the individual-swap path (the batch
         // command is issued only for `!any_gap`), and (b) the gap twin's
         // terminal is non-WETH, so the erc6909 mint path (the only
@@ -1545,7 +1544,7 @@ mod tests {
         assert!(matches!(inner[6], PlanStep::V4SettleAll), "6: settle all");
         let _ = U256::ZERO;
     }
-    // ── WE45KC inc.2: ProfitCapture::Native on v4_v4 (ADR-029 D1) ──────────
+    // ── ProfitCapture::Native on v4_v4 (ADR-029 D1) ──────────
     // The capture axis is now load-bearing in the encoder: a WETH-terminal
     // v4_v4 path with capture=Native appends a WETH_WITHDRAW (0x13) converting
     // the profit to native ETH after the V4_TAKE_DELTA custody take. A
@@ -1645,7 +1644,7 @@ mod tests {
     }
     #[test]
     fn v4_v4_native_capture_plan_byte_parity_and_validates() {
-        // WE45KC inc.2: the Native-capture Plan (WETH terminal → V4TakeDelta
+        // The Native-capture Plan (WETH terminal → V4TakeDelta
         // custody + WethWithdraw) stays byte-identical to derive_2hop_v4v4 AND
         // validates clean through the ledger gate (D5). The custody credit on
         // V4TakeDelta(→SELF) now models the executor's receipt, so the

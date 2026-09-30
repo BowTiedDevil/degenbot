@@ -3,7 +3,7 @@
 //!
 //! The workspace lint `exit = "deny"` forbids a library from aborting the host
 //! process: `run` returns codes. `EX_CONFIG` (78, sysexits) is the typed fleet
-//! boot refusal lifted out of `DegenbotCLI.invoke` (FF-T1, BPHR6F).
+//! boot refusal lifted out of `DegenbotCLI.invoke`.
 
 use std::fmt;
 

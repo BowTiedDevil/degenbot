@@ -13,7 +13,7 @@
 //! Ports the `fee_history(block_count=1, newest_block, reward_percentiles)`
 //! and `dict(zip(FEE_PERCENTILES, reward[-1]))` block (L2842–L2851). The
 //! wire-shape matches the Python web3.py `fee_history` round-trip; the typed
-//! `eth_fee_history` surface (the §ZUZANP leaf) carries retry-with-backoff
+//! `eth_fee_history` surface carries retry-with-backoff
 //! and error classification.
 
 // Solidity/RPC identifiers (eth_feeHistory, reward, oldest_block, etc.) are

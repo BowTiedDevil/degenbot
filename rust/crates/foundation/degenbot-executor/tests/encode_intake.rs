@@ -98,8 +98,7 @@ fn encode_cmd_stream_routes_two_hop_v2_v3_via_the_intake_pair() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TGUZCT — the `use_v4_batch` × `erc6909_profit` interplay (was SMOZG3 open
-// question 3). On the deployed artifact the combination COMPOSES via the
+// The `use_v4_batch` × `erc6909_profit` interplay. On the deployed artifact the combination COMPOSES via the
 // `V4_BATCH_OPEN_WETH` (0x43) command: the batch skips its WETH tail-settle,
 // so the follow-up `V4_MINT_COMPACT` finds the live delta. (The
 // pre-deployment artifact's 0x42 tail-settle starved the mint — D0; the
@@ -127,7 +126,7 @@ fn v4v4_weth_terminal() -> PathInfo {
 
 #[test]
 fn batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
-    // TGUZCT/SW42JA: the deployed artifact's 0x43 open-weth batch leaves the
+    // The deployed artifact's 0x43 open-weth batch leaves the
     // WETH delta open for the trailing mint — the intake encodes the open
     // batch (not the legacy 0x42).
     let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
@@ -143,7 +142,7 @@ fn batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
         },
     );
     let bytes = encode_cmd_stream(&ctx, &req)
-        .unwrap_or_else(|| panic!("batch + erc6909 capture must compose (TGUZCT)"));
+        .unwrap_or_else(|| panic!("batch + erc6909 capture must compose"));
     assert!(
         bytes.windows(2).any(|w| w[0] == 0x43 && w[1] == 2),
         "stream must carry the open-weth batch command (0x43, 2 entries)"
@@ -170,7 +169,7 @@ fn erc6909_capture_without_batch_still_encodes() {
 
 #[test]
 fn v4v4v4_batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
-    // TGUZCT/SW42JA: the 3-hop pure-V4 family composes too (0x43 open batch).
+    // The 3-hop pure-V4 family composes too (0x43 open batch).
     // Three tokens so the path is WETH-terminal: WETH -> TOK2 -> USDC -> WETH.
     let path = PathInfo::new(vec![
         v4_hop(WETH, TOK2, true),
@@ -194,7 +193,7 @@ fn v4v4v4_batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
         },
     );
     let bytes = encode_cmd_stream(&ctx, &req)
-        .unwrap_or_else(|| panic!("3-hop batch + erc6909 capture must compose (TGUZCT)"));
+        .unwrap_or_else(|| panic!("3-hop batch + erc6909 capture must compose"));
     assert!(
         bytes.windows(2).any(|w| w[0] == 0x43 && w[1] == 3),
         "stream must carry the open-weth batch command (0x43, 3 entries)"
@@ -228,7 +227,7 @@ fn v4v4v4_erc6909_capture_without_batch_still_encodes() {
     assert!(encode_cmd_stream(&ctx, &req).is_some());
 }
 
-// ── TGUZCT/TAZXHN: byte-stability guard for the NON-BATCH capture stream ──
+// ── byte-stability guard for the NON-BATCH capture stream ──
 // The flip (bdde6759b) must not move the proven non-batch erc6909 capture
 // stream — pin its full-byte hash (the "non-batch capture unchanged
 // byte-for-byte" acceptance bullet, mechanically enforced).
@@ -243,7 +242,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 
 #[test]
 fn nonbatch_capture_stream_bytes_are_stable() {
-    // TGUZCT/TAZXHN acceptance: the 0x43 flip may not perturb the proven
+    // Acceptance: the 0x43 flip may not perturb the proven
     // non-batch erc6909 capture stream — full-byte fnv1a pins, captured at
     // flip time from the non-batch flow (which the 0x43 flip does not
     // touch); the pins guard against future drift of that proven stream.

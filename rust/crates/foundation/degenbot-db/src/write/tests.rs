@@ -137,7 +137,7 @@ fn open_for_writes_is_write_capable() {
 
 #[test]
 fn open_read_only_still_blocks_writes() {
-    // SLHSM4 binding #2 hard AC: the default read handle stays read-only.
+    // binding #2 hard AC: the default read handle stays read-only.
     let (db, _state) = DegenbotDb::open_in_memory().unwrap();
     let conn = db.conn.lock();
     let r: rusqlite::Result<usize> = conn.execute("CREATE TABLE x (a INT)", []);
@@ -328,7 +328,7 @@ fn get_or_create_erc20_token_backfills_null_metadata_on_existing_row() {
     assert!(id2 >= 1);
 }
 
-/// BOPQZ3 defensive guard: a pre-POPULATED row is NOT clobbered by a
+/// Defensive guard: a pre-POPULATED row is NOT clobbered by a
 /// later `get_or_create` call (e.g. an inner-logger retry passing None).
 /// Only cells that ARE NULL get backfilled.
 #[test]
@@ -338,7 +338,7 @@ fn get_or_create_erc20_token_does_not_overwrite_existing_metadata() {
         .get_or_create_erc20_token(1, "0xtoken2", Some("Weth"), Some("WETH"), Some(18))
         .unwrap();
     // a later call supplying contradictory/different metadata MUST NOT
-    // overwrite the existing populated cells (defensive — the BOPQZ3 fix
+    // overwrite the existing populated cells (defensive — the fix
     // only backfills NULL cells).
     let id2 = db
         .get_or_create_erc20_token(1, "0xtoken2", Some("Other Name"), Some("OTH"), Some(6))
@@ -1051,7 +1051,7 @@ fn apply_scaled_burn_exact_match_lands_on_zero() {
     );
 }
 
-// ── 2QGL6G: ReserveInitialized GHO-vToken-FK link (divergence #8) ────
+// ── ReserveInitialized GHO-vToken-FK link (divergence #8) ────
 // When the new asset's underlying IS the GHO token, the apply links the
 // GHO token row to the new vToken (`aave_gho_tokens.v_token_id`), mirroring
 // the Python's `_process_reserve_initialized_event` (event_handlers.py:

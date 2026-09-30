@@ -47,7 +47,7 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 /// spawns every worker through the blocking pool's `spawn_thread`, calling
 /// the `thread_name_fn` closure once per spawned thread — so an internal
 /// counter yields the distinct `degenbot-io-rt-N` names the census declares
-/// (GOQWCL: two defaulting `tokio-runtime-worker` pools made thread dumps
+/// (two defaulting `tokio-runtime-worker` pools made thread dumps
 /// unattributable).
 static IO_RT_SEQ: AtomicUsize = AtomicUsize::new(0);
 

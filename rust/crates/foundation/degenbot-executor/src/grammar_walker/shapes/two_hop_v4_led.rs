@@ -1,6 +1,6 @@
 //! 2-hop V4-led shape (block 3: NetZero lead).
 //!
-//! **T4 walk (6SWFBS / 4FKIPB).** The v4v4/v4v2/v4v4 per-family bodies are
+//! **Walk.** The v4v4/v4v2/v4v4 per-family bodies are
 //! walked onto the `mechanics` primitives + the shared V4-crossing helpers:
 //! `v4_terminal_capture_steps` (the V4-tail capture: `V4Mint` on an erc6909
 //! WETH terminal, the explicit `V4TakeDelta` for the non-batch / tok
@@ -89,10 +89,10 @@ fn v4v4_arm(
         inner.push(mechanics::v4_settle_all());
         inner
     } else {
-        // TGUZCT/SW42JA: the deployed artifact composes batch × erc6909 on a
+        // The deployed artifact composes batch × erc6909 on a
         // WETH terminal — the open-weth batch variant (0x43) skips the WETH
         // tail-settle, so the trailing `v4_terminal_capture_steps` mint finds
-        // the live delta. (The SMOZG3 pre-deployment decline is lifted.)
+        // the live delta. (The pre-deployment decline is lifted.)
         let batch = inputs.opts.use_v4_batch;
         let open_weth = batch && capture == ProfitCapture::Erc6909 && out_b == weth;
         let explicit_take = out_b != NATIVE_CURRENCY_ADDRESS && out_b != weth;
@@ -356,11 +356,9 @@ mod walk_probe {
         &src[..i]
     }
 
-    /// RED by design : 49 literal `PlanStep::` sites
-    /// today. Goes GREEN when T4 (4FKIPB) walks the v4v2/v4v3/v4v4 arms onto
-    /// `mechanics` + the shared capture/bridge helpers; then it stays put as
-    /// the honesty invariant (D6 precedent: RED probe at f3b06397, honesty
-    /// test kept at DDNEAB).
+    /// Honesty invariant: no literal `PlanStep::` sites in the walked arms —
+    /// the v4v2/v4v3/v4v4 families emit through `mechanics` + the shared
+    /// capture/bridge helpers, so per-family Plan bodies cannot reappear.
     #[test]
     fn two_hop_v4_led_arms_use_mechanics_not_planstep_literals() {
         let src = walk_source();
@@ -373,7 +371,7 @@ mod walk_probe {
 
     /// Per-file byte-identity pin: the exact current streams for every
     /// v4v2/v4v3/v4v4 family × amount-set × `EncodeOptions` combo. The
-    /// SMOZG3 erc6909×batch WETH-terminal decline is lifted (TGUZCT/SW42JA);
+    /// erc6909×batch WETH-terminal decline is lifted on the deployed artifact;
     /// the flipped cell is pinned by the shape/matrix tests, not this table.
     const FAMILIES: &[(&str, &[&str])] = &[
         ("V4_V2", &["V4", "V2"]),

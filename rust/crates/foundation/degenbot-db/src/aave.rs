@@ -444,7 +444,7 @@ impl DegenbotDb {
     /// `ReserveInitialized` dispatch to resolve the oracle FRESH (the spec's
     /// `oracle_address` is cached once before the loop + can be `None` when the
     /// `PRICE_ORACLE` row is registered mid-loop via a `PriceOracleUpdated`
-    /// event — I2RHGP Fix 1b).
+    /// event — Fix 1b).
     ///
     /// # Errors
     ///

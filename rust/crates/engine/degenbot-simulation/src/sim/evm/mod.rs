@@ -109,7 +109,7 @@ pub mod access_list;
 
 /// Composable `revm::Inspector` pair for simulation diagnostics
 /// (`CallTraceInspector`, `SwapEventCaptureInspector`) + the `SimInspector`
-/// composed-tuple alias. Additive + test-only in the prototype; production wiring gated on the JHPW5W follow-on.
+/// composed-tuple alias. Additive + test-only in the prototype; production wiring is a follow-on.
 pub mod inspectors;
 
 pub mod frame_replay;

@@ -252,12 +252,12 @@ fn run_err_to_py(err: RunError) -> PyErr {
 ///
 /// Returns a list of divergence dicts (empty = GREEN). Each dict has:
 /// `kind`, `position_id`, `user_address`, `token_address`, `block_number`,
-/// `field`, `expected`, `actual` — the same shape the JGQHBX drive harness's
+/// `field`, `expected`, `actual` — the same shape the drive harness's
 /// compare divergences emit, so it's bisect-able.
 ///
 /// Per-position `eth_call`s — acceptable for the touched-users-per-chunk case
 /// (small set). Multicall3 batching for the market-wide verify is the natural
-/// extension (BE474R-full, post-HLYWI6).
+/// extension .
 ///
 /// The GIL is released across the whole call (`py.detach`); the orchestrator
 /// drives its RPC fetches/verifies on the process-wide shared runtime
@@ -274,7 +274,7 @@ fn run_err_to_py(err: RunError) -> PyErr {
 /// - `block_number` — the block to verify against (`chunk_end` in the
 ///   per-chunk gate).
 /// - `touched_users` — `None` (default) verifies ALL positions;
-///   `["0x...", ...]` verifies only those users (the JGQHBX drive harness's
+///   `["0x...", ...]` verifies only those users (the drive harness's
 ///   per-chunk path passes the `touched_user_addresses` from
 ///   `run_aave_update`'s progress dict for efficiency).
 #[pyfunction]
@@ -311,13 +311,13 @@ fn verify_touched_positions_on_chain(
 
             // Lock the DB handle for a read-only connection (verify uses no
             // SQL writes; the lock guarantees no concurrent mutator inside
-            // the same `DegenbotDb` handle — the JGQHBX drive harness calls
+            // the same `DegenbotDb` handle — the drive harness calls
             // from a SEPARATE connection from `run_aave_update`'s writer).
             let db = DegenbotDb::open(&path)?.0;
             let conn = db.lock();
             let touched_ref = touched.as_deref();
             // Runtime strategy: the ambient handle is resolved up front (the
-            // VJGZJ2 policy — a missing runtime errors, never a per-call
+            // Policy — a missing runtime errors, never a per-call
             // build). Invoking from inside an existing runtime (e.g. a
             // caller driving verification from the updater worker — context
             // set + multi-thread) uses `block_in_place` + `handle.block_on`
@@ -427,7 +427,7 @@ fn verify_all_positions_on_chain(
             let touched_ref = touched.as_deref();
 
             // Runtime strategy: the ambient handle is resolved up front (the
-            // VJGZJ2 policy — a missing runtime errors, never a per-call
+            // Policy — a missing runtime errors, never a per-call
             // build). The `AlloyProvider` is constructed inside that
             // runtime's context to avoid its internals' runtime-handle
             // binding.

@@ -202,7 +202,7 @@ pub(crate) fn boot_host() -> BootedHost {
     // node join resolved (a joinless host keeps the registry EMPTY below,
     // but nothing may make the runtime's existence host-dependent). The
     // binding also pins pyo3-async to the shared runtime BEFORE any async
-    // seam runs, the GOQWCL second-runtime obligation.
+    // seam runs, the second-runtime obligation.
     crate::ambient_runtime::ensure_async_runtime_bound();
     let cfg = degenbot_config::holder::config();
 

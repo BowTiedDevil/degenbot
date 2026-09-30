@@ -16,7 +16,7 @@
 //! - registrations AFTER the boot dump each emit their own structured
 //!   `info!` line, so lazily-booted resources are visible in the log too.
 //!
-//! # GOQWCL lesson: distinct thread names
+//! # Lesson: distinct thread names
 //!
 //! Two concurrent multi-thread tokio runtimes must never share a thread
 //! name (the incident: both defaulting to `tokio-runtime-worker` made

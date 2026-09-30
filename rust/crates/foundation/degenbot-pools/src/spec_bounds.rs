@@ -107,7 +107,7 @@ impl std::fmt::Display for SpecViolation {
 // Validators — pure functions returning `Result<(), SpecViolation>`.
 //
 // The family `RegisterV{2,3,4}PoolError` enums each wrap a `SpecViolation`
-// (added in MSTAT2 / 24KNGF / K3IICB) via `SpecViolation(SpecViolation)` —
+// via `SpecViolation(SpecViolation)` —
 // the register fns `.map_err(RegisterV*PoolError::SpecViolation)` when
 // calling these.
 // ---------------------------------------------------------------------------

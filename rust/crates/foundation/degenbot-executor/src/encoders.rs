@@ -645,7 +645,7 @@ pub fn enc_v4_batch(swaps: &[V4BatchEntry]) -> Result<Vec<u8>, EncoderError> {
 ///
 /// Byte-identical layout to `V4_BATCH` (0x42) except the command byte: the
 /// PoolManager SKIPS the WETH tail-settle, leaving the positive WETH delta
-/// OPEN for a trailing `V4_MINT_COMPACT` (ERC6909 capture — TGUZCT/SW42JA);
+/// OPEN for a trailing `V4_MINT_COMPACT` (ERC6909 capture);
 /// the native-ETH tail-settle still applies.
 ///
 /// # Errors

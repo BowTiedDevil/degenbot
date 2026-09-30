@@ -254,7 +254,7 @@ pub fn encode_v3_liquidity_slot(liquidity: u128) -> U256 {
 #[must_use]
 pub fn encode_v3_tick_info_slot(tick_info: &TickInfo) -> U256 {
     let gross = U256::from(tick_info.liquidity_gross.to::<u128>());
-    // The field is the on-chain int128 (LIBQKE); its two's-complement bit
+    // The field is the on-chain int128; its two's-complement bit
     // pattern shifts into the HIGH half so the low-128 `gross` field is not
     // corrupted by a negative net's sign extension.
     let net_high128 = U256::from(tick_info.liquidity_net.cast_unsigned()) << 128;

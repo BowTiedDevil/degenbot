@@ -34,7 +34,7 @@
 //! Prototype : the inspectors + captured structs land here
 //! as additive, test-only modules. Production wiring into `BlockEvm` +
 //! `SimFailure` deepening + `diagnostic.rs` retirement is gated on the
-//! JHPW5W follow-on implementation-definition task.
+//! Follow-on implementation-definition task.
 
 pub mod call_end;
 pub mod call_trace;
@@ -54,7 +54,7 @@ pub use swap_event::{CapturedSwap, SwapEventCaptureHandle, SwapEventCaptureInspe
 /// all three after `inspect_one` moves the tuple into the EVM.
 ///
 /// NOT yet wired into `sim/evm/simulator.rs::BlockEvm` (the prototype is
-/// test-only); the JHPW5W follow-on task flips the `BlockEvm` type parameter
+/// test-only); the follow-on task flips the `BlockEvm` type parameter
 /// from bare `AccessListCollector` to this alias.
 pub type SimInspector = (
     super::access_list::AccessListCollector,

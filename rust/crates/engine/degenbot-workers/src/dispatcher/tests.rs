@@ -19,7 +19,7 @@ fn policy() -> PosturePolicy {
 }
 
 /// A FRESH hermetic posture owner (leaked to `'static`): every test host
-/// gets its own owner, never the process global (7KAPBB isolation).
+/// gets its own owner, never the process global (isolation).
 fn hermetic_owner() -> &'static PostureOwner {
     std::boxed::Box::leak(std::boxed::Box::new(PostureOwner::new(policy())))
 }
@@ -50,7 +50,7 @@ fn host() -> FleetHost {
 
 #[test]
 fn boot_fails_loudly_on_an_unhostable_quota() {
-    // FF-T4: the 2-5-core tier BOOTS the serial plan — the
+    // The 2-5-core tier BOOTS the serial plan — the
     // loud refusal moved below the serial floor (HOST_FLOOR_CORES: a
     // 1.5-core host cannot host ANY tier).
     let host = FleetHost::boot(FleetBoot {
@@ -60,7 +60,7 @@ fn boot_fails_loudly_on_an_unhostable_quota() {
         posture: policy(),
         owner: Some(hermetic_owner()),
     })
-    .expect("a 4.5-core auto host boots the serial tier (FF-T4)");
+    .expect("a 4.5-core auto host boots the serial tier");
     assert_eq!(host.plan().binding, crate::plan::Binding::Serial);
     let err = FleetHost::boot(FleetBoot {
         profile: degenbot_config::FleetProfile::Auto,
@@ -127,7 +127,7 @@ fn boot_pins_exactly_one_merge_and_registers_the_census() {
     }
 }
 
-/// DNZQ5G (Q1): the FSM can only reach `Pinned{k}` on ONE cell (the
+/// The FSM can only reach `Pinned{k}` on ONE cell (the
 /// one-seat-per-bin contract), and the derived `pin_slot` agrees with
 /// that unique cell across claim and T6 cycles.
 #[test]
@@ -347,7 +347,7 @@ fn merge_is_never_queued_and_declared_roles_are_gated() {
 /// (in-flight or running on its pinned seat) must WAIT for its own seat —
 /// the dispatch lanes must never grant a hot key as a new pin claim onto a
 /// second idle seat (the pin IS the key; a double grant breaks the
-/// one-seat-per-bin RAYPAR T3 contract).
+/// one-seat-per-bin contract).
 #[test]
 fn a_busy_pinned_key_never_grants_a_second_seat() {
     let mut host = host();
@@ -735,7 +735,7 @@ fn idle_intake_slot(host: &FleetHost) -> u64 {
     u64::try_from(host.layout().poolupd.start).unwrap_or(u64::MAX)
 }
 
-/// The flap window's completion end (JCI2FW Part A + the T7/T8 contract):
+/// The flap window's completion end (the T7/T8 contract):
 /// a Running deferrable unit shed at cordon onset reports `SeatDone` like
 /// any other — `complete` must route the `DrainComplete` row (T8). A
 /// rejected completion is a loud abort in production ("seat completion
@@ -767,7 +767,7 @@ fn the_seatdone_of_a_shed_running_unit_lands_on_t8() {
     assert_eq!(host.slot_state(slot), Some(SlotState::Idle));
 }
 
-/// JCI2FW Part A: the T7 shed is driven by the SHARED owner's transition
+/// The T7 shed is driven by the SHARED owner's transition
 /// feed — the host drains its boot-time watch (the transition edge) and,
 /// at every grant pass, the live posture (check-before-each-grant), so a
 /// cordon published by ANY feeder sheds this host's deferrable in-flight
@@ -856,7 +856,7 @@ fn the_t7_shed_is_driven_by_the_shared_owner_transition_feed() {
 #[test]
 fn hermetic_owners_are_injected_never_the_process_global() {
     // Two hosts booted from DIFFERENT fresh owners hold independent
-    // postures: cordoning one never moves the other (7KAPBB isolation).
+    // postures: cordoning one never moves the other (isolation).
     let owner_a = hermetic_owner();
     let owner_b = hermetic_owner();
     let mut host_a = FleetHost::boot(boot_with_owner(owner_a)).expect("8-core boot");

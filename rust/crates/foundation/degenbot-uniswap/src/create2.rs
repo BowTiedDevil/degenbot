@@ -1,5 +1,5 @@
 //! CREATE2 pool-address derivation — the pure-Rust mirror of the Python
-//! `generate_v2_pool_address` / `generate_v3_pool_address` (Fork A, JC6OFG).
+//! `generate_v2_pool_address` / `generate_v3_pool_address` (Fork A).
 //!
 //! Two address computations:
 //!

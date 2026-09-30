@@ -58,7 +58,7 @@
 //!
 //! ## Contents (added incrementally)
 //!
-//! The crate is populated by the `USPN7M` epic, one task per concern:
+//! The crate is organized one concern per module:
 //!
 //! - **trait definitions** (`TickWordFetcher`, `CurveDataProvider`,
 //!   `BalancerRateProvider` + their error/return types + `StaticRateProvider`)
@@ -156,7 +156,7 @@ pub struct TickInfo {
     /// The liquidity delta for ticks entered from left to right.
     /// Positive for lower ticks, negative for upper ticks. Stored at the
     /// on-chain width (`ticks(tick).liquidityNet` is `int128`) — the
-    /// LIBQKE narrowing from the previous `alloy::primitives::I256`.
+    /// int128 narrowing from the previous `alloy::primitives::I256`.
     pub liquidity_net: i128,
     /// The block at which this tick was last mutated (Mint/Burn event block,
     /// or the pool's registration block for genesis-seeded ticks). Mirrors the
@@ -169,7 +169,7 @@ pub struct TickInfo {
 
 impl TickInfo {
     /// The `liquidity_net` value as a plain `i128`. The field is stored at
-    /// the on-chain width (LIBQKE narrowing), so this is now the identity
+    /// the on-chain width (int128 narrowing), so this is now the identity
     /// projection; kept as the read seam for all consumers that used to
     /// route through the low-16-byte extraction of the old `I256` field.
     ///
@@ -197,7 +197,7 @@ mod tick_info_tests {
         }
     }
 
-    /// LIBQKE: the stored field IS the on-chain int128 width; the legacy
+    /// The stored field IS the on-chain int128 width; the legacy
     /// low-16-byte projection of the old I256 field is now the identity.
     #[test]
     fn liquidity_net_i128_is_identity() {

@@ -20,7 +20,7 @@
 //! with `DEGENBOT_IO_WORKERS=2` (the terminal override both the table and
 //! this code honor). The SUM invariant holds under either assignment.
 //!
-//! # Pin count = the LPT bin count (P6YXA6 sizing reconciliation)
+//! # Pin count = the LPT bin count (sizing reconciliation)
 //!
 //! Solver pins are STRUCTURAL, not a share multiple: one seat per LPT bin,
 //! the bin count following the same policy as
@@ -138,7 +138,7 @@ pub enum BudgetError {
         /// [`MIN_SOLVER_CPUS`].
         min: u64,
     },
-    /// Fractional quota below the 2-core host floor (FLEETFLOOR FF-T2: one
+    /// Fractional quota below the 2-core host floor (FLEETFLOOR: one
     /// core for I/O work, one core for solve work) — no binding can host
     /// the fleet there, forced or not.
     #[error(
@@ -151,7 +151,7 @@ pub enum BudgetError {
         quota: f64,
     },
     /// A `runtime.io_workers` override the resolved plan cannot honor
-    /// (FF-T2): below the ambient floor (A >= 1) on the pinned
+    /// Below the ambient floor (A >= 1) on the pinned
     /// binding, or off the serial binding\u0027s exactly-one ambient I/O lane.
     /// Refused with a hint, never a silent clamp.
     #[error(
@@ -170,7 +170,7 @@ pub enum BudgetError {
 impl BudgetError {
     /// The typed variant NAME (the closed, greppable refusal vocabulary).
     /// `runtime_status()`'s `tier_refused` string names the family the plan
-    /// fell from (FF-T5 addendum, 452GZC); the Display wording stays the
+    /// fell from; the Display wording stays the
     /// operator sentence with the quota, the floor, and the hint.
     #[must_use]
     pub const fn name(&self) -> &'static str {
@@ -317,7 +317,7 @@ impl FleetBudget {
         let pool_state_updater_slots = overrides
             .pool_state_updater_slots
             .unwrap_or(DEFAULT_POOL_STATE_UPDATER_SLOTS);
-        // Pin seats are STRUCTURAL (P6YXA6 reconciliation): one per LPT
+        // Pin seats are STRUCTURAL: one per LPT
         // bin, the bin count following cpu_budget's solve-bin POLICY —
         // minus the solve headroom, floored at 1 — but FLOORING the quota:
         // cpu_budget ceils fractional quotas for worker-existence; Solver
@@ -398,7 +398,7 @@ impl FleetBudget {
                 // The logical 2-core solve minimum: the serial cycle thread
                 // runs solve work on the second core.
                 solver_cpus: MIN_SOLVER_CPUS,
-                // serial-0: exactly one solve seat (the FF-T4 contract).
+                // serial-0: exactly one solve seat (the serial contract).
                 solver_pin_count: 1,
                 sim_slot_cap,
                 pool_state_updater_slots,
@@ -514,8 +514,7 @@ mod tests {
         // Pins are STRUCTURAL: one seat per LPT bin = floor(Q) - the solve
         // headroom (allocation FLOORS the quota; cpu_budget's worker-
         // existence detection ceils it — the cross-authority property in this file
-        // pins that split) — not the 2:1 parked-wait over-subscription
-        // (P6YXA6 sizing note).
+        // pins that split) — not the 2:1 parked-wait over-subscription.
         assert_eq!(b.solver_pin_count, 6);
     }
 
@@ -549,7 +548,7 @@ mod tests {
         ));
     }
 
-    /// FF-T5 addendum (452GZC): the typed refusal family carries a closed,
+    /// The typed refusal family carries a closed,
     /// greppable NAME vocabulary — the runtime status names the family it
     /// fell from (never a free-text parse); the wording stays the operator
     /// sentence.
@@ -895,12 +894,12 @@ mod tests {
         );
     }
 
-    /// GAXX2Z helper: the shared ambient formula A = max(1, (floor(Q)-H)/4).
+    /// Helper: the shared ambient formula A = max(1, (floor(Q)-H)/4).
     fn ambient_formula(floor: u64, reserve: u64) -> u64 {
         ((floor.saturating_sub(reserve)) / 4).max(1)
     }
 
-    /// GAXX2Z helper: the structural pin formula floor(Q) - headroom, >= 1.
+    /// Helper: the structural pin formula floor(Q) - headroom, >= 1.
     fn pin_formula(floor: u64, headroom: usize) -> usize {
         usize::try_from(floor)
             .unwrap_or(usize::MAX)
@@ -908,7 +907,7 @@ mod tests {
             .max(1)
     }
 
-    /// GAXX2Z helper: the pinned arm's sum-checked invariants.
+    /// Helper: the pinned arm's sum-checked invariants.
     #[expect(
         clippy::cast_precision_loss,
         reason = "test quotas and small share sums are exact in f64"
@@ -962,7 +961,7 @@ mod tests {
         }
     }
 
-    /// GAXX2Z helper: the marked arm's total pinned arithmetic.
+    /// Helper: the marked arm's total pinned arithmetic.
     fn assert_marked_projection(
         quota: f64,
         floor: u64,
@@ -994,7 +993,7 @@ mod tests {
         );
     }
 
-    /// GAXX2Z helper: the serial arm's one-lane / one-seat topology.
+    /// Helper: the serial arm's one-lane / one-seat topology.
     #[expect(
         clippy::cast_precision_loss,
         reason = "the host floor is a tiny core count, exact in f64"
@@ -1125,7 +1124,7 @@ mod tests {
                             "hostable shape refused: q = {q}"
                         )));
                     };
-                    // The P6YXA6 formula, as written.
+                    // The formula, as written.
                     prop_assert_eq!(
                         b.solver_pin_count,
                         usize::try_from((floor_q - 2).max(1)).unwrap_or(usize::MAX)
@@ -1153,7 +1152,7 @@ mod tests {
     }
 
     mod derivation {
-        //! CVURM7 : `derive` over ARBITRARY quotas AND
+        //! `derive` over ARBITRARY quotas AND
         //! overrides. Total over the input space: a typed `Ok` holding the
         //! invariants (integer shares sum to at most the floor; the
         //! fractional remainder banks exactly `Q - declared_sum`; seats
@@ -1219,7 +1218,7 @@ mod tests {
                         BudgetError::QuotaTooSmallForPinnedRoles { .. }
                         | BudgetError::Oversubscribed { .. }
                         | BudgetError::TooFewSolverCpus { .. }
-                        // FF-T2: the plan-tier refusal classes.
+                        // The plan-tier refusal classes.
                         // The derive itself never produces them (the plan
                         // does); listed so the match stays exhaustive and
                         // a future arm is still a compile error.

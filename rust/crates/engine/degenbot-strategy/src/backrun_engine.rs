@@ -1,4 +1,4 @@
-//! Backrun connector-solve engine (epic DFYDYI, task B3): the
+//! Backrun connector-solve engine: the
 //! engine-backed path solver replacing the hand-composed mono-pool probe.
 //!
 //! Solves over a PRIVATE planning [`Workspace`] (the FORK-1 isolation: the
@@ -302,7 +302,7 @@ impl LaneFamily {
 }
 
 /// The best executable path a lane found: everything the composer + exact
-/// sim need (epic DFYDYI B4).
+/// sim need.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaneCandidate {
     /// The workspace declaration index that identifies this solved path.

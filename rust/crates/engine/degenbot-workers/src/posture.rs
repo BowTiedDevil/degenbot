@@ -47,13 +47,13 @@ pub enum EnterReason {
         /// Measured duty percent.
         duty_percent: f64,
     },
-    /// A lane died mid-flight (FF-T4, Z6XTDX — the DECIDED option (a)
+    /// A lane died mid-flight (the DECIDED option (a)
     /// input). Entered with its OWN exit discipline: see
     /// [`PostureCause::LaneDeath`].
     LaneDeath,
 }
 
-/// A typed non-throttle posture cause (FF-T4, Z6XTDX — the DECIDED
+/// A typed non-throttle posture cause (the DECIDED
 /// option (a): the input is typed AT the posture owner, not a sample
 /// it has to infer from; the failure taxonomy stays CLOSED per
 /// ADR-040's per-bucket reactions).
@@ -140,7 +140,7 @@ impl PosturePolicy {
     }
 
     /// Apply a validated [`PosturePolicyPatch`] to `self`, producing the
-    /// effective policy (the JCI2FW Part B re-tune channel's only write
+    /// effective policy (the re-tune channel's only write
     /// path: current policy + supplied fields). Pure — the caller feeds the
     /// result to [`PostureOwner::retune`]. Call [`PosturePolicyPatch::validate`]
     /// FIRST; this projection never checks semantics.
@@ -163,8 +163,8 @@ impl PosturePolicy {
     }
 }
 
-/// A partial re-tune request over the six typed thresholds (JCI2FW Part B,
-/// the operator channel's wire shape): every field is `None` = "key not
+/// A partial re-tune request over the six typed thresholds (the
+/// operator channel's wire shape): every field is `None` = "key not
 /// supplied — keep the current value". `sim_intake_floor_override` is
 /// doubly-`Option`: the OUTER `None` is key-absent, and the inner
 /// `Some(None)` is the operator supplying the key's `None` value (clear the
@@ -248,8 +248,8 @@ impl PosturePolicyPatch {
     }
 }
 
-/// Why the re-tune channel refused a [`PosturePolicyPatch`] (JCI2FW Part
-/// B). The rules live once, in [`PosturePolicyPatch::validate`]; the wire
+/// Why the re-tune channel refused a [`PosturePolicyPatch`]. The rules
+/// live once, in [`PosturePolicyPatch::validate`]; the wire
 /// layer maps these to its typed channel error verbatim.
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum PostureRetuneError {
@@ -307,7 +307,7 @@ pub struct PostureCounters {
     /// Lease grants denied while cordoned (deferrable intake held + sim
     /// intake suppression above the floor).
     pub intake_suppressed: u64,
-    /// Lane-death causes observed (FF-T4 — the sticky cordons, incl.
+    /// Lane-death causes observed (the sticky cordons, incl.
     /// upgrades of an existing throttle cordon).
     pub lane_deaths: u64,
 }
@@ -327,7 +327,7 @@ pub struct PostureStateMachine {
     samples: VecDeque<Sample>,
     last_unclean_ms: Option<u64>,
     counters: PostureCounters,
-    /// A lane-death cordon is STICKY (FF-T4): once set, the clean-window
+    /// A lane-death cordon is STICKY: once set, the clean-window
     /// exit refuses to lift the cordon — the lane is still dead. Only
     /// a fresh process clears it (the operator restart path); there is
     /// deliberately no in-process clear API (a sticky cordon that
@@ -362,8 +362,8 @@ impl PostureStateMachine {
         &self.counters
     }
 
-    /// The sticky lane-death hold (FF-T4): once set, no clean window can
-    /// ever lift it — the `FleetHost` Faulted transition (TB4QGX T6) keys on
+    /// The sticky lane-death hold: once set, no clean window can
+    /// ever lift it — the `FleetHost` Faulted transition keys on
     /// THIS typed latch, never on elapsed cordon time.
     #[must_use]
     pub const fn lane_death_held(&self) -> bool {
@@ -380,7 +380,7 @@ impl PostureStateMachine {
     /// and the trailing sample window are KEPT — a retune never fabricates
     /// samples, so the next [`Self::observe`] re-derives the posture under
     /// the new thresholds. Semantic validation of the new policy is the
-    /// re-tune caller's job (the JCI2FW Part B channel).
+    /// re-tune caller's job (the re-tune channel).
     pub fn set_policy(&mut self, policy: PosturePolicy) {
         self.policy = policy;
     }
@@ -400,7 +400,7 @@ impl PostureStateMachine {
         }
     }
 
-    /// Feed one typed non-throttle cause (FF-T4, Z6XTDX — the DECIDED
+    /// Feed one typed non-throttle cause (the DECIDED
     /// option (a) input). A [`PostureCause::LaneDeath`] enters the
     /// cordon from ANY state with its OWN exit discipline: the cordon
     /// is sticky (the clean window never lifts it — see
@@ -517,7 +517,7 @@ impl PostureStateMachine {
     }
 
     fn maybe_exit(&mut self, now_ms: u64) -> PostureChange {
-        // The lane-death hold is STICKY (FF-T4): the clean window never
+        // The lane-death hold is STICKY: the clean window never
         // lifts it — the lane is still dead. Throttle samples keep
         // feeding the machine (harmless bookkeeping); only a fresh
         // process clears the hold.
@@ -544,7 +544,7 @@ impl PostureStateMachine {
     }
 }
 
-// ---- the ONE process-level fleet posture owner (JCI2FW Part A) ------------
+// ---- the ONE process-level fleet posture owner ------------
 
 /// Watch-style subscription to the fleet posture feed — the workers-crate
 /// equivalent of a `tokio::sync::watch` receiver (the crate carries no
@@ -619,7 +619,7 @@ impl PostureOwner {
     /// A fresh owner in [`FleetPosture::Nominal`]. Hermetic tests build
     /// their own owner and inject it via `FleetBoot::owner` — NEVER the
     /// process global ([`process`]/[`install_process_owner`]); posture
-    /// leaking across tests is a failure class (7KAPBB).
+    /// leaking across tests is a failure class.
     #[must_use]
     pub fn new(policy: PosturePolicy) -> Self {
         Self {
@@ -637,7 +637,7 @@ impl PostureOwner {
     /// transition (`Held` ticks are silent — a subscriber never sees a
     /// spurious edge).
     ///
-    /// # Feeder-site contract (TB4QGX T3, ADR-044)
+    /// # Feeder-site contract (ADR-044)
     /// A BOT-side caller of this method MUST also wake the fleet hosts on a
     /// non-`Held` change (the degenbot-bot host waker,
     /// `arb_engine::fleet_wake::wake_hosts`), which emits ONE untrusted,
@@ -657,12 +657,12 @@ impl PostureOwner {
         change
     }
 
-    /// Feed one typed non-throttle cause (FF-T4, Z6XTDX). Publishes to
+    /// Feed one typed non-throttle cause . Publishes to
     /// the feed on a real transition like [`Self::observe_throttle`]
     /// (an idempotent hold-upgrade returns `Held` and stays silent —
     /// the detection site owns the loud lane-death log).
     ///
-    /// # Feeder-site contract (TB4QGX T3, ADR-044)
+    /// # Feeder-site contract (ADR-044)
     /// A BOT-side caller of this method MUST also wake the fleet hosts on a
     /// non-`Held` change; see [`Self::observe_throttle`]. On the lane-death
     /// (`Faulted`) arm the wake still fires, and the host drains its held
@@ -766,7 +766,7 @@ impl PostureOwner {
     }
 }
 
-/// The process-level posture owner (the KAHU5W holder pattern): ONE
+/// The process-level posture owner (the holder pattern): ONE
 /// instance per process, installed by the FIRST fleet boot (first-wins —
 /// later installs log at debug and return the existing owner).
 static PROCESS_OWNER: OnceLock<PostureOwner> = OnceLock::new();
@@ -829,7 +829,7 @@ mod tests {
         assert_eq!(sm().state(), FleetPosture::Nominal);
     }
 
-    /// FF-T4 — the DECIDED option (a): a typed `PostureCause`
+    /// The DECIDED option (a): a typed `PostureCause`
     /// enters the cordon IMMEDIATELY (no sample hysteresis).
     #[test]
     fn a_lane_death_cordons_immediately() {
@@ -1106,7 +1106,7 @@ mod tests {
         assert_eq!(p.sim_intake_floor_override, None);
     }
 
-    // ---- PostureOwner (JCI2FW Part A) -------------------------------------
+    // ---- PostureOwner -------------------------------------
 
     #[test]
     fn owner_transitions_publish_only_on_change() {
@@ -1229,7 +1229,7 @@ mod tests {
         assert_eq!(owner.counters().entered, 1);
     }
 
-    // ---- the operator re-tune patch (JCI2FW Part B) -----------------------
+    // ---- the operator re-tune patch -----------------------
 
     #[test]
     fn an_empty_patch_is_rejected() {

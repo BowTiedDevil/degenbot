@@ -9,7 +9,7 @@
 //! # Open path
 //!
 //! [`DegenbotDb::open`] sets `PRAGMA journal_mode=WAL; busy_timeout=5000;
-//! synchronous=NORMAL;` (matching the Python open path — Phase 0, `2KUI3M`),
+//! synchronous=NORMAL;` (matching the Python open path — Phase 0),
 //! runs the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
 //! version-lock (`migrate::ensure_schema_at_open`) — a legacy DB carrying the
 //! `alembic_version` marker table is healed out-of-place to `RustOwned` unless

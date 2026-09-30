@@ -10,7 +10,7 @@
 //!   layer, state/anchor-adjacent) vs SLOW (>=100 µs — reached the RPC
 //!   transport). The SLOW totals are the latency the M1 pooled-handle
 //!   parallel-workers pipeline buys back; the FAST share sizes any prefetch
-//!   headroom (JSXP3I direction 1).
+//!   headroom (direction 1).
 //! - [`BlockSimHandle::build`](super::simulator::BlockSimHandle::build) —
 //!   count + duration (the amortization target: today the build re-arms per
 //!   1-candidate dispatch).

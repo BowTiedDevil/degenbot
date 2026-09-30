@@ -391,7 +391,7 @@ impl ResolvedHop {
     /// The integer tick-range sequence, if this is a CL hop (V3 or V4).
     #[must_use]
     pub fn as_int_sequence(&self) -> Option<&IntV3TickRangeSequence> {
-        // RLVDUP T2: the sequence is Arc-shared (built once per projection;
+        // The sequence is Arc-shared (built once per projection;
         // the memo deep-cloning it per path was the point of this change).
         match self {
             Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
@@ -455,7 +455,7 @@ pub struct ResolvedMixedPath {
     pub hops: Vec<ResolvedHop>,
     /// Whether this path is valid for solving
     pub valid: bool,
-    /// Per-hop state nonces captured at resolve time (AV42C7 staleness gate).
+    /// Per-hop state nonces captured at resolve time (the staleness gate).
     /// `state_nonces[i]` is `pool_state_nonce(pool_refs[i].pool_key)` at the
     /// resolve-time `core.read()` snapshot. The dispatch seam re-reads each
     /// hop's current nonce and skips candidates whose nonce has advanced —
@@ -491,7 +491,7 @@ pub struct SolvePathResult {
     /// is hit, this may be less than the input — the unused remainder is
     /// retained by the caller (matching on-chain partial-fill behavior).
     pub consumed_inputs: Vec<U256>,
-    /// Per-hop state nonces captured at resolve time (AV42C7 staleness gate).
+    /// Per-hop state nonces captured at resolve time (the staleness gate).
     /// The dispatch seam re-reads each hop's current nonce and skips
     /// candidates whose nonce has advanced — the solver computed against
     /// state the pump has since superseded (the block-N solve used pool@N-1

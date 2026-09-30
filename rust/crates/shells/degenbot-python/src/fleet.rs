@@ -1,4 +1,4 @@
-//! The fleet operator seam (JCI2FW Part B): the runtime re-tune channel
+//! The fleet operator seam: the runtime re-tune channel
 //! over the ONE process-level posture owner
 //! ([`degenbot_workers::posture::process`]).
 //!
@@ -299,7 +299,7 @@ pub fn set_posture_policy(patch: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
         op_warn!(domain = solver, changed = %changed,
             "operator retune — cordon thresholds changed and are LIVE"
         );
-        // TB4QGX T9 (retune wake gap): a live retune can change the
+        // Retune wake gap: a live retune can change the
         // admission guard with no message in flight. Wake every parked host
         // so the fleet re-reads the owner now, not at the backstop bound.
         degenbot_bot::arb_engine::fleet_wake::wake_hosts();

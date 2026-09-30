@@ -2,7 +2,7 @@
 //!
 //! The coordination-state value object for the dispatch loop. Python held a
 //! separate mirror (`examples/eth_backrun_v2_v3_v4_rust.py` `class Dispatcher`)
-//! duplicating the Rust-owned [`Dispatcher`] (`M756BN` + `5FB5MW`
+//! duplicating the Rust-owned [`Dispatcher`] and its
 //! `PathSuppression`). This wrapper makes the Rust-owned state the single
 //! source — Python constructs + drives it via the `PyO3` seam (ADR-005 §3).
 //!
@@ -119,7 +119,7 @@ impl PyDivergentPool {
 )]
 pub struct PyDispatcher {
     pub(crate) inner: Arc<Mutex<Dispatcher>>,
-    /// The standalone path-suppression tracker (LITQFF) — held alongside the
+    /// The standalone path-suppression tracker — held alongside the
     /// `Dispatcher` arc so the simulation seam (`dispatch_profitable_py`)
     /// can lock suppression WITHOUT locking the `Dispatcher` (the submission
     /// monitor tasks contend for the `Dispatcher` lock; suppression is
@@ -147,7 +147,7 @@ impl PyDispatcher {
     }
 
     /// Borrow the shared `Arc<Mutex<PathSuppression>>` (for the simulation
-    /// seam's `dispatch_profitable_py` — A4/QQFTB4 — which locks suppression
+    /// seam's `dispatch_profitable_py` — which locks suppression
     /// for the `dispatch_profitable_results` call; the `Dispatcher` arc is
     /// NOT touched, so monitor-task contention on the `Dispatcher` is
     /// unaffected).
@@ -156,7 +156,7 @@ impl PyDispatcher {
     }
 
     /// Borrow the shared `Arc<Mutex<PoolDivergence>>` (for the simulation
-    /// seam's `dispatch_profitable_py` — `GMWYIU` — which locks divergence
+    /// seam's `dispatch_profitable_py` — which locks divergence
     /// at the dispatch skip + feedback bookends; the `Dispatcher` arc is
     /// NOT touched, so monitor-task contention on the `Dispatcher` is
     /// unaffected).
@@ -165,7 +165,7 @@ impl PyDispatcher {
     }
 
     /// Borrow the shared `Arc<Mutex<FeeOnTransferRegistry>>` (for the
-    /// simulation seam's `dispatch_profitable_py` — `3O535Q` — which locks
+    /// simulation seam's `dispatch_profitable_py` — which locks
     /// the registry at the dispatch skip + feedback + success bookends).
     pub(crate) fn fot_registry_arc(&self) -> Arc<Mutex<FeeOnTransferRegistry>> {
         Arc::clone(&self.fot_registry)
@@ -351,7 +351,7 @@ impl PyDispatcher {
     }
 
     // ── PathSuppression delegation ────────────────────────────────
-    // Delegated to the standalone `Arc<Mutex<PathSuppression>>` (LITQFF), NOT
+    // Delegated to the standalone `Arc<Mutex<PathSuppression>>`, NOT
     // the `Dispatcher` arc — the sim seam locks the same arc directly, and the
     // `Dispatcher` lock stays uncontended by suppression bookkeeping.
     /// Record a successful simulation for `path_id` (clears its fail streak).
@@ -396,7 +396,7 @@ impl PyDispatcher {
             .discard(path_id);
     }
 
-    // ── PoolDivergence delegation (GMWYIU) ─────────────────────────
+    // ── PoolDivergence delegation ─────────────────────────
     // Delegated to the standalone `Arc<Mutex<PoolDivergence>>`, NOT the
     // `Dispatcher` arc — the sim seam locks the same arc directly at the
     // dispatch skip (step 2) + feedback (step 7) bookends. The persistent

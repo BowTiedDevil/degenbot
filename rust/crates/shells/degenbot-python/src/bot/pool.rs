@@ -189,7 +189,7 @@ impl degenbot_pools::rate_provider::BalancerRateProvider for PyBalancerRateProvi
 }
 
 // ---------------------------------------------------------------------------
-// Curve data-provider Py adapter (ADR-005 JFGCHJ I/O trait object).
+// Curve data-provider Py adapter (ADR-005 I/O trait object).
 // ---------------------------------------------------------------------------
 
 /// `PyO3` adapter wrapping a Python `CurveDataProvider` as a stored
@@ -439,7 +439,7 @@ pub struct PyLiquidityPool {
 }
 
 impl PyLiquidityPool {
-    /// RATR5A/CXRHW3 probe (mechanical lock-freedom invariant, pair-review
+    /// Probe (mechanical lock-freedom invariant, pair-review
     /// condition 1): the caller thread holds the GIL; the `BotState` WRITE is
     /// required free. `try_write` is instant and non-blocking - safe at any
     /// depth (it never parks).
@@ -705,7 +705,7 @@ impl PyLiquidityPool {
             }
             let Some(fetcher) = fetcher else {
                 // Misses exist but no fetcher is stored: the hypothetical
-                // cannot be backfilled (RATR5A staged pass), fail as None
+                // cannot be backfilled (staged pass), fail as None
                 // exactly like the disarmed sim's FetchExhausted arm.
                 return Ok(None);
             };
@@ -845,7 +845,7 @@ impl PyLiquidityPool {
             )
         })?;
         // DISARMED — miss recovery cannot run (no-raise-on-miss: sparse => 0).
-        // cdbc03bb (RATR5A Finding on ae2c4124f): two DISTINCT error classes:
+        // cdbc03bb (finding on ae2c4124f): two DISTINCT error classes:
         // - FetchExhausted/Failed (miss recovery) → U256::ZERO per the no-raise contract.
         // - NotComputable (V2 mul overflow >= 2^256) → ValueError raise (on-chain parity).
         // The disarm conversion collapsed them; this restores the distinction by
@@ -1573,7 +1573,7 @@ impl PyLiquidityPool {
     }
 
     /// The resolved `DexIdentity` for this pool's registered variant, with the
-    /// JSON-sourced deployer + `init_hash` merged in (Fork A, NSAZ4X). `None` if
+    /// JSON-sourced deployer + `init_hash` merged in (Fork A). `None` if
     /// not a V2 pool. The Python companion reads this to recover deployer /
     /// init-hash without taking constructor args. Protocol-const fields
     /// (fees/ABI shape) come from the variant preset; `factory`/`deployer` /
@@ -1952,7 +1952,7 @@ impl PyLiquidityPool {
         }
     }
 
-    /// Backfill an unknown tick-bitmap word for this pool (T2 FBJTUM — the
+    /// Backfill an unknown tick-bitmap word for this pool (the
     /// write-path gate's fetch seam).
     /// STAGED fetch — the multi-second fetch (`Python::attach` + the
     /// companion's serial web3 RPC) runs with the `BotState` write guard
@@ -1974,7 +1974,7 @@ impl PyLiquidityPool {
         // a race requires a same-pool event to land inside the multi-second
         // fetch window, so three attempts exhaust only pathological bursts.
         // The retry attempt re-derives the fetch context from the pool clock
-        // (RATR5A Finding-1(b)), not from the caller's stale block.
+        // (finding 1(b)), not from the caller's stale block.
         for attempt in 0..3u8 {
             let Some(staged) = self.with_state_mut(py, |s| {
                 s.stage_word_fetch_by_pool_id(self.pool_id, word_i32, block, attempt > 0)
@@ -1995,7 +1995,7 @@ impl PyLiquidityPool {
         Ok(false)
     }
 
-    /// The pool's tick-map coverage (T2 FBJTUM): `"sparse"` or `"tracked"`
+    /// The pool's tick-map coverage: `"sparse"` or `"tracked"`
     /// for a registered V3/V4 pool, `None` for any other pool family. The
     /// Python companion's sparse-word gate reads this — Rust's coverage is
     /// sparse-map backfill). Mirrors the Python `UniswapV3Pool.update_tick_data`
@@ -2087,7 +2087,7 @@ impl PyLiquidityPool {
 
     // --- Curve state read getters + mutations (ADR-005 slice 11a state port) ---
 
-    // --- Curve identity getters (ADR-005 identity extension, BOMDRK) ---
+    // --- Curve identity getters (ADR-005 identity extension) ---
 
     /// Curve A-ramping: `(initial_a, future_a, initial_a_time,
     /// future_a_time, create_timestamp)` — all `None` for non-ramping pools.
@@ -2186,7 +2186,7 @@ impl PyLiquidityPool {
     }
 
     /// Whether a Curve data-provider I/O trait object is stored on this
-    /// pool's state (ADR-005 JFGCHJ). `False` for non-Curve pools or Curve
+    /// pool's state (ADR-005). `False` for non-Curve pools or Curve
     /// pools registered without a provider (the no-I/O fixture case).
     #[getter]
     fn curve_has_data_provider(&self, py: Python<'_>) -> bool {
@@ -2196,7 +2196,7 @@ impl PyLiquidityPool {
         })
     }
 
-    // --- Curve identity getters (ADR-005 BQM2OA identity-from-handle) ---
+    // --- Curve identity getters (ADR-005 identity-from-handle) ---
 
     /// Curve amplification coefficient `A` (raw). 0 for a non-Curve handle.
     #[getter]
@@ -2760,7 +2760,7 @@ impl PyLiquidityPool {
         })
     }
 
-    // --- Balancer stable identity getters (ADR-005 sealed seam, MBWSGP) ---
+    // --- Balancer stable identity getters (ADR-005 sealed seam) ---
 
     /// Balancer V2 stable pool's Vault singleton (EIP-55 checksummed). Empty
     /// string if not a Balancer stable pool.

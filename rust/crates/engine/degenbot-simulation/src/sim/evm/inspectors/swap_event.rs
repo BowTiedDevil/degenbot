@@ -41,7 +41,7 @@
 //! `Log` (all metadata `None`) before decoding. The captured struct
 //! [`CapturedSwap`] stores the DECODED fields — no `Log` type in the public
 //! surface. Whether the decoders should be widened to accept `primitives::Log`
-//! directly is a decision for the JHPW5W follow-on task.
+//! directly is a follow-on decision.
 
 use std::cell::RefCell;
 use std::rc::Rc;

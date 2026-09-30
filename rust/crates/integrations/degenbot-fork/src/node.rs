@@ -5,8 +5,8 @@
 //! surface as typed methods delegating to [`alloy::providers::ext::AnvilApi`].
 //!
 //! Mirrors the public config + dev-method surface of the legacy Python
-//! `AnvilFork` (see `src/degenbot/anvil_fork.py`); the Python class becomes a
-//! thin `PyO3` shell in task FF4 (`WXRNHH`).
+//! `AnvilFork` (see `src/degenbot/anvil_fork.py`); the Python class is a
+//! thin `PyO3` shell.
 //!
 //! [`Provider`]: alloy::providers::Provider
 

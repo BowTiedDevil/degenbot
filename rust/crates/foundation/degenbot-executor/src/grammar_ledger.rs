@@ -10,12 +10,12 @@
 //! * **ledger-validator** — a [`LedgerOp`] IR + a stateful walker
 //!   ([`LedgerValidator`]) that simulates credit/debit per [`Ledger`] and
 //!   rejects any stream that violates **credit-before-debit**. It encodes the
-//!   two invariants from DS4OQD:
+//!   two invariants:
 //!   - `D0` — a `V4_TAKE*`/`V4_MINT*` may not debit `PM[currency]` unless a
 //!     prior swap left `PM[currency] ≥ amount` (the `v2_v2_v4`/`v2_v4_v4`
 //!     bug);
 //!   - terminal-V2 — a `V2_SWAP_CALC` may not consume `H[pool,input]` unless
-//!     the pair was credited first (the `2PT5HH` / `path-182449` über-draw).
+//!     the pair was credited first (the `path-182449` über-draw).
 
 use std::collections::HashMap;
 
@@ -51,7 +51,7 @@ pub enum FundingSource {
     /// PoolManager delta accounting carries the entry credit (no-prefund V4).
     PmLedger,
     /// An external lender flash (Aave-shape; modeled, executable only after
-    /// the external-ledger work — VIXQYH stubs it).
+    /// the external-ledger work — stubbed).
     ExternalLender,
     /// Burn a held ERC-6909 claim to fund settlement.
     Erc6909BurnToSettle,
@@ -74,11 +74,11 @@ pub enum ProfitCapture {
     /// (Balancer) captured into the external Vault ledger — modeled, not yet
     /// executable by the current executor.
     BalancerVault,
-    /// follow-up (767TN5): the rare 'send accumulated profit to
+    /// follow-up: the rare 'send accumulated profit to
     /// another address' case. Defeats the profit assert (the sweep sends the
     /// balance away, so combined_after < combined_before is expected). Routes
     /// to the contract's `check_mode=3` (SWEEP) — the ONLY way to defeat the
-    /// U3WVLL assert. The recipient is an address-table entry the operator
+    /// profit assert. The recipient is an address-table entry the operator
     /// populates (`SET_ADDRESS`) and passes as `bribe_recipient_idx` with
     /// `bribe_bips=10000` for a full sweep.
     SweepToAddress,
@@ -107,7 +107,7 @@ pub struct ShapeClass {
     pub bribe: Bribe,
 }
 
-/// The stream-varying D1 output axes (candidate 4, `3BTR22`) — the axes a
+/// The stream-varying D1 output axes (candidate 4) — the axes a
 /// family's builder may **branch on in the produced STREAM**, as opposed to
 /// the runtime `check_mode`/`pack_config` config seam.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -123,7 +123,7 @@ pub enum Axis {
 
 /// A family's declared set of stream-varying axes — which of
 /// `{funding, capture, bribe}` its builder actually branches on in the
-/// produced bytes (declared on the family→producer dispatch row, `3BTR22`),
+/// produced bytes (declared on the family→producer dispatch row),
 /// so a caller reads a family's honored axes off the declaration instead of
 /// reverse-engineering the builder body. **Declaration, not behavior:** a
 /// family whose row leaves an axis off derives it implicitly (InPathFlash
@@ -265,14 +265,14 @@ pub enum LedgerOp {
     /// WETH delta OPEN (no tail take), so the stream must convert it with a
     /// `Mint { currency: weth }` before `V4UnlockEnd` — otherwise the PM's
     /// `delta()` settles the leftover delta to the caller at callback end
-    /// (TGUZCT/SW42JA). Disarmed by a mint of the same currency.
+    /// Disarmed by a mint of the same currency.
     OpenWethPairing { weth: Address },
     /// `V4_TAKE_DELTA(cur→rcp)` — take the ENTIRE positive `PM[cur]` delta to
     /// `rcp` (the profit capture). Debits whatever credit `PM[cur]` holds
     /// (amount is runtime state — the current balance). Requires `PM[cur] > 0`
     /// immediately before (the D0 credit-before-debit rule on the PM ledger).
     /// When the recipient is a V2 pool (`seeds_pool`), the taken credit seeds
-    /// that pool's `H[pool]` (the 2PT5HH rule across a V4→V2 boundary — e.g.
+    /// that pool's `H[pool]` (the terminal-V2 rule across a V4→V2 boundary — e.g.
     /// the `v3_v4_v2` family).
     V4TakeDelta {
         currency: Address,
@@ -304,7 +304,7 @@ pub enum LedgerOp {
         /// `V4Settle`/net-zero accounts it) — no executor credit.
         recipient: SwapRecipient,
     },
-    // ── POC (6SRC23): V2/V3 flash-credit chain for `v2_v3` (ADR-029 D4/D5). ──
+    // ── POC: V2/V3 flash-credit chain for `v2_v3` (ADR-029 D4/D5). ──
     /// A `V2_SWAP_COMPACT` flash: the pool extends `out_currency` credit to the
     /// executor (the swap output, before repayment), and incurs an `in_currency`
     /// flash debt repayable within the callback. Extends the executor `Erc20`
@@ -379,7 +379,7 @@ pub enum LedgerOp {
     /// credits `Erc20[WETH]` (the native came from a V4 `V4TakeCompact(native→
     /// SELF)`).
     WethDeposit { weth: Address, amount: u128 },
-    /// `EXTERNAL_FLASH` (VIXQYH stub) — a flash from an external-held ledger
+    /// `EXTERNAL_FLASH` (stub) — a flash from an external-held ledger
     /// (a Balancer-shaped Vault or an Aave-shaped lender). Extends the
     /// executor's balance on that ledger + incurs flash debt, mirroring
     /// `V2Flash`/`V3Flash` but on a pluggable [`BalanceLedger`] (the `ledger`
@@ -401,7 +401,7 @@ pub enum LedgerOp {
         /// The owed amount (incl. the flash premium for a lender).
         in_amount: u128,
     },
-    /// `EXTERNAL_REPAY` (VIXQYH stub) — the repayment half of an
+    /// `EXTERNAL_REPAY` (stub) — the repayment half of an
     /// [`ExternalFlash`]: debits the external-ledger balance (checked — D0
     /// credit-before-debit, the same invariant as `Erc20Transfer` but routed to
     /// the external `BalanceLedger`) and zeroes the flash debt. Composes the
@@ -484,13 +484,13 @@ impl LedgerOp {
 }
 
 /// Rejects a command stream if it violates **credit-before-debit** within any
-/// ledger (the DS4OQD invariants: D0 take/mint-before-credit; terminal-V2
+/// ledger (the invariants: D0 take/mint-before-credit; terminal-V2
 /// über-draw). Fail-fast on the first violation.
 ///
 /// `take`/`mint` require `PM[currency] ≥ amount` **immediately before**; a
 /// `SwapCalc` requires the pair to have been seeded (`H[pool] ≥ 0`) first.
 ///
-/// POC (`6SRC23`): the executor's own `Erc20[currency]` balance is the same
+/// POC: the executor's own `Erc20[currency]` balance is the same
 /// credit-before-debit ledger for V2/V3 flash swaps — a flash repayment
 /// (`Erc20Transfer`) is only legal after a prior flash extended the credit.
 /// Flash debts must be fully repaid by `finish()` (the V2/V3 analogue of the
@@ -506,7 +506,7 @@ pub struct LedgerValidator {
     /// by flash swaps, consumed by `Erc20Transfer`) — behind the
     /// [`Erc20Ledger`] newtype.
     erc20: Erc20Ledger,
-    /// External held-balance ledgers (VIXQYH stub — a Balancer Vault and/or
+    /// External held-balance ledgers (stub — a Balancer Vault and/or
     /// an Aave lender). Indexed by `LedgerOp::ExternalFlash::ledger`. Empty by
     /// default; populated via [`Self::with_external_ledgers`]. The additive
     /// proof: the D0 gate enforces on these uniformly via the `BalanceLedger`
@@ -520,7 +520,7 @@ pub struct LedgerValidator {
     /// Outstanding flash debt per currency (owed by the executor, awaiting
     /// repayment within a callback). Checked zero at `finish()`.
     flash_debt: HashMap<Address, u128>,
-    /// Armed open-weth (0x43) batch pairing (TGUZCT/SW42JA): `Some(weth)`
+    /// Armed open-weth (0x43) batch pairing: `Some(weth)`
     /// after an `OpenWethPairing` op until a `Mint { currency: weth }`
     /// disarms it; `V4UnlockEnd` rejects while set.
     open_weth_pairing: Option<Address>,
@@ -536,12 +536,12 @@ pub enum ValidationError {
         wanted: u128,
         have: i128,
     },
-    /// A `V2_SWAP_CALC` fired before the pair was seeded (the terminal-V2 /
-    /// `2PT5HH` über-draw class).
+    /// A `V2_SWAP_CALC` fired before the pair was seeded (the terminal-V2
+    /// über-draw class).
     SwapCalcBeforeCredit { pool: Address },
     /// An `ERC20_TRANSFER` debiting the executor fired before the executor held
     /// `currency` credit (the V2/V3 flash-repay-before-credit class; surfaced
-    /// by the `6SRC23` POC — byte-parity cannot see this ordering defect).
+    /// by the POC — byte-parity cannot see this ordering defect).
     Erc20TransferBeforeCredit {
         currency: Address,
         wanted: u128,
@@ -561,14 +561,14 @@ pub enum ValidationError {
     /// precede the native pay-in.
     NativeTransferBeforeCredit { wanted: u128, have: i128 },
     /// An `ExternalFlash`/`ExternalRepay` referenced an external-ledger index
-    /// not registered on the validator (VIXQYH stub). The validator must be
+    /// not registered on the validator (stub). The validator must be
     /// constructed with `with_external_ledgers` covering the index the stream
     /// uses.
     UnknownExternalLedger { ledger: u8 },
     /// A `V4_BATCH_OPEN_WETH` (0x43) left the WETH delta OPEN and the unlock
     /// closed before a WETH `V4_MINT_COMPACT` consumed it — the PM's
     /// `delta()` would settle the leftover delta to the caller at callback
-    /// end (TGUZCT: with the open-weth batch, a batch without its mint is
+    /// end (with the open-weth batch, a batch without its mint is
     /// unrepresentable).
     OpenWethBatchNotFollowedByMint { weth: Address },
 }
@@ -580,7 +580,7 @@ pub enum ValidationError {
 // The Address-keyed signed-balance ledgers (PM delta + executor ERC-20)
 // share `credit` / `debit` (the credit-before-debit D0 check) / `balance`.
 // That shared interface is the open-set seam: an external Vault/lender's
-// held-balance or delta ledger (VIXQYH) plugs in as one more `BalanceLedger`
+// held-balance or delta ledger plugs in as one more `BalanceLedger`
 // impl, and the validator's D0 enforcement applies uniformly. PM-specific ops
 // (debt-creation, settle, take-delta, check-all-zero) stay inherent — they
 // don't generalize across ledgers. `native` (scalar), `pair` (unsigned
@@ -713,7 +713,7 @@ impl BalanceLedger for Erc20Ledger {
     }
 }
 
-/// A stub external held-balance ledger (VIXQYH — ADR-029 D6 additive proof):
+/// A stub external held-balance ledger (ADR-029 D6 additive proof):
 /// the shape a Balancer Vault's per-token balance or an Aave lender's
 /// supplied-liquidity balance takes from the validator's perspective. Same
 /// Address-keyed signed-balance + D0 credit-before-debit semantics as
@@ -752,7 +752,7 @@ impl BalanceLedger for ExternalLedger {
 }
 
 impl LedgerValidator {
-    /// Configure the external held-balance ledgers (VIXQYH stub). The
+    /// Configure the external held-balance ledgers (stub). The
     /// validator routes `LedgerOp::ExternalFlash`/`ExternalRepay` to the
     /// `ExternalLedger` at the index the op carries, enforcing D0 on it via
     /// the `BalanceLedger` trait. Returns `self` for chaining.
@@ -826,7 +826,7 @@ impl LedgerValidator {
             }
             // V4_TAKE_DELTA: take the entire positive PM[currency] delta to rcp.
             // Requires PM[currency] > 0 immediately before (credit-before-debit).
-            // WE45KC inc.2: when the recipient is SELF, the take physically delivers
+            // When the recipient is SELF, the take physically delivers
             // the asset to executor custody — model the receipt so a downstream
             // `WethWithdraw` (ProfitCapture::Native) can debit it. (Native currency
             // credits the Native ledger; ERC-20/WETH credits Erc20.)
@@ -844,14 +844,14 @@ impl LedgerValidator {
                     }
                 } else if let Some(pool) = seeds_pool {
                     // The take hands the credit directly to a V2 pool (PM→pool
-                    // the 2PT5HH terminal-V2 rule across the V4 boundary):
+                    // the terminal-V2 rule across the V4 boundary):
                     // seed its pair-handoff so a following `V2SwapCalc` sees it.
                     let h = *self.pair.get(&pool).unwrap_or(&0);
                     self.pair.insert(pool, h + amount);
                 }
                 Ok(())
             }
-            // TGUZCT/SW42JA: the 0x43 open-weth batch arms the pairing — a
+            // The 0x43 open-weth batch arms the pairing — a
             // WETH `Mint` before `V4UnlockEnd` must consume the open delta.
             // Re-arming overwrites (the encoder emits at most one per unlock).
             LedgerOp::OpenWethPairing { weth } => {
@@ -904,7 +904,7 @@ impl LedgerValidator {
             } => self.pm.debit(currency, amount),
             LedgerOp::Mint { currency, amount } => {
                 self.pm.debit(currency, amount)?;
-                // TGUZCT/SW42JA: a mint of the paired currency consumes the
+                // A mint of the paired currency consumes the
                 // open batch's WETH delta — disarms the pairing gate.
                 if Some(currency) == self.open_weth_pairing {
                     self.open_weth_pairing = None;
@@ -949,7 +949,7 @@ impl LedgerValidator {
                 }
                 Ok(())
             }
-            // POC (6SRC23): V2/V3 flash swaps — term ops extending executor
+            // POC: V2/V3 flash swaps — term ops extending executor
             // `Erc20` credit and incurring flash debt (repayable within the
             // callback). Same credit-before-debit rule as `V4Swap`→`PM`, on the
             // executor-ledger axis.
@@ -1060,7 +1060,7 @@ impl LedgerValidator {
                 }
                 Ok(())
             }
-            // External-ledger flash (VIXQYH stub): credit the external
+            // External-ledger flash (stub): credit the external
             // ledger + incur flash debt — mirrors V2Flash/V3Flash but routed to
             // the indexed `ExternalLedger` impl. The additive proof: the D0
             // invariant applies to the external ledger via the trait, no new
@@ -1192,7 +1192,7 @@ mod tests {
         ));
     }
 
-    // ── TGUZCT/SW42JA: the open-weth batch pairing gate ──
+    // ── the open-weth batch pairing gate ──
     // The 0x43 `V4_BATCH_OPEN_WETH` leaves the positive WETH delta OPEN at
     // the batch's end (no tail take). The stream can end the callback only if
     // a WETH `V4_MINT_COMPACT` consumes that delta before unlock — otherwise
@@ -1390,7 +1390,7 @@ mod tests {
     }
 
     /// terminal-V2 — a `V2_SWAP_CALC` with an un-seeded pair is rejected
-    /// (the `2PT5HH` / `path-182449` über-draw class).
+    /// (the `path-182449` über-draw class).
     #[test]
     fn swap_calc_without_seeded_pair_rejected() {
         let mut v = LedgerValidator::default();
@@ -1454,7 +1454,7 @@ mod tests {
     }
 
     // ════════════════════════════════════════════════════════════════════
-    // POC (6SRC23): the V2/V3 flash-credit chain for `v2_v3` (InPathFlash).
+    // POC: the V2/V3 flash-credit chain for `v2_v3` (InPathFlash).
     // The executor starts at 0; a flash repayment (ERC20_TRANSFER from the
     // executor) is only legal AFTER the flash that extended that currency's
     // credit. Byte-parity cannot see this ordering defect; the gate can.
@@ -1571,7 +1571,7 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // BP7KIR Increment 3b: the `v4_v3` cross-ledger boundary take. The V4
+    // Increment 3b: the `v4_v3` cross-ledger boundary take. The V4
     // swap credits PM[t1]; `V4TakeCompact(t1→SELF)` debits PM[t1] AND credits
     // the executor `Erc20[t1]` (the token physically arrives); the V3 flash's
     // auto-repay then debits that `Erc20[t1]`. The gate enforces the boundary
@@ -1673,9 +1673,9 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // BP7KIR Increment 3b: the `v4_v2` boundary-seed family. The V4 forward
+    // Increment 3b: the `v4_v2` boundary-seed family. The V4 forward
     // output is taken DIRECTLY to the V2 pair (PM→pool via `SeedPair`),
-    // consumed by a `V2SwapCalc` (2PT5HH across the PM boundary); the V4
+    // consumed by a `V2SwapCalc` (terminal-V2 across the PM boundary); the V4
     // WETH-input debt is settled by `Erc20Transfer(WETH→PM)` + `V4Settle`,
     // funded by the V2 swap's WETH output credit.
     // ══════════════════════════════════════════════════════════════════
@@ -1739,7 +1739,7 @@ mod tests {
     }
 
     /// The structural defect: the boundary take+seed is omitted, so the
-    /// `V2SwapCalc` fires against `pair[v2] == 0` → rejected (the 2PT5HH
+    /// `V2SwapCalc` fires against `pair[v2] == 0` → rejected (the
     // terminal-V2 rule across the PM boundary).
     #[test]
     fn v4_v2_pair_seed_omitted_rejected() {
@@ -1806,7 +1806,7 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // BP7KIR Increment 3c: native settle. The V4 native-input debt (PM[native])
+    // Increment 3c: native settle. The V4 native-input debt (PM[native])
     // is settled by `WethWithdraw` (credit Native) + `NativeTransfer` (debit
     // Native → PM) + `V4SettleDelta(native)` (zero PM[native]). The
     // `NativeTransfer` is the executor-debit half, separate from the
@@ -1880,7 +1880,7 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // VIXQYH — additive-capability proof (ADR-029 D6)
+    // Additive-capability proof (ADR-029 D6)
     // ═══════════════════════════════════════════════════════════════════
     // A stub external held-balance ledger (Balancer-Vault / Aave-lender shape)
     // composes with the existing protocols as ONE new `BalanceLedger` impl +
@@ -2067,7 +2067,7 @@ mod tests {
         );
     }
 
-    /// VIXQYH acceptance: quantify the combinatorial savings. Under the old
+    /// Acceptance: quantify the combinatorial savings. Under the old
     /// bespoke-adapter model (pre-ADR-029), adding a 4th protocol family as a
     /// new axis value would have forced a new hand-written adapter for every
     /// (position × neighbor × funding × capture) cell the new protocol touches.

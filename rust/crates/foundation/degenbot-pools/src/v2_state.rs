@@ -35,13 +35,12 @@ pub struct V2PoolIdentity {
     pub fee_token1: (u64, u64),
     /// Pool factory address.
     pub factory: Address,
-    /// The CREATE2 deployer this pool's address was verified against (Fork A,
-    /// NSAZ4X). The JSON row's `deployer` (or `factory` for null), or the
+    /// The CREATE2 deployer this pool's address was verified against (Fork A). The JSON row's `deployer` (or `factory` for null), or the
     /// factory itself for non-JSON pools. The `dex` getter merges this per-
     /// (chain,factory) deployer into the protocol preset (replacing the
     /// canonical-mainnet preset deployer).
     pub deployer: Address,
-    /// The CREATE2 init code hash (Fork A, NSAZ4X). The JSON row's `init_hash`,
+    /// The CREATE2 init code hash (Fork A). The JSON row's `init_hash`,
     /// or the V2 mainnet fallback const for non-JSON pools.
     pub init_hash: B256,
     /// The DEX+variant discriminator. Resolves the canonical
@@ -101,14 +100,14 @@ pub struct RegisterV2PoolParams {
     pub fee_token1: (u64, u64),
     pub factory: Address,
     /// The CREATE2 deployer the Rust builder verified this pool's address
-    /// against (Fork A, NSAZ4X). Equals the JSON row's `deployer`, or
+    /// against (Fork A). Equals the JSON row's `deployer`, or
     /// `factory` when the row had `null` (the `None -> factory` convention).
     /// For non-JSON pools, the factory itself. Stored on the identity so the
     /// `dex` getter merges the per-(chain,factory) deployer (no getter-time
     /// `chain_id` lookup).
     pub deployer: Address,
-    /// The CREATE2 init code hash the builder verified against (Fork A,
-    /// NSAZ4X). The JSON row's `init_hash`; the V2 mainnet fallback const
+    /// The CREATE2 init code hash the builder verified against (Fork A).
+    /// The JSON row's `init_hash`; the V2 mainnet fallback const
     /// for non-JSON pools.
     pub init_hash: B256,
     /// Block number of the registration state — seeds the genesis reorg

@@ -23,7 +23,7 @@
 // 2-hop and 3-hop composers all take a `&ComposerInputs` bundle beyond the
 // hops, so none trips `too_many_arguments`.
 
-// `emit_currency_bridge` (the only user of these) survives RVNIPD only as a
+// `emit_currency_bridge` (the only user of these) survives only as a
 // unit-test fixture.
 #[cfg(test)]
 use crate::encoders::{self, SENTINEL_SELF};
@@ -262,7 +262,7 @@ pub(crate) fn emit_currency_bridge(
 
 /// Tuning knobs for [`encode_cmd_stream`]. All default to `false`/`0`.
 ///
-/// **Per-path output axes (ADR-029 D1, WE45KC):** `funding`, `capture`, and
+/// **Per-path output axes (ADR-029 D1):** `funding`, `capture`, and
 /// `bribe` carry the runtime economic choices the strategy/operator makes per
 /// path. Whether a family's builder actually branches an axis IN THE STREAM is
 /// **declared per family** on the family→producer dispatch row
@@ -274,7 +274,7 @@ pub(crate) fn emit_currency_bridge(
 /// pure-V4 streams reach `capture` only via the on-chain `check_mode` config
 /// (a different seam), NOT the stream bytes. `bribe` is branched by no family
 /// (it rides `pack_config`, never the stream). Spreading an axis across more
-/// families is separate post-WE45KC work, not this surface's claim. The legacy
+/// families is separate follow-up work, not this surface's claim. The legacy
 /// `erc6909_profit` bool is kept as a backwards-compatible alias for
 /// `capture = ProfitCapture::Erc6909` (see [`resolve_axes`] for the precedence
 /// rule).
@@ -291,18 +291,18 @@ pub struct EncodeOptions {
     /// Branched IN THE STREAM only by the families whose dispatch row declares
     /// `funding` ([`crate::grammar_shape::family_axis_support`]: `v2_v3` and
     /// any-N all-V2); every other family derives `InPathFlash`. Honoring it as
-    /// a runtime economic knob across ALL families is separate post-WE45KC work.
+    /// a runtime economic knob across ALL families is separate follow-up work.
     pub funding: crate::grammar_ledger::FundingSource,
     /// Declared destination of the stream's terminal profit (ADR-029 D1).
     /// Honored via [`resolve_axes`] (takes precedence over the legacy
     /// `erc6909_profit` bool only when that bool is `false`).
     pub capture: crate::grammar_ledger::ProfitCapture,
     /// Whether/how a builder bribe is paid (ADR-029 D1/Q3). Not yet honored by
-    /// the encoder; wiring lands in a subsequent WE45KC increment.
+    /// the encoder; wiring lands in a subsequent increment.
     pub bribe: crate::grammar_ledger::Bribe,
 }
 
-/// Resolve the per-path output axes (ADR-029 D1, WE45KC) from [`EncodeOptions`],
+/// Resolve the per-path output axes (ADR-029 D1) from [`EncodeOptions`],
 /// collapsing the legacy `erc6909_profit` bool into the `capture` axis.
 ///
 /// **Precedence (backwards-compatible):** `erc6909_profit: true` forces
@@ -312,7 +312,7 @@ pub struct EncodeOptions {
 /// honored.
 ///
 /// `funding` and `bribe` are passed through unchanged (the encoder does not yet
-/// read them; they are carried for the subsequent WE45KC increments).
+/// read them; they are carried for subsequent increments).
 #[must_use]
 pub fn resolve_axes(
     opts: EncodeOptions,
@@ -481,7 +481,7 @@ pub struct ComposerInputs<'a> {
 /// # Path-type routing
 ///
 /// * all-V2 hops (≥2): [`crate::grammar_shape::derive_all_v2`] — the Plan +
-///   validator path (KO5NNB cutover)
+///   validator path
 /// * every other 2/3-hop mix: the shape-class walker
 ///   ([`crate::grammar_shape::derive_shape`])
 #[must_use]
@@ -501,7 +501,7 @@ pub fn encode_cmd_stream(ctx: &EncodeContext, req: &EncodeRequest) -> Option<Vec
     // former 8 two-hop + 27 three-hop bespoke permutation bodies, producing
     // byte-identical output (validated by the golden corpus). All-V2 any-N uses
     // the Plan + validator path (`derive_all_v2` → `build_walk` → gate
-    // → `plan_to_bytes`, KO5NNB); other 2/3-hop paths use the combo grammar walk.
+    // → `plan_to_bytes`); other 2/3-hop paths use the combo grammar walk.
     if num_hops >= 2 && req.path.hops.iter().all(|h| matches!(h, HopInfo::V2(_))) {
         crate::grammar_shape::derive_all_v2(&req.path, &inputs)
     } else {
@@ -525,25 +525,25 @@ pub struct EncodedCall {
 }
 
 /// Build the `execute(bytes,uint256)` `config` uint256 matching an
-/// [`EncodeOptions`] (the axis-aware config builder, WE45KC). Reads the full
+/// [`EncodeOptions`] (the axis-aware config builder). Reads the full
 /// per-path axis set:
 ///   - `capture` → `check_mode`: `Erc6909` = 2 (verify via PM.balanceOf),
 ///     `SweepToAddress` = 3 (SWEEP — defeats the assert), every other capture
 ///     (`Custody`/`Native`/`Owner`/`BalancerVault`) = 1 (WETH+ETH combined
-///     balance assert — active by default, U3WVLL). Resolved through
+///     balance assert — active by default). Resolved through
 ///     [`resolve_axes`] so the legacy `erc6909_profit` bool is collapsed into
 ///     `capture` (backwards-compatible: `erc6909_profit: true` forces
 ///     `Erc6909`).
 ///   - `bribe` → `bribe_bips` + `bribe_recipient_idx`: `None` = (0, 0) (no bribe);
 ///     `Some{bips, recipient_idx}` is forwarded (recipient_idx 0 = block.coinbase).
 ///   - `expected_value` is IGNORED (kept in the signature for ABI compat; the
-///     U3WVLL contract fix made the executor read its OWN combined balance at
+///     contract fix made the executor read its OWN combined balance at
 ///     start+end, so the operator no longer supplies the pre-tx balance).
 ///
 /// This is the single axis-aware config builder. Production
-/// (`degenbot-arbitrage`'s `simulate_path_on_evm`, Q35IJN) packs every
+/// (`degenbot-arbitrage`'s `simulate_path_on_evm`) packs every
 /// `execute(bytes, uint256)` call through it, and the declarative harness
-/// (`run_path_with_*`, SMOZG3) mirrors it — so the on-chain profit check
+/// (`run_path_with_*`) mirrors it — so the on-chain profit check
 /// (check_mode 1/2/3) runs under production exactly as it runs under tests.
 /// Only the offline calldata-dump examples use the raw zero config.
 ///
@@ -556,9 +556,9 @@ pub fn config_for_options(
     opts: EncodeOptions,
     expected_value: U256,
 ) -> Result<U256, crate::config::ConfigError> {
-    let _ = expected_value; // U3WVLL: ignored — the contract reads its own balance.
+    let _ = expected_value; // ignored — the contract reads its own balance.
     let (_, capture, bribe) = resolve_axes(opts);
-    // U3WVLL defect fix: the profit assert is active by default. Non-erc6909
+    // Defect fix: the profit assert is active by default. Non-erc6909
     // captures use check_mode=1 (WETH+ETH combined balance assert — the
     // on-chain money-loss protection the operator wants active "nearly
     // always"); Erc6909 uses check_mode=2 (ERC6909 WETH). check_mode=0 (fast
@@ -1053,7 +1053,7 @@ fn resolve_axes_funding_passes_through() {
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
 fn config_for_options_default_is_check_mode_1() {
-    // U3WVLL defect fix: default (Custody, no bribe) → check_mode=1 (WETH+ETH
+    // Defect fix: default (Custody, no bribe) → check_mode=1 (WETH+ETH
     // profit assert active). The contract reads its own combined balance at
     // start+end and asserts combined_after >= combined_before. This is the
     // "profit assert active nearly always" protection the operator wants.
@@ -1175,7 +1175,7 @@ fn config_for_options_combines_all_axes() {
 #[test]
 #[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
 fn config_for_options_capture_sweep_to_address_sets_check_mode_3() {
-    // follow-up (767TN5): ProfitCapture::SweepToAddress routes to
+    // follow-up: ProfitCapture::SweepToAddress routes to
     // check_mode=3 (SWEEP) — the only way to defeat the profit assert.
     let opts = EncodeOptions {
         capture: crate::grammar_ledger::ProfitCapture::SweepToAddress,

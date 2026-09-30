@@ -38,7 +38,7 @@ use pyo3::types::PyDict;
 use degenbot_pool_updater::run::{self, NoProgress, ProgressSink, RunError, UpdateReport};
 
 /// Build the `UpdateReport` return `dict` (matches the `db_heal_database`
-/// `dict`-return idiom from `MZ55NP`/`67691f7c`).
+/// `dict`-return idiom from `67691f7c`).
 ///
 /// Shape: `{"chain_id": int, "from_block": int, "to_block": int,
 /// "chunks_committed": int, "total_pools_written": int,

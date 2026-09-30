@@ -1,6 +1,6 @@
 //! `PyO3` seam for the V3/V4 snapshot DB readers — a thin `#[pyclass]`
 //! `PyDatabaseSnapshot` holding a [`DegenbotDb`] read handle, exposing the
-//! SLHSM4 snapshot read fns (`fetch_liquidity_map` / `fetch_liquidity_map_v4`
+//! Snapshot read fns (`fetch_liquidity_map` / `fetch_liquidity_map_v4`
 //! / `fetch_all_liquidity_maps` / `fetch_newest_update_block` /
 //! `fetch_v3_pool_addresses` / `fetch_v4_pool_hashes`) to Python.
 //!

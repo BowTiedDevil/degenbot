@@ -1,4 +1,4 @@
-//! Fee-on-transfer (FoT) token suspicion — attribution leaf (spike `5MP3HQ`).
+//! Fee-on-transfer (FoT) token suspicion — attribution leaf.
 //!
 //! A fee-on-transfer token deducts a fee from the sender's balance *during
 //! transfer*, so the pool's `swap()` receives less than the executor sent.
@@ -51,7 +51,7 @@ use crate::simulator::SimFailure;
 /// `degenbot_decoders::revert::classify_revert` (the bare base names after
 /// `lookup`'s `.split('(').next()` normalization).
 ///
-/// # Mainnet-validated (spike `5MP3HQ`, experiment)
+/// # Mainnet-validated (live experiment)
 ///
 /// - `UniswapV2: K` — the V2 pool's own K-invariant revert (Error(string)
 ///   message). Fires when the FoT fee shorted the input, making `x*y < k`
@@ -82,8 +82,8 @@ const FOT_REVERT_LABELS: &[&str] = &["IIA", "CurrencyNotSettled", "UniswapV2: K"
 /// Attribute a `SimFailure` to the input token of the failing hop AND the
 /// failing pool's chain-identity key, if the failure's
 /// `reverting_frame.label` is a FoT signature (`IIA` for V3,
-/// `CurrencyNotSettled` for V4, `UniswapV2: K` for V2 — confirmed by spike
-/// `5MP3HQ`'s mainnet experiment with RFI). Returns `None` for
+/// `CurrencyNotSettled` for V4, `UniswapV2: K` for V2 — confirmed by a
+/// mainnet experiment with RFI). Returns `None` for
 /// non-FoT-classifiable failures, missing `reverting_frame`, or when the
 /// reverting pool cannot be matched to a hop in `hops` (or its V4 `poolId`
 /// hex is malformed).
@@ -145,7 +145,7 @@ pub fn fot_suspected_token_from_reverting_frame(
 /// hop's input token + POOL KEY. Returns `None` when the failure is not
 /// `SolverCalc`-class or the mismatching hop isn't found.
 ///
-/// **DEAD CODE for the FoT case** (spike `5MP3HQ` finding F4): V2 FoT
+/// **DEAD CODE for the FoT case** (spike finding F4): V2 FoT
 /// tokens revert at the root frame (the pool's own `UniswapV2: K` revert)
 /// BEFORE any `Swap` event fires, so `captured_swaps` is always empty for
 /// V2 FoT failures. This arm is kept for a potential non-reverting
@@ -297,7 +297,7 @@ pub const FOT_DECAY_BLOCKS: u64 = 100;
 /// reverting pool addresses for the same token (across distinct paths,
 /// within [`FOT_DECAY_BLOCKS`] blocks) before the token is flagged FoT.
 ///
-/// # Spike `5MP3HQ` calibration
+/// # Spike calibration
 ///
 /// The noise floor on `UniswapV2: K` is NOT zero — CRV (a non-FoT whitelisted
 /// token) also reverted persistently with the same label, but at 1 pool only
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn v2_k_invariant_revert_attributes_to_input_token() {
         // The V2 pool's own K-invariant revert (Error(string) "UniswapV2: K")
-        // is the ACTUAL V2 FoT signal on mainnet (spike 5MP3HQ experiment).
+        // is the ACTUAL V2 FoT signal on mainnet (the mainnet spike experiment).
         // The reverting target is the V2 pair address; the attribution finds
         // the hop with that pool_address → returns its input token.
         let hops = vec![v2_hop_zfo(V2_POOL)];

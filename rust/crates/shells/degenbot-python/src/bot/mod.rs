@@ -562,7 +562,7 @@ impl PyBot {
         Ok(crate::bot::engine::BlockStream::new(block_rx))
     }
 
-    /// Load the V3 + V4 DB snapshot into the core `BotState` (B3OROH, JUCFCB).
+    /// Load the V3 + V4 DB snapshot into the core `BotState` .
     ///
     /// Called at Python `Bot.__init__` time when a DB path is configured
     /// (Shape 2: eager construction-time load). Opens a read-only
@@ -806,7 +806,7 @@ impl PyBot {
     ///
     /// The snapshot→WS gap is closed automatically inside the core
     /// `BlockPump::resume_from_subscribe`; the pyo3
-    /// `backfill_from_snapshot` method is retired (2SM4Y7). Delegates to the
+    /// `backfill_from_snapshot` method is retired. Delegates to the
     /// shared `PumpState`.
     fn resume(&self, py: Python<'_>) -> PyResult<()> {
         crate::bot::pump::resume(py, &self.pump_state()?)
@@ -922,12 +922,12 @@ impl PyBot {
         })?;
 
         // Verify the pool address against the JSON-sourced CREATE2 deployer +
-        // init hash (Fork A, JC6OFG). Skipped if (chain, factory) is not in the
+        // init hash (Fork A). Skipped if (chain, factory) is not in the
         // shipped JSON — preserves the manual/ad-hoc registration path.
         crate::bot::deployments::verify_v2(self.bot.chain_id(), fac, addr, t0, t1)?;
 
-        // Resolve the JSON-sourced CREATE2 deployer + init hash (Fork A,
-        // NSAZ4X). Stored on the V2 identity so the `dex` getter merges the
+        // Resolve the JSON-sourced CREATE2 deployer + init hash (Fork A).
+        // Stored on the V2 identity so the `dex` getter merges the
         // per-(chain,factory) deployer/init_hash into the protocol preset
         // (replacing the canonical-mainnet preset values). Non-JSON pools
         // default to factory-as-deployer + the V2 mainnet fallback init hash.
@@ -1000,7 +1000,7 @@ impl PyBot {
         // publish) runs under the engine-internal single flight keyed by
         // (V2, chain, address). The registry-of-record pre-check answers a
         // registered address with its identity — no duplicate builder replay
-        // racing into an AlreadyRegistered refusal (the CXKACI race class).
+        // racing into an AlreadyRegistered refusal (a race class).
         let key = build_flights::FlightKey(
             build_flights::flight_family::V2,
             chain_id,
@@ -1023,7 +1023,7 @@ impl PyBot {
                         get_runtime().block_on(builder::build_v2(chain_id, addr, &io, block))
                     })
                     .map_err(map_builder_err)?;
-                // TF7RZB-S1 (builder return surface): return the core-computed identity
+                // (builder return surface): return the core-computed identity
                 // alongside the pool_id so a facade-free registration driver can consume
                 // token0/token1/address/family from the Rust builder instead of
                 // re-deriving them from the pool handle. `variant` is the `DexVariant`
@@ -1232,7 +1232,7 @@ impl PyBot {
     /// Build + register a V3 pool through the Rust `PoolBuilder` (
     /// delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
     /// map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the
-    /// IKGQ6F quarantine→verify lifecycle; `db=false` forces the Chain-arm
+    /// quarantine→verify lifecycle; `db=false` forces the Chain-arm
     /// Sparse path). `block` defaults to the current chain head.
     ///
     /// # Errors
@@ -1303,7 +1303,7 @@ impl PyBot {
                 let fetcher = tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.unbind()));
-                // CL slot layout (VERIFY2 T4 / W32CAU): explicit override (the Python
+                // CL slot layout : explicit override (the Python
                 // driver knows the pool class for non-JSON deployments) wins over the
                 // builder's deployment-table resolution.
                 let slot_override = match slot_layout {
@@ -1334,7 +1334,7 @@ impl PyBot {
                         ))
                     })
                     .map_err(map_construction_refusal)?;
-                // TF7RZB-S1 (builder return surface): the core-computed identity
+                // (builder return surface): the core-computed identity
                 // echoes alongside the pool_id. A registry-GET race answer
                 // (`built == None`) echoes the already-registered payload instead.
                 let (pool_id, identity) = if let Some(built) = constructed.built {
@@ -1465,7 +1465,7 @@ impl PyBot {
             id.tick_spacing,
             // Derived mask — kept for the driver's existing flag-parity check.
             degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags(id.hook_address),
-            // The REAL hook address (pool-ID mismatch regression, MTMPQB): the
+            // The REAL hook address (pool-ID mismatch regression): the
             // driver must thread this through to build_v4_pool so the
             // registered pool key round-trips keccak(abi.encode(pool_key)).
             id.hook_address.to_checksum(None),
@@ -1596,7 +1596,7 @@ impl PyBot {
                     tick_spacing,
                     hook_address: hook_addr,
                 };
-                // TF7RZB-S2 (builder return surface): capture the normalized identity
+                // (builder return surface): capture the normalized identity
                 // tuple before `id` is moved into `build_v4`.
                 let identity_ret = (
                     id.currency0.to_checksum(None),
@@ -1611,7 +1611,7 @@ impl PyBot {
                     .detach(|| get_runtime().block_on(builder::build_v4(id, db_ref, &io, block)))
                     .map_err(map_builder_err)?;
                 let mut params = result.params;
-                // CDJEPJ-1: lp_fee + protocol_fee come from the SAME head-stamped slot0
+                // lp_fee + protocol_fee come from the SAME head-stamped slot0
                 // read inside build_v4 (no second fetch_v4_slot0_liquidity each pool).
                 let lp_fee = result.lp_fee;
                 let protocol_fee = params.protocol_fee;
@@ -1644,7 +1644,7 @@ impl PyBot {
                 // Python driver can set the companion's `_sparse_liquidity_map` (from
                 // coverage), the normalized identity, and the fee overrides
                 // (protocol_fee/lp_fee from the builder's own slot0 read) in one return
-                // surface (TF7RZB-S2 / CDJEPJ-1).
+                // surface.
                 Ok((
                     registered,
                     (
@@ -2269,7 +2269,7 @@ impl PyBot {
             }
         };
 
-        // CL slot layout (VERIFY2 T4 / W32CAU): an explicit override wins
+        // CL slot layout : an explicit override wins
         // (the Python driver knows the pool class for non-JSON deployments);
         // else the deployment table; else the canonical Uniswap layout.
         // Validated BEFORE the CREATE2 verify (cheap string check first — no
@@ -2294,12 +2294,12 @@ impl PyBot {
         };
 
         // Verify the pool address against the JSON-sourced CREATE2 deployer +
-        // init hash (Fork A, JC6OFG). Skipped if (chain, factory) is not in the
+        // init hash (Fork A). Skipped if (chain, factory) is not in the
         // shipped JSON — preserves the manual/ad-hoc registration path.
         crate::bot::deployments::verify_v3(self.bot.chain_id(), fac, addr, t0, t1, fee)?;
 
         // Resolve the JSON-sourced CREATE2 deployer + init hash for this
-        // (chain, factory) (Fork A, P62DKO). Stored on the pool identity so the
+        // (chain, factory) (Fork A). Stored on the pool identity so the
         // Python companion reads it off the handle. Non-JSON pools default to
         // factory-as-deployer + the Uniswap V3 mainnet fallback init hash.
         let chain_id = self.bot.chain_id();
@@ -2352,7 +2352,7 @@ impl PyBot {
     /// registered hook address at hop projection / simulation-caveat time),
     /// and the `HookedPoolRejectedError` raise site is reserved (no longer
     /// fires). The FULL `hook_address` rides into the registered pool key so
-    /// the identity round-trips `keccak(abi.encode(pool_key))` (MTMPQB).
+    /// the identity round-trips `keccak(abi.encode(pool_key))`.
     ///
     /// ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
     /// INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
@@ -2381,7 +2381,7 @@ impl PyBot {
         tick_spacing: i32,
         // The REAL hook contract address (None/empty = no hook). Registered
         // in the pool key in full so the identity round-trips
-        // keccak(abi.encode(pool_key)) (pool-ID mismatch regression, MTMPQB);
+        // keccak(abi.encode(pool_key)) (pool-ID mismatch regression);
         // the derived 16-bit mask rides along in params.hook_flags.
         hook_address: Option<&str>,
         sqrt_price_x96: &Bound<'_, PyAny>,
@@ -2461,7 +2461,7 @@ impl PyBot {
                 fee,
                 tick_spacing,
                 // The REAL hook address — the identity must round-trip
-                // keccak(abi.encode(pool_key)) (pool-ID mismatch, MTMPQB).
+                // keccak(abi.encode(pool_key)) (pool-ID mismatch).
                 hooks: hook_addr,
             },
             hook_flags: degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags(hook_addr),
@@ -2665,7 +2665,7 @@ impl PyBot {
     }
 
     /// Build + register a Curve `StableSwap` pool through the Rust `PoolBuilder`
-    /// (WKKMJM delegation adapter) — the Curve twin of [`Self::build_v2_pool`].
+    /// — the Curve twin of [`Self::build_v2_pool`].
     /// The core `builder::build_curve_pool` runs the full detection
     /// choreography (coins + balances, `A`/`fee`/`admin_fee`, A-ramping,
     /// lending, crypto params, `lp_token`, metapool base + underlying coins,
@@ -2899,8 +2899,8 @@ impl PyBot {
         })?;
 
         // Verify the pool address against the JSON-sourced EIP-1167 deployer
-        // + implementation address (Fork A follow-on, S5SJXF/WLJD2Y — the
-        // Aerodrome parity gap of JC6OFG). Skipped if (chain, factory) is
+        // + implementation address (Fork A follow-on — the Aerodrome parity
+        // gap). Skipped if (chain, factory) is
         // not in the shipped JSON or the row has no implementation address —
         // preserves the manual/ad-hoc registration path.
         crate::bot::deployments::verify_aerodrome_v2(
@@ -3102,7 +3102,7 @@ impl PyBot {
     }
 
     /// Build + register an ERC-20 token, resolving metadata DB-first, then
-    /// on-chain (the core twin of `Erc20Builder.build`, VK3YDM-S2).
+    /// on-chain (the core twin of `Erc20Builder.build`).
     ///
     /// `builder::build_erc20_metadata` resolves `name`/`symbol`/`decimals`
     /// (DB row → on-chain batched read → alternate-prototype fallback →
@@ -3505,7 +3505,7 @@ mod tests {
     }
 
     /// `assemble_v3_tick_map` on a fresh `PyBot` (cold-start, no DB loaded, empty
-    /// store) returns `Ok(None)` — the miss path. Ac A4YUYJ: "Returns None on
+    /// store) returns `Ok(None)` — the miss path. The AC: "Returns None on
     /// miss".
     #[test]
     fn assemble_v3_tick_map_cold_start_returns_none() {
@@ -3706,7 +3706,7 @@ mod tests {
                     block: 0,
                 },
             );
-            // bit 1 = tick 10 at spacing 10 (T3 OMDCIY intake reconciliation
+            // bit 1 = tick 10 at spacing 10 (intake reconciliation
             // requires the bit to match the row position).
             tick_bitmap.insert(
                 0,

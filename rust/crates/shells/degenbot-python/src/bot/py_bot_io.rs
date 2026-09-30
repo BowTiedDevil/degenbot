@@ -21,8 +21,7 @@
 //! Python `provider` delegation tier and D3 removed the inlined `self.alloy`
 //! RPC duplication, leaving one code path per method. Non-integer block tags
 //! (`"latest"`) likewise error loudly: the core `RpcConstruction` trait only
-//! accepts `u64` blocks (tag support is a follow-on trait change — epic
-//! `VK3YDM`).
+//! accepts `u64` blocks (tag support is a follow-on trait change).
 //!
 //! ## Async bridging
 //!
@@ -66,7 +65,7 @@ fn address_lower_hex(a: alloy::primitives::Address) -> String {
 /// ```
 /// then pass `io` where a builder expects an `io: PoolIO`.
 /// A typed ERC-20 token DB row returned by [`PyBotIo::fetch_erc20_token`]
-/// (QVMWQC). Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
+///. Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
 /// attributes (`.id` / `.chain` / `.address` / `.name` / `.symbol` /
 /// `.decimals`) so the builder's downstream attribute reads stay unchanged
 /// after the cutover from `session.scalar(select(Erc20TokenTable)...)`.
@@ -142,7 +141,7 @@ pub struct PyBotIo {
     /// round-trip); `get_block_timestamp` derives from `get_block(n).header.timestamp`.
     /// `None` only for non-alloy Python providers (retired by O3).
     alloy: Option<Arc<AlloyProvider>>,
-    /// The on-disk `SQLite` database path (QVMWQC). Retained for the `getter`
+    /// The on-disk `SQLite` database path. Retained for the `getter`
     /// (Python introspection) + the `database_path` is now opened ONCE at
     /// `attach_construction_io` time into a held `DegenbotDbConstruction`; the
     /// 12 DB methods no longer per-call `DegenbotDb::open` from here.
@@ -171,7 +170,7 @@ impl PyBotIo {
     /// legacy-double fallback) yield `alloy = None` and every RPC + choreography
     /// method errors loudly (ADR-023 D1).
     ///
-    /// `database_path` (QVMWQC) is the on-disk `SQLite` path; when set, the
+    /// `database_path` is the on-disk `SQLite` path; when set, the
     /// DB-query methods (`fetch_erc20_token`, `update_erc20_token_metadata`, …)
     /// open a `degenbot_db::DegenbotDb` handle from it + route the
     /// construction-time DB reads/writes through Rust (the `SQLAlchemy`
@@ -239,7 +238,7 @@ impl PyBotIo {
         Ok(())
     }
 
-    /// The on-disk `SQLite` database path, if any (QVMWQC). The DB-query methods
+    /// The on-disk `SQLite` database path, if any. The DB-query methods
     /// open a `degenbot_db::DegenbotDb` handle from this path; `None` when the
     /// `Bot` has no DB.
     #[getter]
@@ -248,7 +247,7 @@ impl PyBotIo {
     }
 
     /// Fetch an ERC-20 token row from the DB by `(chain_id, address)` — the
-    /// construction-time read in `Erc20Builder.build` (QVMWQC). Replaces the
+    /// construction-time read in `Erc20Builder.build`. Replaces the
     /// `SQLAlchemy` `session.scalar(select(Erc20TokenTable).where(...))` call.
     ///
     /// Returns a [`PyErc20TokenRow`] with `(id, chain, address, name, symbol,
@@ -287,7 +286,7 @@ impl PyBotIo {
 
     /// Write back an ERC-20 token row's metadata (`name` / `symbol` / `decimals`)
     /// by `(chain_id, address)` — the construction-time write-back in
-    /// `Erc20Builder.build` (QVMWQC). Replaces the `SQLAlchemy`
+    /// `Erc20Builder.build`. Replaces the `SQLAlchemy`
     /// `token_from_db.decimals = …; token_from_db.name = …;
     /// token_from_db.symbol = …; session.commit()` block. Each `None` field
     /// writes `NULL` (matches the ORM attribute assignment).
@@ -319,7 +318,7 @@ impl PyBotIo {
     }
 
     /// Fetch a `pools` row by `(chain_id, address)` — the pool builder's
-    /// construction-time read (QVMWQC). Replaces the `SQLAlchemy`
+    /// construction-time read. Replaces the `SQLAlchemy`
     /// `session.scalar(select(LiquidityPoolTable).where(...))`. Returns a
     /// [`PyLiquidityPoolRow`] carrying the scalar + FK-id columns
     /// (`exchange_id` / `token0_id` / `token1_id` / `kind`); the caller hydrates
@@ -355,7 +354,7 @@ impl PyBotIo {
         }
     }
 
-    /// Fetch an `exchanges` row by its FK id (QVMWQC) — hydrates the
+    /// Fetch an `exchanges` row by its FK id — hydrates the
     /// `pool.exchange` relationship (`factory` / `deployer`). `None` when absent
     /// or no path.
     #[pyo3(signature = (exchange_id))]
@@ -488,7 +487,7 @@ impl PyBotIo {
     }
 
     /// Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
-    /// Multicall3 `aggregate3` `eth_call` (CDJEPJ-2), falling back to the
+    /// Multicall3 `aggregate3` `eth_call` , falling back to the
     /// per-token `fetch_erc20_metadata` path if the multicall itself errors.
     ///
     /// Returns one `Option<(name, symbol, decimals)>` per input address, in

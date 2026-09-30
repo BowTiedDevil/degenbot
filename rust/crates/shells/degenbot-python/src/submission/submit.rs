@@ -169,7 +169,7 @@ impl PySubmitCandidate {
         self.inner.priority_fee
     }
 
-    /// The mutual-exclusion pool-key set the join stamped (NUUJFA): the
+    /// The mutual-exclusion pool-key set the join stamped; the
     /// parity-test read surface — the payload arm's rows must carry the
     /// byte-identical set the FFI batch join derives for the same path. The
     /// strings are the `PoolKey` display forms (V4 `pool_id_hex`; V2/V3

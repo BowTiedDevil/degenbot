@@ -61,8 +61,8 @@ pub enum PoolTickCoverage {
 /// first RPC await in the two-step verify) so a live `Swap`/`Mint`/`Burn`
 /// landing during the drain+pin+verify window cannot advance `update_block`
 /// past the pump's `last_complete_block` — which would desync the pinned
-/// `(tick_data, update_block)` pair (the 6N7XVR race; the live direct-apply
-/// gap YLYJM2's `drain_pump_completed` buffer gate does NOT cover).
+/// `(tick_data, update_block)` pair (the quarantine race; the live direct-apply
+/// gap the `drain_pump_completed` buffer gate does NOT cover).
 ///
 /// Defaults to `Live`: pools registered outside the two-step verify path
 /// (test/standalone construction) keep the existing direct-apply behavior.
@@ -103,7 +103,7 @@ impl crate::liquidity_event::LiquidityEvent for BufferedV3LiquidityUpdate {
 
 /// A buffered V3 `Swap` event awaiting application — either because the pool
 /// is unregistered (the live drop path, retained for symmetry with liquidity)
-/// or because the pool is `Quarantined` (6N7XVR deferral). Carries the scalar
+/// or because the pool is `Quarantined` (quarantine deferral). Carries the scalar
 /// fields `apply_swap` mutates; no `tick_priors` (the pump path passes `&[]`).
 #[derive(Clone, Debug)]
 pub struct BufferedV3SwapEvent {
@@ -126,7 +126,7 @@ impl crate::liquidity_event::LiquidityEvent for BufferedV3SwapEvent {
 /// A buffered V3 pool event — a `Swap` or a liquidity update (`Mint`/`Burn`),
 /// unified in one enum so the `LiquidityEventBuffer` preserves cross-type
 /// arrival order within a block (a `Swap` at logIdx 1433 must apply after a
-/// `Mint` at logIdx 120). 6N7XVR: the quarantine deferral routes BOTH variants
+/// `Mint` at logIdx 120). The quarantine deferral routes BOTH variants
 /// through the same gated drain, so the pin's `update_block` cannot outrun
 /// `last_complete_block` regardless of event type.
 #[derive(Clone, Debug)]
@@ -245,14 +245,14 @@ pub struct RegisterV3PoolParams {
     /// callable.
     pub fetcher: Option<Arc<dyn TickWordFetcher>>,
     /// The CREATE2 deployer the Rust builder verified this pool's address
-    /// against (Fork A, P62DKO). Equals the JSON row's `deployer`, or `factory`
+    /// against (Fork A). Equals the JSON row's `deployer`, or `factory`
     /// when the row had `null` (the `None -> factory` convention). For non-JSON
     /// pools, the factory (no lookup). Stored on the identity so a Python
     /// companion reads the verified deployer off the handle (no `chain_id`
     /// plumbing needed).
     pub deployer: Address,
     /// The CREATE2 init code hash the Rust builder verified this pool's
-    /// address against (Fork A, P62DKO). The JSON row's `init_hash` when the
+    /// address against (Fork A). The JSON row's `init_hash` when the
     /// `(chain, factory)` shipped, else the [`degenbot_uniswap::deployments`]
     /// `UNISWAP_V3_MAINNET_INIT_HASH` fallback (the retired Python `ClassVar`'s
     /// documented default for non-JSON V3 pools).
@@ -378,12 +378,11 @@ pub struct V3PoolIdentity {
     pub tick_spacing: i32,
     /// Pool factory address.
     pub factory: Address,
-    /// The CREATE2 deployer the pool's address was verified against (Fork A,
-    /// P62DKO). The JSON row's `deployer` (or `factory` for null), or the
+    /// The CREATE2 deployer the pool's address was verified against (Fork A). The JSON row's `deployer` (or `factory` for null), or the
     /// factory itself for non-JSON pools. Stored on the identity so the
     /// companion reads it off the handle.
     pub deployer: Address,
-    /// The CREATE2 init code hash (Fork A, P62DKO). The JSON row's `init_hash`
+    /// The CREATE2 init code hash (Fork A). The JSON row's `init_hash`
     /// when shipped, else the Uniswap V3 mainnet fallback const. Off the
     /// handle, not the retired Python `ClassVar`.
     pub init_hash: B256,
@@ -437,7 +436,7 @@ pub struct V3PoolState {
     /// never advanced by `apply_swap`/`apply_liquidity_update`/`update_block`.
     pub initial_state_block: u64,
 
-    /// The per-pool registration lifecycle (6N7XVR): `Quarantined` during
+    /// The per-pool registration lifecycle: `Quarantined` during
     /// `register_v3_pool`'s drain+pin+verify (live events deferred to the pump
     /// buffer so the pin's `update_block` cannot outrun `last_complete_block`),
     /// `Live` thereafter (direct apply). Defaults to `Live` (pools registered
@@ -450,7 +449,7 @@ pub struct V3PoolState {
     /// time so the dispatch seam can detect staleness: if a pool's current
     /// nonce has advanced past the snapshot, the solver computed its result
     /// against state that has since been superseded → skip the stale
-    /// candidate (AV42C7: the block-N solve used pool@N-1 while on-chain@N
+    /// candidate (the block-N solve used pool@N-1 while on-chain@N
     /// has pool@N after the user swap).
     pub state_nonce: u64,
 
@@ -835,7 +834,7 @@ impl V3PoolState {
         )
         .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 
-        // Cache the result regardless of Some/None (2SGSE3: caching None
+        // Cache the result regardless of Some/None (caching None
         // avoids re-walking pools whose state hasn't changed since the last
         // failed walk).
         let mut cache = self.cached_tick_ranges.lock();
@@ -1438,7 +1437,7 @@ pub fn v3_simulate_swap(
             // Reached the next tick — cross it if initialized.
             if initialized {
                 if let Some(info) = state.tick_data.get(&tick_next) {
-                    // The net is the on-chain int128 (LIBQKE) — no narrowing
+                    // The net is the on-chain int128 — no narrowing
                     // conversion needed at the crossing site anymore.
                     let liquidity_net = info.liquidity_net;
                     let net = if zero_for_one {
@@ -2384,7 +2383,7 @@ mod tests {
         assert_eq!(seq.expect("built").ranges.len(), 1);
     }
 
-    /// 2SGSE3: a `None` from `get_cached_tick_ranges` must be cached so the
+    /// A `None` from `get_cached_tick_ranges` must be cached so the
     /// next call returns `None` without re-walking `compute_tick_ranges`.
     /// Without caching None, every solve cycle re-walks the same failing
     /// pools (1300-9600 `SequenceUnavailable` rejections per cycle in live

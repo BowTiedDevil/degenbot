@@ -75,8 +75,8 @@ fn tick_info_size_pinned() {
     assert_eq!(
         size_of::<TickInfo>(),
         48,
-        "TickInfo drift: the LIBQKE narrowing pinned 48 B (16 gross + 16 i128 \
-         net + 8 block, pad-to-16). Update this pin citing the task if the \
+        "TickInfo drift: the int128 narrowing pinned 48 B (16 gross + 16 i128 \
+         net + 8 block, pad-to-16). Update this pin if the \
          change is intentional; otherwise the struct grew silently"
     );
 }

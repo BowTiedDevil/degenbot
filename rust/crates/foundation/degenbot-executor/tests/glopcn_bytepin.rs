@@ -1,4 +1,4 @@
-//! GLOPCN byte-identity regression golden (the scaffold extraction must not
+//! Byte-identity regression golden (the scaffold extraction must not
 //! change any family's produced bytes or its guard↔decline partition).
 //!
 //! Captures a deterministic FNV-1a hash of the FULL produced byte stream
@@ -129,7 +129,7 @@ fn build_hops(combo: &[&str]) -> Vec<HopInfo> {
         .collect()
 }
 
-/// The frozen byte-identity golden, captured at GLOPCN (the pure V2/V3
+/// The frozen byte-identity golden (the pure V2/V3
 /// scaffold extraction). Sorted; every family/config must reproduce exactly.
 const GOLDEN: &[&str] = &[
     "2hop_V2_V2_base_0 23c218ba470db61a",

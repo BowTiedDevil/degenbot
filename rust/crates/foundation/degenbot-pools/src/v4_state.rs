@@ -104,7 +104,7 @@ impl LiquidityEvent for BufferedV4LiquidityUpdate {
 }
 
 /// A buffered V4 `Swap` event awaiting application — either the
-/// unregistered drop path (retained for symmetry) or the 6N7XVR quarantine
+/// unregistered drop path (retained for symmetry) or the quarantine
 /// deferral. Carries the scalar fields `apply_swap` mutates; no `tick_priors`
 /// (the pump path passes `&[]`). The `(pool_manager, pool_id)` key lives on
 /// the buffer, not here.
@@ -128,7 +128,7 @@ impl LiquidityEvent for BufferedV4SwapEvent {
 
 /// A buffered V4 pool event — a `Swap` or a `ModifyLiquidity` update, unified
 /// in one enum so the `LiquidityEventBuffer` preserves cross-type arrival order
-/// within a block. 6N7XVR: the quarantine deferral routes BOTH variants through
+/// within a block. The quarantine deferral routes BOTH variants through
 /// the same gated drain, so the pin's `update_block` cannot outrun
 /// `last_complete_block` regardless of event type (a live `Swap` alone would
 /// otherwise advance `update_block` past the frontier while a same-block
@@ -233,8 +233,8 @@ pub enum RegisterV4PoolError {
     /// validator helpers (`validate_sqrt_price` / `validate_tick` /
     /// `validate_v4_fee` / `validate_tick_spacing`); the four V4 spec checks
     /// fire together ahead of the hooked / dynamic-fee rejections. Mirrors
-    /// the V2 (`RegisterV2PoolError::SpecViolation`, MSTAT2) and V3
-    /// (`RegisterV3PoolError::SpecViolation`, 24KNGF) twins.
+    /// the V2 (`RegisterV2PoolError::SpecViolation`) and V3
+    /// (`RegisterV3PoolError::SpecViolation`) twins.
     SpecViolation(crate::spec_bounds::SpecViolation),
 }
 
@@ -328,7 +328,7 @@ pub struct V4PoolState {
     pub initial_state_block: u64,
     /// Per-mutation nonce — see [`V3PoolState::state_nonce`] (V4 twin).
     pub state_nonce: u64,
-    /// The per-pool registration lifecycle (6N7XVR — V4 twin of
+    /// The per-pool registration lifecycle (V4 twin of
     /// `V3PoolState::registration_lifecycle`). `Quarantined` during
     /// `register_v4_pool`'s drain+pin+verify; `Live` thereafter.
     pub registration_lifecycle: RegistrationLifecycle,
@@ -344,7 +344,7 @@ pub struct V4PoolState {
     pub tick_data: HashMap<i32, TickInfo>,
     pub coverage: PoolTickCoverage,
 
-    /// The pinned snapshot seed (CBCH6H — see `V3PoolState::snapshot_seed`).
+    /// The pinned snapshot seed (see `V3PoolState::snapshot_seed`).
     /// A copy of the registration `tick_data`, immutable across pump
     /// `ModifyLiquidity` events, retained so step-1 verify compares the seed
     /// vs on-chain@snapshot_block. `Some` only for `Tracked` pools; cleared by
@@ -402,7 +402,7 @@ impl Clone for V4PoolState {
             fetcher: self.fetcher.clone(),
             journal: self.journal.clone(),
             // Clones (e.g. `v4_pools_snapshot()`) do NOT carry the pinned seed or
-            // the pinned post-drain snapshot (CBCH6H + step-2 race fix — see
+            // the pinned post-drain snapshot (step-2 race fix — see
             // V3PoolState::Clone).
             snapshot_seed: None,
             post_drain_snapshot: None,
@@ -543,7 +543,7 @@ impl V4PoolState {
             tick_data_block: params.tick_data_block.unwrap_or(params.update_block),
             initial_state_block: params.update_block,
             state_nonce: 0,
-            // ADR-close of the rolling-start direct-apply gap (DFQYM5, V4 twin
+            // ADR-close of the rolling-start direct-apply gap (V4 twin
             // of the V3 `from_params` change): `Tracked` pools start
             // `Quarantined` (no live event direct-applies before the two-step
             // verify; `set_pool_live` is the sole transition to `Live`);
@@ -623,7 +623,7 @@ impl V4PoolState {
         )
         .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 
-        // Cache the result regardless of Some/None (2SGSE3: twin of V3).
+        // Cache the result regardless of Some/None (twin of V3).
         let mut cache = self.cached_tick_ranges.lock();
         match ranges {
             Some(ref r) => {

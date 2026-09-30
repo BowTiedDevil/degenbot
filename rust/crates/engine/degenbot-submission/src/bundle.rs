@@ -1,4 +1,4 @@
-//! `MEVBlocker` backrun-bundle submission (task GSUF22).
+//! `MEVBlocker` backrun-bundle submission.
 //!
 //! Wire contract per docs.mevblocker.io (searcher onboarding):
 //!

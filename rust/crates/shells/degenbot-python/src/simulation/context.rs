@@ -45,7 +45,7 @@ use std::sync::Arc;
     skip_from_py_object,
     module = "degenbot._ffi.simulation"
 )]
-// Every field is consumed by `dispatch_profitable_py` (A4, QQFTB4) when it
+// Every field is consumed by `dispatch_profitable_py` when it
 // stitches them into the borrowed `SimulateContext<'_>`; until A4 lands only
 // `provider` is read (by the `rpc_url` getter).
 pub struct PySimulateContext {

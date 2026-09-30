@@ -464,7 +464,7 @@ impl PyAlloyProvider {
 
         match tx {
             Some(tx_typed) => {
-                // HXLBJZ: the core returns alloy's typed `Transaction`; serialize
+                // The core returns alloy's typed `Transaction`; serialize
                 // to JSON at the FFI boundary for `json_to_py_with_hexbytes`.
                 let tx_json = serde_json::to_value(&tx_typed).map_err(|e| {
                     PyValueError::new_err(format!("Failed to serialize transaction: {e}"))
@@ -497,7 +497,7 @@ impl PyAlloyProvider {
 
         match receipt {
             Some(receipt_typed) => {
-                // HXLBJZ: the core returns alloy's typed `TransactionReceipt`;
+                // The core returns alloy's typed `TransactionReceipt`;
                 // serialize to JSON at the FFI boundary.
                 let receipt_json = serde_json::to_value(&receipt_typed).map_err(|e| {
                     PyValueError::new_err(format!("Failed to serialize transaction receipt: {e}"))

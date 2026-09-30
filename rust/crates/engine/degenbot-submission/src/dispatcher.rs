@@ -1,5 +1,4 @@
-//! Dispatcher nonce/pool/task coordination state (row N3 of the submission
-//! scope `SHT6GE` — `port-now`).
+//! Dispatcher nonce/pool/task coordination state.
 //!
 //! Port of `examples/eth_backrun_v2_v3_v4_rust.py` `Dispatcher` (L579–L678) +
 //! the composed `PathSuppression` (L509–L578). Pure coordination state:
@@ -32,10 +31,10 @@
 //! - `PathSuppression` state transitions (suppress → retry → permanent
 //!   un-suppress on success).
 //!
-//! The `CurrentBlock` clock is driven by `next_base_fee` (N1 leaf `JTLWA3` —
-//! CONSUMED, no hard edge); `block_priority_fees` is later FED by
-//! `eth_feeHistory` (`ZUZANP`) in the N6 dispatch orchestration — this module
-//! owns only the ring data structure + prune.
+//! The `CurrentBlock` clock is driven by `next_base_fee` (CONSUMED, no hard
+//! edge); `block_priority_fees` is later FED by `eth_feeHistory` in the
+//! dispatch orchestration — this module owns only the ring data structure +
+//! prune.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -518,7 +517,7 @@ impl Dispatcher {
     }
 
     // ── PathSuppression ───────────────────────────────────────────────────
-    // (Removed — LITQFF) `PathSuppression` is no longer composed into
+    // `PathSuppression` is no longer composed into
     // `Dispatcher`. The `record_success`/`record_failure`/`is_suppressed`/
     // `total_suppressed`/`discard_path` accessors live on `PyDispatcher` (the
     // PyO3 seam), delegating to the standalone `Arc<Mutex<PathSuppression>>`.

@@ -106,7 +106,7 @@ impl Unit {
 
 /// Why the fleet refused to boot.
 ///
-/// Clone (FF-T1, BPHR6F): the boot-refusal parks in the executors'
+/// Clone: the boot-refusal parks in the executors'
 /// process materializers and every later caller surfaces a CLONE of the
 /// same sticky refusal — the typed error is cheap to hand out forever.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -195,7 +195,7 @@ impl SlotLayout {
         // of seating bins on phantom seats.
         if solver_len != budget.solver_pin_count {
             return Err(BootError::Invariant(
-                "solver seats must equal the structural LPT bin count (pins == bins, P6YXA6)",
+                "solver seats must equal the structural LPT bin count (pins == bins)",
             ));
         }
         let solver = 0..solver_len;
@@ -277,7 +277,7 @@ pub enum EnqueueError {
 }
 
 /// The submit-seam refusal (LW-T5, Seam E): typed AT the submit surface —
-/// admission-side only (a cordon never preempts a running unit: RAYPAR T3
+/// admission-side only (a cordon never preempts a running unit: the
 /// never-yield mid-unit; the slot FSM itself stays untouched).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SubmitError {
@@ -285,7 +285,7 @@ pub enum SubmitError {
     /// caller owns the retry/fallback decision (the serial arm is LW-T7).
     #[error(
         "submit refused: posture {posture:?} holds intake for role {role:?} \
-         — admission-side only; running units never preempted (RAYPAR T3)"
+         — admission-side only; running units never preempted"
     )]
     PostureHeld {
         /// The posture observed at submit.
@@ -379,7 +379,7 @@ struct SlotCell {
 /// state is the truth). This renderer derives the `(key, slot)` pin view
 /// from it, in SLOT-INDEX order.
 ///
-/// Order contract (deliberate normalization, DNZQ5G): the deleted `pins`
+/// Order contract (deliberate normalization): the deleted `pins`
 /// mirror was MRU-ordered (`complete()`'s retain+push); the derived view
 /// is slot-index ordered. No caller observes pin order — the `pins()`
 /// accessor had zero callers repo-wide, and continuation grants are
@@ -411,7 +411,7 @@ fn take_solver_unit_for(queue: &mut VecDeque<Unit>, key: PinKey) -> Option<Unit>
 /// the real engines is F3–F5).
 pub struct FleetHost {
     budget: FleetBudget,
-    /// The boot plan (FF-T2, MEBF4V): the tiered authority that resolved
+    /// The boot plan : the tiered authority that resolved
     /// this boot (id + binding + the oversubscription mark + the detected
     /// budget). Boot-frozen like the layout; the census rows and
     /// `runtime_status` read it.
@@ -419,7 +419,7 @@ pub struct FleetHost {
     /// The boot-frozen slot table geometry: derived FIRST at
     /// boot, before any cell/queue/census row; see [`SlotLayout`].
     layout: SlotLayout,
-    /// THE shared fleet posture owner (JCI2FW Part A): the host consults it
+    /// THE shared fleet posture owner: the host consults it
     /// everywhere it used to consult a host-local machine (enqueue gate,
     /// admission thresholds, the T7 shed trigger) so every host — and the
     /// process throttle feed — see ONE posture.
@@ -454,19 +454,18 @@ pub struct FleetBoot {
     /// Fractional cgroup quota (cores), from
     /// [`crate::quota::fractional_cpu_budget`].
     pub quota_cpus: f64,
-    /// The fleet host-binding profile (FF-T2, MEBF4V): `auto` resolves
+    /// The fleet host-binding profile : `auto` resolves
     /// the tier from the budget; `pinned`/`serial` force a binding.
     pub profile: degenbot_config::FleetProfile,
     /// Terminal typed overrides.
     pub overrides: BudgetOverrides,
     /// Posture thresholds (typed config).
     pub posture: PosturePolicy,
-    /// The shared fleet posture owner (JCI2FW Part A). `None` (production)
+    /// The shared fleet posture owner. `None` (production)
     /// installs `posture` into the PROCESS owner first-wins at boot and
     /// consults that — exactly one posture per process. Hermetic tests
     /// MUST inject a fresh [`PostureOwner::new`] owner here (leaked to
-    /// `'static`): posture leaking across tests is a failure class
-    /// (7KAPBB).
+    /// `'static`): posture leaking across tests is a failure class.
     pub owner: Option<&'static PostureOwner>,
 }
 
@@ -510,11 +509,11 @@ impl FleetHost {
     /// [`BootError::Invariant`] on a dead hosted station or a broken
     /// layout invariant.
     pub fn boot(boot: FleetBoot) -> Result<Self, BootError> {
-        // FF-T2: the PLAN is the first boot step — the tiered
+        // The PLAN is the first boot step — the tiered
         // host authority (LW-T4's one floor generalized into ordered tiers).
         // ONE boot log line names it (id + binding + budget); the serial
         // tier refuses with its own typed refusal until the arm lands
-        // (FF-T4) — never a silent narrow.
+        // — never a silent narrow.
         let plan = crate::plan::plan(boot.quota_cpus, boot.profile, &boot.overrides)?;
         op_info!(domain = pump, plan = plan.id,
             binding = %plan.binding,
@@ -522,12 +521,12 @@ impl FleetHost {
             oversubscribed = plan.oversubscribed,
             "boot plan resolved"
         );
-        // FF-T4: BOTH bindings boot — the projection is
+        // BOTH bindings boot — the projection is
         // binding-derived (pinned: the floor-checked budget; serial: the
         // one-solver-seat tier) and the executors' binding seam
         // instantiates the seat model over the SAME slot FSM.
         let budget = plan.projected_budget(&boot.overrides)?;
-        // ONE process-level fleet posture owner (JCI2FW Part A): the
+        // ONE process-level fleet posture owner: the
         // boot's policy installs the process owner first-wins; hermetic
         // boots inject their own owner and never touch the global.
         let posture: &'static PostureOwner = boot
@@ -621,7 +620,7 @@ impl FleetHost {
         Ok(host)
     }
 
-    /// The boot plan (FF-T2): the tiered authority that resolved this
+    /// The boot plan: the tiered authority that resolved this
     /// boot — id, binding, the oversubscription mark, and the detected
     /// budget. Boot-frozen; `runtime_status` and the census read it.
     #[must_use]
@@ -647,10 +646,10 @@ impl FleetHost {
                 count: self.role_slot_budget(role),
                 thread_name: role.thread_name(),
                 sizing: role.census_sizing(),
-                // FF-T2: how the row's work binds to host threads — the
+                // How the row's work binds to host threads — the
                 // fleet roles are the pinned binding's dedicated seats
                 // (the serial binding maps them onto shared threads as
-                // logical lanes when it lands, FF-T4).
+                // logical lanes when it lands).
                 binding: self.plan.binding.label(),
             });
         }
@@ -694,7 +693,7 @@ impl FleetHost {
     }
 
     /// The sticky lane-death hold (read-through). The Faulted transition
-    /// (TB4QGX T6) keys on THIS typed latch — never on elapsed cordon time.
+    /// keys on THIS typed latch — never on elapsed cordon time.
     #[must_use]
     pub fn lane_death_held(&self) -> bool {
         self.posture.lane_death_held()
@@ -793,8 +792,8 @@ impl FleetHost {
 
     // ---- posture feed -----------------------------------------------------------
 
-    /// Feed a throttle delta to the SHARED posture owner (JCI2FW Part A —
-    /// the host owns no machine anymore). A transition INTO Cordoned
+    /// Feed a throttle delta to the SHARED posture owner —
+    /// the host owns no machine anymore. A transition INTO Cordoned
     /// immediately sheds cordon-deferrable in-flight units to Draining
     /// (T7) — they always complete (T8); pinned walks and the merge pin
     /// are never shed. The shed is driven by the owner's transition feed
@@ -916,7 +915,7 @@ impl FleetHost {
     /// The lossless refusal seam (§10 never-drop): like [`FleetHost::
     /// enqueue`], but a refusal returns the unit BACK next to the typed
     /// error. The pooled-intake hosts need this under the SHARED posture
-    /// owner (JCI2FW Part A): the owner is fed from the throttle-poller
+    /// owner: the owner is fed from the throttle-poller
     /// thread, so a cordon can onset between a caller's admission check
     /// and this gate — the refusing gate must not swallow the payload
     /// (the caller parks it in its unbounded backlog instead).
@@ -981,7 +980,7 @@ impl FleetHost {
     }
 
     /// Drain a role's queued (not-yet-granted) units, returning how many
-    /// were removed. The Faulted arm (TB4QGX T6) resolves them terminally;
+    /// were removed. The Faulted arm resolves them terminally;
     /// granted in-flight units are untouched (they complete naturally).
     pub fn drain_role_queue(&mut self, role: WorkerRole) -> usize {
         self.role_queue_mut(role).map_or(0, |queue| {
@@ -1038,7 +1037,7 @@ impl FleetHost {
         let mut grants = Vec::new();
 
         // 1. Pinned continuations (T6): cycle-critical, keyed to their pin.
-        //    Iterate the DERIVED pin table (slot-index order, DNZQ5G): no
+        //    Iterate the DERIVED pin table (slot-index order): no
         //    mirror and no per-pass allocation — the old `self.pins.clone()`
         //    heap copy is gone; the renderer reads the cells the FSM wrote,
         //    and nothing below mutates slot states (queue-only mutation,
@@ -1354,8 +1353,8 @@ impl FleetHost {
             SlotState::Pinned { key, .. } => {
                 // The FSM's CompleteToPinned write above IS the pin
                 // registration: the derived renderer reads the cell, so
-                // there is no mirror to update (DNZQ5G deleted the
-                // three-way pins/merge_pin bookkeeping).
+                // there is no mirror to update (the three-way
+                // pins/merge_pin bookkeeping is gone).
                 // ONE arena mint path: ensure_arena (idempotent; minted on
                 // the first pin, reused warm across cycles, DETACHED(0)
                 // never minted).

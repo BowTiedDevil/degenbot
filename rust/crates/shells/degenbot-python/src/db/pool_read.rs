@@ -1,4 +1,4 @@
-//! Row pyclasses returned by the `PyBotIo` pool-builder DB seam (QVMWQC).
+//! Row pyclasses returned by the `PyBotIo` pool-builder DB seam.
 //!
 //! Mirrors the `SQLAlchemy` ORM rows + relationships the sync pool builders
 //! traverse at construction time (`v2/v3/v4_pool_builder.py`): a pool row,

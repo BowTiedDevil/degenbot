@@ -1,6 +1,6 @@
 //! 2-hop seed→V4 shape (block 2: SelfRefund lead, NetZero tail).
 //!
-//! **T3 walk (6SWFBS / CP6BNJ).** The six per-family literals (v2v4/v3v4 ×
+//! **Walk.** The six per-family literals (v2v4/v3v4 ×
 //! native-out / native-in / erc20-out) are walked onto the `mechanics`
 //! primitives + the single arm assembly below. v2v4 and v3v4 differ only in
 //! the lead flash's protocol (V2 vs V3) and in v2v4-native-out's
@@ -196,12 +196,9 @@ mod walk_probe {
         &src[..i]
     }
 
-    /// RED by design : 60 literal `PlanStep::` sites
-    /// today. Goes GREEN when T3 walks the v2v4/v3v4 arms onto
-    /// `mechanics` + the shared capture/bridge helpers; then it stays put as
-    /// the honesty invariant that no per-family Plan bodies reappear (D6
-    /// precedent: the RED probe committed at f3b06397, honesty test kept at
-    /// DDNEAB).
+    /// Honesty invariant: no literal `PlanStep::` sites in the walked arms —
+    /// the v2v4/v3v4 families emit through `mechanics` + the shared
+    /// capture/bridge helpers, so per-family Plan bodies cannot reappear.
     #[test]
     fn two_hop_seed_v4_arms_use_mechanics_not_planstep_literals() {
         let src = walk_source();
@@ -212,9 +209,9 @@ mod walk_probe {
         );
     }
 
-    /// Per-file byte-identity pin (T4 gate target): the exact current streams
+    /// Per-file byte-identity pin: the exact current streams
     /// for every v2v4/v3v4 family × amount-set × `EncodeOptions` combo. (The
-    /// SMOZG3 erc6909×batch WETH-terminal decline is lifted — TGUZCT/SW42JA —
+    /// erc6909×batch WETH-terminal decline is lifted on the deployed artifact —
     /// and the flipped cell is pinned by the shape/matrix tests, not this
     /// table.)
     const FAMILIES: &[(&str, &[&str])] = &[("V2_V4", &["V2", "V4"]), ("V3_V4", &["V3", "V4"])];

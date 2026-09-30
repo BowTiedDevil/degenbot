@@ -57,7 +57,7 @@ impl Line {
     /// result is exact affine algebra:
     /// `(A₁ + B₁·(A₀ + B₀·x)/C₀)/C₁ = ((A₁·C₀ + B₁·A₀) + B₁·B₀·x)/(C₀·C₁)`.
     ///
-    /// M6776W overflow fix: chaining affine lines across 3+ hops with
+    /// Overflow fix: chaining affine lines across 3+ hops with
     /// 1e24+ reserves overflows `I512` during the cross-multiplication. When
     /// exact composition overflows, both operands are **sound-reduced**
     /// (right-shifted with A/B ceiling and C flooring → the ratio can only
@@ -339,7 +339,7 @@ fn ceil_div(n: I512, d: I512) -> I512 {
 /// What the gate needs from one resolved hop. `None` slots (unsupported
 /// families) poison the whole path: no skip without a rigorous bound.
 ///
-/// M6776W extends the gate beyond V2/CL to the Solidly/Curve/Balancer hop
+/// The gate extends beyond V2/CL to the Solidly/Curve/Balancer hop
 /// families. Each added variant carries a RIGOROUS upper bound proven against
 /// the family's real math leaf by the proptest suite in `profit_envelope_tests`.
 /// The stableswap families (Solidly stable / Curve / Balancer stable) get the
@@ -353,7 +353,7 @@ pub enum HopMath<'a> {
     V2(&'a IntHopState),
     /// Concentrated-liquidity hop: the ordered tick-range sequence plus its
     /// carried crossing table (production: the table the resolve pass already
-    /// built — never re-derived per path, BZSOJ7; tableless callers use
+    /// built — never re-derived per path; tableless callers use
     /// [`HopMath::cl_derived`]).
     Cl(ClHop<'a>),
     /// Solidly volatile pool (constant-product family). SOUND: identical
@@ -872,8 +872,7 @@ fn hop_lines_and_cap_cached(
     }
 }
 
-/// Classify WHY a CL hop was rejected by `hop_lines_and_cap` (M6776W
-/// diagnostic). Runs only when production returned `None`, so it reports
+/// Classify WHY a CL hop was rejected by `hop_lines_and_cap` (diagnostic). Runs only when production returned `None`, so it reports
 /// the *first* range that survived the zero-liq skip but failed (zero
 /// price, `compute_crossing` failure, all-zero, or `cap_tail` overflow).
 #[must_use]
@@ -1323,7 +1322,7 @@ pub struct GateStats {
     pub skipped: u64,
     /// Paths with at least one unsupported hop family (solved unscreened).
     pub unsupported: u64,
-    /// Per-cause breakdown of `unsupported` (M6776W diagnostic). At most one
+    /// Per-cause breakdown of `unsupported` (diagnostic). At most one
     /// counter advances per unsupported path (the FIRST cause early-returns).
     pub none_hop_unmapped: u64,
     pub none_degenerate: u64,
@@ -1766,7 +1765,7 @@ pub fn take_last_gate_stats() -> GateStats {
     gate_tls(|t| std::mem::replace(t, GateStats::EMPTY))
 }
 
-/// The gate's typed verdict (SU7MAE deepening): [`Envelope::Bound`] is a
+/// The gate's typed verdict: [`Envelope::Bound`] is a
 /// rigorous upper bound on `max_x [path_output(x) − x]` — skip ONLY when its
 /// value is at or below the caller's profit floor. [`Envelope::Unsupported`]
 /// means NO sound bound exists: the path is SOLVED unscreened, never skipped
@@ -1777,7 +1776,7 @@ pub enum Envelope {
     Unsupported(GateSkipCause),
 }
 
-/// Why no bound was derivable (the per-cause M6776W counters name the same
+/// Why no bound was derivable (the per-cause counters name the same
 /// three exits).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GateSkipCause {
@@ -1802,7 +1801,7 @@ pub struct GateDeps<'a> {
     /// solve (offline deps, tests). Replaces the retired process static.
     pub prefix_store: Option<&'a PrefixCache>,
     pub capture: Option<&'a GateCaptureCfg>,
-    /// The engine-owned cross-block walk-memo handle (SU7MAE T3); `None`
+    /// The engine-owned cross-block walk-memo handle; `None`
     /// disables the memo for this solve.
     pub walk_memo: Option<&'a crate::cl::WalkMemo>,
     /// the owner's runtime stance (envelope caps + trace gate),
@@ -1948,7 +1947,7 @@ fn path_profit_bound_inner(
         };
         let Some((hop_ls, cap)) = hop_lines_and_cap_cached(hop.clone(), &deps.runtime, fan_cache)
         else {
-            // M6776W degenerate diagnostic: log the hop family + the reject
+            // Degenerate diagnostic: log the hop family + the reject
             // reason so the steady-state degenerate rate can be classified as
             // the expected shape (sparse CL with empty active range / zero
             // reserves) vs a real coverage gap. Debug-level: opt-in via
@@ -1994,7 +1993,7 @@ fn path_profit_bound_inner(
                 family = %family,
                 "degenerate hop rejected (impossible to bound — solved unscreened)"
             );
-            // M6776W golden capture: serialize the full per-hop state when a
+            // Golden capture: serialize the full per-hop state when a
             // capture harness is configured so the pool states can be replayed
             // offline for fix experimentation.
             if let Some(cfg) = deps.capture {
@@ -2700,7 +2699,7 @@ fn compose_selected_pairs(
     Ok(next)
 }
 
-/// GATE-COMPOSE-2 (7OT63B): merged pair-selection compose.
+/// GATE-COMPOSE-2: merged pair-selection compose.
 ///
 /// The composed lower envelope F(x) = min over pairs of outer_j(inner_i(x))
 /// factorizes, for non-decreasing lines (b >= 0), into
@@ -3039,7 +3038,7 @@ mod tests {
     use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
 
     // ===================================================================
-    // GATE-COMPOSE-2: merged pair-selection compose (7OT63B).
+    // GATE-COMPOSE-2: merged pair-selection compose.
     //
     // `compose_boundary_reference` freezes the LEGACY boundary chain
     // (hop prune -> pair product -> prune -> reduce -> sample) so the
@@ -3264,7 +3263,7 @@ mod tests {
         ]
     }
 
-    /// Falsification families for the merge (7OT63B review): adversarial
+    /// Falsification families for the merge: adversarial
     /// determinstic constructions the randomized seeds cannot reach —
     /// concurrent triple-touch (same-function different-repr +
     /// repr-identical duplicates + triple concurrency at a point, with

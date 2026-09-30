@@ -1,4 +1,4 @@
-//! Declarative multi-hop fixture runner (UQOAHA).
+//! Declarative multi-hop fixture runner.
 //!
 //! The pre-`declarative` fixtures each hand-assembled a `PathInfo`, hand-
 //! derived the per-hop amount chain, hand-wired the funding buffers and pool
@@ -150,7 +150,7 @@ pub struct ChainResult {
     /// Measured PoolManager ERC6909 WETH-balance delta
     /// (`PM.balanceOf(executor, weth)`) after `execute` — where the
     /// `erc6909_profit` capture mints the profit
-    /// ([`assert_erc6909_capture`] is its assertion; SMOZG3). 0 for
+    /// ([`assert_erc6909_capture`] is its assertion). 0 for
     /// streams the capture axis does not branch (every non-pure-V4 family:
     /// they reach the vault only via the on-chain `check_mode` config, never
     /// the stream bytes).
@@ -177,7 +177,7 @@ impl Harness {
         )
     }
 
-    /// KO5NNB variant of [`Self::run_chain`] with explicit [`EncodeOptions`]
+    /// Variant of [`Self::run_chain`] with explicit [`EncodeOptions`]
     /// (funding axis etc.). A test that must drive a NON-default funding
     /// source — e.g. a negative control that needs a losing path to still
     /// EXECUTE: only representable under `FundingSource::SelfFund`, where the
@@ -332,7 +332,7 @@ impl Harness {
     /// Build the production `PathInfo`, forward-traversed `hop_outputs`, and
     /// `consumed_inputs = [optimal_input, hop_outputs[0], …]` for a hop chain —
     /// everything the derivations/composers need, exposed publicly for the
-    /// ShapeClass derivation spike (6YUNQN) to drive raw payloads. Uses the same
+    /// ShapeClass derivation spike to drive raw payloads. Uses the same
     /// amount math as [`Self::run_chain`].
     pub fn path_and_amounts(
         &mut self,
@@ -360,7 +360,7 @@ impl Harness {
 
     /// Like [`Self::run_chain`] but drives an **explicit** payload instead of
     /// re-encoding via the production composer. Used by the ShapeClass
-    /// derivation spike (6YUNQN) to inject rule-driven bytes into the runtime
+    /// derivation spike to inject rule-driven bytes into the runtime
     /// matrix. Applies the same universal funding + approval + measurement as
     /// [`Self::run_chain`]; `payload` is the raw `execute()` command stream.
     pub fn run_raw_payload(
@@ -447,7 +447,7 @@ pub fn assert_profitable(result: &ChainResult, expected_swaps: usize, label: &st
 }
 
 /// Assert a [`ChainResult`] is a genuine **ERC6909-vault capture** (the
-/// `erc6909_profit` operator toggle; SMOZG3): the path executed, the measured
+/// `erc6909_profit` operator toggle): the path executed, the measured
 /// PoolManager ERC6909 WETH delta — the **contract-computed** side of the
 /// profit assertion, read via `PM.balanceOf(executor, weth)` — is positive
 /// and matches the predicted profit within the same 0.1% tolerance as

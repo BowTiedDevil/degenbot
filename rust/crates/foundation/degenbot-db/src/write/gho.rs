@@ -11,7 +11,7 @@ fn existing_gho_token(
     chain_id: i64,
     token_address: &str,
 ) -> Result<Option<i64>, DbError> {
-    // OONKWO: prepare_cached caches the compiled statement across calls.
+    // prepare_cached caches the compiled statement across calls.
     let mut s = conn.prepare_cached(
         "SELECT g.id FROM aave_gho_tokens g
          JOIN erc20_tokens t ON t.id = g.token_id
@@ -159,7 +159,7 @@ impl DegenbotDb {
     /// is skipped entirely; only the `Some` side is mutated. The degenerate
     /// `Transfer(0→0)` case lands both `None` and applies nothing.
     ///
-    /// YMWN5V retirement (crash #3): the prior design dedupe-skipped the
+    /// Retirement (crash #3): the prior design dedupe-skipped the
     /// zero-leg here + processed the paired Staked/Redeem via separate apply
     /// fns. The empirical reality (verified via cast logs) is that some
     /// actions emit ONLY the `Transfer(X→0)` event with NO paired Redeem;
@@ -277,7 +277,7 @@ impl DegenbotDb {
     }
 
     /// Apply a `RewardsController` `RewardsClaimed` event. **No-op** —
-    /// investigation (RYKCC4, 2026-07-04) confirmed the Python `event_handlers.py`
+    /// investigation (2026-07-04) confirmed the Python `event_handlers.py`
     /// defines `AaveV3RewardsControllerEvent.REWARDS_CLAIMED` in
     /// `src/degenbot/aave/events.py` but has NO handler for it: rewards claims
     /// surface only via the stkAAVE token's `Transfer` events (see
@@ -330,7 +330,7 @@ impl DegenbotDb {
 
     /// Get-or-create an `aave_gho_tokens` row by `(chain_id, token_address)`.
     /// Port of the GHO-token resolution the parser + apply glue uses to
-    /// resolve the `gho_token_id` parameter the GHO apply fns take (RYKCC4
+    /// resolve the `gho_token_id` parameter the GHO apply fns take (a
     /// flag #6 follow-up; the apply fns `apply_gho_discount_rate_strategy_updated_on_conn`
     /// / `apply_gho_discount_token_updated_on_conn` require a pre-resolved
     /// `gho_token_id`).

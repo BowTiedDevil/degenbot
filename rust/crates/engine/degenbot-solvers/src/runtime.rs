@@ -1,7 +1,7 @@
-//! The solver crate's injected runtime config (SU7MAE T4 / Q7b+Q13a): the
+//! The solver crate's injected runtime config: the
 //! tunables the perf campaign kept re-reading from the process environment
 //! become ONE plain-data config, packed by the outer owner and passed
-//! down through the call chain (KAHU5W: the RUNTIME OnceLock is deleted;
+//! down through the call chain (the RUNTIME OnceLock is deleted;
 //! the config is instance-scoped and threaded). Internals read the
 //! passed-in config — data, never the environment — so tests construct
 //! the config directly and A/B per run.

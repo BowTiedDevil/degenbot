@@ -1,6 +1,5 @@
 //! `SubmittedTx` + `monitor_pending_transaction` — the pending-tx
-//! confirmation/expiry lifecycle (row N2 of the submission scope `SHT6GE`
-//! — `port-now`).
+//! confirmation/expiry lifecycle.
 //!
 //! Port of `examples/eth_backrun_v2_v3_v4_rust.py` `SubmittedTx` (L1617–L1622)
 //! and `monitor_pending_transaction` (L1624–L1652). A typed pending-tx
@@ -15,7 +14,7 @@
 //!
 //! # Dispatcher sharing
 //!
-//! [`Dispatcher`] (N3 `M756BN`) holds its pool/task coordination state behind
+//! [`Dispatcher`] holds its pool/task coordination state behind
 //! `&mut self` methods; the monitor shares it across tokio tasks via the
 //! standard `Arc<Mutex<Dispatcher>>`. The monitor:
 //! - waits on the head-event broadcast [`Dispatcher::block_events`] (a
@@ -25,7 +24,7 @@
 //!   and the `changed().await` is already buffered.
 //! - reads `current_block` after each head event via the by-reference clock
 //!   handle [`Dispatcher::current_block_handle`] (extracted once before the
-//!   loop — the `Arc<Mutex<u64>>`, N3 M756BN). This avoids acquiring the
+//!   loop — the `Arc<Mutex<u64>>`). This avoids acquiring the
 //!   outer mutex on every event (matches the Python `current_block_ref[0]`
 //!   read-by-reference pattern).
 //! - locks the outer `Mutex<Dispatcher>` only for the rare pool `release_tx`
@@ -86,7 +85,7 @@ pub const BLOCKS_BEFORE_NONCE_EXPIRES: u64 = 5;
 /// `eth_sendRawTransaction` returns the hash) and spawns
 /// [`monitor_pending_transaction`] over it. `pools` holds the Rust pool keys
 /// (V4 `pool_id_hex` / V2–V3 pool address) locked by the tx — typed as
-/// [`PoolKey`] (the dispatcher's pool-key newtype, M756BN) so the
+/// [`PoolKey`] (the dispatcher's pool-key newtype) so the
 /// [`Dispatcher::release_tx`] path is type-consistent. The Python `set[str]`
 /// maps 1:1 to `HashSet<PoolKey>` via [`PoolKey::from`]. `nonce` names the
 /// authority slot the tx was signed against; the monitor carries it for
@@ -206,8 +205,8 @@ pub trait ReceiptProbe: Send + Sync {
 /// owning lane releases an expired one.
 ///
 /// Reads the current block after each head event via the by-reference clock
-/// handle [`Dispatcher::current_block_handle`] (the `Arc<Mutex<u64>>` from N3
-/// `M756BN`) — extracted once before the loop — so the per-event clock read
+/// handle [`Dispatcher::current_block_handle`] (the `Arc<Mutex<u64>>`) —
+/// extracted once before the loop — so the per-event clock read
 /// does NOT acquire the outer dispatcher mutex (matches the Python
 /// `current_block_ref[0]` read-by-reference pattern). The outer
 /// `Mutex<Dispatcher>` is locked only for the rare `release_tx` on
@@ -241,9 +240,9 @@ pub async fn monitor_pending_transaction(
     // Extract the by-reference block clock handle + the head-event receiver
     // ONCE (before the loop) so the per-event `current_block` read avoids
     // acquiring the outer dispatcher mutex (the handle is the inner
-    // `Arc<Mutex<u64>>`, M756BN) and the receiver is registered before the
+    // `Arc<Mutex<u64>>`) and the receiver is registered before the
     // first probe (no head event can slip between subscription and the loop).
-    // RMHQAR : OTel tier-1 - one Jaeger node per awaited receipt
+    // OTel tier-1 - one Jaeger node per awaited receipt
     // (degenbot.bundle.monitor); parents under the block/solve spans when
     // pump-driven. Inert without a subscriber.
     let span = tracing::info_span!(
@@ -720,9 +719,9 @@ mod tests {
         ))
     }
 
-    /// RMHQAR : the monitor span records "monitor.result" on every
+    /// The monitor span records "monitor.result" on every
     /// terminal path. Unique nonces filter this test's spans from the shared global
-    /// capture (MQUKB6 unique-identifier rule).
+    /// capture (the unique-identifier rule).
     #[tokio::test]
     async fn monitor_span_records_terminal_outcomes() {
         const CONFIRM_NONCE: u64 = 0xC0FF_EE01;

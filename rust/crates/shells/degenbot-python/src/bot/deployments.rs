@@ -1,4 +1,4 @@
-//! Python seam for the Rust-core deployment-identity lookup (Fork A, 7FA5EZ).
+//! Python seam for the Rust-core deployment-identity lookup (Fork A).
 //!
 //! Two thin `#[pyfunction]` views over
 //! [`degenbot_uniswap::deployments`]: the embedded canonical `deployments.json`
@@ -69,7 +69,7 @@ fn deployer_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
 
 /// Resolve the effective CREATE2 deployer for a ``(chain_id, factory)`` pair,
 /// with the `None -> factory` convention applied. Returns the factory itself
-/// when the ``(chain, factory)`` is not in the shipped JSON (Fork A, P62DKO).
+/// when the ``(chain, factory)`` is not in the shipped JSON (Fork A).
 #[pyfunction]
 fn resolve_deployer(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
@@ -82,7 +82,7 @@ fn resolve_deployer(chain_id: u64, factory: &str) -> PyResult<String> {
 /// Resolve the CREATE2 init code hash for a V3 ``(chain_id, factory)`` pair,
 /// with a documented fallback. Returns the JSON row's `init_hash` when shipped
 /// with a CREATE2 init hash; otherwise the Uniswap V3 mainnet fallback (the
-/// retired Python `ClassVar`'s default for non-JSON V3 pools) (Fork A, P62DKO).
+/// retired Python `ClassVar`'s default for non-JSON V3 pools) (Fork A).
 #[pyfunction]
 fn resolve_v3_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
@@ -96,7 +96,7 @@ fn resolve_v3_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
 /// Resolve the CREATE2 init code hash for a V2 ``(chain_id, factory)`` pair,
 /// with a documented fallback. Returns the JSON row's `init_hash` when shipped
 /// with a CREATE2 init hash; otherwise the Uniswap V2 mainnet fallback (the
-/// retired Python `ClassVar`'s default for non-JSON V2 pools) (Fork A, NSAZ4X).
+/// retired Python `ClassVar`'s default for non-JSON V2 pools) (Fork A).
 #[pyfunction]
 fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
@@ -111,7 +111,7 @@ fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
 /// `degenbot._ffi.deployments` submodule.
 /// The `degenbot._ffi.deployments` Python submodule (declarative
 /// `#[pymodule]`), carrying the deployment-identity lookup over the
-/// embedded deployments.json (Fork A, 7FA5EZ). The parent module registers
+/// embedded deployments.json (Fork A). The parent module registers
 /// the submodule itself and its `sys.modules` entry.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
@@ -123,7 +123,7 @@ pub mod deployments {
 }
 
 // ---------------------------------------------------------------------------
-// Registration-time verification wrappers (Fork A, JC6OFG)
+// Registration-time verification wrappers (Fork A)
 // ---------------------------------------------------------------------------
 //
 // Thin `PyResult` wrappers over the pure `degenbot_uniswap::deployments::
@@ -172,7 +172,7 @@ pub(crate) fn verify_v3(
 /// JSON-sourced EIP-1167 deployer + implementation address (the Aerodrome V2
 /// salt includes the `stable` flag). `Ok(())` if it matches or is not
 /// applicable; `Err(PyValueError)` on a verified mismatch.
-/// (Fork A follow-on, S5SJXF/WLJD2Y — the Aerodrome parity gap of JC6OFG.)
+/// (Fork A follow-on.)
 pub(crate) fn verify_aerodrome_v2(
     chain_id: u64,
     factory: alloy::primitives::Address,
@@ -191,7 +191,7 @@ pub(crate) fn verify_aerodrome_v2(
 /// against the JSON-sourced EIP-1167 deployer + implementation address (the
 /// V3 salt includes the `tick_spacing`). `Ok(())` if it matches or is not
 /// applicable; `Err(PyValueError)` on a verified mismatch.
-/// (Fork A follow-on, S5SJXF/WLJD2Y.)
+/// (Fork A follow-on.)
 #[expect(dead_code)] // wired when a tick_spacing-aware register_aerodrome_v3 lands
 pub(crate) fn verify_aerodrome_v3(
     chain_id: u64,

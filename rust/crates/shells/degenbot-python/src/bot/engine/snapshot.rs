@@ -6,7 +6,7 @@
 //! blocks per type, so each concern file contributes one slice.
 //!
 //! ## Retired surface
-//! RUQ637's `SnapshotStore` fields + the `load_*_from_py` / `clear_*_snapshot`
+//! The `SnapshotStore` fields + the `load_*_from_py` / `clear_*_snapshot`
 //! ingestion surface are RETIRED. The in-memory `SnapshotStore` was a
 //! boot-time freeze of the DB cut; replaced it with a WAL held
 //! read transaction (`SnapshotDb`) so every per-pool `fetch_liquidity_map`

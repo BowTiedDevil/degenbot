@@ -1,7 +1,7 @@
 //! Engine-internal single-flight pool builds (PRG-1 registry
 //! unification).
 //!
-//! Replaces the CXKACI FFI claim table (`pool_build_claims.rs`, a `PyO3`
+//! Replaces the FFI claim table (`pool_build_claims.rs`, a `PyO3`
 //! peer driven by a Python claim wrapper): the propagation seam between the
 //! Python crawl shell and the Rust build is DISSOLVED — `BotState` is the sole
 //! pool registry of record, so the coordination moves inside the build path

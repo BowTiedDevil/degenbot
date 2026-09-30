@@ -15,7 +15,7 @@
 //! result can be provably evicted to the cold set without ever losing a top-K
 //! result. `top_k` exact-ranks only the hot set.
 //!
-//! ## Dynamic maintenance (GRFRXI)
+//! ## Dynamic maintenance
 //!
 //! The **hull is X-independent** (pure geometry of `gas`/`gross`) and is held
 //! as a **snapshot** independent of the live `points` indices, so mutations

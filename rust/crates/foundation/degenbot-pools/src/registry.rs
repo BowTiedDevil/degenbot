@@ -415,7 +415,7 @@ fn some_cl_mut(entry: &mut PoolEntry) -> Option<&mut dyn ConcentratedLiquidityPo
 /// HashMap<i32, TickInfo>`; V4 additionally nests `fee`/`tick_spacing`
 /// inside `pool_key`, which the impl projects out. The trait lets
 /// [`BotState::get_v3_or_v4_pool`] return one borrowed view covering both
-/// families without cloning — the reader twin of the RAJ3PP apply dispatchers.
+/// families without cloning — the reader twin of the apply dispatchers.
 ///
 /// V2 is intentionally excluded (different state shape — reserves, not
 /// scalars); a V2 `pool_id` yields `None` from the accessor, matching the
@@ -668,7 +668,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         true
     }
 
-    // RATR5A Finding-1(a): the fetched word can predate an event the pump
+    // Finding 1(a): the fetched word can predate an event the pump
     // applied while its staged fetch was in flight (the word re-fetches at
     // its context block after a Raced retry). A fetched tick with an OLDER
     // stamp than a resident tick must never regress the resident value -
@@ -741,7 +741,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         // backfill replay (block <= seed). Live applies are STRICT monotonic
         // (a backward stamp outside a reorg panics); backfill replays drain
         // older events and are a sanctioned monotonic no-op on clocks they
-        // already cover (AV42C7 — never rewind a head-fresh pool below seed).
+        // already cover (never rewind a head-fresh pool below seed).
         if block_number > self.initial_state_block {
             self.advance_update_block(block_number);
             self.advance_tick_data_block(block_number);
@@ -758,7 +758,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         // changes the walk inputs (tick_data via tick_priors, or current
         // tick). An in-range swap that stays at the same tick without
         // crossing any initialized ticks leaves the walk result identical,
-        // so the cache is preserved (2SGSE3 H1a: dominant case for active
+        // so the cache is preserved (the dominant case for active
         // pools — they swap within their current range every block).
         if tick != tick_before || !tick_priors.is_empty() {
             self.invalidate_tick_range_cache();
@@ -945,7 +945,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         // backfill replay (block <= seed). Live applies are STRICT monotonic
         // (a backward stamp outside a reorg panics); backfill replays drain
         // older events and are a sanctioned monotonic no-op on clocks they
-        // already cover (AV42C7 — never rewind a head-fresh pool below seed).
+        // already cover (never rewind a head-fresh pool below seed).
         if block_number > self.initial_state_block {
             self.advance_update_block(block_number);
             self.advance_tick_data_block(block_number);
@@ -962,7 +962,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         // changes the walk inputs (tick_data via tick_priors, or current
         // tick). An in-range swap that stays at the same tick without
         // crossing any initialized ticks leaves the walk result identical,
-        // so the cache is preserved (2SGSE3 H1a: dominant case for active
+        // so the cache is preserved (the dominant case for active
         // pools — they swap within their current range every block).
         if tick != tick_before || !tick_priors.is_empty() {
             self.invalidate_tick_range_cache();
@@ -1123,7 +1123,7 @@ mod projection_tests {
     }
 }
 
-// --- arch-review cand 4 (T1 3WTDFK): the known-word writer + coverage reader
+// --- arch-review candidate 4: the known-word writer + coverage reader
 // (the FFI checked-word invariant contract, tested at the trait seam).
 
 #[cfg(test)]

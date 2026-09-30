@@ -139,7 +139,7 @@ pub struct ChunkProgress {
     /// `true` iff this is the run's final chunk (`chunk_end >= last_block`).
     /// Reported POST-commit so it reflects a committed final chunk (the
     /// Python shell uses it to fire the completion-time backup). The Rust
-    /// completion full-verify (YWEUIR) computes finality inline.
+    /// completion full-verify computes finality inline.
     pub is_final: bool,
 }
 
@@ -1056,7 +1056,7 @@ pub fn run_pool_update(
         report.total_pools_written += chunk_report.pools_written;
         report.total_liquidity_applies += chunk_report.liquidity_apply_count;
 
-        // Operator-facing progress (Q5IKHX: the Rust core owns CLI progress —
+        // Operator-facing progress (the Rust core owns CLI progress —
         // no per-chunk FFI hop). Time-throttled so a long backfill's console
         // stays readable; the run's final chunk always logs so completion is
         // observable even when the last chunks land inside one throttle window.

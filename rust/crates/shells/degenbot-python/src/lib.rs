@@ -66,7 +66,7 @@ pub mod cancel;
 pub mod cli;
 #[cfg(feature = "concentrated-liquidity-math")]
 pub mod concentrated_liquidity_math;
-/// Typed `BotConfig` accessors for the Python driver shell (4IOEVT). The
+/// Typed `BotConfig` accessors for the Python driver shell. The
 /// loader (the ONLY env reader) installs the process-wide config; these
 /// getters expose its typed fields to Python without a second declaration
 /// site. Unconditional — degenbot-config is always a dependency.
@@ -85,7 +85,7 @@ pub mod eip_1559;
 pub mod execution;
 #[cfg(feature = "executor")]
 pub mod executor;
-/// The fleet operator seam (JCI2FW Part B): the runtime re-tune channel
+/// The fleet operator seam: the runtime re-tune channel
 /// over the process posture owner. Gated on `simulation` — the feature
 /// that carries the `degenbot-workers` dependency.
 #[cfg(feature = "simulation")]
@@ -519,7 +519,7 @@ mod _ffi {
     use crate::bot::dex_identity::dex_identity_pymodule;
 
     // Deployment-identity lookup over the embedded deployments.json
-    // (Fork A, 7FA5EZ) (feature = "bot").
+    // (Fork A) (feature = "bot").
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::deployments::deployments;
@@ -546,8 +546,8 @@ mod _ffi {
     #[pymodule_export]
     use crate::simulation::simulation;
 
-    // Fleet operator seam (feature = "simulation") — the JCI2FW Part B
-    // runtime re-tune channel over the process posture owner (the mirror
+    // Fleet operator seam (feature = "simulation") — the runtime
+    // re-tune channel over the process posture owner (the mirror
     // home is `degenbot.fleet`; the operator op is `set_fleet_posture`).
     #[cfg(feature = "simulation")]
     #[pymodule_export]
@@ -562,7 +562,7 @@ mod _ffi {
     /// is `std::process::exit(2)`, which never returns to Python either way.
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
-        // KAHU5W boot wiring: install the typed BotConfig BEFORE any
+        // Boot wiring: install the typed BotConfig BEFORE any
         // subscriber/failure-policy/engine code reads the holder. The loader is
         // the ONLY env-reading site; without this install every production run
         // observed schema defaults (metrics bound 127.0.0.1, default debounce),
@@ -706,7 +706,7 @@ mod _ffi {
                 "UnsupportedPoolFamilyError",
                 py.get_type::<crate::bot::engine::UnsupportedPoolFamilyError>(),
             )?;
-            // Typed pool-admission exceptions (Plan 102, F2EVV6): a unified
+            // Typed pool-admission exceptions (Plan 102): a unified
             // `PoolRegistrationError` hierarchy so `build_paths` can classify
             // V2/V3/V4 admission refusals by type instead of fragile string
             // matching. The V4-specific `HookedPoolRejectedError` /

@@ -51,7 +51,7 @@ fn policy() -> PosturePolicy {
 }
 
 /// A FRESH hermetic posture owner (leaked to `'static`): every scripted
-/// host gets its own owner, never the process global (7KAPBB isolation).
+/// host gets its own owner, never the process global (isolation).
 fn hermetic_owner() -> &'static PostureOwner {
     std::boxed::Box::leak(std::boxed::Box::new(PostureOwner::new(policy())))
 }
@@ -520,14 +520,14 @@ fn declared_roles_gate_in_dispatch_until_their_migration_step() {
 /// start on over-subscription — never a runtime throttle storm).
 #[test]
 fn overly_small_quotas_never_boot() {
-    // FF-T4: the 2-5-core tier BOOTS the serial plan; the loud
+    // The 2-5-core tier BOOTS the serial plan; the loud
     // refusal moved below the serial floor (HOST_FLOOR_CORES).
     let host = FleetHost::boot(FleetBoot {
         profile: degenbot_config::FleetProfile::Auto,
         quota_cpus: 4.5,
         ..boot()
     })
-    .expect("a 4.5-core auto host boots the serial tier (FF-T4)");
+    .expect("a 4.5-core auto host boots the serial tier");
     assert_eq!(host.plan().binding, crate::plan::Binding::Serial);
     let err = FleetHost::boot(FleetBoot {
         profile: degenbot_config::FleetProfile::Auto,
@@ -539,7 +539,7 @@ fn overly_small_quotas_never_boot() {
 }
 
 mod pin_derive {
-    //! DNZQ5G (Q1): the pin table's single-source-of-truth property, driven
+    //! The pin table's single-source-of-truth property, driven
     //! over random legal grant/complete/release sequences. The DERIVED
     //! renderer (`pinned_slots` — the one pin representation, the slot
     //! table's `SlotState::Pinned` cells written only by the T-table) must

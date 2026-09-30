@@ -32,7 +32,7 @@
 //!
 //! The trait method signature is `fn ... -> Result<...>` (synchronous), not
 //! `async fn`. The only consumer (`assemble_*_tick_map`) runs in a synchronous
-//! callsite already wrapped in `py.detach` (A4YUYJ's GIL release); the alloy
+//! callsite already wrapped in `py.detach` (GIL release); the alloy
 //! impl handles the async `eth_call` internally via
 //! `get_runtime().block_on(async { ... })`, matching the pattern in
 //! `rust/crates/shells/degenbot-python/src/bot/py_bot_io.rs::forward_call_to_provider`.
@@ -78,7 +78,7 @@ pub enum BootstrapTickError {
 ///
 /// Implementations may do I/O (RPC). The assemble helper runs the Chain arm
 /// AFTER the Store arm's closure has returned and dropped the `BotState` read
-/// guard (A4YUYJ's two-phase lock protocol — no `BotState` guard held across
+/// guard (two-phase lock protocol — no `BotState` guard held across
 /// the RPC read). A pyo3-adapter impl that re-enters the GIL must do so via
 /// the standard `Python::attach` per-call hop pattern (mirrors
 /// `PyTickWordFetcher`); an alloy-backed impl releases the GIL across the RPC

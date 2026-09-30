@@ -687,7 +687,7 @@ fn rule_walk_v4_led(
             };
 
             let mut inner: Plan = if inputs.opts.use_v4_batch && !any_gap {
-                // TGUZCT/SW42JA: on a WETH terminal with erc6909 capture, open
+                // On a WETH terminal with erc6909 capture, open
                 // the WETH tail-settle (0x43, not 0x42) so the trailing mint
                 // finds the live delta.
                 let open_weth = capture == ProfitCapture::Erc6909 && output_c == weth;

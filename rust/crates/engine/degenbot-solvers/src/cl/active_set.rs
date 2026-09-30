@@ -542,7 +542,7 @@ pub(super) fn walk_refine_window(
     (argmax_x, best_score)
 }
 
-/// One path's walk-combinator counters (D63GSE follow-up): the FULL set, so
+/// One path's walk-combinator counters: the FULL set, so
 /// solve telemetry can name the real cost driver — `sims × per-sim word_steps`
 /// vs `refine_sims` (input-partition refinement probes).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -578,8 +578,8 @@ pub struct WalkStats {
     pub census: WalkEventCensus,
 }
 
-/// The walk entry's whole return: result + returned telemetry (SU7MAE
-/// deepening — no frozen thread-locals on the read-back path; the entry
+/// The walk entry's whole return: result + returned telemetry (no
+/// frozen thread-locals on the read-back path; the entry
 /// drains its own counters at entry and reports this stats value at exit).
 #[derive(Debug, Default)]
 pub struct WalkOutcome {
@@ -704,7 +704,7 @@ fn solve_active_set_path_inner(
         if x_l <= hi_current {
             walk_refine_window(hops, x_l, hi_current, rec, anchor, cfg, env);
         }
-        // Gated forward-neighbor refine (6V3ZS6 follow-up): a full ternary +
+        // Gated forward-neighbor refine: a full ternary +
         // grid over the neighbor window runs on climbing stops (edge can
         // straddle a peak) and — on falling stops — only when a cheap coarse
         // 33-point evidence grid finds the neighbor competitive within a

@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[pymethods]
 impl PyArbEngine {
     /// Last block number processed by the pump's drain phase. Routes through
-    /// the engine's stage surface (`EngineStages`, SZJUKL): the engine's own
+    /// the engine's stage surface (`EngineStages`): the engine's own
     /// cursor. The dissolved coordinator cursor (`last_drained_block` under
     /// `drain_lock`) is gone — solve/finalize/publish work runs INLINE in the
     /// single-writer pump driver, so the engine cursor IS the drained cursor
@@ -145,13 +145,13 @@ impl PyArbEngine {
         Ok(())
     }
 
-    /// Set a V3 pool's registration lifecycle to `Quarantined` (6N7XVR). The
+    /// Set a V3 pool's registration lifecycle to `Quarantined`. The
     /// live pump then defers the pool's Swap/Mint/Burn events to the pump
     /// buffer until [`set_v3_pool_live`] transitions it back. Call at the
     /// start of `register_v3_pool` (before the first RPC await) so a live
     /// event landing during the drain+pin+verify window cannot advance
     /// `update_block` past `last_complete_block` (the live direct-apply gap
-    /// YLYJM2's `drain_pump_completed` buffer gate does NOT cover). No-op for
+    /// the `drain_pump_completed` buffer gate does NOT cover). No-op for
     /// unregistered pools.
     #[pyo3(signature = (pool_address))]
     fn set_v3_pool_quarantined(&self, py: Python<'_>, pool_address: &str) -> PyResult<()> {
@@ -163,7 +163,7 @@ impl PyArbEngine {
         Ok(())
     }
 
-    /// Set a V4 pool's registration lifecycle to `Quarantined` (6N7XVR). V4
+    /// Set a V4 pool's registration lifecycle to `Quarantined`. V4
     /// twin of [`set_v3_pool_quarantined`]. Call at the start of
     /// `register_v4_pool` (before the first RPC await).
     #[pyo3(signature = (pool_manager, pool_id_hex))]
@@ -182,7 +182,7 @@ impl PyArbEngine {
         Ok(())
     }
 
-    /// Transition a V3 pool from `Quarantined` to `Live` (6N7XVR): flush the
+    /// Transition a V3 pool from `Quarantined` to `Live`: flush the
     /// retained in-progress-block pump tail via the unguarded `drain_pump`
     /// in insertion order, then mark `Live`. Call after step-2 post-drain
     /// verify passes. No-op for unregistered / already-`Live` pools.
@@ -196,7 +196,7 @@ impl PyArbEngine {
         Ok(())
     }
 
-    /// Transition a V4 pool from `Quarantined` to `Live` (6N7XVR). V4 twin
+    /// Transition a V4 pool from `Quarantined` to `Live`. V4 twin
     /// of [`set_v3_pool_live`]. Call after step-2 post-drain verify passes.
     #[pyo3(signature = (pool_manager, pool_id_hex))]
     fn set_v4_pool_live(
@@ -214,7 +214,7 @@ impl PyArbEngine {
         Ok(())
     }
 
-    /// Batch-release every pool still `Quarantined` (DFQYM5 orphan sweep).
+    /// Batch-release every pool still `Quarantined` (orphan sweep).
     /// With Tracked pools now registering `Quarantined` by default, call once
     /// after `build_paths` finishes so a Tracked pool built but never reached
     /// by `register_v3/v4_pool` (path skipped before registration) is released

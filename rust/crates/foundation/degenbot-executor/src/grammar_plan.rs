@@ -1,5 +1,5 @@
 //! The Plan walker — the **deep, stable** half of the grammar (`grammar_shape.rs`
-//! split, ERP6ES / candidate 2 of `architecture-review-1786663110.html`).
+//! split, candidate 2 of `architecture-review-1786663110.html`).
 //!
 //! A 2/3-hop family's stream is authored as an execution-ordered,
 //! callback-nested [`Plan`] of [`PlanStep`]s by the builders in
@@ -37,7 +37,7 @@ use crate::grammar_ledger::{LedgerOp, SwapRecipient};
 pub use crate::grammar_ledger::Prot;
 
 // The 2/3-hop axis types (FundingSource + ProfitCapture + Bribe + ShapeClass)
-// live in grammar_ledger (ADR-029 D1, WE45KC unification): the open-set enum is
+// live in grammar_ledger (ADR-029 D1 unification): the open-set enum is
 // the single source of truth, re-exported here for the builders + consumers.
 pub use crate::grammar_ledger::{
     Axis, AxisSupport, Bribe, FundingSource, ProfitCapture, ShapeClass,
@@ -76,10 +76,10 @@ pub(crate) fn v3_input(h: &V3HopInfo) -> Address {
 /// `pre_grant_to` is the address-table index already credited with the hop's
 /// input (a prior `V4_TAKE_COMPACT`/`ERC20_TRANSFER` into the pair). A terminal
 /// V2 always swaps via `V2_SWAP_CALC` from that pre-grant (credit-before-debit
-/// on the pair-handoff ledger — the `2PT5HH` / `path-182449` rule); a terminal
+/// on the pair-handoff ledger — the `path-182449` rule); a terminal
 /// V3 is a `V3_SWAP_COMPACT` flash whose input comes from the coupled ledger.
 ///
-/// RVNIPD: after the emitter deletion this helper survives only as the
+/// This helper survives only as the
 /// fixture for the terminal-V2 `V2_SWAP_CALC`-not-`V2_SWAP_COMPACT` rule test.
 #[cfg(test)]
 fn emit_terminal_hop(
@@ -120,7 +120,7 @@ fn emit_terminal_hop(
     Some(())
 }
 // ═══════════════════════════════════════════════════════════════════════════
-// Plan tree — the primary grammar artifact (ADR-029 D4, mechanism (iii), `BP7KIR`).
+// Plan tree — the primary grammar artifact (ADR-029 D4, mechanism (iii)).
 // A family's ledger decisions authored as an execution-ordered, callback-nested
 // tree. Two consumers derive from the SAME Plan: the encoder (`Plan→Vec<u8>`)
 // and the validator (`Plan→LedgerOp`, depth-first = execution order). One
@@ -139,7 +139,7 @@ fn emit_terminal_hop(
 /// Each leaf carries BOTH the resolved address-table index (for the byte
 /// encoder) and the currency/pool address (for the `LedgerOp` projection) —
 /// Checkpoint 1 keeps this minimal; a later refactor may separate
-/// address-collection from emission if it clarifies (see `BP7KIR` body).
+/// address-collection from emission if it clarifies.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlanStep {
     /// A V2 or V3 `*_SWAP_COMPACT` flash — the pool credits `out_currency` to
@@ -174,7 +174,7 @@ pub enum PlanStep {
         callback: Plan,
     },
     /// An `ERC20_TRANSFER(token→recipient, amount)` from the executor. Doubles
-    /// as flash-repayment and pair-seed by recipient role (DS4OQD finding 5):
+    /// as flash-repayment and pair-seed by recipient role:
     /// when the recipient is a V2 pair being pre-funded, `seeds_pool` carries
     /// that pair's address so the projection also credits the pair-handoff
     /// ledger (a following `V2SwapCalc` consumes it).
@@ -190,7 +190,7 @@ pub enum PlanStep {
         repays_flash: Option<Address>,
     },
     /// A `V2_SWAP_CALC(pool, zfo, recipient, fee)` — the terminal-V2 pre-fund
-    /// rule (`2PT5HH`): swap from whatever the feeder delivered to the pair,
+    /// rule: swap from whatever the feeder delivered to the pair,
     /// never an exact-out `V2_SWAP_COMPACT` (over-drains 1 wei → `UniswapV2: K`).
     /// Consumes the pair-handoff credit seeded by a prior `Erc20Transfer`.
     V2SwapCalc {
@@ -244,7 +244,7 @@ pub enum PlanStep {
     /// a stream precondition the validator credits so SelfFund families' flash
     /// repayments validate. The encoder emits nothing for it.
     SelfFund { currency: Address, amount: u128 },
-    // ── V4 (BP7KIR Increment 3): the PoolManager container + delta ops. ──
+    // ── V4: the PoolManager container + delta ops. ──
     /// A `V4_UNLOCK(inner)` — the PM callback scope. `inner` runs inside the
     /// unlock; at its end the master V4 invariant fires: every touched PM delta
     /// must net to zero (`V4UnlockEnd`).
@@ -268,7 +268,7 @@ pub enum PlanStep {
     /// `V4_TAKE_DELTA(cur→rcp)` — takes the entire positive `PM[cur]` delta to
     /// `rcp` (the profit capture; debits PM credit). When the recipient is a
     /// V2 pool (`seeds_pool`), the taken credit seeds that pool's pair-handoff
-    /// (the 2PT5HH terminal-V2 rule across the V4 boundary — `v3_v4_v2`).
+    /// (the terminal-V2 rule across the V4 boundary — `v3_v4_v2`).
     V4TakeDelta {
         currency_idx: u8,
         currency_addr: Address,
@@ -363,7 +363,7 @@ pub enum PlanStep {
     ///
     /// `open_weth`: `false` = 0x42 (full tail-settle); `true` = 0x43 — the
     /// WETH tail-settle is SKIPPED, so the positive `PM[weth]` delta is left
-    /// OPEN for a trailing `V4Mint` (ERC6909 capture, TGUZCT/SW42JA). The 0x43
+    /// OPEN for a trailing `V4Mint` (ERC6909 capture). The 0x43
     /// projection additionally emits the `LedgerOp::OpenWethPairing` gate op,
     /// which requires a WETH `Mint` before `V4UnlockEnd`.
     V4Batch {
@@ -371,7 +371,7 @@ pub enum PlanStep {
         open_weth: bool,
     },
     /// `V4_MINT_COMPACT(cur→rcp, amount)` — convert a positive `PM[cur]`
-    /// delta into an ERC6909 claim for `rcp` (BP7KIR `erc6909_profit` opt).
+    /// delta into an ERC6909 claim for `rcp` (`erc6909_profit` opt).
     /// Ledger-equivalent to [`PlanStep::V4TakeDelta`]: debits `PM[cur]` by
     /// `amount` (requires credit-before-debit, `D0`). The asset stays inside
     /// the PM as a claim rather than a physical transfer — distinct from
@@ -498,7 +498,7 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                         amount: *amount,
                         repays_flash: *repays_flash,
                     });
-                    // DS4OQD finding 5: a transfer TO a V2 pair pre-funds it —
+                    // A transfer TO a V2 pair pre-funds it —
                     // credit the pair-handoff ledger so a following `V2SwapCalc`
                     // sees its seed (the terminal-V2 credit-before-debit rule).
                     if let Some(pool) = seeds_pool {
@@ -624,7 +624,7 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     // in `v4_v3`) validates. When the recipient is a V2 pair,
                     // the token seeds the pair directly (PM→pool) — credit
                     // `PairHandoff[pool]` so a following `V2SwapCalc` sees its
-                    // seed (the 2PT5HH terminal-V2 rule across the PM boundary).
+                    // seed (the terminal-V2 rule across the PM boundary).
                     if *recipient_idx == SENTINEL_SELF {
                         // The token physically arrives at the executor's balance.
                         // Which ledger depends on the currency: native credits
@@ -699,7 +699,7 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                         });
                     }
                     if *open_weth {
-                        // TGUZCT/SW42JA: the 0x43 variant leaves the terminal
+                        // The 0x43 variant leaves the terminal
                         // (WETH) delta open — arm the pairing gate for the
                         // trailing `V4_MINT_COMPACT`.
                         let weth = entries.last().map(|e| e.out_currency).unwrap_or_default();

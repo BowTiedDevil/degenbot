@@ -801,7 +801,7 @@ pub fn init_logging_subscriber() {
 /// wide build even though this crate resolves without it. That second
 /// install then fails against the explicit `LogTracer::init()` bridge above,
 /// panicking with "failed to set global default subscriber:
-/// `SetLoggerError(())`" (TU252C: deterministic `cargo test --workspace`
+/// `SetLoggerError(())`" (deterministic `cargo test --workspace`
 /// failure of `degenbot_rs --test logging_parity`). The free function sets
 /// only the subscriber; the explicit bridge remains the single owner of the
 /// `log` slot under every feature resolution.

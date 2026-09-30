@@ -1,5 +1,4 @@
-//! The header/logs watchdog windows (JIABO3 + SONJQA + the logs-silence
-//! inverse watchdog).
+//! The header/logs watchdog windows plus the logs-silence inverse watchdog.
 //!
 //! ADR-008: the FSM (`StageMachine`) OWNS the watchdog *decisions*
 //! (`on_tick` emits `Recover` / `LogSilence`); this crate owns the watchdog
@@ -24,7 +23,7 @@ use std::time::Duration;
 /// no-activity path uses.
 pub const HEADER_STALENESS_SECS: u64 = 30;
 
-/// SONJQA: the waterfall `log_wait` child is force-closed (with an explicit
+/// The waterfall `log_wait` child is force-closed (with an explicit
 /// stall warning) once it ages past this horizon — the observed failure shape
 /// (trace a1ad51bd, block 25913381) was a 12.7s all-quiet header gap leaving
 /// `log_wait` open until the NEXT header while its parent `pump.block` span
@@ -50,7 +49,7 @@ pub const LOG_SILENCE_SECS: u64 = 60;
 pub struct Watchdog {
     /// Header-staleness window (dead-`newHeads` recovery).
     pub header_staleness: Duration,
-    /// Max age of the waterfall `log_wait` child before force-close (SONJQA).
+    /// Max age of the waterfall `log_wait` child before force-close.
     pub log_wait_max_age: Duration,
     /// Logs-silence window (dead/stalled `logs` arm while headers flow).
     pub log_silence: Duration,

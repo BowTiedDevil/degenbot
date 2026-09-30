@@ -26,8 +26,8 @@
 //! The legacy Python `AnvilFork` exposed `self.w3`/`self.async_w3()` (a
 //! Web3 instance) constructed over the spawned anvil process's URL. The
 //! Rust direction replaces that with `AlloyProvider` constructed from
-//! [`PyAnvilFork::ipc_path`]. FF4 (`WXRNHH`) — the Python companion-shell
-//! rewrite — owns the decision of whether `AnvilFork.provider` becomes:
+//! [`PyAnvilFork::ipc_path`]. The Python companion shell owns the decision
+//! of whether `AnvilFork.provider` becomes:
 //!
 //! 1. a re-constructed `AlloyProvider` over `ipc_path` (the same path the
 //!    core `DynProvider` is already connected over — IPC supports

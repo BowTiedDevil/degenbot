@@ -170,7 +170,7 @@ pub fn observe_storage_read_forced(
     index: U256,
     rpc_value: U256,
 ) {
-    // ULUWNI: the engine's oracle is the build-time SNAPSHOT — scalar slots
+    // The engine's oracle is the build-time SNAPSHOT — scalar slots
     // compare against the engine-at-build words; tick slots are not
     // snapshotted and fall through. A state-less view (the boot registry)
     // answers `None`, leaving the observer inert.

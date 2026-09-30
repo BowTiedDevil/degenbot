@@ -10,7 +10,7 @@ fn existing_aave_v3_asset(
     market_id: i64,
     underlying_asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    // OONKWO: prepare_cached caches the compiled statement across calls.
+    // prepare_cached caches the compiled statement across calls.
     let mut s = conn.prepare_cached(
         "SELECT id FROM aave_v3_assets \
          WHERE market_id = ?1 AND underlying_asset_id = ?2",
@@ -44,7 +44,7 @@ impl DegenbotDb {
         Ok(())
     }
 
-    // ── Pool-event direct writers (UR7QNL — Option A) ───────────────────
+    // ── Pool-event direct writers (Option A) ───────────────────
     //
     // The two Aave V3 Pool events that write DB rows directly:
     // `ReserveDataUpdated` (index/rate UPDATE) + `ReserveInitialized`
@@ -97,7 +97,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_reserve_data_updated`] (UR7QNL — the §3.4 atomicity fix;
+    /// [`Self::apply_reserve_data_updated`] (the §3.4 atomicity fix;
     /// see [`Self::get_or_create_e_mode_category_on_conn`] for the rationale).
     ///
     /// # Errors
@@ -154,7 +154,7 @@ impl DegenbotDb {
     /// (`getSourceOfAsset`) happen in the orchestrator; the apply fn
     /// takes pre-resolved fields (mirrors design decision #1 — the
     /// apply core is pure substrate, no RPC). The GHO cross-link setup if the
-    /// asset IS the GHO token is RYKCC4's concern, NOT this fn's.
+    /// asset IS the GHO token is a separate concern, NOT this fn's.
     ///
     /// Returns the asset row `id`.
     ///
@@ -188,7 +188,7 @@ impl DegenbotDb {
     }
 
     /// The single-transaction-bound variant of
-    /// [`Self::apply_reserve_initialized`] (UR7QNL — the §3.4 atomicity fix;
+    /// [`Self::apply_reserve_initialized`] (the §3.4 atomicity fix;
     /// see [`Self::get_or_create_e_mode_category_on_conn`] for the rationale).
     ///
     /// # Errors
@@ -251,10 +251,10 @@ impl DegenbotDb {
             ],
         )?;
         let asset_id = conn.last_insert_rowid();
-        // 2QGL6G / divergence #8: mirror the Python's GHO-vToken-FK link
+        // divergence #8: mirror the Python's GHO-vToken-FK link
         // (event_handlers.py:689-698) — when the new asset's underlying IS
         // the GHO token, set `aave_gho_tokens.v_token_id` to the new vToken's
-        // erc20 id. The FK is the precondition for the ULDUAC emitter guard
+        // erc20 id. The FK is the precondition for the emitter guard
         // (resolved via `gho_asset.v_token_address`). `None` for a regular
         // reserve (no link).
         if let Some(gho_id) = gho_link_token_id {
@@ -456,7 +456,7 @@ impl DegenbotDb {
     /// `_process_proxy_creation_event` which appends unconditionally but is fed
     /// each `ProxyCreated` exactly once).
     ///
-    /// # Why this exists (O4BOST cold-boot)
+    /// # Why this exists (cold-boot)
     ///
     /// The Rust `run_aave_update` bootstrap pass fetches `ProxyCreated` events
     /// over `[from_block, from_block + BOOTSTRAP_WINDOW]` + applies them BEFORE

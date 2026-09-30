@@ -110,7 +110,7 @@ impl DegenbotDb {
 
     /// `SELECT id, chain, address, name, symbol, decimals FROM erc20_tokens WHERE id = ?`.
     ///
-    /// The FK-id companion to [`Self::fetch_token_by_address`]. QVMWQC: the pool
+    /// The FK-id companion to [`Self::fetch_token_by_address`] The pool
     /// builders hydrate `pool.token0` / `pool.token1` ORM relationships by their
     /// FK id columns (`token0_id` / `token1_id`); this is the single-table read
     /// that replaces the `SQLAlchemy` lazy-load.
@@ -136,7 +136,7 @@ impl DegenbotDb {
 
     /// `SELECT id, chain_id, name, active, last_update_block, factory, deployer FROM exchanges WHERE id = ?`.
     ///
-    /// QVMWQC: the pool builders hydrate the `pool.exchange` ORM relationship by
+    /// The pool builders hydrate the `pool.exchange` ORM relationship by
     /// its FK id column (`exchange_id`); this read replaces the `SQLAlchemy`
     /// lazy-load. `factory` / `deployer` are the fields the builders read
     /// (`exchange.factory`, `exchange.deployer`).
@@ -190,7 +190,7 @@ impl DegenbotDb {
 
     /// `SELECT id, address, chain, kind, state_view, exchange_id FROM pool_managers WHERE address = ? AND chain = ?`.
     ///
-    /// QVMWQC: the V4 builder resolves its `pool_manager` row by `(address,
+    /// The V4 builder resolves its `pool_manager` row by `(address,
     /// chain)` to obtain the `id` (for the V4 pool join) + the `state_view`
     /// contract address. Replaces the `SQLAlchemy`
     /// `session.scalar(select(PoolManagerTable).where(...))` read.
@@ -217,7 +217,7 @@ impl DegenbotDb {
 
     /// `SELECT <V4 subclass cols> FROM uniswap_v4_pools WHERE pool_hash = ?`.
     ///
-    /// QVMWQC: the V4 builder resolves its pool row by the `pool_hash`
+    /// The V4 builder resolves its pool row by the `pool_hash`
     /// (`bytes32,` 0x-prefixed lowercase-hex unique key). Returns the V4 subclass
     /// row (`managed_pool_id` / `hooks` / currencies / fees / `tick_spacing` /
     /// liquidity-update marker) — the same shape as [`Self::fetch_pool_kind`]

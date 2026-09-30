@@ -320,7 +320,7 @@ thread_local! {
     // driver so the next optimization touches the right loop.
     pub(crate) static WALK_TERNARY_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_GRID_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Loop-13 YHR3ZH atomization: per-piece window-edge bisection probes and
+    // Loop-13 atomization: per-piece window-edge bisection probes and
     // the transitional-anchor sweep. Everything else (straddle probes,
     // landed_beyond scans, skipped-tuple checks, neighbor coarse grids) is
     // the residual of total - (left+right+anchor+refine).

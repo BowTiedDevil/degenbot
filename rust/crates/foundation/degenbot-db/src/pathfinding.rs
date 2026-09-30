@@ -103,7 +103,7 @@ pub struct PathGraphData {
     /// Preserved so the `PyO3` seam can reconstruct the exact concrete
     /// `PathStep.type` class (Python maps `kind_string → pool_type` via
     /// `pool_type.__mapper__.polymorphic_identity`), avoiding the V2/V3
-    /// collapse that `pool_id_to_kind` performs (AF7OEL strict parity).
+    /// collapse that `pool_id_to_kind` performs (strict parity).
     pub pool_id_to_kind_string: HashMap<u64, String>,
 }
 

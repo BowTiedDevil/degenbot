@@ -292,7 +292,7 @@ impl DegenbotDb {
         get_or_create_position_on_conn(conn, user_id, asset_id, "aave_v3_debt_positions")
     }
 
-    // ── ScaledToken position-state mutations (5Z3QQ2 — SCALEAPPLY) ────────
+    // ── ScaledToken position-state mutations (SCALEAPPLY) ────────
     //
     // The aToken/vToken `Mint`/`Burn`/`BalanceTransfer` events drive the
     // `balance` + `last_index` columns on `aave_v3_collateral_positions` /
@@ -441,7 +441,7 @@ impl DegenbotDb {
         Ok(())
     }
 
-    // ── `&self` wrappers (2QPBUJ path: thin lock-and-delegate) ─────────────
+    // ── `&self` wrappers (thin lock-and-delegate) ─────────────
 
     /// `&self` wrapper for [`Self::apply_scaled_token_mint_on_conn`].
     ///

@@ -5,7 +5,7 @@
 //! the core [`DispatchCandidate`]). The candidate resolves its
 //! [`composers::PathInfo`] directly from `path_id` via the
 //! [`PyArbEngine::path_info_for_core`] projection over the shared
-//! `BotState` — no Python `PathInfo` dataclass round-trip (NXM2BF, the
+//! `BotState` — no Python `PathInfo` dataclass round-trip (the
 //! encode-relay flatten).
 //!
 //! The `EncodeOptions` (`erc6909_profit` / `use_v4_batch`) come in as bool
@@ -37,7 +37,7 @@ use pyo3::exceptions::PyValueError;
     skip_from_py_object,
     module = "degenbot._ffi.simulation"
 )]
-// `inner` is read by `dispatch_profitable_py` (A4, QQFTB4) — not yet landed;
+// `inner` is read by `dispatch_profitable_py` (pending) — not yet landed;
 // the field is dead until then.
 pub struct PyDispatchCandidate {
     pub(crate) inner: DispatchCandidate,
@@ -67,7 +67,7 @@ impl PyDispatchCandidate {
     ///         case, surfaced as `ValueError`.
     ///     `solve_block`: the block the solver produced the result on.
     ///     `state_nonces`: per-hop state nonces captured at solve time
-    ///         (AV42C7 staleness gate — the dispatch seam skips candidates
+    ///         (the staleness gate — the dispatch seam skips candidates
     ///         whose pool state has advanced since the solve).
     ///     `erc6909_profit`: encode the V4 profit as an ERC6909 transfer
     ///         (default `False`).

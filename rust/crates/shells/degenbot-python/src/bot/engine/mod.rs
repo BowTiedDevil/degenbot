@@ -107,7 +107,7 @@ pub struct PyArbEngine {
     // lives on the shared EngineDriver — `PyBot::block_stream` hands it to
     // Python.
     /// The cross-block persistent bytecode + account-existence cache
-    /// (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Held for the
+    /// (`WarmCodeCacheInner`, the Option-A layer). Held for the
     /// engine's life; cloned into each per-block `BlockSimHandle::build` so
     /// the per-block cold `basic`/code RPCs stop repeating across blocks
     /// (first block warms; later blocks hit until TTL expiry). Constructed
@@ -173,7 +173,7 @@ impl PyArbEngine {
         self.stages.core()
     }
 
-    /// The cross-block warm bytecode cache arc (`HDEG7H` Option A) — the
+    /// The cross-block warm bytecode cache arc (Option A) — the
     /// persistent `Arc<RwLock<WarmCodeCacheInner>>` held for the engine's life.
     /// `dispatch_profitable_py` clones this into the per-block
     /// `BlockSimHandle::build` so the `WarmCodeCache` layer shares one inner
@@ -220,7 +220,7 @@ pub(crate) fn hex_string_to_pool_id(
     Ok(pool_id)
 }
 
-/// `#[pymethods]` slice for the JUCFCB snapshot-seed getter. `PyO3` allows
+/// `#[pymethods]` slice for the snapshot-seed getter. `PyO3` allows
 /// multiple `#[pymethods] impl PyArbEngine { ... }` blocks; this is the
 /// snapshot-seed surface (the phase / startup ritual lives in `pump.rs`/`solve.rs`).
 #[pymethods]
@@ -228,7 +228,7 @@ impl PyArbEngine {
     /// The snapshot seed block `S` — set at `Bot.__init__` time by
     /// `Bot::load_snapshot_from_db` for the DB path, OR via
     /// [`set_snapshot_seed_block`](Self::set_snapshot_seed_block) for the
-    /// non-DB (file/memory) path (2SM4Y7 — the pyo3 `backfill_from_snapshot`
+    /// non-DB (file/memory) path (the pyo3 `backfill_from_snapshot`
     /// is retired; the core auto-backfill inside `BlockPump::resume_from_subscribe`
     /// reads `S` from the shared `BotState`). `None` = cold-start (no snapshot
     /// loaded).
@@ -239,7 +239,7 @@ impl PyArbEngine {
     }
 
     /// Set the snapshot seed block `S` on the shared `BotState` for the
-    /// non-DB (file/memory) snapshot path (2SM4Y7).
+    /// non-DB (file/memory) snapshot path.
     ///
     /// The DB path (`Bot::load_snapshot_from_db`) sets `S` itself; the
     /// non-DB path calls this once after `load_v3_snapshot_from_py` /

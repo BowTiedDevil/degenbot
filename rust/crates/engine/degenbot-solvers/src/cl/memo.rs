@@ -3,7 +3,7 @@ use alloy::primitives::U256;
 use super::IntV3TickRangeSequence;
 
 // ---------------------------------------------------------------------------
-// Cross-block composition memo (walk_climb_fork follow-up; F4YJL8)
+// Cross-block composition memo (walk_climb_fork follow-up)
 // ---------------------------------------------------------------------------
 
 /// One epoch's walk-composition memo accounting. `hits` = probes whose
@@ -58,7 +58,7 @@ impl Default for WalkMemoState {
     }
 }
 
-/// The engine's OWNED cross-block walk-composition handle (SU7MAE T3 / Q12a):
+/// The engine's OWNED cross-block walk-composition handle:
 /// an `Arc<WalkMemo>` passed into the CL solve entry — no global state, and
 /// no environment read inside the solver (the enabled flags are constructor
 /// fields; the owner builds them from its config, `build` at the

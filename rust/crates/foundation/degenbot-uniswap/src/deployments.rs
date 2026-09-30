@@ -93,8 +93,7 @@ pub fn resolve_v2_init_hash(chain_id: u64, factory: Address) -> alloy::primitive
 ///
 /// Returns the factory itself when the `(chain, factory)` is not in the
 /// shipped JSON (non-JSON pools default to factory as deployer). This is the
-/// value the builder stores on the pool identity at registration (Fork A,
-/// P62DKO) so the companion reads it off the handle with no runtime
+/// value the builder stores on the pool identity at registration (Fork A) so the companion reads it off the handle with no runtime
 /// `chain_id` plumbing.
 #[must_use]
 pub fn resolve_deployer(chain_id: u64, factory: Address) -> Address {
@@ -156,7 +155,7 @@ struct RawRecord {
     /// The EIP-1167 master implementation contract Aerodrome factories
     /// clone (V2 `stable`/volatile + V3 Slipstream). Absent for V2/V3
     /// rows that use the standard init-hash CREATE2 path. Aerodrome-only
-    /// field (Fork A follow-on, S5SJXF/D7VKQX).
+    /// field (Fork A follow-on).
     #[serde(default)]
     implementation_address: Option<String>,
 }
@@ -193,7 +192,7 @@ pub struct DeploymentRecord {
     /// CREATE2 path. A standalone Rust consumer derives an Aerodrome pool
     /// address from `(deployer, tokens, stable|tick_spacing,
     /// implementation_address)` with no Python (ADR-005 standalone
-    /// constraint). (Fork A follow-on, S5SJXF/D7VKQX.)
+    /// constraint). (Fork A follow-on.)
     pub implementation_address: Option<Address>,
     /// The resolved DEX name for this deployment (derived from the JSON
     /// `name` label). `None` if the label names no known DEX.
@@ -322,7 +321,7 @@ fn table() -> &'static Table {
 /// pair + `stable`/`tick_spacing`). V2/V3 rows that use the standard
 /// init-hash CREATE2 path have no `implementation_address` and this returns
 /// `None`. Used by the Rust builder's registration-time verification + the
-/// standalone clone-address derivation (Fork A follow-on, S5SJXF/D7VKQX).
+/// standalone clone-address derivation (Fork A follow-on).
 #[must_use]
 pub fn implementation_address(chain_id: u64, factory: Address) -> Option<Address> {
     lookup(chain_id, factory).and_then(|rec| rec.implementation_address)
@@ -371,7 +370,7 @@ pub fn resolve_dex_name(chain_id: u64, factory: Address) -> Option<DexName> {
 }
 
 /// Whether the `(chain, factory)` deployment row names a Pancakes V3
-/// deployment — the CL slot-layout discriminator (VERIFY2 T4 / W32CAU).
+/// deployment — the CL slot-layout discriminator.
 /// Unknown deployments (not in the shipped JSON) return `false`; callers
 /// degrade to the canonical Uniswap layout unless the driver passes an
 /// explicit layout override. Only meaningful for V3 pools (the V2 pancake
@@ -543,7 +542,7 @@ pub fn verify_v3_pool_address(
 }
 
 // ---------------------------------------------------------------------------
-// Registration-time verification (Fork A, JC6OFG)
+// Registration-time verification (Fork A)
 // ---------------------------------------------------------------------------
 //
 // The Rust builder recomputes the CREATE2 address from the JSON-sourced
@@ -576,7 +575,7 @@ pub fn verify_v3_pool_address(
 /// Returns `Err(AddressMismatch)` only when the `(chain_id, factory)` is in
 /// the shipped JSON with an `implementation_address` AND the recomputed
 /// EIP-1167 clone address differs from `expected`. Returns `Ok(())` for
-/// non-applicable cases (Fork A follow-on, S5SJXF/WLJD2Y).
+/// non-applicable cases (Fork A follow-on).
 #[must_use = "the verification result must be checked before registration proceeds"]
 pub fn verify_aerodrome_v2_pool_address(
     chain_id: u64,
@@ -620,7 +619,7 @@ pub fn verify_aerodrome_v2_pool_address(
 /// Returns `Err(AddressMismatch)` only when the `(chain_id, factory)` is in
 /// the shipped JSON with an `implementation_address` AND the recomputed
 /// EIP-1167 clone address differs from `expected`. Returns `Ok(())` for
-/// non-applicable cases (Fork A follow-on, S5SJXF/WLJD2Y).
+/// non-applicable cases (Fork A follow-on).
 #[must_use = "the verification result must be checked before registration proceeds"]
 pub fn verify_aerodrome_v3_pool_address(
     chain_id: u64,
@@ -732,7 +731,7 @@ mod tests {
         assert!(rec.init_hash.is_none());
     }
 
-    // --- CL slot-layout discriminator (VERIFY2 T4 / W32CAU) -----------------
+    // --- CL slot-layout discriminator -----------------
 
     #[test]
     fn pancake_v3_factories_discriminate_from_uniswap_and_unknown() {

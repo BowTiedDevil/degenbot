@@ -505,7 +505,7 @@ mod mechanics {
         // index is implicit. Kept as a thin wrapper so the mechanics surface is
         // homogeneous (T7 wires the `v4_v4`/`v4_v4_v4` batch paths through it).
         // `open_weth`: 0x43 variant — the WETH tail-settle is skipped, so a
-        // trailing mint (erc6909 capture) finds the live delta (TGUZCT/SW42JA).
+        // trailing mint (erc6909 capture) finds the live delta.
         let _ = (at, facts);
         PlanStep::V4Batch { entries, open_weth }
     }

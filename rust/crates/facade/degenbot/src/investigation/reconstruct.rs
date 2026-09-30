@@ -143,7 +143,7 @@ pub fn register_v4_with(
             tick_spacing: p.tick_spacing.expect("v4 tick_spacing"),
             // The REAL hook address from the fixture (captured from the DB
             // row). A ZERO default would break the keccak(pool_key) round-trip
-            // and blind the ADR-037 guards in replay (MTMPQB).
+            // and blind the ADR-037 guards in replay.
             hooks: p.hooks.unwrap_or_default(),
         },
         hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
@@ -200,7 +200,7 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
             currency1: p.currency1.expect("v4 currency1"),
             fee: p.fee_currency0.expect("v4 fee"),
             tick_spacing: p.tick_spacing.expect("v4 tick_spacing"),
-            // Same as register_v4_with: carry the REAL hook address (MTMPQB).
+            // Same as register_v4_with: carry the REAL hook address.
             hooks: p.hooks.unwrap_or_default(),
         },
         hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
@@ -222,7 +222,7 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
 
 #[cfg(test)]
 mod hook_wiring_tests {
-    //! Replay-vs-DB hook parity (MTMPQB): a captured-path V4 pool with a
+    //! Replay-vs-DB hook parity: a captured-path V4 pool with a
     //! nonzero hook address must register with the REAL hook in its identity so
     //! the pool key round-trips `keccak(abi.encode(pool_key))` and the ADR-037
     //! guard surface stays truthful in investigations.

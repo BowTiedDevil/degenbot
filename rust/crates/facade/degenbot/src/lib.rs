@@ -20,7 +20,7 @@ pub use degenbot_bot as bot;
 /// Engine-session end DETECTION facts: the typed cause vocabulary, the heartbeat
 /// stall watchdog, and the once-only delivery channel both drivers share.
 pub use degenbot_bot::arb_engine::session_end;
-/// ADR-050 / Gap G1 (`5XOGRK`): the public Rust driver seam over the
+/// ADR-050 / Gap G1: the public Rust driver seam over the
 /// crate-private engine. `cargo add degenbot` reaches the full
 /// subscribe→resume(+auto-backfill)→stop ritual (also available as
 /// `degenbot::bot::arb_engine::EngineDriver`).

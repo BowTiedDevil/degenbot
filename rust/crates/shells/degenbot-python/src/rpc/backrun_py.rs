@@ -1,4 +1,4 @@
-//! `PyO3` bindings for the backrun pipeline crates (task NYVL2F slice).
+//! `PyO3` bindings for the backrun pipeline crates.
 //!
 //! - `PyBackrunFeed` — owns the `degenbot-rpc` feed pump; `drain()` returns
 //!   plain dicts (lossless fields), `status()` the counters snapshot.

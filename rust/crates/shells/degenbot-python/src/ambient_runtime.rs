@@ -3,7 +3,7 @@
 //! The verify seams (`aave_updater::verify_touched_positions_on_chain`,
 //! `pool::verify_v3/v4_liquidity_map`) removed their per-call multi-thread
 //! runtime build (the dead tokio-rt-worker churn source) and now require the
-//! CALLER's ambient runtime — a missing one returns the typed VJGZJ2 error
+//! CALLER's ambient runtime — a missing one returns the typed policy error
 //! ("run under the shared degenbot-core ambient runtime"). Rust consumers
 //! enter the runtime naturally (they run on it); a Python driver shell has
 //! no way to do that, so this module exposes the minimal primitive: call a
@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 /// Bind `pyo3-async-runtimes` to the shared degenbot-core ambient runtime,
 /// exactly once per process, before the first `future_into_py` runs.
 ///
-/// GOQWCL (incident 2026-08-21): using pyo3-async's default runtime when the
+/// Incident 2026-08-21: using pyo3-async's default runtime when the
 /// binding never happened is what spawned a SECOND nproc-worker runtime
 /// mid-run (24 surprise worker threads at the wedge timestamp). The singleton
 /// here is the ONE shared runtime (`degenbot_core::runtime`), and the
@@ -57,7 +57,7 @@ where
 /// calling thread.
 ///
 /// Python drivers + tests that call an ambient-runtime-only verify seam
-/// (the VJGZJ2 policy) wrap the call in this helper:
+/// (the policy) wrap the call in this helper:
 ///
 /// ```python
 /// divergences = call_on_ambient_runtime(

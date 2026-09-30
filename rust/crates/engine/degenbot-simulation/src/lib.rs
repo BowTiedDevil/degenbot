@@ -24,7 +24,7 @@
 /// `degenbot-arbitrage` (ADR-019 D4/D7, decision R).
 pub mod sim;
 
-/// The executor grammar harness (UQOAHA): deploy the real `cmd_executor` +
+/// The executor grammar harness: deploy the real `cmd_executor` +
 /// synthesized pools into a fresh revm `CacheDB`, run a path's
 /// [`encode_cmd_stream`](degenbot_executor::composers::encode_cmd_stream)
 /// payload through `execute()`, and report whether it executes + which pools

@@ -30,7 +30,7 @@
 //! umbrella `pub use degenbot_submission;` and can sign + broadcast EIP-1559
 //! transactions with **zero Python, zero `pyo3`** (verified by
 //! `just check-no-pyo3-in-cores`). The broadcast itself (`eth_sendRawTransaction`
-//! `bytes → TxHash`) is the sibling RPC task (`ZUZANP`); this crate owns only
+//! `bytes → TxHash`) is the sibling RPC task; this crate owns only
 //! the SIGNING that produces the bytes.
 //!
 //! # Parity (ADR-005 §4.2)
@@ -55,8 +55,8 @@
 //!
 //! # Non-goals
 //!
-//! - The `eth_sendRawTransaction` broadcast (`bytes → TxHash`) — `ZUZANP`.
-//! - `next_base_fee` — `JTLWA3` (consumed via `base_fee_next`).
+//! - The `eth_sendRawTransaction` broadcast (`bytes → TxHash`) — the sibling RPC task.
+//! - `next_base_fee` (consumed via `base_fee_next`).
 //! - `_compute_priority_fee` (the `priority_fee` value) (consumed
 //!   via `tx_params`; for §4.2 it is a fixture).
 //! - The submit orchestration (claim nonce → finalize → re-compute access
@@ -113,10 +113,10 @@ pub fn resolve_state_root() -> Option<std::path::PathBuf> {
     degenbot_runs::resolve_state_root().ok()
 }
 
-// Test-only span capture for the OTel tier-1 span tests (RMHQAR, epic
-// 2LXPPV). One global subscriber per test process: async tests cross
-// tasks, where scoped `with_default` guards would be unsafe (MQUKB6
-// finding), so every test module in this crate shares the same capture
+// Test-only span capture for the OTel tier-1 span tests. One global
+// subscriber per test process: async tests cross tasks, where scoped
+// `with_default` guards would be unsafe, so every test module in this
+// crate shares the same capture
 // via `span_capture::global()`.
 #[cfg(test)]
 pub(crate) mod span_capture {

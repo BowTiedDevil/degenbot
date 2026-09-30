@@ -74,7 +74,7 @@ pub fn encode_get_eth_balance_calldata(account: Address) -> Result<Bytes, AbiDec
 /// eth_abi.abi.encode(["address", "uint256"], [executor, weth_erc6909_id])`.
 /// The `uint256` id is the ERC6909 `uint160(currency)` for the given token
 /// (`CurrencyLibrary.toId()`) — reused from `degenbot_executor::erc6909_id`
-/// (the §62H23D leaf — consume, don't duplicate).
+/// (consume, don't duplicate).
 ///
 /// # Errors
 ///
@@ -103,8 +103,8 @@ fn encode_single_address(selector: [u8; 4], account: Address) -> Result<Bytes, A
 
 /// Wrap the `execute(bytes, uint256)` call from its parts (the settlement-arbitrage call).
 ///
-/// Delegates to `degenbot_executor::composers::encode_execute_call` (the
-/// §YQORTM leaf) — the selector + the `(bytes, uint256)` ABI encoding live
+/// Delegates to `degenbot_executor::composers::encode_execute_call` — the
+/// selector + the `(bytes, uint256)` ABI encoding live
 /// there. Colocated with the settlement-arbitrage bundle (the 7-call vector's execute
 /// wrap) so the in-process revm path can build the execute calldata without
 /// a cycle.
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn erc6909_id_reuses_executor_leaf() {
-        // The ERC6909 id is the §62H23D leaf's `erc6909_id` (uint160(currency))
+        // The ERC6909 id is the shared `erc6909_id` (uint160(currency))
         // — reused, not recomputed. Cross-check against the inlined read.
         let id = erc6909_id(WETH);
         let low20 = &id.to_be_bytes::<32>()[12..];

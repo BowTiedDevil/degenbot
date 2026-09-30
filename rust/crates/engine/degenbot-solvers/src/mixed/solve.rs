@@ -34,7 +34,7 @@ use crate::mixed::{
 /// borrowing `self` (which would conflict with the `&mut self` write to
 /// `self.results` that follows the solve).
 /// The mixed solve entry's whole return: result + typed envelope verdict +
-/// returned walk telemetry (SU7MAE T2 — no frozen thread-locals on the
+/// returned walk telemetry (no frozen thread-locals on the
 /// read-back path).
 #[derive(Debug)]
 pub struct SolveOutcome {
@@ -349,7 +349,7 @@ pub fn solve_path_inner(
 
     let result = result.map(|mut r| {
         r.state_nonces.clone_from(&resolved.state_nonces);
-        // RLVDUP2 T5: the pool-state descriptions are consumed ONLY by the
+        // The pool-state descriptions are consumed ONLY by the
         // [solver-st] debug sites in the bot - formatting U256s for every
         // solved path every cycle is pure waste unless a debug subscriber
         // is active (RUST_LOG=degenbot::solver=debug turns them back on).
@@ -1446,7 +1446,7 @@ fn curve_brute_force_best(hops: &[ResolvedHop], start: U256) -> Option<U256> {
 }
 
 // ---------------------------------------------------------------------------
-// Profit-envelope gate wiring tests (SU7MAE WNQB3V)
+// Profit-envelope gate wiring tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1559,7 +1559,7 @@ mod gate_tests {
     }
 
     // -----------------------------------------------------------------
-    // M6776W soundness proptests: the new bounds must point-wise dominate
+    // Soundness proptests: the new bounds must point-wise dominate
     // the REAL family math leaves (independent oracle = the same
     // `simulate_*_hop` the solver walks). A bound that ever dips BELOW the
     // true output would skip a profitable path -> WRONG. proptest over

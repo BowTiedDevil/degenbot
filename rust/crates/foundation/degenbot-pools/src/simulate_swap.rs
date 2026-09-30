@@ -712,10 +712,10 @@ mod tests {
     /// CANNOT reach (the dispatch is `zero_for_one`-based and hardcodes token
     /// positions `0 ↔ 1`, so a `bpt_idx = 1` pool would swap token0 ↔ BPT —
     /// not a valid asset-pair swap). It is the core correctness claim of the
-    /// full RPSW4Z scenario and is pinned directly here so the rebase is
+    /// full end-to-end scenario and is pinned directly here so the rebase is
     /// verified independently of the dispatch limitation. The end-to-end wiring
     /// of arbitrary (idx_in, idx_out) through `simulate_swap` is the broader
-    /// VQ4OHX multi-token-API extension (sibling to `7D34LW` / `U2K6FN`).
+    /// multi-token-API extension.
     #[test]
     fn skip_bpt_composable_bpt_in_middle_rebases_index_past_bpt() {
         // [token0=10, BPT=999, token2=30] → drop index 1 → [10, 30].

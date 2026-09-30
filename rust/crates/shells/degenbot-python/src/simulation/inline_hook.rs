@@ -75,7 +75,7 @@ pub(crate) struct InlineSimHook {
     warmup: degenbot_executor::WarmupSlots,
     erc6909_profit: bool,
     /// The shared core (the sim anchor's snapshot source) — the SAME short
-    /// read discipline as the FFI path (ULUWNI: snapshot under a short read,
+    /// read discipline as the FFI path (snapshot under a short read,
     /// drop the guard BEFORE any provider I/O).
     bot_state: Arc<StateLock<BotState>>,
     warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
@@ -337,7 +337,7 @@ where
     sim_runtime.block_on(fut)
 }
 
-/// GOQWCL: the inline-sim runtime previously kept the default thread name
+/// The inline-sim runtime previously kept the default thread name
 /// (`tokio-runtime-worker`) — indistinguishable in thread dumps from every
 /// other defaulting pool. The census declares the distinct
 /// `degenbot-inline-sim-{n}` pattern; the seq closure mirrors tokio 1.53's
@@ -390,7 +390,7 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
 /// cycle - see the M1/M2 soak records), overridable via the typed
 /// `solve.inline_sim_workers` key (env `DEGENBOT_INLINE_SIM_WORKERS`).
 /// Value parsing/validation is the loader's job (fail-closed at boot,
-/// KAHU5W); this layer just clamps to 1..=32.
+/// fail-closed at boot); this layer just clamps to 1..=32.
 fn inline_sim_worker_count() -> usize {
     // Two-runtime sizing: the sim runtime follows the LEFTOVER
     // of the CPU budget after the solve bins (not raw available
@@ -427,7 +427,7 @@ impl InlineSimulator for InlineSimHook {
         };
 
         // 2. The sim anchor — SHORT core read, dropped before any provider
-        //    I/O (ULUWNI discipline).
+        //    I/O discipline.
         let anchor = {
             let guard = self
                 .bot_state
@@ -739,7 +739,7 @@ mod tests {
     use degenbot_workers::lane::EscalationPort as _;
 
     // The override parsing matrix moved to degenbot-config's precedence
-    // tests (KAHU5W: the loader owns the env read). This pins the production
+    // tests (the loader owns the env read). This pins the production
     // default only: with no override, the count follows the leftover CPU
     // budget, NOT raw available_parallelism.
     #[test]

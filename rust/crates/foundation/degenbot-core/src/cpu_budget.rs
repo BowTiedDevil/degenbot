@@ -752,7 +752,7 @@ mod tests {
     }
 
     mod derivation {
-        //! CVURM7 : host-shape derivation properties. Any
+        //! Host-shape derivation properties. Any
         //! combination of cgroup quota text and affinity must produce the
         //! documented `min(ceil(cgroup quota), affinity)` floored at 1 —
         //! never zero, never a panic, fail-closed on malformed text.

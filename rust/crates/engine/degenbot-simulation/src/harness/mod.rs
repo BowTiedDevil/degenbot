@@ -1,4 +1,4 @@
-//! Executor grammar harness (UQOAHA).
+//! Executor grammar harness.
 //!
 //! The missing third correctness tool for the swap-encoding grammar: byte
 //! parity (the golden corpus) only pins bytes and proves nothing at runtime,
@@ -452,7 +452,7 @@ impl Harness {
     /// Execute an encoded payload with an explicit `execute()` `config` uint256
     /// (packed `check_mode`/bribe/expected_value — see [`execute_data_config`])
     /// and classify the outcome. Enables runtime proof of the `erc6909_profit`
-    /// (`check_mode=2`) and bribe config axes (EYUWFG / WE45KC).
+    /// (`check_mode=2`) and bribe config axes.
     pub fn execute_payload_config(
         &mut self,
         payload: &[u8],
@@ -566,12 +566,12 @@ impl Harness {
         )
     }
 
-    /// KO5NNB variant of [`Self::run_path`] with explicit [`EncodeOptions`]
+    /// Variant of [`Self::run_path`] with explicit [`EncodeOptions`]
     /// (funding axis etc.), threaded through to `encode_path_with_opts` — used
     /// by [`crate::harness::declarative::Harness::run_chain_with_opts`].
     ///
-    /// Executes under the **production axis-aware config** (SMOZG3 — the same
-    /// `config_for_options(opts, 0)` the arbitrage strategy packs, Q35IJN):
+    /// Executes under the **production axis-aware config** (the same
+    /// `config_for_options(opts, 0)` the arbitrage strategy packs):
     /// the on-chain profit check runs exactly like production (default
     /// Custody → `check_mode=1` active assert; `erc6909_profit` → `check_mode=2`).
     pub fn run_path_with_opts(
@@ -672,7 +672,7 @@ impl Harness {
             self.weth,
         )
     }
-    /// Encode a path with explicit [`EncodeOptions`] (WE45KC runtime axis proof
+    /// Encode a path with explicit [`EncodeOptions`] (runtime axis proof
     /// — funding source / profit capture / bribe).
     pub fn encode_path_with_opts(
         &self,
@@ -701,7 +701,7 @@ impl Harness {
 }
 
 /// The production axis-aware `execute()` config — the single point where the
-/// harness meets the strategy's Q35IJN config expression
+/// harness meets the strategy's config expression
 /// (Custody → `check_mode=1`, Erc6909 → `check_mode=2`, SweepToAddress →
 /// `check_mode=3`).
 fn production_config(opts: degenbot_executor::composers::EncodeOptions) -> Result<U256, String> {
@@ -783,13 +783,13 @@ pub fn execute_data(payload: &[u8]) -> Bytes {
 /// where `config` is the packed execute config (check_mode/bribe/expected_value).
 ///
 /// Delegates to the production [`degenbot_executor::composers::encode_execute_call`]
-/// (the §YQORTM leaf, uses the proper `encode_rust` ABI encoder) so the config
+/// (uses the proper `encode_rust` ABI encoder) so the config
 /// lands in head\[1\] — NOT hand-rolled. The prior hand-rolled encoding wrote
 /// `config` at the END of the calldata (after the bytes tail), so the contract
 /// read `config = payload.len()` (a silent no-op config); the bug was latent
 /// because the erc6909 capture mint is in the command stream (not config-gated)
 /// and `check_mode=2`'s verification is skipped when `expected_value=0`. The
-/// first test requiring the config to reach the contract (WE45KC bribe) exposed
+/// first test requiring the config to reach the contract (the bribe) exposed
 /// it.
 #[must_use]
 pub fn execute_data_config(payload: &[u8], config: U256) -> Bytes {

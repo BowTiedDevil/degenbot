@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(buf.event_count(&1), 1);
     }
 
-    // ── drain_pump_completed block-completeness gate (YLYJM2 race fix) ────
+    // ── drain_pump_completed block-completeness gate (race fix) ────
     //
     // The rolling-start race: `apply_buffer` drains the pump buffer mid-block
     // and pins `(tick_data, update_block=N)`, but the pump hadn't yet

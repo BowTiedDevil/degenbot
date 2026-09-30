@@ -34,7 +34,7 @@
 //!    (pre-filter + outcome record) inside the core — NEVER held across the
 //!    `buffer_unordered` `.await`s — and the `Dispatcher` arc is not locked
 //!    at all during the fan-out (the monitor tasks that contend for it stay
-//!    free — A3 `LITQFF`).
+//!    free.
 //! 3. **Join + wrap (no GIL needed).** Each surviving `SimResult` is joined
 //!    to a [`SubmitCandidate`] (sim-derived fields from the result; the
 //!    `executor_address` from `PySimulateContext`; the `path_pools`
@@ -160,10 +160,10 @@ pub fn dispatch_profitable_py<'py>(
 
     // The suppression arc — locked ONLY at the dispatch bookends inside the
     // core (pre-filter + outcome record); NEVER held across the fan-out
-    // `.await`s (A3 `LITQFF`). The `Dispatcher` arc is NOT held during the
+    // `.await`s). The `Dispatcher` arc is NOT held during the
     // fan-out (monitor-task contention is unaffected).
     let suppression_arc = dispatcher.suppression_arc();
-    // The pool-divergence arc (GMWYIU) — same standalone-arc discipline: locked
+    // The pool-divergence arc — same standalone-arc discipline: locked
     // ONLY at the dispatch skip (step 1.5) + feedback (step 5.5) bookends in
     // the core, never across the `.await`s.
     let pool_divergence_arc = dispatcher.pool_divergence_arc();
@@ -183,7 +183,7 @@ pub fn dispatch_profitable_py<'py>(
     // production always supplies `engine`. Kept `Option` here transitively
     // until step 6 collapses the FFI seam to a required `engine`.
     //
-    // `warm_cache` is the cross-block bytecode cache (`HDEG7H` Option A) —
+    // `warm_cache` is the cross-block bytecode cache (Option A) —
     // cloned from the engine's `warm_code_cache_arc()` (one Arc clone, no
     // map copy). Same transitional `Option` shape as `bot_state`.
     let bot_state: Option<Arc<StateLock<degenbot_substrate::BotState>>> =
@@ -308,7 +308,7 @@ pub fn dispatch_profitable_py<'py>(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// The inline-sim payload seam (NUUJFA) — one sim seam for both entry arms
+// The inline-sim payload seam — one sim seam for both entry arms
 // ─────────────────────────────────────────────────────────────────────────
 //
 // The engine's inline-sim payloads (SIMPIPE2 T3) used to be re-categorized
@@ -334,7 +334,7 @@ impl PathResolver for ResolvedPaths<'_> {
     }
 }
 
-/// The payload arm of the sim seam (NUUJFA): derive the dispatch-policy
+/// The payload arm of the sim seam: derive the dispatch-policy
 /// facts for the engine's inline-sim payload records Rust-side, through the
 /// SAME row builder the FFI batch join uses.
 ///
@@ -461,7 +461,7 @@ pub fn merge_payload_results_py(
     })
 }
 
-/// Extract a required u64 field off one payload dict (NUUJFA seam helper).
+/// Extract a required u64 field off one payload dict (seam helper).
 fn required_u64(entry: &Bound<'_, PyDict>, key: &str) -> PyResult<u64> {
     entry
         .get_item(key)?
@@ -569,7 +569,7 @@ fn parse_payload_access_list(v: &Bound<'_, PyAny>) -> PyResult<alloy::rpc::types
     Ok(alloy::rpc::types::AccessList(entries))
 }
 
-/// Extract a required u128 field off one payload dict (NUUJFA seam helper).
+/// Extract a required u128 field off one payload dict (seam helper).
 fn required_u128(entry: &Bound<'_, PyDict>, key: &str) -> PyResult<u128> {
     entry
         .get_item(key)?
@@ -653,7 +653,7 @@ impl PyPayloadVerdict {
     }
 }
 
-/// The merged inline-sim payload record set (NUUJFA) — the payload arm of
+/// The merged inline-sim payload record set — the payload arm of
 /// `PyDispatchOutcome`, built by `merge_payload_results_py`. Rust owns every
 /// policy fact; Python renders + stitches these getters into the merged
 /// outcome view.

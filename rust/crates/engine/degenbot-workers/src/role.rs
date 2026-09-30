@@ -27,7 +27,7 @@ pub enum CordonClass {
 /// row, not a redesign.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum WorkerRole {
-    /// One persistent pin per LPT bin (RAYPAR T3). Pinned by bin key; warm
+    /// One persistent pin per LPT bin. Pinned by bin key; warm
     /// L1/L2 + allocator arenas survive across cycles.
     Solver,
     /// Pipelined inline sims behind the slot pool. Absorbs `SimSlots`'
@@ -123,7 +123,7 @@ impl WorkerRole {
         }
     }
 
-    /// Distinct, greppable thread-name pattern (GOQWCL rule: never share a
+    /// Distinct, greppable thread-name pattern (never share a
     /// thread-name pattern across resources).
     #[must_use]
     pub const fn thread_name(self) -> &'static str {
@@ -143,7 +143,7 @@ impl WorkerRole {
     #[must_use]
     pub const fn census_kind(self) -> &'static str {
         match self {
-            Self::Solver => "fleet worker slot: LPT-bin pin (RAYPAR T3)",
+            Self::Solver => "fleet worker slot: LPT-bin pin",
             Self::SimDriver => "fleet worker slot: pooled sim driver",
             Self::Resolve => "fleet worker slot: resolve chunk",
             Self::Merge => "fleet worker slot: merge sidecar pin",
@@ -303,11 +303,7 @@ mod tests {
         resources.dedup();
         threads.dedup();
         assert_eq!(resources.len(), n, "census resource ids must be unique");
-        assert_eq!(
-            threads.len(),
-            n,
-            "thread-name patterns must be unique (GOQWCL)"
-        );
+        assert_eq!(threads.len(), n, "thread-name patterns must be unique");
     }
 
     #[test]

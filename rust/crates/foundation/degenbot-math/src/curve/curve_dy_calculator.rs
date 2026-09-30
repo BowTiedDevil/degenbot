@@ -133,7 +133,7 @@ pub struct DyCalculationInputs {
 }
 
 /// The slice of the base-pool surface metapool calc paths need (the Rust twin
-/// of the Python `BasePoolPort` Protocol; ADR-005 `BQM2OA` sibling). Sync —
+/// of the Python `BasePoolPort` Protocol; an ADR-005 sibling). Sync —
 /// matches the provider/calc call discipline. The bot's `CurvePoolsState`
 /// implements it; tests use a canned stub.
 pub trait CurveBasePoolPort {

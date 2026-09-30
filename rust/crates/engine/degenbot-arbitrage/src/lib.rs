@@ -47,7 +47,7 @@ pub mod dispatch;
 /// counter consumed by the same dispatch leaf).
 pub mod pool_divergence;
 
-/// Fee-on-transfer token suspicion attribution (spike `5MP3HQ`) — the
+/// Fee-on-transfer token suspicion attribution — the
 /// `fot_suspected_token` leaf attributes a `SimFailure` to the failing hop's
 /// input token when the failure's `reverting_frame.label` is `IIA` (V3) or
 /// `CurrencyNotSettled` (V4), or when the captured-swap output mismatches

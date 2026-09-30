@@ -39,7 +39,7 @@ pub struct BitmapAtWord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiquidityAtTick {
     pub liquidity_gross: U256,
-    /// On-chain int128 (LIBQKE); TEXT codec round-trips byte-identically.
+    /// On-chain int128; TEXT codec round-trips byte-identically.
     pub liquidity_net: i128,
 }
 

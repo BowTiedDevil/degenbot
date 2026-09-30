@@ -347,7 +347,7 @@ pub(crate) fn map_liquidity_verify_error(
 
 #[cfg(test)]
 mod tests {
-    //! AGVGNH: pin the per-family verify exception mapping. The
+    //! Pin the per-family verify exception mapping. The
     //! `verify_v3_liquidity_maps` / `verify_v4_liquidity_maps` methods must
     //! route `LiquidityVerifyError` through `map_liquidity_verify_error` so
     //! that a genuine on-chain mismatch surfaces as

@@ -7,7 +7,7 @@
 //! later dispatches on these values. No I/O, no `pyo3` — a standalone `cargo
 //! add degenbot` consumer resolves strategies directly.
 //!
-//! ## Discriminant values (single source of truth, spike `CE7QVQ` §2)
+//! ## Discriminant values (single source of truth)
 //!
 //! The Python enums are `auto()`-based (1, 2, 3, … in declaration order) and
 //! the builder maps `.value` into the `u8` the Rust identity stores. A

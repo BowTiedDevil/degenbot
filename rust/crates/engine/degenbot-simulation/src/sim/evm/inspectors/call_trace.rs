@@ -202,7 +202,7 @@ impl CallTrace {
     /// if no frame reverted.
     ///
     /// This is the prototype's `classify_revert`-fed-at-depth wiring (not yet
-    /// surfaced into `SimFailure` — that is the JHPW5W follow-on task).
+    /// surfaced into `SimFailure` — that is a follow-on).
     #[must_use]
     pub fn reverting_frame_label(&self) -> Option<(&CallFrame, String)> {
         self.deepest_revert().map(|f| {
@@ -350,7 +350,7 @@ where
             caller: inputs.caller(),
             // The precise created address needs the caller's nonce from the
             // journal; `execute()` uses CALLs, not CREATE, so this is `ZERO`
-            // in the prototype. The JHPW5W follow-on can resolve it via the
+            // in the prototype. A follow-on can resolve it via the
             // context if CREATE-frame attribution ever matters.
             target: Address::ZERO,
             selector: [0u8; 4],

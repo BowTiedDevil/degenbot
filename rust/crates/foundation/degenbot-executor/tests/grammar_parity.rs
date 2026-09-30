@@ -2,21 +2,21 @@
 //!
 //! Since `encode_cmd_stream` / `encode_cmd_3_hop` all *delegate* to the Plan
 //! (`grammar::encode_grammar` → `derive_shape` → `build_*_plan` + validator +
-//! `plan_to_bytes`, and the all-V2 any-N family → `grammar_shape::derive_all_v2`
-//! since the KO5NNB cutover), the byte-identity of every combo is pinned by the
+//! `plan_to_bytes`, and the all-V2 any-N family → `grammar_shape::derive_all_v2`),
+//! the byte-identity of every combo is pinned by the
 //! revm runtime matrix (`degenbot-simulation` `harness_declarative`
 //! `full_matrix`, exact delta — the ADR-029 D5 source of truth) plus the
 //! primitive wire-format layer (`encoders_parity.rs`) and the native bridge
 //! byte-golden (`native_eth_3hop_bridge.rs`). The former golden-master byte
 //! corpus (`composers_parity.rs` / `composers_3hop_parity.rs` /
-//! `grammar_shape_parity` / `native_v4_*`) was deleted in EYQ6UF — those were
+//! `grammar_shape_parity` / `native_v4_*`) was deleted — those were
 //! Plan-vs-Plan or byte-literal duplication with the Plan as sole producer.
 //!
 //! This test instead guards the **routing/coverage** invariant: every 2-hop
 //! and 3-hop family combo must still encode (`Some`) through both public entry
 //! points for valid amounts — i.e. no combo is accidentally dropped by the
 //! grammar walk. The former all-V2 routing split (N-hop speedrail vs the
-//! distinct 3-hop layout) is GONE since KO5NNB: all-V2 any-N (2/3/any) routes
+//! distinct 3-hop layout) is unified: all-V2 any-N (2/3/any) routes
 //! through the single `build_all_v2_chain` Plan producer via both entries, so
 //! the split test (`all_v2_routing_split_holds`) was deleted.
 

@@ -8,7 +8,7 @@
 use pyo3::{create_exception, PyErr};
 
 // Distinct Python exception types for the two verification failure
-// categories (TODO-53b7453b / 7SSOJX). Both subclass `RuntimeError` so existing
+// categories (TODO-53b7453b. Both subclass `RuntimeError` so existing
 // `except RuntimeError` handlers keep catching them, but they let callers
 // classify by *type* instead of fragile string matching on "tick data
 // mismatch". `build_paths` previously swallowed any `RuntimeError` lacking
@@ -19,8 +19,8 @@ use pyo3::{create_exception, PyErr};
 // - `VerificationMismatchError`: the engine's tick data does NOT match
 //   on-chain. Fatal — the bot must shut down rather than trade on stale data.
 // - `VerificationRpcError`: the verification RPC could not be performed
-//   (provider construction failure OR a per-call RPC transport failure —
-//   VP42BP). Not safe to silently skip; surfaced as a distinct type so the
+//   (provider construction failure OR a per-call RPC transport failure).
+//   Not safe to silently skip; surfaced as a distinct type so the
 //   caller can choose retry/backoff vs abort without re-introducing the
 //   swallowing bug.
 //
@@ -65,7 +65,7 @@ create_exception!(
 // fees > 65535 are un-encodable). Per ADR-005 that floor must protect a
 // standalone Rust consumer, so the refusal lives in
 // `BotState::register_v4_pool` and surfaces here as typed exceptions. All the pool-registration admission refusals subclass
-// `PoolRegistrationError` (which subclasses `PyValueError`) — F2EVV6 unified
+// `PoolRegistrationError` (which subclasses `PyValueError`) — unified
 // the family so `except PoolRegistrationError:` catches every admission
 // refusal across V2/V3/V4 (already-registered + spec violation + V4 hook +
 // V4 dynamic fee), and the older V4-specific names (`HookedPoolRejectedError` /
@@ -75,7 +75,7 @@ create_exception!(
 // The unified hierarchy:
 //
 //   ValueError
-//   └─ PoolRegistrationError                       (F2EVV6 base)
+//   └─ PoolRegistrationError
 //      ├─ HookedPoolRejectedError                    (V4 admission —
 //      │                                              amount-modifying hook)
 //      ├─ DynamicFeePoolRejectedError                (V4 admission — dynamic fee)
@@ -148,7 +148,7 @@ create_exception!(
     "The engine path registry is at its configured registered-path cap. Benign stop: discovery must stop offering new candidate paths."
 );
 
-// FF-T1 (BPHR6F, FLEETFLOOR): the fleet boot refusal is a TYPED error —
+// The fleet boot refusal is a TYPED error —
 // the library never aborts the host process on the boot-refusal arm. The
 // 2026-09-11 CI failures made the gap concrete: on 4-vCPU runners the
 // fleet budget refusal (fractional quota below the pinned-role floor)
@@ -169,7 +169,7 @@ create_exception!(
     "The fleet host refused to boot: the detected CPU budget is below the pinned-role floor, or a boot invariant failed. The library never aborts the host process on this arm; the message carries the detected budget, the floor, and one operator hint."
 );
 
-// TB4QGX T6 (spike S2): the Faulted intake drain. The sticky lane-death
+// The Faulted intake drain. The sticky lane-death
 // latch resolved parked intake units terminally; the receipt re-raises this
 // typed error. Distinct from the fatal verification errors so the driver can
 // tell a fleet fault from a bad pool; subclassing RuntimeError keeps broad

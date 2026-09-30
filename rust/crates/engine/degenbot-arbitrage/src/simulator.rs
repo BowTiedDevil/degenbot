@@ -128,11 +128,11 @@ pub fn execute_gas_limit() -> u64 {
         .unwrap_or(INITIAL_EXECUTE_GAS)
 }
 
-// NOTE (HAVRUW/SEG2PS): the former `EXECUTE_CONFIG = U256::ZERO` constant
+// NOTE: the former `EXECUTE_CONFIG = U256::ZERO` constant
 // (raw config=0, no on-chain profit check) was deleted with the one-shot
 // calldata-dump examples it existed for. Production always builds `config`
-// via the axis-aware `config_for_options` (Q35IJN — active profit assert by
-// default, `check_mode=2` under `erc6909_profit`; SMOZG3).
+// via the axis-aware `config_for_options` (active profit assert by
+// default, `check_mode=2` under `erc6909_profit`).
 
 /// The int128 range bounds (ports `INT128_MIN`/`INT128_MAX` from
 /// `degenbot.arbitrage.encoding`, L19–L20).
@@ -140,7 +140,7 @@ pub const INT128_MIN: i128 = i128::MIN;
 pub const INT128_MAX: i128 = i128::MAX;
 
 // ─────────────────────────────────────────────────────────────────────────
-// The int128 guard (C3 — ports with the WWC4DL reference)
+// The int128 guard (C3)
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Return `true` if `value` fits in a signed 128-bit integer.
@@ -725,13 +725,13 @@ fn scan_for_v4_v2_boundary_bridge(hops: &[HopInfo], weth_address: Address) -> Op
 /// its `rpc_url` is logged separately by the driver).
 #[derive(Clone)]
 pub struct SimulateContext<'a> {
-    /// The typed RPC provider (the §ZUZANP leaf, wrapped). The in-process path
+    /// The typed RPC provider (wrapped). The in-process path
     /// uses it for the cold-miss `AlloyDB` fallback under the engine's
     /// `WrapDatabaseAsync` (a sim miss for an untracked account/block routes
     /// through `block_in_place` to a single `eth_call`).
     pub provider: &'a AlloyProvider,
     /// The operator key's address — the `from` of the `execute()` call + the
-    /// owner funded with ETH in `stateOverrides` (TCTUAW).
+    /// owner funded with ETH in `stateOverrides`.
     pub executor_owner: Address,
     /// The cmd_executor contract address — the `execute()` target + the
     /// address whose balances are diffed.
@@ -749,7 +749,7 @@ pub struct SimulateContext<'a> {
     pub injected_address: Option<Address>,
     /// The executor runtime bytecode (injected when `inject_code` is `true`).
     pub runtime_bytecode: alloy::primitives::Bytes,
-    /// The warmup slots (the §62H23D leaf).
+    /// The warmup slots.
     pub warmup: WarmupSlots,
     /// The base fee of the NEXT block (`base_fee_next`).
     pub base_fee_next: u128,
@@ -1128,13 +1128,13 @@ where
         }
     }
 
-    // TGXBCE observation probe: scan for a V4↔V2 boundary-bridge signature
+    // Observation probe: scan for a V4↔V2 boundary-bridge signature
     // (V4 side native, V2 side WETH) — a path shape the 3-hop composers do
     // NOT encode (the 2-hop `encode_cmd_v4_v2` handles it via
     // `V4_TAKE(native,self) + WETH_DEPOSIT + V2_SWAP_COMPACT`, but the bridge
     // does not trivially port to 3-hop — the V2 callback's received-token
     // accounting needs restructuring). Empirically unobserved across ~148
-    // mainnet blocks (TGXBCE resolved); this probe stays gated by
+    // mainnet blocks; this probe stays gated by
     // `DEGENBOT_BRIDGE_PROBE` so a future materialization surfaces here
     // rather than silently dropping as `encode-failed`.
     if ::degenbot_config::holder::config().aave.bridge_probe {
@@ -1146,7 +1146,7 @@ where
         }
     }
 
-    // Encode the cmd_executor command stream (YQORTM) via the ADR-033 intake:
+    // Encode the cmd_executor command stream via the ADR-033 intake:
     // the session context + the per-path request (the strategy's projection).
     let cmd_bytes = encode_cmd_stream(&ctx.encode_context(), &path.encode_request());
     let Some(cmd_bytes) = cmd_bytes else {
@@ -1161,8 +1161,8 @@ where
         return Ok(None);
     };
 
-    // execute(bytes, uint256) ABI wrap. Q35IJN: build `config` via the
-    // axis-aware `config_for_options` (U3WVLL — the contract reads its own
+    // execute(bytes, uint256) ABI wrap. Build `config` via the
+    // axis-aware `config_for_options` (the contract reads its own
     // combined balance; default Custody capture → check_mode=1 profit assert
     // active; Erc6909 → check_mode=2; SweepToAddress → check_mode=3). Replaces
     // the hardcoded `EXECUTE_CONFIG = ZERO` (check_mode=0 fast path, no
@@ -1968,7 +1968,7 @@ mod tests {
     use degenbot_executor::composers::V3HopInfo;
 
     // ── C0: execute_gas_limit config override (artificial-ceiling
-    // investigation; KAHU5W: the string contract lives in degenbot-config's
+    // investigation; the string contract lives in degenbot-config's
     // loader tests — here the value is a typed Option<u64>) ──
 
     #[test]
@@ -2350,7 +2350,7 @@ mod tests {
         );
     }
 
-    // ── TGXBCE: scan_for_v4_v2_boundary_bridge ─────────────────────────
+    // ── scan_for_v4_v2_boundary_bridge ─────────────────────────
     #[test]
     fn scan_detects_v4_native_to_v2_weth_boundary() {
         use degenbot_executor::composers::{HopInfo, V2HopInfo, V4HopInfo};

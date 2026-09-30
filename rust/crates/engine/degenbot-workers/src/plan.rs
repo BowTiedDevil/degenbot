@@ -1,8 +1,8 @@
-//! `plan` — the `FleetPlan` tiered boot authority (FLEETFLOOR FF-T2 / MEBF4V).
+//! `plan` — the `FleetPlan` tiered boot authority (FLEETFLOOR).
 //!
 //! LW-T4 made the budget the sole sizing authority with ONE
-//! floor: below the pinned-role floor the boot refused. FF-T2 generalizes
-//! that one floor into ordered HOST TIERS, one pure function of the
+//! floor: below the pinned-role floor the boot refused. This module
+//! generalizes that one floor into ordered HOST TIERS, one pure function of the
 //! budget:
 //!
 //! - pinned: the pinned-role derivation succeeds (floor(Q) >= H+A+R+M+2)
@@ -10,7 +10,7 @@
 //!   `FleetBudget::derive`, unchanged);
 //! - serial: 2-5 core hosts (the pinned derivation refuses but the host
 //!   has the 2-core minimum: one core for I/O work, one core for solve
-//!   work) — the arm itself lands with FF-T4; until then the boot
+//!   work) — the arm itself is pending; until then the boot
 //!   refuses with the tier's own typed refusal, never a silent narrow
 //!   (the reth `has_enough_parallelism` lesson: lane capability is
 //!   explicit);
@@ -62,7 +62,7 @@ pub enum Binding {
     /// (6 cores or more under default overrides).
     Pinned,
     /// The serial binding: one ambient I/O lane plus one cycle lane, one
-    /// solve seat (the arm lands with FF-T4).
+    /// solve seat (the arm is pending).
     Serial,
 }
 
@@ -70,7 +70,7 @@ impl Binding {
     /// The census `binding` label (the field's closed vocabulary:
     /// pinned / shared / logical). The fleet roles stamp the PINNED
     /// binding today; the serial binding maps them onto shared threads as
-    /// LOGICAL lanes when it lands (FF-T4) — the label changes with the
+    /// LOGICAL lanes when it lands — the label changes with the
     /// binding, the row does not.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -117,11 +117,11 @@ pub struct FleetPlan {
     /// The typed budget refusal the resolved plan overrode or fell from
     /// (`None` when nothing was refused): under `auto`, the pinned-budget
     /// refusal that placed this host in the serial tier (the boot re-raises
-    /// it while the serial arm is pending — FF-T4 — so the refusal stays
+    /// it while the serial arm is pending, so the refusal stays
     /// the typed, named budget error the pinned derivation produced); under
     /// a FORCED pinned profile below the pinned-role floor, the overridden
     /// `QuotaTooSmallForPinnedRoles` the marked plan runs past (the runtime
-    /// status names the floor it fell from — FF-T5 addendum, 452GZC);
+    /// status names the floor it fell from);
     /// `None` for forced serial and every unrefused boot.
     pub tier_refusal: Option<BudgetError>,
 }
@@ -150,7 +150,7 @@ impl FleetPlan {
     }
 
     /// The typed refusal the BOOT raises while the serial arm is pending
-    /// (FF-T4): under `auto` the tier's own pinned-budget refusal (the
+    /// pending: under `auto` the tier's own pinned-budget refusal (the
     /// CI-stable message); under a FORCED serial profile the named
     /// pending-arm invariant (the operator asked for a binding that does
     /// not exist yet — refusing is the honest answer, never a silent
@@ -160,7 +160,7 @@ impl FleetPlan {
         match self.tier_refusal {
             Some(refusal) => BootError::Budget(refusal),
             None => BootError::Invariant(
-                "the serial binding (the 2-5-core tier) lands with FF-T4 \
+                "the serial binding (the 2-5-core tier) is pending \
                  — forced serial refuses rather than run the pinned topology \
                  silently narrower",
             ),
@@ -213,7 +213,7 @@ pub fn plan(
             }
             // The 2-5-core tier: the plan says Serial, carrying the pinned
             // refusal that placed the host there. The arm lands with
-            // FF-T4; until then the boot re-raises the tier refusal.
+            // pending; until then the boot re-raises the tier refusal.
             Err(refusal @ BudgetError::QuotaTooSmallForPinnedRoles { .. }) => {
                 validate_io_workers(Binding::Serial, overrides)?;
                 Ok(FleetPlan {
@@ -235,8 +235,7 @@ pub fn plan(
             // the pinned-role floor the latency contract is void (marked).
             // The typed refusal the operator overrode RIDES the plan — like
             // the auto serial tier carries its placing refusal — so the
-            // runtime status names the pinned floor it fell from (FF-T5
-            // addendum, 452GZC).
+            // runtime status names the pinned floor it fell from.
             let (oversubscribed, tier_refusal) = match FleetBudget::derive(quota_cpus, overrides) {
                 Ok(_) => (false, None),
                 Err(refusal) => (true, Some(refusal)),
@@ -262,7 +261,7 @@ pub fn plan(
     }
 }
 
-/// The per-binding `runtime.io_workers` bounds (FF-T2: an out-of-bounds
+/// The per-binding `runtime.io_workers` bounds (an out-of-bounds
 /// override raises a typed refusal with a hint, never a silent clamp).
 /// The pinned binding keeps the ambient floor (A >= 1); the serial
 /// binding owns exactly ONE ambient I/O lane (A == 1).
@@ -294,7 +293,7 @@ mod tests {
         BudgetOverrides::default()
     }
 
-    /// THE FF-T2 algebra table (the AC, verbatim): one pure function of
+    /// THE tier algebra table (the AC, verbatim): one pure function of
     /// the budget over the ordered host tiers.
     #[test]
     fn the_tier_table_is_the_contract() {
@@ -336,8 +335,8 @@ mod tests {
     }
 
     /// The auto serial tier CARRIES the pinned refusal that placed the
-    /// host there: the boot re-raises it while the arm is pending
-    /// (FF-T4), keeping the CI-stable typed message.
+    /// host there: the boot re-raises it while the arm is pending,
+    /// keeping the CI-stable typed message.
     #[test]
     fn the_auto_serial_tier_carries_the_pinned_refusal() {
         let p = plan(4.0, FleetProfile::Auto, &overrides()).expect("4-core host plans");
@@ -365,7 +364,7 @@ mod tests {
         ));
     }
 
-    /// FF-T5 addendum (452GZC): a forced pinned binding below the
+    /// A forced pinned binding below the
     /// pinned-role floor is MARKED and KEEPS the typed refusal it overrode —
     /// the runtime status names the pinned floor it fell from, exactly like
     /// the auto serial tier carries its placing refusal. At/above the floor

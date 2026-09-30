@@ -3,24 +3,22 @@
 //! Ports `examples/eth_backrun_v2_v3_v4_rust.py::dispatch_profitable_results`
 //! (the fan-out L2450–L2517 + categorization + summary L2519–L2535) + the
 //! thin-margin pre-filter (`filter_thin_margin_results` from
-//! `examples/eth_backrun_helpers.py::filter_thin_margin_results`, L407–L446,
-//! the SYI3PG cross-epic reference).
+//! `examples/eth_backrun_helpers.py::filter_thin_margin_results`, L407–L446).
 //!
 //! This is the concurrency orchestration that owns the GIL release + the
 //! tokio fan-out over the per-path [`simulate_path_on_evm`] leaf. Owning
 //! the fan-out in Rust releases the GIL across the per-tx sim RPCs
 //! (ADR-005 §3 — "Rust is the engine").
 //!
-//! # Dispositions (per the `4JGPDW` scope rubric)
+//! # Dispositions
 //!
 //! - **D1 `port-now`** — the fan-out + categorization (this leaf). Pure
 //!   concurrency orchestration: a `buffer_unordered(MAX_SIMULATE_CONCURRENT)`
 //!   stream (capped by `truncate` pre-fan-out); pure-int categorization.
-//! - **D2 `done`-reference** — [`degenbot_submission::PathSuppression`] (the
-//!   M756BN leaf — `record_success`/`record_failure`/`is_suppressed`/
+//! - **D2 `done`-reference** — [`degenbot_submission::PathSuppression`]
+//!   (`record_success`/`record_failure`/`is_suppressed`/
 //!   `total_suppressed` + `PATH_SUPPRESS_THRESHOLD`). CONSUMED, not re-ported.
-//! - **D3 `done`-reference** — [`filter_thin_margin_results`] (the SYI3PG
-//!   cross-epic reference). The leaf was Python-only at the time of this
+//! - **D3 `done`-reference** — [`filter_thin_margin_results`]. The leaf was Python-only at the time of this
 //!   port; it's small (20 lines, pure int) + has a clean standalone signature,
 //!   so it is ported HERE (with a note it should later move to a shared
 //!   crate). Re-porting it inline is the standalone-Rust-core constraint — a
@@ -137,7 +135,7 @@ pub fn is_gas_profitable(net_profit: U256) -> bool {
 pub const BPS_DENOM: u128 = 10_000;
 
 // ─────────────────────────────────────────────────────────────────────────
-// The thin-margin pre-filter (D3 — SYI3PG reference, ported inline)
+// The thin-margin pre-filter (D3 — ported inline)
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Drop solver results whose gross-profit margin is too low (ports
@@ -216,7 +214,7 @@ pub struct SolveStep {
     /// less than `output` of the prior hop when the range boundary is hit;
     /// the encoder must feed the clamped forward, not the full prior output.
     pub consumed_input: u128,
-    /// Per-hop state nonce captured at solve time (AV42C7 staleness gate).
+    /// Per-hop state nonce captured at solve time (the staleness gate).
     pub state_nonce: u64,
 }
 
@@ -411,7 +409,7 @@ impl DispatchOutcome {
 /// Deterministically reorder `candidates` into the order index's net-profit
 /// ranking (profit descending, id ascending) before the `MAX_SIMULATE_CONCURRENT`
 /// cap — the `order-index` feature's substitute for the "candidates arrive
-/// pre-sorted" contract (see ADR-024, 34VCC2). Today the solver emits no
+/// pre-sorted" contract (see ADR-024). Today the solver emits no
 /// per-path gas, so `gas = 0` and `net == gross == engine_profit`; the seam
 /// becomes net-aware as soon as per-path gas is available.
 #[cfg(feature = "order-index")]
@@ -482,7 +480,7 @@ pub fn dispatch_profitable_results(
     // without a `BotState`.
     bot_state: Option<Arc<StateLock<BotState>>>,
     // The cross-block persistent bytecode + account-existence cache
-    // (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Required by the
+    // (`WarmCodeCacheInner`, the Option-A layer). Required by the
     // `BlockSimHandle` build (the `None` arm is unreachable — see `bot_state`).
     // The `Arc` clones cheaply into this async fn's future; the engine owner
     // (`PyArbitrageEngine` / standalone `Bot`) holds it for the engine's
@@ -504,7 +502,7 @@ pub fn dispatch_profitable_results(
     // 1. Pre-filter — suppression (L2486–L2490). Lock the suppression arc
     //    ONLY for this synchronous retain (the guard is dropped before the
     //    fan-out `.await` so the future stays `Send` — a `std::sync::MutexGuard`
-    //    is not `Send`). A3 (`LITQFF`) extracted `PathSuppression` onto its own
+    //    is not `Send`). A3 extracted `PathSuppression` onto its own
     //    arc precisely so this bookend scope never contends with the
     //    `Dispatcher` arc the monitor tasks lock.
     {
@@ -646,7 +644,7 @@ pub fn dispatch_profitable_results(
         // committed to the shared `CacheDB`). `parking_lot`'s read guard is
         // held for the serial loop's duration.
         Some(arc) => {
-            // ULUWNI (incident 2026-08-20 #1 root fix): snapshot the sim
+            // Incident 2026-08-20 #1 root fix: snapshot the sim
             // anchor under a SHORT read and drop the guard BEFORE any
             // provider I/O. Pre-fix this read guard was held across
             // `BlockSimHandle::build` + the whole serial sim loop — every
@@ -674,7 +672,7 @@ pub fn dispatch_profitable_results(
             // + the override params projected from this strategy's
             // `SimulateContext` (ADR-019 D7, decision R — the engine stays
             // generic over strategy config; it never names `SimulateContext`).
-            // The shared-EVM sim anchor: since BO5FBS the pump pre-promotes
+            // The shared-EVM sim anchor: the pump pre-promotes
             // `active_block = max(drain_block, pool_state_head)` and threads it
             // as each candidate's `solve_block`, so every candidate in the
             // batch carries the SAME promoted block (the pool-state head). This
@@ -682,7 +680,7 @@ pub fn dispatch_profitable_results(
             // returns that shared promoted block — kept as an invariant
             // assertion, not a re-anchor. Simulating at the lagging Python
             // clock fetched PRE-update state (state-ahead-of-clock desync) and
-            // mismatched the solver's head math — the MQIZ5M IIA; one
+            // mismatched the solver's head math; one
             // head-anchored shared EVM reproduces every candidate exactly.
             let sim_block = candidates
                 .iter()
@@ -1266,7 +1264,7 @@ mod tests {
 
     // ── Tier 1: in-process serial branch ─────────────────────
 
-    // ── ULUWNI: no BotState guard across provider I/O ──────────────────
+    // ── no BotState guard across provider I/O ──────────────────
 
     /// A transport wrapper that delays every request before delegating —
     /// makes the fan-out's provider I/O observably slow so a guard held
@@ -1301,7 +1299,7 @@ mod tests {
         }
     }
 
-    /// ULUWNI (incident 2026-08-20 #1 root fix): the fan-out must NOT hold
+    /// Incident 2026-08-20 #1 root fix: the fan-out must NOT hold
     /// the `BotState` read guard across provider I/O. Pre-fix,
     /// `BlockSimHandle::build` + the serial sim loop borrowed the guard
     /// while every cold-miss fetch went over RPC — a writer parked for the
@@ -1378,7 +1376,7 @@ mod tests {
         assert!(
             waited < std::time::Duration::from_millis(700),
             "BotState writer waited {waited:?} — the fan-out holds the read \
-             guard across provider I/O (ULUWNI)"
+             guard across provider I/O"
         );
 
         let outcome = sim_thread.join().expect("fan-out thread");
@@ -1564,7 +1562,7 @@ mod tests {
 
     /// `order-index` feature: the pre-sim selection is deterministic (profit
     /// desc, id-asc tie-break) regardless of the caller's order — parity with a
-    /// brute-force profit sort (ADR-024 / 34VCC2).
+    /// brute-force profit sort (ADR-024).
     #[cfg(feature = "order-index")]
     #[test]
     fn order_index_top_selection_is_deterministic() {

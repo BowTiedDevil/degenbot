@@ -11,7 +11,7 @@ use crate::prelude::*;
 #[pymethods]
 impl PyArbEngine {
     /// Run a single V3 pool's registration verify-lifecycle end-to-end
-    /// (IKGQ6F / ADR-022 D1) — the core-owned
+    /// (ADR-022 D1) — the core-owned
     /// `quarantine → seed-verify → drain+pin → post-drain-verify → set_live`
     /// choreography, delegating to the shared `PumpState`. **Sparse** →
     /// immediate no-op (`Live`, no RPC); **Tracked** → verified with the

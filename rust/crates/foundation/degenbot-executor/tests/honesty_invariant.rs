@@ -1,4 +1,4 @@
-//! Honesty-invariant test (candidate 4, `DDNEAB`, riding `3BTR22`).
+//! Honesty-invariant test.
 //!
 //! Turns the per-family axis-support declaration into an ENFORCED invariant:
 //! for every family row the axes the builder ACTUALLY branches on in its body
@@ -16,7 +16,7 @@
 //!
 //! If this test fails, do NOT "fix" it by editing the declaration to match a
 //! builder, nor the builder to match the declaration — the coordinator decides
-//! which side is the truth (per `3BTR22`: the declaration is the intended
+//! which side is the truth (the declaration is the intended
 //! truth; a builder honoring an un-declared axis is a latent bug; a builder
 //! NOT honoring a declared axis is a declaration bug).
 

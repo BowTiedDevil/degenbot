@@ -260,7 +260,7 @@ impl PyDispatchOutcome {
     /// `path_infos[cand.path_id]` per survivor; preserved here (Decision 1=B,
     /// A5) so the cockpit doesn't thread a separate map.
     ///
-    /// Each value is a plain `dict` (WEFVGE — the Python `hop_info`
+    /// Each value is a plain `dict` (the Python `hop_info`
     /// dataclass render type retired):
     ///   - `path_type` (`str`) — the combined pool-type label,
     ///   - `hops` (`list[dict]`) — one dict per hop, carrying a `family`
@@ -278,7 +278,7 @@ impl PyDispatchOutcome {
     }
 }
 
-/// Build a plain-Python-dict view of a `PathInfo` (the render shape, WEFVGE).
+/// Build a plain-Python-dict view of a `PathInfo` (the render shape).
 ///
 /// `path_type` is the combined pool-type label (`"V2-V3"`, `"V4-V2"`, …);
 /// `hops` is a list of per-hop dicts built by [`hop_to_py_dict`]. No Python

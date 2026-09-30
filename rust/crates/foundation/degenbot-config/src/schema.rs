@@ -531,7 +531,7 @@ crate::config_schema! {
             doc = "Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot.";
     }
 
-    // 4IOEVT: discovery delivery batching. The startup discovery sweep's
+    // Discovery delivery batching. The startup discovery sweep's
     // async wrapper delivers paths in batches (one event-loop hop per batch)
     // instead of one hop per path; this typed key makes the batch size
     // operator-settable without a code change.
@@ -1129,7 +1129,7 @@ mod tests {
             assert_eq!(key.map(|k| k.env), Some(env), "{toml_path} env drift");
         }
         // LW-T9 hard cutover: the stance key is RETIRED — it must not be
-        // declared (mirror of the P6YXA6 solve.executor removal; the env
+        // declared (mirror of the solve.executor removal; the env
         // var + TOML key fail the load loudly at the loader).
         assert!(
             !SCHEMA.iter().any(|k| k.toml_path == "fleet.stance"),
@@ -1303,7 +1303,10 @@ mod tests {
         let key = SCHEMA
             .iter()
             .find(|k| k.toml_path == "pathfinding.discovery_batch_size");
-        assert!(key.is_some(), "4IOEVT key must be declared exactly once");
+        assert!(
+            key.is_some(),
+            "discovery batching key must be declared exactly once"
+        );
         assert_eq!(key.map(|k| k.env), Some("DEGENBOT_DISCOVERY_BATCH_SIZE"));
         assert_eq!(BotConfig::default().pathfinding.discovery_batch_size, 1000);
     }
@@ -1697,7 +1700,7 @@ mod tests {
 
     #[test]
     fn retired_solve_stance_keys_are_not_declared() {
-        // WFF6MM hard cutover: the detached-solve stance key is RETIRED with
+        // Hard cutover: the detached-solve stance key is RETIRED with
         // the in-cycle fallback arm — detached is the only solve arm now.
         // The key must not be declared; a surviving TOML key fails the load
         // with the generic unknown-key error (fail-closed) and a CLI

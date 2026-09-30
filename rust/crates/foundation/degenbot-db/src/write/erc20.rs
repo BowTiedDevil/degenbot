@@ -7,7 +7,7 @@ fn existing_erc20_token(
     chain: i64,
     address: &str,
 ) -> Result<Option<i64>, DbError> {
-    // OONKWO: prepare_cached caches the compiled statement across calls. The only
+    // prepare_cached caches the compiled statement across calls. The only
     // PRODUCTION caller today (discovery.rs per-pool get_or_create_erc20_token)
     // is cold/sparse; this banks the ~4× for when the Aave migration ports the
     // Python event handlers to these Rust get_or_create_* paths.
@@ -92,7 +92,7 @@ impl DegenbotDb {
     }
 
     /// Update an existing `erc20_tokens` row's metadata (`name` / `symbol` /
-    /// `decimals`) by `(chain, address)`. QVMWQC: the construction-time write-back
+    /// `decimals`) by `(chain, address)`. The construction-time write-back
     /// from `Erc20Builder.build` (a token row fetched with `NULL` metadata, then
     /// populated from RPC + committed) routes through here instead of the `SQLAlchemy`
     /// `session.commit()` dirty-tracking path.

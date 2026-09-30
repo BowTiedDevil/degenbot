@@ -41,7 +41,7 @@ pub struct PyIntakeReceipt {
     /// Set by the seat right after the outcome lands — a cheap probe for
     /// the driver (no parked waiter thread per unit).
     done: Arc<AtomicBool>,
-    /// TB4QGX T6 (spike S2): this executor's fault watch. When the sticky
+    /// This executor's fault watch. When the sticky
     /// lane-death latch faults the intake, `wait`/`result` resolve terminally
     /// instead of parking forever.
     fault: Option<Arc<IntakeFaultWatch>>,
@@ -214,7 +214,7 @@ pub fn submit(fn_work: Py<PyAny>) -> PyResult<PyIntakeReceipt> {
         .map_err(crate::bot::engine::boot_refused)?;
     intake.spawn(Box::new(move || {
         let outcome = Python::attach(|py| {
-            // GOQWCL: propagate the seat's Rust thread name into Python —
+            // Propagate the seat's Rust thread name into Python —
             // an anonymous C thread registers as `Dummy-N`, hiding which
             // fleet seat executed the unit (py-spy/operator
             // greppability). The per-call rename is idempotent.
@@ -248,7 +248,7 @@ mod tests {
     use super::*;
     use degenbot_bot::fleet_intake::{IntakeFault, IntakeFaultWatch};
 
-    /// TB4QGX T7 (carried from the T6 acceptance): a lane death latches the
+    /// A lane death latches the
     /// sticky watch; a waiting receipt's `join_signals` resolves to the TYPED
     /// `FleetIntakeFaultedError` instead of parking forever — the S2 seam's
     /// Python-observable half.

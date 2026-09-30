@@ -8,7 +8,7 @@
 //! the GIL via `py.detach()` for the encode/warmup compute → calls the core →
 //! wraps the result into `bytes`/`dict`/`int`. No business logic lives here.
 //!
-//! WEFVGE: the standalone `encode_cmd_stream` / `v4_input_is_native` /
+//! The standalone `encode_cmd_stream` / `v4_input_is_native` /
 //! `v4_output_is_native` `PyO3` pyfunctions + their `HopTypes` /
 //! `extract_hop` / `extract_path_info` / `hop_to_py` / `path_info_to_py`
 //! helpers are RETIRED. The encode path moved to the Rust core

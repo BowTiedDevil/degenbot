@@ -1,6 +1,6 @@
 //! The schema-gate migration runner.
 //!
-//! The HARD REQUIREMENT (from the SLHSM4 binding): open an existing
+//! The HARD REQUIREMENT (from the binding): open an existing
 //! Alembic-stamped degenbot `SQLite` DB, read the `alembic_version` table head,
 //! and treat a stamped DB as current WITHOUT re-running DDL or clobbering its
 //! revision. Both [`sqlx::migrate!`] and [`refinery`] fail this — each writes

@@ -74,7 +74,7 @@ pub struct PoolData {
     /// `pool_key.hooks` — the REAL hook contract address from the DB row.
     /// Zero/absent for the common no-hook pools. Carried in full so the
     /// replayed identity round-trips `pool_id = keccak(abi.encode(pool_key))`
-    /// (pool-ID mismatch regression, MTMPQB).
+    /// (pool-ID mismatch regression).
     #[serde(default)]
     pub hooks: Option<Address>,
     #[serde(default)]

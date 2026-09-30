@@ -1,4 +1,4 @@
-//! Frame-liveness FSM (CMJ2DQ): wire frames whose claimed nonce sits ahead
+//! Frame-liveness FSM: wire frames whose claimed nonce sits ahead
 //! of the parent state's sender nonce are TRACKED until the chain proves the
 //! frame's opportunity is over. The surviving decisions are rescue (replay
 //! predecessors first), wait, and nonce-consumed (classify the consumption,

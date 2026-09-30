@@ -158,14 +158,14 @@ pub struct RegisterCurvePoolParams {
     pub tokens_underlying: Option<Vec<Address>>,
 
     // --- Metapool strategy discriminants (immutable; the two
-    //     `PoolStrategies` enums the BOMDRK extension did not carry). ---
+    //     `PoolStrategies` enums the extension did not carry). ---
     /// `metapool_rate_style` discriminant (auto()-based `MetapoolRateStyle`).
     pub metapool_rate_style: u8,
     /// `metapool_underlying_style` discriminant (`MetapoolUnderlyingStyle`).
     pub metapool_underlying_style: u8,
 
     // --- I/O trait object (layer-2 design; the on-chain-state reader). ---
-    /// Off-chain data provider (ADR-005 JFGCHJ). `None` ⇔ no I/O path — a
+    /// Off-chain data provider (ADR-005). `None` ⇔ no I/O path — a
     /// pure-Rust fixture test or a pool whose calc doesn't need per-block
     /// on-chain lookups. When `Some`, the (future, seam task) Python
     /// companion delegates reads here instead of holding a Python
@@ -279,7 +279,7 @@ pub struct CurvePoolState {
     /// Reorg journal — balance priors for rollback.
     pub journal: ReorgJournal<BalancesBlockDelta>,
 
-    /// Off-chain data provider (ADR-005 JFGCHJ). `None` ⇔ no I/O path.
+    /// Off-chain data provider (ADR-005). `None` ⇔ no I/O path.
     /// Stored on state (not immutable identity) because the provider is an
     /// I/O shim, not pool identity; the companion reads through the handle
     /// at calc time.

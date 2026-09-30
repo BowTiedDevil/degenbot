@@ -33,7 +33,7 @@ pub const LOG_CATCHUP_SETTLE_SECS: u64 = 15;
 pub const DEFAULT_BACKFILL_CHUNK_SIZE: u64 = 2000;
 
 /// The handshake result: boundary block + its timestamp + the fused stream
-/// (re-injected with any logs the handshake consumed — MJXP5Z, one WS, one
+/// (re-injected with any logs the handshake consumed — one WS, one
 /// handoff, a structurally lost log is impossible).
 pub struct SubscribeBoundary {
     /// The first COMPLETE block observed (header + log) or the
@@ -102,7 +102,7 @@ impl WsIngestor {
         Ok(stream_select(block_stream, log_stream))
     }
 
-    /// MJXP5Z single-stream handshake + delivery-hole-free boundary.
+    /// Single-stream handshake + delivery-hole-free boundary.
     /// Connects, merges both subscriptions, confirms the boundary from the
     /// LOG STREAM's actual liveness (two consecutive headers + first-delivered
     /// log, header fallback past the settle window), and returns the boundary
@@ -120,7 +120,7 @@ impl WsIngestor {
 
     /// Run the handshake against a caller-owned merged stream (pure-Rust
     /// consumers that already hold a live fused stream — the test seam).
-    /// Same MJXP5Z/DFQYM5 contract as [`Self::subscribe_with_handshake`]
+    /// Same contract as [`Self::subscribe_with_handshake`]
     /// minus the connect.
     #[must_use]
     pub async fn handshake(
@@ -177,7 +177,7 @@ impl WsIngestor {
         self.provider.get_logs(&filter).await
     }
 
-    /// Handshake (MJXP5Z / Alternative B) that confirms the boundary from the
+    /// Handshake (Alternative B) that confirms the boundary from the
     /// LOG STREAM's actual liveness, not headers alone. Polls the
     /// fused stream until (a) two consecutive distinct headers confirm the
     /// head is near/finalized AND (b) the `logs` sub has delivered at least
@@ -364,8 +364,8 @@ pub fn stream_select(
 
 #[cfg(test)]
 mod handshake_tests {
-    //! MJXP5Z/DFQYM5 handshake tests (migrated from the `block_pump` with the
-    //! transport they exercise — 5WTYYQ). Offline: a mock transport under the
+    //! Handshake tests (migrated from the `block_pump` with the transport they
+    //! exercise). Offline: a mock transport under the
     //! ingestor, synthetic fused streams. The handshake polls headers /
     //! collects logs and never touches the data plane.
 
@@ -491,7 +491,7 @@ mod handshake_tests {
         }
     }
 
-    /// MJXP5Z : the single-stream handshake does NOT drop block-W
+    /// The single-stream handshake does NOT drop block-W
     /// logs. The handshake polls headers ONLY (two consecutive headers W,
     /// W+1 confirm the boundary), collecting any `IngestEvent::Pool` the
     /// fused stream interleaves and re-injecting it. With the OLD

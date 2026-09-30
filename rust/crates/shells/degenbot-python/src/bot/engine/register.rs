@@ -84,7 +84,7 @@ impl PyArbEngine {
         if let Some(parent) = py_bot_ref {
             parent.borrow(py).attach_pump_state(Arc::clone(&driver));
         }
-        // The cross-block warm bytecode cache (`HDEG7H` Option A) — one
+        // The cross-block warm bytecode cache (Option A) — one
         // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
         // cloned into each per-block `BlockSimHandle::build`. Empty at
         // construction; warmed lazily by the first block's cold RPCs.
@@ -153,7 +153,7 @@ impl PyArbEngine {
                 .register_path(hops)
                 .map_err(map_path_registration_err)
         })?;
-        // SZJUKL: no engine-side registration. Touched-pool dirty tracking
+        // No engine-side registration. Touched-pool dirty tracking
         // is a BYPRODUCT of log application (`Bot::dispatch_log` records the
         // block's `EpochDelta`, which `on_resolve` consumes).
         Ok((path_id, created))
@@ -203,7 +203,7 @@ impl PyArbEngine {
                 .register_and_solve_path(hops)
                 .map_err(map_path_registration_err)
         })?;
-        // No engine-side subscription — see `register_path` (SZJUKL).
+        // No engine-side subscription — see `register_path`.
         Ok((path_id, created))
     }
 
@@ -330,7 +330,7 @@ impl PyArbEngine {
     }
 }
 
-// --- Pool-registration error mapping (free helpers, F2EVV6) ---
+// --- Pool-registration error mapping (free helpers) ---
 /// Map a [`RegisterV2PoolError`] to a typed Python exception under the
 /// `PoolRegistrationError` hierarchy.
 ///
@@ -373,8 +373,8 @@ pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolErr
     }
 }
 
-/// Map a [`RegisterV4PoolError`] to a typed Python exception (Plan 102 +
-/// F2EVV6 unified hierarchy).
+/// Map a [`RegisterV4PoolError`] to a typed Python exception (Plan 102,
+/// unified hierarchy).
 ///
 /// - `HookedPool` → [`HookedPoolRejectedError`] (V4 amount-modifying-hook
 ///   admission floor — the solver's CL math assumes no hook intervention).
@@ -386,10 +386,10 @@ pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolErr
 /// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`] (duplicate
 ///   `(pool_manager, pool_id)` registration — a wiring/programming error
 ///   surfaced at admission time, now unified with the V2/V3 twins under
-///   `PoolRegistrationError`, F2EVV6).
+///   `PoolRegistrationError`).
 /// - `SpecViolation` → [`SpecViolationError`] (out-of-spec
-///   sqrtPriceX96/tick/fee/tickSpacing, K3IICB stop-gap upgraded to a typed
-///   exception in F2EVV6).
+///   sqrtPriceX96/tick/fee/tickSpacing, stop-gap upgraded to a typed
+///   exception).
 ///
 /// The message text for the V4-specific variants is byte-for-byte unchanged
 /// from the legacy `Err(String)` formatting so `build_paths`'s classification

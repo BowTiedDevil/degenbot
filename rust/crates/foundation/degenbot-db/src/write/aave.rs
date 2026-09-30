@@ -145,7 +145,7 @@ fn existing_emode_category(
     market_id: i64,
     category_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    // OONKWO: prepare_cached caches the compiled statement across calls (spike-7
+    // prepare_cached caches the compiled statement across calls (spike-7
     // measured ~4× over query_row for this constant-SQL single-row shape). Block-
     // scoped: the `s` drops at the fn boundary, releasing back to the cache before
     // any commit. FN signature UNCHANGED.
@@ -161,7 +161,7 @@ fn existing_asset_config(
     conn: &rusqlite::Connection,
     asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    // OONKWO: prepare_cached caches the compiled statement across calls.
+    // prepare_cached caches the compiled statement across calls.
     let mut s = conn.prepare_cached("SELECT id FROM aave_v3_asset_configs WHERE asset_id = ?1")?;
     Ok(s.query_row(params![asset_id], |r| r.get(0)).optional()?)
 }
@@ -171,7 +171,7 @@ fn existing_user_collateral_config(
     user_id: i64,
     asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    // OONKWO: prepare_cached caches the compiled statement across calls.
+    // prepare_cached caches the compiled statement across calls.
     let mut s = conn.prepare_cached(
         "SELECT id FROM aave_v3_user_collateral_configs \
          WHERE user_id = ?1 AND asset_id = ?2",
@@ -185,7 +185,7 @@ fn existing_user(
     market_id: i64,
     address: &str,
 ) -> Result<Option<i64>, DbError> {
-    // OONKWO: prepare_cached caches the compiled statement across calls.
+    // prepare_cached caches the compiled statement across calls.
     let mut s =
         conn.prepare_cached("SELECT id FROM aave_v3_users WHERE market_id = ?1 AND address = ?2")?;
     Ok(s.query_row(params![market_id, address], |r| r.get(0))

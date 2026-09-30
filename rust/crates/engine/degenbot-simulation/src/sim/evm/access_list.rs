@@ -7,7 +7,7 @@
 //! `AccessList` ready for the *submitted* `execute()` transaction's
 //! `TxParams.accessList` (consumed by `degenbot-submission`).
 //!
-//! # API surface (spike QGJGWI §5 — pinned)
+//! # API surface (spike-validated, pinned)
 //!
 //! ```text
 //! // revm-context-interface-41.0.0/src/result.rs

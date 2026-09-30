@@ -1,6 +1,5 @@
 //! Aave V3 lending-market DB writers — the per-event apply fns +
-//! `get_or_create_*` upsert substrate (row N4 of the writer scope
-//! `RQXEKH` — `port-now`).
+//! `get_or_create_*` upsert substrate.
 //!
 //! Port of `src/degenbot/cli/aave/event_handlers.py::_process_*` handlers +
 //! `db_market.py` / `db_assets.py` / `db_users.py` / `db_positions.py`
@@ -10,7 +9,7 @@
 //!
 //! # The write-capable connection (`open_for_writes`)
 //!
-//! SLHSM4 binding #2 hard-AC is "every **read** connection opened by
+//! binding #2 hard-AC is "every **read** connection opened by
 //! degenbot-db MUST set `query_only=on`" — [`DegenbotDb::open`] /
 //! [`DegenbotDb::open_in_memory`] stay read-only. Writers use
 //! [`DegenbotDb::open_for_writes`] / [`DegenbotDb::open_in_memory_for_writes`]:

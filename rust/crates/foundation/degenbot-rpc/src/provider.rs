@@ -68,7 +68,7 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
 /// Adoption verdict (spike, 2026-09,): alloy 2.4.2's
 /// `transports::layers::RetryBackoffLayer` was evaluated as the
 /// transport-idiomatic replacement for this loop and rejected: it only
-/// `trace!`s retries (no E2B542 leveled records, no provider `{context}`
+/// `trace!`s retries (no leveled records, no provider `{context}`
 /// labels), has no per-attempt deadline knob, its
 /// `initial_backoff` is a fixed base that is explicitly "not an exponential
 /// base", and exhaustion collapses typed errors into a `custom_str`. It is
@@ -85,7 +85,7 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
 /// per-call `tokio::time::timeout`. The loop stays centralized here
 /// and consumes the shared [`RetryPolicy`] curve.
 ///
-/// Emission policy (the E2B542 decision):
+/// Emission policy:
 /// - First retry (attempt 1): `log::debug!` — transient, often benign.
 /// - Subsequent retries (attempt >= 2): `log::warn!` — sustained backoff.
 /// - Exhausted all attempts: `log::error!` — terminal failure.
@@ -348,14 +348,14 @@ const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 pub const SUBSCRIPTION_CHANNEL_SIZE: usize = 1_000_000;
 
 /// Default maximum total attempts for provider operations (1 initial + 2
-/// retries). 65F2N7 #4: this is the actual production default the bot hotpath
+/// retries). This is the actual production default the bot hotpath
 /// (`degenbot-bot` pump) uses — previously `10` but every `new()` call site
 /// passed `3`, making the constant misleading. Now the constant matches the
 /// hotpath default; non-hotpath updaters (Aave/pool-updater) pass their own
 /// `RPC_MAX_RETRIES` constant as an intentional override.
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
-/// 65F2N7 #1: detect an IPC path explicitly. A string is an IPC path if it
+/// Detect an IPC path explicitly. A string is an IPC path if it
 /// starts with `ipc://`, is an absolute Unix path (starts with `/`), or is a
 /// Windows named pipe (starts with `\\`). A bare `host:port` (a typo missing
 /// the `http://` scheme) is NOT an IPC path — it falls through to the
@@ -366,7 +366,7 @@ pub fn is_ipc_path(rpc_url: &str) -> bool {
     rpc_url.starts_with("ipc://") || rpc_url.starts_with('/') || rpc_url.starts_with("\\\\")
 }
 
-/// 65F2N7 #3: retry a WS connect at construction with the existing backoff.
+/// Retry a WS connect at construction with the existing backoff.
 /// Previously `connect_ws(ws_connect).await?` was eagerly fatal — a transient
 /// outage at build time failed the provider permanently while HTTP was lazy.
 /// Now construction retries the connect a bounded number of times, matching
@@ -407,7 +407,7 @@ async fn connect_ws_with_retries(
     }
 }
 
-/// 65F2N7 #3: retry an IPC connect at construction with the existing backoff.
+/// Retry an IPC connect at construction with the existing backoff.
 /// Same rationale as `connect_ws_with_retries` — IPC connect was eagerly
 /// fatal; now it retries a bounded number of times.
 async fn connect_ipc_with_retries(
@@ -446,7 +446,7 @@ async fn connect_ipc_with_retries(
     }
 }
 
-/// 65F2N7 #2: the idempotent-RPC-method allowlist. `make_request` is a raw
+/// The idempotent-RPC-method allowlist. `make_request` is a raw
 /// escape hatch that can issue ANY method — including non-idempotent
 /// `debug_*` / `trace_*` / state-mutating methods. Retrying those blindly (the
 /// previous behavior) is unsafe: a partial timeout on a mutating call re-sends
@@ -513,7 +513,7 @@ macro_rules! rpc_call {
 /// exhaustion over HTTP 200 (the transport did NOT fail at the HTTP layer,
 /// so the 429-based classification in [`IntoProviderError`] does not fire).
 ///
-/// Conservative set (BJXUPU):
+/// Conservative set:
 /// - `-32005` — `Alchemy` "your app has exceeded its compute unit capacity".
 /// - `-32004` — `QuickNode` "rate limit exceeded".
 ///
@@ -546,7 +546,7 @@ const JSON_RPC_RATE_LIMIT_MESSAGE_MARKERS: &[&str] = &[
 /// substring). Used by [`IntoProviderError::into_provider_error`] so such
 /// responses map to [`ProviderError::RateLimited`] and feed the retry loop.
 ///
-/// (BJXUPU — `is_retryable()` already returns true for `RateLimited`, so no
+/// (`is_retryable()` already returns true for `RateLimited`, so no
 /// predicate change is needed.)
 fn is_json_rpc_rate_limit_response(code: i64, message: &str) -> bool {
     if JSON_RPC_RATE_LIMIT_CODES.contains(&code) {
@@ -606,7 +606,7 @@ impl IntoProviderError for RpcError<TransportErrorKind> {
 
         // Server returned an error response (JSON-RPC error)
         if let Some(error_resp) = self.as_error_resp() {
-            // BJXUPU: JSON-RPC-level rate-limit responses. Providers signal
+            // JSON-RPC-level rate-limit responses. Providers signal
             // quota exhaustion over HTTP 200 (the transport did NOT fail at
             // the HTTP layer, so the 429 transport branch above does not fire).
             // Detect by (a) a known provider quota code, or (b) a rate-limit
@@ -1059,14 +1059,14 @@ impl AlloyProvider {
                 let provider = connect_ws_with_retries(ws_connect, max_retries).await?;
                 provider
             } else if is_ipc_path(rpc_url) {
-                // 65F2N7 #1: explicit IPC path detection — require `ipc://`, an
+                // Explicit IPC path detection — require `ipc://`, an
                 // absolute Unix path (`/`), or a Windows named pipe (`\\`). A
                 // bare `localhost:8545` (a typo missing `http://`) is NO longer
                 // silently routed to IPC; it falls through to the
                 // unsupported-scheme error below with a clear message.
                 let ipc_path = rpc_url.strip_prefix("ipc://").unwrap_or(rpc_url);
                 let ipc_connect: IpcConnect<String> = IpcConnect::new(ipc_path.to_string());
-                // 65F2N7 #3: WS/IPC connect is no longer eagerly fatal. HTTP
+                // WS/IPC connect is no longer eagerly fatal. HTTP
                 // is lazy (connects on first call, retried via
                 // retry_with_backoff); WS/IPC `.await?`'d at construction, so a
                 // transient outage at build time failed the provider
@@ -1318,7 +1318,7 @@ impl AlloyProvider {
             message: format!("Invalid transaction hash: {e}"),
         })?;
 
-        // HXLBJZ: return alloy's typed `Transaction` (consistent with
+        // Return alloy's typed `Transaction` (consistent with
         // `EthBlock`'s `Transaction<TxEnvelope>`), not a serialize-then-reparse
         // `serde_json::Value` round-trip. The PyO3 wrapper serializes to JSON
         // at the FFI boundary when a Python caller needs it.
@@ -1344,7 +1344,7 @@ impl AlloyProvider {
             message: format!("Invalid transaction hash: {e}"),
         })?;
 
-        // HXLBJZ: return alloy's typed `TransactionReceipt`, not a
+        // Return alloy's typed `TransactionReceipt`, not a
         // serialize-then-reparse `serde_json::Value` round-trip.
         self.retry_with_backoff(|| async {
             self.inner
@@ -1366,7 +1366,7 @@ impl AlloyProvider {
         position: U256,
         block_number: Option<u64>,
     ) -> ProviderResult<B256> {
-        // HXLBJZ: the `to_be_bytes::<32>()` byte-array detour is NOT
+        // The `to_be_bytes::<32>()` byte-array detour is NOT
         // pointless — alloy's `get_storage_at` returns a `U256`
         // (`StorageValue = U256`), and there is no direct `From<U256> for
         // B256`. The 32-byte big-endian form of a `U256` IS the `B256` layout,
@@ -1605,7 +1605,7 @@ impl AlloyProvider {
         let method = method.to_string();
         let params = Arc::new(params);
 
-        // 65F2N7 #2: `make_request` is a raw escape hatch that can issue ANY
+        // `make_request` is a raw escape hatch that can issue ANY
         // method. Retrying non-idempotent methods (debug_*, trace_*, state-
         // mutating) is unsafe — a partial timeout re-sends the payload. Retry
         // ONLY the idempotent allowlist (`is_idempotent_rpc_method`); all other
@@ -1832,7 +1832,7 @@ mod tests {
         );
     }
 
-    // ── BJXUPU: JSON-RPC-level rate-limit error responses ───────────────
+    // ── JSON-RPC-level rate-limit error responses ───────────────
     //
     // HTTP 200 + a JSON-RPC error body is how providers (Alchemy, QuickNode,
     // Infura) signal quota exhaustion over a transport that did NOT fail at
@@ -1840,7 +1840,7 @@ mod tests {
     // to `ProviderError::RateLimited` so the retry loop's `is_retryable()`
     // picks them up (instead of failing fast as `RpcError { code }`).
 
-    /// BJXUPU: Alchemy/QuickNode `-32005` (request rate exceeded) maps to
+    /// Alchemy/QuickNode `-32005` (request rate exceeded) maps to
     /// `RateLimited` (retryable), not `RpcError`.
     #[test]
     fn json_rpc_rate_limit_code_32005_classified_as_rate_limited() {
@@ -1866,7 +1866,7 @@ mod tests {
         );
     }
 
-    /// BJXUPU: `QuickNode` `-32004` (rate limit) also maps to `RateLimited`.
+    /// `QuickNode` `-32004` (rate limit) also maps to `RateLimited`.
     #[test]
     fn json_rpc_rate_limit_code_32004_classified_as_rate_limited() {
         let json = r#"{"code":-32004,"message":"rate limit exceeded"}"#;
@@ -1880,7 +1880,7 @@ mod tests {
         assert!(provider_err.is_retryable());
     }
 
-    /// BJXUPU: `Infura`-style `-32001` carrying a rate-limit *message* maps to
+    /// `Infura`-style `-32001` carrying a rate-limit *message* maps to
     /// `RateLimited` (the message-marker fallback catches providers that reuse
     /// a generic code for quota errors). The companion test
     /// `non_revert_error_stays_rpc_error` pins that `-32001` WITHOUT a
@@ -1899,7 +1899,7 @@ mod tests {
         assert!(provider_err.is_retryable());
     }
 
-    /// BJXUPU: `-32601` (method not found) is NOT a rate-limit code and must
+    /// `-32601` (method not found) is NOT a rate-limit code and must
     /// stay `RpcError` (not retried). Guards against an over-broad code set.
     #[test]
     fn json_rpc_method_not_found_stays_rpc_error() {
@@ -2689,7 +2689,7 @@ mod tests {
         assert_block_type(None);
     }
 
-    // ── 65F2N7: IPC path detection + idempotent retry allowlist ─────────
+    // ── IPC path detection + idempotent retry allowlist ─────────
 
     #[test]
     fn test_is_ipc_path_detects_unix_and_windows_and_scheme() {
@@ -2704,7 +2704,7 @@ mod tests {
 
     #[test]
     fn test_is_ipc_path_rejects_bare_hostport_typo() {
-        // 65F2N7 #1: a bare `localhost:8545` (missing the http:// scheme) is
+        // A bare `localhost:8545` (missing the http:// scheme) is
         // NO longer silently routed to IPC. It must be rejected so the typo
         // surfaces in the unsupported-scheme error.
         assert!(!is_ipc_path("localhost:8545"));
@@ -2717,7 +2717,7 @@ mod tests {
 
     #[test]
     fn test_is_idempotent_rpc_method_allowlist() {
-        // 65F2N7 #2: read-only eth_* methods are retry-safe.
+        // Read-only eth_* methods are retry-safe.
         assert!(is_idempotent_rpc_method("eth_call"));
         assert!(is_idempotent_rpc_method("eth_getLogs"));
         assert!(is_idempotent_rpc_method("eth_getBlockByNumber"));
@@ -2728,7 +2728,7 @@ mod tests {
 
     #[test]
     fn test_is_idempotent_rpc_method_rejects_non_idempotent() {
-        // 65F2N7 #2: mutating + stateful methods must NOT be retried blindly.
+        // Mutating + stateful methods must NOT be retried blindly.
         assert!(!is_idempotent_rpc_method("eth_sendRawTransaction"));
         assert!(!is_idempotent_rpc_method("eth_sendTransaction"));
         assert!(!is_idempotent_rpc_method("debug_traceCallByBlockhash"));
@@ -2892,8 +2892,8 @@ mod tests {
     fn send_raw_transaction_request_hex_encoding_matches_web3() {
         // eth_sendRawTransaction sends ("0x"+hexlify(bytes),). web3.py uses
         // `/`-prefixed hex; alloy uses `hex::encode_prefixed`. Assert they
-        // match for a fixture payload (the signed-bytes from G6DNW4's §4.2
-        // fixture — an anvil-key-0 type-2 envelope prefix).
+        // match for a fixture payload (the §4.2 signed-bytes fixture — an
+        // anvil-key-0 type-2 envelope prefix).
         let signed_bytes: &[u8] = &[0x02, 0xf8, 0x70, 0x01, 0x07];
         let hex = alloy::hex::encode_prefixed(signed_bytes);
         // web3.py `web3.Web3.to_hex(bytes)` produces the same 0x-prefixed hex
