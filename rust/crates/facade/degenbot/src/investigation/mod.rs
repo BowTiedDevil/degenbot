@@ -1,6 +1,6 @@
 //! Path **investigation toolkit** — reusable building blocks for reproducing a
 //! captured failing settlement-arbitrage path (the `path<N>_…_block<B>` fixtures written by
-//! `scripts/capture_*_fixture.py`).
+//! the `capture_path_fixture` example).
 //!
 //! **Layering.** This is degenbot's OWN pool-level scaffold (its capture format,
 //! its V2/V3/V4 pool reconstruction, its per-hop pool oracle). It contains NO
@@ -37,6 +37,8 @@
 /// Ignore pedantic doc/must_use/hasher nits for this run-once tooling (see
 /// module comment for rationale).
 #[expect(clippy::missing_errors_doc)]
+pub mod capture;
+pub mod chain_capture;
 pub mod fixture;
 #[expect(clippy::missing_panics_doc, clippy::must_use_candidate)]
 pub mod hop_oracle;

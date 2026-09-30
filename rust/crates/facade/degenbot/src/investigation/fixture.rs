@@ -2,7 +2,7 @@
 //! JSON capture format so a future investigation can load a captured
 //! `path<N>_…_block<B>.json` with zero copy-paste.
 //!
-//! The fixture files produced by `scripts/capture_*_fixture.py` share a common
+//! The fixture files produced by the `capture_path_fixture` example share a common
 //! core (pool list, hop list, tick map, recorded solve) with small per-family
 //! variation (a V4 pool adds `currency0/1`+`pool_id`; a V2 pool adds
 //! `reserve0/1`; amounts were authored as JSON numbers in some files and decimal
@@ -162,7 +162,7 @@ pub struct PathFixture {
 }
 
 impl PathFixture {
-    /// Load + parse a captured-path fixture JSON (see `capture_*_fixture.py`).
+    /// Load + parse a captured-path fixture JSON (see the `capture_path_fixture` example).
     pub fn load(path: &str) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
         serde_json::from_str(&text).map_err(|e| format!("parse {path}: {e}"))

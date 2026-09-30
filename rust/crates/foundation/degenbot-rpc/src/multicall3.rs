@@ -33,6 +33,15 @@ pub const AGGREGATE3_SELECTOR: [u8; 4] = [0x13, 0x4d, 0xd3, 0x43];
 /// (a safe margin below typical node request-body limits).
 pub const MULTICALL3_BATCH_SIZE: usize = 1024;
 
+/// keccak256("tryAggregate(bool,(address,bytes)[])")[0..4] = `0xbce38bd7`.
+///
+/// The Multicall2-patented batch primitive: same sub-call fan-out and the SAME
+/// `(bool,bytes)[]` return shape as `aggregate3`, so [`decode_aggregate3_results`]
+/// decodes it unchanged. Some nodes carry a Multicall2 deployment at
+/// [`MULTICALL3_ADDRESS`] (no `aggregate3` there) — callers degrade to this
+/// selector before giving up on batching.
+pub const TRY_AGGREGATE_SELECTOR: [u8; 4] = [0xbc, 0xe3, 0x8b, 0xd7];
+
 /// One Multicall3 `Result`: `(bool success, bytes returnData)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MulticallResult {
@@ -64,6 +73,31 @@ pub fn encode_aggregate3(calls: &[(Address, Bytes)]) -> ProviderResult<Bytes> {
     let params = DynSolValue::Tuple(vec![DynSolValue::Array(tuples)]);
     let mut calldata = Vec::with_capacity(4 + 32 * (3 + calls.len()));
     calldata.extend_from_slice(&AGGREGATE3_SELECTOR);
+    calldata.extend_from_slice(&params.abi_encode_params());
+    Ok(Bytes::from(calldata))
+}
+
+/// Encode `tryAggregate(bool,(address,bytes)[])` calldata for `calls`, with
+/// `requireSuccess = false` (a reverted sub-call is an item result, never a
+/// batch fault) — the Multicall2 twin of [`encode_aggregate3`].
+///
+/// # Errors
+///
+/// Returns [`ProviderError::EncodingError`] if the alloy ABI encoder rejects a
+/// value (defensive — the inputs are always encodable).
+pub fn encode_try_aggregate(calls: &[(Address, Bytes)]) -> ProviderResult<Bytes> {
+    let tuples: Vec<DynSolValue> = calls
+        .iter()
+        .map(|(target, data)| {
+            DynSolValue::Tuple(vec![
+                DynSolValue::Address(*target),
+                DynSolValue::Bytes(data.to_vec()),
+            ])
+        })
+        .collect();
+    let params = DynSolValue::Tuple(vec![DynSolValue::Bool(false), DynSolValue::Array(tuples)]);
+    let mut calldata = Vec::with_capacity(4 + 32 * (3 + 2 * calls.len()));
+    calldata.extend_from_slice(&TRY_AGGREGATE_SELECTOR);
     calldata.extend_from_slice(&params.abi_encode_params());
     Ok(Bytes::from(calldata))
 }

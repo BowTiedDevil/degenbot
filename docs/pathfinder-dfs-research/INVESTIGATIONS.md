@@ -207,3 +207,11 @@ instead.
   `path73385` fixtures + capture scripts (consumed by committed tier-3 regression
   tests). The Layer-3 worked example now points at the kept `path5000` fixture,
   and the `EXECUTE_CONFIG` constant whose calldata-dump examples went is deleted.
+- **Retired the path capture scripts (2026-09-30):** `capture_path5000_v2v4v3_fixture.py`
+  and `capture_path73385_v4_fixture.py` were replaced by the `capture_path_fixture`
+  example (`degenbot::investigation::capture`), which recaptures every fixture's
+  recorded state (DB tick snapshot + on-chain scalars at `target_block`) through
+  the typed config — the retired scripts hardcoded the since-removed
+  `~/.config/degenbot/degenbot.db`. The committed fixtures remain the tier-3
+  regression input, and their `_doc` stamps keep the recorder names as
+  provenance of what the file records.
