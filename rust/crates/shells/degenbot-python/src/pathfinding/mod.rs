@@ -61,13 +61,17 @@ impl PoolKind {
     ///
     /// The core enum is `#[non_exhaustive]`, so this routes through its own
     /// `u8` discriminant (which the core defines exhaustively) rather than
-    /// matching its variants directly.
+    /// matching its variants directly. Returns `None` for a discriminant the
+    /// binding does not know (a stale binding meeting a newer core); every
+    /// caller must raise a loud Python exception in that case instead of
+    /// silently mistranslating it to `V4`.
     #[must_use]
-    pub const fn from_core(kind: CorePoolKind) -> Self {
+    pub const fn from_core(kind: CorePoolKind) -> Option<Self> {
         match kind.as_u8() {
-            0 => PoolKind::V2,
-            1 => PoolKind::V3,
-            _ => PoolKind::V4,
+            0 => Some(PoolKind::V2),
+            1 => Some(PoolKind::V3),
+            2 => Some(PoolKind::V4),
+            _ => None,
         }
     }
 }
@@ -592,13 +596,23 @@ fn fetch_graph_data(
     let data = db.fetch_path_graph_edges(chain_id, kinds)?;
 
     // Filter edges to those where BOTH tokens are candidate tokens (mirrors
-    // Python `_prepare_graph`'s `candidate_tokens` intersection).
-    let edges: Vec<(u64, u64, u64, PoolKind)> = data
-        .edges
-        .into_iter()
-        .filter(|(t0, t1, _, _)| candidate_tokens.contains(t0) && candidate_tokens.contains(t1))
-        .map(|(t0, t1, pid, kind)| (t0, t1, pid, PoolKind::from_core(kind)))
-        .collect();
+    // Python `_prepare_graph`'s `candidate_tokens` intersection). An unknown
+    // core discriminant is a stale-binding/newer-core mismatch: refuse it
+    // (the caller's DbError -> PyValueError mapping surfaces it to Python)
+    // instead of silently mistranslating it to V4.
+    let mut edges: Vec<(u64, u64, u64, PoolKind)> = Vec::with_capacity(data.edges.len());
+    for (t0, t1, pid, kind) in data.edges {
+        if !(candidate_tokens.contains(&t0) && candidate_tokens.contains(&t1)) {
+            continue;
+        }
+        let discriminant = kind.as_u8();
+        let Some(kind) = PoolKind::from_core(kind) else {
+            return Err(degenbot_db::DbError::Decode(format!(
+                "unknown core pool-kind discriminant {discriminant} crossing the FFI (pool id {pid})"
+            )));
+        };
+        edges.push((t0, t1, pid, kind));
+    }
 
     // Pre-compute EIP-55 checksum strings for every V2/V3 pool address +
     // every V4 manager address inside this GIL-released span .
@@ -656,7 +670,13 @@ fn build_graph_dict<'py>(
 
     let kind_map = PyDict::new(py);
     for (pid, kind) in pool_id_to_kind {
-        kind_map.set_item(pid, PoolKind::from_core(*kind))?;
+        let pool_kind = PoolKind::from_core(*kind).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "unknown core pool-kind discriminant {} crossing the FFI (pool id {pid})",
+                kind.as_u8()
+            ))
+        })?;
+        kind_map.set_item(pid, pool_kind)?;
     }
     out.set_item("pool_id_to_kind", kind_map)?;
 
@@ -774,11 +794,17 @@ fn materialize_pool_keys(
         if slot.is_none() {
             let pool_idx = u32::try_from(i).unwrap_or(u32::MAX);
             let (pool_id, pool_kind) = finder.pool_edge_key(pool_idx);
+            let pool_kind = PoolKind::from_core(pool_kind).ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "unknown core pool-kind discriminant {} crossing the FFI (pool id {pool_id})",
+                    pool_kind.as_u8()
+                ))
+            })?;
             let tuple = PyTuple::new(
                 py,
                 [
                     pool_id.into_pyobject(py)?.into_any(),
-                    PoolKind::from_core(pool_kind).into_pyobject(py)?.into_any(),
+                    pool_kind.into_pyobject(py)?.into_any(),
                 ],
             )?;
             *slot = Some(tuple.unbind());

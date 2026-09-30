@@ -96,14 +96,18 @@ fn bench_sweep(c: &mut Criterion) {
     });
 
     let grid = grid_4x4();
-    let grid_depths = Some(kind_filter(&[None, None, None, None, None]));
-    let grid_nvd = grid.compute_node_valid_depths(&kind_filter(&[None, None, None, None, None]));
+    // The 5-deep all-`None` kind filter this bench used to carry is dropped
+    // along with its paired node_valid_depths table: post-floor (the core
+    // floors the effective min depth at the filter length) it would have
+    // silenced the 4-cycles this sweep measures. The grid is bipartite
+    // (right/down edges only), so max_depth=Some(5) alone enumerates exactly
+    // the path set today's runs enumerate.
     g.bench_function("grid_4x4_d5", |b| {
         b.iter(|| {
             black_box(sweep_paths(
                 &grid,
-                grid_depths.as_deref(),
-                Some(&grid_nvd),
+                None,
+                None,
                 gid_of(0, 0),
                 gid_of(0, 0),
                 3,

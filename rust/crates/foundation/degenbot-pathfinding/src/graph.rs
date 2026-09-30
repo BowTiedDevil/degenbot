@@ -42,6 +42,12 @@ pub enum PoolKind {
 }
 
 impl PoolKind {
+    /// Every variant, in discriminant order — the single list every
+    /// discriminant-driven lookup projects through. A new variant extends
+    /// this array (and `as_u8`'s exhaustive match forces the arm), so the
+    /// variant declaration is the one obvious update site.
+    pub const ALL: [PoolKind; 3] = [PoolKind::V2, PoolKind::V3, PoolKind::V4];
+
     /// Convert to the `u8` discriminant used at the `PyO3` boundary.
     #[must_use]
     pub const fn as_u8(self) -> u8 {
@@ -57,12 +63,14 @@ impl PoolKind {
     /// Returns `None` for unknown discriminants.
     #[must_use]
     pub const fn from_u8(val: u8) -> Option<Self> {
-        match val {
-            0 => Some(PoolKind::V2),
-            1 => Some(PoolKind::V3),
-            2 => Some(PoolKind::V4),
-            _ => None,
+        let mut i = 0;
+        while i < Self::ALL.len() {
+            if Self::ALL[i].as_u8() == val {
+                return Some(Self::ALL[i]);
+            }
+            i += 1;
         }
+        None
     }
 
     /// The single table of persisted `kind` discriminators the graph
@@ -319,7 +327,7 @@ impl PathGraph {
         let mut flat = vec![(0u32, 0u32); offsets[n] as usize];
         let mut cursor: Vec<u32> = offsets[..n].to_vec();
         for (b, &(a, t)) in self.bundle_pairs.iter().enumerate() {
-            let bundle = u32::try_from(b).unwrap_or(u32::MAX);
+            let bundle = expect_u32(b, "bundle count exceeds u32::MAX");
             flat[cursor[a as usize] as usize] = (t, bundle);
             cursor[a as usize] += 1;
             if t != a {
@@ -377,7 +385,7 @@ impl PathGraph {
                 bundle_kinds[b as usize] |= kind_bit;
                 b
             } else {
-                let b = u32::try_from(bundle_pairs.len()).unwrap_or(u32::MAX);
+                let b = expect_u32(bundle_pairs.len(), "bundle count exceeds u32::MAX");
                 bundle_id.insert(packed, b);
                 bundle_pairs.push((idx0.min(idx1), idx0.max(idx1)));
                 bundle_kinds.push(kind_bit);
@@ -524,7 +532,7 @@ impl PathGraph {
         // O(1) times instead of rescanning the whole graph per round
         // (O(V+E) total; the round-based version was O(rounds * (V+E)) and
         // took ~55s on a 742k-edge mainnet graph).
-        let node_count_u32 = u32::try_from(self.nodes()).unwrap_or(u32::MAX);
+        let node_count_u32 = expect_u32(self.nodes(), "node count exceeds u32::MAX");
         let mut degree: Vec<usize> = (0..node_count_u32).map(|i| self.adj_of(i).len()).collect();
         let mut removed = vec![false; n];
 
@@ -543,7 +551,7 @@ impl PathGraph {
                 continue;
             }
             removed[i] = true;
-            for e in self.adj_of(u32::try_from(i).unwrap_or(u32::MAX)) {
+            for e in self.adj_of(expect_u32(i, "node index exceeds u32::MAX")) {
                 let j = e.neighbor as usize;
                 if removed[j] {
                     continue;
@@ -596,12 +604,13 @@ impl PathGraph {
     ) -> Vec<Vec<bool>> {
         let mut result = Vec::with_capacity(self.nodes());
         for i in 0..self.nodes() {
-            let edges = self.adj_of(u32::try_from(i).unwrap_or(u32::MAX));
+            let edges = self.adj_of(expect_u32(i, "node index exceeds u32::MAX"));
             // Collect all pool kinds this node has edges for (a node can use
             // any pool it touches at any depth).
-            let mut kinds = [false; 3];
+            let mut kinds = [false; PoolKind::ALL.len()];
             for e in edges {
                 let kind = self.pools[e.pool_idx as usize].1;
+                debug_assert!((kind.as_u8() as usize) < PoolKind::ALL.len());
                 kinds[kind.as_u8() as usize] = true;
             }
             let mut valid = vec![false; pool_type_per_depth.len()];
@@ -849,6 +858,18 @@ fn pack_token_pair(a: u32, b: u32) -> u64 {
     (u64::from(a.min(b)) << 32) | u64::from(a.max(b))
 }
 
+/// Convert a count or index to `u32`, panicking if it exceeds `u32::MAX`.
+///
+/// The compact-index representation bounds pools, tokens, and bundle ids at
+/// `u32::MAX` (the architectural bound documented on
+/// [`PathGraph::from_edges`]); that bound is unreachable in practice, so the
+/// failure panics with the site's message instead of fabricating an
+/// out-of-range index that silently misbehaves downstream.
+#[expect(clippy::expect_used)]
+fn expect_u32(value: usize, what: &'static str) -> u32 {
+    u32::try_from(value).expect(what)
+}
+
 impl<B: Borrow<PathGraph>> BundledSearch<B> {
     /// Assemble from explicit parameters (both public constructors funnel
     /// here). The filter's `node_valid_depths` lookahead table is passed in
@@ -877,6 +898,18 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
         };
 
         let filter_len = pool_type_per_depth.as_ref().map_or(0, Vec::len);
+
+        // The single enforcement point for the minimum-depth floor (D1
+        // policy): a per-depth filter of length N pins an exactly-N-hop
+        // permutation regardless of kind constraints — all-`None` filters
+        // included. Without the floor, the yield condition only checks
+        // `>= min_depth`, so a walk shorter than the filter that
+        // prefix-matches its early depths leaks through. plan.rs floors the
+        // *reported* effective minimum for its callers; re-applying here is
+        // an idempotent `max()`.
+        let min_depth = pool_type_per_depth
+            .as_ref()
+            .map_or(min_depth, |filter| min_depth.max(filter.len()));
 
         let src = graph.borrow();
 
@@ -1153,6 +1186,11 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                 // prefix break admits only target-adjacent bundles — the
                 // old engine's separate final-hop end-edge list is implicit.)
                 let remaining_budget = self.effective_max_depth.map(|emd| {
+                    // Saturating on purpose, NOT the panic helper: `emd`
+                    // derives from the caller's unchecked `max_depth`
+                    // (reachable FFI input), so the subtraction can exceed
+                    // `u32::MAX`. The clamp means "no cutoff" — the sorted
+                    // prefix break below never discards a yieldable trail.
                     u32::try_from(emd - self.walk_bundles.len() - 1).unwrap_or(u32::MAX)
                 });
                 let entry_base = self.tok_bundle_offsets[*node as usize] as usize;
@@ -1370,6 +1408,11 @@ pub type OwnedPathFinder = BundledSearch<Box<PathGraph>>;
 impl BundledSearch<Box<PathGraph>> {
     /// Create from an owned graph plus search parameters. Computes the
     /// lookahead `node_valid_depths` table from the filter.
+    ///
+    /// When a `pool_type_per_depth` filter is present, the effective minimum
+    /// depth is floored at the filter's length (a filter of length N pins an
+    /// exactly-N-hop permutation), so a caller `min_depth` below the filter
+    /// length never yields shorter walks.
     #[must_use]
     pub fn new(
         graph: PathGraph,
@@ -1402,6 +1445,11 @@ impl PathGraph {
     /// one path at a time, avoiding the memory cost of collecting all results
     /// into a `Vec`. Use this when the graph may produce a large number of
     /// paths.
+    ///
+    /// When a `pool_type_per_depth` filter is present, the effective minimum
+    /// depth is floored at the filter's length (a filter of length N pins an
+    /// exactly-N-hop permutation), so a caller `min_depth` below the filter
+    /// length never yields shorter walks.
     #[expect(clippy::too_many_arguments)]
     #[must_use]
     pub fn find_paths_iter<'a>(
@@ -1437,12 +1485,15 @@ impl PathGraph {
     /// # Arguments
     /// * `start` — The token ID where the search begins.
     /// * `end` — The token ID the path must return to.
-    /// * `min_depth` — Minimum number of hops in a completed path.
+    /// * `min_depth` — Minimum number of hops in a completed path. When
+    ///   `pool_type_per_depth` is present the effective minimum is
+    ///   `max(min_depth, filter.len())` (the filter's length floors it).
     /// * `max_depth` — Maximum number of hops, or `None` for no limit.
     /// * `include_reverse` — If `true`, yield each found path again reversed.
     /// * `pool_type_per_depth` — Optional per-depth allowed pool kinds. A
     ///   `None` entry allows all kinds at that depth. Implicitly caps max
-    ///   depth at its length.
+    ///   depth at its length and floors the effective min depth at its
+    ///   length (all-`None` filters included).
     /// * `node_valid_depths` — Optional precomputed valid-depth sets (from
     ///   `compute_node_valid_depths`) for lookahead pruning.
     ///
@@ -1642,11 +1693,13 @@ mod tests {
 
     #[test]
     fn test_three_hop_filter_yields_no_two_hop_cycles() {
-        // A 3-depth V2-V2-V2 filter must yield only 3-hop paths.
-        // The synthetic graph contains both a 2-hop cycle (WETH-A-WETH via
-        // parallel pools) and a 3-hop cycle (WETH-A-B-WETH). The 2-hop cycle
-        // matches the filter's depths 0 and 1, so without the implicit
-        // min_depth floor from the filter length, it would leak through.
+        // A per-depth filter of length N pins an exactly-N-hop permutation
+        // regardless of kind constraints (all-`None` filters included), so
+        // with `min_depth=2` and a 3-deep filter the core floors the
+        // effective minimum depth at 3. The synthetic graph contains both a
+        // 2-hop cycle (WETH-A-WETH via parallel pools) and a 3-hop cycle
+        // (WETH-A-B-WETH); the 2-hop cycle prefix-matches the filter's first
+        // two depths and leaked through before the core applied the floor.
         let graph = build_fixture_graph();
         let filter = vec![
             Some(vec![PoolKind::V2]),
@@ -1654,45 +1707,26 @@ mod tests {
             Some(vec![PoolKind::V2]),
         ];
         let nvd = graph.compute_node_valid_depths(&filter);
-        let _paths = graph.find_paths(
+        let paths = graph.find_paths(
             WETH,
             WETH,
-            2,       // caller min_depth
+            2,       // caller min_depth (below the filter length)
             Some(3), // caller max_depth
             false,
             Some(&filter),
             Some(&nvd),
         );
-
-        // The filter caps max_depth at 3 and the effective min_depth should
-        // be max(2, 3) = 3 (floor applied by the Python caller). But the Rust
-        // core does NOT apply the floor — the caller does. Here we test with
-        // min_depth=2 to verify that the filter alone does not leak 2-hop
-        // paths... actually, it CAN leak 2-hop paths if min_depth=2.
-        //
-        // The Python find_paths applies: effective_min_depth = max(min_depth,
-        // len(pool_type_per_depth)). So the caller would pass min_depth=3.
-        // Let's test that explicitly:
-        let paths_floored = graph.find_paths(
-            WETH,
-            WETH,
-            3, // effective min_depth = max(2, 3) = 3
-            Some(3),
-            false,
-            Some(&filter),
-            Some(&nvd),
+        assert!(
+            !paths.is_empty(),
+            "3-depth filter should yield at least one 3-hop path"
         );
-        for path in &paths_floored {
+        for path in &paths {
             assert_eq!(
                 path.len(),
                 3,
-                "3-depth filter with min_depth=3 should yield only 3-hop paths"
+                "3-depth filter with min_depth=2 must yield only 3-hop paths"
             );
         }
-        assert!(
-            !paths_floored.is_empty(),
-            "3-depth filter should yield at least one 3-hop path"
-        );
     }
 
     #[test]
@@ -1988,7 +2022,11 @@ mod tests {
         for (t0, t1, pid, _kind) in edges {
             let a = intern_ref(&mut token_index, &mut adj, *t0);
             let b = intern_ref(&mut token_index, &mut adj, *t1);
-            let fresh_pool = u32::try_from(pool_ids.len()).unwrap_or(u32::MAX);
+            #[expect(clippy::expect_used)]
+            let fresh_pool = u32::try_from(pool_ids.len())
+                // Test oracle: deliberately NOT the production `expect_u32`
+                // helper, so oracle failures stay decoupled from impl invariants.
+                .expect("oracle pool count exceeds u32::MAX");
             pool_ids.push(*pid);
             adj[a as usize].push((b, fresh_pool));
             adj[b as usize].push((a, fresh_pool));

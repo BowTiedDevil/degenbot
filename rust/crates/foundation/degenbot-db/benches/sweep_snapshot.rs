@@ -108,9 +108,6 @@ fn bench_snapshot_sweeps(c: &mut Criterion) {
     ];
     let nvd_v3v4v3 = graph.compute_node_valid_depths(&depths_v3v4v3);
 
-    let depths_native: [Option<Vec<PoolKind>>; 3] = [None, None, None];
-    let nvd_native = graph.compute_node_valid_depths(&depths_native);
-
     let mut g = c.benchmark_group("pathfinding_snapshot");
     g.measurement_time(Duration::from_secs(3));
     g.sample_size(15);
@@ -145,17 +142,14 @@ fn bench_snapshot_sweeps(c: &mut Criterion) {
             ));
         });
     });
+    // The 3-deep all-`None` kind filter this bench used to carry is dropped
+    // along with its paired node_valid_depths table: post-floor (the core
+    // floors the effective min depth at the filter length) it would have
+    // silenced the 2-hop native cycles the bench name advertises. Passing
+    // max_depth alone enumerates exactly the path set today's runs enumerate.
     g.bench_function("native_min2_emd3", |b| {
         b.iter(|| {
-            black_box(sweep_paths(
-                &graph,
-                Some(&depths_native),
-                Some(&nvd_native),
-                native,
-                native,
-                2,
-                Some(3),
-            ));
+            black_box(sweep_paths(&graph, None, None, native, native, 2, Some(3)));
         });
     });
 
