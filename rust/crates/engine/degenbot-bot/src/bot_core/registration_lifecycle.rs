@@ -1,4 +1,4 @@
-//! Registration verify-lifecycle core ownership (IKGQ6F / ADR-022).
+//! Registration verify-lifecycle core ownership (ADR-022).
 //!
 //! Owns the per-pool `quarantine → drain+pin → two-step verify → Live`
 //! sequence that was previously orchestrated in Python
@@ -6,7 +6,7 @@
 //!
 //! Decision D4 (lifecycle), per ADR-022:
 //! - a **sparse** pool is `Live` immediately, receives **no verification
-//!   deferral and no RPC** (DFQYM5 — it stays `Live`);
+//!   deferral and no RPC**;
 //! - a **tracked** pool is `Live` only after its liquidity-map verification
 //!   passes, with the verification `MismatchError` as the **tripwire** that
 //!   must pass before `Live` (no pool becomes solvable on unverified state).
@@ -82,7 +82,7 @@ impl std::fmt::Display for RegistrationLifecycleError {
 impl std::error::Error for RegistrationLifecycleError {}
 
 /// Drive a V3 CL pool through the registration verify-lifecycle, branching on
-/// coverage (D4 / DFQYM5): **Sparse → immediate no-op** (already `Live`, no
+/// coverage:: **Sparse → immediate no-op** (already `Live`, no
 /// verification deferral, no RPC); **Tracked → quarantine → (step-1 seed
 /// verify) → drain+pin → (step-2 post-drain verify) → `set_live`**.
 ///
@@ -121,7 +121,7 @@ where
     F2: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut2 + Send,
     Fut2: Future<Output = Result<(), E>> + Send,
 {
-    // Coverage branch up-front (D4 / DFQYM5). A Sparse pool stays `Live`,
+    // Coverage branch up-front:. A Sparse pool stays `Live`,
     // receives NO verification deferral and NO verify RPC, but its buffered
     // backfill/pump events (buffered while the pool was still unregistered)
     // must still be drained onto the pool — draining is not verification and
@@ -141,7 +141,7 @@ where
         Some(PoolTickCoverage::Tracked) => {}
     }
 
-    // Quarantine BEFORE the first RPC await (6N7XVR): defers the pool's live
+    // Quarantine BEFORE the first RPC await: defers the pool's live
     // Swap/Mint/Burn to the pump buffer so the pin's `update_block` cannot
     // outrun `last_complete_block` during the drain+pin+verify window.
     core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
@@ -250,7 +250,7 @@ where
         Some(PoolTickCoverage::Tracked) => {}
     }
 
-    // Quarantine before the first RPC await (6N7XVR).
+    // Quarantine before the first RPC await.
     core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
         .set_v4_pool_quarantined(pool_manager, pool_id);
 

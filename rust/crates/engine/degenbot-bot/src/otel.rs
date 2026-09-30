@@ -86,7 +86,7 @@ pub enum OtelInitError {
 static HANDLE: OnceLock<OtelHandle> = OnceLock::new();
 
 /// The process-lifetime handle installed by [`init_otel_tracing`], if any.
-/// Exit paths (S53STH cooperative shutdown) flush + shut the provider down
+/// Exit paths (cooperative shutdown) flush + shut the provider down
 /// through this instead of reaching for `process::exit`.
 #[cfg(feature = "otel")]
 #[must_use]
@@ -217,7 +217,7 @@ where
     // exporter (which returns a future — the OTLP/HTTP client needs a tokio
     // reactor) from a bare std thread and panics with "there is no reactor
     // running".
-    // Span-event cap — BOUNDED (MQUKB6-T2 revisits incident a8c1bf/81d006):
+    // Span-event cap — BOUNDED (incident a8c1bf/81d006):
     // the incident was the SDK default 128 truncating a busy solve span,
     // silently dropping the phase events emitted AFTER the per-path
     // activation flood. The u32::MAX emergency fix is now retired because
@@ -313,7 +313,7 @@ pub fn layer(
     // Disabling activation empties GUARD_STACK forever - the hazard class
     // cannot occur. Parentage is unaffected: contextual parents fall back to
     // the tracing span tree (`ctx.lookup_current()`), which is our model
-    // anyway (JYCTXI explicit roots + MQUKB6 tree); nothing in this
+    // anyway (explicit roots + tree); nothing in this
     // workspace reads the ambient OTel context.
     tracing_opentelemetry::OpenTelemetryLayer::new(tracer).with_context_activation(false)
 }

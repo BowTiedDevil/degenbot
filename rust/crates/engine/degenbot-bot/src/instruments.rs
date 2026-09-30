@@ -82,15 +82,15 @@ pub struct PipelineInstruments {
     logs_undecoded: Counter<u64>,
     /// Relevant-topic logs that decoded but matched no registered pool (apply-miss).
     apply_missed: Counter<u64>,
-    /// WAJEQP T-R1: reorg episodes entered (one per `EnterReorg`).
+    /// reorg episodes entered (one per `EnterReorg`).
     reorg_windows: Counter<u64>,
-    /// WAJEQP T-R1: per-pool journal restores that CHANGED state (idempotent
+    /// per-pool journal restores that CHANGED state (idempotent
     /// no-ops excluded).
     reorg_unwound_pools: Counter<u64>,
-    /// WAJEQP T-R1: rollback depth at episode entry (current head − reorg
+    /// rollback depth at episode entry (current head − reorg
     /// target, in blocks).
     reorg_depth_blocks: Histogram<f64>,
-    /// WAJEQP T-R1: log events discarded by the recovery-anchor rule
+    /// log events discarded by the recovery-anchor rule
     /// (`DroppedRecovery`); spikes during reorg episodes.
     reorg_recovery_dropped: Counter<u64>,
     /// forward logs admitted LATE — arrived after their block's D1
@@ -208,7 +208,7 @@ pub struct PipelineInstruments {
     /// detached stragglers applied to the results map.
     detached_applied: Counter<u64>,
     /// Cold-start trace: cycles the machine DEGRADED to the in-cycle arm.
-    /// WFF6MM retired that arm (and its producer): the series is retained so
+    /// That arm is retired (and its producer): the series is retained so
     /// dashboards keep a stable zero rather than a missing metric.
     detached_degraded_cycles: Counter<u64>,
     /// detached outcomes LOST to a DEAD MERGE DRAIN — a
@@ -220,10 +220,10 @@ pub struct PipelineInstruments {
     /// merge-seat panics caught by the sidecar's `catch_unwind`
     /// guard (the typed failure record for a dead merge seat).
     detached_merge_panic: Counter<u64>,
-    /// QTZGFL: solve cycles SHED by capacity-modulated admission (zero draw
+    /// Solve cycles SHED by capacity-modulated admission (zero draw
     /// budget: nothing submitted, cursor advanced, keys retained for carry).
     detached_shed: Counter<u64>,
-    /// QTZGFL: retained (carried) admission keys pruned by the retention
+    /// Retained (carried) admission keys pruned by the retention
     /// window (`head − W`) — a starved lead's visible expiry.
     detached_leads_expired: Counter<u64>,
     /// time an acquisition waited for the core `BotState`
@@ -493,7 +493,7 @@ impl PipelineInstruments {
             intake_backlog: meter
                 .f64_gauge("degenbot.fleet.intake_backlog")
                 .with_description(
-                    "Host intake backlog depth per role (TB4QGX T7): held-but-unadmitted units; a stalled held backlog is visible here",
+                    "Host intake backlog depth per role: held-but-unadmitted units; a stalled held backlog is visible here",
                 )
                 .build(),
             worker_census: meter
@@ -684,7 +684,7 @@ impl PipelineInstruments {
         // `send_failed_total` series must never read as "no lost outcomes".
         instruments.detached_send_failed.add(0, &[]);
         instruments.detached_merge_panic.add(0, &[]);
-        // QTZGFL: same zero-init contract for the admission counters — a
+        // Same zero-init contract for the admission counters — a
         // missing `shed_total`/`leads_expired_total` series must never read
         // as "nothing shed / nothing expired" (the 9395c481b lesson).
         instruments.detached_shed.add(0, &[]);
@@ -754,23 +754,23 @@ impl PipelineInstruments {
         self.apply_missed.add(1, &[]);
     }
 
-    /// One reorg episode entered (`EnterReorg`) — WAJEQP T-R1.
+    /// One reorg episode entered (`EnterReorg`).
     pub fn count_reorg_window(&self) {
         self.reorg_windows.add(1, &[]);
     }
 
-    /// One per-pool journal restore that CHANGED state — WAJEQP T-R1.
+    /// One per-pool journal restore that CHANGED state.
     pub fn count_reorg_unwound_pool(&self) {
         self.reorg_unwound_pools.add(1, &[]);
     }
 
-    /// Rollback depth at reorg-episode entry, in blocks — WAJEQP T-R1.
+    /// Rollback depth at reorg-episode entry, in blocks.
     pub fn observe_reorg_depth(&self, blocks: u64) {
         self.reorg_depth_blocks
             .record(f64::from(u32::try_from(blocks).unwrap_or(u32::MAX)), &[]);
     }
 
-    /// One log event discarded by the recovery-anchor rule — WAJEQP T-R1.
+    /// One log event discarded by the recovery-anchor rule.
     pub fn count_reorg_recovery_dropped(&self) {
         self.reorg_recovery_dropped.add(1, &[]);
     }
@@ -1070,12 +1070,12 @@ impl PipelineInstruments {
         self.detached_merge_panic.add(1, &[]);
     }
 
-    /// QTZGFL: one solve cycle SHED by capacity-modulated admission.
+    /// One solve cycle SHED by capacity-modulated admission.
     pub fn count_detached_shed(&self) {
         self.detached_shed.add(1, &[]);
     }
 
-    /// QTZGFL: `n` retained admission keys expired by the retention window.
+    /// `n` retained admission keys expired by the retention window.
     pub fn count_detached_leads_expired(&self, n: u64) {
         self.detached_leads_expired.add(n, &[]);
     }
@@ -1482,7 +1482,7 @@ mod kind_tests {
         drop(provider);
     }
 
-    /// Fix 3 (VPD5ZH follow-up): the 10.0s top bucket collapsed every
+    /// Fix 3: the 10.0s top bucket collapsed every
     /// solve over 10s into one cylinder, hiding the 90s outliers that
     /// motivated the CPU-budget fix. The tail bounds are contract, not
     /// tuning.
@@ -1609,7 +1609,7 @@ mod kind_tests {
         drop(provider);
     }
 
-    /// WS-log pipeline counters for the desync visibility work (2BOI2V):
+    /// WS-log pipeline counters for the desync visibility work:
     /// "degenbot.ws.logs.seen" (every WS log event), "degenbot.logs.decoded"
     /// (decoder matched), "degenbot.logs.undecoded" (relevant-topic decode
     /// miss), "degenbot.solver.verify.blocks" (published blocks judged).
@@ -1721,7 +1721,7 @@ mod kind_tests {
         drop(provider);
     }
 
-    /// QTZGFL: the admission counters must render BEFORE they ever fire — a
+    /// The admission counters must render BEFORE they ever fire — a
     /// missing `shed_total`/`leads_expired_total` series would read as
     /// "nothing shed / nothing expired" (the 9395c481b zero-init lesson).
     #[test]

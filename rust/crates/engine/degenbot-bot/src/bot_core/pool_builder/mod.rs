@@ -22,8 +22,8 @@
 //!   ledger's build-refusal taxonomy).
 //!
 //! Note: `build_curve_pool` / `build_balancer_*` are not yet re-exported from
-//! the `degenbot` umbrella nor exposed on `PyBot` (see ADR-023/D4 + epic
-//! `VK3YDM`); `build_v2`/`build_v3`/`build_v4` are the standalone-reachable set.
+//! the `degenbot` umbrella nor exposed on `PyBot` (see ADR-023/D4);
+//! `build_v2`/`build_v3`/`build_v4` are the standalone-reachable set.
 
 pub mod builder;
 pub mod choreography;

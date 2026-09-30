@@ -391,7 +391,7 @@ mod tests {
             solver_pool_states: Vec::new(),
         }
     }
-    /// BI7UZV core claim: the delivery policy is a **pure consumer** of the
+    /// Core claim: the delivery policy is a **pure consumer** of the
     /// solve output — feed it a hand-built results map (no `ArbitrageEngine`
     /// involved) and it computes the true incremental diff against what Python
     /// has already seen, then advances `delivered`.

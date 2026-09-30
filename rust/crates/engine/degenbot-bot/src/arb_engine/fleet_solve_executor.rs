@@ -5,7 +5,7 @@
 //! Replaces the private `solve_executor` runtime fleet on this axis, with
 //! the degenbot-workers `FleetHost` FSM driving dispatch: per-bin worker
 //! pinning is a keyed pin (Solver pin per LPT bin, T3/T6 across cycles —
-//! warm L1/L2 + allocator arenas, RAYPAR T3 no-split/no-steal carried
+//! warm L1/L2 + allocator arenas, carried
 //! over); per-path result streaming is the callers' existing per-path
 //! mpsc sends (not per-bin) and is unchanged. The deadlock ledger carries
 //! over verbatim (design doc §10): a submitted unit whose results feed a
@@ -66,7 +66,7 @@ fn validate_bin_index(bin: usize, solver_seats: usize) -> Result<(), String> {
     } else {
         Err(format!(
             "bin {bin} exceeds the {solver_seats} structural Solver seats \
-             (pins == bins invariant, P6YXA6); the dispatch arms must bin \
+             (pins == bins invariant); the dispatch arms must bin \
              at executor.bin_count()"
         ))
     }
@@ -93,7 +93,7 @@ pub(crate) struct FleetSolveExecutor {
     waker: u64,
     unit_seq: AtomicU64,
     /// The BOUNDED role-queue length at the LAST stamp (spill or
-    /// `SeatDone`) — NOT the backlog depth (6HE6RF comment fix; the
+    /// `SeatDone`) — NOT the backlog depth (the
     /// mechanism is kept). `submit_solve_bin`'s receipt bit compares
     /// this against the queue cap: "the role queue was >= cap at the
     /// last stamp" — an advisory lagging flag exactly as
@@ -176,7 +176,7 @@ impl FleetSolveExecutor {
         let solver_seats = host.budget().solver_pin_count;
         let (tx, rx) = mpsc::channel::<HostMsg>();
         // Per-seat mailboxes: a seat is a persistent keyed pin — one unit
-        // at a time, warm arenas across cycles (RAYPAR T3, design doc §3.4).
+        // at a time, warm arenas across cycles (design doc §3.4).
         let mut seat_senders = Vec::with_capacity(solver_seats);
         let mut seat_mailboxes = Vec::with_capacity(solver_seats);
         for _seat in 0..solver_seats {
@@ -191,7 +191,7 @@ impl FleetSolveExecutor {
         // crate cannot name the `pub(crate)` layout, so the invariant is
         // pinned HERE, citing it). `SlotLayout::of` asserts the solver
         // range to be exactly `budget.solver_pin_count` seats (pins ==
-        // bins, P6YXA6) cut from index 0, so this vec is the identity map
+        // bins) cut from index 0, so this vec is the identity map
         // over the solver home range; any non-solver grant (sim/resolve/
         // poolupd/merge seats have no mailbox) misses the `get` and aborts
         // loudly below.
@@ -207,7 +207,7 @@ impl FleetSolveExecutor {
         }
         // The submit mirror (LW-T5, Seam E) lives with the host thread and
         // every executor handle shares the same cells.
-        // 7OGY5V: no posture MIRROR — posture-invariant Solver admission
+        // No posture mirror — posture-invariant Solver admission
         // retired its only reader (the host FSM still owns every posture
         // decision: Deferrable hold + sim-intake floor, dispatcher-side).
         let solver_queue_len = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -253,7 +253,7 @@ impl FleetSolveExecutor {
         self.binding
     }
     /// Solver seats = the budget's structural LPT bin count. The dispatch
-    /// arms bin at THIS count (P6YXA6 reconciliation): pins and bins are
+    /// arms bin at THIS count: pins and bins are
     /// the same number, so every bin owns a warm keyed seat across cycles.
     #[must_use]
     pub(crate) fn bin_count(&self) -> usize {
@@ -288,12 +288,12 @@ impl FleetSolveExecutor {
             true,
             Box::new(work),
         );
-        // 7OGY5V: Solver admission is posture-INVARIANT (worker-fleet.md §6:
+        // Solver admission is posture-invariant (worker-fleet.md §6:
         // cordon effects are the Deferrable hold + sim-intake floor ONLY;
         // Solver is CordonClass::Never in workers::role). The LW-T5-era
         // seam-side refusal was backed out — the soak showed it stranded the
         // bin's result pipe and aborted the bot on routine cgroup throttling.
-        // The ONE process posture owner (JCI2FW Part A) feeds the Deferrable
+        // The ONE process posture owner feeds the Deferrable
         // hold + sim floor downstream (the dispatcher's own gates consult it
         // live; the host sheds on the owner's transition feed).
         if self.tx.send(HostMsg::Enqueue(unit)).is_err() {
@@ -308,7 +308,7 @@ impl FleetSolveExecutor {
             // ledger) — never dropped, never silent. ADVISORY under mirror
             // lag: the stamp is published asynchronously on the host thread,
             // so the bit is a lagging flag exactly as `SubmitReceipt`'s doc
-            // says (6HE6RF fixed the overstated "backlog mirror" comment;
+            // says (the "backlog mirror" comment no longer overstates;
             // the mechanism is kept).
             accepted_with_backlog: self.solver_queue_len.load(Ordering::Relaxed)
                 >= self.solver_seats.saturating_mul(2),
@@ -343,8 +343,8 @@ fn seat_loop(seat: u64, rx: mpsc::Receiver<SeatJob>, done: &mpsc::Sender<HostMsg
 }
 /// The solve host's dispatch loop: build the unified [`HostPump`] for the
 /// Solver pin role (the FOLD MAP — everything per-host is a field) and run
-/// the ONE recv → apply → pump loop (6HE6RF). The seat model (per-seat
-/// keyed mailboxes, warm arenas) stays HERE — P-RZEWTX; only the message
+/// the ONE recv → apply → pump loop. The seat model (per-seat
+/// keyed mailboxes, warm arenas) stays HERE; only the message
 /// triple joined `seat_host`. (`rx` moves into
 /// [`HostPump::run`] — the thread-boundary move the pre-fold loop
 /// needed a lint expectation for is now `run`'s.)
@@ -366,7 +366,7 @@ fn host_loop(
         // The typed-submit receipt's advisory stamp — present iff the host
         // serves a typed-receipt submit seam (the pooled port has nothing
         // to inform). It stores the BOUNDED role-queue length at the last
-        // stamp (spill or SeatDone) — the honest mirror note, 6HE6RF.
+        // stamp (spill or SeatDone).
         mirror: Some(solver_queue_len),
         discipline: &discipline,
         backstop: intake_backstop(),
@@ -383,7 +383,7 @@ fn host_loop(
     }
     .run(rx);
 }
-/// The solve host's seat model (P-RZEWTX, unchanged by 6HE6RF): per-seat
+/// The solve host's seat model:: per-seat
 /// keyed mailboxes — a seat is a persistent pin (T3/T6 warm arenas), so a
 /// granted unit routes POSITIONALLY to the grant slot's mailbox:
 /// seat i <-> `SlotLayout::solver.start` + i).
@@ -397,7 +397,7 @@ impl SeatSink for SolveSink<'_> {
         // from index 0 at exactly this vec's length (pinned at the
         // executor's construction), so the get is the identity map over
         // the solver seats; any non-solver grant has no mailbox and is
-        // a loud abort, never a silent re-seat. (6HE6RF: the explicit
+        // a loud abort, never a silent re-seat. (the explicit
         // `GrantContract::SolverPins` kind check in the unified pump
         // now fires BEFORE this get — this arm is the second, seat-map
         // layer of the same loud contract.)
@@ -415,7 +415,7 @@ impl SeatSink for SolveSink<'_> {
         // warm identity (stable across cycles; released at T9). An
         // unknown slot here is structurally unreachable (the grant came
         // from THIS host) — a silent default would violate the loud
-        // posture, so it aborts with BOTH numbers, P6YXA6-style.
+        // posture, so it aborts with BOTH numbers-style.
         let arena = host.ensure_arena(grant.slot).unwrap_or_else(|| {
             abort_executor(
                 "arena mint at grant",
@@ -513,7 +513,7 @@ pub(crate) fn global_fleet_solve_executor() -> &'static FleetSolveExecutor {
 }
 // The solve-lane adapter (witness + carrier + ledger) now lives in
 // `crate::arb_engine::executor`: the former provisional
-// lane module folded there per the JI275C placement. The fleet executor
+// lane module folded there per the placement. The fleet executor
 // retains SOLVE_BIN_KEY_BASE and its host machinery here.
 #[cfg(test)]
 #[expect(clippy::expect_used)]
@@ -539,7 +539,7 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     /// A FRESH hermetic posture owner (leaked to `'static`): every test
-    /// boot gets its own owner, never the process global (7KAPBB isolation).
+    /// boot gets its own owner, never the process global.
     fn hermetic_owner() -> &'static PostureOwner {
         std::boxed::Box::leak(std::boxed::Box::new(PostureOwner::new(
             PosturePolicy::doc_defaults(),
@@ -610,18 +610,18 @@ mod tests {
         results.sort_unstable_by_key(|(pid, _)| *pid);
         results
     }
-    /// FLEET FIXTURE (BCA77G, LW-T9 single-arm): the fleet-hosted solve
+    /// FLEET FIXTURE (LW-T9 single-arm): the fleet-hosted solve
     /// executor produces exact, honest outcomes on the committed heavy-CL
     /// capture fixture — outcomes can never exceed submissions, every
     /// submitted path yields exactly one outcome (`solve_one_path` verdict
-    /// or failure), and the pinned-seat parity semantics carry (P6YXA6:
+    /// or failure), and the pinned-seat parity semantics carry (
     /// pins == bins). The former legacy-executor parity arm is deleted
     /// with the stance (LW-T9; there is no other executor to diff against).
     #[test]
     fn fleet_executor_yields_exact_outcomes_on_capture_fixture() {
         let items = load_corpus_fixture();
         let ctx = probe_ctx();
-        // P6YXA6 regression: the bins bind at the fleet's STRUCTURAL seat
+        // The bins bind at the fleet's STRUCTURAL seat
         // count — pins == bins. Binning at the machine-derived worker count
         // instead boots 6 hermetic seats against host-core-derived bins (22
         // on the 24-core raw host) and aborts at the T2 grant — the
@@ -631,7 +631,7 @@ mod tests {
         assert_eq!(
             bins.len(),
             executor.bin_count(),
-            "solver bins must equal the structural Solver seat count (pins == bins, P6YXA6)"
+            "solver bins must equal the structural Solver seat count (pins == bins)"
         );
         let fleet = submit_bins(&executor, &bins, &items, &ctx);
         assert!(!fleet.is_empty(), "fixture must produce results");
@@ -656,9 +656,9 @@ mod tests {
     }
     /// Pinning fixture: per-bin worker pinning — every bin's
     /// units ride the same seat across cycles (T3/T6), matching the
-    /// RAYPAR T3 one-persistent-worker-per-bin contract.
+    /// One-persistent-worker-per-bin contract.
     ///
-    /// P6YXA6 sizing reconciliation: the fleet seats are the
+    /// Sizing reconciliation: the fleet seats are the
     /// STRUCTURAL LPT bin count — at a hermetic Q = 8 boot,
     /// floor(8) − the default solve headroom (2) = 6 seats — not the
     /// retired sharesx2 multiple (8). The dispatch arms bin at this same
@@ -850,7 +850,7 @@ mod tests {
     /// LW-T6: the boot census carries the seat fleet's rows — per-index
     /// `{n}` patterns matching the roles, the Solver budget matching the
     /// STRUCTURAL seat count, and no two rows sharing a thread-name pattern
-    /// (the GOQWCL collision lock, fleet-wide).
+    /// (the collision lock, fleet-wide).
     #[test]
     fn boot_census_rows_are_per_index_patterned_with_the_solver_budget() {
         let executor = FleetSolveExecutor::boot(hermetic_boot()).expect("fleet boot");
@@ -865,7 +865,7 @@ mod tests {
             "the census Solver count must equal the structural seat count"
         );
         // The collision lock: no two rows fleet-wide share a thread-name
-        // pattern (the GOQWCL lesson: shared patterns made dumps
+        // pattern (the lesson: shared patterns made dumps
         // unattributable).
         let mut patterns: Vec<&str> = snap.iter().map(|e| e.thread_name).collect();
         let n = patterns.len();
@@ -922,7 +922,7 @@ mod tests {
         );
     }
     // ---- LW-T5 (Seam E): posture & precedence at the submit seam ------------
-    /// 7OGY5V (soak adjudication, 2026-09-10): Solver admission is
+    /// Soak adjudication (2026-09-10): Solver admission is
     /// posture-INVARIANT — design doc §6's cordon effects hold only the
     /// Deferrable classes + the sim intake floor, and `workers::role`
     /// declares `Solver` `CordonClass::Never`; a cordon never refuses a
@@ -930,7 +930,7 @@ mod tests {
     /// spec and the soak found the refusal stranded the bin's result pipe).
     #[test]
     fn submit_in_cordoned_posture_still_admits_solver_units_and_running_units_complete() {
-        // JCI2FW Part A: the hermetic owner is INJECTED at boot, and the
+        // The hermetic owner is INJECTED at boot, and the
         // cordon is forced through that shared owner (the executor's host
         // consults it; there is no per-executor feed seam anymore).
         let owner = hermetic_owner();
@@ -948,7 +948,7 @@ mod tests {
                 })),
             )
             .expect("the nominal submit is accepted");
-        // Flip the posture to Cordoned through the SHARED owner (7OGY5V:
+        // Flip the posture to Cordoned through the SHARED owner (
         // Solver is CordonClass::Never — the cordon must never refuse the
         // bin, and the already-running unit is never shed).
         owner.observe_throttle(
@@ -1648,13 +1648,13 @@ mod tests {
         );
         assert_eq!(AbortingPolicy.on_unit_panic(7, 3), PanicAction::Abort);
     }
-    /// 6HE6RF (the unified row-#6 tripwire, Q3.2): the solve host's
+    /// The unified row-#6 tripwire: the solve host's
     /// grant-kind contract is now EXPLICIT — `GrantContract::SolverPins`
     /// inside the unified [`HostPump`] — so a foreign grant is a broken
     /// host contract, denied loudly, NEVER seated. Pre-fold the contract
     /// held only by the `seats.get(slot)` indexing accident, and under
     /// Nominal posture a foreign unit was silently SEATED on a Solver
-    /// seat with a minted warm arena (the 6HE6RF red, catalog row #6);
+    /// seat with a minted warm arena (the red, catalog row #6);
     /// the pooled side aborted loudly (`seat_host`'s pre-existing check).
     /// The abort itself is a process abort (uncatchable in-process), so
     /// the contract is pinned at its pure predicate, mirroring

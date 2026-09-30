@@ -56,7 +56,7 @@ pub enum SnapshotLoadError {
 /// (`map_verify_err`):
 /// - `Snapshot` → `VerificationMismatchError` (genuine mismatch — fatal)
 /// - `Provider` → `VerificationRpcError` (verify-provider construction failure)
-/// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure — VP42BP)
+/// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure)
 /// - `NoSnapshotStream` → `PyRuntimeError` (programmer error)
 /// - `Other` → `PyRuntimeError` (any other fatal classification failure)
 ///

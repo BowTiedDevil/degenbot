@@ -82,7 +82,7 @@ impl BlockPump {
         // report. With HOTPATH_SHUTDOWN_MS set, the cooperative timer below
         // raises the shutdown flag at the window; the guard drops HERE — after
         // the post-loop OTel flush — so the report captures the final state
-        // without racing live workers (S53STH: replaces hotpath's own
+        // without racing live workers (replaces hotpath's own
         // build_with_shutdown thread, whose process::exit aborted tokio
         // workers mid-TLS-teardown).
         let _hotpath_guard = crate::profiling::hotpath_guard("block_pump");
@@ -96,7 +96,7 @@ impl BlockPump {
         // apply any fixed DEGENBOT_MIMALLOC_PURGE_DELAY_MS and
         // arm the block-cadence discovery for the purge-delay control.
         crate::allocator_ctrl::init_from_env_at_pump_start();
-        // S53STH cooperative timed exit: a 500ms tick that polls the shutdown
+        // Cooperative timed exit: a 500ms tick that polls the shutdown
         // flag inside the parked select, so the loop unwinds through its span
         // guards promptly when the hotpath timer raises the flag. The flag is
         // the single source of truth (also checked at the loop head).
@@ -125,12 +125,12 @@ impl BlockPump {
 
         // Read the last block processed by the engine (the post-backfill
         // cursor when the snapshot→WS gap was closed inside resume; cold-start
-        // otherwise). J3FMDO: the core `BlockPump::backfill_from_snapshot`
+        // otherwise). The core `BlockPump::backfill_from_snapshot`
         // applies state via `BotState::process_backfill_logs`, which advances
         // neither the solve/finalize hooks' cursor nor the engine's
         // `last_processed_block`. Hence on the post-backfill resume path the
         // engine's `last_processed_block` is still `None` and the branch below
-        // re-anchors on `first_observed_block`. (SZJUKL: the dissolved
+        // re-anchors on `first_observed_block`. (The dissolved
         // coordinator cursor — `last_drained_block` under `drain_lock` — is
         // gone; work runs inline in this single-writer driver, so the engine
         // cursor IS the drained cursor.)
@@ -195,7 +195,7 @@ impl BlockPump {
         // pump hands it the operator-tuned parameter snapshot once and then
         // only feeds settle-point observations and reads the armed window.
         fsm.set_quiesce_params(self.quiesce_params);
-        // DFQYM5 single-writer, now FSM-owned: on a resume
+        // Single-writer, now FSM-owned: on a resume
         // where the snapshot→WS gap was backfilled (S < W), the backfill owns
         // [S+1, W] inclusive and the live WS owns [W+1, ∞). Seed the FSM's
         // recovery anchor with W so `should_drop_recovered_forward` is the
@@ -236,8 +236,8 @@ impl BlockPump {
         // FSM recovery state: `recovery_anchor` is the highest block an
         // authoritative (eth_getLogs) catch-up has OWNEed — either a live-loop
         // gap/`handle_timeout_eager` backfill, or (at resume) the backfilled
-        // snapshot→WS first block. Per the single-writer rule (DFQYM5
-        // precedent), the live WS NO LONGER owns any block ≤ `recovery_anchor`:
+        // snapshot→WS first block. Per the single-writer precedent, the live
+        // WS NO LONGER owns any block ≤ `recovery_anchor`:
         // when a stalled WS recovers and flushes buffered forward logs for
         // those blocks, they are duplicates of state we already applied and are
         // dropped (they never reach the `LateForward` benign late-admit
@@ -257,7 +257,7 @@ impl BlockPump {
         // Per-block metadata, snapshotted from each block's header. A block's
         // tombstone (first log for N+1) may arrive AFTER header N+1 overwrote
         // `current_metadata`, so the result batch that finalizes N must carry
-        // N's OWN metadata, retrieved here (VTWCIG).
+        // N's OWN metadata, retrieved here.
 
         // [DIAG] newHeads-stall counters — owned by the `PumpTelemetry` seam
         // (`diag_header_count`/`diag_log_count`/`last_header_at`/stats all live
@@ -273,9 +273,9 @@ impl BlockPump {
         // (the logs-silence clock + re-arm alarm now live in the FSM, fed via
         // `record_log`; the telemetry seam owns the DIAG gap anchor).
 
-        // SZJUKL seam retirement: NO dispatch owner, NO drain FIFO, NO
+        // NO dispatch owner, NO drain FIFO, NO
         // background drainer task. The stage hooks run INLINE at the
-        // machine's decision points (below), so the B4GX7C drainer-liveness
+        // machine's decision points (below), so the drainer-liveness
         // machinery (`DrainerHealth`/`StallWatch`/closed-channel abort) has
         // no separate task to police and is DELETED. The dissolved
         // `DrainerHealth`'s no-progress obligation maps onto the machine's
@@ -285,7 +285,7 @@ impl BlockPump {
         // watchdog covers the inverse. There is no queue left to go silently
         // dead while the loop advances.
 
-        // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
+        // Header-staleness watchdog. A `tokio::time::interval`
         // selected against `combined.next()` (below) whose internal `Sleep`
         // elapses independently of stream activity. This catches a silent
         // `newHeads` (dead/stalled WS subscription) even under dense-log
@@ -295,7 +295,7 @@ impl BlockPump {
         // genuinely stale (>= `header_staleness`), it runs the SAME
         // `handle_timeout_eager` catch-up the no-activity path uses.
         //
-        // Limitation (documented in JIABO3 Option A): this fires only when the
+        // Limitation:: this fires only when the
         // pump is parked AT the select. If the pump parks BEFORE the select
         // (GIL re-entry park via `PySubscriberAdapter`, or engine-lock
         // contention inside `on_drain`/`apply_buffer_v3`), the interval can't
@@ -342,7 +342,7 @@ impl BlockPump {
         let mut slice_first_dirty: Option<tokio::time::Instant> = None;
         let mut slice_done = false;
 
-        // WAJEQP T-R1 reorg-window telemetry state: the episode span + its
+        // Reorg-window telemetry state: the episode span + its
         // per-window counters live ACROSS loop iterations (EnterReorg →
         // CloseReorg). The window span is its own trace root (episodes cross
         // block windows); the `restore` children are emitted by the
@@ -353,7 +353,7 @@ impl BlockPump {
         // the per-stage waterfall seam. The legacy
         // `pump.log_wait` / `pump.apply_stream` children are replaced by the
         // machine's stage cycle rendered as `degenbot.stage.*` spans under
-        // the per-epoch root, and the SONJQA force-close law carries over
+        // the per-epoch root, and the force-close law carries over
         // (`force_close_aged` from the timed-exit tick below).
         let mut stage_tel = crate::bot_core::stage_telemetry::StageTelemetry::new();
         // per-block phase attribution - the apply-stream start
@@ -411,7 +411,7 @@ impl BlockPump {
             };
             let event = tokio::select! {
                 biased;
-                // S53STH cooperative timed exit: the hotpath timer raises the
+                // Cooperative timed exit: the hotpath timer raises the
                 // shutdown flag; this arm polls it every 500ms so the parked
                 // select wakes promptly (worst case otherwise: one full
                 // BACKFILL_TIMEOUT_SECS park). The loop-head shutdown check
@@ -437,7 +437,7 @@ impl BlockPump {
                     // arm's `Option<WsEvent>`.
                     continue;
                 }
-                // JIABO3 header-staleness watchdog — see the interval setup
+                // Header-staleness watchdog — see the interval setup
                 // above. Firing here does NOT consume the stream event; it runs
                 // `handle_timeout_eager` then re-loops (the top-of-loop drain
                 // picks up any dirty paths the backfill created). The
@@ -515,7 +515,7 @@ impl BlockPump {
                                 // Option-A solver-state accuracy gate:
                                 // publish the debounced batch to Python (the
                                 // Published edge — delivery/submission/Python
-                                // subscribe HERE, SZJUKL), then hand the
+                                // subscribe HERE), then hand the
                                 // quiesced `open` block + its change set to the
                                 // latest-wins verifier task. The anchor is
                                 // `open`, the LOG-DRIVEN quiesced block, NOT the
@@ -657,7 +657,7 @@ impl BlockPump {
                         header_to_first_log_us = tracing::field::Empty,
                         log_burst_us = tracing::field::Empty,
                         settle_wait_us = tracing::field::Empty,
-                        // WAJEQP T-R1 reorg breadcrumbs: when a reorg episode
+                        // Reorg breadcrumbs: when a reorg episode
                         // opens or closes while THIS block window is current,
                         // the block trace is silently interrupted — surface it
                         // here so an operator reading the block trace sees the
@@ -665,7 +665,7 @@ impl BlockPump {
                         reorg.entry_block = tracing::field::Empty,
                         reorg.closed = tracing::field::Empty,
                     );
-                    // MQUKB6-T0 / JYCTXI: detached-at-creation so each header
+                    // // Detached-at-creation so each header
                     // span is its own trace ROOT (the detach + its reasoning
                     // live on the telemetry seam). Children (logs, solves,
                     // dispatch) nest under it via the loop-context below; only
@@ -735,7 +735,7 @@ impl BlockPump {
                                     stats.nr_throttled,
                                     stats.throttled_usec,
                                 );
-                                // LW-T5 (Seam E), re-routed by JCI2FW
+                                // LW-T5 (Seam E), re-routed
                                 // Part A: the SAME per-block sample feeds
                                 // the ONE process fleet posture owner
                                 // (`degenbot_workers::posture::process()`
@@ -778,7 +778,7 @@ impl BlockPump {
                                 // explicit range is authoritative — the FSM has
                                 // already advanced its own cursor past it, so a
                                 // `current_block + 1`-derived range would be
-                                // wrong here (BQ7ZBC single-writer anchor is set
+                                // wrong here (the single-writer anchor is set
                                 // inside `on_header`).
                                 let to = to.unwrap_or_else(|| {
                                     unreachable!("on_header backfill always carries an upper bound")
@@ -821,7 +821,7 @@ impl BlockPump {
                 // Solve happens at the top of the next iteration. Batch send
                 // is debounced — the timer starts/resets on each log.
                 Ok(Some(WsEvent::Pool(pe))) => {
-                    // (5WTYYQ) The ingestion crate emits the structured
+                    // The ingestion crate emits the structured
                     // PoolEvent { epoch, log_index, payload }; the apply path
                     // consumes the raw payload.
                     let log = pe.payload;
@@ -883,7 +883,7 @@ impl BlockPump {
                     // the Streaming stage interval opens at the first
                     // relevant log of the epoch (idempotent within the epoch —
                     // the burst's remaining logs only bump its age); it runs
-                    // until the quiesce/tombstone/rewind transition. REMED1 T3
+                    // until the quiesce/tombstone/rewind transition.
                     // keeps the apply-start anchor for the throttled diag line.
                     if apply_started_at.is_none() {
                         apply_started_at = Some(std::time::Instant::now());
@@ -897,7 +897,7 @@ impl BlockPump {
                     // stalled WS that recovers flushes buffered forward logs for
                     // blocks ≤ the anchor — those are duplicates of state the
                     // backfill already applied and are DROPPED (they never reach
-                    // `observe_log`'s `LateForward` class). This mirrors the DFQYM5
+                    // `observe_log`'s `LateForward` class). This mirrors the
                     // resume-boundary rule, generalized to mid-run recovery.
                     // Reorg logs (`removed: true`) are NEVER dropped — they must
                     // reach the reorg classifier to unwind the backfilled range.
@@ -905,7 +905,7 @@ impl BlockPump {
                     // remains a hard ADR-008 D3 fault (only the pump's own
                     // single-writer range is benign).
                     if fsm.should_drop_recovered_forward(log_block, log.removed) {
-                        // WAJEQP T-R1: a recovery-dropped log during an OPEN
+                        // A recovery-dropped log during an OPEN
                         // reorg window is episode evidence — emit it as a
                         // child span so the window trace shows which replay
                         // events were discarded (outside a window it is
@@ -954,7 +954,7 @@ impl BlockPump {
                     let prev_stage = fsm.stage();
                     let log_decision = fsm.on_log(log_block, log.removed);
                     // The reorg classification may have just bumped the
-                    // rewind generation (I2). SZJUKL: the dissolved FIFO's
+                    // rewind generation (I2). The dissolved FIFO's
                     // `observe_rewind_seq` mirror is gone — the driver checks
                     // each work item's epoch INLINE at its execution site
                     // (`reorg_flying_stale`), so a stale item cannot slip
@@ -1000,7 +1000,7 @@ impl BlockPump {
                             op_warn!(domain = pump, reorg_block,
                                 "BlockPump: chain reorg detected (removed log) — entering unwind path"
                             );
-                            // WAJEQP T-R1: open the episode span — its OWN
+                            // Open the episode span — its OWN
                             // trace root (the episode crosses block windows;
                             // parenting it under the current block span would
                             // misattribute the unwind to the delivering block,
@@ -1018,7 +1018,7 @@ impl BlockPump {
                                 reorg.outcome = tracing::field::Empty,
                             );
                             crate::telemetry::make_trace_root(&window);
-                            // WAJEQP T-R1 metrics: episode count + entry depth.
+                            // Metrics: episode count + entry depth.
                             if let Some(p) = crate::instruments::pipeline() {
                                 p.count_reorg_window();
                                 p.observe_reorg_depth(depth_blocks);
@@ -1111,7 +1111,7 @@ impl BlockPump {
                                 new_head,
                                 "BlockPump: reorg window closed — resuming forward tracking"
                             );
-                            // WAJEQP T-R1: close the episode span with its
+                            // Close the episode span with its
                             // counters + outcome, and leave a breadcrumb field
                             // on the current block window's span.
                             if let Some(window) = reorg_span.take() {
@@ -1139,7 +1139,7 @@ impl BlockPump {
                             // moved the cursor to `new_head` in `on_log`).
                         }
                         LogDecision::TombstonePrevious(prev) => {
-                            // 3M5PO5 correction: this tombstone verdict is the
+                            // This tombstone verdict is the
                             // pump's single writer of the delivery cutoff — `BotState`
                             // owns the value and the driver mirrors the verdict on
                             // execution (the same decision-execution pattern as the
@@ -1151,7 +1151,7 @@ impl BlockPump {
                             // First removed:false log for N+1 → tombstone N.
                             // Finalize N with N's OWN metadata (snapshotted
                             // when N's header arrived), not fsm.current_metadata
-                            // which may now hold N+1's — VTWCIG. The terminal
+                            // which may now hold N+1's. The terminal
                             // publish (finalize_block) supersedes any pending
                             // quiesce publish for the open block.
                             //
@@ -1162,7 +1162,7 @@ impl BlockPump {
                             // registration drain+pin cannot capture a
                             // half-delivered `prev` (the rolling-start race
                             // where a later same-block log lands after the pin).
-                            // 3M5PO5: no explicit `mark_pump_blocks_complete`
+                            // No explicit `mark_pump_blocks_complete`
                             // here — the fsm's own `tombstone(prev)` (inside
                             // `on_log`) already advanced the shared cutoff
                             // the registration drain reads.
@@ -1357,7 +1357,7 @@ impl BlockPump {
             // simply re-arms the drain loop and the solve happens exactly once
             // at the end of the burst.
             //
-            // MBNASQ: the original `poll_fn` was a single non-yielding poll —
+            // The original `poll_fn` was a single non-yielding poll —
             // it checked the stream's internal channel once without giving the
             // tokio runtime a chance to schedule the WS socket reader task. If
             // the WS delivered logs in multiple frames with brief gaps (5-70ms
@@ -1381,7 +1381,7 @@ impl BlockPump {
             // steal was accidentally providing). The slice consumes the dirty
             // sets (`take_all` semantics) and re-derives its anchor per
             // cycle, so a following tail solve only re-solves NEWLY dirtied
-            // pools; one slice per block window keeps MBNASQ's unbounded
+            // pools; one slice per block window keeps the unbounded
             // serial solves from returning. `0` = disabled → the wait below
             // is always the bare debounce window (exact pre-T2 behavior).
             if dirty_now && slice_first_dirty.is_none() && !slice_done {

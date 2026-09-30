@@ -15,7 +15,7 @@
 //!   logs-silence watchdogs, the backfill trigger, the tombstone /
 //!   WS-completeness verify, and the `Rewind` handling (epoch `seq` bump +
 //!   staleness of pre-rewind contexts) are all machine decisions below.
-//! - `DrainerHealth`'s no-progress obligation (retired by SZJUKL) is
+//! - `DrainerHealth`'s no-progress obligation is
 //!   represented here: the machine exposes
 //!   [`watchdog_phase`](Self::watchdog_phase) — `Healthy` / `HeaderStale` /
 //!   `LogsSilent` — the phase space the dissolved accounting's watchdogs
@@ -134,7 +134,7 @@ pub enum StageDecision {
     /// Quiesce-gated publish (ADR-008 D2) at a settle point. The driver
     /// fetches the change-set and drives the engine's Published-edge `on_publish`.
     Publish { open: u64, metadata: BlockMetadata },
-    /// Tombstone finalize of a fully-delivered block (VTWCIG metadata). The
+    /// Tombstone finalize of a fully-delivered block. The
     /// driver drives the engine's `on_finalize` stage hook.
     Finalize { block: u64, metadata: BlockMetadata },
     /// Block-clock notification for Python's head tracker (B2). The driver
@@ -169,7 +169,7 @@ impl StageDecision {
 }
 
 /// The verdict of the WS-delivery completeness rule at a tombstone
-/// (DFQYM5 / WS-DROP). The FSM owns the whole accountability policy: whether
+///. The FSM owns the whole accountability policy: whether
 /// the live websocket is even answerable for the tombstoned block. The
 /// driver only executes the `Verify` arm (fetch `eth_getLogs`, abort on any
 /// on-chain relevant log the websocket missed) and ignores `BackfillOwned`.
@@ -216,7 +216,7 @@ pub struct StageMachine {
     /// machine's future `Rewind` event). Epochs minted before the
     /// bump are stale and fail fast via `Epoch::ensure_current`.
     rewind_seq: u64,
-    /// Per-block metadata snapshots (deferred tombstone finalize, VTWCIG).
+    /// Per-block metadata snapshots (deferred tombstone finalize).
     block_metadata: HashMap<u64, BlockMetadata>,
     /// WS-delivery completeness tracker (relevant log indices per block).
     ws_delivered: HashMap<u64, HashSet<u64>>,
@@ -331,7 +331,7 @@ impl StageMachine {
         self.block_metadata.retain(|&block, _| block < reorg_block);
     }
 
-    /// The snapshotted metadata for `block` (deferred tombstone finalize, VTWCIG).
+    /// The snapshotted metadata for `block` (deferred tombstone finalize).
     #[must_use]
     pub fn block_metadata_for(&self, block: u64) -> Option<BlockMetadata> {
         self.block_metadata.get(&block).copied()
@@ -482,7 +482,7 @@ impl StageMachine {
         self.last_header_at_ms = now_ms;
 
         // Snapshot the just-finished block's metadata BEFORE overwriting
-        // `current_metadata` (VTWCIG): the batch finalizing `current_block`
+        // `current_metadata`: the batch finalizing `current_block`
         // must carry ITS metadata, not the incoming header's.
         self.current_metadata = metadata;
         if matches!(self.observe_header(number), HeaderDecision::Stale) {
@@ -527,7 +527,7 @@ impl StageMachine {
         decisions
     }
 
-    /// BQ7ZBC / DFQYM5 single-writer recovery discard. A stalled WS that
+    /// Single-writer recovery discard. A stalled WS that
     /// recovers flushes buffered forward logs for blocks ≤ `recovery_anchor` —
     /// duplicates of state the authoritative catch-up already applied. These
     /// are DROPPED (never reaching `observe_log`'s `LateForward` class).
@@ -558,7 +558,7 @@ impl StageMachine {
         self.last_header_at_ms = now_ms;
     }
 
-    /// The watchdog tick (JIABO3 / logs-silence): the driver's interval fires
+    /// The watchdog tick:: the driver's interval fires
     /// and feeds a synthetic `now_ms`; the windows enter as data
     /// (`header_staleness_ms`, `log_silence_ms`). Decides, from elapsed-time
     /// only: `Recover` when headers have been stale >= the staleness window
@@ -583,7 +583,7 @@ impl StageMachine {
         decisions
     }
 
-    /// The WS-completeness verdict (DFQYM5 / WS-DROP) at a block's tombstone.
+    /// The WS-completeness verdict at a block's tombstone.
     /// The FSM owns the full accountability policy, deriving BOTH arms from
     /// the same single-writer rule that governs recovered-forward dedup:
     ///
@@ -903,7 +903,7 @@ mod block_clock_contract {
         assert_eq!(fsm.recovery_anchor, 205);
 
         // A recovered forward INSIDE the owned range is a benign duplicate:…
-        // dropped, not re-asserted (no BQ7ZBC recover-forward re-assert; the
+        // dropped, not re-asserted (no recover-forward re-assert; the
         // recover flush never reaches the `LateForward` drop either).
         assert!(fsm.should_drop_recovered_forward(205, false));
         assert!(fsm.should_drop_recovered_forward(201, false));
@@ -1244,9 +1244,9 @@ impl StageMachine {
     }
 
     /// The deepest tombstoned (`LogsApplied`/`Drained`) block — the test-side
-    /// read of the delivery cutoff (3M5PO5, last complete block). Computed
+    /// read of the delivery cutoff (last complete block). Computed
     /// over the per-block map; `0` until the first tombstone. Production
-    /// authority for the cutoff lives on `BotState` since BGEDB6; this
+    /// authority for the cutoff lives on `BotState`; this
     /// accessor exists so the clock's own tests pin the tombstone-only
     /// advance semantics.
     #[cfg(test)]
@@ -1561,7 +1561,7 @@ impl StageMachine {
     /// The currently-armed settle (quiesce) window in ms — the value the
     /// driver arms its settle timers with. Fixed mode returns the fixed
     /// window (the `pump_debounce_ms` contract); adaptive mode the clamped
-    /// EWMA projection (design §6.1, BM35LK).
+    /// EWMA projection (design §6.1.
     #[must_use]
     pub fn settle_window_ms(&self) -> u64 {
         self.quiesce.window_ms()
@@ -1633,7 +1633,7 @@ mod tests {
         );
     }
 
-    /// The `highest_applied` cutoff (3M5PO5) — the registration drain's
+    /// The `highest_applied` cutoff — the registration drain's
     /// single source of truth — advances ONLY on the tombstone (the first
     /// `removed: false` log of N+1), exactly as the retired buffer
     /// `last_complete_block` marker did.
@@ -2101,7 +2101,7 @@ impl StageMachine {
     }
 
     /// The watchdog phase (see [`WatchdogPhase`]): the no-progress phase
-    /// space the dissolved `DrainerHealth` (SZJUKL) maps its
+    /// space the dissolved `DrainerHealth` maps its
     /// strike detector onto. Pure: same inputs as [`on_tick`](Self::on_tick);
     /// advances no state.
     #[must_use]

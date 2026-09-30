@@ -31,7 +31,7 @@ impl BlockPump {
             p.count_backfill();
         }
 
-        // (5WTYYQ) The transport fetch is degenbot-ingestion's; the
+        // The transport fetch is degenbot-ingestion's; the
         // apply/solve loop below stays on the driver (its FSM + dispatch).
         let logs = match self.ingestor.fetch_logs(from_block, to_block).await {
             Ok(logs) => logs,
@@ -93,7 +93,7 @@ impl BlockPump {
                 // The backfill solve: the Solved cycle at the block's default
                 // metadata — NO Published row (no `on_publish`): the
                 // backfill applies state without dispatching result batches
-                // (the `Backfilled` phase invariant, FD7NFG).
+                // (the `Backfilled` phase invariant.
                 self.drive_solve(fsm, fsm.context_for(block, BlockMetadata::default()));
                 any_processed = true;
             }
@@ -150,7 +150,7 @@ impl BlockPump {
         block: u64,
         delivered_log_indices: std::collections::HashSet<u64>,
     ) {
-        // (5WTYYQ) The eth_getLogs transport call is the ingestion crate's.
+        // The eth_getLogs transport call is the ingestion crate's.
         let logs = match self.ingestor.fetch_logs(block, block).await {
             Ok(logs) => logs,
             Err(e) => {
@@ -186,7 +186,7 @@ impl BlockPump {
             // HARD and immediately. A contained worker-thread panic would
             // leave the bot half-alive (silent-ish), which is itself a failure
             // mode; `std::process::abort` guarantees termination.
-            op_error!(domain = pump, "LIVE WEBSOCKET LOG DROP at block {block}: {} relevant on-chain log(s) missing from WS delivery: log_index {:?}. eth_getLogs={} logs, WS delivered={} logs. The websocket/pump delivery path dropped a relevant event — ABORT (DFQYM5/WS-DROP). Investigate the subscription/reconnect path; do NOT silence this.",
+            op_error!(domain = pump, "LIVE WEBSOCKET LOG DROP at block {block}: {} relevant on-chain log(s) missing from WS delivery: log_index {:?}. eth_getLogs={} logs, WS delivered={} logs. The websocket/pump delivery path dropped a relevant event — ABORT. Investigate the subscription/reconnect path; do NOT silence this.",
                 missing.len(),
                 missing,
                 onchain.len(),
@@ -308,7 +308,7 @@ impl BlockPump {
                 "BlockPump::backfill_from_snapshot: fetching chunk"
             );
             let t0 = std::time::Instant::now();
-            // (5WTYYQ) The eth_getLogs chunk fetch is the ingestion crate's;
+            // The eth_getLogs chunk fetch is the ingestion crate's;
             // the apply loop stays on the driver.
             let logs = self
                 .ingestor

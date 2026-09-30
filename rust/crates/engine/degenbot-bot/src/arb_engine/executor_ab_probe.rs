@@ -29,7 +29,7 @@ fn fixture_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl")
 }
-/// Zst-aware corpus load for the BCA77G parity fixtures: the packaged
+/// Zst-aware corpus load for the parity fixtures: the packaged
 /// `heavy_cl_solve_captures.jsonl.zst` decodes transparently via
 /// `capture_fixture::read_fixture` (same corpus the probe measures).
 pub(in crate::arb_engine) fn load_corpus_fixture(

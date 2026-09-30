@@ -123,7 +123,7 @@ async fn cold_start_anchors_to_first_observed_block() {
     );
 }
 
-/// BGEDB6 (3M5PO5 correction): the delivery cutoff (last complete block)
+/// The delivery cutoff (last complete block)
 /// is owned by `BotState` and outlives a pump run. A second
 /// `run_with_stream` (a resume with a fresh `StageMachine`)
 /// must NOT reset it — the old design re-embedded a fresh
@@ -182,11 +182,11 @@ async fn resume_never_resets_pump_complete_cutoff() {
 // ==============================================================
 // T3: the single-writer boundary rule has one owner —
 // the FSM's recovery anchor + `should_drop_recovered_forward` (the
-// BQ7ZBC drop path). The driver seeds the anchor from the resume
+// drop path). The driver seeds the anchor from the resume
 // boundary; no inline `snapshot_seed` check remains in the log loop.
 // ==============================================================
 
-/// DFQYM5 single-writer regression for the resume boundary: with the
+/// Single-writer regression for the resume boundary: with the
 /// snapshot→WS gap backfilled (S < W), the WS's partial duplicate of W
 /// (the boundary block the backfill already fully applied) must not be
 /// re-applied, while the first LIVE log (W+1) flows through. Pins the
@@ -493,7 +493,7 @@ async fn resume_anchors_to_subscribe_block() {
         gas_used: 14,
         gas_limit: 15,
     };
-    // The solve issued before resume anchors the cursor to W (SZJUKL:
+    // The solve issued before resume anchors the cursor to W (
     // the engine's own cursor; the dissolved coordinator cursor is gone).
     let _ = sink.on_solve(&crate::bot_core::Solve {
         ctx: BlockContext::new(w, meta_w),
@@ -551,7 +551,7 @@ async fn resume_anchors_to_subscribe_block() {
     );
 }
 
-/// SZJUKL port of the dissolved `event_dispatch` test
+/// Port of the dissolved `event_dispatch` test
 /// `drainer_warns_and_drops_reorg_flying_stale_epoch_work`: the stale-epoch
 /// drop is now the DRIVER-side `reorg_flying_stale` check at each work
 /// site — the `DispatchOwner` FIFO is gone. A work item minted in the

@@ -1,6 +1,6 @@
-//! Pure workload-analysis cluster (from the retired grab-file dissolution,
-//!): the solve-bin sizing seam (`solve_bin_count`,
-//! P6YXA6), the LPT pre-balanced partition (`lpt_partition`, RAYPAR T3), the
+//! Pure workload-analysis cluster (from the retired grab-file dissolution):
+//! the solve-bin sizing seam (`solve_bin_count`), the
+//! LPT pre-balanced partition (`lpt_partition`), the
 //! named cordon-fallback seat plan (`plan_bins` + `SeatPlan` +
 //! `CordonFallbackDecision`, LW-T7), and the resolve-time cost proxies
 //! (`path_cost_proxy`, `sims_aware_cost`).
@@ -26,7 +26,7 @@ pub(crate) fn solve_bin_count() -> usize {
 /// descending cost and greedily assigns each to the least-loaded bin. Returns
 /// indices into the original items slice, one Vec per bin.
 ///
-/// The RAYPAR lab (docs/rayon-parallelism-lab.md) showed rayon work-stealing
+/// The lab (docs/rayon-parallelism-lab.md) showed rayon work-stealing
 /// par_iter achieves only 4.91/8 efficiency on the heavy-CL capture corpus
 /// because the workload has extreme cost skew (top 8 of 80 paths = 60% of CPU).
 /// LPT pre-balances so no thread gets stuck with an unsplittable giant while
@@ -130,7 +130,7 @@ pub(crate) fn path_cost_proxy(resolved: &ResolvedMixedPath) -> usize {
 /// LPT cost used at binning: max(structural word-boundary proxy, previous
 /// block's measured walk sims + measured gate µs). The measured counts
 /// predict the current block's combinatorics better for stable pool shapes;
-/// the proxy floors it for freshly dirty pools. (loop-12 BY7BLS KUKHMX;
+/// the proxy floors it for freshly dirty pools. (loop-12 lab;
 /// loop-18 adds the gate-µs term — gate-heavy paths carry sims≈0 and were
 /// bin-packed cheap while dominating wall time.) The sims and gate terms add
 /// (same µs-scale: a walk sim ≈0.7-0.8µs, so `sims` ≈ walk µs).
@@ -295,7 +295,7 @@ mod lpt_partition_tests {
 }
 #[cfg(test)]
 mod dispatch_binning_properties {
-    //! JXCAR4 : solver dispatch binning properties over
+    //! Solver dispatch binning properties over
     //! ARBITRARY item counts, cost shapes and seat shapes. The spawn-seam
     //! invariant (`FleetSolveExecutor::spawn` aborts on a bin >= the
     //! structural seat count, commit `ccc148275`) must never be the

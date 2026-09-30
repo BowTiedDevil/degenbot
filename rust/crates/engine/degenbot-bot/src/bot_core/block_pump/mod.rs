@@ -24,7 +24,7 @@
 //!
 //! The WS transport moved OUT of this module into the
 //! pyo3-free `degenbot-ingestion` crate: the dual `newHeads` + `logs`
-//! subscriptions, the MJXP5Z one-stream handshake, Rust-side topic filtering
+//! subscriptions, the one-stream handshake, Rust-side topic filtering
 //! ([`degenbot_ingestion::RELEVANT_TOPICS`]), gap-backfill `eth_getLogs`
 //! fetching, and the header/logs watchdog windows all live there now. This
 //! driver consumes the crate's `IngestEvent` stream (header + `PoolEvent`
@@ -66,7 +66,7 @@ use degenbot_substrate::stance;
 
 use alloy::primitives::B256;
 use alloy::rpc::types::Log;
-// (5WTYYQ) The event/fetch surface of the ingestion crate. `PoolEvent` +
+// The event/fetch surface of the ingestion crate. `PoolEvent` +
 // `build_backfill_filter` are imported by the test module below.
 use degenbot_ingestion::{
     IngestEvent as WsEvent, Watchdog, WsIngestor, BACKFILL_TIMEOUT_SECS,
@@ -84,7 +84,7 @@ use crate::bot_core::{
 };
 use degenbot_substrate::{BlockMetadata, Epoch};
 // (the topic-import list, the backfill/idle + handshake constants, and the
-// header/log watchdog windows all live in degenbot-ingestion now — 5WTYYQ.)
+// header/log watchdog windows all live in degenbot-ingestion now.)
 
 // the debounce / early-slice defaults moved into the typed schema
 // (pump.pump_debounce_ms = 50, pump.early_slice_ms = 25; the loader validates
@@ -103,7 +103,7 @@ fn us_to_secs(us: u64) -> f64 {
 static LAST_HEADER_SAMPLE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Feed ONE per-header cgroup throttle sample to the ONE process-level
-/// fleet posture owner (JCI2FW Part A — the Executor seam's
+/// fleet posture owner (the Executor seam's
 /// `observe_throttle` channel is dissolved; the pump feeds
 /// `degenbot_workers::posture::process()` directly and every fleet host
 /// consults that same owner). The pump owns the header sample cadence:
@@ -169,7 +169,7 @@ pub struct BlockPump {
     /// `reorg_coordinator.dispatch_reorg_log(log)` (`removed: true`).
     /// ADR-006 D4 + slice 7.
     bot: Arc<Bot>,
-    /// The engine's stage surface (SZJUKL: the ONE seam — the dissolved
+    /// The engine's stage surface (the ONE seam — the dissolved
     /// `SolveCoordinator`/`DrainSink` fan-out collapsed onto the arb
     /// engine's `StageHandlers` implementation; no `drain_lock`, no FIFO).
     engine: Arc<dyn StageHandlers>,
@@ -181,19 +181,19 @@ pub struct BlockPump {
     /// routed through the engine seam — reorg is a `Bot` concern, parallel
     /// to `dispatch_log`).
     reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
-    /// (5WTYYQ) The WS transport handle — subscriptions + handshake +
+    /// The WS transport handle — subscriptions + handshake +
     /// gap-backfill fetching live in `degenbot-ingestion`; this driver only
     /// consumes the emitted `IngestEvent` stream and calls the fetch API.
     ingestor: WsIngestor,
     /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
     shutdown: Arc<AtomicBool>,
-    /// SONJQA: max age of a held stage-span interval before the pump
+    /// Max age of a held stage-span interval before the pump
     /// force-closes it (with a stall warning) — the G3 stall lesson, see
     /// `STAGE_MAX_AGE_SECS` / `stage_telemetry`. Default 5s; the tick
     /// granularity is the 500ms timed-exit interval. Tests may set the field
     /// directly (`pump_for_test` construction + assignment) - no env race.
     stage_max_age: Duration,
-    /// (5WTYYQ) The watchdog windows + silence-alarm accounting (owned by
+    /// The watchdog windows + silence-alarm accounting (owned by
     /// `degenbot-ingestion::Watchdog`). The tokio intervals stay in the
     /// driver's select (the FSM decides, the driver executes — ADR-008).
     watchdog: Watchdog,
@@ -207,7 +207,7 @@ pub struct BlockPump {
     /// `eth_getLogs` has but the live websocket dropped). Conservative default
     /// ON (`DEGENBOT_WS_COMPLETENESS`, via `bot_env_flag_default_on`): set
     /// `=0` to disable. Held as a field (not a global env read) so tests
-    /// deterministically opt out per-pump (Z4KQXF pattern). When OFF the
+    /// deterministically opt out per-pump. When OFF the
     /// `ws_delivered` index-tracking map is not populated
     /// (no work on the hot loop).
     ws_completeness_enabled: bool,
@@ -217,7 +217,7 @@ pub struct BlockPump {
     /// instead of waiting for burst quiesce — the designed replacement for
     /// the retired finalize steal. `0` disables the slice (exact
     /// pre-T2 gate behavior). One slice per block window (reset at each
-    /// accepted header and at each settle dispatch) keeps MBNASQ's unbounded
+    /// accepted header and at each settle dispatch) keeps the unbounded
     /// per-gap serial solves from returning.
     early_slice_ms: u64,
     /// the quiesce-estimator parameters the FSM's adaptive

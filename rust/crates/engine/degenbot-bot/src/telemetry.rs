@@ -211,7 +211,7 @@ pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
 }
 
 /// Detach a span from the ambient `OTel` context so it becomes its own trace
-/// ROOT (JYCTXI / MQUKB6): a span created while another is still current —
+/// ROOT:: a span created while another is still current —
 /// e.g. the pump's per-block beat when the previous block's loop-context
 /// span is still entered under a backfill `.instrument()` future — would
 /// otherwise chain every block of a session into one ever-growing
@@ -360,7 +360,7 @@ mod otel_tests {
         );
     }
 
-    /// JYCTXI: `make_trace_root` detaches from the ambient context so the span
+    /// `make_trace_root` detaches from the ambient context so the span
     /// exports as its own trace ROOT (zero sentinel parent), even though it was
     /// created while another span is entered (the default parent lookup would
     /// otherwise chain).

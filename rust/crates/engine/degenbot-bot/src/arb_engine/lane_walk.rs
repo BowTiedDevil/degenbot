@@ -2,7 +2,7 @@
 //! T3 created the module for `solve_one_path`; T4 moved the walk
 //! driver in): home of `solve_one_path` — the per-path solve + diagnostics
 //! body every Solver seat's bin executes — and of THE ONE
-//! LANE WALK (`drive_lane_walk`, WNH5OL) plus its policy/context/result
+//! LANE WALK (`drive_lane_walk` plus its policy/context/result
 //! types (`LaneArmPolicy`, `LaneWalkBinPlan`, `WalkSubmitCtx`,
 //! `LaneWalkReads`) and the walk-side telemetry statics/record
 //! (`SLOWEST_PATHS_K`, `WALK_DENSE_ALERTED`, `PathTimeRecord`).
@@ -21,7 +21,7 @@ use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
 use ::degenbot_solvers::mixed::{ResolvedMixedPath, SolvePathResult};
 use degenbot_core::{diag, op_warn};
 /// How many slowest-path entries the solve-cycle completion event names
-/// (D63GSE intra-solve visibility). Walk-side only after the T4 move.
+///. Walk-side only after the T4 move.
 const SLOWEST_PATHS_K: usize = 5;
 /// Q3 dense one-shot alert flag — the CONSUMER side of the moved alert: the
 /// walk reports `WalkStats::max_dense_words`; this logs once per process.
@@ -85,7 +85,7 @@ pub(crate) fn inline_sim_payload(
     let sim = ctx.inline_sim.as_ref()?;
     // The assembly lives in ONE home (`arb_engine::inline_sim`); this
     // wrapper is only the guards + shape, and otel tests reachable through
-    // it pin the production assembly directly (RKXN5Z/IJUBV3 span shape,
+    // it pin the production assembly directly (span shape,
     // SIMSPANDUP verdict discipline).
     let request = crate::arb_engine::inline_sim::build_inline_sim_request(ctx, idx, pid, result);
     crate::arb_engine::inline_sim::run_inline_sim(sim, request, result.profit, parent_span.clone())
@@ -129,9 +129,9 @@ pub(crate) fn flush_solved_item(
 /// shared per-cycle context by reference; workers touch NO engine state
 /// and NO core.lock (engine-then-core lock ordering preserved unchanged),
 /// and the passed span is re-entered per item exactly as the `par_iter`
-/// closure did (MQUKB6-T0: worker threads have no ambient context). Each
+/// closure did (worker threads have no ambient context). Each
 /// item also emits a `degenbot.arb.path` DEBUG child span parented under
-/// that re-entered cycle span (MQUKB6-T2: per-path latency as attributes).
+/// that re-entered cycle span (per-path latency as attributes).
 #[expect(clippy::too_many_lines)] // the moved solve + diagnostics pipeline is one narrative
 pub(crate) fn solve_one_path(
     ctx: &SolveCycleShared,
@@ -202,7 +202,7 @@ pub(crate) fn solve_one_path(
         }
     }
     ctx.gate_total.lock().merge(&gs);
-    // Walk telemetry OUT the return path (SU7MAE T2): the
+    // Walk telemetry OUT the return path: the
     // outcome carries this path's counters — no TLS
     // read-back. The Q3 dense one-shot alert is the
     // CONSUMER's decision.
@@ -227,7 +227,7 @@ pub(crate) fn solve_one_path(
         ws.grid_sims,
     );
     // Record this block's measured walk sims for the next
-    // block's LPT cost (loop-12 KUKHMX).
+    // block's LPT cost (loop-12 lab).
     ctx.sims_recorder
         .lock()
         .insert(pid, u64::try_from(sims).unwrap_or(0));
@@ -336,9 +336,9 @@ pub(crate) fn solve_one_path(
 //
 // --------------------------------------------------------------------------
 // THE FOUR SEQUENCING CONTRACTS — each named at its enforcement site below
-// (search "contract 1..4"; the accept conditions of WNH5OL).
+// (search "contract 1..4"; the accept conditions).
 // --------------------------------------------------------------------------
-// Contract 1 — admission-draw backpressure: WFF6MM retired the cap-based
+// Contract 1 — admission-draw backpressure: retired the cap-based
 //   enqueue gate (and its in-cycle degrade). Backpressure is now the
 //   admission draw (`budget = max(0, admission_target_depth − in-flight)` in
 //   `on_resolve`); a zero-budget draw SHEDS the cycle before any begin. The
@@ -364,7 +364,7 @@ pub(crate) fn solve_one_path(
 //   Suppressed/Failed claim divergence (`claim_all_lanes`) retired with the
 //   in-cycle arm.
 // --------------------------------------------------------------------------
-/// The arm policy (WNH5OL; WFF6MM trimmed to the ONE detached arm): the
+/// The arm policy (trimmed to the ONE detached arm): the
 /// lane walk body is ONE function; every per-arm behavior rides this value
 /// (the carrier stamps and the drain's ledger seq). The detached gauge hook
 /// stays on the lane itself — fused into `SolveLane::new`, contract
@@ -417,7 +417,7 @@ pub(crate) fn drive_lane_walk(
         {
             // The profitless filter runs BEFORE the sim is scheduled —
             // a clamp-zeroed candidate never needs its payload.
-            // WNH5OL ACCEPTANCE NOTE (arm-as-data): the pre-fold arms
+            // Acceptance note (arm-as-data): the pre-fold arms
             // DIFFERED here by delivery-shape only (the detached arm
             // suppressed pre-filter `continue` skips; the in-cycle arm
             // suppressed post-solve `None` arms). Both reductions
@@ -558,7 +558,7 @@ fn stamp_outcome(
             .unwrap_or_else(tracing::Span::none),
     }
 }
-// ----------------- PER-PATH SPAN TELEMETRY (MQUKB6-T2) -----------------
+// ----------------- PER-PATH SPAN TELEMETRY-----------------
 #[cfg(all(test, feature = "otel"))]
 #[expect(clippy::expect_used)] // otel tests assert loudly, per telemetry.rs otel_tests
 mod solve_path_span_tests {

@@ -35,7 +35,7 @@ impl BlockPump {
             engine,
             control,
             reorg_coordinator,
-            // (5WTYYQ) The injected mock provider rides inside the ingestion
+            // The injected mock provider rides inside the ingestion
             // transport handle; tests that avoid timeouts never touch it.
             ingestor: WsIngestor::with_provider(provider),
             shutdown,
@@ -68,7 +68,7 @@ impl BlockPump {
         self.quiesce_params = params;
     }
 
-    /// Test-only access to the shared `Bot` arc (FD7NFG tests inject
+    /// Test-only access to the shared `Bot` arc (tests inject
     /// `snapshot_seed_block` to drive the `S≥W` / `S=0` no-op branches).
     #[must_use]
     pub fn bot_arc_for_test(&self) -> Arc<Bot> {
@@ -124,14 +124,14 @@ impl BlockPump {
 /// Records every `on_finalize` / `on_publish` (the retired `on_send` —
 /// the Published-row delivery flush) / `on_solve` invocation with the
 /// `(block, metadata)` pair the pump passed, so tests can assert the
-/// *block N's* result batch carries *block N's* metadata — the VTWCIG
+/// *block N's* result batch carries *block N's* metadata — the batch contract
 /// contract. Behaves as an empty engine (no dirty paths, no state).
 struct FakeStageEngine {
     finalized: Mutex<Vec<(u64, BlockMetadata)>>,
     sent: Mutex<Vec<BlockMetadata>>,
     drained: Mutex<Vec<(u64, BlockMetadata)>>,
     notified: Mutex<Vec<(u64, BlockMetadata)>>,
-    /// Records every `set_last_solved_block` call (JIABO3: proves the
+    /// Records every `set_last_solved_block` call (proves the
     /// header-staleness watchdog reached `handle_timeout_eager` because
     /// only the backfill path + the header anchor call this — the watchdog
     /// is the sole path that backfills past the stream's observed block).
@@ -484,7 +484,7 @@ fn register_burst_pool(bot: &Arc<Bot>) {
     .expect("test setup: V2 registration");
 }
 
-/// WAJEQP T-R1 capture layer: one record per created span (name, id,
+/// Capture layer: one record per created span (name, id,
 /// parent id) plus every `record`ed field, threaded through a
 /// thread-local span stack so contextually-created children resolve the
 /// way tracing's dispatcher does (same pattern as the `arb_span` tests'
@@ -574,7 +574,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ReorgSpanCapture {
 fn run_reorg_stream(capture: ReorgSpanCapture, pump: &mut BlockPump, events: Vec<WsEvent>) {
     use stream::StreamExt;
     use tracing_subscriber::layer::SubscriberExt;
-    // WAJEQP flake fix (BGGTEG): the tracing callsite interest cache is
+    // Flake fix: the tracing callsite interest cache is
     // PROCESS-GLOBAL, and a parallel subscriber-less test (same pump
     // code, no thread-local default) that executes the shared
     // `degenbot.epoch.run` macro first registers the callsite as

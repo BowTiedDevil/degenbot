@@ -80,17 +80,17 @@ pub mod instruments {
         pub fn count_log_applied(&self) {}
         /// no-op
         pub fn count_log_apply_missed(&self) {}
-        /// no-op (WAJEQP T-R1)
+        /// no-op
         pub fn count_reorg_window(&self) {}
-        /// no-op (WAJEQP T-R1)
+        /// no-op
         pub fn count_reorg_unwound_pool(&self) {}
-        /// no-op (WAJEQP T-R1)
+        /// no-op
         pub fn observe_reorg_depth(&self, _blocks: u64) {}
-        /// no-op (WAJEQP T-R1)
+        /// no-op
         pub fn count_reorg_recovery_dropped(&self) {}
         /// no-op (benign late-admit family)
         pub fn count_late_log_admitted(&self) {}
-        /// no-op (BM35LK adaptive quiesce window)
+        /// no-op
         pub fn observe_quiesce_window(&self, _ms: u64) {}
         /// no-op
         pub fn count_ws_log_seen(&self) {}
@@ -114,7 +114,7 @@ pub mod instruments {
         pub fn count_sim_error_reason(&self, _reason: &str) {}
         /// no-op
         pub fn set_process_rss_bytes(&self, _bytes: u64) {}
-        /// no-op (NO4DIW per-block log funnel)
+        /// no-op
         pub fn observe_epoch_logs(
             &self,
             _seen: u64,
@@ -167,7 +167,7 @@ pub mod instruments {
         pub fn count_solves_executed(&self) {}
         /// no-op
         pub fn set_registered_paths(&self, _count: u64) {}
-        /// no-op (TB4QGX T7)
+        /// no-op
         pub fn set_intake_backlog(&self, _role: &str, _depth: u64) {}
         /// no-op
         pub fn count_candidates_found(&self, _n: u64) {}
@@ -205,13 +205,13 @@ pub mod instruments {
         pub fn count_detached_applied(&self) {}
         /// no-op (cold-start trace: degraded-cycle counter)
         pub fn count_detached_degraded_cycle(&self) {}
-        /// no-op (AQV6EF: detached outcomes lost to a dead merge drain)
+        /// no-op
         pub fn count_detached_send_failed(&self) {}
-        /// no-op (AQV6EF: merge-seat panics caught by the sidecar guard)
+        /// no-op
         pub fn count_detached_merge_panic(&self) {}
-        /// no-op (QTZGFL: admission-shed cycles)
+        /// no-op (admission-shed cycles)
         pub fn count_detached_shed(&self) {}
-        /// no-op (QTZGFL: retained admission keys expired by the retention window)
+        /// no-op (retained admission keys expired by the retention window)
         pub fn count_detached_leads_expired(&self, _n: u64) {}
     }
 
@@ -239,7 +239,7 @@ pub mod instruments {
 }
 pub mod allocator_ctrl;
 pub mod arb_engine;
-/// The PRG-3 intake surface (LNQDOA): the documented single re-export the
+/// The PRG-3 intake surface: the documented single re-export the
 /// pyo3 leaf depends on — no other `arb_engine` module is public surface.
 pub use arb_engine::fleet_intake;
 pub use degenbot_substrate::connector_index;
@@ -254,7 +254,7 @@ pub mod profiling;
 pub mod strategy_host;
 pub mod telemetry;
 
-// P6YXA6 hard cutover: the process-global rayon pool (`configure_rayon_
+// Hard cutover: the process-global rayon pool (`configure_rayon_
 // solver_pool`) is retired with the rayon dispatch arms it served — every
 // solve bin rides the fleet-hosted executor or the dedicated private tokio
 // runtime, and the resolve fan-out runs on scoped std threads. The

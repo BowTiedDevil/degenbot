@@ -250,7 +250,7 @@ fn decode_uint_word(bytes: &[u8]) -> Result<U256, ProviderError> {
 }
 
 /// Fetch a Camelot V2 pool's `stableSwap()` flag and fee configuration
-/// (ADR-005 LWKLMP slice).
+/// (ADR-005).
 ///
 /// # Errors
 ///
@@ -494,7 +494,7 @@ fn decode_metadata_decimals(res: &MulticallResult) -> Option<u64> {
 }
 
 /// Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
-/// Multicall3 `aggregate3` `eth_call` (CDJEPJ-2), falling back to per-token
+/// Multicall3 `aggregate3` `eth_call`, falling back to per-token
 /// [`fetch_erc20_metadata`] if the multicall itself errors.
 ///
 /// Returns one `Option<(name, symbol, decimals)>` per input address, in order.

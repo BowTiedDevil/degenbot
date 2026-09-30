@@ -1,4 +1,4 @@
-//! Fleet host waker fan-out (TB4QGX T3) — the degenbot-bot side of the
+//! Fleet host waker fan-out — the degenbot-bot side of the
 //! `PostureEdge` hint.
 //!
 //! The ONE posture owner (`degenbot_workers::posture::process()`) publishes
@@ -45,7 +45,7 @@ pub fn wake_hosts() {
 }
 /// Feed ONE throttle-poll delta to the ONE process-level posture owner and
 /// wake the fleet hosts on a real (non-`Held`) transition. This is the ONLY
-/// bot-side throttle feeder (TB4QGX T9): the pairing is mechanical, asserted
+/// bot-side throttle feeder: the pairing is mechanical, asserted
 /// by `production_feeders_go_through_the_wrapper`.
 pub fn feed_throttle(now_ms: u64, sample: ThrottleSample) {
     let change = degenbot_workers::posture::process().observe_throttle(now_ms, sample);

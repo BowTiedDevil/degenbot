@@ -6,7 +6,7 @@
 //! off-chain, per-block on-chain reads a Curve pool's calc needs (virtual
 //! price, lending rates, crypto `D`/`gamma`/`price_scale`, admin balances,
 //! redemption price) over an [`RpcConstruction`] / [`ConstructionIo`]. It is
-//! the layer-2 stored trait object (ADR-005 JFGCHJ): a standalone `cargo add
+//! the layer-2 stored trait object (ADR-005): a standalone `cargo add
 //! degenbot` consumer constructs it (no Python) and both the Python companion
 //! and any Rust calc read through it.
 //!

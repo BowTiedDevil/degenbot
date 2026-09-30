@@ -1,5 +1,5 @@
 //! The engine-side path-info seam: `ArbitrageEngine`-registered paths resolve
-//! to the executor's `composers::PathInfo` (NXM2BF — the encode-relay
+//! to the executor's `composers::PathInfo` (the encode-relay
 //! flatten).
 //!
 //! The pure projection (a hop list + `BotState` pool identities →

@@ -14,15 +14,15 @@
 //! HOLDS intake entirely (Deferrable cordon class — `enqueue` refuses
 //! while cordoned) and in-flight units are never cancelled.
 //!
-//! RZEWTX: the pooled-seat machinery (`WorkQueue`, `seat_loop`,
+//! The pooled-seat machinery (`WorkQueue`, `seat_loop`,
 //! `host_loop`, `apply_host_msg`/`pump` admission, the boot install/global
 //! boilerplate) is SHARED with the sim executor — ONE seat host
 //! (`arb_engine::seat_host`) parameterized by the `FleetBootRegistry`'s
 //! `REG_ROLE` descriptor (candidate 4 moved the descriptor row there; this
-//! module owns only the executor + boot fn). 6HE6RF: the solve executor's host-MESSAGE triple joins
+//! module owns only the executor + boot fn). The solve executor's host-MESSAGE triple joins
 //! that machinery too (the ONE [`HostPump`] behind all three fleet
 //! hosts); its SEAT MODEL (per-seat keyed mailboxes, warm arenas) and
-//! typed submit seam stay in `fleet_solve_executor.rs` — the RZEWTX
+//! typed submit seam stay in `fleet_solve_executor.rs`;
 //! design gate now covers only the seat models (see `seat_host`'s
 //! module doc).
 //!
@@ -51,7 +51,7 @@ pub(crate) struct FleetRegistrationExecutor {
     /// The shared pooled-seat host (the channel submit end + the unit
     /// sequence).
     host: SeatHost,
-    /// This executor's S2 fault watch (TB4QGX T6). Per-instance so hermetic
+    /// This executor's S2 fault watch. Per-instance so hermetic
     /// executors isolate; the process-global executor shares the process one.
     fault_watch: Arc<IntakeFaultWatch>,
     /// The budget's `PoolStateUpdater` slot cap (the pooled seat count).
@@ -148,7 +148,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
     /// A FRESH hermetic posture owner (leaked to `'static`): every test
-    /// boot gets its own owner, never the process global (7KAPBB isolation).
+    /// boot gets its own owner, never the process global.
     fn hermetic_owner() -> &'static PostureOwner {
         std::boxed::Box::leak(std::boxed::Box::new(PostureOwner::new(
             PosturePolicy::doc_defaults(),
@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(got, want, "every intake unit completes exactly once");
     }
     /// Seats are the fleet `PoolStateUpdater` role: census thread-name
-    /// pattern work-fleet-poolupd-{n} (GOQWCL rule).
+    /// pattern work-fleet-poolupd-{n}.
     #[test]
     fn intake_units_execute_on_named_fleet_poolupd_seats() {
         let executor = FleetRegistrationExecutor::boot(hermetic_boot()).expect("fleet intake boot");
@@ -477,8 +477,8 @@ mod tests {
             "no unit dropped across the backlog spill"
         );
     }
-    /// The design-gate admission policy, BEHAVIORAL and REACHED (RZEWTX;
-    /// JCI2FW Part A dissolved the `CordonAdmission::Hold` descriptor arm
+    /// The design-gate admission policy, BEHAVIORAL and REACHED (
+    /// The dissolved `CordonAdmission::Hold` descriptor arm
     /// and made the Cordoned arm reachable): `PoolStateUpdater` is
     /// Deferrable cordon class — a forced-Cordoned hermetic owner HOLDS
     /// intake (the unit waits in the unbounded backlog, no receipt), and

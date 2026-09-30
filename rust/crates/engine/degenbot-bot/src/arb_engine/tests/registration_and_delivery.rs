@@ -568,7 +568,7 @@ fn register_path_dedup_is_counted_for_the_skip_family() {
     let _ = register_path(&mut engine, hops).expect("dedup hit");
     assert_eq!(path_dedups(&engine,), 1, "the duplicate was counted");
 }
-/// FPGOYX: registering the same path (same pools + directions) twice
+/// Registering the same path (same pools + directions) twice
 /// must be idempotent — return the SAME `path_id`, not a new one.
 /// Unbounded registration growth (8.7k -> 107k in 25 min) caused OOM kills
 /// and multi-second CPU-bound solves because every dirty-pool fan-out
@@ -609,7 +609,7 @@ fn register_path_dedup_returns_same_id() {
         "engine must not grow on duplicate registration"
     );
 }
-/// FPGOYX: a path with the same pools but reversed directions is a
+/// A path with the same pools but reversed directions is a
 /// different path and must get its own id.
 #[test]
 fn register_path_reversed_direction_is_distinct() {

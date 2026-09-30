@@ -16,7 +16,7 @@ use degenbot_workers::dispatcher::BootError;
 use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
 use std::time::Duration;
-/// The typed terminal record for a Faulted intake (TB4QGX T6, spike S2):
+/// The typed terminal record for a Faulted intake (spike S2):
 /// the host drained held work because the lane-death latch is sticky, so no
 /// later admit can ever respect it. `held` is the number of queued/backlogged
 /// units resolved by the drain — they ran ZERO times (resolution != execution),
@@ -71,7 +71,7 @@ impl IntakeFaultWatch {
 /// receipt observes. `None` before any engine construction (a submit would
 /// already have refused with the typed `BootError`). Deliberately NOT a
 /// separate process-global: the watch belongs to the executor, so hermetic
-/// executors isolate completely (7KAPBB).
+/// executors isolate completely.
 #[must_use]
 pub fn registration_fault_watch() -> Option<Arc<IntakeFaultWatch>> {
     crate::arb_engine::seat_host::FleetBootRegistry::process()
@@ -157,8 +157,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
     // Copied from fleet_registration_executor.rs — the module's existing
     // fixture kit, module-local (no new helpers; the design's fixture note).
-    // JCI2FW Part A: a fresh hermetic posture owner per boot — never the
-    // process global (7KAPBB isolation).
+    // A fresh hermetic posture owner per boot — never the
+    // process global.
     fn hermetic_boot() -> FleetBoot {
         FleetBoot {
             profile: degenbot_config::FleetProfile::Auto,

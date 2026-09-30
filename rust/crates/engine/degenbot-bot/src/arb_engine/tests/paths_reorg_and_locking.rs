@@ -725,7 +725,7 @@ fn register_path_rejects_pool_id_not_in_bot() {
         "error must name the missing pool_id={bogus_id}, got: {msg}"
     );
 }
-/// Regression (3ECKWX): `process_backfill_logs` must stamp each applied log
+/// Regression: `process_backfill_logs` must stamp each applied log
 /// with the log's OWN `block_number`, not the chunk-level `chunk_end`. Two
 /// V3 Swap logs at distinct blocks B1=10, B2=20 inside one backfill chunk
 /// (`chunk_end=2000`) must land as TWO separate journal deltas at blocks 10
@@ -884,7 +884,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     // `update_block` follows V3RestoreResult's existing "restore point =
     // oldest popped block" convention (the block we rolled back to the
     // pre-state of), intentionally not the landed-at block — out of scope
-    // for 3ECKWX (per-log stamping); the scalar assertions above are the
+    // for the per-log stamping; the scalar assertions above are the
     // restorability proof.
 }
 /// ADR-006 slice 10 acceptance: `ArbitrageEngine::with_core` shares the

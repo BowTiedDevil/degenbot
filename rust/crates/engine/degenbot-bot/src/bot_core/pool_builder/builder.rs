@@ -110,7 +110,7 @@ pub enum PoolBuilderError {
     Db(#[from] DbError),
     #[error("V4 identity incomplete: {message}")]
     MissingIdentity { message: String },
-    /// A Tracked Db snapshot failed the intake reconciliation (T3 OMDCIY):
+    /// A Tracked Db snapshot failed the intake reconciliation:
     /// the bitmap and tick rows contradict each other. Registration is
     /// rejected with a typed error; the message names the conflict.
     #[error("tick map assembly failure: {0}")]
@@ -126,7 +126,7 @@ const UNKNOWN_DECIMALS: u8 = 18;
 
 /// Resolve ERC-20 token metadata DB-first, then on-chain, with the
 /// alternate-prototype + UNKNOWN fallbacks — the core twin of
-/// `Erc20Builder.build` steps 3–5 (VK3YDM-S2).
+/// `Erc20Builder.build` steps 3–5.
 ///
 /// Order:
 /// 1. `io.fetch_erc20_token(chain_id, address)` — prefer the persisted row's
@@ -499,14 +499,14 @@ pub async fn build_v2(
 }
 
 /// Build an Aerodrome V2 (constant-product, unidirectional-fee) pool (the
-/// ADR-005 slice 14g follow-up / SSD2XI): a bare `(chain_id, address)` becomes
+/// ADR-005 slice 14g follow-up: a bare `(chain_id, address)` becomes
 /// a [`RegisterAerodromeV2PoolParams`] ready for `BotState::register_aerodrome_pool`.
 ///
 /// The Aerodrome volatile/stable pair shares one factory, so the two reads the
 /// `getReserves` probe can't reach are: `stable()` on the pool (picks the
 /// variant) and `getFee(address,bool)` on the factory (the unidirectional fee;
 /// `10_000` = 100%). CREATE2 identity is verified against the JSON-sourced
-/// EIP-1167 deployer + implementation (S5SJXF/WLJD2Y — the JC6OFG parity gap).
+/// EIP-1167 deployer + implementation (the Aerodrome parity gap).
 ///
 /// # Errors
 ///
@@ -1178,7 +1178,7 @@ pub async fn build_v3(
 
     let deployer = deployments::resolve_deployer(chain_id, imm.factory);
     let init_hash: B256 = deployments::resolve_v3_init_hash(chain_id, imm.factory);
-    // Family-aware slot layout (VERIFY2 T4 / W32CAU): the Pancake V3 fork's
+    // Family-aware slot layout: the Pancake V3 fork's
     // divergent storage layout (liquidity@5, ticks@6) — resolved from the
     // deployment table; the FFI layer can override for non-JSON pools.
     let slot_layout = if deployments::is_pancakeswap_v3_factory(chain_id, imm.factory) {
@@ -1295,7 +1295,7 @@ pub struct V4PoolBuildIdentity {
 /// The complete result of a V4 pool build: the registration params plus the
 /// LP-fee pip decoded from the same head-stamped slot0 read.
 ///
-/// CDJEPJ-1: ``lp_fee`` is exposed here (rather than bloat
+/// ``lp_fee`` is exposed here (rather than bloat
 /// [`RegisterV4PoolParams`] with a field the engine/solver does not consume)
 /// so the Python companion can set its ``lp_fee`` override from the builder's
 /// own slot0 read instead of issuing a second, redundant ``fetch_v4_slot0_liquidity``
@@ -1376,7 +1376,7 @@ pub async fn build_v4(
                 currency1: id.currency1,
                 fee: id.fee,
                 tick_spacing: id.tick_spacing,
-                // The REAL hook address (pool-ID mismatch regression, MTMPQB):
+                // The REAL hook address (pool-ID mismatch regression:
                 // a zeroed hooks breaks the keccak(pool_key) round-trip the
                 // Python companion asserts and disables the ADR-037
                 // has_amount_modifying_hook guards (both read the identity).
@@ -1397,8 +1397,8 @@ pub async fn build_v4(
     })
 }
 
-/// Caller-supplied V4 identity **overrides** (the DB-resolution fallback, Task
-/// TF7RZB-S3). Every field is optional because the core prefers the DB two-step
+/// Caller-supplied V4 identity **overrides** (the DB-resolution fallback).
+/// Every field is optional because the core prefers the DB two-step
 /// (manager → V4 row → per-FK tokens); when that is incomplete these fill the
 /// gaps (all required for a pool not in the database). The word "overrides"
 /// distinguishes this raw caller surface from the fully-resolved
@@ -1421,7 +1421,7 @@ pub struct V4PoolBuildOverrides {
     pub state_view: Option<Address>,
 }
 
-/// Resolve the V4 identity **core-side** (TF7RZB-S3): the DB two-step
+/// Resolve the V4 identity **core-side**: the DB two-step
 /// (manager → V4 row → per-FK token rows) first, else the caller-supplied
 /// [`V4PoolBuildOverrides`]. Returns the resolved [`V4PoolBuildIdentity`].
 ///
@@ -1474,7 +1474,7 @@ pub async fn resolve_v4_identity(
             tick_spacing: i32::try_from(v4_row.tick_spacing).ok()?,
             // The DB row carries the real hook contract address — keep it in
             // full so the registered pool key round-trips the pool_id hash
-            // (pool-ID mismatch regression, MTMPQB).
+            // (pool-ID mismatch regression.
             hook_address: v4_row.hooks,
         })
     })

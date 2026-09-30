@@ -169,7 +169,7 @@ mod tests {
     fn a_ramp_crypto_fees_lp_lending_precision_round_trip() {
         // Every new identity field (A-ramp + crypto fees + lp_token +
         // use_lending + precision_multipliers) round-trips through
-        // register/get — the BOMDRK acceptance criterion. Covers the
+        // register/get — the acceptance criterion. Covers the
         // crypto-pool case where every field is populated.
         let mut core = BotState::new();
         let lp = Address::repeat_byte(0x99);

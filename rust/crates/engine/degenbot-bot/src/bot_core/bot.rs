@@ -14,7 +14,7 @@
 //! The other ADR-006 D4 helper rows (`LogDispatcher`/`BlockPump`/
 //! `ReorgCoordinator`) already live as sibling
 //! `bot_core/*.rs` files; `bot.rs` is the last one to file-extract.
-//! (SZJUKL: the former `SolveCoordinator` row is dissolved — the arb engine's
+//! ( the former `SolveCoordinator` row is dissolved — the arb engine's
 //! `EngineStages`/`StageHandlers` surface replaced it.)
 
 use std::sync::Arc;
@@ -29,7 +29,7 @@ use degenbot_substrate::{log_dispatcher, BotState};
 /// [`BotState`] (the pure-data registries/swap math/reorg journal) plus the
 /// `chain_id` (ADR-006 D1) and, in later slices, the cohesive helpers
 /// (`LogDispatcher` / `BlockPump` / `ReorgCoordinator`) — the engine seam is
-/// the arb engine's `StageHandlers` surface (SZJUKL; the former
+/// the arb engine's `StageHandlers` surface (the former
 /// `SolveCoordinator` is dissolved).
 ///
 /// `PyBot` owns a `Bot` outright (not behind a lock) and hands out clones of
@@ -298,7 +298,7 @@ impl Bot {
             .restore_pool_before_block(pool_id, block);
     }
 
-    /// Peek the newest reorg-journal delta block for `pool_id` (WAJEQP T-R1:
+    /// Peek the newest reorg-journal delta block for `pool_id` (
     /// idempotent-noop detection for the `degenbot.reorg.restore` spans).
     /// `None` when unregistered or the journal is empty.
     #[must_use]

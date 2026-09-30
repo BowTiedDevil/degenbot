@@ -6,7 +6,7 @@
 //! packs at construction and the operator can re-apply at runtime through
 //! [`EngineStages::apply_retune`](super::EngineStages::apply_retune).
 //!
-//! NOT named "stance" (the fleet-migration stance, ADR-042, and the KAHU5W
+//! NOT named "stance" (the fleet-migration stance, ADR-042, and the
 //! per-construction construction-stance values) and NOT "posture" (the
 //! fleet's cordon concept) — see CONTEXT.md's "Engine retune" glossary entry.
 use super::detached_cycle::DETACHED_INFLIGHT_CAP;
@@ -15,7 +15,7 @@ use hashbrown::HashSet;
 /// The typed operator re-parameterization value crossing the driver seam.
 ///
 /// Construction packs the config-derived knobs ONCE ([`Self::from_config`] —
-/// the J4HN66 / KAHU5W construction-stance trajectory completed for the
+/// the construction-stance trajectory completed for the
 /// engine); a runtime operator retune overwrites the live values through
 /// `ArbitrageEngine::apply_retune`, reached from [`EngineStages::apply_retune`](super::EngineStages::apply_retune).
 ///
@@ -26,14 +26,14 @@ pub struct EngineRetune {
     /// V3/V4 buffered-event max age. `None` disables expiry (the cockpit
     /// default — the hot-path expiry scan is gated off).
     pub event_buffer_max_age: Option<u64>,
-    /// QTZGFL capacity-modulated admission: `true` draws `max(0, target -
+    /// Capacity-modulated admission: `true` draws `max(0, target -
     /// in-flight)` and SHEDS zero-budget cycles; `false` is the take-all
     /// no-shed operator stance.
     pub solve_admission: bool,
-    /// QTZGFL admission target depth (un-merged-result pipe depth, in keys),
+    /// Admission target depth (un-merged-result pipe depth, in keys),
     /// clamped at application to `1..=DETACHED_INFLIGHT_CAP`.
     pub admission_target_depth: u64,
-    /// QTZGFL retained (carried) key retention window `W` in blocks.
+    /// Retained (carried) key retention window `W` in blocks.
     pub admission_retention_blocks: u64,
     /// Registered-path cap (`None` = unlimited).
     pub path_cap: Option<usize>,
@@ -43,7 +43,7 @@ pub struct EngineRetune {
     /// Maximum result profit (in wei) for the delivery policy window
     /// (inclusive).
     pub max_profit: U256,
-    /// KJWIK5 diagnostic override: force the future-price deferral for these
+    /// Diagnostic override: force the future-price deferral for these
     /// path ids. Production leaves it empty.
     pub force_deferred: Option<HashSet<u64>>,
 }
@@ -52,7 +52,7 @@ impl EngineRetune {
     /// (the ONE parse point for the engine's construction knobs).
     ///
     /// Only construction/config-derived writes are folded here: the admission
-    /// trio (packed like every other KAHU5W construction-stance value),
+    /// trio (packed like every other construction-stance value),
     /// `min_profit_wei`, and the schema defaults for the operator-only knobs
     /// ([`Self::path_cap`] and [`Self::event_buffer_max_age`] have no Rust
     /// config key — the `PyO3` driver sets them, T5's scope).
@@ -126,7 +126,7 @@ mod tests {
         (engine, stages)
     }
     /// Construction applies the value from the `BotConfig` fields (the
-    /// KAHU5W/J4HN66 packing): the admission trio reflects the config, the
+    /// packing): the admission trio reflects the config, the
     /// profit window takes `min_profit_wei`, and the operator-only knobs keep
     /// their schema defaults.
     #[test]

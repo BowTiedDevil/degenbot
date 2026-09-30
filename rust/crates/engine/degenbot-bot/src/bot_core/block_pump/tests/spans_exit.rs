@@ -37,7 +37,7 @@ async fn header_arms_per_block_span_with_number_and_parent() {
     tracing::subscriber::set_global_default(subscriber)
         .expect("global default already set by another test");
 
-    // JYCTXI: a second header exercises the consecutive-header case —
+    // A second header exercises the consecutive-header case —
     // the new span must detach from the still-entered previous block
     // span (loop-context guard) instead of chaining into one mega-trace.
     let events: Vec<WsEvent> = vec![
@@ -108,7 +108,7 @@ async fn header_arms_per_block_span_with_number_and_parent() {
         block_span.parent_span_id
     );
 
-    // JYCTXI: the NEXT header's span must ALSO be a trace root in its own
+    // The NEXT header's span must ALSO be a trace root in its own
     // trace — created while block {}'s span was still entered (the loop
     // context guard), it must detach rather than chain into a mega-trace.
     let next_spans: Vec<_> = spans
@@ -148,7 +148,7 @@ async fn header_arms_per_block_span_with_number_and_parent() {
 /// the observable symptom — all N spans closed — and exercises cross-await
 /// parking so CI load that DOES migrate the task surfaces the old leak.
 ///
-/// SONJQA/G3 note: the pump-level `log_wait` force-close test
+/// The pump-level `log_wait` force-close test
 /// was retired with the `pump.log_wait` waterfall — quiet headers now open
 /// NO stage span at all. The force-close law it pinned lives on as the
 /// `stage_telemetry::otel_tests::stale_stage_span_exports_force_closed`

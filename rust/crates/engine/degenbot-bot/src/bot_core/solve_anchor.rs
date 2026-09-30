@@ -9,10 +9,10 @@
 //!
 //! ## Why the head floor (the backfill-ahead desync class)
 //!
-//! - **MQIZ5M / IIA (+1-wei)** — solving below the state head consumes pools
+//! - **+1-wei** — solving below the state head consumes pools
 //!   whose state reflects a later block; the +1-wei / IIA mispricing class
 //!   followed. The `max(pool_state_head)` floor is load-bearing, not optional.
-//! - **BO5FBS (QMSTSV)** — the pump promotes `active_block` once before
+//! - **Active-block promotion** — the pump promotes `active_block` once before
 //!   `on_drain`, so on the pump path the engine's re-anchor is a defensive
 //!   no-op; it stays load-bearing for callers that bypass the pump (tests
 //!   driving the cycle directly).
@@ -24,7 +24,7 @@
 //!
 //! ## Why the future rule is strict (the future-price class)
 //!
-//! - **U6RNHH T1 / TVJF6K T2** — even +1 ahead is never legitimate: a
+//! - **Future-block guard** — even +1 ahead is never legitimate: a
 //!   future-price solve reports a misleading downstream IIA. The guard is a
 //!   belt-and-suspenders invariant assertion, not a normal-path rejection:
 //!   after the head floor, `update_block > anchor` is impossible by definition
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn ahead_is_future_never_legitimate() {
-        // Any magnitude ahead is future (U6RNHH T1 / TVJF6K T2) — ported from
+        // Any magnitude ahead is future — ported from
         // the former `hop_is_future` / `is_future_price` suites.
         assert!(SolveAnchor::for_head(100, 100).is_future(101));
         assert!(SolveAnchor::for_head(25_677_777, 0).is_future(25_677_789));

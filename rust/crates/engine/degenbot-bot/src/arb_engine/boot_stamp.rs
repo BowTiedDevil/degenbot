@@ -1,7 +1,7 @@
 //! THE construction-stamped fleet boot carrier .
 //!
 //! `ArbitrageEngine::with_core_cfg` derives its `FleetBoot` from the
-//! CALLER's own config (the KAHU5W trajectory completed for the boot path)
+//! CALLER's own config (the trajectory completed for the boot path)
 //! and packs it as a `BootStamp`: the boot value PLUS the constructing
 //! engine's identity (`engine_id`) and a deterministic hash of the boot
 //! (`cfg_hash`). The per-role `OnceLock<BootStamp>` statics in the three
@@ -245,7 +245,7 @@ mod tests {
             },
             posture: PosturePolicy::doc_defaults(),
             // A fresh hermetic owner per boot — never the process global
-            // (7KAPBB isolation; these tests never boot a host anyway).
+            // ( these tests never boot a host anyway).
             owner: Some(std::boxed::Box::leak(std::boxed::Box::new(
                 PostureOwner::new(PosturePolicy::doc_defaults()),
             ))),

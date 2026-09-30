@@ -1,4 +1,4 @@
-//! On-demand backrun pair resolution + staged path planning (task B6H2KO).
+//! On-demand backrun pair resolution + staged path planning.
 //!
 //! The backrun pipeline receives swap legs from the frame replay, but the
 //! boot-time path graph only
@@ -8,7 +8,7 @@
 //! 1. warm-index check — pairs already in the graph stage nothing,
 //! 2. pair discovery via the `PairDiscovery` port (production adapter:
 //!    CREATE2-derived V2 pair addresses + existence probe; provider wiring
-//!    lands with the driver task NYVL2F),
+//!    lands),
 //! 3. `FoT` gating — suspected fee-on-transfer tokens never stage edges
 //!    (same semantics as the dispatcher's `FoT` classifier),
 //! 4. per-event budget — at most `max_new_edges_per_event` new pairs stage

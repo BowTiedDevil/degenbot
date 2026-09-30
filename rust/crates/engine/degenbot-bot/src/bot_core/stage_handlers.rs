@@ -188,7 +188,7 @@ pub struct QuiesceOutcome {
 pub struct CandidateId(pub u64);
 
 /// The affected-path set derived at the Resolved row from the epoch's delta.
-/// (SZJUKL: carries the real ledger keys — the `EpochDelta` take — not loose
+/// ( carries the real ledger keys — the `EpochDelta` take — not loose
 /// ids, so the Solved hook receives exactly what the solver consumes.)
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AffectedPaths(pub Vec<degenbot_solvers::affected_keys::AffectedKey>);

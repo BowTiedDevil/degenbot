@@ -876,7 +876,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     assert_eq!(params.tick, 5);
     assert_eq!(params.coverage, PoolTickCoverage::Sparse);
     assert!(params.tick_data.is_empty());
-    // CDJEPJ-1: lp_fee is no longer discarded - returned from the SAME
+    // lp_fee is no longer discarded - returned from the SAME
     // head-stamped slot0 read as protocol_fee (mock slot0 has lp_fee=50).
     assert_eq!(result.lp_fee, 50);
 }
@@ -963,7 +963,7 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
         LiquidityMap {
             tick_bitmap: HashMap::from([(
                 0i64,
-                // bit 1 = tick 60 at spacing 60 (T3 OMDCIY intake
+                // bit 1 = tick 60 at spacing 60 (intake
                 // reconciliation: bit position = tick / spacing).
                 BitmapAtWord {
                     bitmap: U256::from(1u128) << 1,
@@ -1034,7 +1034,7 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
         LiquidityMap {
             tick_bitmap: HashMap::from([(
                 0i64,
-                // bit 1 = tick 60 at spacing 60 (T3 OMDCIY intake
+                // bit 1 = tick 60 at spacing 60 (intake
                 // reconciliation: bit position = tick / spacing).
                 BitmapAtWord {
                     bitmap: U256::from(1u128) << 1,
@@ -1774,7 +1774,7 @@ async fn build_curve_pool_rejects_fewer_than_two_coins() {
 
 /// The three ERC-20 token reads (`balanceOf`/`allowance`/`totalSupply`) decode
 /// a `uint256` return losslessly through the core choreography (SUB-TASK: ERC-20
-/// token-balance family, LWKLMP). Selector-keyed [`FakeRpc`] responses.
+/// token-balance family). Selector-keyed [`FakeRpc`] responses.
 #[tokio::test]
 async fn fetch_token_balance_supply_allowance_decode_uint256() {
     // balanceOf(address) returns 1234... (a 64-bit value).

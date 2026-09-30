@@ -42,7 +42,7 @@ fn test_pump_disables_ws_completeness_by_default() {
         "test pumps must disable the WS-delivery completeness cross-check"
     );
     // And the production default must be ON so drops surface loudly out
-    // of the box (KAHU5W: typed schema default, loader owns env).
+    // of the box (typed schema default; the loader owns env).
     assert!(
         degenbot_substrate::stance::config().pump.ws_completeness,
         "production default for pump.ws_completeness must be ON"

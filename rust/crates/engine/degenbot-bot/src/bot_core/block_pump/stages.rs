@@ -9,10 +9,10 @@ impl BlockPump {
     /// inside — the stage hooks run INLINE on this driver task, so their
     /// spans nest under the entered cursor block span naturally).
     ///
-    /// Pump-owned ACTIVE BLOCK promotion (QMSTSV/BO5FBS): the solve anchor is
+    /// Pump-owned ACTIVE BLOCK promotion: the solve anchor is
     /// the LOG-DRIVEN settled block (`fsm.latest_observed()`, never a
     /// racing header), floored by the pool-state head so it is never below
-    /// the state it solves against (MQIZ5M +1-wei / IIA class; the
+    /// the state it solves against (+1-wei class; the
     /// backfill-ahead semantics). `drain_decision` owns the exact rule.
     pub(super) fn boundary_drain_dispatch(
         &self,
@@ -144,7 +144,7 @@ impl BlockPump {
         }
     }
 
-    /// Drive the Finalized row: the tombstone boundary catch (VTWCIG
+    /// Drive the Finalized row: the tombstone boundary catch:
     /// metadata; terminal publish supersedes the pending quiesce publish).
     pub(super) fn drive_finalize(&self, fsm: &StageMachine, ctx: degenbot_substrate::BlockContext) {
         if self.reorg_flying_stale(fsm, &ctx) {

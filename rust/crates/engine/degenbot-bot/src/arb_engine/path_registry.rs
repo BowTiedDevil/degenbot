@@ -86,7 +86,7 @@ pub(crate) struct PathRegistry {
     /// Dedup index: canonical `(pool_id, zero_for_one)` sequence -> path id.
     /// `register_path` is idempotent: re-registering the same hop sequence
     /// returns the existing `path_id` instead of allocating a new one
-    /// (FPGOYX).
+    ///.
     path_signatures: HashMap<Vec<(u64, bool)>, u64>,
     /// Auto-incrementing path id (starts at 1).
     next_path_id: u64,

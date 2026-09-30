@@ -6,7 +6,7 @@
 //!
 //! # Why a state machine
 //!
-//! Before R522XA the truth was scattered: `ResolvedMixedPath.valid` (a bool
+//! Before the unification the truth was scattered: `ResolvedMixedPath.valid` (a bool
 //! whose failing hop was discarded), `rebuild_and_solve_affected`'s
 //! reverse-index fan-out + invalid-reason histogram + solve-time `valid`
 //! filter, and `solve_all_paths` re-resolving the whole registered set every

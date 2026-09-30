@@ -62,7 +62,7 @@ impl Default for DirtyKeys {
 // Cold-start trace (detached-cycle arm attribution): the cycle span must
 // carry `cycle.arm`, derivable WITHOUT log archaeology. The helper below
 // is the ONE wiring site (the solve cycle, at the machine's begin_cycle
-// verdict). WFF6MM: one arm remains, so one stamp.
+// verdict). one arm remains, so one stamp.
 #[cfg(feature = "otel")]
 #[test]
 #[expect(clippy::expect_used)]

@@ -41,7 +41,7 @@ pub(crate) fn solve_runtime_config_from_cfg(
 /// is a schema key (env or TOML loads into it via the degenbot-config loader).
 /// The solver-runtime stance is NOT installed globally anymore — the engine
 /// holds an instance value built by [`solve_runtime_config_from_cfg`] and
-/// threads it down (KAHU5W: the solver `OnceLock` is retired).
+/// threads it down.
 ///
 /// the boots installed here are the CONSTRUCTION-STAMPED values —
 /// the engine derived its own `FleetBoot` from THIS caller cfg and stamped it
@@ -80,11 +80,11 @@ pub(crate) fn install_engine_stances(
     degenbot_substrate::resolve::install_projection_memo_stance(cfg.solve.cl_projection_cache);
     // the chunked parallel resolve stance is an ENGINE
     // instance value now — packed per construction from
-    // cfg.solve.solve_resolve_par (the KAHU5W construction-stance
+    // cfg.solve.solve_resolve_par (the construction-stance
     // trajectory); no installer store remains here.
 }
 /// PRG-4: `PathRegistrationError` moved to
-/// [`super::path_registry`] (ADR-045 `C4UAFP`); re-exported here at its old
+/// [`super::path_registry`] (ADR-045); re-exported here at its old
 /// path so the `PyO3` mapper (`degenbot-python`) and white-box tests compile
 /// unchanged.
 pub use super::path_registry::PathRegistrationError;
@@ -132,7 +132,7 @@ pub(crate) fn register_and_solve_path(
 /// Set the maximum age for buffered events in the V3/V4 buffers (ADR-003:
 /// both live on `BotState`).
 ///
-/// LPEOBI: caches the stance ON the engine - with `None` the expiry is a
+/// Caches the stance ON the engine - with `None` the expiry is a
 /// provable no-op and `expire_buffered_events` skips the core write (each
 /// write bought a ~2.9s writer-queue slot under the block-apply stream).
 pub(crate) fn set_event_buffer_max_age(engine: &mut ArbitrageEngine, max_age: Option<u64>) {
@@ -159,7 +159,7 @@ pub(crate) fn flush_event_buffer(engine: &mut ArbitrageEngine) {
 }
 /// Read the last solved results and block number.
 ///
-/// RAYPAR engine-shard T1: snaps a snapshot of the `DashMap`
+/// Engine-shard T1: snaps a snapshot of the `DashMap`
 /// shards into an owned `HashMap` so the caller never holds a lock into the
 /// engine. `O(n_results)` — typically <50 entries (profitable solves only)
 /// per drain.
@@ -257,7 +257,7 @@ pub(crate) fn path_dedups(engine: &ArbitrageEngine) -> u64 {
     engine.registry.dedups()
 }
 /// The detached solve cycle (enqueue-and-return with sidecar merge) is THE
-/// ONLY solve arm since the WFF6MM hard cutover: the DRIVEN solve path takes
+/// ONLY solve arm since the Hard cutover: the DRIVEN solve path takes
 /// NO engine-level Mutex — the stage-surface (`EngineStages`) solve hold
 /// collapses to enqueue end (µs) and each result merges on the sidecar under
 /// its own short per-item acquisition (the Q1a stale policy makes that safe).

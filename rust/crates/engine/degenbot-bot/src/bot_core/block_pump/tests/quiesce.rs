@@ -34,7 +34,7 @@ async fn early_slice_fires_mid_burst_then_settles() {
 }
 
 /// bounded: ONE early slice per block window, however long
-/// the burst (MBNASQ's unbounded per-gap serial solves must not return).
+/// the burst (the unbounded per-gap serial solves must not return).
 /// Six gapped headers → exactly slice + tail, never a third dispatch.
 #[tokio::test(start_paused = true)]
 async fn early_slice_fires_at_most_once_per_window() {
@@ -143,7 +143,7 @@ async fn adaptive_quiesce_arms_the_estimator_window() {
     }
 }
 
-/// WAJEQP T-R1: the reorg window span lifecycle. A `removed:true` log for
+/// The reorg window span lifecycle. A `removed:true` log for
 /// the current block opens exactly ONE `degenbot.reorg.window` span (own
 /// root); each subsequent event adds a `degenbot.reorg.restore` child;
 /// the closing forward log records `reorg.new_head` + counters +
@@ -291,7 +291,7 @@ fn reorg_window_span_lifecycle_enter_restore_close() {
     );
 }
 
-/// WAJEQP T-R1: a removed log for a pool whose newest journal delta is
+/// A removed log for a pool whose newest journal delta is
 /// already below the target restores nothing — the restore span is still
 /// emitted, labeled `idempotent_noop`, and the window still closes.
 #[test]

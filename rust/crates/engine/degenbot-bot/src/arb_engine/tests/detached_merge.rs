@@ -243,7 +243,7 @@ fn detached_duplicate_straggler_trips_the_exactness_fuse() {
         "the duplicate delivery must trip the loud exactness fuse once"
     );
 }
-/// RLVDUP T3 (red/green): de-registration removes the resolve
+/// Red/green: de-registration removes the resolve
 /// bookkeeping - `path_status` and `resolved_update_snapshot` entries
 /// must follow the path out, or per-pool churn grows the maps
 /// unbounded.
@@ -407,7 +407,7 @@ fn detached_merge_event_parents_under_the_carried_solve_span() {
         solve_spans[0].events.events
     );
 }
-/// AQV6EF AC2 (red-first): a panic inside `merge_detached_item` must be
+/// A panic inside `merge_detached_item` must be
 /// CAUGHT — it becomes a typed drain-death record that trips the SAME
 /// sticky cordon as a failed send, and the sidecar must return (not
 /// vanish silently, stranding every later send with no signal). The
@@ -444,7 +444,7 @@ fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
         "the panicked sidecar has exited: later sends hit the dead pipe (the send-failure signal)"
     );
 }
-/// T2 cadence acceptance, SZJUKL-port: with detached
+/// T2 cadence acceptance, ported: with detached
 /// cycles ON through the PRODUCTION stage surface (`EngineStages` — the
 /// shipped `solve_dirty` cadence the driver executes INLINE at the machine's
 /// decision points), each solve call RETURNS at enqueue-end (µs) while the

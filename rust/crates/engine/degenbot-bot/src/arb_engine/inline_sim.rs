@@ -74,11 +74,11 @@ pub struct InlineSimRequest {
     /// The solver's per-hop outputs (wei), path order — the step outputs the
     /// encoder must feed forward (T4: the sim's `SolveStep` rows).
     pub hop_outputs: Vec<U256>,
-    /// The per-hop solve-time state nonces (AV42C7 staleness parity).
+    /// The per-hop solve-time state nonces.
     pub state_nonces: Vec<u64>,
     // ---- The block env (the sim's `SimulateContext` primitives) ----
     /// The block to simulate against (the cycle's solve block — the
-    /// head-anchored promoted block, MQIZ5M).
+    /// head-anchored promoted block.
     pub sim_block: u64,
     /// The block timestamp (the pump's header; the default `1`
     /// timestamp forks Solidity-0.8 pair updates).
@@ -358,7 +358,7 @@ impl PipelinedSims {
         // that replaced the SimSlots semaphore. Receipts ride the SAME
         // per-request channel, so the poll/join contract is untouched.
         // ADR-042 F4 (LW-T9): submit through the pooled-executor seam — arb_engine
-        // hosts TWO executor traits since LNQDOA: Executor (solve, bin-indexed)
+        // hosts TWO executor traits since the unified executor port: Executor (solve, bin-indexed)
         // and FleetIntake (pooled sim/intake, fire-and-dispatch). Pooled SimDriver
         // unit, lane-2 dispatch precedence; receipts stay on the caller's
         // per-request channel (unchanged contract).

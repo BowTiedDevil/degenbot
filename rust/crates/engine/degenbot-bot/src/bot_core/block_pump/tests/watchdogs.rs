@@ -1,6 +1,6 @@
 use super::*;
 
-/// JIABO3 Option A — header-staleness watchdog independence.
+/// Header-staleness watchdog independence.
 ///
 /// Contract: a `tokio::time::interval` selected against `combined.next()`
 /// wakes the pump even when the WS stream is silent (no new headers / no
@@ -66,7 +66,7 @@ async fn header_staleness_watchdog_fires_under_silent_stream() {
     );
 }
 
-/// JIABO3 Option A — guard: the watchdog does NOT spuriously fire when
+/// Guard: the watchdog does NOT spuriously fire when
 /// headers keep arriving within the staleness window. The
 /// `last_header_at.elapsed() >= header_staleness` guard must prevent
 /// backfill under a live `newHeads` stream, even though the interval tick
@@ -217,7 +217,7 @@ async fn logs_silence_watchdog_does_not_fire_when_logs_flowing() {
 
 #[tokio::test]
 async fn finalize_carries_just_finished_blocks_metadata() {
-    // Contract (VTWCIG, ADR-008): block N is finalized when the FIRST
+    // Contract: block N is finalized when the FIRST
     // `removed: false` LOG for N+1 arrives (the tombstone — NOT a header).
     // The result batch that finalizes N must carry N's OWN metadata, even
     // though header N+1 (with distinct metadata) arrived earlier and
@@ -289,11 +289,11 @@ async fn finalize_carries_just_finished_blocks_metadata() {
     );
 }
 
-/// BO5FBS active-block promotion (QMSTSV, confirmed): the pump sets the
+/// Active-block promotion: the pump sets the
 /// solve anchor = max(newHead-driven `current_block`, `pool_state_head`).
 /// On a header stall, ordered backfill advances the state clock above
 /// `current_block`; the solve anchor must never be below the state it
-/// solves against (MQIZ5M +1-wei / IIA class). Here a V2 pool is
+/// solves against (+1-wei class). Here a V2 pool is
 /// registered at `update_block` 500 while the pump advances headers only to
 /// 103 — every `on_drain` must receive the promoted 500, not the lagging
 /// header. RED before the pump-owned promotion, GREEN after.

@@ -8,7 +8,7 @@
 //!
 //! - Pump, on a WS log with `removed: true`, calls
 //!   `bot.dispatch_reorg_log(&log)` — reorg is a Bot concern, parallel to
-//!   `dispatch_log`, never a stage-hook seam (SZJUKL). The engine re-solves
+//!   `dispatch_log`, never a stage-hook seam. The engine re-solves
 //!   at the next drained-settle gate from the freshly recorded `EpochDelta`.
 //! - `ReorgCoordinator::dispatch_reorg_log` decodes the log to resolve the
 //!   target `pool_id` (V2/V3 via `pool_id_by_address`, V4 via
@@ -71,7 +71,7 @@ impl ReorgCoordinator {
     /// WITHOUT applying it forward, restore that pool's state to just before
     /// `log`'s block, then record it into the epoch `EpochDelta`.
     ///
-    /// WAJEQP T-R1 telemetry: every resolved event emits a
+    /// Telemetry: every resolved event emits a
     /// `degenbot.reorg.restore` span parented under `parent` (the pump's open
     /// `degenbot.reorg.window` episode span; `None` = detached — tests or
     /// out-of-window callers). The outcome (`reorg.action`) distinguishes a
@@ -107,7 +107,7 @@ impl ReorgCoordinator {
             return Ok(ReorgOutcome::IdempotentNoop);
         };
         let block = decoded.block_number();
-        // WAJEQP T-R1: one span per reorg event, named + attributed at the
+        // one span per reorg event, named + attributed at the
         // boundary where the journal decision is made. The pump parent enters
         // the window span for the duration of this call, but the explicit
         // `parent:` link keeps the child correct even if that changes.
@@ -142,7 +142,7 @@ impl ReorgCoordinator {
             );
             return Err(ReorgError::NoStatePriorToBlock { pool_id, block });
         }
-        // Idempotent-noop detection (WAJEQP T-R1): the newest journal delta for
+        // Idempotent-noop detection: the newest journal delta for
         // this pool is already strictly before the target, so the restore is a
         // guaranteed no-op pop (state history is order-insensitive). Recorded
         // as its own action — the share of redundant replay events is itself

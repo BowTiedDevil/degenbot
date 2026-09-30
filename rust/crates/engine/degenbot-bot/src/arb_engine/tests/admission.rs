@@ -1,7 +1,7 @@
 use super::*;
 
 // -------------------------------------------------------------------
-// QTZGFL: capacity-modulated admission draw (experiment; flag OFF by
+// capacity-modulated admission draw (experiment; flag OFF by
 // default so the current degrade stays byte-identical).
 // -------------------------------------------------------------------
 /// Budget arithmetic: `budget = max(0, target − outstanding)` in KEYS,
@@ -299,7 +299,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
 /// (they are already removed from the ledger); an earlier cycle's bin
 /// thread bumping in-flight to/over the target between the draw and the
 /// dispatch must NOT turn that cycle into a shed — the drawn keys would
-/// be discarded (never submitted, never re-recorded). WFF6MM: the drawn
+/// be discarded (never submitted, never re-recorded). the drawn
 /// keys submit down the one (detached) arm regardless of the gauge.
 ///
 /// The test drives both stages explicitly, so it can interleave the

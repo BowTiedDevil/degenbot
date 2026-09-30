@@ -4,7 +4,7 @@
 //! conceptual per-cycle machine. This module is its single owner: the
 //! per-cycle states (`Unopened → Open`), the merge pipe open/take, the
 //! outstanding-gauge pair, the seq counters, the outcome-ledger door, the
-//! disposition counters, and the ONE sidecar spawn. WFF6MM hard cutover:
+//! disposition counters, and the ONE sidecar spawn. Hard cutover:
 //! the in-cycle fallback arm (and its stance input) is GONE — every solve
 //! cycle issues the detached arm.
 //!
@@ -20,7 +20,7 @@
 //! One legal-transition table ([`transition`]) + the sized
 //! [`ALL_CYCLE_ARMS`] const + the conformance walk in the test module
 //! (house pattern: `degenbot-workers` `slot.rs` T1–T9 +
-//! `bot_core::stage_handlers::ALL_STAGES`). WFF6MM: every row is total (a
+//! `bot_core::stage_handlers::ALL_STAGES`). Every row is total (a
 //! begin always opens; gauge/disposition events are state-transparent), so
 //! the table can no longer reject — the typed-rejection machinery retired
 //! with the in-cycle arm. The panics and aborts that exist today stay
@@ -44,7 +44,7 @@ use super::executor::LaneOutcome;
 use super::ArbitrageEngine;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-/// Design-locked in-flight depth safety valve (~8). WFF6MM: this is NO
+/// Design-locked in-flight depth safety valve (~8). this is NO
 /// longer a runtime cap verdict (the in-cycle degrade it gated is retired);
 /// it survives only as the default + construction clamp for
 /// `solve.admission_target_depth`. The admission draw
@@ -54,7 +54,7 @@ use std::sync::Arc;
 /// (the cap consult moved into the machine; the consult
 /// retired with the arm.)
 pub(crate) const DETACHED_INFLIGHT_CAP: u64 = 8;
-/// THE persistent machine state. WFF6MM: the in-flight-cap
+/// THE persistent machine state. The in-flight-cap
 /// `Saturated` state retired with the in-cycle arm — a begin ALWAYS opens,
 /// so the machine is `Unopened → Open`; no row ever returns to
 /// [`CycleArm::Unopened`] (a pipe, once open, stays open until teardown).
@@ -93,11 +93,11 @@ pub(crate) enum Disposition {
     Duplicate,
 }
 /// A machine verb — the drivers' complete surface, one row family each in
-/// [`transition`]. WFF6MM: the in-cycle `TickInCycle` verb retired with the
+/// [`transition`]. The in-cycle `TickInCycle` verb retired with the
 /// arm; a begin carries no verdict (the admission draw owns backpressure).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Transition {
-    /// [`DetachedCycle::begin_cycle`] — the arm decision. WFF6MM: the
+    /// [`DetachedCycle::begin_cycle`] — the arm decision. the
     /// detached arm is the ONLY arm; a begin always opens the pipe (no
     /// stance input, no cap verdict — the admission draw owns backpressure).
     BeginCycle,
@@ -122,7 +122,7 @@ pub(crate) enum Transition {
     Disposition(Disposition),
 }
 /// THE legal-transition table (house pattern:
-/// `degenbot-workers` `slot.rs::transition`). WFF6MM: with the in-cycle arm
+/// `degenbot-workers` `slot.rs::transition`). With the in-cycle arm
 /// retired every row is TOTAL, so the table is infallible (no typed
 /// rejections remain):
 ///
@@ -148,7 +148,7 @@ pub(crate) fn transition(from: CycleArm, t: Transition) -> CycleArm {
 }
 /// The per-cycle begin decision: the machine-issued seq (THE ledger key half
 /// for this cycle's detached claims — the ONE `(solve_seq, pid)` key zone)
-/// and the merge-pipe `Sender` clone for the 'static bin threads. WFF6MM:
+/// and the merge-pipe `Sender` clone for the 'static bin threads.
 /// the detached arm is the ONLY arm — the in-cycle alternative retired with
 /// its stance and seq-tick verb.
 #[derive(Debug)]
@@ -174,7 +174,7 @@ pub(crate) struct LaneDrainCounts {
 // ---------------------------------------------------------------------------
 /// THE one detached solve-arm machine: the single owner of the
 /// scattered per-cycle fields this module's doc header names. The engine
-/// holds ONE of these. WFF6MM: the in-cycle stance is gone — every begin
+/// holds ONE of these. The in-cycle stance is gone — every begin
 /// issues the detached arm.
 /// Lock order: the engine mutex (which guards this whole struct) is the
 /// OUTER lock; [`Self::outcome_ledger`]'s mutex is always an inner lock —
@@ -212,7 +212,7 @@ pub(crate) struct DetachedCycle {
     /// In-flight gauge: detached results SENT but not yet dispositioned.
     /// `Arc` because the enqueue half's bin threads bump it at send time
     /// ([`Self::gauge_hook`]) and the sidecar decrements it per Solved
-    /// receipt ([`Self::solved_received`]). WFF6MM: the gauge feeds the
+    /// receipt ([`Self::solved_received`]). The gauge feeds the
     /// admission draw (`budget = max(0, admission_target_depth − in-flight)`),
     /// which is the sole backpressure now.
     pub(crate) outstanding: Arc<std::sync::atomic::AtomicU64>,
@@ -221,12 +221,12 @@ pub(crate) struct DetachedCycle {
     pub(crate) applied: std::sync::atomic::AtomicU64,
     pub(crate) dropped_stale: std::sync::atomic::AtomicU64,
     pub(crate) dropped_deregistered: std::sync::atomic::AtomicU64,
-    /// QTZGFL: cycles SHED by capacity-modulated admission (zero draw
+    /// Cycles SHED by capacity-modulated admission (zero draw
     /// budget) — the machine's disposition counter behind
     /// `degenbot.detached.shed`. A shed cycle submits nothing and
     /// claims nothing (no seq tick); this is a pure counter event.
     pub(crate) shed_cycles: std::sync::atomic::AtomicU64,
-    /// QTZGFL: retained (carried) admission keys pruned by the retention
+    /// Retained (carried) admission keys pruned by the retention
     /// window (`head − W`) — the machine's counter behind
     /// `degenbot.detached.leads_expired`.
     pub(crate) leads_expired: std::sync::atomic::AtomicU64,
@@ -276,7 +276,7 @@ impl DetachedCycle {
     }
     /// THE arm decision (one machine verb): tick the ONE seq counter, open
     /// the merge pipe once (if not already open), and hand back the `Sender`
-    /// clone for the 'static bin threads. WFF6MM: this ALWAYS issues the
+    /// clone for the 'static bin threads. This ALWAYS issues the
     /// detached arm — the stance input, the live-gauge cap verdict, and the
     /// in-cycle fallback retired; the admission draw owns backpressure.
     ///
@@ -355,7 +355,7 @@ impl DetachedCycle {
             u32::try_from(outstanding_now).unwrap_or(u32::MAX),
         ));
     }
-    /// QTZGFL: one admission SHED cycle (zero draw budget) — the machine
+    /// One admission SHED cycle (zero draw budget) — the machine
     /// owns the disposition counter + its pipeline meter, mirroring
     /// [`Self::disposition`]. A shed cycle takes NO transition beyond the
     /// begin (the machine is not consulted at all on the deterministic path);
@@ -366,7 +366,7 @@ impl DetachedCycle {
             p.count_detached_shed();
         }
     }
-    /// QTZGFL: `n` retained admission keys expired by the retention window
+    /// `n` retained admission keys expired by the retention window
     /// (`head − W`) on a block advance — the machine counter + its pipeline
     /// meter. A zero count is a no-op (no spurious series touch).
     pub(crate) fn note_leads_expired(&self, n: usize) {
@@ -455,7 +455,7 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
 // ---------------------------------------------------------------------------
 // DETACHED SOLVE CYCLE
 // ---------------------------------------------------------------------------
-// DETACH-ALWAYS (design locked 2026-09-02; WFF6MM cutover retired the
+// DETACH-ALWAYS (design locked 2026-09-02; the cutover retired the
 // in-cycle arm so this is now the unconditional shape): the whole solve
 // cycle RETURNS at ENQUEUE end — every result then flows through an
 // UNBOUNDED mpsc to the merge sidecar, a plain `std::thread` (see the
@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(ALL_CYCLE_ARMS, [CycleArm::Unopened, CycleArm::Open]);
     }
     /// THE CONFORMANCE WALK: every legal (state × transition) cell
-    /// lands on its table successor. WFF6MM: with the in-cycle arm retired
+    /// lands on its table successor. With the in-cycle arm retired
     /// every row is total — there is no illegal cell and therefore no typed
     /// rejection left to pin.
     #[test]

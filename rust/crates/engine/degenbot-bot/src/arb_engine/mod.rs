@@ -72,14 +72,14 @@ mod delivery_policy;
 // sidecar spawn — see the module's own doc header.
 pub(crate) mod detached_cycle;
 mod diagnostic;
-// SZJUKL seam retirement: the arb engine's StageHandlers implementation —
+// The arb engine's StageHandlers implementation —
 // the ONE surface left between the machine driver and the engine. The
 // dissolved `engine_handle` (wrapper Mutex), `engine_subscriber` (liveness
 // adapter), and `epoch_delta_parity`/`test_oracle` (the parity
 // oracle, GONE now that `EpochDelta` is sole authority) are deleted —
 // hard cutover, Q6.
 pub mod engine_stages;
-// ADR-050 / Gap G1 (`5XOGRK`): the public Rust driver seam above the one
+// ADR-050: the public Rust driver seam above the one
 // stage seam. The engine type stays `pub(crate)`; this composes
 // `EngineStages` + the pump session state so a `cargo add degenbot`
 // consumer can run the subscribe→resume(+auto-backfill)→stop ritual.
@@ -105,11 +105,11 @@ mod path_registry;
 // `degenbot_substrate::session_registry::PathObjectAdapter`, so the session names
 // canonical paths without a second path store.
 pub mod path_objects;
-// 3WI4EO : the typed operator re-parameterization value crossing
+// The typed operator re-parameterization value crossing
 // the driver seam — `EngineRetune`, applied at construction and at runtime via
 // `EngineStages::apply_retune`.
 mod retune;
-// RZEWTX: the ONE pooled-seat host for the WorkQueue fleet roles (sim +
+// The ONE pooled-seat host for the WorkQueue fleet roles (sim +
 // registration) — the executors are thin role descriptors over it; the
 // solve executor's exclusion (per-seat channel model + posture-invariant
 // typed-submit admission) is documented in the module doc.
@@ -262,7 +262,7 @@ impl PumpPhase {
             )),
         }
     }
-    /// Compute the phase AFTER `subscribe()` completes (J3FMDO regression
+    /// Compute the phase AFTER `subscribe()` completes (regression
     /// fix for the construction-time-load path).
     ///
     /// `PumpState::subscribe` used to unconditionally `set_phase(Subscribed)`,
@@ -403,7 +403,7 @@ pub(crate) struct ArbitrageEngine {
     /// `&mut`. The invariant "`path_pools` is consistent with `pool_to_paths`"
     /// is internal to [`PathRegistry::commit`] / [`PathRegistry::remove`].
     pub(crate) registry: PathRegistry,
-    /// ADR-045 (`ANVHXW`): the solve cycle's owned state — the resolve
+    /// ADR-045: the solve cycle's owned state — the resolve
     /// companions, the cycle-transient stash, the solve output, the admissions
     /// stance, the detached-arm collaborator, the walk/projection recorders,
     /// and the seven `for_test` knobs. Fields only at T3; behavior methods move
@@ -419,7 +419,7 @@ pub(crate) struct ArbitrageEngine {
     /// THE construction-stamped fleet boot: the engine's OWN
     /// `FleetBoot`, derived from the CALLER's cfg at construction and
     /// stamped with the engine id + a deterministic cfg hash. Packed in
-    /// `with_core_cfg` right beside `streaming_delivery` (the KAHU5W
+    /// `with_core_cfg` right beside `streaming_delivery` (the
     /// construction-stance pattern); the per-role fleet statics courier it
     /// to the ONE process fleet materialization per role, and any
     /// divergent-cfg rider is ledgered (`boot_stamp::record_ride`). The
@@ -428,7 +428,7 @@ pub(crate) struct ArbitrageEngine {
     /// through the white-box probe accessor.
     #[cfg_attr(not(test), expect(dead_code))]
     fleet_boot_stamp: BootStamp,
-    /// Engine lifecycle phase (ZU7RAF — core-OWNED). Enforces ordering
+    /// Engine lifecycle phase (core-owned). Enforces ordering
     /// `Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`.
     /// Previously the `AtomicU8` lived on the pyo3 `PumpState` wrapper;
     /// moving it to the core engine lets a standalone Rust consumer observe +
@@ -437,7 +437,7 @@ pub(crate) struct ArbitrageEngine {
     /// `Arc<Mutex<..>>` so the atomic read is lock-free across the pyo3
     /// wrappers and the pump task.
     phase: std::sync::atomic::AtomicU8,
-    /// LPEOBI: does the core hold a configured `max_age` for the V3/V4
+    /// Does the core hold a configured `max_age` for the V3/V4
     /// buffered-event expiry? With the cockpit default (`max_age=None`)
     /// `expire` is a provable no-op, so the stage cycle must not take a core
     /// write for it — each one bought a ~2.9s writer-queue slot under the
@@ -485,7 +485,7 @@ impl ArbitrageEngine {
         core: Arc<StateLock<BotState>>,
         cfg: &std::sync::Arc<::degenbot_config::BotConfig>,
     ) -> Self {
-        // J4HN66 : construction stances come from the CALLER's
+        // Construction stances come from the CALLER's
         // own cfg — never from an install-then-read process static. A
         // parallel construction flips such a static between our install and
         // a global read (TOCTOU). The install call remains for its process
@@ -592,7 +592,7 @@ impl ArbitrageEngine {
                 .write_at(degenbot_substrate::state_lock::LockSite::Solver)
                 .set_v4_buffer_max_age(retune.event_buffer_max_age);
         }
-        // The admission trio (QTZGFL).
+        // The admission trio.
         self.cycle.solve_admission = retune.solve_admission;
         self.cycle.admission_target_depth = retune.admission_target_depth;
         self.cycle.admission_retention_blocks = retune.admission_retention_blocks;
@@ -601,7 +601,7 @@ impl ArbitrageEngine {
         // The delivery profit window.
         self.delivery
             .set_profit_thresholds(retune.min_profit, retune.max_profit);
-        // The KJWIK5 diagnostic force-deferred override.
+        // The diagnostic force-deferred override.
         self.cycle.force_deferred.clone_from(&retune.force_deferred);
     }
     /// Immutable access to the shared `BotState` `Arc` (ADR-003 / ADR-006
@@ -625,8 +625,7 @@ impl ArbitrageEngine {
     pub fn path_pools(&self) -> &HashMap<u64, std::sync::Arc<MixedPath>> {
         self.registry.path_pools()
     }
-    /// Read the current engine lifecycle phase (core-owned source of truth,
-    /// ZU7RAF).
+    /// Read the current engine lifecycle phase (core-owned source of truth).
     /// Atomic + lock-free (the engine is behind `Arc<Mutex<..>>` across the
     /// pyo3 wrappers and the pump). Reconstructs from the `u8` discriminant;
     /// an unknown discriminant falls back to `Created` (the safest default —

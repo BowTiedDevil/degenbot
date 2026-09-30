@@ -325,7 +325,7 @@ fn merge_reports_worker_twins_and_never_reclips() {
         "twins=0 must run the merge-site clamp"
     );
 }
-// ----------------- RKXN5Z / IJUBV3: bundle.simulate span hygiene -----------------
+// ----------------- bundle.simulate span hygiene -----------------
 /// RED-gate: the merge-site microsecond `degenbot.bundle.simulate`
 /// "verdict bookmark" spans collided with the REAL per-path EVM sim spans
 /// of the same name (traces 98f7cf52 / ab13f75fad50: 90-300 markers per

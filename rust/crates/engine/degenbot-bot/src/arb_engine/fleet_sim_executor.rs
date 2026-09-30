@@ -20,15 +20,15 @@
 //! the unbounded part of the burst); submission over the never-drop
 //! host channel is the pacing seam now.
 //!
-//! RZEWTX: the pooled-seat machinery (`WorkQueue`, `seat_loop`,
+//! The pooled-seat machinery (`WorkQueue`, `seat_loop`,
 //! `host_loop`, `apply_host_msg`/`pump` admission, the boot install/global
 //! boilerplate) is SHARED with the registration executor — ONE seat host
 //! (`arb_engine::seat_host`) parameterized by the `FleetBootRegistry`'s
 //! `SIM_ROLE` descriptor (candidate 4 moved the descriptor row there; this
-//! module owns only the executor + boot fn). 6HE6RF: the solve executor's host-MESSAGE triple joins
+//! module owns only the executor + boot fn). The solve executor's host-MESSAGE triple joins
 //! that machinery too (the ONE [`HostPump`] behind all three fleet
 //! hosts); its SEAT MODEL (per-seat keyed mailboxes, warm arenas) and
-//! typed submit seam stay in `fleet_solve_executor.rs` — the RZEWTX
+//! typed submit seam stay in `fleet_solve_executor.rs`;
 //! design gate now covers only the seat models (see `seat_host`'s
 //! module doc).
 //!
@@ -140,7 +140,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     /// A FRESH hermetic posture owner (leaked to `'static`): every test
-    /// boot gets its own owner, never the process global (7KAPBB isolation).
+    /// boot gets its own owner, never the process global.
     fn hermetic_owner() -> &'static PostureOwner {
         std::boxed::Box::leak(std::boxed::Box::new(PostureOwner::new(
             PosturePolicy::doc_defaults(),
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(got, want, "every sim unit completes exactly once");
     }
     /// Seats are the fleet `SimDriver` role: census thread-name pattern
-    /// work-fleet-sim-{n} (GOQWCL rule — greppable, never the shared
+    /// work-fleet-sim-{n} — greppable, never the shared
     /// tokio-runtime-worker default).
     #[test]
     fn sims_execute_on_named_fleet_simdriver_seats() {
@@ -342,7 +342,7 @@ mod tests {
         );
     }
     /// The design-gate admission policy, BEHAVIORAL under the shared
-    /// posture owner (RZEWTX; JCI2FW Part A dissolved the
+    /// posture owner (dissolved the
     /// `CordonAdmission::Admit` descriptor arm — the role's `SimPool`
     /// cordon class + the ONE shared owner ARE the policy): a Cordoned
     /// posture still ADMITS sim intake — units submitted under cordon run
@@ -620,7 +620,7 @@ mod fleet_sim_stance_tests {
                 (true, payload)
             })
     }
-    /// FLEET FIXTURE (LTUE7I, LW-T9 single-arm): fleet `SimDriver` inline sims
+    /// FLEET FIXTURE (LW-T9 single-arm): fleet `SimDriver` inline sims
     /// honor the full request contract over the committed capture corpus —
     /// every request schedules, successes carry field-equal payloads, and
     /// the failure-payload contract is exercised end to end.
@@ -653,10 +653,10 @@ mod fleet_sim_stance_tests {
             "the fixture must exercise the failure-payload contract too"
         );
     }
-    /// IDENTITY FIXTURE (LTUE7I, LW-T9 single-arm): the ONLY sim hosting
+    /// IDENTITY FIXTURE (LW-T9 single-arm): the ONLY sim hosting
     /// family is the fleet `SimDriver` seats (`work-fleet-sim-{n}`) and the
     /// executor's census row is registered (the `fleet_merge_slots` pattern
-    /// from the BCA77G work).
+    /// from that work).
     ///
     /// Pinned-tier fixture (FF-T2): the seat-shape contract binds only on a
     /// host whose auto-resolved fleet binding is pinned (see the host-tier

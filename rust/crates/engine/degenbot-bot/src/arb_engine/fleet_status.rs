@@ -45,7 +45,7 @@ pub struct FleetRuntimeStatus {
     /// floor, and the hint. A serial-tier host carries the
     /// `QuotaTooSmallForPinnedRoles` that placed it there; a forced-pinned
     /// oversubscribed host carries the pinned-floor refusal it overrode
-    /// (FF-T5 addendum, 452GZC). None when the plan refused nothing — or
+    /// (FF-T5 addendum). None when the plan refused nothing — or
     /// the boot plan itself refused (binding None).
     pub tier_refused: Option<String>,
     /// The projected budget the fleet runs (the plan's projection).
@@ -105,7 +105,7 @@ pub fn fleet_runtime_status() -> FleetRuntimeStatus {
         census: degenbot_core::worker_census::snapshot(),
     }
 }
-/// The `tier_refused` string (FF-T5 addendum, 452GZC): the typed refusal's
+/// The `tier_refused` string (FF-T5 addendum): the typed refusal's
 /// closed family NAME plus its Display sentence — an operator (and the
 /// test gates) greps the family; the sentence keeps the detected quota,
 /// the floor, and the hint.
@@ -125,7 +125,7 @@ fn live_default_boot() -> FleetBoot {
         owner: None,
     }
 }
-/// The process's resolved fleet profile summary (FF-T5, NT7HJC): the
+/// The process's resolved fleet profile summary (FF-T5: the
 /// one-line answer to "what did the fleet boot as", recorded ONCE at the
 /// construction-stamp install (first engine wins, like every stance
 /// static) and exported as the `degenbot_fleet_profile` metric.
@@ -170,7 +170,7 @@ pub fn record_fleet_profile_at_install(boot: &FleetBoot) {
     if summary.binding == "serial" {
         op_warn!(domain = solver, profile = summary.profile,
             quota_cpus = boot.quota_cpus,
-            "PRODUCTION ALERT: this host resolved to the SERIAL tier              (2-5 cores: one cycle lane per host) - the small-host arm is a              degradation signal, never a silent narrow (FF-T5, NT7HJC)"
+            "PRODUCTION ALERT: this host resolved to the SERIAL tier              (2-5 cores: one cycle lane per host) - the small-host arm is a              degradation signal, never a silent narrow (FF-T5)"
         );
     }
 }

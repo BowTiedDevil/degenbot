@@ -607,7 +607,7 @@ impl EngineDriver {
         }
         // Read S BEFORE subscribe so `after_subscribe` reflects whether the
         // core already holds a snapshot (the construction-time-load path,
-        // J3FMDO).
+        // per the regression fix above).
         let core_has_snapshot = self
             .bot
             .state_arc()
@@ -701,7 +701,7 @@ impl EngineDriver {
         } = state;
         // the backfill is SYNCHRONOUS with respect to `resume` so the
         // consumer's registration draining the per-pool backfill buffer cannot
-        // race it. DFQYM5: `backfill_with_drain` also re-injects live events
+        // race it. `backfill_with_drain` also re-injects live events
         // drained during the backfill ahead of the live tail.
         let (backfill_res, combined) = pump.backfill_with_drain(first_block, combined_stream).await;
         if let Err(e) = backfill_res {
@@ -1166,7 +1166,7 @@ impl EngineDriver {
         self.stages.set_inline_simulator(sim);
     }
 
-    /// The last solved results + block (DELEGATION, RAYPAR snapshot).
+    /// The last solved results + block.
     #[must_use]
     pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
         self.stages.latest_results()

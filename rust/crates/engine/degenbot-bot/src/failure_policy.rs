@@ -1,7 +1,7 @@
 //! The per-bucket failure policy (ADR-040) — one closed taxonomy in which
 //! every failure bucket declares its `Severity`, taint `Scope`, and default
 //! `Action`. Reactions are a pure function of the bucket: there is no
-//! process-wide mode to reconcile (the D63GSE `exit|harden|continue` lattice
+//! process-wide mode to reconcile (the `exit|harden|continue` lattice
 //! is retired — it was a second channel that could contradict the bucket
 //! table). Supply-side dedup (the [`CooldownRegistry`] behind
 //! `telemetry::record_exception_keyed`) is orthogonal to reaction choice and
@@ -254,7 +254,7 @@ pub fn scope(kind: &str, reason: Option<&str>) -> Scope {
     bucket(kind, reason).1
 }
 
-/// Process-wide dedup for error storms (kept from D63GSE): one alerting
+/// Process-wide dedup for error storms: one alerting
 /// surface event per `(kind, primary_id)` fingerprint per [`COOLDOWN_BLOCKS`]
 /// window. Trace spans still carry every occurrence.
 pub const COOLDOWN_BLOCKS: u64 = 10;
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(action("ws_completeness", None), Action::Exit);
     }
 
-    // --- cooldown (kept from D63GSE) ---
+    // --- cooldown ---
 
     #[test]
     fn cooldown_admits_first_then_suppresses_within_window() {

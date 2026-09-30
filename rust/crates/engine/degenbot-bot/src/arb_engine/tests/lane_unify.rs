@@ -6,7 +6,7 @@ use super::*;
 // code — they pin the POST-merge contracts (one carrier, one ledger,
 // the detached arm's lane witness). They GREEN in commit 2.
 // =================================================================
-/// N2 (same-seq replay, WFF6MM single-arm): a merged result and a later
+/// N2 (same-seq replay): a merged result and a later
 /// carrier naming the SAME (`cycle_seq`, pid) must collide on the ONE
 /// ledger — the fuse refuses the second arrival instead of merging
 /// twice.
@@ -341,7 +341,7 @@ fn detached_panic_does_not_leak_inflight_gauge() {
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
 }
-/// WFF6MM cutover: the in-flight cap gate is RETIRED — a cycle whose
+/// Cutover: the in-flight cap gate is RETIRED — a cycle whose
 /// un-dispositioned count sits AT the old cap STILL detaches (the
 /// admission draw, not the cap, owns backpressure now; there is no
 /// in-cycle fallback left to degrade to).
@@ -401,7 +401,7 @@ fn cycle_arm_label_latches_for_every_dispatch_arm() {
         "detached",
         "a sub-cap cycle under the detached stance must latch the detached arm"
     );
-    // At the (retired) in-flight cap: STILL detached (WFF6MM — the
+    // At the (retired) in-flight cap: STILL detached — the
     // cap gate is gone; every dispatched cycle takes the one arm).
     engine
         .cycle

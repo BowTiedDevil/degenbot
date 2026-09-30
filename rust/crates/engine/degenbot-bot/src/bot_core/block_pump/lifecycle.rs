@@ -26,7 +26,7 @@ impl BlockPump {
         reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<(Self, SubscribeState), String> {
-        // (5WTYYQ) Transport connect + subscribe + MJXP5Z handshake all live in
+        // Transport connect + subscribe + handshake all live in
         // degenbot-ingestion; the driver receives the fused, re-injected
         // `IngestEvent` stream + keeps the handle for gap-backfill fetching.
         let ingestor = WsIngestor::connect(rpc_url).await?;
@@ -56,7 +56,7 @@ impl BlockPump {
             .dispatcher()
             .set_strict_decode_fault(pump.ws_completeness_enabled);
 
-        // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
+        // Single-stream handshake - NO resubscribe.
         // The ingestion handshake hands the SAME merged stream onward,
         // re-injecting any logs consumed during header-only polling. One WS,
         // one handoff.
@@ -125,8 +125,8 @@ impl BlockPump {
     /// consumers of the synchronous backfill — the core
     /// [`resume_from_subscribe`](Self::resume_from_subscribe) AND the pyo3
     /// `PumpState::resume` (which must `block_on` the backfill before
-    /// returning so Python's `build_paths` cannot race the per-pool buffer,
-    /// J3FMDO) — MUST go through this helper so the drain discipline has a
+    /// returning so Python's `build_paths` cannot race the per-pool buffer —
+    /// MUST go through this helper so the drain discipline has a
     /// single owner.
     pub async fn backfill_with_drain(
         &self,

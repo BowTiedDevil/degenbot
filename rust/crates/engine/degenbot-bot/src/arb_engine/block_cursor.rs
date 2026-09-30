@@ -63,7 +63,7 @@
 #[expect(clippy::struct_field_names)]
 #[derive(Debug, Default)]
 pub(crate) struct BlockCursor {
-    /// The solve-anchor stamp (KNEUQX): the block the MOST RECENT solve
+    /// The solve-anchor stamp: the block the MOST RECENT solve
     /// cycle ran anchored on — the solve-anchor resolution (request block
     /// floored by the pool-state head, see
     /// `crate::bot_core::solve_anchor`), published as every batch's
@@ -157,7 +157,7 @@ impl BlockCursor {
     pub(crate) const fn is_anchored(&self) -> bool {
         self.results_block != 0
     }
-    /// The solve-anchor stamp (KNEUQX span tagging + batch `solve_block`).
+    /// The solve-anchor stamp.
     #[must_use]
     pub(crate) const fn results_block(&self) -> u64 {
         self.results_block

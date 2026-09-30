@@ -1,6 +1,6 @@
-//! THE Executor seam (parking-lot decision, LW-T8 JI275C): the name is
-//! **`Executor`** — the LANEWARDEN vocabulary finalizes here. Since LNQDOA
-//! (the pooled intake port) this module owns the GLOBAL EXECUTOR TOKEN
+//! THE Executor seam (parking-lot decision, LW-T8): the name is
+//! **`Executor`** — the LANEWARDEN vocabulary finalizes here. Since the pooled intake port landed,
+//! this module owns the GLOBAL EXECUTOR TOKEN
 //! FAMILY for `arb_engine` — `global_executor` (the solve-arm seam) plus
 //! the pooled-intake delegate `global_sim_executor` (which hands out
 //! `fleet_intake`'s `FleetIntake` port over the pooled sim executor; the
@@ -15,7 +15,7 @@ use degenbot_workers::lane::LaneCtx;
 /// One escalated work item handed through a seat's `LaneCtx` port.
 pub(crate) type SubmitWork = Box<dyn FnOnce(&LaneCtx) + Send + 'static>;
 /// The ONE executor seam (LW-T8): `boot/bin_count/submit` + the
-/// `LaneCtx`/`EscalationPort` contracts. (JCI2FW Part A: the retired
+/// `LaneCtx`/`EscalationPort` contracts. (the retired
 /// `observe_throttle` absorb-by-contract default is dissolved — the ONE
 /// process posture owner (`degenbot_workers::posture::process`) is fed
 /// by the block pump directly, and every fleet host consults the same
@@ -24,7 +24,7 @@ pub(crate) trait Executor: Send + Sync {
     /// The structural seat count bins bind at.
     fn bin_count(&self) -> usize;
     /// Submit one LPT bin job; the unit body receives the seat's `LaneCtx`.
-    /// Admission is posture-invariant (7OGY5V/024ef513d): a posture refusal
+    /// Admission is posture-invariant: a posture refusal
     /// at the gate aborts LOUDLY (process exit) with the 'bin submission,
     /// posture gate' context; accepted units are never silently dropped
     /// (units ride one of the solved-arm lanes; receipts are tracked per
@@ -32,7 +32,7 @@ pub(crate) trait Executor: Send + Sync {
     fn submit(&self, bin: usize, work: SubmitWork) -> Result<SubmitReceipt, SubmitError>;
 }
 /// The solve-arm global token (LW-T8): every SOLVE call site submits
-/// through here. LNQDOA: it is the solve arm of a token FAMILY — the
+/// through here. It is the solve arm of a token FAMILY — the
 /// pooled intake arms submit through `global_sim_executor` here (which
 /// delegates to `fleet_intake`'s `FleetIntake` port) and
 /// `fleet_intake::registration_intake` (the pyo3-leaf registration arm),
@@ -47,7 +47,7 @@ pub(crate) trait Executor: Send + Sync {
 pub(crate) fn global_executor() -> &'static dyn Executor {
     crate::arb_engine::fleet_solve_executor::global_fleet_solve_executor()
 }
-/// The pooled SIM intake delegate (LNQDOA): hands out `fleet_intake`'s
+/// The pooled SIM intake delegate: hands out `fleet_intake`'s
 /// `FleetIntake` port over the fleet sim executor, so the sim dispatch
 /// route reads through ONE module (the trait object flows in-crate only).
 pub(crate) fn global_sim_executor(
@@ -57,7 +57,7 @@ pub(crate) fn global_sim_executor(
 // ---------------------------------------------------------------------------
 // THE solve lane: the one outcome-carrier module both solve
 // arms submit through. Folded here from the fleet solve executor's
-// provisional lane module — the placement is the one JI275C named.
+// provisional lane module — the placement is the named placement.
 // WITNESS + CARRIER + LEDGER live together on purpose: the lane knows the
 // pids it owes, the carrier carries what the merge consumes, and the ledger
 // asserts the one-outcome-per-path-per-cycle law across BOTH arms.
@@ -82,7 +82,7 @@ pub(crate) enum LaneFailure {
         /// The panic payload when it is a string.
         message: Option<String>,
     },
-    /// The LANE died mid-flight (FF-T4, Z6XTDX): the seat thread
+    /// The LANE died mid-flight (FF-T4): the seat thread
     /// abandoned its bin before draining its paths — every still-owed
     /// path becomes one of these terminal records. The fleet cordons
     /// (the sticky [`degenbot_workers::posture::PostureCause::LaneDeath`]
@@ -122,7 +122,7 @@ pub(crate) struct SolveOutcome {
     /// construction: the cycle holds the Mutex through the merge).
     pub update_stamp: Vec<u64>,
     /// The enqueue-time solve span the sidecar re-enters per item
-    /// (MQUKB6-T2). `Span::none()` on the in-cycle arm and in tests.
+    ///. `Span::none()` on the in-cycle arm and in tests.
     pub solve_span: tracing::Span,
 }
 /// One drained per-path outcome: EXACTLY one per submitted path.
@@ -332,7 +332,7 @@ impl SolveLane {
             .collect()
     }
 }
-/// The lane-death response (FF-T4, Z6XTDX — AC 3): a lane that died
+/// The lane-death response (FF-T4 — AC 3): a lane that died
 /// mid-flight (its seat thread abandoned the bin before draining its
 /// paths) gets TERMINAL RECEIPTS — every still-owed path patched onto
 /// the pipe as exactly one typed `Failed(LaneFailure::LaneDeath)`
@@ -491,7 +491,7 @@ mod tests {
             PosturePolicy::doc_defaults(),
         )))
     }
-    /// AQV6EF AC1 (red-first): an outcome send against a DROPPED merge
+    /// An outcome send against a DROPPED merge
     /// Receiver must fire the drain-death hook with the typed failure —
     /// and must NOT bump the in-flight gauge (the failed send was never a
     /// delivery).
@@ -532,7 +532,7 @@ mod tests {
             "a FAILED send is not a delivery: the in-flight gauge must not bump"
         );
     }
-    /// AQV6EF AC1/AC2: the drain-death response trips the FF-T4 STICKY
+    /// The drain-death response trips the FF-T4 STICKY
     /// cordon (only a fresh process lifts it) and stays loud.
     #[test]
     fn a_dead_merge_drain_cordons_the_fleet_stickily() {

@@ -13,12 +13,12 @@
 //! old `DispatchOwner` FIFO needed is a cheap I3 check the driver runs at
 //! each work site (see `block_pump::run_with_stream`).
 //!
-//! Channels survive ONLY at genuine asynchrony boundaries (SZJUKL):
+//! Channels survive ONLY at genuine asynchrony boundaries:
 //! - the **block clock** (delivery-to-Python header ticks) — an unbounded
 //!   mpsc send per accepted header, never queued behind solver work;
 //! - the **result batch** channel — the Published edge `on_publish` writes
 //!   the debounced batch into; Python's consumer subscribes there as a
-//!   sink (ADR-027 completion, B4GX7C lineage).
+//!   sink (ADR-027 completion lineage).
 //!
 //! The no-progress/strike obligations of the dissolved `DrainerHealth`
 //! map onto the machine's `WatchdogPhase`: header staleness =
@@ -204,7 +204,7 @@ impl EngineStages {
         )))
     }
 
-    /// Read the current pump-protocol phase (ZU7RAF core-owned truth): the
+    /// Read the current pump-protocol phase: the
     /// engine session's read-only sub-state. Operator legality lives in the
     /// [`crate::strategy_host::StrategyHost`] FSM, not here.
     #[must_use]
@@ -247,7 +247,7 @@ impl EngineStages {
             .map(|p| p.pools.clone())
     }
 
-    /// Read the last solved results + block (RAYPAR snapshot).
+    /// Read the last solved results + block.
     #[must_use]
     pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
         latest_results(&self.engine.lock())
@@ -451,7 +451,7 @@ impl EngineStages {
             } else {
                 run_engine_cycle(&mut engine, affected, block, metadata)
             };
-            // KNEUQX: surface the cycle's anchored block on the span.
+            // Surface the cycle's anchored block on the span.
             span.record("cycle.solve_block", engine.cycle.cursor.results_block());
             // Cold-start trace (ADR-045 T5): attribute the cycle arm from the
             // typed OUTCOME, never a post-hoc engine stash.
@@ -500,7 +500,7 @@ impl EngineStages {
 /// `event_routing.rs::solve_dirty` prologue), the machine's `run_epoch`, and the
 /// processed-cursor stamp.
 ///
-/// LPEOBI/XC7SWD: the expiry core write runs FIRST, ahead of `run_epoch`,
+/// The expiry core write runs FIRST, ahead of `run_epoch`,
 /// under the SAME engine lock — the engine-then-core nesting is
 /// byte-identical to the retired engine method (never takes the engine lock
 /// while holding the core lock).
@@ -544,7 +544,7 @@ fn run_engine_cycle(
 /// 4.85s vs the rebuild-cycle internal p95 of 0.46s; Jaeger children
 /// sum to <0.5s of a 3.1-3.3s solve span).
 ///
-/// LPEOBI: with the cockpit default (`max_age=None`) the expiry is a
+/// With the cockpit default (`max_age=None`) the expiry is a
 /// provable no-op (`expire()` early-returns: "If `max_age` is `None`",
 /// `liquidity_event_buffer.rs`) - and each write still bought a ~2.9s
 /// writer-queue slot under the block-apply stream (lock WAIT p90
@@ -636,7 +636,7 @@ impl StageHandlers for EngineStages {
     /// The take preserves the retired `DirtySets::take_all` semantics;
     /// keys recorded while this drain runs land in the NEXT cycle).
     ///
-    /// QTZGFL: under the construction-stamped admission stance this is a
+    /// Under the construction-stamped admission stance this is a
     /// capacity-modulated DRAW — `budget = max(0, target − in-flight)` KEYS,
     /// freshest-first, the overflow RETAINED for a later cycle (carry). A zero
     /// budget draws nothing; the engine's solve cycle then sheds. The same
@@ -645,7 +645,7 @@ impl StageHandlers for EngineStages {
     /// the ledger mutex inside `expire_older_than`/`draw_freshest` is the
     /// inner lock — never the reverse.
     ///
-    /// QTZGFL: THIS is the SINGLE consumption decision (F3). The zero-budget
+    /// THIS is the SINGLE consumption decision (F3). The zero-budget
     /// verdict is stashed on the engine for the same cycle's dispatch — the
     /// dispatch consumes and clears it under the engine mutex and never
     /// re-reads the live gauge. The stage machine drives Resolved -> Solved
@@ -706,7 +706,7 @@ impl StageHandlers for EngineStages {
         if engine.cycle.cursor.finalize(work.ctx.block()) {
             compute_diff_and_send(&mut engine, work.ctx.metadata());
         }
-        // Authoritative per-family apply split (2SDIQW): hotpath labels do
+        // Authoritative per-family apply split: hotpath labels do
         // not aggregate reliably in impl_type mode, so the atomics summarize
         // per block here. Format: calls:us per family.
         let (apply_calls, apply_us) = degenbot_substrate::apply_telemetry::snapshot_reset();
@@ -792,7 +792,7 @@ impl PumpControl for EngineStages {
 }
 #[cfg(test)]
 mod fleet_stance_tests {
-    //! BCA77G: the merge sidecar hosted as the fleet `Merge` role. LW-T9:
+    //! The merge sidecar hosted as the fleet `Merge` role. LW-T9:
     //! the fleet.stance flip matrix is retired — ONE posture survives.
     // the naming/census fns moved into the machine; the pins
     // (byte-identical naming + census row) stay right here.

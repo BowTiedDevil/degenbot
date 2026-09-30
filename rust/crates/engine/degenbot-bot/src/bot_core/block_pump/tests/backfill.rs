@@ -45,7 +45,7 @@ async fn burst_of_logs_publishes_once_at_tail_via_quiesce_gate() {
         sent.len()
     );
 }
-/// BO5FBS publish-gate interaction: the newHead-driven eager solve is
+/// Publish-gate interaction: the newHead-driven eager solve is
 /// distinct from the publish gate. With the promotion live, `on_drain`
 /// fires eagerly at the promoted block (`pool_state_head` 500) on the
 /// `LogsArriving` path, but NO publish (`on_send`) occurs until a forward
@@ -182,7 +182,7 @@ async fn auto_backfill_runs_inside_resume_when_s_lt_w() {
     );
 }
 
-/// J3FMDO race regression: `backfill_to_ws_block` is the
+/// Race regression: `backfill_to_ws_block` is the
 /// synchronously-awaitable backfill that `PumpState::resume` `block_on`s
 /// BEFORE spawning the live loop. Pre-fix the backfill ran INSIDE the
 /// spawned `resume_from_subscribe` task, so `PumpState::resume` returned
@@ -233,7 +233,7 @@ async fn backfill_to_ws_block_populates_buffer_before_return() {
 /// block's logs — tripping the WS-completeness abort (observed live:
 /// `eth_getLogs=44 logs, WS delivered=0` at block 25800995). The helper
 /// returns the stream to hand to `run_with_stream`: drained events
-/// first (arrival order, MJXP5Z), live tail after — and the J3FMDO
+/// first (arrival order), live tail after — and the
 /// synchronous-backfill contract still holds (buffer populated on
 /// return).
 #[tokio::test]
@@ -278,7 +278,7 @@ async fn backfill_with_drain_reinjects_events_present_during_backfill() {
     let (backfill_res, mut combined) = pump.backfill_with_drain(100, combined).await;
     backfill_res.expect("backfill completes against the mock");
 
-    // J3FMDO invariant preserved: the backfill buffer is populated on
+    // Invariant preserved: the backfill buffer is populated on
     // return (the synchronous contract `PumpState::resume` relies on).
     assert_eq!(
         bot.state_arc()

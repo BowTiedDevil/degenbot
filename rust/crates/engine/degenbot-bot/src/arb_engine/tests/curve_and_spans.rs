@@ -652,7 +652,7 @@ fn solve_spans_anchor_to_their_own_published_block() {
         "solve(unpublished block) must keep the ambient parent - no fallback mis-dating"
     );
 }
-/// KNEUQX: the arb.solve span records `cycle.solve_block` (the cycle's
+/// The arb.solve span records `cycle.solve_block` (the cycle's
 /// anchored work block = `engine.cycle.cursor.results_block()`) alongside the entry
 /// block.number tag. At a settle boundary the anchor is the pool-state
 /// head and can run one (or more) ahead of the entry block - the field
@@ -738,7 +738,7 @@ fn solve_cycle_emits_arb_solve_span_with_block_number() {
     });
     provider.force_flush().expect("flush");
     let spans = exporter.get_finished_spans().expect("spans");
-    // Same dual-representation attribute check as the MQUKB6 pump test (tracing-
+    // Same dual-representation attribute check as the pump test (tracing-
     // opentelemetry 0.33 maps u64 fields to strings; an OTel bump may switch to
     // I64 - accept both).
     let my_spans: Vec<_> = spans
@@ -761,7 +761,7 @@ fn solve_cycle_emits_arb_solve_span_with_block_number() {
         spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
     );
 }
-/// XC7SWD + LPEOBI: the pre-cycle expiry window (core write
+/// The pre-cycle expiry window (core write
 /// `expire_v3/v4`) owns a ~2.8-3.1s lock-queue slot per cycle. When
 /// `max_age` is unset (production cockpit default) the expiry is
 /// PROVABLY a no-op and must not take the core write at all: no
@@ -809,7 +809,7 @@ fn solve_cycle_skips_expire_spans_when_max_age_unset() {
 /// borrow-free for the parallel dispatch. That phase must emit its own
 /// `degenbot.arb.stage` phase span carrying `paths.staged`, so the
 /// staging cost is attributable in Jaeger like its fanout/resolve/lpt/
-/// merge siblings (MQUKB6-T2 pattern). RED before the span existed.
+/// merge siblings. RED before the span existed.
 #[cfg(feature = "otel")]
 #[test]
 #[expect(clippy::expect_used)]
@@ -877,7 +877,7 @@ fn run_epoch_emits_stage_span_with_paths_staged() {
         spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
     );
     // Dual-representation check (u64 fields map to String or I64 under
-    // tracing-opentelemetry 0.33; mirrors the MQUKB6 pump test).
+    // tracing-opentelemetry 0.33; mirrors the pump test).
     assert!(
             stage_spans[0].attributes.iter().any(|kv| {
                 kv.key == opentelemetry::Key::from_static_str("paths.staged")

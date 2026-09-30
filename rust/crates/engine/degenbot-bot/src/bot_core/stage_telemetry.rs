@@ -19,7 +19,7 @@
 //!   transition; point rows (`quiesced`, `publish`, `finalize`) emit and drop
 //!   immediately (they carry no waiting time of their own).
 //!
-//! ## G3 stall lesson (preserved — SONJQA, trace a1ad51bd)
+//! ## G3 stall lesson (trace a1ad51bd)
 //!
 //! The old `pump.log_wait` child was force-closed past
 //! `LOG_WAIT_MAX_AGE_SECS` because a quiet gap left it dangling 12.7s against
@@ -49,7 +49,7 @@ use tracing::Span;
 use super::stage_handlers::Stage;
 use degenbot_substrate::epoch::Epoch;
 
-/// SONJQA: max age of a held (open-ended) stage-span interval before the pump
+/// Max age of a held (open-ended) stage-span interval before the pump
 /// force-closes it (with a stall warning). Carried over from
 /// `LOG_WAIT_MAX_AGE_SECS` (the `pump.log_wait` waterfall child bound): the
 /// observed failure shape (trace a1ad51bd, block 25913381) was a 12.7s
@@ -239,7 +239,7 @@ impl StageTelemetry {
         self.open_interval(parent, OpenKind::Streaming, epoch, Some(Stage::Rewind));
     }
 
-    /// SONJQA (G3, preserved): force-close a held stage interval past
+    /// Force-close a held stage interval past
     /// `max_age`. The pump's timed-exit tick (500ms) drives this; a stalled
     /// feed or a stuck reorg window never leaves a waterfall child dangling
     /// against a long-closed epoch root.
@@ -423,7 +423,7 @@ mod tests {
         Instant::now().checked_sub(Duration::from_secs(6)).unwrap()
     }
 
-    /// G3 force-close contract (SONJQA, generalized): a stale interval closes
+    /// G3 force-close contract: a stale interval closes
     /// AT the expiry tick, with its age recorded — never at the next epoch.
     /// Export behavior (the span actually lands in the exporter, closed and
     /// stamped) is pinned by `stale_stage_span_exports_force_closed` below.

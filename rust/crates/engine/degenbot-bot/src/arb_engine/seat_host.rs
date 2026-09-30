@@ -1,12 +1,12 @@
 //! `seat_host` — the ONE host machinery for the fleet hosts: the
 //! byte-identical `WorkQueue` pair, the `seat_loop` pair, and — since
-//! 6HE6RF — the ONE [`HostPump`] host-message triple (`apply_host_msg` +
+//! The ONE [`HostPump`] host-message triple (`apply_host_msg` +
 //! the backlog-draining grant pump + the recv loop) that ALL THREE fleet
 //! hosts run (the pooled pair AND the solve host), plus the
 //! construction-stamped boot install/global boilerplate.
 //! `fleet_sim_executor`, `fleet_registration_executor`, and
 //! `fleet_solve_executor` parameterize the triple; the seat models stay
-//! per host kind (P-RZEWTX): the pooled `WorkQueue` here, the solve
+//! per host kind: the pooled `WorkQueue` here, the solve
 //! host's per-seat keyed mailboxes there.
 //!
 //! # The admission model (design gate — decided BEFORE any code moved)
@@ -23,7 +23,7 @@
 //!   never-drop flood with unbounded backlog; a `Cordoned` posture HOLDS
 //!   new intake — held units wait in the backlog, never dropped
 //!   (`fleet_intake.rs`; test
-//!   `fleet_intake_facade_preserves_the_never_drop_flood`, and JCI2FW
+//!   `fleet_intake_facade_preserves_the_never_drop_flood` and
 //!   Part A's reached-Cordoned test
 //!   `a_cordoned_posture_holds_registration_intake_until_the_cordon_
 //!   lifts`).
@@ -39,13 +39,13 @@
 //!   `submit_in_cordoned_posture_still_admits_solver_units_and_running_
 //!   units_complete`).
 //!
-//! DECISION (RZEWTX, narrowed by 6HE6RF): the host serves the pairwise-
+//! DECISION: the host serves the pairwise-
 //! compatible `WorkQueue` pair (sim + registration); the solve executor's
 //! SEAT MODEL (per-seat mpsc mailboxes keyed by the Solver pin — T3/T6
 //! warm arenas, `seat_loop(seat, rx, done)`) and its typed submit seam
 //! (`Result<SubmitReceipt, SubmitError>`) stay in
 //! `fleet_solve_executor.rs` — folding the seat models themselves is the
-//! documented misfit. 6HE6RF executes the spike's settled WAITING answer
+//! documented misfit. The fold executes the spike's settled WAITING answer
 //! on top: the host-MESSAGE triple (`apply_host_msg` + `pump`, backlog
 //! drain included) folds ONCE here as [`HostPump`], and the solve host
 //! JOINS it — the cap/consult/hold rules now apply ONCE per host instead
@@ -53,7 +53,7 @@
 //! unified shape and behavior-EXACT for solve (spike-proven; the proof
 //! restated on [`HostPump`]): `admits_lease` blocks ONLY the
 //! `(Cordoned, Deferrable)` pair and `Solver` is `CordonClass::Never`.
-//! JCI2FW Part A dissolved the TWO-arm `CordonAdmission` descriptor
+//! The dissolved two-arm `CordonAdmission` descriptor
 //! field entirely: admission consults the ONE shared posture owner
 //! directly and derives the policy from the role's own cordon class —
 //! `FleetHost::posture_admits_role` is the SAME `admits_lease`
@@ -84,7 +84,7 @@
 //!   whose tag (`[fleet-sim]` / `[fleet-reg]`) and stranded-pipe noun stay
 //!   byte-identical per role.
 //!
-//! # The lane interface (FF-T3, Z2YW52 — lanes stay logical)
+//! # The lane interface (FF-T3 — lanes stay logical)
 //!
 //! Lanes are LOGICAL: the LANEWARDEN lane vocabulary names WHO owns
 //! which receipts and ledger writes, never which thread runs them — the
@@ -139,7 +139,7 @@ use std::time::Duration;
 /// The role descriptor: everything that differs between the two pooled
 /// `WorkQueue` executors, and nothing else. The executors are THIN over
 /// this — the machinery (queue, seat loop, host loop, admission, boot
-/// boilerplate) lives once, here. (JCI2FW Part A dissolved the per-role
+/// boilerplate) lives once, here. (dissolved the per-role
 /// `cordon` descriptor field; admission derives from the role's own
 /// `cordon_class()` plus the ONE shared posture owner, read through
 /// `FleetHost::posture_admits_role`.)
@@ -173,7 +173,7 @@ pub(crate) struct SeatRoleDesc {
     /// from (`sim_slot_cap` / `pool_state_updater_slots`).
     pub seats: fn(&FleetBudget) -> usize,
 }
-/// Host-bound message — ONE shape for all three fleet hosts (6HE6RF): a
+/// Host-bound message — ONE shape for all three fleet hosts: a
 /// submitted unit, or a seat reporting its unit done. Completion applies
 /// the slot's own T-row ([`FleetHost::complete`] keys off the slot FSM
 /// state: T5 pooled → idle, T3 Solver → warm re-pin), so the message
@@ -221,7 +221,7 @@ impl Admission {
         matches!(self, Admission::Admit)
     }
 }
-/// THE pure admission predicate (JCI2FW unified consult, 6HE6RF fold): a
+/// THE pure admission predicate:: a
 /// total function of [`AdmissionInputs`] ALONE. It is the ONLY gate on the
 /// backlog → role-queue move; `try_enqueue`'s `PostureHeld` hand-back
 /// stays the TOCTOU backstop for a cordon onset between the consult and the
@@ -344,7 +344,7 @@ struct SeatJob {
 }
 /// The shared pooled-seat work queue (std `mpsc` receivers are not
 /// `Clone`, so the contended seat pool rides a condvar deque). Folded once
-/// from the byte-identical pair (RZEWTX).
+/// from the byte-identical pair (.
 #[derive(Default)]
 struct WorkQueue {
     queue: parking_lot::Mutex<VecDeque<SeatJob>>,
@@ -389,7 +389,7 @@ impl WorkQueue {
     }
 }
 /// Which dispatch grant kinds a host's [`HostPump`] is contracted to serve
-/// (the row-#6 contract check, loud on ALL THREE hosts since 6HE6RF): a
+/// (the row-#6 contract check, loud on all three hosts): a
 /// grant outside this set is a broken host contract, never a seat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GrantContract {
@@ -414,11 +414,11 @@ impl GrantContract {
         }
     }
 }
-/// P-RZEWTX: the seat-model split of the unified host-message triple. The
+/// The seat-model split of the unified host-message triple. The
 /// triple (admission, backlog drain, grant loop) is ONE shape; routing a
 /// GRANTED unit to its seat stays per host kind — the pooled `WorkQueue`
 /// condvar pair vs the solve host's per-seat keyed mailboxes (warm arenas,
-/// typed `LaneCtx`). Folding the seat models themselves is the RZEWTX
+/// typed `LaneCtx`). Folding the seat models themselves is the
 /// misfit; this trait is the seam that keeps them apart.
 pub(crate) trait SeatSink {
     /// Route one T2-started grant to its seat. `host` is handed back
@@ -426,7 +426,7 @@ pub(crate) trait SeatSink {
     /// (`ensure_arena`) at the same seam the pre-fold loop did.
     fn deliver(&self, host: &mut FleetHost, grant: Grant, unit: Unit);
 }
-/// The pooled seat model (sim + registration, RZEWTX byte-identical): the
+/// The pooled seat model (sim + registration, byte-identical): the
 /// granted unit joins the shared `WorkQueue` — any idle pooled seat takes
 /// it (seats contend, no pin affinity); completion carries the granted
 /// slot back for T5.
@@ -485,21 +485,21 @@ impl HostDiscipline for PooledDiscipline {
         )
     }
 }
-/// THE one host-message/waiting shape (6HE6RF): `apply_host_msg` + the
+/// THE one host-message/waiting shape: `apply_host_msg` + the
 /// backlog-draining grant pump + the recv loop, folded ONCE behind all
 /// three fleet hosts. The pooled pair (sim + registration) and the solve
-/// host parameterize it — everything the JCI2FW-diverged pair actually
+/// host parameterize it — everything the diverged pair actually
 /// differed on is a field:
 ///
-/// - [`SeatSink`] — the seat model split (P-RZEWTX): the pooled
+/// - [`SeatSink`] — the seat model split: the pooled
 ///   `WorkQueue` vs the solve host's per-seat keyed mailboxes.
 /// - `mirror: Option<&AtomicUsize>` — the typed-submit receipt's
 ///   advisory stamp (solve only; `None` on the fire-and-forget pooled
 ///   port). It stores the BOUNDED role-queue length at the last stamp
 ///   (spill or `SeatDone`) — NOT the backlog depth: the receipt bit means
 ///   "the role queue was >= cap at the last stamp", an advisory lagging
-///   flag exactly as `SubmitReceipt`'s doc says. (6HE6RF fixed the
-///   overstated "backlog mirror" COMMENT; the mechanism is kept.)
+///   flag exactly as `SubmitReceipt`'s doc says. (the
+///   "backlog mirror" comment no longer overstates; the mechanism is kept.)
 /// - [`GrantContract`] — the row-#6 grant-kind contract, now explicit on
 ///   all three hosts (solve GAINED it: pre-fold a foreign grant reached
 ///   the solve pump only to die by the `seats.get(slot)` indexing
@@ -523,7 +523,7 @@ impl HostDiscipline for PooledDiscipline {
 /// the consult's unconditional presence here IS the point (one shape,
 /// one consult, class-derived).
 ///
-/// # Wake discipline (the ratified contract — TB4QGX, ADR-044)
+/// # Wake discipline (the ratified contract — ADR-044)
 ///
 /// The pump runs on a message AND on the `BackstopTick`: `recv_timeout` is
 /// armed iff the backlog is non-empty (T2), so a guard change that arrives
@@ -550,7 +550,7 @@ pub(crate) struct HostPump<'a> {
     pub(crate) role: WorkerRole,
     /// The row-#6 grant-kind contract (loud on all three hosts).
     pub(crate) grants: GrantContract,
-    /// The seat model (P-RZEWTX split).
+    /// The seat model.
     pub(crate) sink: &'a dyn SeatSink,
     /// The typed-receipt advisory mirror (solve only; `None` = pooled).
     pub(crate) mirror: Option<&'a AtomicUsize>,
@@ -565,7 +565,7 @@ pub(crate) struct HostPump<'a> {
     /// passes trip the loud fail). Borrowed so it persists across every
     /// pump pass of one host thread.
     pub(crate) no_progress: &'a mut NoProgressGuard,
-    /// The S2 fault watch (TB4QGX T6): set on entering Faulted so every
+    /// The S2 fault watch: set on entering Faulted so every
     /// parked intake receipt resolves terminally. `None` on hosts whose
     /// receipts are not pyo3-owned (sim/solve): `progress()` requires a
     /// watch, so they NEVER enter Faulted — held work there follows the
@@ -589,12 +589,12 @@ impl HostPump<'_> {
     /// The intake progress state (backlog emptiness today; the fault and
     /// closed arms land with the transitions that make them reachable).
     fn progress(&self) -> ProgressState {
-        // Faulted is a PURE function of the sticky typed latch (TB4QGX T6):
+        // Faulted is a PURE function of the sticky typed latch:
         // no separate flag, so double lane-death delivery is idempotent by
         // construction and no elapsed-time heuristic can reach it. Gated on
         // a fault watch: only receipt-owning hosts Fault — a SHARED process
         // posture owner's sticky latch must never fault a host with no
-        // receipts (the 7KAPBB cross-test contamination class).
+        // receipts (a cross-test contamination class).
         if self.fault.is_some() && self.host.lane_death_held() {
             ProgressState::Faulted
         } else if self.backlog.is_empty() {
@@ -604,14 +604,14 @@ impl HostPump<'_> {
         }
     }
     /// Publish the live backlog depth to the `degenbot_fleet_intake_backlog`
-    /// gauge (TB4QGX T7). Called at every pump exit and after a fault drain,
+    /// gauge. Called at every pump exit and after a fault drain,
     /// so a stalled held backlog is observable.
     fn publish_backlog(&self) {
         if let Some(pipeline) = crate::instruments::pipeline() {
             pipeline.set_intake_backlog(self.role.label(), self.backlog.len() as u64);
         }
     }
-    /// The Faulted arm (TB4QGX T6): drain the backlog AND the role queue and
+    /// The Faulted arm: drain the backlog AND the role queue and
     /// report the held count to the S2 fault watch. Granted in-flight units
     /// are untouched (they complete naturally). A held unit runs ZERO times
     /// here — resolution != execution, so at-most-once holds. Idempotent:
@@ -692,7 +692,7 @@ impl HostPump<'_> {
                 // pump — never dropped (§10 ledger).
                 //
                 // The pre-check ALSO consults the ONE shared posture owner
-                // (JCI2FW Part A), unconditionally. For Solver this is
+                //, unconditionally. For Solver this is
                 // provably a no-op (the struct doc's proof:
                 // `admits_lease` blocks only `(Cordoned, Deferrable)`;
                 // `Solver` is `CordonClass::Never`) — the consult's
@@ -702,7 +702,7 @@ impl HostPump<'_> {
                     if let Some(mirror) = self.mirror {
                         // The spill stamp: the receipt's advisory reads the
                         // BOUNDED role-queue length at the stamp — not the
-                        // backlog depth (the honest mirror note, 6HE6RF).
+                        // backlog depth.
                         mirror.store(self.host.queue_len(self.role), Ordering::Relaxed);
                     }
                 } else if let Err((err, unit)) = self.host.try_enqueue(unit) {
@@ -749,7 +749,7 @@ impl HostPump<'_> {
     /// grant time — the seat-model delivery IS the claim — and completion
     /// arrives via [`HostMsg::SeatDone`].
     pub(crate) fn pump(&mut self) {
-        // Faulted FIRST (TB4QGX T6): the sticky lane-death latch means no
+        // Faulted FIRST: the sticky lane-death latch means no
         // admit can ever arrive, so held work is resolved terminally (and
         // this returns before the T4 guard, which must never accrue here).
         if self.progress() == ProgressState::Faulted {
@@ -804,7 +804,7 @@ impl HostPump<'_> {
                 break;
             }
             for (grant, unit) in grants {
-                // Row #6, loud on ALL THREE hosts since 6HE6RF: this host
+                // Row #6, loud on ALL THREE hosts: this host
                 // only enqueues its own role's units, so every grant must
                 // be one of its contracted kinds. Anything else is a broken
                 // host contract, not a drop. (The solve host GAINED this
@@ -961,7 +961,7 @@ impl SeatHost {
     /// (the census prints `logical`). Intake stays the §10 never-drop
     /// shape; saturation is the advisory queue depth, named and metered
     /// through the census's serial binding row (no second waiting
-    /// policy — the 6HE6RF amendment).
+    /// policy — the amendment).
     fn boot_serial(
         desc: &'static SeatRoleDesc,
         host: FleetHost,
@@ -1086,7 +1086,7 @@ fn seat_loop(desc: &'static SeatRoleDesc, work: &WorkQueue, done: &mpsc::Sender<
 }
 /// The pooled hosts' dispatch loop: build the unified [`HostPump`] for the
 /// descriptor's role (the FOLD MAP — everything per-host is a field) and
-/// run the ONE recv → apply → pump loop (6HE6RF).
+/// run the ONE recv → apply → pump loop.
 /// (`rx` moves into [`HostPump::run`] — the thread-boundary move the
 /// pre-fold loop needed a lint expectation for is now `run`'s.)
 #[expect(
@@ -1464,7 +1464,7 @@ macro_rules! impl_seat_hosted {
 }
 pub(crate) use impl_seat_hosted;
 // ---------------------------------------------------------------------------
-// 6HE6RF: the cross-host property suite. The unified HostPump is driven
+// The cross-host property suite. The unified HostPump is driven
 // DIRECTLY in both parameterizations (the dispatcher::harness precedent —
 // the core is exercised by a deterministic script, not by production
 // callers), with the seat-model artifacts (seat counts, keyed-pin chain,
@@ -1492,8 +1492,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     /// A FRESH hermetic posture owner (leaked to 'static): every test boot
-    /// gets its own owner, never the process global (7KAPBB isolation).
-    /// Per-file hermeticity stays per-file (the 6HE6RF KILL list): this
+    /// gets its own owner, never the process global.
+    /// Per-file hermeticity stays per-file (the kill list): this
     /// suite owns its helper and does not couple the other test binaries.
     fn hermetic_owner() -> &'static PostureOwner {
         std::boxed::Box::leak(std::boxed::Box::new(PostureOwner::new(
@@ -1514,7 +1514,7 @@ mod tests {
         assert_eq!(owner.current(), FleetPosture::Cordoned);
     }
     /// Feed the full clean hysteresis (10 s of virtual clean ticks since
-    /// the dirty sample at now = 0) — the JCI2FW lift.
+    /// the dirty sample at now = 0) — the lift.
     fn lift_cordon(owner: &'static PostureOwner) {
         let mut now = 1_000;
         loop {
@@ -1608,7 +1608,7 @@ mod tests {
         }
         fn foreign_grant(&self, kind: GrantKind) -> ! {
             self.recorder.record(Outcome::ForeignGrant(kind));
-            panic!("6HE6RF row-#6 denial recorded: {kind:?}");
+            panic!("Row-#6 denial recorded: {kind:?}");
         }
     }
     /// The two host kinds the property drives (the parameterization IS the
@@ -1616,7 +1616,7 @@ mod tests {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum HostKind {
         /// The pooled pair's registration arm: `PoolStateUpdater` (Deferrable
-        /// the JCI2FW cordon hold is reachable), one grant kind, no
+        /// the cordon hold is reachable), one grant kind, no
         /// receipt mirror (the fire-and-forget port).
         Pooled,
         /// The solve host: `Solver` (`CordonClass::Never`), the pin-pair
@@ -1805,7 +1805,7 @@ mod tests {
                 .collect()
         }
     }
-    /// THE cross-host property (6HE6RF): drive IDENTICAL unit sequences
+    /// THE cross-host property: drive IDENTICAL unit sequences
     /// into both host kinds and assert IDENTICAL backlog ORDER outcomes —
     /// every unit seated exactly once, in SUBMISSION order (the §10
     /// spill-to-backlog + drain-first FIFO), with the backlog empty at the
@@ -1896,7 +1896,7 @@ mod tests {
     /// unconditionally; the outcomes differ ONLY by the role's own cordon
     /// class, never by host-kind code: the Deferrable registration host
     /// HOLDS intake in the backlog, while the solve host ADMITS
-    /// and grants under the cordon (7OGY5V — the consult is provably
+    /// and grants under the cordon — the consult is provably
     /// constant-true for `CordonClass::Never`, so the unconditional consult
     /// is behavior-EXACT for solve).
     #[test]
@@ -1935,7 +1935,7 @@ mod tests {
     /// THE rows-#2 + #6 dissolution, made observable cross-host: a
     /// foreign-role unit reaching each host's pump under a forced cordon.
     /// Pre-fold, the solve host ABORTED THE PROCESS on this exact input
-    /// (the 6HE6RF red: no `try_enqueue` hand-back arm — the pooled host
+    /// (the red: no `try_enqueue` hand-back arm — the pooled host
     /// held the identical input) and, under Nominal, silently SEATED a
     /// foreign grant via the seats.get indexing accident. The unified
     /// shape: BOTH hosts hold the unit in the backlog during the cordon
@@ -2024,7 +2024,7 @@ mod tests {
             "the foreign unit is NEVER seated on the pooled host either"
         );
     }
-    /// Q3.4 (the honest mirror, 6HE6RF): the receipt bit tracks the
+    /// Q3.4 (the honest mirror): the receipt bit tracks the
     /// BOUNDED role-queue stamp — NOT the backlog depth. After the spill
     /// the mirror equals the cap (bit TRUE: the queue WAS at cap); after
     /// the next `SeatDone` stamp the mirror reads the DRAINED queue (bit

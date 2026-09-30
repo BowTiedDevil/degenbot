@@ -420,7 +420,7 @@ fn allow_subscribe_accepts_created_and_snapshot_loaded() {
     assert!(PumpPhase::Backfilled.allow_subscribe("subscribe").is_err());
     assert!(PumpPhase::Resumed.allow_subscribe("subscribe").is_err());
 }
-/// J3FMDO regression: `subscribe()` must not regress the phase below
+/// Regression: `subscribe()` must not regress the phase below
 /// `SnapshotLoaded` when the core already has a snapshot loaded (the
 /// construction-time-load path: `load_snapshot_from_db` at `Bot`
 /// construction → `subscribe`). The snapshot is loaded into the shared
