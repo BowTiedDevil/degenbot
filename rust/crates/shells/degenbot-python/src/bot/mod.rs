@@ -487,21 +487,17 @@ impl PyBot {
     /// `RuntimeError` if no pump state is attached (no engine constructed
     /// against this bot) or the receiver was already handed out.
     pub fn block_stream(&self) -> PyResult<crate::bot::engine::BlockStream> {
-        // parking_lot::lock() is infallible (no poisoning) — the guard derefs
-        // straight to Option<Arc<EngineDriver>>.
-        let pump = {
-            let guard = self.pump.lock();
-            match guard.as_ref() {
-                Some(p) => p.clone(),
-                None => {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                        "no pump state: construct an engine against this Bot first",
-                    ))
-                }
+        use degenbot_bot::bot_core::bot::BlockStreamError;
+        // D4 state: the pump `Mutex<Option<Arc<EngineDriver>>>` is read here;
+        // the once-only receiver hand-off is the core `Bot::block_stream`.
+        let pump = self.pump.lock().clone();
+        let block_rx = Bot::block_stream(pump.as_deref()).map_err(|e| match e {
+            BlockStreamError::NoPumpState => pyo3::exceptions::PyRuntimeError::new_err(
+                "no pump state: construct an engine against this Bot first",
+            ),
+            BlockStreamError::AlreadyTaken => {
+                pyo3::exceptions::PyRuntimeError::new_err("block_stream() can only be called once")
             }
-        };
-        let block_rx = pump.take_block_receiver().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("block_stream() can only be called once")
         })?;
         Ok(crate::bot::engine::BlockStream::new(block_rx))
     }
@@ -527,23 +523,24 @@ impl PyBot {
     /// `PyRuntimeError` on a DB open/read failure or a liquidity value
     /// out of range.
     #[pyo3(signature = (db_path, chain_id))]
-    fn load_snapshot_from_db(&self, db_path: &str, chain_id: u64) -> PyResult<()> {
-        // open a `SnapshotDb` — a read-only handle with a held
-        // deferred read transaction. `Bot::load_snapshot_from_db` reads `S =
+    fn load_snapshot_from_db(&self, py: Python<'_>, db_path: &str, chain_id: u64) -> PyResult<()> {
+        use degenbot_bot::bot_core::bot::SnapshotOpenError;
+        // The core opens the `SnapshotDb` — a read-only handle with a held
+        // deferred read transaction — and reads `S =
         // min(fetch_newest_update_block(V3), V4)` INSIDE the held tx so `S`
         // and every per-pool `fetch_liquidity_map` read share one frozen DB
         // snapshot across `build_paths` (the consistency replacement for the
-        // retired `SnapshotStore`). `PyBot.close_snapshot_tx()` commits the
-        // tx at end of `build_paths` to release the WAL snapshot.
-        let snap = degenbot_db::snapshot_db::SnapshotDb::open(&std::path::PathBuf::from(db_path))
-            .map_err(|e| crate::db::db_err_to_py(&e))?
-            .0;
-        self.bot
-            .load_snapshot_from_db(&snap, chain_id)
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
+        // retired `SnapshotStore`); the STILL-OPEN handle comes back for the
+        // shell to retain. `PyBot.close_snapshot_tx()` commits the tx at end
+        // of `build_paths` to release the WAL snapshot.
+        // GIL hygiene: the DB open + seed read run under this py.detach.
+        let snap = py
+            .detach(|| self.bot.load_snapshot_from_db_path(db_path, chain_id))
+            .map_err(|e| match e {
+                SnapshotOpenError::Open(e) => crate::db::db_err_to_py(&e),
+                SnapshotOpenError::Load(e) => pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "load_snapshot_from_db failed: {e}"
-                ))
+                )),
             })?;
         // Retain the `SnapshotDb` as a long-lived `Arc` so the registration-
         // path PyO3 functions (`assemble_v3_tick_map` etc.) clone it to feed
@@ -564,43 +561,35 @@ impl PyBot {
     /// # Errors
     /// `PyRuntimeError` if the `COMMIT` fails.
     fn close_snapshot_tx(&self, py: Python<'_>) -> PyResult<()> {
+        use degenbot_bot::bot_core::bot::CloseSnapshotTxError;
         // Canary: capture S_snapshot (read inside the
         // held tx) before committing, then re-read S_live after COMMIT on the
         // same connection (now seeing the live DB). If S_live > S_snapshot the
         // pool_updater committed concurrently with startup — a discipline
         // violation. Correctness was already preserved by the held tx; the
-        // canary only surfaces it.
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        let s_snapshot = self.with_state(py, degenbot_substrate::BotState::snapshot_seed_block);
-        let chain_id = self.bot.chain_id();
+        // canary only surfaces it. That teardown — S capture, sole-Arc
+        // unwrap, COMMIT + canary re-read — is the core
+        // `Bot::close_snapshot_tx`; the shell maps the typed refusals and
+        // emits the operator warning.
+        // GIL hygiene: the teardown runs under this py.detach.
         let snap = self.db.lock().take();
-        if let Some(snap) = snap {
-            // `Arc::try_unwrap` succeeds only if `assemble_*` calls released
-            // their clones. During `build_paths` the Db arm clones per-call +
-            // drops before `close_snapshot_tx` runs, so at this point the only
-            // remaining `Arc` is this one. A failure (clones remain) surfaces
-            // as a `RuntimeError` rather than silently leaking the tx.
-            match std::sync::Arc::try_unwrap(snap) {
-                Ok(snap) => {
-                    let chain = i64::try_from(chain_id).unwrap_or(0);
-                    let report = snap
-                        .close_with_canary(s_snapshot, chain)
-                        .map_err(|e| crate::db::db_err_to_py(&e))?;
-                    if report.advanced {
-                        op_warn!(
-                            domain = state,
-                            s_snapshot = report.s_snapshot.unwrap_or(0),
-                            s_live = report.s_live.unwrap_or(0),
-                            "DB advanced during startup — operator discipline violation"
-                        );
-                    }
-                }
-                Err(_) => {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                        "close_snapshot_tx: SnapshotDb Arc still held (clone leak — \
+        let report = py
+            .detach(|| self.bot.close_snapshot_tx(snap))
+            .map_err(|e| match e {
+                CloseSnapshotTxError::Close(e) => crate::db::db_err_to_py(&e),
+                CloseSnapshotTxError::ArcHeld => pyo3::exceptions::PyRuntimeError::new_err(
+                    "close_snapshot_tx: SnapshotDb Arc still held (clone leak — \
                          a caller didn't drop its handle)",
-                    ));
-                }
+                ),
+            })?;
+        if let Some(report) = report {
+            if report.advanced {
+                op_warn!(
+                    domain = state,
+                    s_snapshot = report.s_snapshot.unwrap_or(0),
+                    s_live = report.s_live.unwrap_or(0),
+                    "DB advanced during startup — operator discipline violation"
+                );
             }
         }
         Ok(())
@@ -727,8 +716,9 @@ impl PyBot {
     /// to stash `_verify_snapshot_block` for the per-pool two-step verify.
     #[getter]
     fn snapshot_seed_block(&self, py: Python<'_>) -> Option<u64> {
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        self.with_state(py, degenbot_substrate::BotState::snapshot_seed_block)
+        // GIL hygiene: the read guard is acquired inside the core method,
+        // which runs under this py.detach (inversion class).
+        py.detach(|| self.bot.snapshot_seed_block())
     }
 
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
@@ -743,7 +733,12 @@ impl PyBot {
     /// started/subscribed, or the WS subscribe fails.
     #[pyo3(signature = (rpc_url))]
     fn subscribe(&self, py: Python<'_>, rpc_url: &str) -> PyResult<u64> {
-        crate::bot::pump::subscribe(py, &self.pump_state()?, rpc_url)
+        let driver = self.pump_state()?;
+        // GIL-release across the WS handshake block_on (the block_on lives in
+        // the core `Bot::subscribe`): the handshake future (WS subscribe +
+        // header polling) does NOT need the GIL to complete.
+        py.detach(|| Bot::subscribe(&driver, rpc_url))
+            .map_err(crate::bot::pump::map_driver_err)
     }
 
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
@@ -753,7 +748,12 @@ impl PyBot {
     /// `backfill_from_snapshot` method is retired. Delegates to the
     /// shared `PumpState`.
     fn resume(&self, py: Python<'_>) -> PyResult<()> {
-        crate::bot::pump::resume(py, &self.pump_state()?)
+        let driver = self.pump_state()?;
+        // GIL-release across the backfill block_on (the block_on lives in the
+        // core `Bot::resume`): the backfill (`eth_getLogs` + `BotState`
+        // mutation) is pure Rust async and does not need the GIL.
+        py.detach(|| Bot::resume(&driver))
+            .map_err(crate::bot::pump::map_driver_err)
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
@@ -765,24 +765,27 @@ impl PyBot {
     /// the `__aexit__` path and a signal handler. Delegates to the shared
     /// `PumpState`.
     fn stop(&self, _py: Python<'_>) -> PyResult<()> {
-        crate::bot::pump::stop(&self.pump_state()?)
+        let driver = self.pump_state()?;
+        Bot::stop(&driver).map_err(crate::bot::pump::map_driver_err)
     }
 
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
     /// Delegates to the shared `PumpState`.
     #[pyo3(signature = (rpc_url))]
     fn set_verify_rpc_url(&self, rpc_url: &str) {
-        if let Ok(pump) = self.pump_state() {
-            pump.set_verify_rpc_url(rpc_url);
-        }
+        // No engine attached → no-op (the swallowed pump_state error, now the
+        // core `None` arm).
+        let pump = self.pump_state().ok();
+        Bot::set_verify_rpc_url(pump.as_deref(), rpc_url);
     }
 
     /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
     #[pyo3(signature = (state_view_address))]
     fn set_verify_state_view(&self, state_view_address: &str) {
-        if let Ok(pump) = self.pump_state() {
-            pump.set_verify_state_view(state_view_address);
-        }
+        // No engine attached → no-op (the swallowed pump_state error, now the
+        // core `None` arm).
+        let pump = self.pump_state().ok();
+        Bot::set_verify_state_view(pump.as_deref(), state_view_address);
     }
 
     /// Run a single V3 pool's registration verify-lifecycle end-to-end
@@ -3603,7 +3606,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             let py_bot = PyBot::new(1);
             py_bot
-                .load_snapshot_from_db(&temp_path.to_string_lossy(), 1)
+                .load_snapshot_from_db(py, &temp_path.to_string_lossy(), 1)
                 .expect("snapshot load must succeed against the seeded temp DB");
 
             // 3. assemble against the seeded pool — expect a hit.
@@ -3708,7 +3711,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             let py_bot = PyBot::new(1);
             py_bot
-                .load_snapshot_from_db(&temp_path.to_string_lossy(), 1)
+                .load_snapshot_from_db(py, &temp_path.to_string_lossy(), 1)
                 .expect("snapshot load must succeed against the seeded temp DB");
             let result = py_bot.assemble_v3_tick_map(
                 py,
@@ -3742,9 +3745,9 @@ mod tests {
     /// stays `None`".
     #[test]
     fn snapshot_load_failure_leaves_db_handle_none() {
-        pyo3::Python::attach(|_| {
+        pyo3::Python::attach(|py| {
             let py_bot = PyBot::new(1);
-            let result = py_bot.load_snapshot_from_db("/nonexistent/path/to/db.sqlite", 1);
+            let result = py_bot.load_snapshot_from_db(py, "/nonexistent/path/to/db.sqlite", 1);
             assert!(
                 result.is_err(),
                 "opening a nonexistent DB path must surface a PyRuntimeError"
@@ -3770,7 +3773,7 @@ mod tests {
             let py_bot = PyBot::new(8453);
             let path_str = fixture.to_string_lossy().to_string();
             py_bot
-                .load_snapshot_from_db(&path_str, 8453)
+                .load_snapshot_from_db(py, &path_str, 8453)
                 .expect("snapshot load against the parity fixture must succeed");
             let handle = py_bot
                 .db_handle()

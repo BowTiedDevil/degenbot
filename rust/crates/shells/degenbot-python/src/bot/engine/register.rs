@@ -243,7 +243,8 @@ impl PyArbEngine {
     fn subscribe(&self, py: Python<'_>, rpc_url: String) -> PyResult<u64> {
         // ADR-050 D7: the engine-only test-seam twin of
         // `PyBot::subscribe` — drives the shared `EngineDriver` directly.
-        crate::bot::pump::subscribe(py, &self.driver, &rpc_url)
+        py.detach(|| degenbot_bot::bot_core::Bot::subscribe(&self.driver, &rpc_url))
+            .map_err(crate::bot::pump::map_driver_err)
     }
 
     /// Pre-pump startup ritual: `subscribe(ws)` → verify-config
@@ -296,7 +297,8 @@ impl PyArbEngine {
     #[expect(clippy::needless_pass_by_value)]
     fn resume(&self, py: Python<'_>, facets: Vec<String>) -> PyResult<()> {
         self.enable_facets(py, &facets)?;
-        crate::bot::pump::resume(py, &self.driver)?;
+        py.detach(|| degenbot_bot::bot_core::Bot::resume(&self.driver))
+            .map_err(crate::bot::pump::map_driver_err)?;
         self.start_hosted_strategies()
             .map_err(super::strategy::map_host_error)?;
         Ok(())
@@ -314,7 +316,7 @@ impl PyArbEngine {
     /// session teardown path and a signal handler. Delegates to the shared
     /// `PumpState`.
     fn stop(&self, _py: Python<'_>) -> PyResult<()> {
-        crate::bot::pump::stop(&self.driver)
+        degenbot_bot::bot_core::Bot::stop(&self.driver).map_err(crate::bot::pump::map_driver_err)
     }
 
     /// Awaitable session-end DETECTION FACT: resolves the core

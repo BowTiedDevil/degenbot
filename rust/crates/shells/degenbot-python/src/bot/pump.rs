@@ -9,7 +9,10 @@
 //! What remains here is translation, not state: the `GIL`-detach-
 //! `block_on`/`future_into_py` wrappers plus the `DriverError` → typed Python
 //! exception maps, as free functions both `PyBot` and `PyArbEngine` call with
-//! their shared driver handle.
+//! their shared driver handle. The `subscribe`/`resume`/`stop` block_on
+//! wrappers moved onto `bot_core::Bot` (the shells call them directly through
+//! the `map_driver_err` seam); `start` and the registration lifecycles keep
+//! their wrappers here.
 
 use degenbot_bot::arb_engine::{DriverError, EngineDriver};
 use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
@@ -18,24 +21,6 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::Bound;
 use std::sync::Arc;
-
-/// Subscribe to the WS `newHeads` + logs streams (drives the driver's
-/// `subscribe` detached from the GIL).
-///
-/// # Errors
-/// `PyRuntimeError` if the pump is already started/subscribed, the phase
-/// is wrong, or the WS subscribe fails.
-pub(crate) fn subscribe(
-    py: Python<'_>,
-    driver: &Arc<EngineDriver>,
-    rpc_url: &str,
-) -> PyResult<u64> {
-    let driver = Arc::clone(driver);
-    // GIL-release across the WS handshake `block_on`: the handshake future
-    // (WS subscribe + header polling) does NOT need the GIL to complete.
-    py.detach(|| degenbot_core::runtime::get_runtime().block_on(driver.subscribe(rpc_url)))
-        .map_err(map_driver_err)
-}
 
 /// Run the pre-pump startup ritual: `subscribe(ws)` then verify-config
 /// (`http`, optional `view`) — the one-call `EngineDriver::start` detached
@@ -69,30 +54,6 @@ pub(crate) fn start(
         ))
     })
     .map_err(map_driver_err)
-}
-
-/// Resume the pump — begin normal WS processing (drives the driver, which
-/// owns the synchronous `S+1..W` auto-backfill before spawning the live
-/// loop).
-///
-/// # Errors
-/// `PyRuntimeError` if the phase is wrong, subscribe wasn't called, the
-/// driver is stopped, or it was already resumed.
-pub(crate) fn resume(py: Python<'_>, driver: &Arc<EngineDriver>) -> PyResult<()> {
-    let driver = Arc::clone(driver);
-    // GIL-release across the backfill `block_on`: the backfill
-    // (`eth_getLogs` + `BotState` mutation) is pure Rust async and does
-    // not need the GIL.
-    py.detach(|| degenbot_core::runtime::get_runtime().block_on(driver.resume()))
-        .map_err(map_driver_err)
-}
-
-/// Stop the pump (the driver's any-phase, idempotent stop).
-///
-/// # Errors
-/// Currently always `Ok`; the typed result keeps the surface symmetric.
-pub(crate) fn stop(driver: &Arc<EngineDriver>) -> PyResult<()> {
-    driver.stop().map_err(map_driver_err)
 }
 
 /// Awaitable session-end DETECTION FACT over [`EngineDriver::wait_session_end`].
