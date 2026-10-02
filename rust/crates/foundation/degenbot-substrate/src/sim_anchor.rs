@@ -106,7 +106,7 @@ impl SimAnchorState {
     #[must_use]
     pub fn snapshot(state: &BotState) -> Self {
         Self {
-            tracked_pools: state.pool_addresses.clone(),
+            tracked_pools: state.registry.pool_addresses.clone(),
             anchor_words: state.project_sim_anchor_scalars().into_iter().collect(),
         }
     }

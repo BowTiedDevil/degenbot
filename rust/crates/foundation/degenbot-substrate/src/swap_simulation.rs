@@ -316,7 +316,7 @@ pub fn simulate_balancer_weighted_pair_out(
     idx_out: usize,
     amount_in: U256,
 ) -> Option<U256> {
-    match bot.pools.get(&pool_id)? {
+    match bot.registry.pools.get(&pool_id)? {
         PoolEntry::BalancerWeighted(p) => {
             let (id, state) = (&p.0, &p.1);
             ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair(
@@ -342,7 +342,7 @@ pub fn simulate_balancer_pair_in_given_out(
     override_balances: Option<&[U256]>,
     override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
-    match bot.pools.get(&pool_id)? {
+    match bot.registry.pools.get(&pool_id)? {
         PoolEntry::BalancerWeighted(p) => {
             let (id, state) = (&p.0, &p.1);
             ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair_in_given_out(
@@ -386,7 +386,7 @@ pub fn simulate_balancer_pair_out(
     override_balances: Option<&[U256]>,
     override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
-    match bot.pools.get(&pool_id)? {
+    match bot.registry.pools.get(&pool_id)? {
         PoolEntry::BalancerWeighted(p) => {
             let (id, state) = (&p.0, &p.1);
             ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair(
@@ -646,7 +646,7 @@ pub(crate) struct RegisteredClSim<'a> {
 
 impl ComputeMerge for RegisteredClSim<'_> {
     fn compute(&self) -> Result<V3SwapOutcome, SimulateSwapError> {
-        let Some(entry) = self.state.pools.get(&self.pool_id) else {
+        let Some(entry) = self.state.registry.pools.get(&self.pool_id) else {
             return Err(SimulateSwapError::NotComputable);
         };
         match entry {
@@ -684,11 +684,12 @@ impl ComputeMerge for RegisteredClSim<'_> {
         // Clone the stored fetcher off the registered V3/V4 state BEFORE any
         // mutation (avoids the self-referential borrow hazard the legacy
         // loops documented at bot_core/mod.rs:811).
-        let fetcher: Option<Arc<dyn TickWordFetcher>> = match self.state.pools.get(&self.pool_id) {
-            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
-            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
-            _ => None,
-        };
+        let fetcher: Option<Arc<dyn TickWordFetcher>> =
+            match self.state.registry.pools.get(&self.pool_id) {
+                Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
+                Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
+                _ => None,
+            };
         let Some(fetcher) = fetcher else {
             return Err(FetchFailure::NoFetcher);
         };
@@ -714,7 +715,7 @@ impl BotState {
         if request.amount_specified.is_zero() {
             return Some(Vec::new());
         }
-        let entry = self.pools.get(&pool_id)?;
+        let entry = self.registry.pools.get(&pool_id)?;
         match entry {
             // Non-CL families never fetch: nothing to stage.
             PoolEntry::V2(..)
@@ -789,7 +790,7 @@ impl BotState {
                 fetcher: None,
                 slot_layout: identity.slot_layout,
             },
-            self.journal_depth,
+            self.registry.journal_depth,
         )
         .1;
         v3_transient
@@ -820,7 +821,7 @@ impl BotState {
                 coverage: st.coverage,
                 fetcher: None,
             },
-            self.journal_depth,
+            self.registry.journal_depth,
         )
         .1;
         v4_transient
@@ -836,7 +837,7 @@ impl BotState {
     /// pre-pass fetches through it OUTSIDE any state lock.
     #[must_use]
     pub fn stored_fetcher_for_pool(&self, pool_id: u64) -> Option<Arc<dyn TickWordFetcher>> {
-        match self.pools.get(&pool_id) {
+        match self.registry.pools.get(&pool_id) {
             Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
             Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
             _ => None,
@@ -913,7 +914,7 @@ impl BotState {
         if over.request.amount_specified.is_zero() {
             return Some(Vec::new());
         }
-        let entry = self.pools.get(&over.pool_id)?;
+        let entry = self.registry.pools.get(&over.pool_id)?;
         match entry {
             PoolEntry::V3(p) => {
                 let (identity, state) = (&p.0, &p.1);
@@ -941,7 +942,7 @@ impl BotState {
                                 fetcher: None,
                                 slot_layout: identity.slot_layout,
                             },
-                            self.journal_depth,
+                            self.registry.journal_depth,
                         )
                         .1,
                     )),
@@ -985,7 +986,7 @@ impl BotState {
                                 coverage: PoolTickCoverage::Sparse,
                                 fetcher: None,
                             },
-                            self.journal_depth,
+                            self.registry.journal_depth,
                         )
                         .1,
                     )),
@@ -1030,7 +1031,7 @@ impl BotState {
         if over.request.amount_specified.is_zero() {
             return Ok(None);
         }
-        let Some(entry) = self.pools.get(&over.pool_id) else {
+        let Some(entry) = self.registry.pools.get(&over.pool_id) else {
             return Ok(None);
         };
         let Some(spec) = I256::try_from(over.request.amount_specified).ok() else {
@@ -1086,7 +1087,7 @@ impl BotState {
                     fetcher: None,
                     slot_layout: identity.slot_layout,
                 };
-                let (_id, st) = V3PoolState::from_params(params, self.journal_depth);
+                let (_id, st) = V3PoolState::from_params(params, self.registry.journal_depth);
                 TransientCl {
                     family: TransientFamily::V3(identity.fee, identity.tick_spacing),
                     inner: TransientInner::V3(Box::new(st)),
@@ -1109,7 +1110,7 @@ impl BotState {
                     coverage: PoolTickCoverage::Sparse,
                     fetcher: None,
                 };
-                let (_id, st) = V4PoolState::from_params(params, self.journal_depth);
+                let (_id, st) = V4PoolState::from_params(params, self.registry.journal_depth);
                 TransientCl {
                     family: TransientFamily::V4(
                         identity.pool_key.fee,
@@ -1180,7 +1181,7 @@ impl BotState {
         request: &SwapRequest,
         disarm_fetch: bool,
     ) -> SwapRead {
-        if !self.pools.contains_key(&pool_id) {
+        if !self.registry.pools.contains_key(&pool_id) {
             // Unknown pool: typed refusal — a fabricated zero would be
             // indistinguishable from a real zero-output swap.
             return SwapRead::UnknownPool { pool_id };
@@ -1196,7 +1197,7 @@ impl BotState {
         let magnitude = request.amount_specified.into_sign_and_abs().1;
         let exact_output = request.amount_specified.is_positive();
 
-        let Some(entry) = self.pools.get(&pool_id) else {
+        let Some(entry) = self.registry.pools.get(&pool_id) else {
             return SwapRead::NotComputable;
         };
         match entry {

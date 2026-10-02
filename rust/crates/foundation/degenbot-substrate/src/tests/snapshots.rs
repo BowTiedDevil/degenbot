@@ -99,7 +99,7 @@ fn pool_tick_data_block_exposes_staged_liquidity_clock() {
     // without touching the tick map (direct poke — the two-stamp mutators
     // keep them in lockstep, which is exactly why this class only arises
     // from a bug / non-CL-advancing path).
-    if let Some(crate::PoolEntry::V3(p)) = core.pools.get_mut(&pool_id) {
+    if let Some(crate::PoolEntry::V3(p)) = core.registry.pools.get_mut(&pool_id) {
         let state = &mut p.1;
         state.update_block = 200;
     }
@@ -784,9 +784,9 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     core.apply_v3_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
     core.apply_v3_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
     // Pre-mark: two pump events, no complete block yet.
-    assert_eq!(core.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 2);
+    assert_eq!(core.cl.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 2);
     assert_eq!(core.pump_complete_cutoff(), 0);
-    assert_eq!(core.v3_buffer.pump_total_at_or_below(100), 2);
+    assert_eq!(core.cl.v3_buffer.pump_total_at_or_below(100), 2);
     // Mark block 100 complete (what the pump does at N+1's tombstone).
     core.advance_pump_complete_cutoff(100);
     assert_eq!(core.pump_complete_cutoff(), 100);
@@ -853,7 +853,7 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
     core.apply_v3_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
     core.advance_pump_complete_cutoff(99);
     assert_eq!(core.pump_complete_cutoff(), 99);
-    assert_eq!(core.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 1);
+    assert_eq!(core.cl.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 1);
     core.apply_pump_buffer_v3(&pool_addr);
     core.pin_v3_post_drain_snapshot(pool_addr);
     let (_ticks, pinned_block) = core
@@ -898,7 +898,7 @@ fn pin_preserves_clock_block_when_no_undrained_events() {
     // past the cutoff, so no event could be missing — the clock block is
     // preserved (NOT clamped), and verifying at 100 is correct.
     core.advance_pump_complete_cutoff(99);
-    assert_eq!(core.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 0);
+    assert_eq!(core.cl.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 0);
     core.apply_pump_buffer_v3(&pool_addr);
     core.pin_v3_post_drain_snapshot(pool_addr);
     let (_ticks, pinned_block) = core

@@ -110,7 +110,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
         InstallWordOutcome::Merged,
         "quiet retry merges (fingerprint unchanged since restage)"
     );
-    match core.pools.get(&pool_id) {
+    match core.registry.pools.get(&pool_id) {
         Some(PoolEntry::V3(p)) => {
             let state = &p.1;
             let tick = state
@@ -125,7 +125,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
         }
         _ => panic!("test setup: V3 pool missing"),
     }
-    let known: Vec<i32> = match core.pools.get(&pool_id) {
+    let known: Vec<i32> = match core.registry.pools.get(&pool_id) {
         Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
         _ => panic!("test setup: V3 pool missing"),
     };
@@ -217,7 +217,7 @@ fn ensure_word_known_merges_ticks_and_marks_word_known() {
     let ok = core.ensure_word_known_by_pool_id(pool_id, 0, 99);
     assert!(ok, "a successful fetch must return True");
 
-    let tick_data: HashMap<i32, TickInfo> = match core.pools.get(&pool_id) {
+    let tick_data: HashMap<i32, TickInfo> = match core.registry.pools.get(&pool_id) {
         Some(PoolEntry::V3(p)) => p.1.tick_data().clone(),
         _ => panic!("test setup: V3 pool missing"),
     };
@@ -225,7 +225,7 @@ fn ensure_word_known_merges_ticks_and_marks_word_known() {
         tick_data.contains_key(&60),
         "the fetched word's ticks must land in tick_data (core merge reused)"
     );
-    let known: Vec<i32> = match core.pools.get(&pool_id) {
+    let known: Vec<i32> = match core.registry.pools.get(&pool_id) {
         Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
         _ => panic!("test setup: V3 pool missing"),
     };
@@ -274,7 +274,7 @@ fn ensure_word_known_fetch_error_returns_false() {
         !core.ensure_word_known_by_pool_id(pool_id, 0, 99),
         "a fetch failure must return False (the Python gate RAISES, never applies)"
     );
-    let (len, known) = match core.pools.get(&pool_id) {
+    let (len, known) = match core.registry.pools.get(&pool_id) {
         Some(PoolEntry::V3(p)) => {
             let state = &p.1;
             (state.tick_data().len(), state.known_bitmap_words().len())
@@ -329,7 +329,7 @@ fn ensure_word_known_checked_empty_marks_word_known() {
         core.ensure_word_known_by_pool_id(pool_id, 3, 99),
         "a checked-empty fetch is a success: the word is known (T1 semantics)"
     );
-    let known: Vec<i32> = match core.pools.get(&pool_id) {
+    let known: Vec<i32> = match core.registry.pools.get(&pool_id) {
         Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
         _ => panic!("test setup: V3 pool missing"),
     };

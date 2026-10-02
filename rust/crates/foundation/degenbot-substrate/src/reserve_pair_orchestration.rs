@@ -46,24 +46,25 @@ impl BotState {
         // `# Panics` section committed in `19218a2c`).
         ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
         ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
-        if self.pool_addresses.contains_key(&params.address) {
+        if self.registry.pool_addresses.contains_key(&params.address) {
             return Err(RegisterV2PoolError::AlreadyRegistered {
                 address: params.address,
             });
         }
 
-        let pool_id = self.next_pool_id;
-        self.next_pool_id += 1;
+        let pool_id = self.registry.next_pool_id;
+        self.registry.next_pool_id += 1;
 
         // Construct (identity, state) + genesis journal delta on the state
         // struct (ADR-014 D6/Q7 — V2 joins its 6 siblings; the construction
         // + genesis-delta push moved out of `register_v2_pool` into
         // `V2PoolState::from_params`).
-        let (identity, state) = V2PoolState::from_params(params, self.journal_depth);
+        let (identity, state) = V2PoolState::from_params(params, self.registry.journal_depth);
 
-        self.pools
+        self.registry
+            .pools
             .insert(pool_id, PoolEntry::V2(Box::new((identity, state))));
-        self.pool_addresses.insert(params.address, pool_id);
+        self.registry.pool_addresses.insert(params.address, pool_id);
 
         Ok(pool_id)
     }
@@ -93,7 +94,7 @@ impl BotState {
         // twin reaches via `as_reserve_pair_mut()?.apply_sync(...)` — the
         // duplication (the bug-hiding class D1 was written to kill) is removed;
         // the address→pool_id resolution is what this wrapper owns.
-        let &pool_id = self.pool_addresses.get(&pool_address)?;
+        let &pool_id = self.registry.pool_addresses.get(&pool_address)?;
         self.apply_sync_by_pool_id(pool_id, reserve0, reserve1, block_number)
     }
 
@@ -138,7 +139,7 @@ impl BotState {
         reserve1: U112,
         block_number: u64,
     ) -> Option<u64> {
-        let entry = self.pools.get_mut(&pool_id)?;
+        let entry = self.registry.pools.get_mut(&pool_id)?;
         entry
             .as_reserve_pair_mut()?
             .apply_sync(reserve0, reserve1, block_number);
@@ -152,7 +153,8 @@ impl BotState {
     /// orientation-specific `IntHopState` at resolve time from `zero_for_one`.
     #[must_use]
     pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::v2)
             .map(|(_, state)| state)
@@ -163,7 +165,8 @@ impl BotState {
     /// pool is not registered or isn't a V2 pool.
     #[must_use]
     pub fn get_v2_identity(&self, pool_id: u64) -> Option<&V2PoolIdentity> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::v2)
             .map(|(identity, _)| identity)
@@ -190,7 +193,8 @@ impl BotState {
     /// Number of registered V2 pools.
     #[must_use]
     pub fn v2_pool_count(&self) -> usize {
-        self.pools
+        self.registry
+            .pools
             .values()
             .filter(|e| matches!(e, PoolEntry::V2(..)))
             .count()
@@ -209,16 +213,18 @@ impl BotState {
     /// Panics if the pool address is already registered.
     pub fn register_aerodrome_pool(&mut self, params: &RegisterAerodromeV2PoolParams) -> u64 {
         assert!(
-            !self.pool_addresses.contains_key(&params.address),
+            !self.registry.pool_addresses.contains_key(&params.address),
             "pool already registered: {}",
             params.address
         );
-        let pool_id = self.next_pool_id;
-        self.next_pool_id += 1;
-        let (identity, state) = AerodromeV2PoolState::from_params(params, self.journal_depth);
-        self.pools
+        let pool_id = self.registry.next_pool_id;
+        self.registry.next_pool_id += 1;
+        let (identity, state) =
+            AerodromeV2PoolState::from_params(params, self.registry.journal_depth);
+        self.registry
+            .pools
             .insert(pool_id, PoolEntry::AerodromeV2(Box::new((identity, state))));
-        self.pool_addresses.insert(params.address, pool_id);
+        self.registry.pool_addresses.insert(params.address, pool_id);
         pool_id
     }
 
@@ -226,7 +232,8 @@ impl BotState {
     /// `None` if not registered or not an Aerodrome pool.
     #[must_use]
     pub fn get_aerodrome_identity(&self, pool_id: u64) -> Option<&AerodromeV2PoolIdentity> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::aerodrome_v2)
             .map(|(identity, _)| identity)
@@ -236,7 +243,8 @@ impl BotState {
     /// `update_block` + the reorg journal).
     #[must_use]
     pub fn get_aerodrome_pool(&self, pool_id: u64) -> Option<&AerodromeV2PoolState> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::aerodrome_v2)
             .map(|(_, state)| state)

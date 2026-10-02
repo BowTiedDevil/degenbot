@@ -85,7 +85,7 @@ pub use ::degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 pub use ::degenbot_ingestion::RELEVANT_TOPICS;
 pub use ::degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 
-pub use cl_orchestration::{InstallWordOutcome, RegisteredV4, StagedWordFetch};
+pub use cl_orchestration::{ClOrchestration, InstallWordOutcome, RegisteredV4, StagedWordFetch};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use epoch::{BlockContext, Epoch, StaleEpoch};
 pub use epoch_delta::EpochDelta;
@@ -101,6 +101,33 @@ use hashbrown::HashMap;
 #[cfg(test)]
 mod tests;
 
+/// The shared registry core - the family-agnostic field set every structural
+/// family reads: the pool tables, the token registry, the id counter, the
+/// reorg journal depth, and the ADR-040 quarantine set. `BotState` composes
+/// this core alongside the family capabilities ([`ClOrchestration`]); the
+/// registry-side `impl BotState` orchestration (swap simulation, balance
+/// vectors, reserve pairs) reads it directly.
+struct RegistryCore {
+    /// Pool registry: `pool_id` -> `PoolEntry`.
+    pools: HashMap<u64, PoolEntry>,
+    /// Pool contract address -> `pool_id`.
+    pool_addresses: HashMap<Address, u64>,
+    /// Token registry: address -> `TokenEntry`.
+    tokens: HashMap<Address, TokenEntry>,
+    /// Auto-incrementing pool ID.
+    next_pool_id: u64,
+    /// Reorg journal depth (in blocks) for every pool - one mainnet epoch
+    /// by default (ADR-003). Applied uniformly to V2/V3/V4.
+    journal_depth: usize,
+    /// ADR-040 quarantine set: pool ids currently EXCLUDED from solve
+    /// resolution (tainted-by-desync surfaces). Family-agnostic - spans
+    /// V2/V3/V4 and every other family because the gate sits in the
+    /// projection dispatcher, not per state type. Each transition bumps the
+    /// pool's `state_nonce` (dirties it) so cached hop projections and
+    /// in-flight candidates invalidate.
+    quarantined_pools: hashbrown::HashSet<u64>,
+}
+
 /// The single owner of all runtime state.
 ///
 /// All pool data, token metadata, engines, and encoded results live here.
@@ -111,77 +138,14 @@ mod tests;
 /// orchestrator seam; `BotState` is a private deep module with its own test
 /// seam.
 pub struct BotState {
-    /// Pool registry: `pool_id` → `PoolEntry`.
-    pools: HashMap<u64, PoolEntry>,
-    /// Pool contract address → `pool_id`.
-    pool_addresses: HashMap<Address, u64>,
-    /// Token registry: address → `TokenEntry`.
-    tokens: HashMap<Address, TokenEntry>,
-    /// Auto-incrementing pool ID.
-    next_pool_id: u64,
-    /// Reorg journal depth (in blocks) for every pool — one mainnet epoch
-    /// by default (ADR-003). Applied uniformly to V2/V3/V4.
-    journal_depth: usize,
-    /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
-    /// registration (ADR-003: the accurate-state buffer lives on `BotState`, not
-    /// the dissolved `V3BlockEngine`).
-    v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer<
-        Address,
-        BufferedV3PoolEvent,
-    >,
-    /// Dual-buffer for V4 `ModifyLiquidity` events awaiting pool registration.
-    /// Keyed by `(pool_manager, pool_id)`.
-    v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer<
-        (Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
-        BufferedV4PoolEvent,
-    >,
-    /// V4 pool registry: `(pool_manager, pool_id)` → `pool_id` (single entry
-    /// per pool — ADR-003 Option I: orientation derived at solve from
-    /// `zero_for_one`, not stored as separate forward/reverse entries).
-    v4_pool_ids: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
-    /// Rust-owned V4 pool-manager → `StateView` registry (ADR-005 / Option 2).
-    /// The canonical V4 scalar state is read via the `StateView`'s
-    /// `getSlot0`/`getLiquidity`, not `getPool(poolManager)` (which reverts on
-    /// the canonical deployment). Keyed by `pool_manager`; each `V4PoolState`
-    /// under a manager shares its manager's `StateView`. Seeded once per manager
-    /// via `register_v4_state_view` (the driver reads it from the
-    /// `pool_managers` DB row); the solver-state verifier reads it via
-    /// [`BotState::state_view_for`].
-    v4_state_views: HashMap<Address, Address>,
-    /// PRG-2: the keyed registration-gate — immutable V4
-    /// admission verdicts (dynamic fee / fee-exceeds-encoder-limit) recorded
-    /// by [`Self::register_v4_pool`] refusals and consulted pre-RPC by the
-    /// `PyO3` build path. Bounded by refused pools, not candidates.
-    registration_gate: registration_gate::RegistrationGate,
-    /// The snapshot seed block `S = min(fetch_newest_update_block(V3), V4)`.
-    /// Set by `Bot::load_snapshot_from_db` (or `load_snapshot_from_py`) when a
-    /// snapshot is loaded; consumed by the auto-backfill that
-    /// closes the `S+1..W-1` gap before resume. `None` when no snapshot was
-    /// loaded (cold-start path — the pump anchors on `first_observed_block`).
-    snapshot_seed_block: Option<u64>,
-    /// The highest FULLY-DELIVERED block — the delivery cutoff (last complete
-    /// block). The registration drain reads this as the
-    /// `drain_pump_completed` cutoff instead of a buffer-local shadow marker;
-    /// `0` means no block has been tombstoned → nothing drains. Owned here as
-    /// a plain monotone value that outlives pump runs: the pump
-    /// driver advances it on the tombstone verdict, and a resume never resets
-    /// it.
-    pump_complete_cutoff: u64,
-    /// Per-pool event-witnessed horizon: the
-    /// highest block of any V3/V4 event ROUTED for this pool (applied
-    /// directly OR staged into a buffer). Advanced ONLY by routed events —
-    /// never by imported DB-row stamps — so it corroborates (or refutes) a
-    /// pin's freshness claim independently of the seed. Keyed like the
-    /// family buffers: address for V3, `(pool_manager, pool_id)` for V4.
-    /// ADR-040 quarantine set: pool ids currently EXCLUDED from solve
-    /// resolution (tainted-by-desync surfaces). Family-agnostic — spans
-    /// V2/V3/V4 and every other family because the gate sits in the
-    /// projection dispatcher, not per state type. Each transition bumps the
-    /// pool's `state_nonce` (dirties it) so cached hop projections and
-    /// in-flight candidates invalidate.
-    quarantined_pools: hashbrown::HashSet<u64>,
-    v3_event_horizons: HashMap<Address, u64>,
-    v4_event_horizons: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
+    /// The shared registry core: the pool tables, the token registry, the
+    /// id counter, the journal depth, and the quarantine set.
+    registry: RegistryCore,
+    /// The concentrated-liquidity (V3 + V4) orchestration capability: the
+    /// dual liquidity buffers, `v4_pool_ids`, the state-view registry, the
+    /// registration gate, the snapshot seed block, the pump delivery
+    /// cutoff, and the per-pool event horizons.
+    cl: ClOrchestration,
 }
 
 /// Why [`BotState::encode_swap`] refused a call.
@@ -370,21 +334,21 @@ impl BotState {
     /// handle prototype (V2 slice) to present a family-agnostic interface.
     #[must_use]
     pub fn pool_entry(&self, pool_id: u64) -> Option<&PoolEntry> {
-        self.pools.get(&pool_id)
+        self.registry.pools.get(&pool_id)
     }
 
     /// Mutable entry borrow for the pump tests' state seeding (the tests
     /// live in the host crate; the field is private).
     #[doc(hidden)]
     pub fn pool_entry_mut(&mut self, pool_id: u64) -> Option<&mut PoolEntry> {
-        self.pools.get_mut(&pool_id)
+        self.registry.pools.get_mut(&pool_id)
     }
 
     /// The registered address of a workspace pool id — the deficit trace's
     /// id→address join so a per-hop reject names the responsible pool.
     #[must_use]
     pub fn pool_address_of(&self, pool_id: u64) -> Option<Address> {
-        match self.pools.get(&pool_id)? {
+        match self.registry.pools.get(&pool_id)? {
             PoolEntry::V2(p) => Some(p.0.address),
             PoolEntry::V3(p) => Some(p.0.address),
             PoolEntry::V4(p) => Some(p.0.pool_manager),
@@ -403,7 +367,10 @@ impl BotState {
     /// re-reads it and skips candidates whose pool state advanced since.
     #[must_use]
     pub fn pool_state_nonce(&self, pool_id: u64) -> u64 {
-        self.pools.get(&pool_id).map_or(0, PoolEntry::state_nonce)
+        self.registry
+            .pools
+            .get(&pool_id)
+            .map_or(0, PoolEntry::state_nonce)
     }
 
     /// The `update_block` of the pool at `pool_id` — the block its reserves /
@@ -423,7 +390,10 @@ impl BotState {
     /// → `assert_ws_block_complete`).
     #[must_use]
     pub fn pool_update_block(&self, pool_id: u64) -> u64 {
-        self.pools.get(&pool_id).map_or(0, PoolEntry::update_block)
+        self.registry
+            .pools
+            .get(&pool_id)
+            .map_or(0, PoolEntry::update_block)
     }
 
     /// ADR-040 quarantine seam: exclude the pool from solve resolution
@@ -433,17 +403,17 @@ impl BotState {
     /// (a `false` return is a no-op or an unknown pool id — callers log).
     /// Maintains the `degenbot.engine.quarantined_pools` scrape gauge.
     pub fn quarantine_pool(&mut self, pool_id: u64) -> bool {
-        if !self.pools.contains_key(&pool_id) {
+        if !self.registry.pools.contains_key(&pool_id) {
             return false;
         }
-        if !self.quarantined_pools.insert(pool_id) {
+        if !self.registry.quarantined_pools.insert(pool_id) {
             return false;
         }
-        if let Some(entry) = self.pools.get_mut(&pool_id) {
+        if let Some(entry) = self.registry.pools.get_mut(&pool_id) {
             entry.bump_state_nonce();
         }
         if let Some(p) = crate::telemetry_port::pipeline() {
-            p.set_quarantined_pools(self.quarantined_pools.len());
+            p.set_quarantined_pools(self.registry.quarantined_pools.len());
         }
         true
     }
@@ -452,14 +422,14 @@ impl BotState {
     /// dirty its nonce so stale `Invalid(Quarantined)` cache entries cannot
     /// stick. Returns `true` when this call CHANGED the state.
     pub fn release_pool(&mut self, pool_id: u64) -> bool {
-        if !self.quarantined_pools.remove(&pool_id) {
+        if !self.registry.quarantined_pools.remove(&pool_id) {
             return false;
         }
-        if let Some(entry) = self.pools.get_mut(&pool_id) {
+        if let Some(entry) = self.registry.pools.get_mut(&pool_id) {
             entry.bump_state_nonce();
         }
         if let Some(p) = crate::telemetry_port::pipeline() {
-            p.set_quarantined_pools(self.quarantined_pools.len());
+            p.set_quarantined_pools(self.registry.quarantined_pools.len());
         }
         true
     }
@@ -467,13 +437,13 @@ impl BotState {
     /// ADR-040: is the pool currently quarantined (excluded from solve)?
     #[must_use]
     pub fn is_pool_quarantined(&self, pool_id: u64) -> bool {
-        self.quarantined_pools.contains(&pool_id)
+        self.registry.quarantined_pools.contains(&pool_id)
     }
 
     /// ADR-040: current quarantine depth (the scrape gauge's backing count).
     #[must_use]
     pub fn quarantined_pool_count(&self) -> usize {
-        self.quarantined_pools.len()
+        self.registry.quarantined_pools.len()
     }
 
     /// The pool-state **price clock head**: the maximum `update_block` across
@@ -489,7 +459,8 @@ impl BotState {
     /// head), so one shared sim cache serves every path.
     #[must_use]
     pub fn pool_state_head(&self) -> u64 {
-        self.pools
+        self.registry
+            .pools
             .values()
             .map(PoolEntry::update_block)
             .max()
@@ -504,7 +475,8 @@ impl BotState {
     /// stale, mirroring [`Self::pool_update_block`]).
     #[must_use]
     pub fn pool_tick_data_block(&self, pool_id: u64) -> u64 {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .map_or(0, PoolEntry::tick_data_block)
     }
@@ -513,38 +485,15 @@ impl BotState {
     #[must_use]
     pub fn with_journal_depth(journal_depth: usize) -> Self {
         Self {
-            pools: HashMap::new(),
-            pool_addresses: HashMap::new(),
-            tokens: HashMap::new(),
-            next_pool_id: 1,
-            journal_depth,
-            v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
-            v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
-            v4_pool_ids: HashMap::new(),
-            v4_state_views: HashMap::new(),
-            registration_gate: registration_gate::RegistrationGate::default(),
-            snapshot_seed_block: None,
-            pump_complete_cutoff: 0,
-            v3_event_horizons: HashMap::new(),
-            quarantined_pools: hashbrown::HashSet::new(),
-            v4_event_horizons: HashMap::new(),
-        }
-    }
-
-    /// The current delivery cutoff (`0` until the first tombstone). Read of
-    /// the value the registration drain gates on.
-    #[must_use]
-    pub fn pump_complete_cutoff(&self) -> u64 {
-        self.pump_complete_cutoff
-    }
-
-    /// Monotonically advance the delivery cutoff (last complete block). The
-    /// live pump drives this when executing the `TombstonePrevious` verdict
-    ///; tests that drive the registration drain without a pump use
-    /// the same entry point.
-    pub fn advance_pump_complete_cutoff(&mut self, block: u64) {
-        if block > self.pump_complete_cutoff {
-            self.pump_complete_cutoff = block;
+            registry: RegistryCore {
+                pools: HashMap::new(),
+                pool_addresses: HashMap::new(),
+                tokens: HashMap::new(),
+                next_pool_id: 1,
+                journal_depth,
+                quarantined_pools: hashbrown::HashSet::new(),
+            },
+            cl: ClOrchestration::new(),
         }
     }
 
@@ -564,23 +513,7 @@ impl BotState {
     /// a family gap via an `""` sentinel.
     #[must_use]
     pub fn pool_family(&self, pool_id: u64) -> Option<&'static str> {
-        self.pools.get(&pool_id).map(entry_family)
-    }
-
-    /// Set the maximum age (in blocks) for buffered V3 pump events.
-    /// `None` means unbounded. Takes effect on the next `expire_v3_buffered`.
-    pub const fn set_v3_buffer_max_age(&mut self, max_age: Option<u64>) {
-        self.v3_buffer.set_max_age(max_age);
-    }
-
-    /// The snapshot seed block `S` — `min(fetch_newest_update_block(V3), V4)`
-    /// across the loaded snapshots. `None` when no snapshot was loaded (the
-    /// cold-start path pumps directly from `first_observed_block`). Set by
-    /// `Bot::load_snapshot_from_db` / `load_snapshot_from_py`; consumed by the
-    /// auto-backfill (`resume_from_subscribe`) that closes `S+1..W-1`.
-    #[must_use]
-    pub const fn snapshot_seed_block(&self) -> Option<u64> {
-        self.snapshot_seed_block
+        self.registry.pools.get(&pool_id).map(entry_family)
     }
 
     /// Family-dispatching reader for the V3/V4 concentrated-liquidity
@@ -600,7 +533,7 @@ impl BotState {
     /// a different state shape and is read via the dedicated V2 getters.
     #[must_use]
     pub fn get_v3_or_v4_pool(&self, pool_id: u64) -> Option<&dyn ConcentratedLiquidityPool> {
-        match self.pools.get(&pool_id)? {
+        match self.registry.pools.get(&pool_id)? {
             PoolEntry::V3(p) => Some(&p.1),
             PoolEntry::V4(p) => Some(&p.1),
             PoolEntry::V2(..)
@@ -614,7 +547,7 @@ impl BotState {
     /// Get the pool ID for a given contract address.
     #[must_use]
     pub fn pool_id_by_address(&self, address: &Address) -> Option<u64> {
-        self.pool_addresses.get(address).copied()
+        self.registry.pool_addresses.get(address).copied()
     }
 
     /// The address-keyed registration of record, family-tagged (PRG-1 /
@@ -636,7 +569,7 @@ impl BotState {
         address: &Address,
     ) -> Option<(u64, RegisteredPoolFamily)> {
         let pool_id = self.pool_id_by_address(address)?;
-        match self.pools.get(&pool_id)?.registered_family() {
+        match self.registry.pools.get(&pool_id)?.registered_family() {
             // An address query cannot name a V4 pool (see the doc above).
             RegisteredPoolFamily::V4 => None,
             family => Some((pool_id, family)),
@@ -654,7 +587,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<RegisteredPoolFamily> {
         let id = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        Some(self.pools.get(&id)?.registered_family())
+        Some(self.registry.pools.get(&id)?.registered_family())
     }
 
     /// The registered pool id for this exact pool identity, DERIVED from the
@@ -716,21 +649,21 @@ impl BotState {
         match pool_id {
             None => {
                 // V2/V3 path: address-keyed.
-                let Some(id) = self.pool_addresses.remove(&address) else {
+                let Some(id) = self.registry.pool_addresses.remove(&address) else {
                     return false;
                 };
-                self.pools.remove(&id);
-                self.v3_buffer.discard_for(&address);
+                self.registry.pools.remove(&id);
+                self.cl.discard_v3_buffered(&address);
                 true
             }
             Some(pid) => {
                 // V4 path: (pool_manager, pool_id)-keyed.
                 let key = (address, pid);
-                let Some(id) = self.v4_pool_ids.remove(&key) else {
+                let Some(id) = self.cl.remove_v4_registration(&key) else {
                     return false;
                 };
-                self.pools.remove(&id);
-                self.v4_buffer.discard_for(&key);
+                self.registry.pools.remove(&id);
+                self.cl.discard_v4_buffered(&key);
                 true
             }
         }
@@ -739,19 +672,19 @@ impl BotState {
     /// Number of registered pools.
     #[must_use]
     pub fn pool_count(&self) -> usize {
-        self.pools.len()
+        self.registry.pools.len()
     }
 
     /// Check if a pool ID is registered.
     #[must_use]
     pub fn has_pool(&self, pool_id: u64) -> bool {
-        self.pools.contains_key(&pool_id)
+        self.registry.pools.contains_key(&pool_id)
     }
 
     /// Check if a token address is registered.
     #[must_use]
     pub fn has_token(&self, address: &Address) -> bool {
-        self.tokens.contains_key(address)
+        self.registry.tokens.contains_key(address)
     }
 
     /// Look up a registered token's metadata entry (address, name, symbol,
@@ -759,7 +692,7 @@ impl BotState {
     /// (ADR-003 T3: Rust owns token identity metadata).
     #[must_use]
     pub fn token_entry(&self, address: &Address) -> Option<&TokenEntry> {
-        self.tokens.get(address)
+        self.registry.tokens.get(address)
     }
 
     /// Get the number of deltas in the reorg journal for a V2 pool.
@@ -777,7 +710,7 @@ impl BotState {
     /// a reorg touches only a subset of pools). Returns the count of pools
     /// that were rolled back.
     pub fn restore_all_pools_before_block(&mut self, target: u64) -> usize {
-        let pool_ids: Vec<u64> = self.pools.keys().copied().collect();
+        let pool_ids: Vec<u64> = self.registry.pools.keys().copied().collect();
         let mut restored = 0usize;
         for pool_id in pool_ids {
             // Peek the per-pool newest delta block without a mutable borrow
@@ -786,6 +719,7 @@ impl BotState {
             // (idempotent restore). The peek also guards the CL family's
             // panic-on-empty journal: an empty journal reports `None` → skip.
             let needs_restore = self
+                .registry
                 .pools
                 .get(&pool_id)
                 .and_then(PoolEntry::as_reorg_state)
@@ -839,7 +773,8 @@ impl BotState {
         block: u64,
     ) -> Option<Result<(), JournalError>> {
         Some(
-            self.pools
+            self.registry
+                .pools
                 .get_mut(&pool_id)?
                 .as_reorg_state_mut()?
                 .restore_before_block(block),
@@ -860,7 +795,8 @@ impl BotState {
         block: u64,
     ) -> Option<Result<(), JournalError>> {
         Some(
-            self.pools
+            self.registry
+                .pools
                 .get_mut(&pool_id)?
                 .as_reorg_state_mut()?
                 .discard_before_block(block),
@@ -872,7 +808,13 @@ impl BotState {
     /// registered.
     #[must_use]
     pub fn pool_journal_len(&self, pool_id: u64) -> Option<usize> {
-        Some(self.pools.get(&pool_id)?.as_reorg_state()?.journal_len())
+        Some(
+            self.registry
+                .pools
+                .get(&pool_id)?
+                .as_reorg_state()?
+                .journal_len(),
+        )
     }
 
     // --- Aerodrome V2 journal + registration methods ---
@@ -909,7 +851,8 @@ impl BotState {
     /// `degenbot.reorg.restore` spans.
     #[must_use]
     pub fn newest_journal_block(&self, pool_id: u64) -> Option<u64> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::as_reorg_state)
             .and_then(ReorgPoolState::newest_block)
@@ -917,7 +860,7 @@ impl BotState {
 
     #[must_use]
     pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
-        let Some(entry) = self.pools.get(&pool_id) else {
+        let Some(entry) = self.registry.pools.get(&pool_id) else {
             // Pool not registered → no journal → the reorg can't restore it.
             // Treat as "has state" (no-op) so the caller proceeds to the normal
             // pool-not-found no-op path rather than a fail-stop.
@@ -983,6 +926,7 @@ impl BotState {
         recipient: Address,
     ) -> Result<EncodedCall, EncodeSwapError> {
         let entry = self
+            .registry
             .pools
             .get(&pool_id)
             .ok_or(EncodeSwapError::NotRegistered { pool_id })?;
@@ -1015,7 +959,7 @@ impl BotState {
     /// dropped every V4 update.
     ///
     /// The family probe is a `matches!` (Copy discriminant) so the immutable
-    /// borrow of `self.pools` ends before the `&mut self` apply call — one
+    /// borrow of `self.registry.pools` ends before the `&mut self` apply call — one
     /// held write guard throughout, two O(1) `HashMap` lookups (probe + apply).
     pub fn apply_swap_by_pool_id(
         &mut self,
@@ -1026,7 +970,7 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        if matches!(self.pools.get(&pool_id), Some(PoolEntry::V4(..))) {
+        if matches!(self.registry.pools.get(&pool_id), Some(PoolEntry::V4(..))) {
             self.apply_v4_swap_by_pool_id(
                 pool_id,
                 sqrt_price_x96,
@@ -1067,14 +1011,14 @@ impl BotState {
     ) -> Result<u64, ClApplyError> {
         match self.cl_kind(pool_id) {
             ClKind::V3 => {
-                let Some(PoolEntry::V3(p)) = self.pools.get_mut(&pool_id) else {
+                let Some(PoolEntry::V3(p)) = self.registry.pools.get_mut(&pool_id) else {
                     return Err(ClApplyError::NotRegistered { pool_id });
                 };
                 p.1.seed_genesis(block);
                 Ok(pool_id)
             }
             ClKind::V4 => {
-                let Some(PoolEntry::V4(p)) = self.pools.get_mut(&pool_id) else {
+                let Some(PoolEntry::V4(p)) = self.registry.pools.get_mut(&pool_id) else {
                     return Err(ClApplyError::NotRegistered { pool_id });
                 };
                 p.1.seed_genesis(block);
@@ -1091,7 +1035,7 @@ impl BotState {
 
     /// The CL dispatch bucket for `pool_id` — see [`ClKind`].
     fn cl_kind(&self, pool_id: u64) -> ClKind {
-        match self.pools.get(&pool_id) {
+        match self.registry.pools.get(&pool_id) {
             Some(PoolEntry::V3(..)) => ClKind::V3,
             Some(PoolEntry::V4(..)) => ClKind::V4,
             Some(entry) => ClKind::NonCl(entry_family(entry)),
@@ -1213,13 +1157,16 @@ impl BotState {
         decimals: u8,
         chain_id: u64,
     ) {
-        self.tokens.entry(address).or_insert_with(|| TokenEntry {
-            address,
-            name,
-            symbol,
-            decimals,
-            chain_id,
-        });
+        self.registry
+            .tokens
+            .entry(address)
+            .or_insert_with(|| TokenEntry {
+                address,
+                name,
+                symbol,
+                decimals,
+                chain_id,
+            });
     }
 }
 

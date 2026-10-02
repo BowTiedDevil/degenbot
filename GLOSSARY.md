@@ -841,15 +841,22 @@ _Avoid_: confusing it with the `PyBot` adapter (the thin PyO3 shell) or with
 `BotState` (the data owner the orchestrator drives).
 
 **Registry core**:
-`BotState`'s shared registry fields — `pools`, `pool_addresses`, `tokens`,
-`next_pool_id`, `journal_depth` — the one canonical object space every handle
-reads through.
+`RegistryCore` — the shared registry struct `BotState` composes: `pools`,
+`pool_addresses`, `tokens`, `next_pool_id`, `journal_depth`, and the
+ADR-040 `quarantined_pools` set — the one canonical object space every handle
+reads through, and the view CL-orchestration fns receive as their `reg`
+parameter.
 _Avoid_: "session registry" for it; the `SessionObjectRegistry` is the
 identity-only layer, the registry core is the live state.
 
 **CL orchestration capability**:
-The future struct that will own the V3/V4 event buffers, event horizons,
-`v4_pool_ids`, and the registration gate as one cohesive unit (a later epic
-task lands it).
-_Avoid_: scattering those fields across the shell or reading them as already
-unified — they are not owned anywhere as one struct yet.
+`ClOrchestration` — the one struct owning every CL-local state surface:
+the V3/V4 liquidity event buffers, `v4_pool_ids`, the V4 state-view registry,
+the registration gate, the snapshot seed block, the pump delivery cutoff, and
+the per-pool event horizons. `BotState` stays the composition root and
+delegates its public CL surface to it one-line-at-a-time; capability fns
+reach the registry core only through the `RegistryCore` view their callers
+pass, and registry-side consumers (the sim-anchor projection, the storage
+probe) see V4 registration only through `registered_v4_pools()`.
+_Avoid_: reaching into `state.cl.<field>` from registry-side code or growing
+CL policy outside the capability's method set.

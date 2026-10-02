@@ -39,6 +39,94 @@ use super::{
     V4PoolIdentity, V4PoolState, V4SwapUpdate,
 };
 
+use super::RegistryCore;
+
+/// The concentrated-liquidity (V3 + V4) orchestration capability - the ONE
+/// struct owning every CL-local state surface the state owner carries: the
+/// dual liquidity buffers, the `(pool_manager, pool_id)` V4 registry, the
+/// state-view registry, the keyed registration gate, the snapshot seed
+/// block, the pump delivery cutoff, and the per-pool event horizons. The
+/// capability's method set (this module) reaches the registry core through
+/// the [`RegistryCore`] view its callers pass; `BotState` remains the
+/// composition root and delegates its public CL surface here.
+pub struct ClOrchestration {
+    /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
+    /// registration (ADR-003: the accurate-state buffer lives on the state
+    /// owner, not the dissolved `V3BlockEngine`).
+    pub(crate) v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer<
+        Address,
+        BufferedV3PoolEvent,
+    >,
+    /// Dual-buffer for V4 `ModifyLiquidity` events awaiting pool registration.
+    /// Keyed by `(pool_manager, pool_id)`.
+    pub(crate) v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer<
+        (Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+        BufferedV4PoolEvent,
+    >,
+    /// V4 pool registry: `(pool_manager, pool_id)` -> `pool_id` (single entry
+    /// per pool - ADR-003 Option I: orientation derived at solve from
+    /// `zero_for_one`, not stored as separate forward/reverse entries).
+    pub(crate) v4_pool_ids: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
+    /// Rust-owned V4 pool-manager -> `StateView` registry (ADR-005 / Option 2).
+    /// The canonical V4 scalar state is read via the `StateView`'s
+    /// `getSlot0`/`getLiquidity`, not `getPool(poolManager)` (which reverts on
+    /// the canonical deployment). Keyed by `pool_manager`; each `V4PoolState`
+    /// under a manager shares its manager's `StateView`. Seeded once per manager
+    /// via `register_v4_state_view` (the driver reads it from the
+    /// `pool_managers` DB row); the solver-state verifier reads it via
+    /// [`BotState::state_view_for`].
+    pub(crate) v4_state_views: HashMap<Address, Address>,
+    /// PRG-2: the keyed registration-gate - immutable V4
+    /// admission verdicts (dynamic fee / fee-exceeds-encoder-limit) recorded
+    /// by [`BotState::register_v4_pool`] refusals and consulted pre-RPC by the
+    /// `PyO3` build path. Bounded by refused pools, not candidates.
+    pub(crate) registration_gate: crate::registration_gate::RegistrationGate,
+    /// The snapshot seed block `S = min(fetch_newest_update_block(V3), V4)`.
+    /// Set by `Bot::load_snapshot_from_db` (or `load_snapshot_from_py`) when a
+    /// snapshot is loaded; consumed by the auto-backfill that
+    /// closes the `S+1..W-1` gap before resume. `None` when no snapshot was
+    /// loaded (cold-start path - the pump anchors on `first_observed_block`).
+    pub(crate) snapshot_seed_block: Option<u64>,
+    /// The highest FULLY-DELIVERED block - the delivery cutoff (last complete
+    /// block). The registration drain reads this as the
+    /// `drain_pump_completed` cutoff instead of a buffer-local shadow marker;
+    /// `0` means no block has been tombstoned -> nothing drains. Owned here as
+    /// a plain monotone value that outlives pump runs: the pump
+    /// driver advances it on the tombstone verdict, and a resume never resets
+    /// it.
+    pub(crate) pump_complete_cutoff: u64,
+    /// Per-pool event-witnessed horizon: the
+    /// highest block of any V3/V4 event ROUTED for this pool (applied
+    /// directly OR staged into a buffer). Advanced ONLY by routed events -
+    /// never by imported DB-row stamps - so it corroborates (or refutes) a
+    /// pin's freshness claim independently of the seed. Keyed like the
+    /// family buffers: address for V3.
+    pub(crate) v3_event_horizons: HashMap<Address, u64>,
+    /// V4 twin of `v3_event_horizons`, keyed `(pool_manager, pool_id)`.
+    pub(crate) v4_event_horizons:
+        HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
+}
+
+impl ClOrchestration {
+    /// An empty capability - every buffer, registry, and horizon starts
+    /// unseeded; `BotState::with_journal_depth` composes it with a
+    /// [`RegistryCore`].
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self {
+            v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v4_pool_ids: HashMap::new(),
+            v4_state_views: HashMap::new(),
+            registration_gate: crate::registration_gate::RegistrationGate::default(),
+            snapshot_seed_block: None,
+            pump_complete_cutoff: 0,
+            v3_event_horizons: HashMap::new(),
+            v4_event_horizons: HashMap::new(),
+        }
+    }
+}
+
 /// the staged fetch plan captured under a SHORT write — pool, word,
 /// fetch context, the stored fetcher Arc, and the pool's tick-mutation
 /// fingerprint the install re-validates.
@@ -85,7 +173,7 @@ pub enum InstallWordOutcome {
     Failed,
 }
 
-impl BotState {
+impl ClOrchestration {
     /// Register a V3 pool by contract address.
     ///
     /// Returns the auto-assigned pool ID.
@@ -101,8 +189,9 @@ impl BotState {
     /// registration-time tick-data seeding (the Db arm of `assemble_*_tick_map`
     /// supplies `tick_data`/`coverage` via the held snapshot tx) + never touch
     /// the immutable config / current state scalars under validation here.
-    pub fn register_v3_pool(
+    pub(crate) fn register_v3_pool(
         &mut self,
+        reg: &mut RegistryCore,
         params: &RegisterV3PoolParams,
     ) -> Result<u64, RegisterV3PoolError> {
         use ::degenbot_pools::spec_bounds as sb;
@@ -113,7 +202,7 @@ impl BotState {
         sb::validate_tick_spacing(params.tick_spacing)
             .map_err(RegisterV3PoolError::SpecViolation)?;
 
-        if self.pool_addresses.contains_key(&params.address) {
+        if reg.pool_addresses.contains_key(&params.address) {
             return Err(RegisterV3PoolError::AlreadyRegistered {
                 address: params.address,
             });
@@ -135,22 +224,21 @@ impl BotState {
             "register-v3-seed"
         );
 
-        let pool_id = self.next_pool_id;
-        self.next_pool_id += 1;
+        let pool_id = reg.next_pool_id;
+        reg.next_pool_id += 1;
         let address = params.address;
 
         // the `seed_from_store` path is retired — the DB
         // seeding is handled by the Db arm of `assemble_v3_tick_map` (held
         // snapshot tx). Just clone + flow the params through.
         let params = params.clone();
-        let (identity, state) = V3PoolState::from_params(params, self.journal_depth);
-        self.pools
+        let (identity, state) = V3PoolState::from_params(params, reg.journal_depth);
+        reg.pools
             .insert(pool_id, PoolEntry::V3(Box::new((identity, state))));
-        self.pool_addresses.insert(address, pool_id);
+        reg.pool_addresses.insert(address, pool_id);
 
         Ok(pool_id)
     }
-
     /// Update a V3 pool's state from a Swap event.
     ///
     /// Looks up the pool by contract address. No-op if the pool is not registered.
@@ -158,8 +246,9 @@ impl BotState {
     /// reorg journal before updating. Kept as the `PyBot` entry; the live
     /// pump path uses [`apply_v3_swap`](Self::apply_v3_swap) (which returns the
     /// affected `pool_id` and overlays `tick_priors` into `tick_data`).
-    pub fn update_v3_pool(
+    pub(crate) fn update_v3_pool(
         &mut self,
+        reg: &mut RegistryCore,
         pool_address: Address,
         sqrt_price_x96: U256,
         liquidity: u128,
@@ -167,11 +256,11 @@ impl BotState {
         block_number: u64,
         tick_priors: Vec<(i32, TickBefore)>,
     ) {
-        let Some(&pool_id) = self.pool_addresses.get(&pool_address) else {
+        let Some(&pool_id) = reg.pool_addresses.get(&pool_address) else {
             return;
         };
 
-        let Some(state) = self
+        let Some(state) = reg
             .pools
             .get_mut(&pool_id)
             .and_then(PoolEntry::v3_mut)
@@ -206,31 +295,27 @@ impl BotState {
         state.advance_tick_data_block(block_number);
         state.invalidate_tick_range_cache();
     }
-
     /// Event-witnessed horizon for a V3 pool:
     /// highest block of any routed event for this pool. `0` = none witnessed.
     #[must_use]
-    pub fn v3_event_horizon(&self, pool_address: &Address) -> u64 {
+    pub(crate) fn v3_event_horizon(&self, pool_address: &Address) -> u64 {
         self.v3_event_horizons
             .get(pool_address)
             .copied()
             .unwrap_or(0)
     }
-
     fn note_v3_event_block(&mut self, pool_address: Address, block_number: u64) {
         let e = self.v3_event_horizons.entry(pool_address).or_insert(0);
         *e = (*e).max(block_number);
     }
-
     /// Event-witnessed horizon for a V4 pool.
     #[must_use]
-    pub fn v4_event_horizon(
+    pub(crate) fn v4_event_horizon(
         &self,
         key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
     ) -> u64 {
         self.v4_event_horizons.get(key).copied().unwrap_or(0)
     }
-
     fn note_v4_event_block(
         &mut self,
         key: (Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
@@ -239,19 +324,17 @@ impl BotState {
         let e = self.v4_event_horizons.entry(key).or_insert(0);
         *e = (*e).max(block_number);
     }
-
     /// Resolve a V3 pool's routing presence (`cl_route` axis).
-    fn v3_presence(&self, pool_address: &Address) -> PoolPresence {
+    fn v3_presence(&self, reg: &RegistryCore, pool_address: &Address) -> PoolPresence {
         let lifecycle =
-            self.pool_addresses
+            reg.pool_addresses
                 .get(pool_address)
-                .and_then(|&id| match self.pools.get(&id) {
+                .and_then(|&id| match reg.pools.get(&id) {
                     Some(PoolEntry::V3(p)) => Some(p.1.registration_lifecycle),
                     _ => None,
                 });
         PoolPresence::from_lifecycle(lifecycle)
     }
-
     /// THE single decision point for a decoded V3 event (`cl_route` table).
     ///
     /// Every production entry point — live dispatch, snapshot-gap backfill,
@@ -263,8 +346,9 @@ impl BotState {
     /// `swap_priors` overlays tick priors onto DIRECT swap application only
     /// (pump/backfill paths pass an empty slice; buffered events never carry
     /// priors).
-    pub fn route_v3_event(
+    pub(crate) fn route_v3_event(
         &mut self,
+        reg: &mut RegistryCore,
         phase: Phase,
         pool_address: Address,
         event: BufferedV3PoolEvent,
@@ -274,7 +358,7 @@ impl BotState {
             BufferedV3PoolEvent::Swap(_) => EventKind::ScalarRefresh,
             BufferedV3PoolEvent::Liquidity(_) => EventKind::TickMutation,
         };
-        let presence = self.v3_presence(&pool_address);
+        let presence = self.v3_presence(reg, &pool_address);
         let event_block = match &event {
             BufferedV3PoolEvent::Swap(s) => s.block_number,
             BufferedV3PoolEvent::Liquidity(l) => l.block_number,
@@ -285,7 +369,7 @@ impl BotState {
                 // Table invariant: ApplyDirect implies registered. Defensive
                 // fallback (never expected) degrades to a named no-op rather
                 // than panicking inside the hot dispatch path.
-                let Some(pool_id) = self.pool_addresses.get(&pool_address).copied() else {
+                let Some(pool_id) = reg.pool_addresses.get(&pool_address).copied() else {
                     debug_assert!(
                         false,
                         "ApplyDirect for an unregistered pool — routing table invariant violated"
@@ -300,6 +384,7 @@ impl BotState {
                         block_number,
                     }) => {
                         self.apply_v3_swap_by_pool_id(
+                            reg,
                             pool_id,
                             sqrt_price_x96,
                             liquidity,
@@ -315,6 +400,7 @@ impl BotState {
                         block_number,
                     }) => {
                         self.apply_v3_liquidity_update_by_pool_id(
+                            reg,
                             pool_id,
                             tick_lower,
                             tick_upper,
@@ -375,15 +461,15 @@ impl BotState {
             RouteAction::Drop(reason) => ApplyOutcome::NoOp(reason),
         }
     }
-
     /// Apply a V3 `Swap` event (ADR-003 live path).
     ///
     /// Thin adapter over [`Self::route_v3_event`] at `Phase::Live`: the routing
     /// table decides apply-vs-buffer-vs-drop; this entry flattens the outcome
     /// to the historical `Option<pool_id>` shape (`None` = buffered or
     /// dropped). `tick_priors` overlay only on direct application.
-    pub fn apply_v3_swap(
+    pub(crate) fn apply_v3_swap(
         &mut self,
+        reg: &mut RegistryCore,
         pool_address: Address,
         sqrt_price_x96: U256,
         liquidity: u128,
@@ -393,6 +479,7 @@ impl BotState {
     ) -> Option<u64> {
         trace_apply_swap_v3(pool_address, sqrt_price_x96, liquidity, tick, block_number);
         match self.route_v3_event(
+            reg,
             Phase::Live,
             pool_address,
             BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
@@ -407,14 +494,14 @@ impl BotState {
             ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
         }
     }
-
     /// Apply a V3 Swap event keyed by the handle's `pool_id` (plan-101 slice 8a).
     ///
     /// Same semantics as [`apply_v3_swap`] but skips address resolution —
     /// the `PyLiquidityPool` handle already holds the canonical `pool_id`, so
     /// this is the one-lock, one-lookup path the handle uses.
-    pub fn apply_v3_swap_by_pool_id(
+    pub(crate) fn apply_v3_swap_by_pool_id(
         &mut self,
+        reg: &mut RegistryCore,
         pool_id: u64,
         sqrt_price_x96: U256,
         liquidity: u128,
@@ -422,17 +509,17 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
+        let (_identity, state) = reg.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
         state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
         Some(pool_id)
     }
-
     /// Apply a V3 liquidity update (Mint/Burn) — thin adapter over
     /// [`Self::route_v3_event`] at `Phase::Live`. Unregistered pools
     /// stage into the PUMP buffer here so late registration captures them;
     /// under the old funnel this row was a silent drop.
-    pub fn apply_v3_liquidity_update(
+    pub(crate) fn apply_v3_liquidity_update(
         &mut self,
+        reg: &mut RegistryCore,
         pool_address: Address,
         tick_lower: i32,
         tick_upper: i32,
@@ -440,6 +527,7 @@ impl BotState {
         block_number: u64,
     ) -> Option<u64> {
         match self.route_v3_event(
+            reg,
             Phase::Live,
             pool_address,
             BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
@@ -454,25 +542,24 @@ impl BotState {
             ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
         }
     }
-
     /// V3 liquidity update keyed by the handle's `pool_id` (plan-101 slice 8a).
     ///
     /// Skips address resolution — the `PyLiquidityPool` handle holds the
     /// canonical `pool_id`, so this is the one-lock, one-lookup path. Registered
     /// pools only (no buffering — the handle's pool is necessarily registered).
-    pub fn apply_v3_liquidity_update_by_pool_id(
+    pub(crate) fn apply_v3_liquidity_update_by_pool_id(
         &mut self,
+        reg: &mut RegistryCore,
         pool_id: u64,
         tick_lower: i32,
         tick_upper: i32,
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
+        let (_identity, state) = reg.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
         state.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
         Some(pool_id)
     }
-
     /// Full-sync a V3/V4 pool's `tick_data` from an external source (Python
     /// sparse-map backfill). Replaces the entire `tick_data` map; keeps the
     /// scalars (`sqrt_price_x96`/`liquidity`/`tick`) unchanged; advances
@@ -487,13 +574,14 @@ impl BotState {
     /// one-lock, one-lookup path. Family-agnostic (V3 + V4) — both store an
     /// identical `tick_data: HashMap<i32, TickInfo>`.
     #[must_use]
-    pub fn sync_tick_data_by_pool_id(
+    pub(crate) fn sync_tick_data_by_pool_id(
         &mut self,
+        reg: &mut RegistryCore,
         pool_id: u64,
         tick_data: HashMap<i32, TickInfo>,
         update_block: u64,
     ) -> bool {
-        let Some(entry) = self.pools.get_mut(&pool_id) else {
+        let Some(entry) = reg.pools.get_mut(&pool_id) else {
             return false;
         };
         match entry {
@@ -515,7 +603,6 @@ impl BotState {
             | PoolEntry::AerodromeV2(..) => false,
         }
     }
-
     /// Record `words` as known on the CL pool behind `pool_id` — the
     /// write-path twin of [`Self::sync_tick_data_by_pool_id`] (arch-review
     /// cand 4, T1). Sparse pools only: the trait writer no-ops for Tracked
@@ -527,8 +614,13 @@ impl BotState {
     /// Returns `false` for V2 / non-CL / unregistered (the family-dispatch
     /// silent no-op contract).
     #[must_use]
-    pub fn mark_bitmap_words_known_by_pool_id(&mut self, pool_id: u64, words: &[i32]) -> bool {
-        let Some(entry) = self.pools.get_mut(&pool_id) else {
+    pub(crate) fn mark_bitmap_words_known_by_pool_id(
+        &mut self,
+        reg: &mut RegistryCore,
+        pool_id: u64,
+        words: &[i32],
+    ) -> bool {
+        let Some(entry) = reg.pools.get_mut(&pool_id) else {
             return false;
         };
         match entry {
@@ -547,21 +639,21 @@ impl BotState {
             | PoolEntry::AerodromeV2(..) => false,
         }
     }
-
     /// Buffer a V3 liquidity update from the backfill phase. During backfill no
     /// pools are registered yet, so this always buffers (routes to the
     /// never-expired backfill buffer). If the pool happens to be registered
     /// already (defensive), applies directly.
-    pub fn buffer_backfill_v3_liquidity_update(
+    pub(crate) fn buffer_backfill_v3_liquidity_update(
         &mut self,
+        reg: &mut RegistryCore,
         pool_address: Address,
         tick_lower: i32,
         tick_upper: i32,
         liquidity_delta: i128,
         block_number: u64,
     ) {
-        if let Some(&key) = self.pool_addresses.get(&pool_address) {
-            if let Some(state) = self
+        if let Some(&key) = reg.pool_addresses.get(&pool_address) {
+            if let Some(state) = reg
                 .pools
                 .get_mut(&key)
                 .and_then(PoolEntry::v3_mut)
@@ -607,7 +699,6 @@ impl BotState {
             }),
         );
     }
-
     /// Apply all buffered **backfill** V3 events for a pool address.
     /// Call this during registration, after `register_v3_pool` and before
     /// [`apply_pump_buffer_v3`](Self::apply_pump_buffer_v3). No-op if there are
@@ -620,11 +711,11 @@ impl BotState {
     /// appliers mutated `tick_data` only, so the buffered events were invisible
     /// to `restore_before_block` and `update_block` stayed frozen at the
     /// registration block.
-    pub fn apply_backfill_buffer_v3(&mut self, address: &Address) {
+    pub(crate) fn apply_backfill_buffer_v3(&mut self, reg: &mut RegistryCore, address: &Address) {
         // Drain diagnostics: per-event apply at DEBUG on `pump` (the
         // drain-dbg gate is retired). Diagnoses same-block Mint+Burn
         // net-zero races where one half is lost between fetch and drain.
-        let Some(&key) = self.pool_addresses.get(address) else {
+        let Some(&key) = reg.pool_addresses.get(address) else {
             diag!(domain = pump, pool_addr = %format!("{address:x}"), "backfill NOT REGISTERED");
             return;
         };
@@ -656,7 +747,7 @@ impl BotState {
                     );
                 }
             }
-            if let Some(state) = self
+            if let Some(state) = reg
                 .pools
                 .get_mut(&key)
                 .and_then(PoolEntry::v3_mut)
@@ -674,14 +765,13 @@ impl BotState {
             }
         }
     }
-
     /// Apply all buffered **pump** V3 events for a pool address.
     /// Call this during registration, after [`apply_backfill_buffer_v3`].
     ///
     /// Same journal + `update_block` contract as
     /// [`apply_backfill_buffer_v3`] — see its docs.
-    pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
-        let Some(&key) = self.pool_addresses.get(address) else {
+    pub(crate) fn apply_pump_buffer_v3(&mut self, reg: &mut RegistryCore, address: &Address) {
+        let Some(&key) = reg.pool_addresses.get(address) else {
             diag!(domain = pump, pool_addr = %format!("{address:x}"), "pump NOT REGISTERED");
             return;
         };
@@ -720,7 +810,7 @@ impl BotState {
                     );
                 }
             }
-            if let Some(state) = self
+            if let Some(state) = reg
                 .pools
                 .get_mut(&key)
                 .and_then(PoolEntry::v3_mut)
@@ -738,34 +828,29 @@ impl BotState {
             }
         }
     }
-
     /// Number of buffered V3 liquidity events for a pool address (backfill + pump).
     #[must_use]
-    pub fn buffered_v3_event_count(&self, address: &Address) -> usize {
+    pub(crate) fn buffered_v3_event_count(&self, address: &Address) -> usize {
         self.v3_buffer.event_count(address)
     }
-
     /// Number of buffered V4 pool events for a `(pool_manager, pool_id)` key
     /// (backfill + pump). Test and diagnostic seam.
     #[must_use]
-    pub fn buffered_v4_event_count(
+    pub(crate) fn buffered_v4_event_count(
         &self,
         key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
     ) -> usize {
         self.v4_buffer.event_count(key)
     }
-
     /// Discard all buffered V3 liquidity events for all pools.
-    pub fn flush_v3_buffer(&mut self) {
+    pub(crate) fn flush_v3_buffer(&mut self) {
         self.v3_buffer.flush();
     }
-
     /// Expire V3 pump-buffer events older than `current_block - max_age`.
     /// No-op if `max_age` is `None`. Backfill buffer is never expired.
-    pub fn expire_v3_buffered(&mut self, current_block: u64) {
+    pub(crate) fn expire_v3_buffered(&mut self, current_block: u64) {
         self.v3_buffer.expire(current_block);
     }
-
     /// Apply one buffered V3 pool event (`Liquidity` or `Swap`) to a
     /// registered pool's state. The V3 drain loops
     /// ([`apply_backfill_buffer_v3`] / [`apply_pump_buffer_v3`]) dispatch
@@ -788,7 +873,6 @@ impl BotState {
             }
         }
     }
-
     /// Mark `block` as fully processed by the pump (every V3 log for `block`
     /// Read a registered V3 pool's state by `pool_id`.
     ///
@@ -796,31 +880,40 @@ impl BotState {
     /// (ADR-003: "Pool's authority over its own math") and calls
     /// `build_int_v3_sequence(zfo)` to build the per-hop state.
     #[must_use]
-    pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
-        self.pools
+    pub(crate) fn get_v3_pool<'r>(
+        &self,
+        reg: &'r RegistryCore,
+        pool_id: u64,
+    ) -> Option<&'r V3PoolState> {
+        reg.pools
             .get(&pool_id)
             .and_then(PoolEntry::v3)
             .map(|(_, state)| state)
     }
-
     /// Look up a V3 pool's immutable registration identity (address, tokens,
     /// fee, `tick_spacing`, factory). Returns `None` if the pool is not
     /// registered or isn't a V3 pool.
     #[must_use]
-    pub fn get_v3_identity(&self, pool_id: u64) -> Option<&V3PoolIdentity> {
-        self.pools
+    pub(crate) fn get_v3_identity<'r>(
+        &self,
+        reg: &'r RegistryCore,
+        pool_id: u64,
+    ) -> Option<&'r V3PoolIdentity> {
+        reg.pools
             .get(&pool_id)
             .and_then(PoolEntry::v3)
             .map(|(identity, _)| identity)
     }
-
     /// Snapshot all V3 pool state for verification (clones every V3 entry).
     ///
     /// Used by `verify_liquidity_maps` so the engine+core locks can be
     /// released before making async RPC calls.
     #[must_use]
-    pub fn v3_pools_snapshot(&self) -> HashMap<u64, (V3PoolIdentity, V3PoolState)> {
-        self.pools
+    pub(crate) fn v3_pools_snapshot(
+        &self,
+        reg: &RegistryCore,
+    ) -> HashMap<u64, (V3PoolIdentity, V3PoolState)> {
+        reg.pools
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V3(p) => Some((*id, (p.0, p.1.clone()))),
@@ -833,7 +926,6 @@ impl BotState {
             })
             .collect()
     }
-
     /// Snapshot seed block `S` setter — the single source of truth for `S`.
     ///
     /// Production paths set `S` here in three ways:
@@ -846,10 +938,9 @@ impl BotState {
     ///
     /// `None` clears the seed (cold-start resume — `BlockPump::resume_from_subscribe`
     /// skips the auto-backfill).
-    pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
+    pub(crate) fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
         self.snapshot_seed_block = s;
     }
-
     /// Read the pinned snapshot seed for a V3 pool. Returns the
     /// seed if the pool is `Tracked` and the seed has not yet been taken; `None`
     /// for sparse pools or after `take_v3_snapshot_seed`. The seed is the
@@ -857,23 +948,29 @@ impl BotState {
     /// verify compares this against on-chain@snapshot_block (not the
     /// pump-mutated `tick_data` current).
     #[must_use]
-    pub fn v3_snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
-        let &pool_id = self.pool_addresses.get(&address)?;
-        let (_identity, state) = self.pools.get(&pool_id).and_then(PoolEntry::v3)?;
+    pub(crate) fn v3_snapshot_seed<'r>(
+        &self,
+        reg: &'r RegistryCore,
+        address: Address,
+    ) -> Option<&'r HashMap<i32, TickInfo>> {
+        let &pool_id = reg.pool_addresses.get(&address)?;
+        let (_identity, state) = reg.pools.get(&pool_id).and_then(PoolEntry::v3)?;
         state.snapshot_seed.as_ref()
     }
-
     /// Take (move out + clear) the pinned snapshot seed for a V3 pool.
     /// Step-1 verify calls this to read+free the seed in one pass — the seed is
     /// verified exactly once (at the snapshot block during `build_paths`), then
     /// released to bound memory across 18k pools. Returns `None` for sparse
     /// pools or if already taken.
-    pub fn take_v3_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
-        let &pool_id = self.pool_addresses.get(&address)?;
-        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
+    pub(crate) fn take_v3_snapshot_seed(
+        &mut self,
+        reg: &mut RegistryCore,
+        address: Address,
+    ) -> Option<HashMap<i32, TickInfo>> {
+        let &pool_id = reg.pool_addresses.get(&address)?;
+        let (_identity, state) = reg.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
         state.snapshot_seed.take()
     }
-
     /// Pin the **post-drain** `(tick_data, block)` pair for a V3 pool (the step-2
     /// rolling-start race fix). Captures a frozen copy of the current
     /// `tick_data` alongside the `update_block` it was computed at — called
@@ -887,22 +984,22 @@ impl BotState {
     /// the 2026-06-29 crash). `Some` only for `Tracked` pools; `Sparse`
     /// stays `None` (no complete `tick_data` → step-2 is a no-op). Idempotent
     /// if called twice (the second pin overwrites; only step-2 consumes it).
-    pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
+    pub(crate) fn pin_v3_post_drain_snapshot(&mut self, reg: &mut RegistryCore, address: Address) {
         // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
         // `&self`) out of the inner scope, where `&mut state` is alive.
-        let cutoff = self.pump_complete_cutoff();
+        let cutoff = self.pump_complete_cutoff;
         // Stamp provenance: hoist the engine-witnessed horizon for
         // this pool — independent of the imported seed stamp — so the pin can
         // classify the stamp's freshness claim (the load-time tripwire).
         let witnessed = self.v3_event_horizon(&address);
         // Capture the pin scalars in an inner scope so the `&mut state`
-        // borrow of `self.pools` ends before the diagnostic reads
+        // borrow of `reg.pools` ends before the diagnostic reads
         // `self.v3_buffer` (a second `&self` borrow).
         let diag = {
-            let Some(&pool_id) = self.pool_addresses.get(&address) else {
+            let Some(&pool_id) = reg.pool_addresses.get(&address) else {
                 return;
             };
-            let Some(state) = self
+            let Some(state) = reg
                 .pools
                 .get_mut(&pool_id)
                 .and_then(PoolEntry::v3_mut)
@@ -952,7 +1049,7 @@ impl BotState {
                 tick_data_block,
                 tick_count,
                 pump_count = self.v3_buffer.pump_count_at_or_below(&address, tick_data_block),
-                last_complete_block = self.pump_complete_cutoff(),
+                last_complete_block = self.pump_complete_cutoff,
                 "V3 pin"
             );
             // Stamp provenance — the load-time tripwire. The
@@ -986,7 +1083,6 @@ impl BotState {
             }
         }
     }
-
     /// Take (move out + clear) the pinned post-drain `(tick_data, block)` pair
     /// for a V3 pool. Step-2 verify calls this to read+free the pin in one
     /// pass — the pin is verified exactly once (at the pinned block during
@@ -996,21 +1092,22 @@ impl BotState {
     /// `tick_data` against on-chain@THIS block, NOT a caller-supplied
     /// `verify_backfill_block` constant. Returns `None` for sparse pools, pools
     /// with no drain-yet pin, or if already taken (no-op Ok at the seam).
-    pub fn take_v3_post_drain_snapshot(
+    pub(crate) fn take_v3_post_drain_snapshot(
         &mut self,
+        reg: &mut RegistryCore,
         address: Address,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
-        let &pool_id = self.pool_addresses.get(&address)?;
-        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
+        let &pool_id = reg.pool_addresses.get(&address)?;
+        let (_identity, state) = reg.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
         state.post_drain_snapshot.take()
     }
-
     /// Full-sync a V3 pool's `tick_data` from an external source (e.g. Python
     /// backfill). Replaces the entire `tick_data` map (so ticks Burn-removed
     /// on-chain are also removed here) and updates scalar state. No-op if the
     /// pool address is not registered.
-    pub fn sync_v3_pool_state(
+    pub(crate) fn sync_v3_pool_state(
         &mut self,
+        reg: &mut RegistryCore,
         pool_address: Address,
         sqrt_price_x96: U256,
         liquidity: u128,
@@ -1018,10 +1115,10 @@ impl BotState {
         tick_data: HashMap<i32, TickInfo>,
         update_block: u64,
     ) {
-        let Some(&key) = self.pool_addresses.get(&pool_address) else {
+        let Some(&key) = reg.pool_addresses.get(&pool_address) else {
             return;
         };
-        let Some(state) = self
+        let Some(state) = reg
             .pools
             .get_mut(&key)
             .and_then(PoolEntry::v3_mut)
@@ -1042,13 +1139,16 @@ impl BotState {
         state.tick_data_block = update_block;
         state.invalidate_tick_range_cache();
     }
-
     /// per-pool tick-mutation fingerprint for the staged word-fetch
     /// install check. Any `tick_data` mutation moves `update_block` and/or
     /// the tick population; the stamp-sum term kills same-block net-zero
     /// churn that len alone would miss. `None` = pool gone.
-    pub(crate) fn tick_fingerprint(&self, pool_id: u64) -> Option<(u64, usize, u64)> {
-        match self.pools.get(&pool_id) {
+    pub(crate) fn tick_fingerprint(
+        &self,
+        reg: &RegistryCore,
+        pool_id: u64,
+    ) -> Option<(u64, usize, u64)> {
+        match reg.pools.get(&pool_id) {
             Some(PoolEntry::V3(p)) => Some((
                 p.1.update_block,
                 p.1.tick_data.len(),
@@ -1062,21 +1162,21 @@ impl BotState {
             _ => None,
         }
     }
-
     /// Stage half of the word backfill: clone the stored fetcher +
     /// capture the pool's tick fingerprint UNDER a short write, and release
     /// the caller's guard before the (multi-second, `Python::attach` + web3
     /// RPC) fetch runs. The old single-hold path fetched while the write
     /// guard was alive, parking the pump’s apply/solve pipeline behind the
     /// RPC. Pair with [`Self::install_word_fetch`].
-    pub fn stage_word_fetch_by_pool_id(
+    pub(crate) fn stage_word_fetch_by_pool_id(
         &mut self,
+        reg: &RegistryCore,
         pool_id: u64,
         word: i32,
         block: u64,
         retried: bool,
     ) -> Option<StagedWordFetch> {
-        let fetcher = match self.pools.get(&pool_id) {
+        let fetcher = match reg.pools.get(&pool_id) {
             Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
             Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
             _ => None,
@@ -1089,7 +1189,7 @@ impl BotState {
         // otherwise go known-minus-missing-ticks alongside the event's own
         // later application). First attempt honors the companion context.
         let fetch_context = if retried {
-            match self.pools.get(&pool_id).map(|entry| match entry {
+            match reg.pools.get(&pool_id).map(|entry| match entry {
                 PoolEntry::V3(p) => p.1.update_block,
                 PoolEntry::V4(p) => p.1.update_block,
                 PoolEntry::AerodromeV2(..)
@@ -1104,7 +1204,7 @@ impl BotState {
         } else {
             block
         };
-        let fingerprint = self.tick_fingerprint(pool_id)?;
+        let fingerprint = self.tick_fingerprint(reg, pool_id)?;
         Some(StagedWordFetch {
             pool_id,
             word,
@@ -1113,7 +1213,6 @@ impl BotState {
             fingerprint,
         })
     }
-
     /// Install half: merges the fetched word only if the pool was NOT
     /// mutated while the fetch ran (fingerprint re-check). A mutation means
     /// the pump applied an event for this pool during the fetch window —
@@ -1121,16 +1220,17 @@ impl BotState {
     /// caller RETRIES the stage+fetch (bounded) instead of applying a lost
     /// update. [`InstallWordOutcome::Failed`] keeps the failure contract
     /// (fetch failed / pool gone → the companion gate raises).
-    pub fn install_word_fetch(
+    pub(crate) fn install_word_fetch(
         &mut self,
+        reg: &mut RegistryCore,
         staged: &StagedWordFetch,
         fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
     ) -> InstallWordOutcome {
         use InstallWordOutcome::{Failed, Merged, Raced};
-        match self.tick_fingerprint(staged.pool_id) {
+        match self.tick_fingerprint(reg, staged.pool_id) {
             None => Failed,
             Some(fp) if fp == staged.fingerprint => {
-                if self.merge_tick_word(staged.pool_id, fetched) {
+                if self.merge_tick_word(reg, staged.pool_id, fetched) {
                     Merged
                 } else {
                     Failed
@@ -1139,7 +1239,6 @@ impl BotState {
             Some(_) => Raced,
         }
     }
-
     /// Backfill an unknown tick-bitmap word for a registered V3/V4 pool
     /// (the write-path twin of the fetch+retry calc seam).
     ///
@@ -1154,10 +1253,16 @@ impl BotState {
     /// failed — the caller (the Python companion gate) RAISES on `false`
     /// rather than applying the event over an unknown word. `true` only on a
     /// successful merge (checked-empty included).
-    pub fn ensure_word_known_by_pool_id(&mut self, pool_id: u64, word: i32, block: u64) -> bool {
+    pub(crate) fn ensure_word_known_by_pool_id(
+        &mut self,
+        reg: &mut RegistryCore,
+        pool_id: u64,
+        word: i32,
+        block: u64,
+    ) -> bool {
         // Clone the stored fetcher off the state first: the fetch call must
         // not hold the pool borrow, and `merge_tick_word` re-borrows `self`.
-        let fetcher = match self.pools.get(&pool_id) {
+        let fetcher = match reg.pools.get(&pool_id) {
             Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
             Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
             _ => None,
@@ -1168,9 +1273,8 @@ impl BotState {
         let Ok(fetched_word) = fetcher.fetch_missing_tick_word(pool_id, word, block) else {
             return false;
         };
-        self.merge_tick_word(pool_id, &fetched_word)
+        self.merge_tick_word(reg, pool_id, &fetched_word)
     }
-
     /// Merge a fetched tick-bitmap word into a V3/V4 pool's state.
     ///
     /// Adds the word's initialized ticks to `tick_data` (overlaying any
@@ -1183,8 +1287,9 @@ impl BotState {
     /// Returns `true` if the merge applied to a registered V3/V4 pool,
     /// `false` otherwise (silent no-op — mirrors `sync_tick_data_by_pool_id`).
     /// ADR-005 sparse-map feature parity.
-    pub fn merge_tick_word(
+    pub(crate) fn merge_tick_word(
         &mut self,
+        reg: &mut RegistryCore,
         pool_id: u64,
         fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
     ) -> bool {
@@ -1192,7 +1297,7 @@ impl BotState {
         // (the body lived inlined in V3/V4 arms here; the trait dedups the
         // two). The `bool` wraps the trait's always-`true` return: `false`
         // for non-CL / unregistered pools (the non-CL no-op).
-        let Some(entry) = self.pools.get_mut(&pool_id) else {
+        let Some(entry) = reg.pools.get_mut(&pool_id) else {
             return false;
         };
         match entry.as_cl_mut() {
@@ -1200,21 +1305,18 @@ impl BotState {
             None => false,
         }
     }
-
     /// Number of registered V3 pools.
     #[must_use]
-    pub fn v3_pool_count(&self) -> usize {
-        self.pools
+    pub(crate) fn v3_pool_count(&self, reg: &RegistryCore) -> usize {
+        reg.pools
             .values()
             .filter(|e| matches!(e, PoolEntry::V3(..)))
             .count()
     }
-
     // -----------------------------------------------------------------------
     // V4 state (ADR-003: single entry per `(pool_manager, pool_id)`;
     // orientation derived at solve from `zero_for_one`)
     // -----------------------------------------------------------------------
-
     /// Record the canonical V4 `StateView` contract address for a `pool_manager`
     /// (ADR-005 / Option 2 — Rust owns the mapping). V4 scalar state is read
     /// via the `StateView`'s `getSlot0`/`getLiquidity`, not `getPool` on the
@@ -1222,37 +1324,33 @@ impl BotState {
     /// solver-state verifier resolves it per-hop via [`BotState::state_view_for`].
     /// Idempotent: the seed for a manager is supplied once by the driver
     /// (read from the `pool_managers` DB row) before V4 pools solve.
-    pub fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
+    pub(crate) fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
         self.v4_state_views.insert(pool_manager, state_view);
     }
-
     /// The canonical V4 `StateView` address for `pool_manager`, if registered.
     /// `None` when unknown — the solver-state verifier skips a V4 hop whose
     /// manager's `StateView` has not been seeded (no false alarm on an
     /// un-verifiable hop).
     #[must_use]
-    pub fn state_view_for(&self, pool_manager: Address) -> Option<Address> {
+    pub(crate) fn state_view_for(&self, pool_manager: Address) -> Option<Address> {
         self.v4_state_views.get(&pool_manager).copied()
     }
-
     /// The immutable admission verdict recorded for a pool, if any (PRG-2).
     /// The `PyO3` `build_v4_pool` pre-check consults this BEFORE any RPC
     /// work on the registration path.
     #[must_use]
-    pub fn admission_verdict(
+    pub(crate) fn admission_verdict(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<crate::registration_gate::AdmissionVerdict> {
         self.registration_gate.verdict(pool_manager, *pool_id)
     }
-
     /// The registration-gate census (recorded immutable verdicts).
     #[must_use]
-    pub fn registration_gate_len(&self) -> usize {
+    pub(crate) fn registration_gate_len(&self) -> usize {
         self.registration_gate.len()
     }
-
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
     /// ADR-037: pools with amount-modifying hooks are ADMITTED (their
@@ -1273,8 +1371,9 @@ impl BotState {
     /// has a static fee exceeding the executor's `u16` encoding field
     /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`), or a pool
     /// with the same `(pool_manager, pool_id)` is already registered.
-    pub fn register_v4_pool(
+    pub(crate) fn register_v4_pool(
         &mut self,
+        reg: &mut RegistryCore,
         params: &RegisterV4PoolParams,
     ) -> Result<u64, RegisterV4PoolError> {
         use ::degenbot_pools::spec_bounds as sb;
@@ -1323,41 +1422,41 @@ impl BotState {
             });
         }
 
-        let pool_id = self.next_pool_id;
-        self.next_pool_id += 1;
+        let pool_id = reg.next_pool_id;
+        reg.next_pool_id += 1;
 
         // the `seed_from_store` path is retired — the DB
         // seeding is handled by the Db arm of `assemble_v4_tick_map` (held
         // snapshot tx). Just clone + flow the params through.
         let params = params.clone();
-        let (identity, state) = V4PoolState::from_params(params, self.journal_depth);
-        self.pools
+        let (identity, state) = V4PoolState::from_params(params, reg.journal_depth);
+        reg.pools
             .insert(pool_id, PoolEntry::V4(Box::new((identity, state))));
         self.v4_pool_ids.insert(key, pool_id);
 
         Ok(pool_id)
     }
-
     /// Resolve a V4 pool's routing presence (`cl_route` axis).
     fn v4_presence(
         &self,
+        reg: &RegistryCore,
         key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
     ) -> PoolPresence {
         let lifecycle = self
             .v4_pool_ids
             .get(key)
-            .and_then(|&id| match self.pools.get(&id) {
+            .and_then(|&id| match reg.pools.get(&id) {
                 Some(PoolEntry::V4(p)) => Some(p.1.registration_lifecycle),
                 _ => None,
             });
         PoolPresence::from_lifecycle(lifecycle)
     }
-
     /// THE single decision point for a decoded V4 event (`cl_route` table).
     /// V4 twin of [`Self::route_v3_event`], keyed by `(pool_manager, pool_id)`.
     /// `swap_priors` overlays tick priors onto DIRECT swap application only.
-    pub fn route_v4_event(
+    pub(crate) fn route_v4_event(
         &mut self,
+        reg: &mut RegistryCore,
         phase: Phase,
         pool_manager: Address,
         v4_pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -1368,7 +1467,7 @@ impl BotState {
             BufferedV4PoolEvent::Swap(_) => EventKind::ScalarRefresh,
             BufferedV4PoolEvent::Liquidity(_) => EventKind::TickMutation,
         };
-        let presence = self.v4_presence(&(pool_manager, v4_pool_id));
+        let presence = self.v4_presence(reg, &(pool_manager, v4_pool_id));
         let event_block = match &event {
             BufferedV4PoolEvent::Swap(s) => s.block_number,
             BufferedV4PoolEvent::Liquidity(l) => l.block_number,
@@ -1392,6 +1491,7 @@ impl BotState {
                         block_number,
                     }) => {
                         self.apply_v4_swap_by_pool_id(
+                            reg,
                             id,
                             sqrt_price_x96,
                             liquidity,
@@ -1408,6 +1508,7 @@ impl BotState {
                     }) => {
                         if let Ok(delta_i128) = i128::try_from(liquidity_delta) {
                             self.apply_v4_liquidity_update_by_pool_id(
+                                reg,
                                 id,
                                 tick_lower,
                                 tick_upper,
@@ -1465,12 +1566,16 @@ impl BotState {
             RouteAction::Drop(reason) => ApplyOutcome::NoOp(reason),
         }
     }
-
     /// Apply a V4 Swap event (ADR-003 live path) — thin adapter over
     /// [`Self::route_v4_event`] at `Phase::Live`; outcome flattened to the
     /// historical `Option<pool_id>` shape. `update.tick_priors` overlay only
     /// on direct application (pump/backfill pass an empty slice).
-    pub fn apply_v4_swap(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
+    pub(crate) fn apply_v4_swap(
+        &mut self,
+        reg: &mut RegistryCore,
+        update: &V4SwapUpdate,
+        block_number: u64,
+    ) -> Option<u64> {
         let pool_id_hex = alloy::hex::encode_prefixed(update.pool_id);
         trace_apply_swap_v4(
             update.pool_manager,
@@ -1481,6 +1586,7 @@ impl BotState {
             block_number,
         );
         match self.route_v4_event(
+            reg,
             Phase::Live,
             update.pool_manager,
             update.pool_id,
@@ -1496,13 +1602,13 @@ impl BotState {
             ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
         }
     }
-
     /// Apply a V4 `ModifyLiquidity` event — thin adapter over
     /// [`Self::route_v4_event`] at `Phase::Live`. The same class of safety:
     /// unregistered pools stage into the PUMP buffer here so late registration
     /// captures them; the old inline arms embedded a partial policy copy.
-    pub fn apply_v4_liquidity_update(
+    pub(crate) fn apply_v4_liquidity_update(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         tick_lower: i32,
@@ -1511,6 +1617,7 @@ impl BotState {
         block_number: u64,
     ) -> Option<u64> {
         match self.route_v4_event(
+            reg,
             Phase::Live,
             pool_manager,
             pool_id,
@@ -1526,11 +1633,11 @@ impl BotState {
             ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
         }
     }
-
     /// Apply a V4 Swap keyed by the resolved `pool_id` (ADR-014 D1 twin of
     /// the V3 address-keyed wrapper; registered pools only).
-    pub fn apply_v4_swap_by_pool_id(
+    pub(crate) fn apply_v4_swap_by_pool_id(
         &mut self,
+        reg: &mut RegistryCore,
         pool_id: u64,
         sqrt_price_x96: U256,
         liquidity: u128,
@@ -1538,11 +1645,10 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v4_mut)?;
+        let (_identity, state) = reg.pools.get_mut(&pool_id).and_then(PoolEntry::v4_mut)?;
         state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
         Some(pool_id)
     }
-
     /// Apply a V4 `ModifyLiquidity` keyed by the resolved `pool_id`: journals
     /// the two tick priors, applies the delta to the tick range
     /// (`liquidity_net` `+=` at lower, `-=` at upper, both `gross +=`),
@@ -1550,22 +1656,23 @@ impl BotState {
     /// change (`scalar_priors: None`) — same ADR-004 tick-only contract as V3.
     ///
     /// Returns `Some(pool_id)` if the pool is V4; `None` otherwise.
-    pub fn apply_v4_liquidity_update_by_pool_id(
+    pub(crate) fn apply_v4_liquidity_update_by_pool_id(
         &mut self,
+        reg: &mut RegistryCore,
         pool_id: u64,
         tick_lower: i32,
         tick_upper: i32,
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v4_mut)?;
+        let (_identity, state) = reg.pools.get_mut(&pool_id).and_then(PoolEntry::v4_mut)?;
         state.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
         Some(pool_id)
     }
-
     /// Buffer a V4 `ModifyLiquidity` event from the backfill phase.
-    pub fn buffer_backfill_v4_liquidity_update(
+    pub(crate) fn buffer_backfill_v4_liquidity_update(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         tick_lower: i32,
@@ -1575,7 +1682,7 @@ impl BotState {
     ) {
         let key = (pool_manager, pool_id);
         if let Some(&id) = self.v4_pool_ids.get(&key) {
-            if let Some(state) = self
+            if let Some(state) = reg
                 .pools
                 .get_mut(&id)
                 .and_then(PoolEntry::v4_mut)
@@ -1616,15 +1723,15 @@ impl BotState {
             }),
         );
     }
-
     /// Apply all buffered **backfill** V4 `ModifyLiquidity` events for a pool.
     ///
     /// Same journal + `update_block` contract as the V3 buffer appliers
     /// ([`apply_backfill_buffer_v3`]) — each event pushes a tick-only
     /// `V3BlockDelta` (V4 shares the V3 journal shape) and advances
     /// `state.update_block`. Pre-fix these mutated `tick_data` only.
-    pub fn apply_backfill_buffer_v4(
+    pub(crate) fn apply_backfill_buffer_v4(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
@@ -1636,7 +1743,7 @@ impl BotState {
             return;
         };
         for update in buffered {
-            let Some(state) = self
+            let Some(state) = reg
                 .pools
                 .get_mut(&id)
                 .and_then(PoolEntry::v4_mut)
@@ -1647,13 +1754,13 @@ impl BotState {
             Self::apply_buffered_v4_event(state, update);
         }
     }
-
     /// Apply all buffered **pump** V4 `ModifyLiquidity` events for a pool.
     ///
     /// Same journal + `update_block` contract as
     /// [`apply_backfill_buffer_v4`] — see its docs.
-    pub fn apply_pump_buffer_v4(
+    pub(crate) fn apply_pump_buffer_v4(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
@@ -1673,7 +1780,7 @@ impl BotState {
             return;
         };
         for update in buffered {
-            let Some(state) = self
+            let Some(state) = reg
                 .pools
                 .get_mut(&id)
                 .and_then(PoolEntry::v4_mut)
@@ -1684,20 +1791,16 @@ impl BotState {
             Self::apply_buffered_v4_event(state, update);
         }
     }
-
     /// Set the maximum age for buffered V4 pump events. `None` = unbounded.
-    pub fn set_v4_buffer_max_age(&mut self, max_age: Option<u64>) {
+    pub(crate) fn set_v4_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.v4_buffer.set_max_age(max_age);
     }
-
-    pub fn flush_v4_buffer(&mut self) {
+    pub(crate) fn flush_v4_buffer(&mut self) {
         self.v4_buffer.flush();
     }
-
-    pub fn expire_v4_buffered(&mut self, current_block: u64) {
+    pub(crate) fn expire_v4_buffered(&mut self, current_block: u64) {
         self.v4_buffer.expire(current_block);
     }
-
     /// Apply one buffered V4 pool event (`Liquidity` or `Swap`) to a
     /// registered pool's state. The V4 drain loops
     /// ([`apply_backfill_buffer_v4`] / [`apply_pump_buffer_v4`]) dispatch
@@ -1722,7 +1825,6 @@ impl BotState {
             }
         }
     }
-
     /// Set a V3 pool's registration lifecycle to `Quarantined`. The
     /// live pump then defers the pool's `Swap`/`Mint`/`Burn` events to the
     /// pump buffer until [`set_pool_live`] transitions it back. Call at the
@@ -1736,34 +1838,37 @@ impl BotState {
     /// registration-lifecycle module reads this up-front to branch the
     /// verify-lifecycle (Sparse stays `Live`, no RPC).
     #[must_use]
-    pub fn v3_pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
-        let &pool_id = self.pool_addresses.get(&address)?;
-        match self.pools.get(&pool_id)? {
+    pub(crate) fn v3_pool_coverage(
+        &self,
+        reg: &RegistryCore,
+        address: Address,
+    ) -> Option<PoolTickCoverage> {
+        let &pool_id = reg.pool_addresses.get(&address)?;
+        match reg.pools.get(&pool_id)? {
             PoolEntry::V3(p) => Some(p.1.coverage),
             _ => None,
         }
     }
-
     /// Coverage flag for a registered V4 pool (`Tracked` / `Sparse`). Returns
     /// `None` for unregistered / non-V4 pools. V4 twin of
     /// [`v3_pool_coverage`] — read up-front by the registration-lifecycle to
     /// keep Sparse pools out of the verify deferral.
     #[must_use]
-    pub fn v4_pool_coverage(
+    pub(crate) fn v4_pool_coverage(
         &self,
+        reg: &RegistryCore,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<PoolTickCoverage> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        match self.pools.get(&pid)? {
+        match reg.pools.get(&pid)? {
             PoolEntry::V4(p) => Some(p.1.coverage),
             _ => None,
         }
     }
-
-    pub fn set_v3_pool_quarantined(&mut self, address: Address) {
-        if let Some(&id) = self.pool_addresses.get(&address) {
-            if let Some(state) = self
+    pub(crate) fn set_v3_pool_quarantined(&mut self, reg: &mut RegistryCore, address: Address) {
+        if let Some(&id) = reg.pool_addresses.get(&address) {
+            if let Some(state) = reg
                 .pools
                 .get_mut(&id)
                 .and_then(PoolEntry::v3_mut)
@@ -1775,19 +1880,19 @@ impl BotState {
             }
         }
     }
-
     /// Set a V4 pool's registration lifecycle to `Quarantined`. V4
     /// twin of [`set_v3_pool_quarantined`]. Call at the start of
     /// `register_v4_pool` (before the first RPC await). No-op for unregistered
     /// V4 pools and for non-`Tracked` pools (Sparse stays `Live`).
-    pub fn set_v4_pool_quarantined(
+    pub(crate) fn set_v4_pool_quarantined(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         let key = (pool_manager, pool_id);
         if let Some(&id) = self.v4_pool_ids.get(&key) {
-            if let Some(state) = self
+            if let Some(state) = reg
                 .pools
                 .get_mut(&id)
                 .and_then(PoolEntry::v4_mut)
@@ -1799,7 +1904,6 @@ impl BotState {
             }
         }
     }
-
     /// Transition a V3 pool from `Quarantined` to `Live`: flush any
     /// remaining buffered pump events for the pool (the in-progress-block tail
     /// retained by `drain_pump_completed`) via the UNGUARDED `drain_pump` in
@@ -1810,8 +1914,8 @@ impl BotState {
     /// exists) — matches the Live steady-state contract (Live pools receive
     /// direct apply with no per-block gate; ordering preserved). No-op for
     /// unregistered / non-V3 pools or an already-`Live` pool.
-    pub fn set_v3_pool_live(&mut self, address: Address) {
-        let Some(&id) = self.pool_addresses.get(&address) else {
+    pub(crate) fn set_v3_pool_live(&mut self, reg: &mut RegistryCore, address: Address) {
+        let Some(&id) = reg.pool_addresses.get(&address) else {
             return;
         };
         // Flush the retained pump tail first (backfill already fully drained
@@ -1835,7 +1939,7 @@ impl BotState {
                 );
             }
             for event in buffered {
-                if let Some(state) = self
+                if let Some(state) = reg
                     .pools
                     .get_mut(&id)
                     .and_then(PoolEntry::v3_mut)
@@ -1845,7 +1949,7 @@ impl BotState {
                 }
             }
         }
-        if let Some(state) = self
+        if let Some(state) = reg
             .pools
             .get_mut(&id)
             .and_then(PoolEntry::v3_mut)
@@ -1854,13 +1958,13 @@ impl BotState {
             state.registration_lifecycle = RegistrationLifecycle::Live;
         }
     }
-
     /// Transition a V4 pool from `Quarantined` to `Live`. V4 twin of
     /// [`set_v3_pool_live`] — flushes the retained pump tail via the
     /// unguarded `drain_pump`, then marks `Live`. No-op for unregistered V4
     /// pools or an already-`Live` pool.
-    pub fn set_v4_pool_live(
+    pub(crate) fn set_v4_pool_live(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
@@ -1888,7 +1992,7 @@ impl BotState {
                 );
             }
             for event in buffered {
-                if let Some(state) = self
+                if let Some(state) = reg
                     .pools
                     .get_mut(&id)
                     .and_then(PoolEntry::v4_mut)
@@ -1898,7 +2002,7 @@ impl BotState {
                 }
             }
         }
-        if let Some(state) = self
+        if let Some(state) = reg
             .pools
             .get_mut(&id)
             .and_then(PoolEntry::v4_mut)
@@ -1907,7 +2011,6 @@ impl BotState {
             state.registration_lifecycle = RegistrationLifecycle::Live;
         }
     }
-
     /// Batch-release every pool still `Quarantined` (orphan sweep).
     ///
     /// With Tracked pools now registering `Quarantined` by default, a Tracked
@@ -1919,19 +2022,19 @@ impl BotState {
     /// [`set_v3_pool_live`]/[`set_v4_pool_live`]) and mark it `Live`, so no
     /// registered pool is left buffering forever. No-op when nothing is
     /// quarantined.
-    pub fn release_all_v3_v4_quarantined(&mut self) {
+    pub(crate) fn release_all_v3_v4_quarantined(&mut self, reg: &mut RegistryCore) {
         // Collect the still-Quarantined V3 addresses and V4 (pm, pool_id) keys
         // first (drain buffers are keyed by those, not `pool_id`), then release
         // each via the existing set_live flush+mark. Collect-then-apply avoids
-        // holding a `&mut self.pools` borrow across the drain calls.
-        let v3_addrs: Vec<Address> = self
+        // holding a `&mut reg.pools` borrow across the drain calls.
+        let v3_addrs: Vec<Address> = reg
             .pools
             .iter()
             .filter_map(|(&id, e)| match e {
                 PoolEntry::V3(p)
                     if p.1.registration_lifecycle == RegistrationLifecycle::Quarantined =>
                 {
-                    if let PoolEntry::V3(q) = &self.pools[&id] {
+                    if let PoolEntry::V3(q) = &reg.pools[&id] {
                         Some(q.0.address)
                     } else {
                         None
@@ -1940,14 +2043,14 @@ impl BotState {
                 _ => None,
             })
             .collect();
-        let v4_keys: Vec<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId)> = self
+        let v4_keys: Vec<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId)> = reg
             .pools
             .iter()
             .filter_map(|(&id, e)| match e {
                 PoolEntry::V4(p)
                     if p.1.registration_lifecycle == RegistrationLifecycle::Quarantined =>
                 {
-                    if let PoolEntry::V4(q) = &self.pools[&id] {
+                    if let PoolEntry::V4(q) = &reg.pools[&id] {
                         Some((q.0.pool_manager, q.0.pool_id))
                     } else {
                         None
@@ -1967,43 +2070,47 @@ impl BotState {
             "release-all quarantined"
         );
         for addr in v3_addrs {
-            self.set_v3_pool_live(addr);
+            self.set_v3_pool_live(reg, addr);
         }
         for (pm, pid) in v4_keys {
-            self.set_v4_pool_live(pm, pid);
+            self.set_v4_pool_live(reg, pm, pid);
         }
     }
-
     /// Read a registered V4 pool's state by `pool_id`.
     #[must_use]
-    pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
-        self.pools
+    pub(crate) fn get_v4_pool<'r>(
+        &self,
+        reg: &'r RegistryCore,
+        pool_id: u64,
+    ) -> Option<&'r V4PoolState> {
+        reg.pools
             .get(&pool_id)
             .and_then(PoolEntry::v4)
             .map(|(_, state)| state)
     }
-
     /// Look up a V4 pool's immutable registration identity (`pool_manager`,
     /// `pool_id`, `pool_key`). Returns `None` if the pool is not registered or
     /// isn't a V4 pool.
     #[must_use]
-    pub fn get_v4_identity(&self, pool_id: u64) -> Option<&V4PoolIdentity> {
-        self.pools
+    pub(crate) fn get_v4_identity<'r>(
+        &self,
+        reg: &'r RegistryCore,
+        pool_id: u64,
+    ) -> Option<&'r V4PoolIdentity> {
+        reg.pools
             .get(&pool_id)
             .and_then(PoolEntry::v4)
             .map(|(identity, _)| identity)
     }
-
     /// Look up the pool ID for a registered `(pool_manager, pool_id)` pair.
     #[must_use]
-    pub fn v4_pool_id_by_key(
+    pub(crate) fn v4_pool_id_by_key(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<u64> {
         self.v4_pool_ids.get(&(pool_manager, *pool_id)).copied()
     }
-
     /// One-read fast-path lookup for the `PyO3` `build_v4_pool` re-build guard
     /// (missed-WS-pong incident 2026-08-28).
     ///
@@ -2021,14 +2128,15 @@ impl BotState {
     /// and never registered, so they miss here and keep their existing typed
     /// rejections.
     #[must_use]
-    pub fn try_registered_v4(
+    pub(crate) fn try_registered_v4(
         &self,
+        reg: &RegistryCore,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<RegisteredV4> {
         let id = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let identity = self.get_v4_identity(id)?;
-        let state = self.get_v4_pool(id)?;
+        let identity = self.get_v4_identity(reg, id)?;
+        let state = self.get_v4_pool(reg, id)?;
         Some(RegisteredV4 {
             pool_id: id,
             pool_key: identity.pool_key.clone(),
@@ -2036,32 +2144,31 @@ impl BotState {
             coverage: state.coverage,
         })
     }
-
     /// Read the pinned snapshot seed for a V4 pool (V4 twin of
     /// `v3_snapshot_seed`). Keyed by `(pool_manager, pool_id)`.
     #[must_use]
-    pub fn v4_snapshot_seed(
+    pub(crate) fn v4_snapshot_seed<'r>(
         &self,
+        reg: &'r RegistryCore,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<&HashMap<i32, TickInfo>> {
+    ) -> Option<&'r HashMap<i32, TickInfo>> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let (_identity, state) = self.pools.get(&pid).and_then(PoolEntry::v4)?;
+        let (_identity, state) = reg.pools.get(&pid).and_then(PoolEntry::v4)?;
         state.snapshot_seed.as_ref()
     }
-
     /// Take (move out + clear) the pinned snapshot seed for a V4 pool.
     /// V4 twin of `take_v3_snapshot_seed` — step-1 verify consumes the seed once.
-    pub fn take_v4_snapshot_seed(
+    pub(crate) fn take_v4_snapshot_seed(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<HashMap<i32, TickInfo>> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let (_identity, state) = self.pools.get_mut(&pid).and_then(PoolEntry::v4_mut)?;
+        let (_identity, state) = reg.pools.get_mut(&pid).and_then(PoolEntry::v4_mut)?;
         state.snapshot_seed.take()
     }
-
     /// Pin the post-drain `(tick_data, block)` pair for a V4 pool (step-2 race
     /// fix, V4 twin of `pin_v3_post_drain_snapshot`). Captures a frozen copy
     /// of the current `tick_data` alongside the `update_block` it was computed
@@ -2071,26 +2178,27 @@ impl BotState {
     /// `ModifyLiquidity` journals after the drain) and NOT a start()-time
     /// `verify_backfill_block` constant (which predates the pump buffer's drain
     /// the 2026-06-29 crash). `Tracked` pools only.
-    pub fn pin_v4_post_drain_snapshot(
+    pub(crate) fn pin_v4_post_drain_snapshot(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         let key = (pool_manager, *pool_id);
         // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
         // `&self`) out of the inner scope, where `&mut state` is alive.
-        let cutoff = self.pump_complete_cutoff();
+        let cutoff = self.pump_complete_cutoff;
         // Stamp provenance (V4 twin): hoist the engine-witnessed
         // horizon so the pin can classify the seed stamp's freshness claim.
         let witnessed = self.v4_event_horizon(&key);
         // Capture the pin scalar in an inner scope so the `&mut state` borrow
-        // of `self.pools` ends before the diagnostic reads `self.v4_buffer`
+        // of `reg.pools` ends before the diagnostic reads `self.v4_buffer`
         // (a second `&self` borrow) — Rust forbids both alive at once.
         let diag = {
             let Some(pid) = self.v4_pool_id_by_key(pool_manager, pool_id) else {
                 return;
             };
-            let Some(state) = self
+            let Some(state) = reg
                 .pools
                 .get_mut(&pid)
                 .and_then(PoolEntry::v4_mut)
@@ -2126,7 +2234,7 @@ impl BotState {
                 pool_id = %alloy::hex::encode_prefixed(pool_id),
                 tick_data_block,
                 pump_count = self.v4_buffer.pump_count_at_or_below(&key, tick_data_block),
-                last_complete_block = self.pump_complete_cutoff(),
+                last_complete_block = self.pump_complete_cutoff,
                 "V4 pin"
             );
             // Stamp provenance (V4 twin) — see the V3 pin.
@@ -2154,7 +2262,6 @@ impl BotState {
             }
         }
     }
-
     /// Take (move out + clear) the V4 post-drain `(tick_data, block)` pair.
     /// Step-2 verify consumes it once (at the pinned block). The returned
     /// block is the `tick_data_block` (liquidity clock, two-stamp rule)
@@ -2162,25 +2269,24 @@ impl BotState {
     /// against on-chain@THIS block, NOT a caller-supplied
     /// `verify_backfill_block` constant. `None` for sparse / un-drained /
     /// already-taken pools (no-op Ok at the seam).
-    pub fn take_v4_post_drain_snapshot(
+    pub(crate) fn take_v4_post_drain_snapshot(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let (_identity, state) = self.pools.get_mut(&pid).and_then(PoolEntry::v4_mut)?;
+        let (_identity, state) = reg.pools.get_mut(&pid).and_then(PoolEntry::v4_mut)?;
         state.post_drain_snapshot.take()
     }
-
     /// Number of registered V4 pools.
     #[must_use]
-    pub fn v4_pool_count(&self) -> usize {
+    pub(crate) fn v4_pool_count(&self) -> usize {
         self.v4_pool_ids.len()
     }
-
     /// Return the set of V4 `PoolManager` addresses with registered pools.
     #[must_use]
-    pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
+    pub(crate) fn v4_registered_pool_managers(&self) -> Vec<Address> {
         self.v4_pool_ids
             .keys()
             .map(|(pm, _)| *pm)
@@ -2188,11 +2294,13 @@ impl BotState {
             .into_iter()
             .collect()
     }
-
     /// Snapshot all V4 pool state for verification.
     #[must_use]
-    pub fn v4_pools_snapshot(&self) -> HashMap<u64, (V4PoolIdentity, V4PoolState)> {
-        self.pools
+    pub(crate) fn v4_pools_snapshot(
+        &self,
+        reg: &RegistryCore,
+    ) -> HashMap<u64, (V4PoolIdentity, V4PoolState)> {
+        reg.pools
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V4(p) => Some((*id, (p.0.clone(), p.1.clone()))),
@@ -2205,10 +2313,10 @@ impl BotState {
             })
             .collect()
     }
-
     /// Full-sync a V4 pool's `tick_data` from an external source.
-    pub fn sync_v4_pool_state(
+    pub(crate) fn sync_v4_pool_state(
         &mut self,
+        reg: &mut RegistryCore,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         update: V4StateSync,
@@ -2216,7 +2324,7 @@ impl BotState {
         let Some(&id) = self.v4_pool_ids.get(&(pool_manager, pool_id)) else {
             return;
         };
-        let Some(state) = self
+        let Some(state) = reg
             .pools
             .get_mut(&id)
             .and_then(PoolEntry::v4_mut)
@@ -2233,6 +2341,772 @@ impl BotState {
         state.update_block = update.update_block;
         state.tick_data_block = update.update_block;
         state.invalidate_tick_range_cache();
+    }
+    // ------------------------------------------------------------------
+    // Capability interface for registry-side consumers
+    // ------------------------------------------------------------------
+
+    /// Enumerate the registered V4 pools - `(pool_manager, pool_id)` ->
+    /// internal pool id. Registry-side consumers (the sim-anchor projection,
+    /// the storage probe) see V4 registration ONLY through this
+    /// capability-scoped read.
+    pub(crate) fn registered_v4_pools(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+            &u64,
+        ),
+    > {
+        self.v4_pool_ids.iter()
+    }
+
+    /// Unregistration seam (ADR-007 U3): drop every buffered V3 event for
+    /// `address` so a re-register never replays stale Mint/Burn events.
+    pub(crate) fn discard_v3_buffered(&mut self, address: &Address) {
+        self.v3_buffer.discard_for(address);
+    }
+
+    /// Unregistration seam (ADR-007 U3): remove the `(pool_manager, pool_id)`
+    /// V4 registration, returning its internal pool id (`None` = never
+    /// registered).
+    pub(crate) fn remove_v4_registration(
+        &mut self,
+        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+    ) -> Option<u64> {
+        self.v4_pool_ids.remove(key)
+    }
+
+    /// Unregistration seam (ADR-007 U3): drop every buffered V4 event for `key`.
+    pub(crate) fn discard_v4_buffered(
+        &mut self,
+        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+    ) {
+        self.v4_buffer.discard_for(key);
+    }
+
+    // ------------------------------------------------------------------
+    // Delivery-cutoff / seed-block accessors (relocated from lib.rs)
+    // ------------------------------------------------------------------
+
+    /// The current delivery cutoff (`0` until the first tombstone). Read of
+    /// the value the registration drain gates on.
+    #[must_use]
+    pub(crate) fn pump_complete_cutoff(&self) -> u64 {
+        self.pump_complete_cutoff
+    }
+
+    /// Monotonically advance the delivery cutoff (last complete block). The
+    /// live pump drives this when executing the `TombstonePrevious` verdict
+    ///; tests that drive the registration drain without a pump use
+    /// the same entry point.
+    pub(crate) fn advance_pump_complete_cutoff(&mut self, block: u64) {
+        if block > self.pump_complete_cutoff {
+            self.pump_complete_cutoff = block;
+        }
+    }
+
+    /// Set the maximum age (in blocks) for buffered V3 pump events.
+    /// `None` means unbounded. Takes effect on the next `expire_v3_buffered`.
+    pub(crate) const fn set_v3_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.v3_buffer.set_max_age(max_age);
+    }
+
+    /// The snapshot seed block `S` - `min(fetch_newest_update_block(V3), V4)`
+    /// across the loaded snapshots. `None` when no snapshot was loaded (the
+    /// cold-start path pumps directly from `first_observed_block`). Set by
+    /// `Bot::load_snapshot_from_db` / `load_snapshot_from_py`; consumed by the
+    /// auto-backfill (`resume_from_subscribe`) that closes `S+1..W-1`.
+    #[must_use]
+    pub(crate) const fn snapshot_seed_block(&self) -> Option<u64> {
+        self.snapshot_seed_block
+    }
+}
+
+/// Delegating composition-root surface: every CL capability method stays
+/// reachable on `BotState` (the pub surface external crates consume);
+/// each wrapper is a one-line split-borrow delegation.
+/// Delegating composition-root surface: every CL capability method stays
+/// reachable on `BotState` (the pub surface external crates consume);
+/// each wrapper is a one-line split-borrow delegation.
+/// Delegating composition-root surface: every CL capability method stays
+/// reachable on `BotState` (the pub surface external crates consume);
+/// each wrapper is a one-line split-borrow delegation.
+/// Delegating composition-root surface: every CL capability method stays
+/// reachable on `BotState` (the pub surface external crates consume);
+/// each wrapper is a one-line split-borrow delegation.
+impl BotState {
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v3_pool`].
+    pub fn register_v3_pool(
+        &mut self,
+        params: &RegisterV3PoolParams,
+    ) -> Result<u64, RegisterV3PoolError> {
+        self.cl.register_v3_pool(&mut self.registry, params)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::update_v3_pool`].
+    pub fn update_v3_pool(
+        &mut self,
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: Vec<(i32, TickBefore)>,
+    ) {
+        self.cl.update_v3_pool(
+            &mut self.registry,
+            pool_address,
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            block_number,
+            tick_priors,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_event_horizon`].
+    pub fn v3_event_horizon(&self, pool_address: &Address) -> u64 {
+        self.cl.v3_event_horizon(pool_address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::note_v3_event_block`].
+    pub fn note_v3_event_block(&mut self, pool_address: Address, block_number: u64) {
+        self.cl.note_v3_event_block(pool_address, block_number)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_event_horizon`].
+    pub fn v4_event_horizon(
+        &self,
+        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+    ) -> u64 {
+        self.cl.v4_event_horizon(key)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::note_v4_event_block`].
+    pub fn note_v4_event_block(
+        &mut self,
+        key: (Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+        block_number: u64,
+    ) {
+        self.cl.note_v4_event_block(key, block_number)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::route_v3_event`].
+    pub fn route_v3_event(
+        &mut self,
+        phase: Phase,
+        pool_address: Address,
+        event: BufferedV3PoolEvent,
+        swap_priors: &[(i32, TickInfo)],
+    ) -> ApplyOutcome {
+        self.cl
+            .route_v3_event(&mut self.registry, phase, pool_address, event, swap_priors)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_v3_swap`].
+    pub fn apply_v3_swap(
+        &mut self,
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
+        self.cl.apply_v3_swap(
+            &mut self.registry,
+            pool_address,
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            block_number,
+            tick_priors,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_v3_swap_by_pool_id`].
+    pub fn apply_v3_swap_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
+        self.cl.apply_v3_swap_by_pool_id(
+            &mut self.registry,
+            pool_id,
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            block_number,
+            tick_priors,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_v3_liquidity_update`].
+    pub fn apply_v3_liquidity_update(
+        &mut self,
+        pool_address: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<u64> {
+        self.cl.apply_v3_liquidity_update(
+            &mut self.registry,
+            pool_address,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_v3_liquidity_update_by_pool_id`].
+    pub fn apply_v3_liquidity_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<u64> {
+        self.cl.apply_v3_liquidity_update_by_pool_id(
+            &mut self.registry,
+            pool_id,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::sync_tick_data_by_pool_id`].
+    pub fn sync_tick_data_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+    ) -> bool {
+        self.cl
+            .sync_tick_data_by_pool_id(&mut self.registry, pool_id, tick_data, update_block)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::mark_bitmap_words_known_by_pool_id`].
+    pub fn mark_bitmap_words_known_by_pool_id(&mut self, pool_id: u64, words: &[i32]) -> bool {
+        self.cl
+            .mark_bitmap_words_known_by_pool_id(&mut self.registry, pool_id, words)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::buffer_backfill_v3_liquidity_update`].
+    pub fn buffer_backfill_v3_liquidity_update(
+        &mut self,
+        pool_address: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) {
+        self.cl.buffer_backfill_v3_liquidity_update(
+            &mut self.registry,
+            pool_address,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_backfill_buffer_v3`].
+    pub fn apply_backfill_buffer_v3(&mut self, address: &Address) {
+        self.cl
+            .apply_backfill_buffer_v3(&mut self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_pump_buffer_v3`].
+    pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
+        self.cl.apply_pump_buffer_v3(&mut self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::buffered_v3_event_count`].
+    pub fn buffered_v3_event_count(&self, address: &Address) -> usize {
+        self.cl.buffered_v3_event_count(address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::buffered_v4_event_count`].
+    pub fn buffered_v4_event_count(
+        &self,
+        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+    ) -> usize {
+        self.cl.buffered_v4_event_count(key)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::flush_v3_buffer`].
+    pub fn flush_v3_buffer(&mut self) {
+        self.cl.flush_v3_buffer()
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::expire_v3_buffered`].
+    pub fn expire_v3_buffered(&mut self, current_block: u64) {
+        self.cl.expire_v3_buffered(current_block)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v3_pool`].
+    pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
+        self.cl.get_v3_pool(&self.registry, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v3_identity`].
+    pub fn get_v3_identity(&self, pool_id: u64) -> Option<&V3PoolIdentity> {
+        self.cl.get_v3_identity(&self.registry, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_pools_snapshot`].
+    pub fn v3_pools_snapshot(&self) -> HashMap<u64, (V3PoolIdentity, V3PoolState)> {
+        self.cl.v3_pools_snapshot(&self.registry)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_snapshot_seed_block`].
+    pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
+        self.cl.set_snapshot_seed_block(s)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_snapshot_seed`].
+    pub fn v3_snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
+        self.cl.v3_snapshot_seed(&self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::take_v3_snapshot_seed`].
+    pub fn take_v3_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
+        self.cl.take_v3_snapshot_seed(&mut self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::pin_v3_post_drain_snapshot`].
+    pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
+        self.cl
+            .pin_v3_post_drain_snapshot(&mut self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::take_v3_post_drain_snapshot`].
+    pub fn take_v3_post_drain_snapshot(
+        &mut self,
+        address: Address,
+    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
+        self.cl
+            .take_v3_post_drain_snapshot(&mut self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::sync_v3_pool_state`].
+    pub fn sync_v3_pool_state(
+        &mut self,
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+    ) {
+        self.cl.sync_v3_pool_state(
+            &mut self.registry,
+            pool_address,
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            tick_data,
+            update_block,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::tick_fingerprint`].
+    pub fn tick_fingerprint(&self, pool_id: u64) -> Option<(u64, usize, u64)> {
+        self.cl.tick_fingerprint(&self.registry, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::stage_word_fetch_by_pool_id`].
+    pub fn stage_word_fetch_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        word: i32,
+        block: u64,
+        retried: bool,
+    ) -> Option<StagedWordFetch> {
+        self.cl
+            .stage_word_fetch_by_pool_id(&self.registry, pool_id, word, block, retried)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::install_word_fetch`].
+    pub fn install_word_fetch(
+        &mut self,
+        staged: &StagedWordFetch,
+        fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
+    ) -> InstallWordOutcome {
+        self.cl
+            .install_word_fetch(&mut self.registry, staged, fetched)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::ensure_word_known_by_pool_id`].
+    pub fn ensure_word_known_by_pool_id(&mut self, pool_id: u64, word: i32, block: u64) -> bool {
+        self.cl
+            .ensure_word_known_by_pool_id(&mut self.registry, pool_id, word, block)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::merge_tick_word`].
+    pub fn merge_tick_word(
+        &mut self,
+        pool_id: u64,
+        fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
+    ) -> bool {
+        self.cl
+            .merge_tick_word(&mut self.registry, pool_id, fetched)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_pool_count`].
+    pub fn v3_pool_count(&self) -> usize {
+        self.cl.v3_pool_count(&self.registry)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v4_state_view`].
+    pub fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
+        self.cl.register_v4_state_view(pool_manager, state_view)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::state_view_for`].
+    pub fn state_view_for(&self, pool_manager: Address) -> Option<Address> {
+        self.cl.state_view_for(pool_manager)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::admission_verdict`].
+    pub fn admission_verdict(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<crate::registration_gate::AdmissionVerdict> {
+        self.cl.admission_verdict(pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::registration_gate_len`].
+    pub fn registration_gate_len(&self) -> usize {
+        self.cl.registration_gate_len()
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v4_pool`].
+    pub fn register_v4_pool(
+        &mut self,
+        params: &RegisterV4PoolParams,
+    ) -> Result<u64, RegisterV4PoolError> {
+        self.cl.register_v4_pool(&mut self.registry, params)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::route_v4_event`].
+    pub fn route_v4_event(
+        &mut self,
+        phase: Phase,
+        pool_manager: Address,
+        v4_pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+        event: BufferedV4PoolEvent,
+        swap_priors: &[(i32, TickInfo)],
+    ) -> ApplyOutcome {
+        self.cl.route_v4_event(
+            &mut self.registry,
+            phase,
+            pool_manager,
+            v4_pool_id,
+            event,
+            swap_priors,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_v4_swap`].
+    pub fn apply_v4_swap(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
+        self.cl
+            .apply_v4_swap(&mut self.registry, update, block_number)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_v4_liquidity_update`].
+    pub fn apply_v4_liquidity_update(
+        &mut self,
+        pool_manager: Address,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: alloy::primitives::I256,
+        block_number: u64,
+    ) -> Option<u64> {
+        self.cl.apply_v4_liquidity_update(
+            &mut self.registry,
+            pool_manager,
+            pool_id,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_v4_swap_by_pool_id`].
+    pub fn apply_v4_swap_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
+        self.cl.apply_v4_swap_by_pool_id(
+            &mut self.registry,
+            pool_id,
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            block_number,
+            tick_priors,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_v4_liquidity_update_by_pool_id`].
+    pub fn apply_v4_liquidity_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<u64> {
+        self.cl.apply_v4_liquidity_update_by_pool_id(
+            &mut self.registry,
+            pool_id,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::buffer_backfill_v4_liquidity_update`].
+    pub fn buffer_backfill_v4_liquidity_update(
+        &mut self,
+        pool_manager: Address,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: alloy::primitives::I256,
+        block_number: u64,
+    ) {
+        self.cl.buffer_backfill_v4_liquidity_update(
+            &mut self.registry,
+            pool_manager,
+            pool_id,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_backfill_buffer_v4`].
+    pub fn apply_backfill_buffer_v4(
+        &mut self,
+        pool_manager: Address,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) {
+        self.cl
+            .apply_backfill_buffer_v4(&mut self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_pump_buffer_v4`].
+    pub fn apply_pump_buffer_v4(
+        &mut self,
+        pool_manager: Address,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) {
+        self.cl
+            .apply_pump_buffer_v4(&mut self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v4_buffer_max_age`].
+    pub fn set_v4_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.cl.set_v4_buffer_max_age(max_age)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::flush_v4_buffer`].
+    pub fn flush_v4_buffer(&mut self) {
+        self.cl.flush_v4_buffer()
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::expire_v4_buffered`].
+    pub fn expire_v4_buffered(&mut self, current_block: u64) {
+        self.cl.expire_v4_buffered(current_block)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_pool_coverage`].
+    pub fn v3_pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
+        self.cl.v3_pool_coverage(&self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pool_coverage`].
+    pub fn v4_pool_coverage(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<PoolTickCoverage> {
+        self.cl
+            .v4_pool_coverage(&self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v3_pool_quarantined`].
+    pub fn set_v3_pool_quarantined(&mut self, address: Address) {
+        self.cl.set_v3_pool_quarantined(&mut self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v4_pool_quarantined`].
+    pub fn set_v4_pool_quarantined(
+        &mut self,
+        pool_manager: Address,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) {
+        self.cl
+            .set_v4_pool_quarantined(&mut self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v3_pool_live`].
+    pub fn set_v3_pool_live(&mut self, address: Address) {
+        self.cl.set_v3_pool_live(&mut self.registry, address)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v4_pool_live`].
+    pub fn set_v4_pool_live(
+        &mut self,
+        pool_manager: Address,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) {
+        self.cl
+            .set_v4_pool_live(&mut self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::release_all_v3_v4_quarantined`].
+    pub fn release_all_v3_v4_quarantined(&mut self) {
+        self.cl.release_all_v3_v4_quarantined(&mut self.registry)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v4_pool`].
+    pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
+        self.cl.get_v4_pool(&self.registry, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v4_identity`].
+    pub fn get_v4_identity(&self, pool_id: u64) -> Option<&V4PoolIdentity> {
+        self.cl.get_v4_identity(&self.registry, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pool_id_by_key`].
+    pub fn v4_pool_id_by_key(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<u64> {
+        self.cl.v4_pool_id_by_key(pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::try_registered_v4`].
+    pub fn try_registered_v4(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<RegisteredV4> {
+        self.cl
+            .try_registered_v4(&self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_snapshot_seed`].
+    pub fn v4_snapshot_seed(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<&HashMap<i32, TickInfo>> {
+        self.cl
+            .v4_snapshot_seed(&self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::take_v4_snapshot_seed`].
+    pub fn take_v4_snapshot_seed(
+        &mut self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<HashMap<i32, TickInfo>> {
+        self.cl
+            .take_v4_snapshot_seed(&mut self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::pin_v4_post_drain_snapshot`].
+    pub fn pin_v4_post_drain_snapshot(
+        &mut self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) {
+        self.cl
+            .pin_v4_post_drain_snapshot(&mut self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::take_v4_post_drain_snapshot`].
+    pub fn take_v4_post_drain_snapshot(
+        &mut self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
+        self.cl
+            .take_v4_post_drain_snapshot(&mut self.registry, pool_manager, pool_id)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pool_count`].
+    pub fn v4_pool_count(&self) -> usize {
+        self.cl.v4_pool_count()
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_registered_pool_managers`].
+    pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
+        self.cl.v4_registered_pool_managers()
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pools_snapshot`].
+    pub fn v4_pools_snapshot(&self) -> HashMap<u64, (V4PoolIdentity, V4PoolState)> {
+        self.cl.v4_pools_snapshot(&self.registry)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::sync_v4_pool_state`].
+    pub fn sync_v4_pool_state(
+        &mut self,
+        pool_manager: Address,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+        update: V4StateSync,
+    ) {
+        self.cl
+            .sync_v4_pool_state(&mut self.registry, pool_manager, pool_id, update)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::pump_complete_cutoff`].
+    #[must_use]
+    pub fn pump_complete_cutoff(&self) -> u64 {
+        self.cl.pump_complete_cutoff()
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::advance_pump_complete_cutoff`].
+    pub fn advance_pump_complete_cutoff(&mut self, block: u64) {
+        self.cl.advance_pump_complete_cutoff(block)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v3_buffer_max_age`].
+    pub const fn set_v3_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.cl.set_v3_buffer_max_age(max_age)
+    }
+
+    /// Delegates to the CL orchestration capability - see [`ClOrchestration::snapshot_seed_block`].
+    #[must_use]
+    pub const fn snapshot_seed_block(&self) -> Option<u64> {
+        self.cl.snapshot_seed_block()
     }
 }
 

@@ -246,8 +246,8 @@ impl BotState {
     /// `v4_pool_ids`, one keccak per pool for the `S_state` base).
     pub(crate) fn project_sim_anchor_scalars(&self) -> Vec<((Address, U256), TrackedSlotProbe)> {
         let mut out = Vec::new();
-        for (&address, &pool_id) in &self.pool_addresses {
-            match self.pools.get(&pool_id) {
+        for (&address, &pool_id) in &self.registry.pool_addresses {
+            match self.registry.pools.get(&pool_id) {
                 Some(PoolEntry::V2(p)) => out.push((
                     (address, U256::from(8u64)),
                     TrackedSlotProbe {
@@ -280,8 +280,8 @@ impl BotState {
                 | None => {}
             }
         }
-        for ((pm, pool_id_bytes), internal_pool_id) in &self.v4_pool_ids {
-            if let Some(PoolEntry::V4(p)) = self.pools.get(internal_pool_id) {
+        for ((pm, pool_id_bytes), internal_pool_id) in self.cl.registered_v4_pools() {
+            if let Some(PoolEntry::V4(p)) = self.registry.pools.get(internal_pool_id) {
                 let state = &p.1;
                 let s_state = derive_v4_pool_state_base(pool_id_bytes);
                 out.push((
@@ -319,7 +319,7 @@ impl BotState {
     ) -> Option<TrackedSlotProbe> {
         // V2/V3 path: address is the pool contract; O(1) address→pool_id.
         if let Some(pool_id) = self.pool_id_by_address(&address) {
-            return match self.pools.get(&pool_id)? {
+            return match self.registry.pools.get(&pool_id)? {
                 PoolEntry::V2(p) => {
                     let state = &p.1;
                     // V2 reserves slot = 8.
@@ -362,11 +362,11 @@ impl BotState {
         // (PM, pool_id), and the per-tick `S_state` base is pool-id-derived).
         // Reverse-map: iterate this PM's V4 pools, derive each `S_state`, check
         // `index == S_state` (slot0) / `S_state + 3` (liquidity).
-        for ((pm, pool_id_bytes), internal_pool_id) in &self.v4_pool_ids {
+        for ((pm, pool_id_bytes), internal_pool_id) in self.cl.registered_v4_pools() {
             if *pm != address {
                 continue;
             }
-            let PoolEntry::V4(p) = self.pools.get(internal_pool_id)? else {
+            let PoolEntry::V4(p) = self.registry.pools.get(internal_pool_id)? else {
                 continue;
             };
             let state = &p.1;

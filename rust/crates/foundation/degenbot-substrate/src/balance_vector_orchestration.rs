@@ -117,7 +117,7 @@ impl BotState {
     /// enforce yet).
     pub fn register_curve_pool(&mut self, params: &RegisterCurvePoolParams) -> u64 {
         assert!(
-            !self.pool_addresses.contains_key(&params.address),
+            !self.registry.pool_addresses.contains_key(&params.address),
             "pool already registered: {}",
             params.address
         );
@@ -131,13 +131,15 @@ impl BotState {
             params.rate_multipliers.len(),
         );
 
-        let pool_id = self.next_pool_id;
-        self.next_pool_id += 1;
+        let pool_id = self.registry.next_pool_id;
+        self.registry.next_pool_id += 1;
 
-        let (identity, state) = CurvePoolState::from_params(params.clone(), self.journal_depth);
-        self.pools
+        let (identity, state) =
+            CurvePoolState::from_params(params.clone(), self.registry.journal_depth);
+        self.registry
+            .pools
             .insert(pool_id, PoolEntry::Curve(Box::new((identity, state))));
-        self.pool_addresses.insert(params.address, pool_id);
+        self.registry.pool_addresses.insert(params.address, pool_id);
 
         pool_id
     }
@@ -175,7 +177,7 @@ impl BotState {
         balances: Vec<U256>,
         block_number: u64,
     ) -> Option<u64> {
-        let entry = self.pools.get_mut(&pool_id)?;
+        let entry = self.registry.pools.get_mut(&pool_id)?;
         entry
             .as_balance_vector_mut()?
             .apply_balance_update(balances, block_number);
@@ -189,7 +191,8 @@ impl BotState {
     /// `None` for non-Curve pools (silent no-op).
     #[must_use]
     pub fn get_curve_pool(&self, pool_id: u64) -> Option<&CurvePoolState> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::curve)
             .map(|(_, state)| state)
@@ -200,7 +203,8 @@ impl BotState {
     /// Returns `None` if the pool is not registered or isn't a Curve pool.
     #[must_use]
     pub fn get_curve_identity(&self, pool_id: u64) -> Option<&CurvePoolIdentity> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::curve)
             .map(|(identity, _)| identity)
@@ -230,6 +234,7 @@ impl BotState {
         override_balances: Option<&[U256]>,
     ) -> Result<U256, CurveInputsError> {
         let (identity, state) = self
+            .registry
             .pools
             .get(&pool_id)
             .and_then(PoolEntry::curve)
@@ -267,6 +272,7 @@ impl BotState {
         override_balances: Option<&[U256]>,
     ) -> Result<U256, CurveInputsError> {
         let (identity, state) = self
+            .registry
             .pools
             .get(&pool_id)
             .and_then(PoolEntry::curve)
@@ -309,6 +315,7 @@ impl BotState {
         block_number: u64,
     ) -> Result<U256, CurveInputsError> {
         let (identity, state) = self
+            .registry
             .pools
             .get(&pool_id)
             .and_then(PoolEntry::curve)
@@ -368,6 +375,7 @@ impl BotState {
         block_number: u64,
     ) -> Result<U256, CurveInputsError> {
         let (identity, state) = self
+            .registry
             .pools
             .get(&pool_id)
             .and_then(PoolEntry::curve)
@@ -432,7 +440,7 @@ impl BotState {
         params: &RegisterBalancerWeightedPoolParams,
     ) -> u64 {
         assert!(
-            !self.pool_addresses.contains_key(&params.address),
+            !self.registry.pool_addresses.contains_key(&params.address),
             "pool already registered: {}",
             params.address
         );
@@ -448,16 +456,16 @@ impl BotState {
             params.scaling_factors.len(),
         );
 
-        let pool_id = self.next_pool_id;
-        self.next_pool_id += 1;
+        let pool_id = self.registry.next_pool_id;
+        self.registry.next_pool_id += 1;
 
         let (identity, state) =
-            BalancerWeightedPoolState::from_params(params.clone(), self.journal_depth);
-        self.pools.insert(
+            BalancerWeightedPoolState::from_params(params.clone(), self.registry.journal_depth);
+        self.registry.pools.insert(
             pool_id,
             PoolEntry::BalancerWeighted(Box::new((identity, state))),
         );
-        self.pool_addresses.insert(params.address, pool_id);
+        self.registry.pool_addresses.insert(params.address, pool_id);
 
         pool_id
     }
@@ -469,7 +477,8 @@ impl BotState {
     /// for non-Balancer-weighted pools (silent no-op).
     #[must_use]
     pub fn get_balancer_weighted_pool(&self, pool_id: u64) -> Option<&BalancerWeightedPoolState> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::balancer_weighted)
             .map(|(_, state)| state)
@@ -483,7 +492,8 @@ impl BotState {
         &self,
         pool_id: u64,
     ) -> Option<&BalancerWeightedPoolIdentity> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::balancer_weighted)
             .map(|(identity, _)| identity)
@@ -509,7 +519,7 @@ impl BotState {
         params: &RegisterBalancerStablePoolParams,
     ) -> u64 {
         assert!(
-            !self.pool_addresses.contains_key(&params.address),
+            !self.registry.pool_addresses.contains_key(&params.address),
             "pool already registered: {}",
             params.address
         );
@@ -532,16 +542,16 @@ impl BotState {
             );
         }
 
-        let pool_id = self.next_pool_id;
-        self.next_pool_id += 1;
+        let pool_id = self.registry.next_pool_id;
+        self.registry.next_pool_id += 1;
 
         let (identity, state) =
-            BalancerStablePoolState::from_params(params.clone(), self.journal_depth);
-        self.pools.insert(
+            BalancerStablePoolState::from_params(params.clone(), self.registry.journal_depth);
+        self.registry.pools.insert(
             pool_id,
             PoolEntry::BalancerStable(Box::new((identity, state))),
         );
-        self.pool_addresses.insert(params.address, pool_id);
+        self.registry.pool_addresses.insert(params.address, pool_id);
 
         pool_id
     }
@@ -554,7 +564,8 @@ impl BotState {
     /// pools (silent no-op).
     #[must_use]
     pub fn get_balancer_stable_pool(&self, pool_id: u64) -> Option<&BalancerStablePoolState> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::balancer_stable)
             .map(|(_, state)| state)
@@ -569,7 +580,8 @@ impl BotState {
         &self,
         pool_id: u64,
     ) -> Option<&BalancerStablePoolIdentity> {
-        self.pools
+        self.registry
+            .pools
             .get(&pool_id)
             .and_then(PoolEntry::balancer_stable)
             .map(|(identity, _)| identity)

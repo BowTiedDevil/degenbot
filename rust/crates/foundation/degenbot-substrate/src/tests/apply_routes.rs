@@ -303,6 +303,7 @@ fn backfill_live_in_range_post_seed_adjusts_in_range_liquidity() {
                                              // Post-seed in-range Mint (tick 0 in [-60,60), block 6 > seed 5):
     core.buffer_backfill_v3_liquidity_update(make_pool_addr(), -60, 60, 123_456_i128, 6);
     let Some(state) = core
+        .registry
         .pools
         .get(&pool_id)
         .and_then(PoolEntry::v3)
@@ -337,6 +338,7 @@ fn backfill_live_in_range_pre_seed_does_not_adjust_scalar() {
                                              // Pre-seed in-range Mint (block 4 <= seed 5):
     core.buffer_backfill_v3_liquidity_update(make_pool_addr(), -60, 60, 250_000_i128, 4);
     let Some(state) = core
+        .registry
         .pools
         .get(&pool_id)
         .and_then(PoolEntry::v3)
@@ -399,6 +401,7 @@ fn v3_restore_before_block_past_newest_leaves_state_untouched() {
     let tick_present;
     {
         let Some(state) = core
+            .registry
             .pools
             .get(&pool_id)
             .and_then(PoolEntry::v3)
@@ -432,6 +435,7 @@ fn v3_restore_before_block_past_newest_leaves_state_untouched() {
 
     // The landed-at state must survive unchanged.
     let Some(state) = core
+        .registry
         .pools
         .get(&pool_id)
         .and_then(PoolEntry::v3)
