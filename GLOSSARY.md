@@ -832,3 +832,24 @@ process).
 
 **runtime_status()**:
 The live-process view of the plan, projected budget, and census rows.
+
+**Bot orchestrator**:
+`bot_core::bot::Bot` — the per-chain pure-Rust facade that owns the shared
+`BotState` handle, the event bus, and the construction-I/O attachment, so the
+standalone-Rust bot and the PyBot driver drive the same core.
+_Avoid_: confusing it with the `PyBot` adapter (the thin PyO3 shell) or with
+`BotState` (the data owner the orchestrator drives).
+
+**Registry core**:
+`BotState`'s shared registry fields — `pools`, `pool_addresses`, `tokens`,
+`next_pool_id`, `journal_depth` — the one canonical object space every handle
+reads through.
+_Avoid_: "session registry" for it; the `SessionObjectRegistry` is the
+identity-only layer, the registry core is the live state.
+
+**CL orchestration capability**:
+The future struct that will own the V3/V4 event buffers, event horizons,
+`v4_pool_ids`, and the registration gate as one cohesive unit (a later epic
+task lands it).
+_Avoid_: scattering those fields across the shell or reading them as already
+unified — they are not owned anywhere as one struct yet.

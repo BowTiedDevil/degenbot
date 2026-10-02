@@ -342,6 +342,217 @@ impl Bot {
         self.delta.record_affected(hop, pool_id, block);
     }
 
+    // === Journal/state-read cluster (moved from the PyO3 shell, ergo
+    // === 2IIHQA): the shell keeps only arg parsing + PyErr mapping; the lock
+    // === discipline and the per-family guards live here so the
+    // === standalone-Rust path gets the same reads.
+
+    /// Number of registered pools (the registry of record's live count).
+    #[must_use]
+    pub fn pool_count(&self) -> usize {
+        self.state
+            .read_at(degenbot_substrate::state_lock::LockSite::Core)
+            .pool_count()
+    }
+
+    /// Is `pool_id` registered? The `get_pool` handle-minting pre-check.
+    #[must_use]
+    pub fn has_pool(&self, pool_id: u64) -> bool {
+        self.state
+            .read_at(degenbot_substrate::state_lock::LockSite::Core)
+            .has_pool(pool_id)
+    }
+
+    /// Is `address` registered as a token? The `get_token` handle-minting
+    /// pre-check.
+    #[must_use]
+    pub fn has_token(&self, address: &alloy::primitives::Address) -> bool {
+        self.state
+            .read_at(degenbot_substrate::state_lock::LockSite::Core)
+            .has_token(address)
+    }
+
+    /// Number of deltas in the reorg journal for a V2 pool. `0` when the id
+    /// is unregistered or NOT a V2 pool — the per-family contract the PyO3
+    /// wrapper's inline guard used to carry.
+    #[must_use]
+    pub fn v2_journal_len(&self, pool_id: u64) -> usize {
+        let state = self
+            .state
+            .read_at(degenbot_substrate::state_lock::LockSite::Core);
+        // Family guard: 0 for non-V2 (preserves the per-family contract).
+        if state.get_v2_pool_state(pool_id).is_none() {
+            0
+        } else {
+            state.pool_journal_len(pool_id).unwrap_or(0)
+        }
+    }
+
+    /// Number of deltas in the reorg journal for a V3/V4 pool. `0` when the
+    /// id is unregistered or not a concentrated-liquidity pool — the
+    /// per-family contract.
+    #[must_use]
+    pub fn v3_journal_len(&self, pool_id: u64) -> usize {
+        let state = self
+            .state
+            .read_at(degenbot_substrate::state_lock::LockSite::Core);
+        // Family guard: 0 for non-V3/V4 (preserves the per-family contract).
+        if state.get_v3_or_v4_pool(pool_id).is_none() {
+            0
+        } else {
+            state.pool_journal_len(pool_id).unwrap_or(0)
+        }
+    }
+
+    /// Discard V2 reorg journal deltas earlier than `block`. `Ok(())` when
+    /// the id is unregistered or not a V2 pool — the V2 no-op contract — and
+    /// a [`degenbot_pools::state_history::JournalError`] when the target is
+    /// past the newest delta (it would remove every known state).
+    pub fn v2_discard_before_block(
+        &self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), degenbot_pools::state_history::JournalError> {
+        let mut state = self
+            .state
+            .write_at(degenbot_substrate::state_lock::LockSite::Core);
+        // Family guard: no-op for non-V2 (V2's contract).
+        if state.get_v2_pool_state(pool_id).is_none() {
+            return Ok(());
+        }
+        state
+            .discard_pool_before_block(pool_id, block)
+            .unwrap_or(Ok(()))
+    }
+
+    /// Discard V3 reorg journal deltas earlier than `block` — the V3 twin of
+    /// [`Bot::v2_discard_before_block`]: non-CL ids are `Ok(())` no-ops.
+    pub fn v3_discard_before_block(
+        &self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), degenbot_pools::state_history::JournalError> {
+        let mut state = self
+            .state
+            .write_at(degenbot_substrate::state_lock::LockSite::Core);
+        // Family guard: no-op for non-V3/V4 (V3's contract).
+        if state.get_v3_or_v4_pool(pool_id).is_none() {
+            return Ok(());
+        }
+        state
+            .discard_pool_before_block(pool_id, block)
+            .unwrap_or(Ok(()))
+    }
+
+    /// Restore a V2 pool's state to the landed-at state strictly before
+    /// `block` (ADR-005 slice 4). Returns the post-restore
+    /// `(reserve0, reserve1, update_block)` — the read-after-restore contract
+    /// (ADR-016): the restore trait returns `()`, and the post-restore fields
+    /// ARE the before-values. `Ok(None)` when the id is unregistered or not a
+    /// V2 pool (the no-op contract); [`JournalError`](degenbot_pools::state_history::JournalError)
+    /// when the target is at/before the registration delta (too deep).
+    pub fn v2_restore_before_block(
+        &self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<
+        Option<(alloy::primitives::U256, alloy::primitives::U256, u64)>,
+        degenbot_pools::state_history::JournalError,
+    > {
+        let mut state = self
+            .state
+            .write_at(degenbot_substrate::state_lock::LockSite::Core);
+        // Family guard: `Ok(None)` for non-V2 (the PyO3 no-op contract).
+        if state.get_v2_pool_state(pool_id).is_none() {
+            return Ok(None);
+        }
+        match state.restore_pool_before_block(pool_id, block) {
+            None => Ok(None),
+            Some(Err(e)) => Err(e),
+            Some(Ok(())) => {
+                #[expect(clippy::expect_used)] // invariant-guarded (family confirmed above)
+                let s = state
+                    .get_v2_pool_state(pool_id)
+                    .expect("V2 pool confirmed above");
+                Ok(Some((
+                    s.reserve0.to::<alloy::primitives::U256>(),
+                    s.reserve1.to::<alloy::primitives::U256>(),
+                    s.update_block,
+                )))
+            }
+        }
+    }
+
+    /// Restore a V3/V4 pool's state to the landed-at state strictly before
+    /// `block` (ADR-005 slice 4). Returns the post-restore
+    /// `(sqrt_price_x96, liquidity, tick, update_block)` — the
+    /// read-after-restore contract (ADR-016 D4). `Ok(None)` when the id is
+    /// unregistered or not a CL pool; the CL journal panics on an empty
+    /// journal, so a caller must pre-check
+    /// [`has_state_prior_to`](Self::has_state_prior_to) — same discipline as
+    /// [`restore_pool_before_block`](Self::restore_pool_before_block).
+    pub fn v3_restore_before_block(
+        &self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<
+        Option<(alloy::primitives::U256, u128, i32, u64)>,
+        degenbot_pools::state_history::JournalError,
+    > {
+        let mut state = self
+            .state
+            .write_at(degenbot_substrate::state_lock::LockSite::Core);
+        // Family guard: `Ok(None)` for non-V3/V4 (the PyO3 no-op contract).
+        if state.get_v3_or_v4_pool(pool_id).is_none() {
+            return Ok(None);
+        }
+        match state.restore_pool_before_block(pool_id, block) {
+            None => Ok(None),
+            Some(Err(e)) => Err(e),
+            Some(Ok(())) => {
+                #[expect(clippy::expect_used)] // invariant-guarded (family confirmed above)
+                let s = state
+                    .get_v3_or_v4_pool(pool_id)
+                    .expect("V3/V4 pool confirmed above");
+                Ok(Some((
+                    s.sqrt_price_x96(),
+                    s.liquidity(),
+                    s.tick(),
+                    s.update_block(),
+                )))
+            }
+        }
+    }
+
+    /// Encode a V2 swap call shaped for submission:
+    /// `(to_address_hex, calldata_hex, value)`. `Ok(None)` when the pool id
+    /// is not registered (the Python facade's no-op contract); a typed
+    /// [`degenbot_substrate::EncodeSwapError`] otherwise (e.g. a registered
+    /// family with no swap-call encoder).
+    pub fn encode_swap(
+        &self,
+        pool_id: u64,
+        zero_for_one: bool,
+        amount_out: alloy::primitives::U256,
+        recipient: alloy::primitives::Address,
+    ) -> Result<Option<(String, String, u64)>, degenbot_substrate::EncodeSwapError> {
+        let call = match self
+            .state
+            .read_at(degenbot_substrate::state_lock::LockSite::Core)
+            .encode_swap(pool_id, zero_for_one, amount_out, recipient)
+        {
+            Ok(call) => call,
+            // NotRegistered maps to the no-op the Python facade returns.
+            Err(degenbot_substrate::EncodeSwapError::NotRegistered { .. }) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        Ok(Some((
+            format!("{:#x}", call.to),
+            format!("0x{}", alloy::hex::encode(call.data)),
+            call.value.to::<u64>(),
+        )))
+    }
+
     /// Start the block pump. Placeholder — the `BlockPump` wiring lands in
     /// ADR-006 slice 5; until then this panics to make the unwired state loud.
     #[expect(clippy::unimplemented)] // deliberate until ADR-006 slice 5 wires BlockPump
@@ -505,5 +716,347 @@ mod tests {
             ),
             "a new session root has its own identity key space"
         );
+    }
+
+    // === Journal/state-read cluster moved onto the facade (ergo 2IIHQA) ===
+    // The PyO3 shell (`degenbot-python/bot/mod.rs`) keeps only arg parsing +
+    // error mapping; the logic these tests pin lives on `Bot`.
+
+    /// A V2 registration fixture scoped to this cluster's tests.
+    fn v2_fixture(address: Address) -> crate::bot_core::RegisterV2PoolParams {
+        crate::bot_core::RegisterV2PoolParams {
+            address,
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U112::from(1000),
+            reserve1: U112::from(2000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::from([0x33u8; 20]),
+            update_block: 10,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
+            ..Default::default()
+        }
+    }
+
+    /// A V3 registration fixture scoped to this cluster's tests (no genesis
+    /// journal delta — the CL family journals from the first event).
+    fn v3_fixture(address: Address) -> crate::bot_core::RegisterV3PoolParams {
+        crate::bot_core::RegisterV3PoolParams {
+            address,
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: Address::from([0x33u8; 20]),
+            sqrt_price_x96: alloy::primitives::U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: hashbrown::HashMap::new(),
+            update_block: 100,
+            tick_data_block: None,
+            coverage: crate::bot_core::PoolTickCoverage::Sparse,
+            fetcher: None,
+            ..Default::default()
+        }
+    }
+
+    /// The facade answers registry reads (`pool_count` / `has_pool` /
+    /// `has_token`) without the caller reaching into `BotState` directly.
+    #[test]
+    fn bot_facade_answers_registry_reads() {
+        let bot = super::Bot::new(5);
+        assert_eq!(bot.pool_count(), 0);
+        assert!(!bot.has_pool(1));
+
+        let pool_id = bot
+            .state_arc()
+            .write_at(degenbot_substrate::state_lock::LockSite::Core)
+            .register_v2_pool(&v2_fixture(Address::from([0x11u8; 20])))
+            .expect("test setup: V2 registration");
+
+        assert_eq!(bot.pool_count(), 1);
+        assert!(bot.has_pool(pool_id));
+        assert!(!bot.has_pool(999));
+
+        let token = Address::from([0x77u8; 20]);
+        bot.state_arc()
+            .write_at(degenbot_substrate::state_lock::LockSite::Core)
+            .register_token(token, "T".to_string(), "T".to_string(), 18, 5);
+        assert!(bot.has_token(&token));
+        assert!(!bot.has_token(&Address::from([0x78u8; 20])));
+    }
+
+    /// Journal-length reads carry the per-family contract: 0 for unregistered
+    /// ids and for the WRONG family (the guard the PyO3 wrapper used to
+    /// inline), the live journal length for the right one. V2 registration
+    /// pushes a genesis delta; V3 registration pushes none.
+    #[test]
+    fn journal_len_reads_carry_the_family_guard() {
+        let bot = super::Bot::new(5);
+        let (v2_id, v3_id) = {
+            let core = bot.state_arc();
+            let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Core);
+            let v2_id = state
+                .register_v2_pool(&v2_fixture(Address::from([0x11u8; 20])))
+                .expect("test setup: V2 registration");
+            let v3_id = state
+                .register_v3_pool(&v3_fixture(Address::from([0x22u8; 20])))
+                .expect("test setup: V3 registration");
+            (v2_id, v3_id)
+        };
+
+        assert_eq!(bot.v2_journal_len(v2_id), 1, "V2 genesis delta");
+        assert_eq!(bot.v2_journal_len(999), 0, "unregistered id");
+        assert_eq!(
+            bot.v3_journal_len(v2_id),
+            0,
+            "family guard: V2 id on V3 read"
+        );
+        assert_eq!(
+            bot.v2_journal_len(v3_id),
+            0,
+            "family guard: V3 id on V2 read"
+        );
+        assert_eq!(bot.v3_journal_len(v3_id), 0, "V3 pushes no genesis delta");
+
+        // A Swap update journals the priors, so the count becomes 1.
+        bot.state_arc()
+            .write_at(degenbot_substrate::state_lock::LockSite::Core)
+            .update_v3_pool(
+                Address::from([0x22u8; 20]),
+                alloy::primitives::U256::from(2u128) << 96,
+                2_000_000,
+                60,
+                200,
+                vec![],
+            );
+        assert_eq!(bot.v3_journal_len(v3_id), 1);
+    }
+
+    /// V2 restore/discard through the facade: restore returns the
+    /// read-after-restore scalars (ADR-016 — the post-restore fields ARE the
+    /// landed-at values), errors on a too-deep target, and no-ops
+    /// (`Ok(None)` / `Ok(())`) off-family or unregistered.
+    #[test]
+    fn v2_discard_and_restore_before_block() {
+        let bot = super::Bot::new(5);
+        let (v2_id, v3_id) = {
+            let core = bot.state_arc();
+            let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Core);
+            let v2_id = state
+                .register_v2_pool(&v2_fixture(Address::from([0x11u8; 20])))
+                .expect("test setup: V2 registration");
+            let v3_id = state
+                .register_v3_pool(&v3_fixture(Address::from([0x22u8; 20])))
+                .expect("test setup: V3 registration");
+            (v2_id, v3_id)
+        };
+
+        // Apply a Sync at block 20 (journals the genesis reserves, lands new).
+        assert_eq!(
+            bot.state_arc()
+                .write_at(degenbot_substrate::state_lock::LockSite::Core)
+                .apply_sync_by_pool_id(v2_id, U112::from(1500), U112::from(2500), 20),
+            Some(v2_id)
+        );
+
+        // Restore to just before block 20: the genesis landed-at state.
+        assert_eq!(
+            bot.v2_restore_before_block(v2_id, 20),
+            Ok(Some((
+                alloy::primitives::U256::from(1000u64),
+                alloy::primitives::U256::from(2000u64),
+                10,
+            ))),
+            "read-after-restore: the post-restore reserves ARE the priors"
+        );
+        assert_eq!(
+            bot.v2_journal_len(v2_id),
+            1,
+            "the block-20 delta was popped"
+        );
+
+        // A target at/before the genesis delta is too deep: typed error.
+        assert_eq!(
+            bot.v2_restore_before_block(v2_id, 5),
+            Err(degenbot_pools::state_history::JournalError::NoStatePriorToBlock { block: 5 })
+        );
+
+        // Off-family / unregistered: Ok(None) — the PyO3 no-op contract.
+        assert_eq!(bot.v2_restore_before_block(999, 5), Ok(None));
+        assert_eq!(bot.v2_restore_before_block(v3_id, 5), Ok(None));
+
+        // Discard trims deltas earlier than the target, errors past the newest.
+        assert_eq!(
+            bot.state_arc()
+                .write_at(degenbot_substrate::state_lock::LockSite::Core)
+                .apply_sync_by_pool_id(v2_id, U112::from(1800), U112::from(2800), 20),
+            Some(v2_id)
+        );
+        bot.v2_discard_before_block(v2_id, 15)
+            .expect("discard within the journal");
+        assert_eq!(
+            bot.v2_journal_len(v2_id),
+            1,
+            "the genesis delta at block 10 was trimmed"
+        );
+        assert_eq!(
+            bot.v2_discard_before_block(v2_id, 100),
+            Err(degenbot_pools::state_history::JournalError::NoStateAtOrAfterBlock { block: 100 })
+        );
+
+        // Off-family / unregistered discards are Ok no-ops.
+        bot.v2_discard_before_block(999, 15)
+            .expect("unregistered id is a no-op");
+        bot.v2_discard_before_block(v3_id, 15)
+            .expect("off-family id is a no-op");
+    }
+
+    /// V3 restore through the facade: the post-restore scalars are the priors
+    /// the popped delta carried (read-after-restore, ADR-016 D4), and the
+    /// family guard returns `Ok(None)` off-family / unregistered.
+    #[test]
+    fn v3_restore_before_block_returns_the_popped_priors() {
+        let bot = super::Bot::new(5);
+        let (v2_id, v3_id) = {
+            let core = bot.state_arc();
+            let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Core);
+            let v2_id = state
+                .register_v2_pool(&v2_fixture(Address::from([0x11u8; 20])))
+                .expect("test setup: V2 registration");
+            let v3_id = state
+                .register_v3_pool(&v3_fixture(Address::from([0x22u8; 20])))
+                .expect("test setup: V3 registration");
+            (v2_id, v3_id)
+        };
+
+        bot.state_arc()
+            .write_at(degenbot_substrate::state_lock::LockSite::Core)
+            .update_v3_pool(
+                Address::from([0x22u8; 20]),
+                alloy::primitives::U256::from(2u128) << 96,
+                2_000_000,
+                60,
+                200,
+                vec![],
+            );
+
+        assert_eq!(
+            bot.v3_restore_before_block(v3_id, 200),
+            Ok(Some((
+                alloy::primitives::U256::from(1u128) << 96,
+                1_000_000,
+                0,
+                100,
+            ))),
+            "read-after-restore: registration-state priors"
+        );
+        assert_eq!(bot.v3_restore_before_block(999, 200), Ok(None));
+        assert_eq!(bot.v3_restore_before_block(v2_id, 200), Ok(None));
+    }
+
+    /// `encode_swap` through the facade: the submission-shaped
+    /// `(to, calldata, value)` triple on a hit, `Ok(None)` for an
+    /// unregistered id, and a typed `UnsupportedFamily` refusal off-family.
+    /// (Byte-level calldata pinning lives in the Python seam's eth_abi
+    /// oracle tests — tests/arbitrage/test_solvers/test_py_bot.py.)
+    #[test]
+    fn encode_swap_shapes_the_submission_call() {
+        let bot = super::Bot::new(5);
+        let (v2_id, v3_id) = {
+            let core = bot.state_arc();
+            let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Core);
+            let v2_id = state
+                .register_v2_pool(&v2_fixture(Address::from([0x11u8; 20])))
+                .expect("test setup: V2 registration");
+            let v3_id = state
+                .register_v3_pool(&v3_fixture(Address::from([0x22u8; 20])))
+                .expect("test setup: V3 registration");
+            (v2_id, v3_id)
+        };
+
+        let (to, calldata, value) = bot
+            .encode_swap(
+                v2_id,
+                true,
+                alloy::primitives::U256::from(181),
+                Address::from([0x55u8; 20]),
+            )
+            .expect("registered V2 encodes")
+            .expect("pool is registered");
+        assert_eq!(to, format!("{:#x}", Address::from([0x11u8; 20])));
+        assert!(
+            calldata.starts_with("0x022c0d9f"),
+            "V2 swap selector: {calldata}"
+        );
+        assert_eq!(value, 0, "no ETH sent");
+
+        assert!(
+            matches!(
+                bot.encode_swap(999, true, alloy::primitives::U256::from(1), Address::ZERO),
+                Ok(None)
+            ),
+            "unregistered id means None"
+        );
+        assert!(
+            matches!(
+                bot.encode_swap(v3_id, true, alloy::primitives::U256::from(1), Address::ZERO),
+                Err(degenbot_substrate::EncodeSwapError::UnsupportedFamily { .. })
+            ),
+            "V3 has no swap-call encoder"
+        );
+    }
+
+    /// `build_rpc_log` (moved from the PyO3 shell) reconstructs the WS-log
+    /// shape `(address, topics, data, block_number)` into the
+    /// `alloy::rpc::types::Log` the dispatcher consumes, with the parse
+    /// refusals the shell mapped to `ValueError`.
+    #[test]
+    fn build_rpc_log_reconstructs_the_ws_log_shape() {
+        let log = crate::bot_core::build_rpc_log(
+            "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+            vec![
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef".to_string(),
+                "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_string(),
+            ],
+            "abcdef",
+            42,
+        )
+        .expect("valid ws log shape");
+        assert_eq!(
+            log.inner.address,
+            "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa"
+                .parse::<alloy::primitives::Address>()
+                .expect("parse")
+        );
+        assert_eq!(log.inner.topics().len(), 2);
+        assert_eq!(
+            log.inner.data.data,
+            alloy::primitives::Bytes::from(vec![0xab, 0xcd, 0xef])
+        );
+        assert_eq!(log.block_number, Some(42));
+        assert!(!log.removed);
+
+        let err = crate::bot_core::build_rpc_log("nothex", vec![], "0x", 1).unwrap_err();
+        assert!(err.contains("Invalid address"), "{err}");
+        let err = crate::bot_core::build_rpc_log(
+            "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+            vec!["zz".to_string()],
+            "0x",
+            1,
+        )
+        .unwrap_err();
+        assert!(err.contains("Invalid topic"), "{err}");
+        let err = crate::bot_core::build_rpc_log(
+            "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+            vec![],
+            "zz",
+            1,
+        )
+        .unwrap_err();
+        assert!(err.contains("Invalid data hex"), "{err}");
     }
 }

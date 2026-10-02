@@ -23,6 +23,9 @@ pub mod pump_telemetry;
 pub mod registration_ledger;
 pub mod registration_lifecycle;
 pub mod reorg_coordinator;
+/// The WS-log-shape → `alloy::rpc::types::Log` reconstruction the offline
+/// pump→dispatch drive path uses (moved from the PyO3 shell).
+pub mod rpc_log;
 /// The at-most-once verification claim — the one owner of the claim policy
 /// (claim-if-absent / wait-if-present / release-on-settlement).
 pub mod verify_claims;
@@ -141,3 +144,4 @@ pub use ::degenbot_pools::TickInfo;
 /// re-exported here so the `BlockPump` + `StageHandlers` seams keep their
 /// `bot_core` path.
 pub use bot::Bot;
+pub use rpc_log::build_rpc_log;

@@ -65,62 +65,6 @@ use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
 
-/// Build an `alloy::rpc::types::Log` from the WS-log shape Python tests pass —
-/// `(address, topics, data, block_number)` reconstructed into the same
-/// `alloy::rpc::types::Log` the `BlockPump` feeds `Bot::dispatch_log`. Hex
-/// strings accept an optional `0x` prefix. This is the marshalling seam for
-/// the Python-facing `dispatch_log` (ADR-006, deferred §17 closure): it lets
-/// an offline test drive the full pump→dispatch→solve loop without a
-/// live WS node, reusing the existing pure-logic dispatcher untouched.
-fn build_rpc_log(
-    address: &str,
-    topics: Vec<String>,
-    data: &str,
-    block_number: u64,
-) -> PyResult<alloy::rpc::types::Log> {
-    let addr: Address = address.parse().map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("Invalid address '{address}': {e}"))
-    })?;
-    let mut topic_hashes = Vec::with_capacity(topics.len());
-    for t in topics {
-        let stripped = t.strip_prefix("0x").unwrap_or(&t);
-        let b: alloy::primitives::B256 = stripped.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid topic '{t}': {e}"))
-        })?;
-        topic_hashes.push(b);
-    }
-    let data_stripped = data.strip_prefix("0x").unwrap_or(data);
-    let data_bytes = alloy::hex::decode(data_stripped).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("Invalid data hex '{data}': {e}"))
-    })?;
-    let inner = alloy::primitives::Log::new_unchecked(
-        addr,
-        topic_hashes,
-        alloy::primitives::Bytes::from(data_bytes),
-    );
-    Ok(alloy::rpc::types::Log {
-        inner,
-        block_hash: None,
-        block_number: Some(block_number),
-        block_timestamp: None,
-        transaction_hash: None,
-        transaction_index: None,
-        log_index: None,
-        removed: false,
-    })
-}
-
-/// Encode a byte slice as a lowercase hex string (no "0x" prefix).
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        s.push(HEX_CHARS[(b >> 4) as usize] as char);
-        s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
-    }
-    s
-}
-
 // ---------------------------------------------------------------------------
 // PyBot — owns the Bot orchestrator; hands out shared BotState Arcs
 // ---------------------------------------------------------------------------
@@ -1906,8 +1850,9 @@ impl PyBot {
 
     /// Number of registered pools.
     fn pool_count(&self, py: Python<'_>) -> usize {
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        self.with_state(py, degenbot_substrate::BotState::pool_count)
+        // GIL hygiene: the read guard is acquired inside the core method,
+        // which runs under this py.detach (inversion class).
+        py.detach(|| self.bot.pool_count())
     }
 
     /// The chain this `PyBot` orchestrates (ADR-006 D4). Wired from the
@@ -1945,7 +1890,8 @@ impl PyBot {
         data: &str,
         block_number: u64,
     ) -> PyResult<()> {
-        let log = build_rpc_log(address, topics, data, block_number)?;
+        let log = degenbot_bot::bot_core::build_rpc_log(address, topics, data, block_number)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
         self.bot.dispatch_log(&log);
         Ok(())
     }
@@ -1958,8 +1904,8 @@ impl PyBot {
     /// Returns:
     ///     A `PyLiquidityPool` handle, or `None` if the pool ID is not registered.
     fn get_pool(&self, py: Python<'_>, pool_id: u64) -> Option<PyLiquidityPool> {
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        if self.with_state(py, |s| s.has_pool(pool_id)) {
+        // GIL hygiene: the has_pool read runs under this py.detach via the core.
+        if py.detach(|| self.bot.has_pool(pool_id)) {
             Some(PyLiquidityPool::new(
                 self.bot.state_arc(),
                 pool_id,
@@ -2961,15 +2907,9 @@ impl PyBot {
     ///
     /// Returns 0 if the pool ID is not registered or is not a V3 pool.
     fn v3_journal_len(&self, py: Python<'_>, pool_id: u64) -> usize {
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        self.with_state(py, |s| {
-            // Family guard: 0 for non-V3/V4 (preserves the per-family contract).
-            if s.get_v3_or_v4_pool(pool_id).is_none() {
-                0
-            } else {
-                s.pool_journal_len(pool_id).unwrap_or(0)
-            }
-        })
+        // GIL hygiene: the read guard is acquired inside the core method,
+        // which runs under this py.detach (inversion class).
+        py.detach(|| self.bot.v3_journal_len(pool_id))
     }
 
     /// Discard V3 reorg journal deltas earlier than the given block.
@@ -2980,17 +2920,10 @@ impl PyBot {
     #[pyo3(signature = (pool_id, block))]
     fn v3_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
         // Incident 2026-08-20: the whole write scope runs detached - the GIL
-        // is released while parked behind a live reader.
-        // GIL hygiene: the write guard is acquired inside the accessor's py.detach.
-        self.with_state_mut(py, |core| {
-            // Family guard: no-op for non-V3/V4 (V3's contract).
-            if core.get_v3_or_v4_pool(pool_id).is_none() {
-                return Ok(());
-            }
-            core.discard_pool_before_block(pool_id, block)
-                .unwrap_or(Ok(()))
-                .map_err(journal_err_to_py)
-        })
+        // is released while parked behind a live reader. The write guard is
+        // acquired inside the core method under this py.detach.
+        py.detach(|| self.bot.v3_discard_before_block(pool_id, block))
+            .map_err(journal_err_to_py)
     }
 
     /// Restore V3 pool state prior to a target block.
@@ -3006,32 +2939,15 @@ impl PyBot {
     ) -> PyResult<Option<Py<PyAny>>> {
         // Read-after-restore (ADR-016 D4): the trait `restore_pool_before_block`
         // returns `()`; the post-restore scalar fields ARE the before-values
-        // the `V3RestoreResult.scalar_priors` previously carried. Copy out
-        // under the write guard, then marshal after release.
-        // Incident 2026-08-20: the whole write scope runs inside the
-        // accessor's py.detach - the GIL is released while parked behind a
-        // live reader. Owned scalars come out (the !Send guard never leaves).
-        let restored = self.with_state_mut(py, |core| {
-            if core.get_v3_or_v4_pool(pool_id).is_none() {
-                return Ok(None);
-            }
-            match core.restore_pool_before_block(pool_id, block) {
-                None => Ok(None),
-                Some(Err(e)) => Err(journal_err_to_py(e)),
-                Some(Ok(())) => {
-                    #[expect(clippy::expect_used)] // invariant-guarded (documented)
-                    let state = core
-                        .get_v3_or_v4_pool(pool_id)
-                        .expect("V3/V4 pool confirmed above");
-                    Ok(Some((
-                        state.sqrt_price_x96(),
-                        state.liquidity(),
-                        state.tick(),
-                        state.update_block(),
-                    )))
-                }
-            }
-        })?;
+        // the `V3RestoreResult.scalar_priors` previously carried. The core
+        // copies the owned scalars out under its write guard; this shell
+        // marshals them after release.
+        // Incident 2026-08-20: the whole write scope runs under the core
+        // method's py.detach - the GIL is released while parked behind a
+        // live reader, and the !Send guard never leaves the core.
+        let restored = py
+            .detach(|| self.bot.v3_restore_before_block(pool_id, block))
+            .map_err(journal_err_to_py)?;
         let Some((sqrt_p, liq, tick, blk)) = restored else {
             return Ok(None);
         };
@@ -3093,8 +3009,8 @@ impl PyBot {
     ///     A `PyErc20Token` handle, or `None` if the address is not registered.
     fn get_token(&self, py: Python<'_>, address: &str) -> PyResult<Option<PyErc20Token>> {
         let addr = parse_address(address)?;
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        if self.with_state(py, |s| s.has_token(&addr)) {
+        // GIL hygiene: the has_token read runs under this py.detach via the core.
+        if py.detach(|| self.bot.has_token(&addr)) {
             Ok(Some(PyErc20Token::new(self.bot.state_arc(), addr)))
         } else {
             Ok(None)
@@ -3169,35 +3085,19 @@ impl PyBot {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let recip = parse_address(recipient)?;
 
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        let result = self.with_state(py, |s| s.encode_swap(pool_id, zero_for_one, amount, recip));
-
-        match result {
-            Ok(call) => Ok(Some((
-                format!("{:#x}", call.to),
-                format!("0x{}", bytes_to_hex(&call.data)),
-                call.value.to::<u64>(),
-            ))),
-            Err(degenbot_substrate::EncodeSwapError::NotRegistered { .. }) => Ok(None),
-            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "encode_swap: {e}"
-            ))),
-        }
+        // GIL hygiene: the read guard is acquired inside the core method,
+        // which runs under this py.detach (inversion class).
+        py.detach(|| self.bot.encode_swap(pool_id, zero_for_one, amount, recip))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("encode_swap: {e}")))
     }
 
     /// Get the number of deltas in the reorg journal for a V2 pool.
     ///
     /// Returns 0 if the pool ID is not registered.
     fn v2_journal_len(&self, py: Python<'_>, pool_id: u64) -> usize {
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        self.with_state(py, |s| {
-            // Family guard: 0 for non-V2 (preserves the per-family contract).
-            if s.get_v2_pool_state(pool_id).is_none() {
-                0
-            } else {
-                s.pool_journal_len(pool_id).unwrap_or(0)
-            }
-        })
+        // GIL hygiene: the read guard is acquired inside the core method,
+        // which runs under this py.detach (inversion class).
+        py.detach(|| self.bot.v2_journal_len(pool_id))
     }
 
     /// Discard V2 reorg journal deltas earlier than the given block.
@@ -3210,17 +3110,10 @@ impl PyBot {
     #[pyo3(signature = (pool_id, block))]
     fn v2_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
         // Incident 2026-08-20: the whole write scope runs detached - the GIL
-        // is released while parked behind a live reader.
-        // GIL hygiene: the write guard is acquired inside the accessor's py.detach.
-        self.with_state_mut(py, |core| {
-            // Family guard: no-op for non-V2 (V2's contract).
-            if core.get_v2_pool_state(pool_id).is_none() {
-                return Ok(());
-            }
-            core.discard_pool_before_block(pool_id, block)
-                .unwrap_or(Ok(()))
-                .map_err(journal_err_to_py)
-        })
+        // is released while parked behind a live reader. The write guard is
+        // acquired inside the core method under this py.detach.
+        py.detach(|| self.bot.v2_discard_before_block(pool_id, block))
+            .map_err(journal_err_to_py)
     }
 
     /// Restore V2 pool state prior to a target block.
@@ -3244,30 +3137,14 @@ impl PyBot {
     ) -> PyResult<Option<Py<PyAny>>> {
         // Read-after-restore (ADR-016): the trait returns `()`; the
         // post-restore reserves ARE the before-values the per-family tuple
-        // previously carried. Copy out under the guard, marshal after release.
-        // Incident 2026-08-20: the whole write scope runs inside the
-        // accessor's py.detach - the GIL is released while parked behind a
-        // live reader. Owned scalars come out (the !Send guard never leaves).
-        let restored = self.with_state_mut(py, |core| {
-            if core.get_v2_pool_state(pool_id).is_none() {
-                return Ok(None);
-            }
-            match core.restore_pool_before_block(pool_id, block) {
-                None => Ok(None),
-                Some(Err(e)) => Err(journal_err_to_py(e)),
-                Some(Ok(())) => {
-                    #[expect(clippy::expect_used)] // invariant-guarded (documented)
-                    let state = core
-                        .get_v2_pool_state(pool_id)
-                        .expect("V2 pool confirmed above");
-                    Ok(Some((
-                        state.reserve0.to::<alloy::primitives::U256>(),
-                        state.reserve1.to::<alloy::primitives::U256>(),
-                        state.update_block,
-                    )))
-                }
-            }
-        })?;
+        // previously carried. The core copies the owned scalars out under its
+        // write guard; this shell marshals them after release.
+        // Incident 2026-08-20: the whole write scope runs under the core
+        // method's py.detach - the GIL is released while parked behind a
+        // live reader, and the !Send guard never leaves the core.
+        let restored = py
+            .detach(|| self.bot.v2_restore_before_block(pool_id, block))
+            .map_err(journal_err_to_py)?;
         let Some((r0, r1, blk)) = restored else {
             return Ok(None);
         };
