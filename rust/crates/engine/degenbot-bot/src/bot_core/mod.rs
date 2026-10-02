@@ -17,6 +17,11 @@ pub mod liquidity_verifier;
 pub mod pool_builder;
 pub mod pump_control;
 pub mod pump_telemetry;
+/// The registration cluster on the `Bot` facade (moved from the PyO3 shell,
+/// ergo ND7GW7): CREATE2-verified pool/token registration, registry-of-record
+/// payload shaping, skip-label collapsing, and the tick-map assembly entry
+/// points the shell's `assemble_*` methods drive.
+pub mod registration;
 /// The registration outcome vocabulary + its four negative memos: the one
 /// owner of the bounded tags the Rust driver and the Python registration
 /// pipeline both read.

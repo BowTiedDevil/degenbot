@@ -139,53 +139,11 @@ fn map_mismatch(m: AddressMismatch) -> pyo3::PyErr {
     pyo3::exceptions::PyValueError::new_err(m.to_string())
 }
 
-/// Verify a V2 pool registration's declared address against the JSON-sourced
-/// CREATE2 deployer + init hash. `Ok(())` if it matches or is not applicable;
-/// `Err(PyValueError)` on a verified mismatch.
-pub(crate) fn verify_v2(
-    chain_id: u64,
-    factory: alloy::primitives::Address,
-    expected: alloy::primitives::Address,
-    token0: alloy::primitives::Address,
-    token1: alloy::primitives::Address,
-) -> PyResult<()> {
-    core_deployments::verify_v2_pool_address(chain_id, factory, expected, token0, token1)
-        .map_err(map_mismatch)
-}
-
-/// Verify a V3 pool registration's declared address against the JSON-sourced
-/// CREATE2 deployer + init hash (the V3 salt includes the fee). `Ok(())` if it
-/// matches or is not applicable; `Err(PyValueError)` on a verified mismatch.
-pub(crate) fn verify_v3(
-    chain_id: u64,
-    factory: alloy::primitives::Address,
-    expected: alloy::primitives::Address,
-    token0: alloy::primitives::Address,
-    token1: alloy::primitives::Address,
-    fee: u32,
-) -> PyResult<()> {
-    core_deployments::verify_v3_pool_address(chain_id, factory, expected, token0, token1, fee)
-        .map_err(map_mismatch)
-}
-
-/// Verify an Aerodrome V2 pool registration's declared address against the
-/// JSON-sourced EIP-1167 deployer + implementation address (the Aerodrome V2
-/// salt includes the `stable` flag). `Ok(())` if it matches or is not
-/// applicable; `Err(PyValueError)` on a verified mismatch.
-/// (Fork A follow-on.)
-pub(crate) fn verify_aerodrome_v2(
-    chain_id: u64,
-    factory: alloy::primitives::Address,
-    expected: alloy::primitives::Address,
-    token0: alloy::primitives::Address,
-    token1: alloy::primitives::Address,
-    stable: bool,
-) -> PyResult<()> {
-    core_deployments::verify_aerodrome_v2_pool_address(
-        chain_id, factory, expected, token0, token1, stable,
-    )
-    .map_err(map_mismatch)
-}
+// The V2 / V3 / Aerodrome-V2 registration-time verify wrappers retired with
+// the registration cluster's move onto the `Bot` facade (ergo ND7GW7): the
+// core `register_*_pool` methods call
+// `degenbot_uniswap::deployments::verify_*_pool_address` directly and the
+// shell maps the typed `Create2` arm to the same bare `ValueError`.
 
 /// Verify an Aerodrome V3 (Slipstream) pool registration's declared address
 /// against the JSON-sourced EIP-1167 deployer + implementation address (the
