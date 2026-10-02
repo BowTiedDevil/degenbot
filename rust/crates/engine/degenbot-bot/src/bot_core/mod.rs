@@ -10,6 +10,11 @@ pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod block_pump;
 pub mod bot;
+/// The build cluster on the `Bot` facade (moved from the PyO3 shell,
+/// ergo QPRUJN): the build-and-register entry points per family, the
+/// swap-simulation calc entries, and the construction-DB open — the shell
+/// keeps only arg parsing + `PyErr` mapping + the single-flight claim.
+pub mod build_register;
 pub mod construction_io;
 pub mod curve_data_provider_impl;
 pub mod curve_state;

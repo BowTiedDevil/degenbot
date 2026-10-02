@@ -160,11 +160,13 @@ fn no_gil_held_botstate_locks_in_bot_sources() {
                 (2..=10).contains(&checked_in_file),
                 "pool.rs lock-site count {checked_in_file} outside the accessor-migration band - the pattern moved"
             ),
-            // mod.rs is near-zero by design since the accessor migration
-            // (UX66EM/3MXFTV): only the sanctioned accessor bodies + test
-            // seams still name `.read()`/`.write()` directly.
+            // mod.rs is at the migration floor (UX66EM/3MXFTV, build-cluster
+            // move): only the register_v2_pool_test_only T1-scan-exempt test
+            // seam still names `.write_at()` directly — every pymethod path
+            // routes through the core `Bot` (LockSite::Core) or
+            // `py.detach`.
             "mod.rs" => assert!(
-                (2..=10).contains(&checked_in_file),
+                (1..=10).contains(&checked_in_file),
                 "mod.rs lock-site count {checked_in_file} outside the accessor-migration band - the pattern moved"
             ),
             _ => {}

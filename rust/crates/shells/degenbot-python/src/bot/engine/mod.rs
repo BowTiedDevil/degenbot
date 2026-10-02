@@ -27,7 +27,9 @@ mod strategy;
 mod verify;
 
 pub(crate) use register::{
-    map_builder_err, map_register_v2_err, map_register_v3_err, map_register_v4_err,
+    map_build_err, map_builder_err, map_calc_tokens_in_err, map_calc_tokens_out_err,
+    map_no_construction_io, map_register_v2_err, map_register_v3_err, map_register_v4_err,
+    map_v2_build_err, map_v3_build_err, map_v4_build_err,
 };
 pub(crate) use strategy::session_phase_next;
 

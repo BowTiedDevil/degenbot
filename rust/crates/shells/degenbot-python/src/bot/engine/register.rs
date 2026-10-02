@@ -494,3 +494,112 @@ pub(crate) fn map_builder_err(
         }
     }
 }
+
+/// Map the typed no-`ConstructionIo` refusal to the historical
+/// method-prefixed `RuntimeError` (each pymethod owns its prefix).
+pub(crate) fn map_no_construction_io(method: &'static str) -> pyo3::PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(format!(
+        "{method}: no ConstructionIo attached (requires an alloy provider)"
+    ))
+}
+
+/// Map a core `BuildError` (the no-registration build families: Aerodrome /
+/// Balancer weighted + stable / Curve / ERC-20 token) to the shell's two
+/// historical surfaces: the method-prefixed no-io `RuntimeError` and the
+/// builder error map.
+pub(crate) fn map_build_err(
+    method: &'static str,
+    err: degenbot_bot::bot_core::build_register::BuildError,
+) -> pyo3::PyErr {
+    use degenbot_bot::bot_core::build_register::BuildError;
+    match err {
+        BuildError::NoConstructionIo => map_no_construction_io(method),
+        BuildError::Builder(e) => map_builder_err(e),
+    }
+}
+
+/// Map a core `V2BuildError` to the shell's three historical surfaces: the
+/// method-prefixed no-io `RuntimeError`, the builder error map, and the V2
+/// registration hierarchy map.
+pub(crate) fn map_v2_build_err(
+    err: degenbot_bot::bot_core::build_register::V2BuildError,
+) -> pyo3::PyErr {
+    use degenbot_bot::bot_core::build_register::V2BuildError;
+    match err {
+        V2BuildError::NoConstructionIo => map_no_construction_io("build_v2_pool"),
+        V2BuildError::Builder(e) => map_builder_err(e),
+        V2BuildError::Register(e) => map_register_v2_err(e),
+    }
+}
+
+/// The V4 twin of [`map_v2_build_err`].
+pub(crate) fn map_v4_build_err(
+    err: degenbot_bot::bot_core::build_register::V4BuildError,
+) -> pyo3::PyErr {
+    use degenbot_bot::bot_core::build_register::V4BuildError;
+    match err {
+        V4BuildError::NoConstructionIo => map_no_construction_io("build_v4_pool"),
+        V4BuildError::Builder(e) => map_builder_err(e),
+        V4BuildError::Register(e) => map_register_v4_err(e),
+    }
+}
+
+/// Map a core `V3BuildError` to the shell's historical surfaces: the
+/// construction-route refusal map (the LOUD `UnsupportedPoolFamilyError`
+/// among them) and the method-prefixed race-answer `RuntimeError`.
+pub(crate) fn map_v3_build_err(
+    err: degenbot_bot::bot_core::build_register::V3BuildError,
+) -> pyo3::PyErr {
+    use degenbot_bot::bot_core::build_register::V3BuildError;
+    match err {
+        V3BuildError::Refusal(e) => super::errors::map_construction_refusal(e),
+        V3BuildError::NoReadableIdentity { address } => pyo3::exceptions::PyRuntimeError::new_err(
+            format!("build_v3_pool: registry GET answered {address} with no readable V3 identity"),
+        ),
+    }
+}
+
+/// Map a core `CalcTokensOutError` to the shell's historical surfaces
+/// (cdbc03bb): the `ValueError` for the overflow/on-chain-revert class, the
+/// unknown-pool and unsupported-family `ValueError`s, and the legacy `0`
+/// mapping for unrecovered sparse-map misses (done core-side).
+pub(crate) fn map_calc_tokens_out_err(
+    err: degenbot_bot::bot_core::build_register::CalcTokensOutError,
+) -> pyo3::PyErr {
+    use degenbot_bot::bot_core::build_register::CalcTokensOutError;
+    match err {
+        CalcTokensOutError::Overflow | CalcTokensOutError::NotComputable => {
+            pyo3::exceptions::PyValueError::new_err(
+                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+            )
+        }
+        CalcTokensOutError::UnknownPool { pool_id } => {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "swap_simulation: pool {pool_id} is not registered"
+            ))
+        }
+        CalcTokensOutError::UnsupportedFamily { pool_id, family } => {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "swap_simulation: pool {pool_id} family {family} is not supported for this operation"
+            ))
+        }
+    }
+}
+
+/// Map a core `CalcTokensInError` to the shell's historical surfaces: the
+/// overflow `ValueError` and the typed exact-output family gap.
+pub(crate) fn map_calc_tokens_in_err(
+    err: degenbot_bot::bot_core::build_register::CalcTokensInError,
+) -> pyo3::PyErr {
+    use degenbot_bot::bot_core::build_register::CalcTokensInError;
+    match err {
+        CalcTokensInError::Overflow => pyo3::exceptions::PyValueError::new_err(
+            "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+        ),
+        CalcTokensInError::UnsupportedFamily { pool_id, family } => {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "calculate_tokens_in: pool {pool_id} family {family} has no exact-output path"
+            ))
+        }
+    }
+}

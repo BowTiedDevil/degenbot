@@ -3,7 +3,6 @@
 //! `engine/` is the first inhabitant of the split binding layer; the
 //! other `bot` / `bot::pool` wrappers live alongside it.
 
-use degenbot_core::diag;
 use degenbot_core::op_warn;
 pub mod build_flights;
 pub mod deployments;
@@ -30,11 +29,12 @@ pub mod token;
 use crate::prelude::*;
 use std::sync::Arc;
 
-use alloy::primitives::{Address, I256};
+use alloy::primitives::Address;
 
 use crate::bot::engine::{
-    hex_string_to_pool_id, map_builder_err, map_construction_refusal, map_register_v2_err,
-    map_register_v3_err, map_register_v4_err, SpecViolationError,
+    hex_string_to_pool_id, map_build_err, map_builder_err, map_calc_tokens_in_err,
+    map_calc_tokens_out_err, map_no_construction_io, map_register_v2_err, map_register_v3_err,
+    map_register_v4_err, map_v2_build_err, map_v3_build_err, map_v4_build_err, SpecViolationError,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -48,9 +48,6 @@ fn narrow_reserve(
 }
 pub use crate::bot::pool::PyLiquidityPool;
 use crate::bot::token::PyErc20Token;
-use crate::diagnostics::thread_registry::{
-    note_state_intent, StateIntentGuard, StateLockMode, StateLockPhase,
-};
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::RegisteredPoolFamily;
 use degenbot_bot::bot_core::{
@@ -58,8 +55,6 @@ use degenbot_bot::bot_core::{
     RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
 use degenbot_pools::state_history::JournalError;
-use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
-use degenbot_substrate::BotState;
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
@@ -114,55 +109,6 @@ impl PyBot {
     #[must_use]
     pub(crate) fn bot_arc(&self) -> Arc<Bot> {
         Arc::clone(&self.bot)
-    }
-
-    /// Sanctioned `BotState` read access for pymethod code (GIL/`BotState`
-    /// inversion class, incidents 2026-08-20/21). The guard is acquired
-    /// INSIDE `py.detach`, so the GIL is never held while parked on the lock;
-    /// pyo3's `Ungil` bound (= `Send` on stable) keeps GIL-bound values out
-    /// of the closure, and the `!Send` guard can never escape it. Direct
-    /// `state_arc().read()/.write()` in pymethod bodies is forbidden — the
-    /// source scan (`tests/gil_state_write_concurrency.rs`) permits it only
-    /// inside these accessors and the marked pure-Rust test seams.
-    pub(crate) fn with_state<T>(&self, py: Python<'_>, f: impl FnOnce(&BotState) -> T + Send) -> T
-    where
-        T: Send,
-    {
-        py.detach(|| {
-            let core = self.bot.state_arc();
-            // Lock-intent registration (incident 2026-08-20 #1 follow-up): a
-            // GIL-deadlock dump states wants/holds outright — join with the
-            // thread's last_span for the pymethod name.
-            note_state_intent("with_state", StateLockMode::Read, StateLockPhase::Wants);
-            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let guard = core.read_at(degenbot_substrate::state_lock::LockSite::Python);
-            let _intent = StateIntentGuard::held("with_state", StateLockMode::Read);
-            f(&guard)
-        })
-    }
-
-    /// Sanctioned `BotState` write access — see [`Self::with_state`].
-    pub(crate) fn with_state_mut<T>(
-        &self,
-        py: Python<'_>,
-        f: impl FnOnce(&mut BotState) -> T + Send,
-    ) -> T
-    where
-        T: Send,
-    {
-        py.detach(move || {
-            let core = self.bot.state_arc();
-            // Lock-intent registration — see `with_state`.
-            note_state_intent(
-                "with_state_mut",
-                StateLockMode::Write,
-                StateLockPhase::Wants,
-            );
-            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
-            let _intent = StateIntentGuard::held("with_state_mut", StateLockMode::Write);
-            f(&mut guard)
-        })
     }
 
     /// The cached read-only `SnapshotDb` handle armed by
@@ -539,57 +485,46 @@ impl PyBot {
         };
         let rpc = std::sync::Arc::new(AlloyRpcConstruction::new((*alloy).clone()));
 
+        // The DB half — open (write-capable; the construction executor does
+        // reads AND the `update_erc20_token_metadata` write-back), with the
+        // missing-file cold-start fallback to `NoDb` so the DB methods
+        // return the no-DB shape (matching the original `database_path`
+        // cold-start skip; a `Bot` restart after the file exists picks it
+        // up) — is core-owned ([`Bot::open_construction_db`], run under this
+        // py.detach).
         let db: std::sync::Arc<
             dyn degenbot_bot::bot_core::construction_io::DbConstruction + Send + Sync,
-        > = match database_path {
-            Some(path) => {
-                let path_buf = std::path::PathBuf::from(path);
-                // `open_for_writes` — the construction executor does reads
-                // AND the `update_erc20_token_metadata` write-back, so the
-                // held connection must be write-capable. A missing file
-                // (SQLAlchemy creates the DB lazily on first write) → fall
-                // back to `NoDb` so the DB methods return the no-DB shape
-                // (matching the original `database_path` cold-start skip);
-                // a `Bot` restart after the file exists picks it up.
-                match py.detach(|| degenbot_db::DegenbotDb::open_for_writes(&path_buf)) {
-                    Ok((db, _state)) => {
-                        let db = std::sync::Arc::new(db);
-                        // Bind the session's position reader HERE, and only
-                        // here: this is the one point in a bot boot where the
-                        // session and the database handle its reads are sourced
-                        // from are both in hand. The reader is a lending
-                        // integration's, the session registry is the engine's,
-                        // and neither may take the other's edge, so the boot
-                        // that already owns both composes them. Nothing about
-                        // the reading is decided at this site — which rows
-                        // answer, how fresh they are, and which faults refuse
-                        // are the observer's own (`degenbot_aave::positions`).
-                        #[cfg(feature = "aave-updater")]
-                        {
-                            let observer: std::sync::Arc<
-                                dyn degenbot_substrate::session_registry::PositionObserver,
-                            > = std::sync::Arc::new(degenbot_aave::AavePositionObserver::new(
-                                std::sync::Arc::clone(&db),
-                            ));
-                            // A refused second install is the registry's to
-                            // report: it already logs at ERROR and hands the
-                            // observer back, precisely because it cannot be the
-                            // site that installs one.
-                            let _ = self
-                                .bot
-                                .session_registry()
-                                .install_position_observer(observer);
-                        }
-                        std::sync::Arc::new(DegenbotDbConstruction::new(db))
-                    }
-                    Err(e) => {
-                        diag!(domain = state, path = %path,
-                            %e,
-                            "Construction-I/O DB open failed; falling back to NoDb"
-                        );
-                        std::sync::Arc::new(NoDb)
-                    }
+        > = match py
+            .detach(|| degenbot_bot::bot_core::bot::Bot::open_construction_db(database_path))
+        {
+            Some(db) => {
+                // Bind the session's position reader HERE, and only
+                // here: this is the one point in a bot boot where the
+                // session and the database handle its reads are sourced
+                // from are both in hand. The reader is a lending
+                // integration's, the session registry is the engine's,
+                // and neither may take the other's edge, so the boot
+                // that already owns both composes them. Nothing about
+                // the reading is decided at this site — which rows
+                // answer, how fresh they are, and which faults refuse
+                // are the observer's own (`degenbot_aave::positions`).
+                #[cfg(feature = "aave-updater")]
+                {
+                    let observer: std::sync::Arc<
+                        dyn degenbot_substrate::session_registry::PositionObserver,
+                    > = std::sync::Arc::new(degenbot_aave::AavePositionObserver::new(
+                        std::sync::Arc::clone(&db),
+                    ));
+                    // A refused second install is the registry's to
+                    // report: it already logs at ERROR and hands the
+                    // observer back, precisely because it cannot be the
+                    // site that installs one.
+                    let _ = self
+                        .bot
+                        .session_registry()
+                        .install_position_observer(observer);
                 }
+                std::sync::Arc::new(DegenbotDbConstruction::new(db))
             }
             None => std::sync::Arc::new(NoDb),
         };
@@ -849,49 +784,17 @@ impl PyBot {
             &key,
             || Ok(self.registered_v2_payload(py, &addr)),
             || {
-                use degenbot_bot::bot_core::pool_builder::builder;
-                use degenbot_core::runtime::get_runtime;
-                let io = self.bot.construction_io_arc().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(
-                        "build_v2_pool: no ConstructionIo attached (requires an alloy provider)",
-                    )
-                })?;
-                let params = py
-                    .detach(|| {
-                        get_runtime().block_on(builder::build_v2(chain_id, addr, &io, block))
-                    })
-                    .map_err(map_builder_err)?;
-                // (builder return surface): return the core-computed identity
-                // alongside the pool_id so a facade-free registration driver can consume
-                // token0/token1/address/family from the Rust builder instead of
-                // re-deriving them from the pool handle. `variant` is the `DexVariant`
-                // the builder resolved (kebab-case, e.g. "uniswap-v2").
-                let identity = (
-                    params.token0.to_checksum(None),
-                    params.token1.to_checksum(None),
-                    params.address.to_checksum(None),
-                    params.variant.as_str().to_string(),
-                );
-                // Incident 2026-08-20 #2: never hold the GIL while parked on the
-                // BotState write - the dispatch fan-out's per-candidate tasks hold
-                // the read end across provider fetches, and a parked GIL-writer
-                // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
-                let pool_id = self
-                    .with_state_mut(py, |s| s.register_v2_pool(&params))
-                    .map_err(map_register_v2_err)?;
-                // Telemetry: one Jaeger node per pool construction+registration
-                // (zero-duration span carrying the full identity — root span on the
-                // registration worker thread, batch-exported with startup).
-                let _reg = tracing::info_span!(
-                    "degenbot.pool.register",
-                    pool.version = "v2",
-                    pool.address = %identity.2,
-                    token0 = %identity.0,
-                    token1 = %identity.1,
-                    dex = %identity.3,
-                    pool.id = pool_id,
-                )
-                .entered();
+                // The io fetch, the builder run on the shared runtime, the
+                // identity shaping (token0/token1/address/variant — the
+                // builder's return surface, kebab-case e.g. "uniswap-v2"),
+                // the BotState registration write, and the telemetry span are
+                // core-owned ([`Bot::build_and_register_v2`]); the GIL is
+                // released across the WHOLE scope (incident 2026-08-20 #2:
+                // never hold the GIL while parked on the runtime or the
+                // BotState write).
+                let (pool_id, identity) = py
+                    .detach(|| self.bot.build_and_register_v2(addr, block))
+                    .map_err(map_v2_build_err)?;
                 Ok((
                     pool_id,
                     (pool_id, identity.0, identity.1, identity.2, identity.3),
@@ -924,29 +827,14 @@ impl PyBot {
         self.run_flight(
             py,
             &key,
+            || Ok(self.registered_family_pool_id(py, &addr, RegisteredPoolFamily::AerodromeV2)),
             || {
-                Ok(
-                    self.registered_family_pool_id(py, &addr, RegisteredPoolFamily::AerodromeV2),
-                )
-            },
-            || {
-                use degenbot_bot::bot_core::pool_builder::builder;
-                use degenbot_core::runtime::get_runtime;
-                let io = self.bot.construction_io_arc().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(
-                        "build_aerodrome_v2_pool: no ConstructionIo attached (requires an alloy provider)",
-                    )
-                })?;
-                let params = py
-                    .detach(|| {
-                        get_runtime().block_on(builder::build_aerodrome_v2(chain_id, addr, &io, block))
-                    })
-                    .map_err(map_builder_err)?;
-                // Incident 2026-08-20 #2: never hold the GIL while parked on the
-                // BotState write - the dispatch fan-out's per-candidate tasks hold
-                // the read end across provider fetches, and a parked GIL-writer
-                // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
-                let pool_id = self.with_state_mut(py, |s| s.register_aerodrome_pool(&params));
+                // Core-owned ([`Bot::build_and_register_aerodrome_v2`] — io
+                // fetch, builder run, registration write; see `build_v2_pool`
+                // for the GIL note).
+                let pool_id = py
+                    .detach(|| self.bot.build_and_register_aerodrome_v2(addr, block))
+                    .map_err(|e| map_build_err("build_aerodrome_v2_pool", e))?;
                 Ok((pool_id, pool_id))
             },
         )
@@ -979,28 +867,21 @@ impl PyBot {
             py,
             &key,
             || {
-                Ok(self
-                    .registered_family_pool_id(py, &addr, RegisteredPoolFamily::BalancerWeighted))
+                Ok(self.registered_family_pool_id(
+                    py,
+                    &addr,
+                    RegisteredPoolFamily::BalancerWeighted,
+                ))
             },
             || {
-                use degenbot_bot::bot_core::pool_builder::builder;
-                use degenbot_core::runtime::get_runtime;
-                let io = self.bot.construction_io_arc().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(
-                        "build_balancer_weighted_pool: no ConstructionIo attached (requires an alloy provider)",
-                    )
-                })?;
-                let params = py
+                // Core-owned ([`Bot::build_and_register_balancer_weighted`]
+                // — see `build_v2_pool`).
+                let pool_id = py
                     .detach(|| {
-                        get_runtime().block_on(builder::build_balancer_weighted(
-                            vault_addr, addr, &io, block,
-                        ))
+                        self.bot
+                            .build_and_register_balancer_weighted(vault_addr, addr, block)
                     })
-                    .map_err(map_builder_err)?;
-                // Incident 2026-08-20 #2: never hold the GIL while parked on the
-                // BotState write - see `build_v2_pool`.
-                let pool_id =
-                    self.with_state_mut(py, |s| s.register_balancer_weighted_pool(&params));
+                    .map_err(|e| map_build_err("build_balancer_weighted_pool", e))?;
                 Ok((pool_id, pool_id))
             },
         )
@@ -1036,32 +917,20 @@ impl PyBot {
         self.run_flight(
             py,
             &key,
+            || Ok(self.registered_family_pool_id(py, &addr, RegisteredPoolFamily::BalancerStable)),
             || {
-                Ok(self.registered_family_pool_id(py, &addr, RegisteredPoolFamily::BalancerStable))
-            },
-            || {
-                use degenbot_bot::bot_core::pool_builder::builder;
-                use degenbot_core::runtime::get_runtime;
-                let io = self.bot.construction_io_arc().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(
-                        "build_balancer_stable_pool: no ConstructionIo attached (requires an alloy provider)",
-                    )
-                })?;
-                let params = py
+                // Core-owned ([`Bot::build_and_register_balancer_stable`] —
+                // see `build_v2_pool`).
+                let pool_id = py
                     .detach(|| {
-                        get_runtime().block_on(builder::build_balancer_stable(
+                        self.bot.build_and_register_balancer_stable(
                             vault_addr,
                             addr,
-                            &io,
                             block,
                             invariant_version,
-                        ))
+                        )
                     })
-                    .map_err(map_builder_err)?;
-                // Incident 2026-08-20 #2: never hold the GIL while parked on the
-                // BotState write - see `build_v2_pool`.
-                let pool_id =
-                    self.with_state_mut(py, |s| s.register_balancer_stable_pool(&params));
+                    .map_err(|e| map_build_err("build_balancer_stable_pool", e))?;
                 Ok((pool_id, pool_id))
             },
         )
@@ -1105,12 +974,11 @@ impl PyBot {
             || Ok(self.registered_v3_payload(py, &addr, chain_id)),
             || {
                 use degenbot_bot::bot_core::pool_builder::route;
-                use degenbot_core::runtime::get_runtime;
-                let io = self.bot.construction_io_arc().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(
-                        "build_v3_pool: no ConstructionIo attached (requires an alloy provider)",
-                    )
-                })?;
+                // The io fetch is core-owned ([`Bot::require_construction_io`]);
+                // the failure maps to the method-prefixed legacy `RuntimeError`.
+                let io = py
+                    .detach(|| self.bot.require_construction_io())
+                    .map_err(|_| map_no_construction_io("build_v3_pool"))?;
                 let db_arc: Option<std::sync::Arc<degenbot_db::snapshot_db::SnapshotDb>> =
                     if db { self.db_handle() } else { None };
                 let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
@@ -1124,7 +992,7 @@ impl PyBot {
                 // default), and the LOUD unsupported-family refusal surfaces
                 // as `UnsupportedPoolFamilyError` — never swallowed into
                 // another rung.
-                let route = route::ConstructionRoute {
+                let route_plan = route::ConstructionRoute {
                     factories: factories
                         .unwrap_or_default()
                         .iter()
@@ -1154,67 +1022,24 @@ impl PyBot {
                         )));
                     }
                 };
-                // Incident 2026-08-20 #2: never hold the GIL while parked on the
-                // core route (its registration write included) - see `build_v2_pool`.
-                let constructed = py
+                // The ONE core entry (get-or-register + route order + build +
+                // register) plus the identity-echo shaping and the telemetry
+                // span are core-owned ([`Bot::build_and_register_v3`]); the
+                // GIL is released across the whole scope (incident
+                // 2026-08-20 #2 — see `build_v2_pool`).
+                let (pool_id, identity) = py
                     .detach(|| {
-                        get_runtime().block_on(route::construct_pool(
-                            &self.bot,
-                            &route,
-                            &route::RequestedPool::V3 { address: addr },
+                        self.bot.build_and_register_v3(
                             &io,
-                            route::V3RouteInputs {
-                                db: db_ref,
-                                fetcher,
-                                slot_layout: slot_override,
-                            },
+                            &route_plan,
+                            db_ref,
+                            fetcher,
+                            slot_override,
+                            addr,
                             block,
-                        ))
+                        )
                     })
-                    .map_err(map_construction_refusal)?;
-                // (builder return surface): the core-computed identity
-                // echoes alongside the pool_id. A registry-GET race answer
-                // (`built == None`) echoes the already-registered payload instead.
-                let (pool_id, identity) = if let Some(built) = constructed.built {
-                    // V3 has no per-pool `DexVariant`; the family is resolved from
-                    // the builder-verified `factory` via the Rust-owned
-                    // `resolve_dex_name` (kebab-case, e.g. "uniswap"), falling back
-                    // to the generic "uniswap-v3" for an unknown deployment.
-                    let family = degenbot_uniswap::deployments::resolve_dex_name(
-                        chain_id,
-                        built.factory.unwrap_or_default(),
-                    )
-                    .map_or_else(|| "uniswap-v3".to_string(), |d| d.as_str().to_string());
-                    (
-                        constructed.pool_id,
-                        (
-                            built.token0.to_checksum(None),
-                            built.token1.to_checksum(None),
-                            built.address.to_checksum(None),
-                            family,
-                        ),
-                    )
-                } else {
-                    let payload = self
-                        .registered_v3_payload(py, &addr, chain_id)
-                        .ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                "build_v3_pool: registry GET answered {addr} with no readable V3 identity"
-                            ))
-                        })?;
-                    (payload.0, (payload.1, payload.2, payload.3, payload.4))
-                };
-                // Telemetry: see build_v2_pool — one Jaeger node per V3 registration.
-                let _reg = tracing::info_span!(
-                    "degenbot.pool.register",
-                    pool.version = "v3",
-                    pool.address = %identity.2,
-                    token0 = %identity.0,
-                    token1 = %identity.1,
-                    dex = %identity.3,
-                    pool.id = pool_id,
-                )
-                .entered();
+                    .map_err(map_v3_build_err)?;
                 Ok((pool_id, (pool_id, identity.0, identity.1, identity.2, identity.3)))
             },
         )
@@ -1356,9 +1181,9 @@ impl PyBot {
         })?;
         // Register the Rust-owned V4 StateView registry first (ADR-005 /
         // Option 2) — the solver-state gate reads it to verify V4 hops.
-        {
-            self.with_state_mut(py, |s| s.register_v4_state_view(pm, state_view));
-        }
+        // Core-owned ([`Bot::register_v4_state_view`], LockSite::Core) under
+        // this py.detach (inversion class).
+        py.detach(|| self.bot.register_v4_state_view(pm, state_view));
 
         // PRG-1 registry unification: the build (pre-check → build → publish)
         // runs under the engine-internal single flight keyed by
@@ -1391,12 +1216,6 @@ impl PyBot {
             // consult); no further wrapping needed.
             || {
                 use degenbot_bot::bot_core::pool_builder::builder;
-                use degenbot_core::runtime::get_runtime;
-                let io = self.bot.construction_io_arc().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(
-                        "build_v4_pool: no ConstructionIo attached (requires an alloy provider)",
-                    )
-                })?;
                 let db_arc: Option<std::sync::Arc<degenbot_db::snapshot_db::SnapshotDb>> =
                     if db { self.db_handle() } else { None };
                 let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
@@ -1413,68 +1232,60 @@ impl PyBot {
                     })
                     .transpose()?
                     .unwrap_or_default();
-                let id = builder::V4PoolBuildIdentity {
-                    pool_manager: pm,
-                    state_view,
-                    pool_id,
-                    currency0: parse_address(currency0).map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!(
-                            "build_v4_pool: malformed currency0 {currency0:?}: {e}"
-                        ))
-                    })?,
-                    currency1: parse_address(currency1).map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!(
-                            "build_v4_pool: malformed currency1 {currency1:?}: {e}"
-                        ))
-                    })?,
+                let currency0_addr = parse_address(currency0).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "build_v4_pool: malformed currency0 {currency0:?}: {e}"
+                    ))
+                })?;
+                let currency1_addr = parse_address(currency1).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "build_v4_pool: malformed currency1 {currency1:?}: {e}"
+                    ))
+                })?;
+                // (builder return surface): the normalized identity echo is
+                // the parsed caller-supplied identity's checksums + the
+                // derived hook mask.
+                let identity_ret = (
+                    currency0_addr.to_checksum(None),
+                    currency1_addr.to_checksum(None),
+                    pm.to_checksum(None),
                     fee,
                     tick_spacing,
-                    hook_address: hook_addr,
-                };
-                // (builder return surface): capture the normalized identity
-                // tuple before `id` is moved into `build_v4`.
-                let identity_ret = (
-                    id.currency0.to_checksum(None),
-                    id.currency1.to_checksum(None),
-                    id.pool_manager.to_checksum(None),
-                    id.fee,
-                    id.tick_spacing,
-                    builder::derive_hook_flags(id.hook_address),
-                    format!("0x{}", alloy::hex::encode(id.pool_id)),
+                    builder::derive_hook_flags(hook_addr),
+                    format!("0x{}", alloy::hex::encode(pool_id)),
                 );
-                let result = py
-                    .detach(|| get_runtime().block_on(builder::build_v4(id, db_ref, &io, block)))
-                    .map_err(map_builder_err)?;
-                let mut params = result.params;
-                // lp_fee + protocol_fee come from the SAME head-stamped slot0
-                // read inside build_v4 (no second fetch_v4_slot0_liquidity each pool).
-                let lp_fee = result.lp_fee;
-                let protocol_fee = params.protocol_fee;
-                // Sparse-map parity (V4 twin of `build_v3_pool`): `build_v4` leaves the
-                // backfill fetcher `None`; inject the Python web3-sync fetcher here.
-                if let Some(fetcher) = tick_data_fetcher.filter(|f| !f.is_none()) {
-                    params.fetcher = Some(crate::bot::pool::make_tick_fetcher(fetcher.unbind()));
-                }
-                let coverage = match params.coverage {
-                    degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
-                    degenbot_bot::bot_core::PoolTickCoverage::Sparse => "sparse",
-                };
-                // Incident 2026-08-20 #2: never hold the GIL while parked on the
-                // BotState write - see `build_v2_pool`.
-                let registered = self
-                    .with_state_mut(py, |s| s.register_v4_pool(&params))
-                    .map_err(map_register_v4_err)?;
-                // Telemetry: see build_v2_pool — one Jaeger node per V4 registration
-                // (pool.manager is the PoolManager; pool.id is the 32-byte id).
-                let _reg = tracing::info_span!(
-                    "degenbot.pool.register",
-                    pool.version = "v4",
-                    pool.manager = %identity_ret.2,
-                    pool.id = %identity_ret.6,
-                    fee = identity_ret.3,
-                    tick_spacing = identity_ret.4,
-                )
-                .entered();
+                // Sparse-map parity (V4 twin of `build_v3_pool`): `build_v4`
+                // leaves the backfill fetcher `None`; the Python web3-sync
+                // fetcher rides into the core entry here (wrapped GIL-held —
+                // a Python callback cannot cross into the core closure).
+                let fetcher = tick_data_fetcher
+                    .filter(|f| !f.is_none())
+                    .map(|f| crate::bot::pool::make_tick_fetcher(f.unbind()));
+                // The io fetch, the builder run on the shared runtime, the
+                // fetcher injection, the coverage mapping, the BotState
+                // registration write, and the telemetry span are core-owned
+                // ([`Bot::build_and_register_v4`]); the GIL is released
+                // across the WHOLE scope (incident 2026-08-20 #2 — see
+                // `build_v2_pool`).
+                let (registered, coverage, protocol_fee, lp_fee) = py
+                    .detach(|| {
+                        self.bot.build_and_register_v4(
+                            builder::V4PoolBuildIdentity {
+                                pool_manager: pm,
+                                state_view,
+                                pool_id,
+                                currency0: currency0_addr,
+                                currency1: currency1_addr,
+                                fee,
+                                tick_spacing,
+                                hook_address: hook_addr,
+                            },
+                            db_ref,
+                            block,
+                            fetcher,
+                        )
+                    })
+                    .map_err(map_v4_build_err)?;
                 // Return `(pool_id, coverage, identity..., protocol_fee, lp_fee)` so the
                 // Python driver can set the companion's `_sparse_liquidity_map` (from
                 // coverage), the normalized identity, and the fee overrides
@@ -1484,7 +1295,7 @@ impl PyBot {
                     registered,
                     (
                         registered,
-                        coverage.to_string(),
+                        coverage,
                         identity_ret.0,
                         identity_ret.1,
                         identity_ret.2,
@@ -1578,7 +1389,9 @@ impl PyBot {
             "reserve1",
         )?;
 
-        self.with_state_mut(py, |s| s.update_v2_pool(addr, r0, r1, block_number));
+        // The write guard is core-owned ([`Bot::update_v2_pool`],
+        // LockSite::Core) under this py.detach (inversion class).
+        py.detach(|| self.bot.update_v2_pool(addr, r0, r1, block_number));
         Ok(())
     }
 
@@ -1597,43 +1410,14 @@ impl PyBot {
         amount_in: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        let request = SwapRequest {
-            zero_for_one,
-            amount_specified: -I256::try_from(amount).map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                )
-            })?,
-            sqrt_price_limit: None,
-        };
-        let result = self.with_state_mut(py, |s| s.swap_simulation(0, pool_id, request));
-        // cdbc03bb: surface `NotComputable` (uint256 overflow = on-chain revert)
-        // as a Python `ValueError` so the companion can translate it to a
-        // domain `LiquidityPoolError`; keep unrecovered sparse-map misses
-        // mapped to 0 so callers that haven't opted into the fetch-retry path
-        // keep the legacy no-raise-on-miss contract.
-        let out = match result {
-            SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
-            SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => {
-                alloy::primitives::U256::ZERO
-            }
-            SwapRead::NotComputable => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                ));
-            }
-            SwapRead::UnknownPool { pool_id } => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "swap_simulation: pool {pool_id} is not registered"
-                )));
-            }
-            SwapRead::UnsupportedFamily { pool_id, family } => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "swap_simulation: pool {pool_id} family {family} is not supported for this operation"
-                )));
-            }
-        };
+        // The request assembly (sign convention), the write guard (the
+        // sparse-miss recovery fills words), the SwapRead classification, and
+        // the legacy 0-on-miss contract are core-owned
+        // ([`Bot::calculate_tokens_out`]); the GIL is released across it
+        // (inversion class).
+        let out = py
+            .detach(|| self.bot.calculate_tokens_out(pool_id, zero_for_one, amount))
+            .map_err(map_calc_tokens_out_err)?;
         let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
     }
@@ -1674,16 +1458,15 @@ impl PyBot {
             }
             None => None,
         };
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        let result = self.with_state(py, |s| {
-            s.curve_get_dy(pool_id, i, j, amount, block_number, overrides.as_deref())
-        });
-        let out = match result {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!("{e:?}")));
-            }
-        };
+        // The read guard is core-owned ([`Bot::curve_get_dy`],
+        // LockSite::Core); the typed error passes through so the shell's
+        // `Debug`-format `ValueError` surface is unchanged.
+        let out = py
+            .detach(|| {
+                self.bot
+                    .curve_get_dy(pool_id, i, j, amount, block_number, overrides.as_deref())
+            })
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e:?}")))?;
         let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
     }
@@ -1706,35 +1489,15 @@ impl PyBot {
         amount_out: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        // ADR-037: exact-output request (positive user-perspective); the
-        // required input rides back as the consumed magnitude. Legacy numeric
-        // contract preserved at this seam: any non-computed outcome flattens
-        // to 0 (the Python tail task will surface typed outcomes instead).
-        let request = SwapRequest {
-            zero_for_one,
-            amount_specified: I256::try_from(amount).map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                )
-            })?,
-            sqrt_price_limit: None,
-        };
-        // GIL hygiene: write guard acquired inside py.detach (inversion class).
-        let read = self.with_state_mut(py, |s| s.swap_simulation(0, pool_id, request));
-        let result = match read {
-            SwapRead::Computed(outcome) => match &outcome {
-                SwapOutcome::V2(o) => (-o.consumed).into_raw(),
-                SwapOutcome::V3(o) | SwapOutcome::V4(o) => (-o.consumed).into_raw(),
-            },
-            // A registered family with no exact-output path is a typed gap,
-            // not the legacy silent-0 contract.
-            SwapRead::UnsupportedFamily { pool_id, family } => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "calculate_tokens_in: pool {pool_id} family {family} has no exact-output path"
-                )));
-            }
-            _ => alloy::primitives::U256::ZERO,
-        };
+        // ADR-037: the exact-output request assembly (positive
+        // user-perspective; the required input rides back as the consumed
+        // magnitude), the write guard, and the SwapRead→result classification
+        // (legacy 0-on-miss, typed family gap) are core-owned
+        // ([`Bot::calculate_tokens_in`]); the GIL is released across it
+        // (inversion class).
+        let result = py
+            .detach(|| self.bot.calculate_tokens_in(pool_id, zero_for_one, amount))
+            .map_err(map_calc_tokens_in_err)?;
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
@@ -2511,23 +2274,18 @@ impl PyBot {
         registry_addresses: &Bound<'_, PyList>,
         block: Option<u64>,
     ) -> PyResult<u64> {
-        use degenbot_bot::bot_core::pool_builder::builder;
-        use degenbot_core::runtime::get_runtime;
         let addr = parse_address(address)?;
         let registry = parse_address_list(registry_addresses)?;
-        let io = self.bot.construction_io_arc().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "build_curve_pool: no ConstructionIo attached (requires an alloy provider)",
-            )
-        })?;
-        let params = py
+        // The io fetch, the detection choreography on the shared runtime, and
+        // the registration write are core-owned
+        // ([`Bot::build_and_register_curve_pool`]); the GIL is released
+        // across the whole scope (incident 2026-08-20: no GIL while parked).
+        Ok(py
             .detach(|| {
-                get_runtime().block_on(builder::build_curve_pool(addr, &registry, &io, block))
+                self.bot
+                    .build_and_register_curve_pool(addr, &registry, block)
             })
-            .map_err(map_builder_err)?;
-        // Incident 2026-08-20: see unregister_pool (no GIL while parked on
-        // the BotState write).
-        Ok(self.with_state_mut(py, |s| s.register_curve_pool(&params)))
+            .map_err(|e| map_build_err("build_curve_pool", e))?)
     }
 
     /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
@@ -2765,9 +2523,9 @@ impl PyBot {
         let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
 
-        self.with_state_mut(py, |s| {
-            s.update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
-        });
+        // The write guard is core-owned ([`Bot::update_v3_pool`],
+        // LockSite::Core) under this py.detach (inversion class).
+        py.detach(|| self.bot.update_v3_pool(addr, spx, liq, tick, block_number));
         Ok(())
     }
 
@@ -2900,7 +2658,6 @@ impl PyBot {
     ///     `chain_id`: chain ID.
     ///     `block`: optional block to read on-chain at (None = head).
     #[pyo3(signature = (address, chain_id, block=None))]
-    #[expect(clippy::cast_possible_wrap)] // chain_id u64 -> core i64 (ids are small)
     fn build_erc20_token(
         &self,
         py: Python<'_>,
@@ -2908,27 +2665,18 @@ impl PyBot {
         chain_id: u64,
         block: Option<u64>,
     ) -> PyResult<PyErc20Token> {
-        use degenbot_bot::bot_core::pool_builder::builder;
-        use degenbot_core::runtime::get_runtime;
         let addr = parse_address(address)?;
-        let io = self.bot.construction_io_arc().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "build_erc20_token: no ConstructionIo attached (requires an alloy provider)",
-            )
-        })?;
-        let (name, symbol, decimals) = py
+        // The io fetch, the metadata resolution (DB row → on-chain batched
+        // read → alternate-prototype fallback → UNKNOWN sentinels, with a DB
+        // write-back), and the token registration are core-owned
+        // ([`Bot::build_and_register_erc20_token`]); the GIL is released
+        // across the whole scope (incident 2026-08-20 discipline).
+        let _registered = py
             .detach(|| {
-                get_runtime().block_on(builder::build_erc20_metadata(
-                    &io,
-                    chain_id as i64,
-                    addr,
-                    block,
-                ))
+                self.bot
+                    .build_and_register_erc20_token(chain_id, addr, block)
             })
-            .map_err(map_builder_err)?;
-        self.with_state_mut(py, |s| {
-            s.register_token(addr, name, symbol, decimals, chain_id);
-        });
+            .map_err(|e| map_build_err("build_erc20_token", e))?;
         Ok(PyErc20Token::new(self.bot.state_arc(), addr))
     }
 
