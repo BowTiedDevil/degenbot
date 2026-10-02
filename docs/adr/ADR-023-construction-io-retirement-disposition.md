@@ -73,7 +73,7 @@ from the umbrella (`degenbot` lib.rs) and exposed `PyBot.build_curve_pool`
 ### D5 — Delete the vestigial Python surface + fix doc rot.
 
 `v2_builder_base.py` (dead in `src/`) is deleted. Stale pointers are corrected:
-`pool_builder/mod.rs`'s "future, task 3FVZF4" comment; `CONTEXT.md`'s "retires
+`pool_builder/mod.rs`'s "future, task 3FVZF4" comment; `GLOSSARY.md`'s "retires
 fully once the 27 wrappers move core-side" (now false); and `LWKLMP`'s
 References claim that builders "receive `&ConstructionIo`" (they receive
 `PyBotIo`).

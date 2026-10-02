@@ -37,7 +37,7 @@ impl BlockPump {
     // mutation points (fsm.set_quiesce_params @611, fsm.record_backfill @619).
     // The future phaser must document the phase-state carrier decision (shared
     // struct vs heavy parameter passing) with its change. Decision record:
-    // CONTEXT.md "Block-pump dispatch seam" -> pump-driver phasing (DECIDED).
+    // GLOSSARY.md "Block-pump dispatch seam" -> pump-driver phasing (DECIDED).
     /// Processes logs eagerly: each WS log is applied to engine state
     /// immediately and affected paths are solved right away, without
     /// waiting for a block header. Block headers provide metadata

@@ -22,7 +22,7 @@ use crate::PoolTickCoverage;
 /// `Arc`'d, ready for the hop-projection memo's O(1) clone. This is the
 /// shared derivation the memo holds per (pool, direction, nonce).
 ///
-/// GUARDRAIL (CONTEXT.md "CL-projection guardrail", still load-bearing):
+/// GUARDRAIL (GLOSSARY.md "CL-projection guardrail", still load-bearing):
 /// this helper sits DOWNSTREAM of the self-contained `build_int_v*_sequence`
 /// calls and reinterprets nothing about fee convention, current-tick drain
 /// framing, or net-sign direction — sequence construction stays per-projector

@@ -44,7 +44,7 @@
 > both — `docs/plans/pzbgp7-terminal-form-axis-draft.md` and
 > `docs/spikes/t6-topology-rules-analysis.md` — were removed in the stale-docs
 > cleanup `71ec78b2`; their findings survive in this paragraph, the
-> `CONTEXT.md` walker glossary, and the rule walkers in
+> `GLOSSARY.md` walker glossary, and the rule walkers in
 > `grammar_walker/shapes/three_hop.rs`.) All 23 3-hop bodies are deleted;
 > three rule walkers (`rule_walk_v2v3`, `rule_walk_v4_led`,
 > `rule_walk_v2v3_v4_mixed` in `grammar_walker/shapes/three_hop.rs`) derive

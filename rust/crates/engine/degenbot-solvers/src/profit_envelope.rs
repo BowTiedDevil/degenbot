@@ -7,7 +7,7 @@
 //! `bound(x) − x` over inputs falls below `min_profit`, the active-set walk is
 //! provably unprofitable and is skipped without a single simulation.
 //!
-//! **Soundness core** (see CONTEXT.md "Profit envelope gate"):
+//! **Soundness core** (see GLOSSARY.md "Profit envelope gate"):
 //! - A CL hop's output curve is concave; on ending-range piece `j` its slope
 //!   never exceeds the marginal price at that piece's entry × (1−fee).
 //!   Extending that entry slope linearly from the piece's cumulative

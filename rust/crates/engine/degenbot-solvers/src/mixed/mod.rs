@@ -5,7 +5,7 @@
 //! math-leaf vocabulary. `degenbot-bot`'s `resolve_path` projects `BotState`
 //! into these types under `core.read()`, then the guard drops, then the
 //! pure solve family (`solve_path` + the `solve_*_path_int` arms) runs
-//! lock-free over a `ResolvedMixedPath`. See `CONTEXT.md` → "Resolve→solve
+//! lock-free over a `ResolvedMixedPath`. See `GLOSSARY.md` → "Resolve→solve
 //! boundary" and ADR-015 for the seam rationale and the deferred hop-shape
 //! review.
 //!

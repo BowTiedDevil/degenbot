@@ -194,6 +194,6 @@ fan-out is the intended trade.
   become general axis values/ledger strategies honored across families.
 
 Implementation, terminology, and the matrix live under ergo epic `463V2C`;
-vocabulary is recorded in `CONTEXT.md` ("Executor command layer"). The runtime
+vocabulary is recorded in `GLOSSARY.md` ("Executor command layer"). The runtime
 harness is `rust/crates/engine/degenbot-simulation/tests/harness_declarative.rs`;
 grammar is `rust/crates/foundation/degenbot-executor/src/grammar.rs`.

@@ -10,7 +10,7 @@
 //! submission. These tests pin the seam between the two from the adapter side,
 //! where the engine's own counters are observable.
 //!
-//! Terminology is the settled set in CONTEXT.md § Session objects; the
+//! Terminology is the settled set in GLOSSARY.md § Session objects; the
 //! identity-vs-policy split is `docs/architecture/session-object-registry.md`.
 
 use super::*;

@@ -200,7 +200,7 @@ class _Phase(Enum):
 
 @dataclass
 class _SessionState:
-    """Cockpit session state (CONTEXT.md term: *session state*).
+    """Cockpit session state (GLOSSARY.md term: *session state*).
 
     The single owner of one pump session's coordination state, built REAL in
     ``start()`` — no pre-session option cluster survives on the runner (its

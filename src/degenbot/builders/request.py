@@ -29,7 +29,7 @@ class BuildPoolRequest:
     tick_bitmap: dict[int, Any] | None = None
     tick_data: dict[int, Any] | None = None
 
-    # The resolved construction route (CONTEXT.md, Construction route) — the
+    # The resolved construction route (GLOSSARY.md, Construction route) — the
     # cockpit's policy ordering the core route entry walks. `None` = the
     # generic-only route (the behavior-preserving default).
     construction_route: ConstructionRoute | None = None
@@ -41,7 +41,7 @@ class BuildPoolRequest:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class ConstructionRoute:
-    """The resolved construction-route policy (CONTEXT.md, Construction route).
+    """The resolved construction-route policy (GLOSSARY.md, Construction route).
 
     ONE ordered attempt policy for constructing a family-unknown single-address
     pool: the factory rungs in policy order, terminating in the generic

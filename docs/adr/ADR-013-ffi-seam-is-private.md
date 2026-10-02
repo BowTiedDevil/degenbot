@@ -119,7 +119,7 @@ embedded JSON and verifies the CREATE2 address at registration time. A
 standalone `Bot` verifies with no Python; if the builder carried identity
 in, Rust would trust rather than verify. **The lookup is load-bearing and
 correctly placed; it is not eliminated and not cross-cutting.** (See
-`CONTEXT.md` "deployments" disposition for the deferred Balancer carve-
+`GLOSSARY.md` "deployments" disposition for the deferred Balancer carve-
 out.)
 
 ## Consequences

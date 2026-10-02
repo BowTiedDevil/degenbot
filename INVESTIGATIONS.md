@@ -202,7 +202,7 @@ instead.
   `rust/crates/facade/degenbot/examples/` run-once `path*`/`fee1`/`desync`/probe
   harnesses plus their fixtures and one-off capture/verify/watch scripts — no
   live test, example, or doc consumed them (verified by whole-tree `rg`; per
-  CONTEXT.md, ad-hoc path fixtures are weak cross-checks to DELETE once the revm
+  GLOSSARY.md, ad-hoc path fixtures are weak cross-checks to DELETE once the revm
   harnesses cover them). Kept: `standalone_consumer.rs`, the `path5000` /
   `path73385` fixtures + capture scripts (consumed by committed tier-3 regression
   tests). The Layer-3 worked example now points at the kept `path5000` fixture,

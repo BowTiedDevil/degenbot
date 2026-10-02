@@ -58,7 +58,7 @@
 /// discipline, and the one intentional strengthening).
 //
 // The field names are the settled interface — the pre-cursor engine
-// field names carried over verbatim (CONTEXT.md "Engine block cursor"); the
+// field names carried over verbatim (GLOSSARY.md "Engine block cursor"); the
 // shared `_block` postfix is the point, not an accident.
 #[expect(clippy::struct_field_names)]
 #[derive(Debug, Default)]

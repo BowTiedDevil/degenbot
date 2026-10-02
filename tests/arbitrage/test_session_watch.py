@@ -1,7 +1,7 @@
 """The session watch's end-state matrix.
 
 The cockpit's ONE owner of a pump session's end-state
-(``degenbot.runner._session_watch`` — the CONTEXT.md *session watch* term):
+(``degenbot.runner._session_watch`` — the GLOSSARY.md *session watch* term):
 the watch-set assembly ({consumer} + optional {registration, watchdog},
 exactly the task sets the former twin await loops watched), the
 ``SessionEndVerdict`` ranking (a fail-fast registration verdict outranks a

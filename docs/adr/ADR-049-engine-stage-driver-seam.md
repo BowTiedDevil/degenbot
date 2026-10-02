@@ -35,7 +35,7 @@ Registration, observation, solve control, and the core handoff have no second pa
 
 The config-derived operating knobs — event-buffer max age (expiry enable), the admission trio (target depth / retention blocks / enable), path cap, the profit window, force-deferred — are one typed value, `arb_engine/retune.rs::EngineRetune`. It is packed ONCE from the caller's `BotConfig` (`from_config`; the KAHU5W/J4HN66 construction-stance discipline) and applied through the ONE knob-write body `ArbitrageEngine::apply_retune`: once at construction and per runtime operator retune via `EngineStages::apply_retune`. It is the engine's twin of the fleet's centralized posture feeders + wake-on-retune. A channel install (`set_result_channel`) and `set_inline_simulator` are wiring, not a retune, and stay discrete.
 
-Naming discipline: not "stance" (the fleet-migration stance of ADR-042, and the KAHU5W per-construction construction-stance values) and not "posture" (the fleet's cordon concept) — see CONTEXT.md's "Engine retune" entry.
+Naming discipline: not "stance" (the fleet-migration stance of ADR-042, and the KAHU5W per-construction construction-stance values) and not "posture" (the fleet's cordon concept) — see GLOSSARY.md's "Engine retune" entry.
 
 ### D4 — machine-direct free functions are the internal style
 

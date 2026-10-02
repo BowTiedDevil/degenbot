@@ -75,7 +75,7 @@ impl StateLockPhase {
     }
 }
 
-/// Record the calling thread's `BotState` lock intent (always-on; CONTEXT.md
+/// Record the calling thread's `BotState` lock intent (always-on; GLOSSARY.md
 /// §"GIL-state discipline module"). A GIL-deadlock dump then states holder +
 /// wanter outright — no manual futex correlation. Join with the thread's
 /// `last_span` (the pymethod name) for the full picture.

@@ -1,6 +1,6 @@
 """Pool construction route — the loud-abort classification contract.
 
-The construction route (CONTEXT.md, pool-construction card) owns ONE core
+The construction route (GLOSSARY.md, pool-construction card) owns ONE core
 entry from a requested pool to a constructed, registered pool. Its failures
 classify on the build-refusal taxonomy:
 

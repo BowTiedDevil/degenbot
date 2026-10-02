@@ -14,7 +14,7 @@ runbook's host path lives at
 
 ## 0. Pick the reaction kind first
 
-A strategy picks exactly one reaction kind (ADR-055; `CONTEXT.md`
+A strategy picks exactly one reaction kind (ADR-055; `GLOSSARY.md`
 "Strategy reaction kinds").
 
 - **Pending-transaction**: implement `PendingTxReaction`
@@ -33,7 +33,7 @@ a strategy trait object. `StrategyHost` never names a family
 
 **Evidence / Keeps / Retires**
 
-- Evidence: reaction kind is an existing `CONTEXT.md` term, and
+- Evidence: reaction kind is an existing `GLOSSARY.md` term, and
   `PendingTxReaction` is the only landed family trait
   (`pending_tx.rs:68`).
 - Keeps: the two-kind split and the `admit → discover → evaluate → compose →

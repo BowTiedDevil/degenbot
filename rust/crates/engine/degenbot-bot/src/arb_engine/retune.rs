@@ -8,7 +8,7 @@
 //!
 //! NOT named "stance" (the fleet-migration stance, ADR-042, and the
 //! per-construction construction-stance values) and NOT "posture" (the
-//! fleet's cordon concept) — see CONTEXT.md's "Engine retune" glossary entry.
+//! fleet's cordon concept) — see GLOSSARY.md's "Engine retune" glossary entry.
 use super::detached_cycle::DETACHED_INFLIGHT_CAP;
 use alloy::primitives::U256;
 use hashbrown::HashSet;

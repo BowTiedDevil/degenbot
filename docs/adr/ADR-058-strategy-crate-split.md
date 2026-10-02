@@ -157,5 +157,5 @@ What actually moved differed from the plan:
 - **ADR-025** — the execution seam the adapter renamed from; the adapter is one
   of the six slots.
 - **ADR-026** — settlement / backrun terminology.
-- `CONTEXT.md`, `docs/architecture/strategy-seams.md`,
+- `GLOSSARY.md`, `docs/architecture/strategy-seams.md`,
   `docs/architecture/adding-a-strategy.md`.

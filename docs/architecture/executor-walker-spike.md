@@ -9,7 +9,7 @@
 > (`docs/plans/pzbgp7-walker-decomposition.md`) and the T6 rule analysis
 > (`docs/spikes/t6-topology-rules-analysis.md`) were removed in the stale-docs
 > cleanup `71ec78b2`; the landed design is recorded in ADR-031's Resolution
-> paragraph, the `CONTEXT.md` walker glossary, and the rule walkers themselves
+> paragraph, the `GLOSSARY.md` walker glossary, and the rule walkers themselves
 > (with the R1–R3 rules stated on each walker fn) in
 > `rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/three_hop.rs`. The
 > frozen A1 schema below is historical.

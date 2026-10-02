@@ -21,7 +21,7 @@ families were silently skipped at use sites.
 
 ## Decision
 
-### D1 — Vocabulary (CONTEXT.md is canonical)
+### D1 — Vocabulary (GLOSSARY.md is canonical)
 
 pending transaction, `PendingTxDriver`, `PendingTxStrategy`,
 `SettledBlockStrategy`, `MarketContext`, `ComposedIntent`/`Decided`,

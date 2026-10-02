@@ -24,7 +24,7 @@ and stop there:
    it may never summarize the verdict ("per ergo DLSKD7 this must fire").
 4. **The docs.** Ship history, measurements, decision rationale, and
    terminology live in `docs/adr/`, `docs/architecture/`, and
-   `CONTEXT.md` respectively — never in the code file's changelog voice.
+   `GLOSSARY.md` respectively — never in the code file's changelog voice.
 
 ## Banned in code
 
@@ -52,7 +52,7 @@ documentation debt; treat them like failing tests.
 
 ## Naming and language
 
-Use the ubiquitous language (CONTEXT.md); if you coin a term in a
+Use the ubiquitous language (GLOSSARY.md); if you coin a term in a
 comment, add it there instead. Docstrings on the Python public API are
 not optional and are not the target of these rules — they follow their
 existing conventions.

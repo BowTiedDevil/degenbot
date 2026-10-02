@@ -300,7 +300,7 @@ The full `PlanStep` variant set lives in
 new family can consume is documented on the axis enums in
 `rust/crates/foundation/degenbot-executor/src/grammar_walker.rs` (`TerminalForm`,
 `RepayMechanism`, `SeedDelivery` — each field's doc comment states when it is
-set and who consumes it) and in the `CONTEXT.md` walker glossary.
+set and who consumes it) and in the `GLOSSARY.md` walker glossary.
 
 ## Where to look next
 

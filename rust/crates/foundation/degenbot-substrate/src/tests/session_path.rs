@@ -9,7 +9,7 @@
 //! owner is installed, and hop-signature equality all resolve inside the
 //! registry.
 //!
-//! Terminology is the settled set in CONTEXT.md § Session objects; the
+//! Terminology is the settled set in GLOSSARY.md § Session objects; the
 //! identity-vs-policy split and the migration order are
 //! `docs/architecture/session-object-registry.md`.
 

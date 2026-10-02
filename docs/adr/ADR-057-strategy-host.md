@@ -406,4 +406,4 @@ mock possible; that absence is the gate.
 - **ADR-043** — the observability standard; the policy fold emits structured
   events on the `degenbot.strategy.head` target.
 - `docs/architecture/strategy-seams.md`,
-  `docs/architecture/phase-b-architecture.html`, `CONTEXT.md`.
+  `docs/architecture/phase-b-architecture.html`, `GLOSSARY.md`.

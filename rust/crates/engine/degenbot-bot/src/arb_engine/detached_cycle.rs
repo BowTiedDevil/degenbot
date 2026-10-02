@@ -34,7 +34,7 @@
 //! reverse (no ABBA ordering). See the verbatim note on
 //! `executor::outcome_ledger::OutcomeLedger::claim`.
 //!
-//! _Avoid_: "detached arm plumbing", "sidecar state" (CONTEXT.md).
+//! _Avoid_: "detached arm plumbing", "sidecar state" (GLOSSARY.md).
 use degenbot_core::op_error;
 // ---------------------------------------------------------------------------
 // The machine surface — states, verbs, the total transition table

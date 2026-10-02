@@ -1,7 +1,7 @@
 """The run ritual's transition table, pinned against a stub host.
 
 ``_run_ritual`` is the cockpit's ONE owner of a running session's startup
-ordering (CONTEXT.md *Run ritual*): consumer-attach, watch-attach, resume,
+ordering (GLOSSARY.md *Run ritual*): consumer-attach, watch-attach, resume,
 registration, main loop — an enum state machine whose transitions refuse to
 run out of order (:class:`RunRitualError`, an internal-sequencing error
 distinct from the operator-facing ``PhaseError``).

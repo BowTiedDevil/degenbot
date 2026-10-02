@@ -412,6 +412,6 @@ publish-snapshots — the wrong model for ArcSwap (would require COW-cloning
 whole state per mutation). No candidate fits. `arc-swap 1.9.2` stays
 transitive-only in `Cargo.lock`; no `degenbot-*` crate pulls it directly.
 
-Recorded in `CONTEXT.md` ("Synchronization primitive for
+Recorded in `GLOSSARY.md` ("Synchronization primitive for
 `construction_io`") so these threads aren't re-litigated without a
 forcing function.

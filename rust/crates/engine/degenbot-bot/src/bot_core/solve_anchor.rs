@@ -5,7 +5,7 @@
 //! pools), and a hop whose price clock runs **ahead of** the anchor is
 //! *future* and never legitimate. The pump's `drain_decision`, the engine's
 //! solve re-anchor, and the ADR-021 publish verifier all derive from this —
-//! never from a raw lagging block. `CONTEXT.md`: "Solve anchor".
+//! never from a raw lagging block. `GLOSSARY.md`: "Solve anchor".
 //!
 //! ## Why the head floor (the backfill-ahead desync class)
 //!

@@ -6,7 +6,7 @@ reached through an architecture review
 session. It supersedes the "two adapters" framing implicitly carried by the
 simulation crates and retires the RPC simulation surface. Some code change
 ships with the acceptance; the bulk is sequenced as a multi-step refactor
-(see Sequencing). The vocabulary is recorded in `CONTEXT.md` under
+(see Sequencing). The vocabulary is recorded in `GLOSSARY.md` under
 "Simulation engine vs. searcher strategy."
 
 ## Context
@@ -336,7 +336,7 @@ leaves a green, verifiable codebase:
 
 ## References
 
-- `CONTEXT.md` — "Simulation engine vs. searcher strategy" section (the
+- `GLOSSARY.md` — "Simulation engine vs. searcher strategy" section (the
   load-bearing vocabulary; kept current as the decision lands).
 - ADR-003 (Bot as state owner) — the `BotState` the revm DB stack reads.
 - ADR-005 (Polars-inspired three-layer architecture) — the standalone-core

@@ -213,7 +213,7 @@ ADR-050 / task evidence).
 Supersedure: the two recorded "stays-python" statements that this sweep
 reverses in part are (a) `runner/bot_runner.py`'s module docstring, which now
 carries an ADR-050 pointer beside the doctrine, and (b) the epic `5TBT7L` Q2b
-crate-private-engine note in `CONTEXT.md` ("Engine seam deepening"), which now
+crate-private-engine note in `GLOSSARY.md` ("Engine seam deepening"), which now
 carries a one-line ADR-050 supersedure. The `pub(crate)` one-door invariant
 itself stands — ADR-050 adds the `EngineDriver` *driver* seam above
 `EngineStages`, not a second engine door.

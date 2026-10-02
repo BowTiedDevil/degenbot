@@ -5,7 +5,7 @@ complete — the Python registries are adapters over core identity, the supersed
 maps and claim tables are deleted, and the architecture gates keep them gone. The
 decision record is [ADR-064](../adr/ADR-064-session-object-registry-cutover.md);
 this note is the reasoning behind the target. Terminology is the settled set in
-[CONTEXT.md § Session objects](../CONTEXT.md#session-objects).
+[GLOSSARY.md § Session objects](../GLOSSARY.md#session-objects).
 
 This note was written before the interface work and deliberately specifies no Python
 method and no FFI signature. Where the implementation settled such a question, ADR-064

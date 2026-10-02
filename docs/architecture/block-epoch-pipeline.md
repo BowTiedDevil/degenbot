@@ -146,7 +146,7 @@ The parallel accounting system is deleted, not wrapped (Q6: hard cutover):
 | 8 | `BF43PM` | Per-stage OTel spans + metrics carrying epoch attributes | observable across all |
 | 9 | `SZJUKL` | Seam retirement: delete `DrainSink`/`Engine`/`SolveCoordinator`/`drain_lock`/`DispatchOwner`/`DrainerHealth` (seams #1, #3) | Published-edge + drive wiring |
 | 10 | `5WTYYQ` | Extract `degenbot-ingestion` (pyo3-free); Python becomes a Published-edge sink | Subscribed + Published |
-| 11 | `PLRGIN` | Regression: capture-replay sweep + live Jaeger soak A/B; flip ADR-041 to implemented; update `CONTEXT.md` vocabulary | proves all |
+| 11 | `PLRGIN` | Regression: capture-replay sweep + live Jaeger soak A/B; flip ADR-041 to implemented; update `GLOSSARY.md` vocabulary | proves all |
 The order above is dependency-ordered per `ergo`; #8 (`BF43PM`) and #9
 (`SZJUKL`) may interleave once #7 lands.
 

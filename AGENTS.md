@@ -38,7 +38,7 @@ Run `cargo fmt` only through the justfile recipes (`just fmt-check`) — a bare
 the pre-commit formatter is the authority. Commit with the whole tree staged
 (`git add -A` before `git commit`): partial staging makes the pre-commit stash dance
 conflict with hook-side formatting changes and the commit aborts. The drift-gate and
-negative-probe idioms govern every machine-emitted artifact (see CONTEXT.md).
+negative-probe idioms govern every machine-emitted artifact (see GLOSSARY.md).
 
 ## Rust toolchain policy
 

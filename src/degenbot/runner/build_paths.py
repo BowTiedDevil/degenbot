@@ -227,7 +227,7 @@ class ConstructionContext:
     on the pump runtime).
 
     The context holds RESOLVED POLICY VALUES only: the construction route
-    (CONTEXT.md, Construction route — the ordered factory rungs + the generic
+    (GLOSSARY.md, Construction route — the ordered factory rungs + the generic
     builder rung) and the WETH token, built once here. The core route entry
     (``pool_builder::route``) owns the walk — route order, the DB two-step
     identity, get-or-register into session state — and classifies every
@@ -327,7 +327,7 @@ class PathRegistrationPipeline:
         self.constr_bot = context.bot
         self.constr_chain_id = context.chain_id
         self.constr_database_path = context.database_path
-        # The resolved construction-route policy (CONTEXT.md, Construction
+        # The resolved construction-route policy (GLOSSARY.md, Construction
         # route) — the core route entry walks it; the driver supplies values,
         # never construction code.
         self.construction_route = context.construction_route

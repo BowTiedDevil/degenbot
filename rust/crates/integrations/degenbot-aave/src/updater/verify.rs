@@ -323,7 +323,7 @@ pub async fn verify_touched_positions_on_conn(
 /// `U256::ZERO` — matching the prior per-call
 /// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics. Delegates the
 /// byte decode to the home `degenbot_rpc::abi::decode_uint256` (the single
-/// deep home for onchain pool-state probing — see CONTEXT.md) — Aave's
+/// deep home for onchain pool-state probing — see GLOSSARY.md) — Aave's
 /// `scaledBalanceOf` / `getPreviousIndex` / `balanceOf` returns are all
 /// generic `uint256` words, so the method-named `decode_balance_of` would be
 /// a semantic lie here.

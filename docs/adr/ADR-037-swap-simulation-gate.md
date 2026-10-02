@@ -89,4 +89,4 @@ so future reviews do not re-suggest the twins.
 - Non-goals: no third bespoke pump channel or bus unification (ADR-027);
   no window-guard changes (ADR-036); no solve-seam reshaping (ADR-015);
   no family-trait work (ADR-014/016/017). Domain vocabulary lives in
-  CONTEXT.md under "Swap simulation".
+  GLOSSARY.md under "Swap simulation".

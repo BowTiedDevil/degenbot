@@ -1,6 +1,6 @@
 """One session watch behind the cockpit's end-state.
 
-The cockpit's single owner of a pump session's end-state (the CONTEXT.md
+The cockpit's single owner of a pump session's end-state (the GLOSSARY.md
 *session watch* term): the watch-set assembly ({consumer} + optional
 {registration, watchdog} — exactly the task sets the former twin await loops
 ``_await_main_loop_with_registration_fail_fast`` /

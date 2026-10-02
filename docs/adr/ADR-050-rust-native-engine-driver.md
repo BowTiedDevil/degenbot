@@ -12,7 +12,7 @@ The pure-Rust settlement bot (`rust/examples/settlement_bot`) is the parity twin
 
 Two recorded doctrines meet head-on:
 
-- **CONTEXT.md / ADR-049** record the `pub(crate)` choice as deliberate (epic `5TBT7L` Q2b): the engine's interface is **one stage seam**, `EngineStages`; the engine recedes to composition machinery behind it, and the one-impl-block census gate (`just check-engine-impl-blocks`) keeps a second door from re-opening. CONTEXT.md's glossary even says _avoid_ the phrase "engine facade" — "a facade fronts ANOTHER still-pub surface; the whole point is there is no second door."
+- **GLOSSARY.md / ADR-049** record the `pub(crate)` choice as deliberate (epic `5TBT7L` Q2b): the engine's interface is **one stage seam**, `EngineStages`; the engine recedes to composition machinery behind it, and the one-impl-block census gate (`just check-engine-impl-blocks`) keeps a second door from re-opening. GLOSSARY.md's glossary even says _avoid_ the phrase "engine facade" — "a facade fronts ANOTHER still-pub surface; the whole point is there is no second door."
 - **AGENTS.md** says a pure-Rust MEV bot must be buildable from `cargo add degenbot` — "Rust is the engine; Python is a driver shell, not a co-implementation."
 
 Meanwhile the startup ritual and phase machine live **twice** in shape if not yet in code: `EngineRegistry.start()` (`src/degenbot/arbitrage/engine_registry.py`) owns S-read → subscribe → verify-config and deliberately stops before `resume()`; `BotRunner` (`src/degenbot/runner/bot_runner.py`) owns the `_Phase` FSM (`New → Started → Running → Closed`), the "attach consumer before resume" ordering, and the "stop the pump first, then cancel the consumer" teardown. A Rust driver that reimplemented this would be a **twin implementation of one concept** — exactly the ADR-046 failure mode (`on_pump_ended` had an inherent twin that silently skipped a required log; two implementations, only one correct). Task `IUGFLH` (RSP-9) already frames this as a **LIFT candidate**: the sequencing is correct for every driver, so the core should own it once.
@@ -23,7 +23,7 @@ Meanwhile the startup ritual and phase machine live **twice** in shape if not ye
 
 `EngineDriver` composes the already-public `Arc<EngineStages>` (the engine's one seam) with the pump session state that currently lives in the PyO3 `PumpState`: the shared `Arc<Bot>`, the `ReorgCoordinator`, the shutdown flag, the subscribe state, the pump `JoinHandle`, the verify provider, and the result/block channel ends.
 
-This is **not** the "engine facade" CONTEXT.md forbids. That note rejects a facade that fronts a _still-pub_ engine — a cosmetic wrapper over a second door. `EngineDriver` fronts nothing that is publicly reachable by another path: the engine type remains `pub(crate)`, and every `EngineDriver` member that touches engine state crosses `EngineStages`. The crate keeps **one door to the engine** (`EngineStages`) and gains **one driver seam above it** (`EngineDriver`), which is a layer, not a second door. The type is named a *driver*, matching the ledger's G1 wording and the driver/engine vocabulary (`docs/architecture/rust-owned-bot.md`).
+This is **not** the "engine facade" GLOSSARY.md forbids. That note rejects a facade that fronts a _still-pub_ engine — a cosmetic wrapper over a second door. `EngineDriver` fronts nothing that is publicly reachable by another path: the engine type remains `pub(crate)`, and every `EngineDriver` member that touches engine state crosses `EngineStages`. The crate keeps **one door to the engine** (`EngineStages`) and gains **one driver seam above it** (`EngineDriver`), which is a layer, not a second door. The type is named a *driver*, matching the ledger's G1 wording and the driver/engine vocabulary (`docs/architecture/rust-owned-bot.md`).
 
 The Python `PyArbEngine` becomes a **second adapter** onto the same `EngineDriver` (D7) — so both the pure-Rust consumer and the FFI consumer share exactly one implementation of the ritual.
 
@@ -173,7 +173,7 @@ The **Python-only pump ritual** is retired: `PumpState`'s `subscribe`/`resume`/`
 - The Python-visible API is byte-identical: same class name, same method signatures; only the Rust ownership behind `PyArbEngine` changes.
 - The degenbot umbrella re-exports `EngineDriver` (via `degenbot_bot::arb_engine` / `degenbot::bot`), so `cargo add degenbot` reaches it without naming a sub-crate.
 - Risks to manage in implementation: the `PumpState`→core move is a behavioral cutover over the verify machinery (the async/blocking twin, the provider ownership, the GIL-detach shape); `degenbot-bot`'s test suite and the pyo3 parity tests are the characterization net; telemetry labels (ADR-043) must stay byte-identical.
-- `IUGFLH` records the supersedure pointer for the previously "stays-python" sequencing doctrine so CONTEXT.md can be updated by the implementing task.
+- `IUGFLH` records the supersedure pointer for the previously "stays-python" sequencing doctrine so GLOSSARY.md can be updated by the implementing task.
 
 ## Open questions deferred to implementation
 
@@ -198,4 +198,4 @@ The **Python-only pump ritual** is retired: `PumpState`'s `subscribe`/`resume`/`
   strategy). Scheduled; do not expand the driver shape for a hypothetical strategy.
 - Epic `RGZG4S` (Rust settlement-bot parity), task `OJI4FH` (this ADR), `5XOGRK` (Gap G1), `XFEJUG`, `L4E7RI`, `IUGFLH` (RSP-9), `23DLCY` (the running parity gate), `YFIOSF` (Gap G2), `KPLWUM` (Gap G5).
 - The task chain behind the preserved invariant: epic `5TBT7L`, tasks `2NLZE3` / `3WI4EO` / `RS64JJ` / `5AFSXM` / `RPEBMX` / `MHLURV` / `XURYVA`.
-- `docs/architecture/rust-settlement-bot-parity.md` (the G1 ledger rows), `docs/architecture/rust-owned-bot.md` (the Rust-owned design), `CONTEXT.md` ("Engine seam deepening", "Engine retune", "Driver seam").
+- `docs/architecture/rust-settlement-bot-parity.md` (the G1 ledger rows), `docs/architecture/rust-owned-bot.md` (the Rust-owned design), `GLOSSARY.md` ("Engine seam deepening", "Engine retune", "Driver seam").

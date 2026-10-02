@@ -14,7 +14,7 @@
 //! pump handle, the subscribe state, the verify provider, and the result/block
 //! channel ends — the session state that previously lived on `PumpState`.
 //!
-//! This is **not** the "engine facade" CONTEXT.md forbids (ADR-049 D1): the
+//! This is **not** the "engine facade" GLOSSARY.md forbids (ADR-049 D1): the
 //! engine type stays `pub(crate)`, every engine touch crosses `EngineStages`,
 //! and the one-impl-block census gate is untouched. It is a layer above the
 //! existing door, not a second door.

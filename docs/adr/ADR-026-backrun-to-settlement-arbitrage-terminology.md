@@ -71,7 +71,7 @@ unabbreviated form.
 
 ## Consequences
 
-- **Forward-looking code and living docs** (README, CONTEXT.md, living
+- **Forward-looking code and living docs** (README, GLOSSARY.md, living
   `docs/architecture/*`) move to the canonical terms; done under ergo epic
   `R2BXPV`, staged non-breaking prose first (B1–B3), then breaking identifier
   renames (A1–A5).

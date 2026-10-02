@@ -175,5 +175,5 @@ parity oracle) and never touch the canonical `dispatch_profitable_*` fan-out.
 - [ADR-025 — the `ExecutionAdapter` seam](adr/ADR-025-execution-strategy-seam.md)
 - ADR-019 — `cmd_executor` + the settlement-arbitrage 7-call balance gate are Rust and stay
   Rust (the default adapter); pricing folds into Assess.
-- `CONTEXT.md` — the seam / two-consumer (Rust engine, Python driver shell)
+- `GLOSSARY.md` — the seam / two-consumer (Rust engine, Python driver shell)
   framing.

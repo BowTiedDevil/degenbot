@@ -1,6 +1,6 @@
 """The run ritual: one owner of a running session's startup ordering.
 
-CONTEXT.md *Run ritual*: the cockpit's one owner of a running session's
+GLOSSARY.md *Run ritual*: the cockpit's one owner of a running session's
 startup ordering — consumer-attach, watch-attach, resume, registration, main
 loop — as a state machine; the registration mode and the task scheduler are
 data it consumes, never branches tests select. It sits strictly behind the

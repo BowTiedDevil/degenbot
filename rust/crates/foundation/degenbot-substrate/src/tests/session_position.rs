@@ -9,7 +9,7 @@
 //! through an observer that can refuse. The registry holds no position store,
 //! so there is nothing here for a failed read to fall back on.
 //!
-//! Terminology is the settled set in CONTEXT.md § Session objects; the
+//! Terminology is the settled set in GLOSSARY.md § Session objects; the
 //! identity-vs-projection split and the layer reasoning are in
 //! `docs/architecture/session-object-registry.md`.
 

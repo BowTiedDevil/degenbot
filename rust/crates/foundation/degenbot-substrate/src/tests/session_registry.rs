@@ -18,7 +18,7 @@
 //! identity is therefore observed with `Arc::ptr_eq`, which compares the
 //! allocation, not a field.
 //!
-//! Terminology is the settled set in CONTEXT.md § Session objects (Object,
+//! Terminology is the settled set in GLOSSARY.md § Session objects (Object,
 //! Session object registry, Canonical identity, Get-or-create, Live state,
 //! Object reference); the rationale is
 //! docs/architecture/session-object-registry.md.

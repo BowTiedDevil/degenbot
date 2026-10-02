@@ -54,7 +54,7 @@ pub fn solve_path(resolved: &ResolvedMixedPath, gate: &GateDeps<'_>) -> SolveOut
 /// [`solve_path`] with the profit-envelope gate active at floor `min_profit`:
 /// when the rigorous upper bound on path profit falls below the floor, the
 /// path is provably unprofitable and returns `None` WITHOUT running any
-/// walk. See CONTEXT.md → "Profit envelope gate". The gate's epoch / cache /
+/// walk. See GLOSSARY.md → "Profit envelope gate". The gate's epoch / cache /
 /// capture stance rides [`GateDeps`] — `GateDeps::per_block` in the engine,
 /// `GateDeps::offline` in tests and replays.
 #[must_use]

@@ -36,7 +36,7 @@ the substrate layer, beside pools/pathfinding).
 a second rippling change.
 
 **D3 — Acceptance is measured.** Post-extraction `degenbot-strategy` carries ZERO
-`use degenbot_bot::bot_core` imports; the strategy seam map and CONTEXT.md point at
+`use degenbot_bot::bot_core` imports; the strategy seam map and GLOSSARY.md point at
 the new home; `degenbot-bot` composes it as a peer, and the pure-Rust consumer path
 (`just check-rust-consumer`) proves a strategy can be authored without the
 application crate.
