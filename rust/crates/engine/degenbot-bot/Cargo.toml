@@ -70,12 +70,7 @@ tracing-opentelemetry = { version = "0.34", optional = true, default-features = 
 # composes a tracing-subscriber registry at the call site, so the crate needs
 # it at runtime, not just in tests.
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
-# Exactly 0.26.0: hotpath 0.26.1+ emits `__unique_label!` guard statics whose
-# `#[export_name]` embeds spaces/quotes; rustc then lists those names in the
-# cdylib version script and GNU ld rejects the link ("syntax error in VERSION
-# script"), so every `maturin develop` build of degenbot_rs fails. Re-bump once
-# upstream ships a linker-safe guard symbol.
-hotpath = { version = "=0.26.0", default-features = false }
+hotpath = { version = "^0.28.4", default-features = false }
 parking_lot = { version = "^0.12" }
 rand = { version = "^0.10" }
 tracing = { version = "^0.1" }
