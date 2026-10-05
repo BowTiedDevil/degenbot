@@ -834,7 +834,7 @@ impl ClOrchestration {
     }
     /// Number of buffered V3 liquidity events for a pool address (backfill + pump).
     #[must_use]
-    pub(crate) fn buffered_v3_event_count(&self, address: &Address) -> usize {
+    pub fn buffered_v3_event_count(&self, address: &Address) -> usize {
         self.v3_buffer.event_count(address)
     }
     /// Discard all buffered V3 liquidity events for all pools.
@@ -933,7 +933,7 @@ impl ClOrchestration {
     ///
     /// `None` clears the seed (cold-start resume — `BlockPump::resume_from_subscribe`
     /// skips the auto-backfill).
-    pub(crate) fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
+    pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
         self.snapshot_seed_block = s;
     }
     /// Read the pinned snapshot seed for a V3 pool. Returns the
@@ -1319,7 +1319,7 @@ impl ClOrchestration {
     /// solver-state verifier resolves it per-hop via [`ClOrchestration::state_view_for`].
     /// Idempotent: the seed for a manager is supplied once by the driver
     /// (read from the `pool_managers` DB row) before V4 pools solve.
-    pub(crate) fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
+    pub fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
         self.v4_state_views.insert(pool_manager, state_view);
     }
     /// The canonical V4 `StateView` address for `pool_manager`, if registered.
@@ -2097,7 +2097,7 @@ impl ClOrchestration {
     }
     /// Look up the pool ID for a registered `(pool_manager, pool_id)` pair.
     #[must_use]
-    pub(crate) fn v4_pool_id_by_key(
+    pub fn v4_pool_id_by_key(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -2401,7 +2401,7 @@ impl ClOrchestration {
     /// `Bot::load_snapshot_from_db` / `load_snapshot_from_py`; consumed by the
     /// auto-backfill (`resume_from_subscribe`) that closes `S+1..W-1`.
     #[must_use]
-    pub(crate) const fn snapshot_seed_block(&self) -> Option<u64> {
+    pub const fn snapshot_seed_block(&self) -> Option<u64> {
         self.snapshot_seed_block
     }
 }

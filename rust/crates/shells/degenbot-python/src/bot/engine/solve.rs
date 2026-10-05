@@ -266,7 +266,7 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: guards acquired inside the accessor's py.detach.
-        let count = self.with_core(py, |s| s.buffered_v3_event_count(&addr));
+        let count = self.with_core(py, |s| s.cl().buffered_v3_event_count(&addr));
         Ok(count)
     }
 

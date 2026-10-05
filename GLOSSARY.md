@@ -854,9 +854,11 @@ identity-only layer, the registry core is the live state.
 the V3/V4 liquidity event buffers, `v4_pool_ids`, the V4 state-view registry,
 the registration gate, the snapshot seed block, the pump delivery cutoff, and
 the per-pool event horizons. `BotState` stays the composition root and
-delegates its public CL surface to it one-line-at-a-time; capability fns
-reach the registry core only through the `RegistryCore` view their callers
-pass, and registry-side consumers (the sim-anchor projection, the storage
-probe) see V4 registration only through `registered_v4_pools()`.
+delegates its public CL surface to it one-line-at-a-time; callers that need
+only CL-local state reach the capability directly through `BotState::cl()` /
+`cl_mut()` over the capability's `pub` method set, capability fns reach the
+registry core only through the `RegistryCore` view their callers pass, and
+registry-side consumers (the sim-anchor projection, the storage probe) see
+V4 registration only through `registered_v4_pools()`.
 _Avoid_: reaching into `state.cl.<field>` from registry-side code or growing
 CL policy outside the capability's method set.

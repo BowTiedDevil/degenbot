@@ -223,16 +223,19 @@ impl PyArbEngine {
         // ADR-003: single V4 entry per `(pool_manager, pool_id)` — no dual
         // forward/reverse keys. v4_pool_id_by_key returns Option<u64>.
         let v4_pools = self.with_core(py, |core| {
-            let v4_key = core.v4_pool_id_by_key(Address::ZERO, &pool_id).or_else(|| {
-                // V4 pools are registered with the actual pool_manager address,
-                // not ZERO. Fallback: scan all V4 pools for matching pool_id.
-                for (key, pool) in core.v4_pools_snapshot() {
-                    if pool.0.pool_id == pool_id {
-                        return Some(key);
+            let v4_key = core
+                .cl()
+                .v4_pool_id_by_key(Address::ZERO, &pool_id)
+                .or_else(|| {
+                    // V4 pools are registered with the actual pool_manager address,
+                    // not ZERO. Fallback: scan all V4 pools for matching pool_id.
+                    for (key, pool) in core.v4_pools_snapshot() {
+                        if pool.0.pool_id == pool_id {
+                            return Some(key);
+                        }
                     }
-                }
-                None
-            });
+                    None
+                });
 
             let fwd_key = v4_key?;
             let mut map = hashbrown::HashMap::new();

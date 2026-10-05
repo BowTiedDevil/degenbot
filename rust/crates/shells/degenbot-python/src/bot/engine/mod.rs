@@ -232,7 +232,7 @@ impl PyArbEngine {
     #[getter]
     fn snapshot_seed_block(&self, py: Python<'_>) -> Option<u64> {
         // GIL hygiene: guards acquired inside the accessor's py.detach.
-        self.with_core(py, degenbot_substrate::BotState::snapshot_seed_block)
+        self.with_core(py, |s| s.cl().snapshot_seed_block())
     }
 
     /// Set the snapshot seed block `S` on the shared `BotState` for the
@@ -251,6 +251,6 @@ impl PyArbEngine {
     #[setter]
     fn set_snapshot_seed_block(&self, py: Python<'_>, block: Option<u64>) {
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_snapshot_seed_block(block));
+        self.with_core_mut(py, |s| s.cl_mut().set_snapshot_seed_block(block));
     }
 }
