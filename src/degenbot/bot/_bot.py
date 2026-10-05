@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot._ffi import Bot as _Engine
 from degenbot._ffi import BotIo
@@ -74,23 +74,6 @@ if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockIdentifier
 
 from degenbot.types.aliases import ChainId  # ruff:ignore[typing-only-first-party-import]
-
-
-class _V4ResolvedIdentity(NamedTuple):
-    """Identity core-resolved for a V4 managed pool.
-
-    Named carrier so the resolver, the core build, and the builder parity
-    guard share one shape instead of re-threading the seven identity fields
-    as loose locals through every helper on the managed-build path.
-    """
-
-    currency0_address: str
-    currency1_address: str
-    fee: int
-    tick_spacing: int
-    hook_flags: int
-    hook_address: str | None
-    state_view_address: str
 
 
 def _update_pool(
@@ -599,7 +582,8 @@ class Bot(AccountQueryMixin):
         """
         return self.build_erc20token(address)
 
-    def build_pool(  # ruff: ignore[too-many-arguments] - one knob per resolved construction input, mirroring the retired keyword surface
+    # ruff: ignore[too-many-arguments, too-many-locals, too-many-branches, too-many-statements] - one knob per resolved construction input, mirroring the retired keyword surface
+    def build_pool(
         self,
         address: str,
         *,
@@ -665,29 +649,139 @@ class Bot(AccountQueryMixin):
         # Look up the concrete pool class from the registry
         pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
 
-        # V2/V3 families delegate to the Rust `PoolBuilder` (full
-        # delegation): the core builder owns ALL the io choreography (immutables,
-        # reserves/state, DEX resolve incl. Camelot, CREATE2 verify, V3
-        # tick-map DB-first) and registers directly into `BotState`. The Python
-        # side then registers the two Erc20Tokens in the same `Bot` (ADR-006 —
-        # `from_handle` resolves them off the handle) and wraps the structural
-        # handle with the companion pool class.
-        #
-        # V3 wires a `tick_data_fetcher` (the legacy web3-sync fetcher) into
-        # `build_v3_pool` so swaps can lazily pull neighbouring tick words
-        # beyond the single word the Rust builder bootstraps — full parity with
-        # the retired builder's attached fetcher.
-        #
-        # Aerodrome V2 and both Balancer families delegate through the Rust
-        # PoolBuilder (their own PoolEntry families);
-        # Curve keeps its Python builder. Python `update()` refresh for these
-        # families stays on the builders — update() was out of the
-        # build-delegation scope, so this split is the permanent design.
+        # Delegated families (V2-style, V3, Aerodrome V2, both Balancer
+        # families) build in the core: the Rust `PoolBuilder` owns ALL the io
+        # choreography (immutables, reserves/state, DEX resolve incl. Camelot,
+        # CREATE2 verify, V3 tick-map DB-first), registers into `BotState`, and
+        # returns the pool id; this facade then registers the pool's tokens in
+        # the same `Bot` (ADR-006) and wraps the structural handle with the
+        # companion pool class. Curve and the registry-builder families keep
+        # their Python builders below.
         if issubclass(
             pool_class,
             (UniswapV2Pool, UniswapV3Pool, AerodromeV2Pool, BalancerV2Pool, BalancerV2StablePool),
         ):
-            return self._build_delegated(pool_class, address, chain_id, request)
+            # Resolve the snapshot block: when no explicit `state_block` is
+            # given, use the current chain head — the core fetches at this
+            # block (a `None` would otherwise degrade to `block=0`).
+            block: int | None = (
+                request.state_block
+                if request.state_block is not None
+                else self._io.get_block_number()
+            )
+
+            # One branch per delegated family mirrors the core's entry points:
+            # V3 threads the tick-data fetcher and the fork slot layout,
+            # Balancer stable threads the invariant version, and the V2-style
+            # families return the full builder identity for the return-surface
+            # parity guard.
+            builder_identity: tuple[int, str, str, str, str] | None
+            if issubclass(pool_class, UniswapV3Pool):
+                # The web3-sync fetcher lets swaps lazily pull neighbouring
+                # tick words beyond the single word the core bootstraps.
+                fetcher = self._make_v3_tick_data_fetcher(address, chain_id)
+                # CL slot layout: the PancakeSwap V3 fork has a divergent
+                # storage layout — pass the family explicitly so the engine's
+                # slot-index consumers (divergence probe, sim-anchor
+                # projection) never misread a fork pool.
+                slot_layout = (
+                    "pancakeswap" if issubclass(pool_class, PancakeswapV3Pool) else "uniswap"
+                )
+                # The construction route: the cockpit's resolved policy value —
+                # the core route entry walks it (route order + get-or-register
+                # + build + register) and classifies every failure on the
+                # taxonomy.
+                route = request.construction_route or ConstructionRoute()
+                b_res = self._py_bot.build_v3_pool(
+                    address,
+                    block=block,
+                    db=True,
+                    tick_data_fetcher=fetcher,
+                    slot_layout=slot_layout,
+                    factories=list(route.factories) or None,
+                )
+                pool_id, builder_identity = b_res[0], b_res
+            elif issubclass(pool_class, AerodromeV2Pool):
+                # A distinct structural family from V2 (shared volatile/stable
+                # factory) — the core reads `stable()`+`getFee()` and registers
+                # into PoolEntry::AerodromeV2.
+                pool_id = self._py_bot.build_aerodrome_v2_pool(address, block=block)
+                builder_identity = None
+            elif issubclass(pool_class, BalancerV2Pool):
+                # Balancer weighted — the core reads getPoolId + Vault
+                # getPoolTokens + getSwapFeePercentage + getNormalizedWeights +
+                # bytecode PowVersion + decimals() scaling factors and
+                # registers into PoolEntry::BalancerWeighted.
+                pool_id = self._py_bot.build_balancer_weighted_pool(
+                    address, vault=BALANCER_V2_VAULT_ADDRESS, block=block
+                )
+                builder_identity = None
+            elif issubclass(pool_class, BalancerV2StablePool):
+                # Balancer stable — the core additionally reads the
+                # amplification parameter, BPT-detect, rate provider/rate, and
+                # resolves the invariant version; registers into
+                # PoolEntry::BalancerStable.
+                pool_id = self._py_bot.build_balancer_stable_pool(
+                    address,
+                    vault=BALANCER_V2_VAULT_ADDRESS,
+                    block=block,
+                    invariant_version=request.invariant_version,
+                )
+                builder_identity = None
+            else:
+                b_res = self._py_bot.build_v2_pool(address, block=block)
+                pool_id, builder_identity = b_res[0], b_res
+
+            py_pool = self._py_bot.get_pool(pool_id)
+            if py_pool is None:  # pragma: no cover
+                msg = f"build_pool: register returned pool_id {pool_id} with no handle"
+                raise DegenbotValueError(message=msg)
+
+            # Return-surface parity: the builder returns the Rust core's own
+            # token0/token1 identity; it must equal what the registered handle
+            # exposes (a divergence is a genuine core/driver seam bug — assert
+            # loudly rather than silently re-deriving).
+            if builder_identity is not None:
+                _b_pid, b_t0, b_t1, _b_addr, _b_fam = builder_identity
+                if (
+                    py_pool.token0_address.casefold() != b_t0.casefold()
+                    or py_pool.token1_address.casefold() != b_t1.casefold()
+                ):
+                    raise DegenbotValueError(
+                        message=(
+                            f"build_pool: builder identity diverged from handle for "
+                            f"{address}: builder token0={b_t0} token1={b_t1}, "
+                            f"handle token0={py_pool.token0_address} "
+                            f"token1={py_pool.token1_address}"
+                        )
+                    )
+
+            # V3: split-seed the reorg genesis anchor. Without it the Sparse
+            # pool journals nothing, so `discard_states_before_block(update_block
+            # + 1)` would not raise — a behavior regression for every consumer
+            # that expects the registration seed to be a known state boundary.
+            if issubclass(pool_class, UniswapV3Pool) and block is not None and block > 0:
+                py_pool.seed_genesis(block_number=block)
+
+            self._register_delegated_tokens(
+                pool_class,
+                py_pool,
+                address=address,
+                chain_id=chain_id,
+                request=request,
+            )
+
+            # `from_handle` is a concrete-class classmethod (not on the base);
+            # cast to `type[Any]` so the call is type-checkable + the union of
+            # the five delegated families stays branch-free here.
+            pool = cast("type[Any]", pool_class).from_handle(py_pool)
+            # Idempotent register: a concurrent registration worker may have
+            # built this same shared pool first; use the canonical instance so
+            # THIS path still registers instead of being lossily skipped.
+            return cast(
+                "AbstractLiquidityPool",
+                self.pools.get_or_add(pool_address=pool.address, chain_id=chain_id, pool=pool),
+            )
 
         builder = self._builders.get(pool_class)
         if builder is None:
@@ -803,183 +897,6 @@ class Bot(AccountQueryMixin):
         """
         return builder.build(address, chain_id=chain_id, io=io, request=request)
 
-    def _build_delegated(
-        self,
-        pool_class: type[AbstractLiquidityPool],
-        address: str,
-        chain_id: ChainId,
-        request: BuildPoolRequest,
-    ) -> AbstractLiquidityPool:
-        """Build a V2/V3/Balancer/Aerodrome pool via the Rust PoolBuilder.
-
-        Thin delegating shell over `the `Bot` engine.build_v2_pool`/`build_v3_pool`: the
-        core builder runs the full io choreography + registers into `BotState`
-        and returns the pool id. This shell then registers the pool's two
-        Erc20Tokens in the same `Bot` (ADR-006 — the companion's
-        ``from_handle`` resolves ``get_token0/get_token1`` off the handle and
-        requires them registered) and wraps the structural handle with
-        ``pool_class``.
-
-        V3 additionally threads the legacy web3-sync `tick_data_fetcher` into
-        `build_v3_pool` (attached as a `PyTickWordFetcher` on the registered
-        pool) so swaps can lazily pull neighbouring tick words beyond the Rust
-        builder's single-word Sparse bootstrap — full parity with the retired
-        builder's attached fetcher.
-
-        Returns:
-            A ``pool_class`` companion wrapping the Rust-built pool.
-
-        Raises:
-            DegenbotValueError: If the Rust builder registered the pool but
-                the resulting handle cannot be recovered.
-
-        """
-        # Resolve the snapshot block like the legacy builders did: when no
-        # explicit `state_block` is given, use the current chain head — the Rust
-        # `PoolBuilder` fetches at this block (a `None` would otherwise degrade
-        # to `block=0`).
-        block: int | None = (
-            request.state_block if request.state_block is not None else self._io.get_block_number()
-        )
-        pool_id, builder_identity = self._build_in_core(
-            pool_class,
-            address,
-            chain_id,
-            block=block,
-            request=request,
-        )
-        py_pool = self._py_bot.get_pool(pool_id)
-        if py_pool is None:  # pragma: no cover
-            msg = f"build_pool: register returned pool_id {pool_id} with no handle"
-            raise DegenbotValueError(message=msg)
-
-        # Return-surface parity: the builder returns the Rust core's
-        # own token0/token1 identity; it must equal what the registered handle
-        # exposes (a divergence is a genuine core/driver seam bug — assert
-        # loudly rather than silently re-deriving).
-        if builder_identity is not None:
-            _b_pid, b_t0, b_t1, _b_addr, _b_fam = builder_identity
-            if (
-                py_pool.token0_address.casefold() != b_t0.casefold()
-                or py_pool.token1_address.casefold() != b_t1.casefold()
-            ):
-                raise DegenbotValueError(
-                    message=(
-                        f"build_pool: builder identity diverged from handle for "
-                        f"{address}: builder token0={b_t0} token1={b_t1}, "
-                        f"handle token0={py_pool.token0_address} "
-                        f"token1={py_pool.token1_address}"
-                    )
-                )
-
-        # V3: split-seed the reorg genesis anchor (mirrors the retired builder's
-        # `seed_genesis(state_block)`). Without it the Sparse pool journals
-        # nothing, so `discard_states_before_block(update_block + 1)` would not
-        # raise — a behavior regression for every consumer that expects the
-        # registration seed to be a known state boundary.
-        if issubclass(pool_class, UniswapV3Pool) and block is not None and block > 0:
-            py_pool.seed_genesis(block_number=block)
-
-        self._register_delegated_tokens(
-            pool_class,
-            py_pool,
-            address=address,
-            chain_id=chain_id,
-            request=request,
-        )
-
-        # `from_handle` is a concrete-class classmethod (not on the base); cast
-        # to `type[Any]` so the call is type-checkable + the union of the five
-        # delegated families stays branch-free here.
-        pool = cast("type[Any]", pool_class).from_handle(py_pool)
-        # Idempotent register: a concurrent registration worker
-        # may have built this same shared pool first; use the canonical instance
-        # so THIS path still registers instead of being lossily skipped. (pool_id
-        # is None on this delegated path, so get_or_add returns an
-        # AbstractLiquidityPool, not a managed V4 pool.)
-        return cast(
-            "AbstractLiquidityPool",
-            self.pools.get_or_add(pool_address=pool.address, chain_id=chain_id, pool=pool),
-        )
-
-    def _build_in_core(
-        self,
-        pool_class: type[AbstractLiquidityPool],
-        address: str,
-        chain_id: ChainId,
-        *,
-        block: int | None,
-        request: BuildPoolRequest,
-    ) -> tuple[Any, tuple[int, str, str, str, str] | None]:
-        """Drive the family-specific Rust build for one delegated pool.
-
-        One branch per delegated family mirrors the core's entry points: V3
-        threads the legacy tick-data fetcher and the fork slot layout,
-        Balancer stable threads the invariant version, and the V2-style
-        families return the full builder identity for the return-surface
-        parity guard.
-
-        Returns:
-            ``(pool_id, builder_identity)`` — ``builder_identity`` is the
-            ``(pool_id, token0, token1, address, family)`` result the core
-            echoes for the V2/V3 registrations, else ``None``.
-
-        """
-        if issubclass(pool_class, UniswapV3Pool):
-            # The legacy web3-sync fetcher factory, relocated off the retired
-            # V3 builder.
-            fetcher = self._make_v3_tick_data_fetcher(address, chain_id)
-            # CL slot layout: the PancakeSwap V3 fork
-            # has a divergent storage layout — pass the family explicitly so
-            # the engine's slot-index consumers (divergence probe, sim-anchor
-            # projection) never misread a fork pool.
-            slot_layout = "pancakeswap" if issubclass(pool_class, PancakeswapV3Pool) else "uniswap"
-            # The construction route: the cockpit's resolved policy value —
-            # the core route entry walks it (route order + get-or-register +
-            # build + register) and classifies every failure on the taxonomy.
-            route = request.construction_route or ConstructionRoute()
-            b_res = self._py_bot.build_v3_pool(
-                address,
-                block=block,
-                db=True,
-                tick_data_fetcher=fetcher,
-                slot_layout=slot_layout,
-                factories=list(route.factories) or None,
-            )
-            return b_res[0], b_res
-
-        if issubclass(pool_class, AerodromeV2Pool):
-            # Aerodrome V2 (shared volatile/stable factory) is a
-            # distinct structural family from V2 — the Rust `build_aerodrome_v2`
-            # reads `stable()`+`getFee()` and registers into PoolEntry::AerodromeV2.
-            pool_id = self._py_bot.build_aerodrome_v2_pool(address, block=block)
-            return pool_id, None
-
-        if issubclass(pool_class, BalancerV2Pool):
-            # Balancer weighted — reads getPoolId + Vault getPoolTokens
-            # + getSwapFeePercentage + getNormalizedWeights + bytecode PowVersion
-            # + decimals() scaling factors; registers into PoolEntry::BalancerWeighted.
-            pool_id = self._py_bot.build_balancer_weighted_pool(
-                address, vault=BALANCER_V2_VAULT_ADDRESS, block=block
-            )
-            return pool_id, None
-
-        if issubclass(pool_class, BalancerV2StablePool):
-            # Balancer stable — reads getPoolId + Vault getPoolTokens +
-            # getSwapFeePercentage + getAmplificationParameter + BPT-detect +
-            # rate-provider/rate + scaling factors + invariant_version;
-            # registers into PoolEntry::BalancerStable.
-            pool_id = self._py_bot.build_balancer_stable_pool(
-                address,
-                vault=BALANCER_V2_VAULT_ADDRESS,
-                block=block,
-                invariant_version=request.invariant_version,
-            )
-            return pool_id, None
-
-        b_res = self._py_bot.build_v2_pool(address, block=block)
-        return b_res[0], b_res
-
     def _register_delegated_tokens(
         self,
         pool_class: type[AbstractLiquidityPool],
@@ -1030,7 +947,7 @@ class Bot(AccountQueryMixin):
             io=self._io,
         )
 
-    def build_managed_pool(
+    def build_managed_pool(  # ruff:ignore[too-many-locals] - the single V4 facade delegation
         self,
         address: str,
         request: BuildManagedPoolRequest,
@@ -1045,8 +962,23 @@ class Bot(AccountQueryMixin):
         ``state_view_address``, ``tokens``, ``fee``, ``tick_spacing`` must
         all be provided.
 
+        The build is one delegation to the core: ``resolve_v4_identity``
+        performs the DB two-step (manager → v4 row → per-FK tokens) first,
+        else the request's caller-supplied overrides; the pool's two tokens
+        build in ONE batched metadata read; then ``build_v4_pool`` fetches
+        slot0/liquidity FRESH, assembles the tick map (Db → Chain precedence),
+        and registers into ``BotState`` atomically, echoing the identity back
+        for the parity guard. The fee overrides ride back from the SAME
+        head-stamped slot0 read, so the companion never issues a second
+        ``fetch_v4_slot0_liquidity`` per pool.
+
         Returns:
-            The computed value.
+            A `UniswapV4Pool` companion wrapping the Rust-registered pool.
+
+        Raises:
+            DegenbotValueError: If neither the DB two-step nor the request
+                overrides complete the identity, or if the builder-echoed
+                identity diverges from the core-resolved identity.
 
         """
         address = get_checksum_address(address)
@@ -1063,35 +995,6 @@ class Bot(AccountQueryMixin):
                 assert isinstance(existing, UniswapV4Pool)
             return existing
 
-        return self._build_v4_managed(
-            address,
-            chain_id=chain_id,
-            request=request,
-        )
-
-    def _build_v4_managed(
-        self,
-        address: str,
-        *,
-        chain_id: ChainId,
-        request: BuildManagedPoolRequest,
-    ) -> UniswapV4Pool:
-        """Build a V4 managed pool via the Rust `PoolBuilder`.
-
-        The thin delegating shell formerly `V4PoolBuilder.build()`: resolves
-        the caller-supplied V4 identity (DB two-step, else request overrides),
-        fetches the slot0 scalars for the Python-side companion overrides
-        (`protocol_fee`/`lp_fee`/`state_view`, which the Rust handle does not
-        expose), then delegates the actual build
-        (live scalars + Db→Chain tick assembly + admission + registration)
-        to `the `Bot` engine.build_v4_pool`.
-
-        Returns:
-            A `UniswapV4Pool` companion wrapping the Rust-registered pool;
-            identity-resolution failure surfaces as `DegenbotValueError` from
-            :meth:`_resolve_v4_identity`.
-
-        """
         pool_id_bytes = to_bytes(request.pool_id)
         pool_manager_address = get_checksum_address(address)
 
@@ -1102,76 +1005,10 @@ class Bot(AccountQueryMixin):
         # read stamps `update_block` at the live head, while the liquidity
         # clock + assembled tick map anchor at `state_block`. When the request
         # pins `state_block`, price = that same block (no split).
-        identity = self._resolve_v4_identity(
-            chain_id=chain_id,
-            pool_manager_address=pool_manager_address,
-            pool_id_bytes=pool_id_bytes,
-            request=request,
-        )
-        token0, token1 = self._build_v4_tokens(
-            identity=identity,
-            chain_id=chain_id,
-            io=self._io,
-            request=request,
-        )
-        py_pool, b_protocol_fee, b_lp_fee = self._build_v4_pool_in_core(
-            chain_id=chain_id,
-            pool_manager_address=pool_manager_address,
-            pool_id_bytes=pool_id_bytes,
-            identity=identity,
-            block=int(state_block) if state_block is not None else None,
-        )
-        pool = UniswapV4Pool.from_handle(py_pool)
-        # Builder-supplied values the seam defaults; override from RPC.
-        pool._state_view_address = (  # ruff:ignore[private-member-access]
-            identity.state_view_address
-        )
-        pool.protocol_fee = ProtocolFee(
-            zero_for_one=b_protocol_fee & 0xFFF,
-            one_for_zero=b_protocol_fee >> 12,
-        )
-        pool.lp_fee = int(b_lp_fee)
-
-        # Register pool in managed pool registry
-        pool = cast(
-            "UniswapV4Pool",
-            self.managed_pools.get_or_add(
-                pool=pool,
-                chain_id=chain_id,
-                pool_manager_address=pool.address,
-                pool_id=pool.pool_id,
-            ),
-        )
-
-        if not request.silent:
-            self._log_v4_pool(pool, token0, token1)
-
-        return pool
-
-    def _resolve_v4_identity(
-        self,
-        *,
-        chain_id: ChainId,
-        pool_manager_address: str,
-        pool_id_bytes: bytes,
-        request: BuildManagedPoolRequest,
-    ) -> _V4ResolvedIdentity:
-        """Resolve a V4 managed pool's identity core-side.
-
-        The Rust `resolve_v4_identity` performs the DB two-step
-        (manager → v4 row → per-FK tokens) first, else the request's
-        caller-supplied overrides, and returns the resolved identity
-        (currency0/1, fee, tick_spacing, hook_flags, state_view). The driver
-        no longer reads the DB nor assembles the kwargs identity itself.
-
-        Returns:
-            The core-resolved identity (checksummed state-view address).
-
-        Raises:
-            DegenbotValueError: If neither the DB two-step nor the request
-                overrides complete the identity.
-
-        """
+        # Identity: the core resolver performs the DB two-step (manager → v4
+        # row → per-FK tokens) first, else the request's caller-supplied
+        # overrides — the driver neither reads the DB nor assembles the
+        # identity itself.
         over_tokens = request.tokens
         try:
             (
@@ -1201,68 +1038,19 @@ class Bot(AccountQueryMixin):
             raise DegenbotValueError(
                 message=exc.args[0] if exc.args else "V4 identity resolution failed"
             ) from exc
-        return _V4ResolvedIdentity(
-            currency0_address=currency0_address,
-            currency1_address=currency1_address,
-            fee=fee_for_pool,
-            tick_spacing=tick_spacing_for_pool,
-            hook_flags=hook_flags,
-            hook_address=hook_address,
-            state_view_address=get_checksum_address(state_view_hex),
-        )
+        state_view_address = get_checksum_address(state_view_hex)
 
-    def _build_v4_tokens(
-        self,
-        *,
-        identity: _V4ResolvedIdentity,
-        chain_id: ChainId,
-        io: BotIo,
-        request: BuildManagedPoolRequest,
-    ) -> tuple[Erc20Token, Erc20Token]:
-        """Build the pool's two tokens in ONE batched metadata read.
-
-        ``build_many`` collapses the two per-token
-        fetch_erc20_metadata round-trips into a single Multicall3 aggregate3
-        eth_call for network-missing metadata.
-
-        Returns:
-            ``token0, token1`` as built by the ERC-20 builder.
-
-        """
-        tokens = self._erc20_builder.build_many(
-            [identity.currency0_address, identity.currency1_address],
+        # The pool's two tokens build in ONE batched metadata read:
+        # `build_many` collapses the two per-token fetch_erc20_metadata
+        # round-trips into a single Multicall3 aggregate3 eth_call for
+        # network-missing metadata.
+        token0, token1 = self._erc20_builder.build_many(
+            [currency0_address, currency1_address],
             chain_id=chain_id,
             silent=request.silent,
-            io=io,
+            io=self._io,
         )
-        return tokens[0], tokens[1]
 
-    def _build_v4_pool_in_core(
-        self,
-        *,
-        chain_id: ChainId,
-        pool_manager_address: str,
-        pool_id_bytes: bytes,
-        identity: _V4ResolvedIdentity,
-        block: int | None,
-    ) -> tuple[Pool, int, int]:
-        """Delegate the build to the Rust `PoolBuilder` and check identity parity.
-
-        Core `build_v4` fetches slot0/liquidity FRESH + assembles the tick map
-        (Db → Chain precedence) + registers into BotState atomically, using
-        the CORE-resolved identity.
-
-        Returns:
-            ``(py_pool_handle, protocol_fee_flags, lp_fee)`` — the fee
-            overrides ride back from the SAME head-stamped slot0 read, so the
-            companion no longer issues a second fetch_v4_slot0_liquidity per
-            pool.
-
-        Raises:
-            DegenbotValueError: If the builder-echoed identity diverges from
-                the core-resolved identity (a real seam bug).
-
-        """
         (
             pool_handle_pool_id,
             _coverage,
@@ -1278,21 +1066,21 @@ class Bot(AccountQueryMixin):
         ) = self._py_bot.build_v4_pool(
             pool_manager=pool_manager_address,
             pool_id_hex=to_0x_hex(pool_id_bytes),
-            currency0=identity.currency0_address,
-            currency1=identity.currency1_address,
-            fee=identity.fee,
-            tick_spacing=identity.tick_spacing,
+            currency0=currency0_address,
+            currency1=currency1_address,
+            fee=fee_for_pool,
+            tick_spacing=tick_spacing_for_pool,
             # The REAL hook address (pool-ID mismatch regression): the
             # core registers it in the pool key so the identity round-trips
             # keccak(abi.encode(pool_key)). The flag mask is derived core-side.
-            hook_address=identity.hook_address,
-            state_view_address=identity.state_view_address,
-            block=int(block) if block is not None else None,
+            hook_address=hook_address,
+            state_view_address=state_view_address,
+            block=int(state_block) if state_block is not None else None,
             db=True,
             tick_data_fetcher=self._make_v4_tick_data_fetcher(
                 pool_id_bytes,
                 pool_manager_address,
-                identity.state_view_address,
+                state_view_address,
                 chain_id,
             ),
         )
@@ -1301,12 +1089,12 @@ class Bot(AccountQueryMixin):
         # real seam bug), and the pool_id must round-trip the requested hash.
         # hook flags are derived from the same hook address on both sides.
         if not all([
-            b_cur0.lower() == identity.currency0_address.lower(),
-            b_cur1.lower() == identity.currency1_address.lower(),
+            b_cur0.lower() == currency0_address.lower(),
+            b_cur1.lower() == currency1_address.lower(),
             b_pm.lower() == pool_manager_address.lower(),
-            int(b_fee) == int(identity.fee),
-            int(b_ts) == int(identity.tick_spacing),
-            int(b_hf) == int(identity.hook_flags),
+            int(b_fee) == int(fee_for_pool),
+            int(b_ts) == int(tick_spacing_for_pool),
+            int(b_hf) == int(hook_flags),
             b_pool_id_hex.lower() == to_0x_hex(pool_id_bytes).lower(),
         ]):
             raise DegenbotValueError(
@@ -1318,7 +1106,31 @@ class Bot(AccountQueryMixin):
             )
         py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
         assert py_pool_handle is not None, "build_v4_pool returned a pool_id with no handle"
-        return py_pool_handle, b_protocol_fee, b_lp_fee
+
+        pool = UniswapV4Pool.from_handle(py_pool_handle)
+        # Builder-supplied values the seam defaults; override from RPC.
+        pool._state_view_address = state_view_address  # ruff:ignore[private-member-access]
+        pool.protocol_fee = ProtocolFee(
+            zero_for_one=b_protocol_fee & 0xFFF,
+            one_for_zero=b_protocol_fee >> 12,
+        )
+        pool.lp_fee = int(b_lp_fee)
+
+        # Register pool in managed pool registry
+        pool = cast(
+            "UniswapV4Pool",
+            self.managed_pools.get_or_add(
+                pool=pool,
+                chain_id=chain_id,
+                pool_manager_address=pool.address,
+                pool_id=pool.pool_id,
+            ),
+        )
+
+        if not request.silent:
+            self._log_v4_pool(pool, token0, token1)
+
+        return pool
 
     @staticmethod
     def _log_v4_pool(pool: UniswapV4Pool, token0: Erc20Token, token1: Erc20Token) -> None:
