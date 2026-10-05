@@ -426,6 +426,76 @@ pub(crate) fn journal_err_to_py(e: JournalError) -> PyErr {
     }
 }
 
+// --- Pool swap-sim surfaces (`bot_core::pool_ops`) ---
+
+/// The on-chain `getAmountOut` SafeMath-parity overflow `ValueError` — the
+/// shared surface for a request amount that did not fit the signed
+/// user-perspective delta and a constant-product `uint256` intermediate
+/// overflow (byte-identical historical text).
+pub(crate) fn swap_math_overflow() -> PyErr {
+    PyValueError::new_err(
+        "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+    )
+}
+
+/// The `getAmountIn` twin of [`swap_math_overflow`] — the exact-output pair
+/// calculation's overflow surface.
+pub(crate) fn swap_math_in_overflow() -> PyErr {
+    PyValueError::new_err(
+        "Pool swap math overflowed uint256 intermediate (on-chain getAmountIn SafeMath revert)",
+    )
+}
+
+/// `ValueError` for a swap op against an unregistered pool id.
+pub(crate) fn swap_unknown_pool(pool_id: u64) -> PyErr {
+    PyValueError::new_err(format!("swap_simulation: pool {pool_id} is not registered"))
+}
+
+/// `ValueError` for a swap op the registered family does not implement.
+pub(crate) fn swap_family_gap(pool_id: u64, family: &str) -> PyErr {
+    PyValueError::new_err(format!(
+        "swap_simulation: pool {pool_id} family {family} is not supported for this operation"
+    ))
+}
+
+/// `ValueError` for an exact-output request against a family with no
+/// exact-output path (`op` is the pymethod name the surface names).
+pub(crate) fn exact_output_family_gap(op: &str, pool_id: u64, family: &str) -> PyErr {
+    PyValueError::new_err(format!(
+        "{op}: pool {pool_id} family {family} has no exact-output path"
+    ))
+}
+
+/// `ValueError` for an override sim against a non-CL family (the family tag
+/// renders in its historical `Debug` form).
+pub(crate) fn override_family_gap(pool_id: u64, family: &str) -> PyErr {
+    PyValueError::new_err(format!(
+        "simulate_override: pool {pool_id} family {family:?} has no concentrated-liquidity override state"
+    ))
+}
+
+/// `ValueError` for a pool handle whose id is not registered.
+pub(crate) fn pool_unregistered(pool_id: u64) -> PyErr {
+    PyValueError::new_err(format!("pool {pool_id} is not registered"))
+}
+
+/// The archived V4 hooked-pool approximation exception — an amount-modifying
+/// hook may have invalidated the standard math, so the approximate deltas
+/// ride the exception text instead of a silently wrong number.
+pub(crate) fn hooked_pool_approximation(
+    consumed: alloy::primitives::I256,
+    delivered: alloy::primitives::U256,
+) -> PyErr {
+    crate::bot::engine::PossibleInaccurateResult::new_err(format!(
+        "pool has an amount-modifying V4 hook; approximation consumed={consumed} delivered={delivered}"
+    ))
+}
+
+/// `ValueError` carrying the `encode_swap:`-prefixed encoder detail.
+pub(crate) fn encode_swap_failed(detail: String) -> PyErr {
+    PyValueError::new_err(format!("encode_swap: {detail}"))
+}
+
 #[cfg(test)]
 mod tests {
     //! Pin the historical message vocabulary per mapper. The Python seam and
@@ -898,6 +968,79 @@ mod tests {
                 ResolveV4IdentityError::NoConstructionIo,
             )),
             "resolve_v4_identity: no ConstructionIo attached (requires an alloy provider)"
+        );
+    }
+
+    #[test]
+    fn pool_swap_math_overflow_pins_the_on_chain_revert_text() {
+        assert_eq!(
+            value_error(swap_math_overflow()),
+            "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)"
+        );
+        assert_eq!(
+            value_error(swap_math_in_overflow()),
+            "Pool swap math overflowed uint256 intermediate (on-chain getAmountIn SafeMath revert)"
+        );
+    }
+
+    #[test]
+    fn pool_swap_family_surfaces_pin_their_vocabulary() {
+        assert_eq!(
+            value_error(swap_unknown_pool(7)),
+            "swap_simulation: pool 7 is not registered"
+        );
+        assert_eq!(
+            value_error(swap_family_gap(7, "v2")),
+            "swap_simulation: pool 7 family v2 is not supported for this operation"
+        );
+        assert_eq!(
+            value_error(exact_output_family_gap("calculate_tokens_in", 7, "curve")),
+            "calculate_tokens_in: pool 7 family curve has no exact-output path"
+        );
+        assert_eq!(
+            value_error(exact_output_family_gap(
+                "simulate_exact_output_swap_with_fetch",
+                9,
+                "balancer-stable"
+            )),
+            "simulate_exact_output_swap_with_fetch: pool 9 family balancer-stable has no exact-output path"
+        );
+    }
+
+    #[test]
+    fn pool_override_and_handle_surfaces_pin_their_vocabulary() {
+        // The family tag renders in its historical Debug (quoted) form.
+        assert_eq!(
+            value_error(override_family_gap(7, "v2")),
+            "simulate_override: pool 7 family \"v2\" has no concentrated-liquidity override state"
+        );
+        assert_eq!(
+            value_error(pool_unregistered(12)),
+            "pool 12 is not registered"
+        );
+        assert_eq!(
+            value_error(encode_swap_failed(
+                "pool 7 family [\"v3\"] has no swap encoder".to_string()
+            )),
+            "encode_swap: pool 7 family [\"v3\"] has no swap encoder"
+        );
+    }
+
+    #[test]
+    fn pool_hooked_pool_approximation_pins_the_archived_text() {
+        // The shell passes the negated (positive) consumed delta; the
+        // mapper renders it verbatim.
+        let consumed =
+            alloy::primitives::I256::try_from(alloy::primitives::U256::from(102u64)).unwrap();
+        let rendered = Python::attach(|_py| {
+            let err = hooked_pool_approximation(consumed, alloy::primitives::U256::from(100u64));
+            err.to_string()
+        });
+        assert!(
+            rendered.ends_with(
+                "pool has an amount-modifying V4 hook; approximation consumed=102 delivered=100"
+            ),
+            "rendered: {rendered}"
         );
     }
 

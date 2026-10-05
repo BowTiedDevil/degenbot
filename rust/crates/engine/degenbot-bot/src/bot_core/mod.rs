@@ -26,6 +26,11 @@ pub mod curve_state;
 pub mod lifecycle;
 pub mod liquidity_verifier;
 pub mod pool_builder;
+/// The pool-handle ops cluster on the shared state lock: the calc /
+/// simulate / encode surface `PyLiquidityPool` drives, with the staged
+/// fetch choreography and typed failure vocabulary the PyO3 shell maps
+/// through `bot::errmap`.
+pub mod pool_ops;
 pub mod pump_control;
 pub mod pump_telemetry;
 /// The registration cluster on the `Bot` facade (moved from the PyO3 shell):

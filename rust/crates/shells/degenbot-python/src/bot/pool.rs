@@ -17,10 +17,15 @@ use std::sync::Arc;
 
 use pyo3::types::{PyDict, PyList, PyTuple};
 
-use crate::bot::errmap::journal_err_to_py;
+use crate::bot::errmap::{
+    encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, journal_err_to_py,
+    override_family_gap, pool_unregistered, swap_family_gap, swap_math_in_overflow,
+    swap_math_overflow, swap_unknown_pool,
+};
+use degenbot_bot::bot_core::pool_ops::{self, StagedSwapOutcome, SwapOpError};
 use degenbot_bot::bot_core::TickInfo;
 use degenbot_substrate::state_lock::StateLock;
-use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
+use degenbot_substrate::swap_simulation::SwapRequest;
 use degenbot_substrate::BotState;
 
 /// `PyO3` adapter wrapping a Python fetch-word callable as a
@@ -439,68 +444,6 @@ impl PyLiquidityPool {
             .is_some()
     }
 
-    /// discover the missing bitmap words for
-    /// the request (a collect-only transient walk), fetch them LOCK-FREE
-    /// through the pool stored fetcher, and install them under SHORT
-    /// writes with the fingerprint re-check. Bounded 3 passes; returns
-    /// true when the sim body can run with miss recovery disarmed.
-    fn ensure_missing_words_staged(
-        &self,
-        py: Python<'_>,
-        block: u64,
-        request: &degenbot_substrate::swap_simulation::SwapRequest,
-    ) -> bool {
-        for pass in 0..3u8 {
-            // no fetcher stored: non-CL or a Tracked pool - the sim body's
-            // disarm contract never fetches; nothing to stage.
-            let Some(missing) = self.with_state(py, |core| {
-                core.swap_missing_words(block, self.pool_id, request)
-            }) else {
-                return false;
-            };
-            if missing.is_empty() {
-                return true;
-            }
-            // Stage the whole batch under ONE short write (the per-word
-            // fingerprints gate the installs individually), then fetch
-            // lock-free, then install with the fingerprint re-check.
-            let Some(staged) = self.with_state_mut(py, |core| {
-                missing
-                    .iter()
-                    .map(|word| {
-                        core.stage_word_fetch_by_pool_id(self.pool_id, *word, block, pass > 0)
-                    })
-                    .collect::<Option<Vec<_>>>()
-            }) else {
-                return false;
-            };
-            // Fetches: GIL-attached (we hold it), NO state lock held.
-            let mut fetched = Vec::new();
-            for staged_word in &staged {
-                match staged_word.fetch() {
-                    Ok(f) => fetched.push(f),
-                    Err(_) => return false,
-                }
-            }
-            // Installs: short writes, fingerprint-gated. Any Raced means
-            // the pump wrote this pool mid-batch: retry the whole pass.
-            let raced = self.with_state_mut(py, |core| {
-                staged
-                    .iter()
-                    .zip(fetched.iter())
-                    .any(|(staged_word, fetched_word)| {
-                        matches!(
-                            core.install_word_fetch(staged_word, fetched_word),
-                            InstallWordOutcome::Raced
-                        )
-                    })
-            });
-            if !raced {
-                return true;
-            }
-        }
-        false
-    }
     /// Create a new thin pool handle.
     pub(crate) const fn new(core: Arc<StateLock<BotState>>, pool_id: u64, chain_id: u64) -> Self {
         Self {
@@ -546,13 +489,9 @@ impl PyLiquidityPool {
     /// from a registered pool, so an unknown id is a family gap, never an
     /// `""` sentinel a caller could mistake for a missing field.
     fn family_of(&self, py: Python<'_>) -> PyResult<&'static str> {
-        self.with_state(py, |core| core.pool_family(self.pool_id))
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "pool {} is not registered",
-                    self.pool_id
-                ))
-            })
+        let core = self.core.clone();
+        let family = py.detach(move || pool_ops::pool_family(&core, self.pool_id));
+        family.ok_or_else(|| pool_unregistered(self.pool_id))
     }
 
     /// Clone-out the stored `CurveDataProvider` (if any) for this handle's
@@ -562,12 +501,8 @@ impl PyLiquidityPool {
         &self,
         py: Python<'_>,
     ) -> Option<std::sync::Arc<dyn degenbot_pools::curve_data_provider::CurveDataProvider>> {
-        self.with_state(
-            py,
-            |core| -> Option<
-                std::sync::Arc<dyn degenbot_pools::curve_data_provider::CurveDataProvider>,
-            > { core.get_curve_pool(self.pool_id)?.data_provider.clone() },
-        )
+        let core = self.core.clone();
+        py.detach(move || pool_ops::curve_data_provider(&core, self.pool_id))
     }
 
     /// Read a `Vec<U256>` from the stored Curve data provider via `f`,
@@ -675,53 +610,14 @@ impl PyLiquidityPool {
             tick: override_tick,
             tick_data: rust_tick_data,
         };
-        // stage missing words OUTSIDE the read lock (bounded
-        // passes) - the sim runs with miss recovery disarmed so no fetch can
-        // execute under the caller read guard.
-        for _ in 0..3u8 {
-            // A None stored fetcher only aborts when there is something to
-            // stage — a complete hypothetical (no misses) must still sim.
-            let staged = self.with_state(py, |core| {
-                let fetcher = core.stored_fetcher_for_pool(self.pool_id);
-                let missing = core.override_missing_words(&over);
-                missing.map(|missing| (fetcher, missing))
-            });
-            let Some((fetcher, missing)) = staged else {
-                return Ok(None);
-            };
-            if missing.is_empty() {
-                break;
-            }
-            let Some(fetcher) = fetcher else {
-                // Misses exist but no fetcher is stored: the hypothetical
-                // cannot be backfilled (staged pass), fail as None
-                // exactly like the disarmed sim's FetchExhausted arm.
-                return Ok(None);
-            };
-            // Fetches: GIL-attached (we hold it), NO state lock held.
-            let mut staged_words = Vec::new();
-            for word in &missing {
-                match fetcher.fetch_missing_tick_word(self.pool_id, *word, block) {
-                    Ok(f) => staged_words.push(f),
-                    Err(_) => return Ok(None),
-                }
-            }
-            // Merge fetched ticks into the caller-owned override map.
-            for f in &staged_words {
-                for (tick, info) in &f.ticks {
-                    over.tick_data.insert(*tick, info.clone());
-                }
-            }
-        }
-        let outcome = self.with_state(py, |core| core.simulate_override_disarmed(&over, block));
+        let core = self.core.clone();
+        let outcome =
+            py.detach(move || pool_ops::simulate_override_with_fetch(&core, &mut over, block));
         match outcome {
             Ok(o) => Ok(o),
             // A non-CL family has no transient CL state to simulate — a typed
             // refusal, never a bare `None` an override miss could produce.
-            Err(u) => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "simulate_override: pool {} family {:?} has no concentrated-liquidity override state",
-                u.pool_id, u.family
-            ))),
+            Err(u) => Err(override_family_gap(u.pool_id, u.family)),
         }
     }
 
@@ -828,52 +724,19 @@ impl PyLiquidityPool {
         amount_in: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let amount_specified = -I256::try_from(amount).map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err(
-                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-            )
-        })?;
-        // DISARMED — miss recovery cannot run (no-raise-on-miss: sparse => 0).
-        // cdbc03bb (finding on ae2c4124f): two DISTINCT error classes:
-        // - FetchExhausted/Failed (miss recovery) → U256::ZERO per the no-raise contract.
-        // - NotComputable (V2 mul overflow >= 2^256) → ValueError raise (on-chain parity).
-        // The disarm conversion collapsed them; this restores the distinction by
-        // keeping the SwapRead return and matching outside.
-        let result = self.with_state_mut(py, |core| {
-            core.swap_simulation_disarmed(
-                0,
-                self.pool_id,
-                &degenbot_substrate::swap_simulation::SwapRequest {
-                    zero_for_one,
-                    amount_specified,
-                    sqrt_price_limit: None,
-                },
-            )
+        let core = self.core.clone();
+        let result = py.detach(move || {
+            pool_ops::calculate_tokens_out(&core, self.pool_id, zero_for_one, amount)
         });
-        // cdbc03bb: MATHEMATICS-OVERFLOW (amount * gamma >= 2^256), NOT a
-        // sparse-map miss (FetchExhausted/Failed => 0 by the no-raise
-        // contract). The two classes are distinct: different consumer
-        // contract (companion LiquidityPoolError, on-chain parity).
-        match &result {
-            SwapRead::Computed(outcome) => {
-                let out = outcome.delivered_unsigned();
+        match result {
+            Ok(out) => {
                 let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
                 Ok(bound.unbind())
             }
-            SwapRead::NotComputable => Err(pyo3::exceptions::PyValueError::new_err(
-                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-            )),
-            SwapRead::UnknownPool { pool_id } => Err(pyo3::exceptions::PyValueError::new_err(
-                format!("swap_simulation: pool {pool_id} is not registered"),
-            )),
-            SwapRead::UnsupportedFamily { pool_id, family } => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "swap_simulation: pool {pool_id} family {family} is not supported for this operation"
-                )))
-            }
-            SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => {
-                let bound = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
-                Ok(bound.unbind())
+            Err(SwapOpError::AmountOverflow) => Err(swap_math_overflow()),
+            Err(SwapOpError::UnknownPool { pool_id }) => Err(swap_unknown_pool(pool_id)),
+            Err(SwapOpError::UnsupportedFamily { pool_id, family }) => {
+                Err(swap_family_gap(pool_id, family))
             }
         }
     }
@@ -919,10 +782,10 @@ impl PyLiquidityPool {
             None => None,
         };
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let outcome = self.with_state(py, |core| {
-            use degenbot_substrate::swap_simulation::simulate_balancer_pair_out;
-            simulate_balancer_pair_out(
-                core,
+        let core = self.core.clone();
+        let outcome = py.detach(move || {
+            pool_ops::calculate_tokens_out_for_pair(
+                &core,
                 self.pool_id,
                 index_in,
                 index_out,
@@ -936,9 +799,7 @@ impl PyLiquidityPool {
                 let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
                 Ok(bound.unbind())
             }
-            None => Err(pyo3::exceptions::PyValueError::new_err(
-                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-            )),
+            None => Err(swap_math_overflow()),
         }
     }
 
@@ -981,10 +842,10 @@ impl PyLiquidityPool {
             None => None,
         };
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        let outcome = self.with_state(py, |core| {
-            use degenbot_substrate::swap_simulation::simulate_balancer_pair_in_given_out;
-            simulate_balancer_pair_in_given_out(
-                core,
+        let core = self.core.clone();
+        let outcome = py.detach(move || {
+            pool_ops::calculate_tokens_in_for_pair(
+                &core,
                 self.pool_id,
                 index_in,
                 index_out,
@@ -998,9 +859,7 @@ impl PyLiquidityPool {
                 let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
                 Ok(bound.unbind())
             }
-            None => Err(pyo3::exceptions::PyValueError::new_err(
-                "Pool swap math overflowed uint256 intermediate (on-chain getAmountIn SafeMath revert)",
-            )),
+            None => Err(swap_math_in_overflow()),
         }
     }
 
@@ -1013,37 +872,25 @@ impl PyLiquidityPool {
         amount_out: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        // ADR-037: exact-output request; required input = |consumed|. Legacy
-        // silent-0 contract preserved here until the Python tail task.
-        let request = degenbot_substrate::swap_simulation::SwapRequest {
-            zero_for_one,
-            amount_specified: I256::try_from(amount).map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                )
-            })?,
-            sqrt_price_limit: None,
-        };
-        // DISARMED — miss recovery cannot run (no-raise-on-miss).
-        // NotComputable (V2 mul overflow) is a distinct class, NOT a miss:
-        // documented legacy contract (silent-0 preserved per ADR-037).
-        let read = self.with_state_mut(py, |core| {
-            core.swap_simulation_disarmed(0, self.pool_id, &request)
+        let core = self.core.clone();
+        let result = py.detach(move || {
+            pool_ops::calculate_tokens_in(&core, self.pool_id, zero_for_one, amount)
         });
-        let result = match read {
-            SwapRead::Computed(outcome) => (-match &outcome {
-                SwapOutcome::V2(o) => o.consumed,
-                SwapOutcome::V3(o) | SwapOutcome::V4(o) => o.consumed,
-            })
-            .into_raw(),
+        let result = match result {
+            Ok(v) => v,
+            Err(SwapOpError::AmountOverflow) => return Err(swap_math_overflow()),
             // A registered family with no exact-output path is a typed gap,
             // not the legacy silent-0 contract.
-            SwapRead::UnsupportedFamily { pool_id, family } => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "calculate_tokens_in: pool {pool_id} family {family} has no exact-output path"
-                )));
+            Err(SwapOpError::UnsupportedFamily { pool_id, family }) => {
+                return Err(exact_output_family_gap(
+                    "calculate_tokens_in",
+                    pool_id,
+                    family,
+                ));
             }
-            _ => U256::ZERO,
+            // Legacy silent-0: unknown pool, not-computable, and miss-recovery
+            // failures keep the zero sentinel (ADR-037).
+            Err(SwapOpError::UnknownPool { .. }) => U256::ZERO,
         };
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
@@ -1073,30 +920,28 @@ impl PyLiquidityPool {
         block: u64,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let request = degenbot_substrate::swap_simulation::SwapRequest {
-            zero_for_one,
-            amount_specified: -I256::try_from(amount).map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                )
-            })?,
-            sqrt_price_limit: None,
-        };
-        // ADR-037: the fetch-retry policy lives behind the gate; unrecovered
-        // core write lock (bounded passes); the sim runs with miss recovery
-        // disarmed so no fetch can execute under the caller write guard.
-        if !self.ensure_missing_words_staged(py, block, &request) {
-            let zero = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
-            return Ok(zero.unbind());
-        }
-        let result = self.with_state_mut(py, |core| {
-            match core.swap_simulation_disarmed(block, self.pool_id, &request) {
-                SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
-                _ => U256::ZERO,
-            }
+        let core = self.core.clone();
+        let result = py.detach(move || {
+            pool_ops::calculate_tokens_out_with_fetch(
+                &core,
+                self.pool_id,
+                zero_for_one,
+                amount,
+                block,
+            )
         });
-        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
-        Ok(bound.unbind())
+        match result {
+            Ok(out) => {
+                let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+                Ok(bound.unbind())
+            }
+            Err(SwapOpError::AmountOverflow) => Err(swap_math_overflow()),
+            // Staging failures keep the legacy zero sentinel.
+            Err(_) => {
+                let bound = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
+                Ok(bound.unbind())
+            }
+        }
     }
 
     /// Fetch+retry full-outcome exact-input swap for sparse V3/V4 pools
@@ -1126,44 +971,20 @@ impl PyLiquidityPool {
             amount_specified,
             sqrt_price_limit,
         };
-        // stage missing words OUTSIDE the write lock (bounded
-        // passes) - the sim below runs with miss recovery disarmed so no
-        // fetch can execute under the caller write guard.
-        if !self.ensure_missing_words_staged(py, block, &request) {
-            return Ok(None);
-        }
-        let read = self.with_state_mut(py, |core| {
-            core.swap_simulation_disarmed(block, self.pool_id, &request)
+        let core = self.core.clone();
+        let outcome = py.detach(move || {
+            pool_ops::simulate_swap_with_fetch(&core, self.pool_id, &request, block)
         });
-        let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
-            return Ok(None);
-        };
-        // ADR-037: an amount-modifying hook may have invalidated the
-        // standard-math result — surface the archived exception (approximate
-        // amounts attached) instead of silently returning a wrong number.
-        if payload
-            .caveats
-            .contains(degenbot_substrate::swap_simulation::Caveats::HOOKED_POOL)
-        {
-            return Err(crate::bot::engine::PossibleInaccurateResult::new_err(
-                format!(
-                    "pool has an amount-modifying V4 hook; approximation consumed={} delivered={}",
-                    -payload.consumed, payload.delivered
-                ),
-            ));
+        match outcome {
+            StagedSwapOutcome::Computed(payload) => Ok(Some(build_cl_payload_tuple(py, &payload)?)),
+            StagedSwapOutcome::HookedPool {
+                consumed,
+                delivered,
+            } => Err(hooked_pool_approximation(-consumed, delivered)),
+            // Legacy bare-`None`: staging failure, not computable, and the
+            // exact-input seam's non-CL collapse.
+            _ => Ok(None),
         }
-        let (amount0, amount1) = payload.raw_token_amounts(zero_for_one);
-        let tuple = pyo3::types::PyTuple::new(
-            py,
-            [
-                crate::conversion::alloy::u256_to_py(py, &amount0)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &amount1)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &payload.end_sqrt_price_x96)?.unbind(),
-                payload.end_liquidity.into_pyobject(py)?.into_any().unbind(),
-                payload.end_tick.into_pyobject(py)?.into_any().unbind(),
-            ],
-        )?;
-        Ok(Some(tuple.into_any().unbind()))
     }
 
     /// Exact-OUTPUT fetch+retry swap: caller passes the desired `amount_out`,
@@ -1198,52 +1019,23 @@ impl PyLiquidityPool {
             amount_specified,
             sqrt_price_limit,
         };
-        // stage missing words OUTSIDE the write lock (bounded
-        // passes) - the sim below runs with miss recovery disarmed so no
-        // fetch can execute under the caller write guard.
-        if !self.ensure_missing_words_staged(py, block, &request) {
-            return Ok(None);
-        }
-        let read = self.with_state_mut(py, |core| {
-            core.swap_simulation_disarmed(block, self.pool_id, &request)
+        let core = self.core.clone();
+        let outcome = py.detach(move || {
+            pool_ops::simulate_swap_with_fetch(&core, self.pool_id, &request, block)
         });
-        let payload = match read {
-            SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) => payload,
+        match outcome {
+            StagedSwapOutcome::Computed(payload) => Ok(Some(build_cl_payload_tuple(py, &payload)?)),
+            StagedSwapOutcome::HookedPool {
+                consumed,
+                delivered,
+            } => Err(hooked_pool_approximation(-consumed, delivered)),
             // A non-CL family cannot produce the CL 5-tuple this exact-output
             // seam promises: a typed gap, never a bare `None`.
-            SwapRead::UnsupportedFamily { pool_id, family } => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "simulate_exact_output_swap_with_fetch: pool {pool_id} family {family} has no exact-output path"
-                )));
-            }
-            _ => return Ok(None),
-        };
-        // ADR-037: an amount-modifying hook may have invalidated the
-        // standard-math result — surface the archived exception (approximate
-        // amounts attached) instead of silently returning a wrong number.
-        if payload
-            .caveats
-            .contains(degenbot_substrate::swap_simulation::Caveats::HOOKED_POOL)
-        {
-            return Err(crate::bot::engine::PossibleInaccurateResult::new_err(
-                format!(
-                    "pool has an amount-modifying V4 hook; approximation consumed={} delivered={}",
-                    -payload.consumed, payload.delivered
-                ),
-            ));
+            StagedSwapOutcome::UnsupportedFamily { pool_id, family } => Err(
+                exact_output_family_gap("simulate_exact_output_swap_with_fetch", pool_id, family),
+            ),
+            StagedSwapOutcome::NotComputable => Ok(None),
         }
-        let (amount0, amount1) = payload.raw_token_amounts(zero_for_one);
-        let tuple = pyo3::types::PyTuple::new(
-            py,
-            [
-                crate::conversion::alloy::u256_to_py(py, &amount0)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &amount1)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &payload.end_sqrt_price_x96)?.unbind(),
-                payload.end_liquidity.into_pyobject(py)?.into_any().unbind(),
-                payload.end_tick.into_pyobject(py)?.into_any().unbind(),
-            ],
-        )?;
-        Ok(Some(tuple.into_any().unbind()))
     }
 
     /// Simulate an exact-input swap over a HYPOTHETICAL override pool state,
@@ -1339,12 +1131,13 @@ impl PyLiquidityPool {
             }
         };
 
-        let result = self.with_state(py, |core| {
-            core.encode_swap(self.pool_id, zero_for_one, amount, recip)
+        let core = self.core.clone();
+        let result = py.detach(move || {
+            pool_ops::encode_swap(&core, self.pool_id, zero_for_one, amount, recip)
         });
 
         match result {
-            Ok(call) => Ok(Some((
+            Ok(Some(call)) => Ok(Some((
                 format!("{:#x}", call.to),
                 alloy::hex::encode_prefixed(&call.data),
                 call.value.to::<u64>(),
@@ -1352,10 +1145,8 @@ impl PyLiquidityPool {
             // The Python handle's own `encode_swap` resolves its pool id at
             // construction, so an unregistered id keeps the `None` not-found
             // contract.
-            Err(degenbot_substrate::EncodeSwapError::NotRegistered { .. }) => Ok(None),
-            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "encode_swap: {e}"
-            ))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(encode_swap_failed(e.to_string())),
         }
     }
 
@@ -3178,21 +2969,37 @@ fn cl_snapshot_fields(
 
 /// Build the Python 5-tuple `(amount0, amount1, sqrt_price_x96, liquidity,
 /// tick)` returned by the swap-sim `PyO3` seams.
+fn build_cl_payload_tuple(
+    py: Python<'_>,
+    payload: &degenbot_bot::bot_core::pool_ops::ClSwapPayload,
+) -> PyResult<Py<PyAny>> {
+    let tuple = pyo3::types::PyTuple::new(
+        py,
+        [
+            crate::conversion::alloy::u256_to_py(py, &payload.amount0)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &payload.amount1)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &payload.sqrt_price_x96)?.unbind(),
+            payload.liquidity.into_pyobject(py)?.into_any().unbind(),
+            payload.tick.into_pyobject(py)?.into_any().unbind(),
+        ],
+    )?;
+    Ok(tuple.into_any().unbind())
+}
+
+/// Build the Python 5-tuple `(amount0, amount1, sqrt_price_x96, liquidity,
+/// tick)` returned by the swap-sim `PyO3` seams.
 fn build_swap_outcome_tuple(
     py: Python<'_>,
     outcome: &degenbot_bot::bot_core::V3SwapOutcome,
 ) -> PyResult<Option<Py<PyAny>>> {
-    let tuple = pyo3::types::PyTuple::new(
-        py,
-        [
-            crate::conversion::alloy::u256_to_py(py, &outcome.amount0)?.unbind(),
-            crate::conversion::alloy::u256_to_py(py, &outcome.amount1)?.unbind(),
-            crate::conversion::alloy::u256_to_py(py, &outcome.sqrt_price_x96)?.unbind(),
-            outcome.liquidity.into_pyobject(py)?.into_any().unbind(),
-            outcome.tick.into_pyobject(py)?.into_any().unbind(),
-        ],
-    )?;
-    Ok(Some(tuple.into_any().unbind()))
+    let payload = pool_ops::ClSwapPayload {
+        amount0: outcome.amount0,
+        amount1: outcome.amount1,
+        sqrt_price_x96: outcome.sqrt_price_x96,
+        liquidity: outcome.liquidity,
+        tick: outcome.tick,
+    };
+    build_cl_payload_tuple(py, &payload).map(Some)
 }
 
 /// Convert a Python `{tick: (liquidity_gross, liquidity_net, block)}` dict into
