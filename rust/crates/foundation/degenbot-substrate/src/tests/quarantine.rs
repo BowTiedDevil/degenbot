@@ -322,7 +322,10 @@ fn quarantined_v4_pool_defers_live_swap_to_pump_buffer() {
     );
     // Snapshot the pre-swap state.
     let pre = core.get_v4_pool(pool_id).unwrap().clone();
-    let pre_count = core.buffered_v4_event_count(&(pool_manager, pool_id_bytes));
+    let pre_count = core
+        .cl
+        .v4_buffer
+        .event_count(&(pool_manager, pool_id_bytes));
     // Deliver a live Swap at block 11.
     core.apply_v4_swap(
         &V4SwapUpdate {
@@ -352,7 +355,9 @@ fn quarantined_v4_pool_defers_live_swap_to_pump_buffer() {
     assert_eq!(s.tick, pre.tick, "tick unchanged — swap deferred");
     // The pump buffer gained one event.
     assert_eq!(
-        core.buffered_v4_event_count(&(pool_manager, pool_id_bytes)),
+        core.cl
+            .v4_buffer
+            .event_count(&(pool_manager, pool_id_bytes)),
         pre_count + 1,
         "live swap buffered, not applied"
     );
@@ -377,7 +382,10 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
         .unwrap()
         .clone();
     let pre_update_block = core.get_v4_pool(pool_id).unwrap().update_block;
-    let pre_count = core.buffered_v4_event_count(&(pool_manager, pool_id_bytes));
+    let pre_count = core
+        .cl
+        .v4_buffer
+        .event_count(&(pool_manager, pool_id_bytes));
     // Deliver a live Burn (negative ModifyLiquidity) at block 11.
     core.apply_v4_liquidity_update(
         pool_manager,
@@ -398,7 +406,9 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
         "update_block must NOT advance — Burn deferred"
     );
     assert_eq!(
-        core.buffered_v4_event_count(&(pool_manager, pool_id_bytes)),
+        core.cl
+            .v4_buffer
+            .event_count(&(pool_manager, pool_id_bytes)),
         pre_count + 1,
         "live Burn buffered, not applied"
     );
@@ -424,7 +434,7 @@ fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
     // Quarantine BEFORE any live event lands (the registration seam's job).
     core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
     // The pump has fully delivered block 10 (tombstone at 11).
-    core.advance_pump_complete_cutoff(10);
+    core.cl_mut().advance_pump_complete_cutoff(10);
     // A live Swap lands at block 11 (in-progress; `last_complete_block` is
     // still 10 — no tombstone for 11 yet).
     core.apply_v4_swap(
@@ -474,7 +484,7 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
     core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
-    core.advance_pump_complete_cutoff(10);
+    core.cl_mut().advance_pump_complete_cutoff(10);
     // Buffer a Burn (block 11, in-progress) + a Swap (block 11) — both
     // retained by the gate during quarantine.
     core.apply_v4_liquidity_update(
@@ -497,7 +507,9 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         11,
     );
     assert_eq!(
-        core.buffered_v4_event_count(&(pool_manager, pool_id_bytes)),
+        core.cl
+            .v4_buffer
+            .event_count(&(pool_manager, pool_id_bytes)),
         2,
         "both events retained"
     );
@@ -515,7 +527,9 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
     assert_eq!(s.sqrt_price_x96, U256::from(2u128) << 96);
     // The buffer is drained.
     assert_eq!(
-        core.buffered_v4_event_count(&(pool_manager, pool_id_bytes)),
+        core.cl
+            .v4_buffer
+            .event_count(&(pool_manager, pool_id_bytes)),
         0
     );
     // A subsequent live event applies directly (no buffering).
@@ -528,7 +542,9 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         12,
     );
     assert_eq!(
-        core.buffered_v4_event_count(&(pool_manager, pool_id_bytes)),
+        core.cl
+            .v4_buffer
+            .event_count(&(pool_manager, pool_id_bytes)),
         0,
         "Live pool applies directly — no buffering"
     );
@@ -562,7 +578,9 @@ fn live_pool_applies_modify_liquidity_directly() {
         11,
     );
     assert_eq!(
-        core.buffered_v4_event_count(&(pool_manager, pool_id_bytes)),
+        core.cl
+            .v4_buffer
+            .event_count(&(pool_manager, pool_id_bytes)),
         0,
         "Live pool never buffers"
     );
@@ -609,7 +627,7 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     let pool_id = register_v4_on_core(&mut core, 10);
     core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
     // The pump has tombstoned block 10 (live events at 10 are complete).
-    core.advance_pump_complete_cutoff(10);
+    core.cl_mut().advance_pump_complete_cutoff(10);
     // A complete-block pump event (block 10) + an in-progress-block pump
     // event (block 11) — both deferred to the pump buffer.
     core.apply_v4_liquidity_update(
@@ -739,7 +757,7 @@ fn concurrent_registration_lifecycle_invariant() {
         })
         .collect();
     // The pump has fully delivered block 10 (tombstone).
-    core.advance_pump_complete_cutoff(10);
+    core.cl_mut().advance_pump_complete_cutoff(10);
     // Interleaved live events: a ModifyLiquidity on pool 0, a Swap on
     // pool 1, a ModifyLiquidity on pool 2 — all at the in-progress block
     // 11. All deferred to their respective pump buffers.
@@ -814,7 +832,7 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
     let mut core = BotState::new();
     let _pool_id = register_v4_on_core(&mut core, 10);
     core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
-    core.advance_pump_complete_cutoff(10);
+    core.cl_mut().advance_pump_complete_cutoff(10);
     // Swap arrives FIRST (logIdx 120), then Mint (logIdx 1433) — both at
     // the in-progress block 11. Cross-type arrival order is preserved in
     // the buffer (Swap before Mint in the Vec).
@@ -870,7 +888,7 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
     core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
-    core.advance_pump_complete_cutoff(10);
+    core.cl_mut().advance_pump_complete_cutoff(10);
     // A complete-block Mint at 10 (applied at drain), then pin.
     core.apply_v4_liquidity_update(
         pool_manager,

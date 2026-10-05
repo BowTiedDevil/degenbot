@@ -914,7 +914,7 @@ mod tests {
         // Concurrent write must complete promptly (no guard held across await).
         let write = tokio::time::timeout(std::time::Duration::from_millis(500), async {
             let c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            let n = c.v4_pool_count();
+            let n = c.cl().v4_pool_count();
             std::hint::black_box(n);
         })
         .await;
@@ -957,6 +957,7 @@ mod tests {
             writer_started_tx.send(()).expect("signal writer start");
             writer_core
                 .write_at(LockSite::Registration)
+                .cl_mut()
                 .advance_pump_complete_cutoff(1);
         });
         writer_started_rx.recv().expect("writer thread started");

@@ -125,6 +125,7 @@ async fn late_forward_after_tombstone_is_benign_late_admit() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
+            .cl()
             .pump_complete_cutoff(),
         8,
         "cutoff must rest at the last tombstone (8), untouched by the late log"
@@ -259,7 +260,7 @@ proptest::proptest! {
                 ));
             }
             // I7: cutoff monotone at the last tombstone.
-            let cutoff = bot.state_arc().read_at(degenbot_substrate::state_lock::LockSite::Pump).pump_complete_cutoff();
+            let cutoff = bot.state_arc().read_at(degenbot_substrate::state_lock::LockSite::Pump).cl().pump_complete_cutoff();
             if cutoff != base + plan.len() as u64 - 2 {
                 return Err(format!(
                     "delivery cutoff must rest at the last tombstone: got {cutoff}"
@@ -488,6 +489,7 @@ async fn late_forward_log_on_tombstoned_block_is_benign_late_admit() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
+            .cl()
             .pump_complete_cutoff(),
         7,
         "cutoff rests at the tombstoned block 7"

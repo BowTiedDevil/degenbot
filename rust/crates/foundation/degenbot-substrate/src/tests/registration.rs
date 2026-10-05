@@ -703,7 +703,7 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
         Err(RegisterV4PoolError::DynamicFee { .. }),
     });
     assert_eq!(
-        core.admission_verdict(pm, &pid),
+        core.cl().admission_verdict(pm, &pid),
         Some(AdmissionVerdict::DynamicFee { fee: 0x100_000 })
     );
 
@@ -716,10 +716,10 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
         Err(RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 320_000 }),
     });
     assert_eq!(
-        core.admission_verdict(pm, &pid2),
+        core.cl().admission_verdict(pm, &pid2),
         Some(AdmissionVerdict::FeeExceedsEncoderLimit { fee: 320_000 })
     );
-    assert_eq!(core.registration_gate_len(), 2);
+    assert_eq!(core.cl.registration_gate.len(), 2);
 
     // An admitted pool registers normally and answers via the registry
     // of record — the REGISTRATION refusals gate-record, admissions do
@@ -729,7 +729,7 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
     ok.pool_id = pid3;
     let admitted = core.register_v4_pool(&ok).expect("in-spec registration");
     assert!(
-        core.admission_verdict(pm, &pid3).is_none(),
+        core.cl().admission_verdict(pm, &pid3).is_none(),
         "admitted pools gate-record nothing"
     );
     assert!(core.try_registered_v4(pm, &pid3).is_some());

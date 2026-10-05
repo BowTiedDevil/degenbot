@@ -586,6 +586,7 @@ impl Bot {
         if let Some(verdict) = self
             .state_arc()
             .read_at(LockSite::Orchestrator)
+            .cl()
             .admission_verdict(pm, pid)
         {
             let core_err = match verdict {

@@ -248,6 +248,7 @@ mod tests {
             for block in 0..2_000 {
                 writer_core
                     .write_at(LockSite::Registration)
+                    .cl_mut()
                     .advance_pump_complete_cutoff(block);
             }
         });

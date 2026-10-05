@@ -1147,6 +1147,7 @@ impl BlockPump {
                             self.bot
                                 .state_arc()
                                 .write_at(degenbot_substrate::state_lock::LockSite::Pump)
+                                .cl_mut()
                                 .advance_pump_complete_cutoff(prev);
                             // First removed:false log for N+1 → tombstone N.
                             // Finalize N with N's OWN metadata (snapshotted

@@ -552,10 +552,12 @@ fn run_engine_cycle(
 /// expiry is not configured (read from the T2 retune value).
 fn expire_buffered_events(engine: &ArbitrageEngine, block_number: u64) {
     if engine.event_buffer_expiry_enabled {
-        let (v3_lock_wait_us, v3_work_us) =
-            expire_buffered_telemetry(engine, "v3", |core| core.expire_v3_buffered(block_number));
-        let (v4_lock_wait_us, v4_work_us) =
-            expire_buffered_telemetry(engine, "v4", |core| core.expire_v4_buffered(block_number));
+        let (v3_lock_wait_us, v3_work_us) = expire_buffered_telemetry(engine, "v3", |core| {
+            core.cl_mut().expire_v3_buffered(block_number)
+        });
+        let (v4_lock_wait_us, v4_work_us) = expire_buffered_telemetry(engine, "v4", |core| {
+            core.cl_mut().expire_v4_buffered(block_number)
+        });
         diag!(
             domain = solver,
             block_number,

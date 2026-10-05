@@ -587,9 +587,11 @@ impl ArbitrageEngine {
             self.event_buffer_expiry_enabled = retune.event_buffer_max_age.is_some();
             self.core
                 .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+                .cl_mut()
                 .set_v3_buffer_max_age(retune.event_buffer_max_age);
             self.core
                 .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+                .cl_mut()
                 .set_v4_buffer_max_age(retune.event_buffer_max_age);
         }
         // The admission trio.

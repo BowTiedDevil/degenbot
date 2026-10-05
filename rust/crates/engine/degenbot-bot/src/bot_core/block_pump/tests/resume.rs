@@ -159,6 +159,7 @@ async fn resume_never_resets_pump_complete_cutoff() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
+            .cl()
             .pump_complete_cutoff(),
         w,
         "run 1's tombstone of w must reach the state-owned cutoff"
@@ -173,6 +174,7 @@ async fn resume_never_resets_pump_complete_cutoff() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
+            .cl()
             .pump_complete_cutoff(),
         w,
         "a resume must NOT reset the cutoff — the value outlives the run"
@@ -220,7 +222,7 @@ async fn resume_boundary_duplicate_dropped_live_block_applied() {
         // Simulate the backfill having applied W (the boundary): state +
         // the drain cutoff both land at W.
         let _ = core.apply_sync_by_pool_id(pool_id, U112::from(5_000), U112::from(1_000), w);
-        core.advance_pump_complete_cutoff(w);
+        core.cl_mut().advance_pump_complete_cutoff(w);
         core.set_snapshot_seed_block(Some(w - 10)); // S < W -> backfill owned
         pool_id
     };
@@ -297,7 +299,7 @@ async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
         // Backfill-applied state: w-5 then W (both inside [S+1, W]).
         let _ = core.apply_sync_by_pool_id(pool_id, U112::from(3_000), U112::from(1_500), w - 5);
         let _ = core.apply_sync_by_pool_id(pool_id, U112::from(5_000), U112::from(1_000), w);
-        core.advance_pump_complete_cutoff(w);
+        core.cl_mut().advance_pump_complete_cutoff(w);
         core.set_snapshot_seed_block(Some(w - 10)); // S < W -> backfill owned
         pool_id
     };

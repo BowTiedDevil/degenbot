@@ -26,7 +26,7 @@ fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
     // event horizon advances at ARRIVAL time (parity with V4) so the
     // pin's stamp-provenance verdict sees the true witnessed span after
     // the staged drain, not just ApplyDirect-routed events.
-    assert_eq!(core.v3_event_horizon(&addr), 10);
+    assert_eq!(core.cl().v3_event_horizon(&addr), 10);
 }
 
 /// the event horizon tracks the MAX block across multiple buffered
@@ -49,7 +49,7 @@ fn v3_event_horizon_tracks_max_block_across_buffered_events() {
     core.route_v3_event(crate::cl_route::Phase::Live, addr, mk(50, 2), &[]);
     core.route_v3_event(crate::cl_route::Phase::Live, addr, mk(30, 3), &[]);
     assert_eq!(core.buffered_v3_event_count(&addr), 3);
-    assert_eq!(core.v3_event_horizon(&addr), 50);
+    assert_eq!(core.cl().v3_event_horizon(&addr), 50);
 }
 
 #[test]
@@ -553,7 +553,7 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
     // live pump marks `block_b` complete at its ADR-008 D1 tombstone (the
     // first log of block_b+1); mirror that here so the drain takes the
     // buffered Mint instead of leaving it pinned behind the gate.
-    core.advance_pump_complete_cutoff(block_b);
+    core.cl_mut().advance_pump_complete_cutoff(block_b);
     core.apply_pump_buffer_v3(&pool_addr);
 
     {

@@ -18,7 +18,7 @@
 
 use degenbot_core::diag;
 use degenbot_core::op_warn;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 
 use alloy::primitives::{Address, U256};
 
@@ -78,7 +78,7 @@ pub struct ClOrchestration {
     /// under a manager shares its manager's `StateView`. Seeded once per manager
     /// via `register_v4_state_view` (the driver reads it from the
     /// `pool_managers` DB row); the solver-state verifier reads it via
-    /// [`BotState::state_view_for`].
+    /// [`ClOrchestration::state_view_for`].
     pub(crate) v4_state_views: HashMap<Address, Address>,
     /// PRG-2: the keyed registration-gate - immutable V4
     /// admission verdicts (dynamic fee / fee-exceeds-encoder-limit) recorded
@@ -837,22 +837,13 @@ impl ClOrchestration {
     pub(crate) fn buffered_v3_event_count(&self, address: &Address) -> usize {
         self.v3_buffer.event_count(address)
     }
-    /// Number of buffered V4 pool events for a `(pool_manager, pool_id)` key
-    /// (backfill + pump). Test and diagnostic seam.
-    #[must_use]
-    pub(crate) fn buffered_v4_event_count(
-        &self,
-        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
-    ) -> usize {
-        self.v4_buffer.event_count(key)
-    }
     /// Discard all buffered V3 liquidity events for all pools.
-    pub(crate) fn flush_v3_buffer(&mut self) {
+    pub fn flush_v3_buffer(&mut self) {
         self.v3_buffer.flush();
     }
     /// Expire V3 pump-buffer events older than `current_block - max_age`.
     /// No-op if `max_age` is `None`. Backfill buffer is never expired.
-    pub(crate) fn expire_v3_buffered(&mut self, current_block: u64) {
+    pub fn expire_v3_buffered(&mut self, current_block: u64) {
         self.v3_buffer.expire(current_block);
     }
     /// Apply one buffered V3 pool event (`Liquidity` or `Swap`) to a
@@ -1325,7 +1316,7 @@ impl ClOrchestration {
     /// (ADR-005 / Option 2 — Rust owns the mapping). V4 scalar state is read
     /// via the `StateView`'s `getSlot0`/`getLiquidity`, not `getPool` on the
     /// `PoolManager` (which reverts on the canonical deployment); the
-    /// solver-state verifier resolves it per-hop via [`BotState::state_view_for`].
+    /// solver-state verifier resolves it per-hop via [`ClOrchestration::state_view_for`].
     /// Idempotent: the seed for a manager is supplied once by the driver
     /// (read from the `pool_managers` DB row) before V4 pools solve.
     pub(crate) fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
@@ -1334,8 +1325,11 @@ impl ClOrchestration {
     /// The canonical V4 `StateView` address for `pool_manager`, if registered.
     /// `None` when unknown — the solver-state verifier skips a V4 hop whose
     /// manager's `StateView` has not been seeded (no false alarm on an
-    /// un-verifiable hop).
+    /// un-verifiable hop). No Rust reader is wired yet; the mapping's write
+    /// path is live via `register_v4_state_view` (the `PyO3` registration
+    /// path), so the read stays in the capability's method set.
     #[must_use]
+    #[expect(dead_code)]
     pub(crate) fn state_view_for(&self, pool_manager: Address) -> Option<Address> {
         self.v4_state_views.get(&pool_manager).copied()
     }
@@ -1343,17 +1337,12 @@ impl ClOrchestration {
     /// The `PyO3` `build_v4_pool` pre-check consults this BEFORE any RPC
     /// work on the registration path.
     #[must_use]
-    pub(crate) fn admission_verdict(
+    pub fn admission_verdict(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<crate::registration_gate::AdmissionVerdict> {
         self.registration_gate.verdict(pool_manager, *pool_id)
-    }
-    /// The registration-gate census (recorded immutable verdicts).
-    #[must_use]
-    pub(crate) fn registration_gate_len(&self) -> usize {
-        self.registration_gate.len()
     }
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
@@ -1796,13 +1785,13 @@ impl ClOrchestration {
         }
     }
     /// Set the maximum age for buffered V4 pump events. `None` = unbounded.
-    pub(crate) fn set_v4_buffer_max_age(&mut self, max_age: Option<u64>) {
+    pub fn set_v4_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.v4_buffer.set_max_age(max_age);
     }
-    pub(crate) fn flush_v4_buffer(&mut self) {
+    pub fn flush_v4_buffer(&mut self) {
         self.v4_buffer.flush();
     }
-    pub(crate) fn expire_v4_buffered(&mut self, current_block: u64) {
+    pub fn expire_v4_buffered(&mut self, current_block: u64) {
         self.v4_buffer.expire(current_block);
     }
     /// Apply one buffered V4 pool event (`Liquidity` or `Swap`) to a
@@ -2285,18 +2274,8 @@ impl ClOrchestration {
     }
     /// Number of registered V4 pools.
     #[must_use]
-    pub(crate) fn v4_pool_count(&self) -> usize {
+    pub fn v4_pool_count(&self) -> usize {
         self.v4_pool_ids.len()
-    }
-    /// Return the set of V4 `PoolManager` addresses with registered pools.
-    #[must_use]
-    pub(crate) fn v4_registered_pool_managers(&self) -> Vec<Address> {
-        self.v4_pool_ids
-            .keys()
-            .map(|(pm, _)| *pm)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect()
     }
     /// Snapshot all V4 pool state for verification.
     #[must_use]
@@ -2396,7 +2375,7 @@ impl ClOrchestration {
     /// The current delivery cutoff (`0` until the first tombstone). Read of
     /// the value the registration drain gates on.
     #[must_use]
-    pub(crate) fn pump_complete_cutoff(&self) -> u64 {
+    pub fn pump_complete_cutoff(&self) -> u64 {
         self.pump_complete_cutoff
     }
 
@@ -2404,7 +2383,7 @@ impl ClOrchestration {
     /// live pump drives this when executing the `TombstonePrevious` verdict
     ///; tests that drive the registration drain without a pump use
     /// the same entry point.
-    pub(crate) fn advance_pump_complete_cutoff(&mut self, block: u64) {
+    pub fn advance_pump_complete_cutoff(&mut self, block: u64) {
         if block > self.pump_complete_cutoff {
             self.pump_complete_cutoff = block;
         }
@@ -2412,7 +2391,7 @@ impl ClOrchestration {
 
     /// Set the maximum age (in blocks) for buffered V3 pump events.
     /// `None` means unbounded. Takes effect on the next `expire_v3_buffered`.
-    pub(crate) const fn set_v3_buffer_max_age(&mut self, max_age: Option<u64>) {
+    pub const fn set_v3_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.v3_buffer.set_max_age(max_age);
     }
 
@@ -2424,6 +2403,22 @@ impl ClOrchestration {
     #[must_use]
     pub(crate) const fn snapshot_seed_block(&self) -> Option<u64> {
         self.snapshot_seed_block
+    }
+}
+
+impl BotState {
+    /// Read access to the CL orchestration capability — the seam for callers
+    /// that need only CL-local state and never the registry core.
+    #[must_use]
+    pub fn cl(&self) -> &ClOrchestration {
+        &self.cl
+    }
+
+    /// Mutable access to the CL orchestration capability. Operations that
+    /// must also mutate the registry core go through the composition-root
+    /// methods, which own the split borrow.
+    pub fn cl_mut(&mut self) -> &mut ClOrchestration {
+        &mut self.cl
     }
 }
 
@@ -2458,33 +2453,6 @@ impl BotState {
             block_number,
             tick_priors,
         )
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_event_horizon`].
-    pub fn v3_event_horizon(&self, pool_address: &Address) -> u64 {
-        self.cl.v3_event_horizon(pool_address)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::note_v3_event_block`].
-    pub fn note_v3_event_block(&mut self, pool_address: Address, block_number: u64) {
-        self.cl.note_v3_event_block(pool_address, block_number)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_event_horizon`].
-    pub fn v4_event_horizon(
-        &self,
-        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
-    ) -> u64 {
-        self.cl.v4_event_horizon(key)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::note_v4_event_block`].
-    pub fn note_v4_event_block(
-        &mut self,
-        key: (Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
-        block_number: u64,
-    ) {
-        self.cl.note_v4_event_block(key, block_number)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::route_v3_event`].
@@ -2631,24 +2599,6 @@ impl BotState {
         self.cl.buffered_v3_event_count(address)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::buffered_v4_event_count`].
-    pub fn buffered_v4_event_count(
-        &self,
-        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
-    ) -> usize {
-        self.cl.buffered_v4_event_count(key)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::flush_v3_buffer`].
-    pub fn flush_v3_buffer(&mut self) {
-        self.cl.flush_v3_buffer()
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::expire_v3_buffered`].
-    pub fn expire_v3_buffered(&mut self, current_block: u64) {
-        self.cl.expire_v3_buffered(current_block)
-    }
-
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v3_pool`].
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
         self.cl.get_v3_pool(&self.registry, pool_id)
@@ -2766,25 +2716,6 @@ impl BotState {
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v4_state_view`].
     pub fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
         self.cl.register_v4_state_view(pool_manager, state_view)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::state_view_for`].
-    pub fn state_view_for(&self, pool_manager: Address) -> Option<Address> {
-        self.cl.state_view_for(pool_manager)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::admission_verdict`].
-    pub fn admission_verdict(
-        &self,
-        pool_manager: Address,
-        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<crate::registration_gate::AdmissionVerdict> {
-        self.cl.admission_verdict(pool_manager, pool_id)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::registration_gate_len`].
-    pub fn registration_gate_len(&self) -> usize {
-        self.cl.registration_gate_len()
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v4_pool`].
@@ -2922,21 +2853,6 @@ impl BotState {
             .apply_pump_buffer_v4(&mut self.registry, pool_manager, pool_id)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v4_buffer_max_age`].
-    pub fn set_v4_buffer_max_age(&mut self, max_age: Option<u64>) {
-        self.cl.set_v4_buffer_max_age(max_age)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::flush_v4_buffer`].
-    pub fn flush_v4_buffer(&mut self) {
-        self.cl.flush_v4_buffer()
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::expire_v4_buffered`].
-    pub fn expire_v4_buffered(&mut self, current_block: u64) {
-        self.cl.expire_v4_buffered(current_block)
-    }
-
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_pool_coverage`].
     pub fn v3_pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
         self.cl.v3_pool_coverage(&self.registry, address)
@@ -3056,16 +2972,6 @@ impl BotState {
             .take_v4_post_drain_snapshot(&mut self.registry, pool_manager, pool_id)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pool_count`].
-    pub fn v4_pool_count(&self) -> usize {
-        self.cl.v4_pool_count()
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_registered_pool_managers`].
-    pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
-        self.cl.v4_registered_pool_managers()
-    }
-
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pools_snapshot`].
     pub fn v4_pools_snapshot(&self) -> HashMap<u64, (V4PoolIdentity, V4PoolState)> {
         self.cl.v4_pools_snapshot(&self.registry)
@@ -3080,22 +2986,6 @@ impl BotState {
     ) {
         self.cl
             .sync_v4_pool_state(&mut self.registry, pool_manager, pool_id, update)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::pump_complete_cutoff`].
-    #[must_use]
-    pub fn pump_complete_cutoff(&self) -> u64 {
-        self.cl.pump_complete_cutoff()
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::advance_pump_complete_cutoff`].
-    pub fn advance_pump_complete_cutoff(&mut self, block: u64) {
-        self.cl.advance_pump_complete_cutoff(block)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v3_buffer_max_age`].
-    pub const fn set_v3_buffer_max_age(&mut self, max_age: Option<u64>) {
-        self.cl.set_v3_buffer_max_age(max_age)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::snapshot_seed_block`].

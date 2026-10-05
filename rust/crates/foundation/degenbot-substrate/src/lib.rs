@@ -1134,10 +1134,10 @@ impl BotState {
             let _ = event.apply_backfill(self);
         }
         if v3_touched {
-            self.expire_v3_buffered(chunk_end);
+            self.cl.expire_v3_buffered(chunk_end);
         }
         if v4_touched {
-            self.expire_v4_buffered(chunk_end);
+            self.cl.expire_v4_buffered(chunk_end);
         }
     }
 

@@ -469,7 +469,7 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
     // Mirror the live pump's ADR-008 D1 tombstone (first log of
     // `pump_block`+1 closes `pump_block`) so the drain takes the pump
     // Mint at `pump_block` rather than leaving it behind the gate.
-    core.advance_pump_complete_cutoff(pump_block);
+    core.cl_mut().advance_pump_complete_cutoff(pump_block);
     core.apply_pump_buffer_v3(&v3_addr);
     core.pin_v3_post_drain_snapshot(v3_addr);
 
@@ -785,11 +785,11 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     core.apply_v3_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
     // Pre-mark: two pump events, no complete block yet.
     assert_eq!(core.cl.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 2);
-    assert_eq!(core.pump_complete_cutoff(), 0);
+    assert_eq!(core.cl().pump_complete_cutoff(), 0);
     assert_eq!(core.cl.v3_buffer.pump_total_at_or_below(100), 2);
     // Mark block 100 complete (what the pump does at N+1's tombstone).
-    core.advance_pump_complete_cutoff(100);
-    assert_eq!(core.pump_complete_cutoff(), 100);
+    core.cl_mut().advance_pump_complete_cutoff(100);
+    assert_eq!(core.cl().pump_complete_cutoff(), 100);
     // Drain + pin: the gated drain yields both events, then the pin
     // captures the post-drain pair. (apply_pump_buffer_v3 + pin are the
     // exact sequence the registration seam runs.)
@@ -851,8 +851,8 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
     // pump through block 99 → the drain (apply_pump_buffer_v3) holds the
     // block-100 event back, so the map is NOT complete at its 100 clock.
     core.apply_v3_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
-    core.advance_pump_complete_cutoff(99);
-    assert_eq!(core.pump_complete_cutoff(), 99);
+    core.cl_mut().advance_pump_complete_cutoff(99);
+    assert_eq!(core.cl().pump_complete_cutoff(), 99);
     assert_eq!(core.cl.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 1);
     core.apply_pump_buffer_v3(&pool_addr);
     core.pin_v3_post_drain_snapshot(pool_addr);
@@ -897,7 +897,7 @@ fn pin_preserves_clock_block_when_no_undrained_events() {
     // mod.rs:580 BENIGN seed case: the DB seed carries the live WS head
     // past the cutoff, so no event could be missing — the clock block is
     // preserved (NOT clamped), and verifying at 100 is correct.
-    core.advance_pump_complete_cutoff(99);
+    core.cl_mut().advance_pump_complete_cutoff(99);
     assert_eq!(core.cl.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 0);
     core.apply_pump_buffer_v3(&pool_addr);
     core.pin_v3_post_drain_snapshot(pool_addr);
