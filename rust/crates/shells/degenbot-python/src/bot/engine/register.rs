@@ -5,10 +5,8 @@
 //! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
-use super::{
-    Arc, Bot, DynamicFeePoolRejectedError, EngineStages, HookedPoolRejectedError, PoolHop,
-    PyArbEngine, PyBot, PyList,
-};
+use super::{Arc, Bot, EngineStages, PoolHop, PyArbEngine, PyBot, PyList};
+use crate::bot::errmap::{map_driver_err, map_path_registration_err};
 use crate::prelude::*;
 
 use degenbot_substrate::session_registry::SessionObjectRegistry;
@@ -244,7 +242,7 @@ impl PyArbEngine {
         // ADR-050 D7: the engine-only test-seam twin of
         // `PyBot::subscribe` — drives the shared `EngineDriver` directly.
         py.detach(|| degenbot_bot::bot_core::Bot::subscribe(&self.driver, &rpc_url))
-            .map_err(crate::bot::pump::map_driver_err)
+            .map_err(map_driver_err)
     }
 
     /// Pre-pump startup ritual: `subscribe(ws)` → verify-config
@@ -298,7 +296,7 @@ impl PyArbEngine {
     fn resume(&self, py: Python<'_>, facets: Vec<String>) -> PyResult<()> {
         self.enable_facets(py, &facets)?;
         py.detach(|| degenbot_bot::bot_core::Bot::resume(&self.driver))
-            .map_err(crate::bot::pump::map_driver_err)?;
+            .map_err(map_driver_err)?;
         self.start_hosted_strategies()
             .map_err(super::strategy::map_host_error)?;
         Ok(())
@@ -316,7 +314,7 @@ impl PyArbEngine {
     /// session teardown path and a signal handler. Delegates to the shared
     /// `PumpState`.
     fn stop(&self, _py: Python<'_>) -> PyResult<()> {
-        degenbot_bot::bot_core::Bot::stop(&self.driver).map_err(crate::bot::pump::map_driver_err)
+        degenbot_bot::bot_core::Bot::stop(&self.driver).map_err(map_driver_err)
     }
 
     /// Awaitable session-end DETECTION FACT: resolves the core
@@ -329,277 +327,5 @@ impl PyArbEngine {
     /// creation).
     fn session_end_future<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::bot::pump::session_end_future(py, &self.driver)
-    }
-}
-
-// --- Pool-registration error mapping (free helpers) ---
-/// Map a [`RegisterV2PoolError`] to a typed Python exception under the
-/// `PoolRegistrationError` hierarchy.
-///
-/// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`]
-/// - `SpecViolation` → [`SpecViolationError`] (the message names the
-///   offending field, its value, and the bound it violates, mirroring
-///   `spec_bounds::SpecViolation`'s `Display`)
-///
-/// These are subclasses of `PoolRegistrationError`, which is itself a
-/// subclass of `ValueError`, so a broad `except ValueError:` (or
-/// `except PoolRegistrationError:` to scope just admission refusals) keeps
-/// working.
-pub(crate) fn map_register_v2_err(err: degenbot_bot::bot_core::RegisterV2PoolError) -> pyo3::PyErr {
-    use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
-    match err {
-        degenbot_bot::bot_core::RegisterV2PoolError::AlreadyRegistered { address } => {
-            PoolAlreadyRegisteredError::new_err(format!(
-                "V2 pool already registered: address={address}"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV2PoolError::SpecViolation(v) => {
-            SpecViolationError::new_err(format!("V2 pool registration failed: {v}"))
-        }
-    }
-}
-
-/// Map a [`RegisterV3PoolError`] to a typed Python exception under the
-/// `PoolRegistrationError` hierarchy. Mirrors [`map_register_v2_err`].
-pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolError) -> pyo3::PyErr {
-    use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
-    match err {
-        degenbot_bot::bot_core::RegisterV3PoolError::AlreadyRegistered { address } => {
-            PoolAlreadyRegisteredError::new_err(format!(
-                "V3 pool already registered: address={address}"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV3PoolError::SpecViolation(v) => {
-            SpecViolationError::new_err(format!("V3 pool registration failed: {v}"))
-        }
-    }
-}
-
-/// Map a [`RegisterV4PoolError`] to a typed Python exception (Plan 102,
-/// unified hierarchy).
-///
-/// - `HookedPool` → [`HookedPoolRejectedError`] (V4 amount-modifying-hook
-///   admission floor — the solver's CL math assumes no hook intervention).
-/// - `DynamicFee` → [`DynamicFeePoolRejectedError`] (V4 dynamic-fee
-///   admission floor — the solver assumes a fixed fee).
-/// - `FeeExceedsEncoderLimit` → [`HighFeePoolRejectedError`] (V4 static-fee
-///   exceeds the `cmd_executor`'s 2-byte encoding field; the
-///   fee is protocol-valid but un-encodable and unprofitable).
-/// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`] (duplicate
-///   `(pool_manager, pool_id)` registration — a wiring/programming error
-///   surfaced at admission time, now unified with the V2/V3 twins under
-///   `PoolRegistrationError`).
-/// - `SpecViolation` → [`SpecViolationError`] (out-of-spec
-///   sqrtPriceX96/tick/fee/tickSpacing, stop-gap upgraded to a typed
-///   exception).
-///
-/// The message text for the V4-specific variants is byte-for-byte unchanged
-/// from the legacy `Err(String)` formatting so `build_paths`'s classification
-/// (now `isinstance`, was substring) matches the same diagnostics.
-/// Map the typed path-registration refusal (PRG-4): a full registry is the
-/// benign `PathRegistryFullError` stop signal; every `Invalid` refusal
-/// keeps the legacy `ValueError` with its verbatim message.
-pub(crate) fn map_path_registration_err(
-    err: degenbot_bot::arb_engine::lifecycle::PathRegistrationError,
-) -> pyo3::PyErr {
-    match err {
-        degenbot_bot::arb_engine::lifecycle::PathRegistrationError::Invalid(msg) => {
-            pyo3::exceptions::PyValueError::new_err(msg)
-        }
-        degenbot_bot::arb_engine::lifecycle::PathRegistrationError::RegistryFull {
-            cap,
-            registered,
-        } => crate::bot::engine::PathRegistryFullError::new_err(format!(
-            "registered-path cap reached ({registered}/{cap}) — the crawl must stop discovery"
-        )),
-    }
-}
-
-pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolError) -> pyo3::PyErr {
-    use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
-    match err {
-        degenbot_bot::bot_core::RegisterV4PoolError::HookedPool { hook_flags } => {
-            HookedPoolRejectedError::new_err(format!(
-                "V4 pool has amount-modifying hooks (flags=0x{hook_flags:04X}, mask=0x{:04X}) — excluded from arbitrage",
-                degenbot_bot::bot_core::AMOUNT_MODIFYING_HOOK_MASK
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV4PoolError::DynamicFee { fee } => {
-            DynamicFeePoolRejectedError::new_err(format!(
-                "V4 pool has dynamic fee (fee=0x{fee:06X}) — excluded from arbitrage"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV4PoolError::FeeExceedsEncoderLimit { fee } => {
-            crate::bot::engine::HighFeePoolRejectedError::new_err(format!(
-                "V4 pool fee (fee={fee}) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV4PoolError::AlreadyRegistered {
-            pool_manager,
-            pool_id,
-        } => PoolAlreadyRegisteredError::new_err(format!(
-            "V4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
-            alloy::hex::encode(pool_id),
-        )),
-        degenbot_bot::bot_core::RegisterV4PoolError::SpecViolation(v) => {
-            SpecViolationError::new_err(format!("V4 pool registration failed: {v}"))
-        }
-    }
-}
-
-/// Map a Rust `PoolBuilder` error (the delegation adapter's
-/// builder stage) to a Python `RuntimeError` carrying the RPC/CREATE2/spec/DB
-/// failure cause. Registration-stage errors are mapped by the `map_register_v*`
-/// fns above, so this covers only the pre-registration build stage.
-pub(crate) fn map_builder_err(
-    err: degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError,
-) -> pyo3::PyErr {
-    match err {
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Rpc(e) => {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("pool build RPC error: {e}"))
-        }
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::UnknownVariant {
-            factory,
-        } => pyo3::exceptions::PyRuntimeError::new_err(format!(
-            "pool build unknown factory {factory} — no built-in DEX variant preset"
-        )),
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::UnknownPoolIdentity {
-            address,
-        } => pyo3::exceptions::PyValueError::new_err(format!(
-            "pool build unknown identity at {address}: no identity selector answered"
-        )),
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Spec => {
-            pyo3::exceptions::PyRuntimeError::new_err("pool build out-of-spec V2 reserve")
-        }
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Create2 => {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "pool build CREATE2 address verification failed",
-            )
-        }
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Db(e) => {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("pool build DB read failed: {e}"))
-        }
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Decoding { message } => {
-            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "pool build decode failure: {message}"
-            ))
-        }
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::MissingIdentity {
-            message,
-        } => pyo3::exceptions::PyValueError::new_err(format!("V4 identity incomplete: {message}")),
-        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::TickAssembly(e) => {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "Tracked tick map rejected at intake: {e}"
-            ))
-        }
-    }
-}
-
-/// Map the typed no-`ConstructionIo` refusal to the historical
-/// method-prefixed `RuntimeError` (each pymethod owns its prefix).
-pub(crate) fn map_no_construction_io(method: &'static str) -> pyo3::PyErr {
-    pyo3::exceptions::PyRuntimeError::new_err(format!(
-        "{method}: no ConstructionIo attached (requires an alloy provider)"
-    ))
-}
-
-/// Map a core `BuildError` (the no-registration build families: Aerodrome /
-/// Balancer weighted + stable / Curve / ERC-20 token) to the shell's two
-/// historical surfaces: the method-prefixed no-io `RuntimeError` and the
-/// builder error map.
-pub(crate) fn map_build_err(
-    method: &'static str,
-    err: degenbot_bot::bot_core::build_register::BuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::BuildError;
-    match err {
-        BuildError::NoConstructionIo => map_no_construction_io(method),
-        BuildError::Builder(e) => map_builder_err(e),
-    }
-}
-
-/// Map a core `V2BuildError` to the shell's three historical surfaces: the
-/// method-prefixed no-io `RuntimeError`, the builder error map, and the V2
-/// registration hierarchy map.
-pub(crate) fn map_v2_build_err(
-    err: degenbot_bot::bot_core::build_register::V2BuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::V2BuildError;
-    match err {
-        V2BuildError::NoConstructionIo => map_no_construction_io("build_v2_pool"),
-        V2BuildError::Builder(e) => map_builder_err(e),
-        V2BuildError::Register(e) => map_register_v2_err(e),
-    }
-}
-
-/// The V4 twin of [`map_v2_build_err`].
-pub(crate) fn map_v4_build_err(
-    err: degenbot_bot::bot_core::build_register::V4BuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::V4BuildError;
-    match err {
-        V4BuildError::NoConstructionIo => map_no_construction_io("build_v4_pool"),
-        V4BuildError::Builder(e) => map_builder_err(e),
-        V4BuildError::Register(e) => map_register_v4_err(e),
-    }
-}
-
-/// Map a core `V3BuildError` to the shell's historical surfaces: the
-/// construction-route refusal map (the LOUD `UnsupportedPoolFamilyError`
-/// among them) and the method-prefixed race-answer `RuntimeError`.
-pub(crate) fn map_v3_build_err(
-    err: degenbot_bot::bot_core::build_register::V3BuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::V3BuildError;
-    match err {
-        V3BuildError::Refusal(e) => super::errors::map_construction_refusal(e),
-        V3BuildError::NoReadableIdentity { address } => pyo3::exceptions::PyRuntimeError::new_err(
-            format!("build_v3_pool: registry GET answered {address} with no readable V3 identity"),
-        ),
-    }
-}
-
-/// Map a core `CalcTokensOutError` to the shell's historical surfaces
-/// (cdbc03bb): the `ValueError` for the overflow/on-chain-revert class, the
-/// unknown-pool and unsupported-family `ValueError`s, and the legacy `0`
-/// mapping for unrecovered sparse-map misses (done core-side).
-pub(crate) fn map_calc_tokens_out_err(
-    err: degenbot_bot::bot_core::build_register::CalcTokensOutError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::CalcTokensOutError;
-    match err {
-        CalcTokensOutError::Overflow | CalcTokensOutError::NotComputable => {
-            pyo3::exceptions::PyValueError::new_err(
-                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-            )
-        }
-        CalcTokensOutError::UnknownPool { pool_id } => {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "swap_simulation: pool {pool_id} is not registered"
-            ))
-        }
-        CalcTokensOutError::UnsupportedFamily { pool_id, family } => {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "swap_simulation: pool {pool_id} family {family} is not supported for this operation"
-            ))
-        }
-    }
-}
-
-/// Map a core `CalcTokensInError` to the shell's historical surfaces: the
-/// overflow `ValueError` and the typed exact-output family gap.
-pub(crate) fn map_calc_tokens_in_err(
-    err: degenbot_bot::bot_core::build_register::CalcTokensInError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::CalcTokensInError;
-    match err {
-        CalcTokensInError::Overflow => pyo3::exceptions::PyValueError::new_err(
-            "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-        ),
-        CalcTokensInError::UnsupportedFamily { pool_id, family } => {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "calculate_tokens_in: pool {pool_id} family {family} has no exact-output path"
-            ))
-        }
     }
 }

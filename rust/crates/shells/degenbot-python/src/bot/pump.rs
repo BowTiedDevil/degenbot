@@ -7,20 +7,20 @@
 //! seam itself; the soak Drop forensics live on `EngineDriver` in the core.
 //!
 //! What remains here is translation, not state: the `GIL`-detach-
-//! `block_on`/`future_into_py` wrappers plus the `DriverError` → typed Python
-//! exception maps, as free functions both `PyBot` and `PyArbEngine` call with
-//! their shared driver handle. The `subscribe`/`resume`/`stop` block_on
-//! wrappers moved onto `bot_core::Bot` (the shells call them directly through
-//! the `map_driver_err` seam); `start` and the registration lifecycles keep
-//! their wrappers here.
+//! `block_on`/`future_into_py` wrappers, as free functions both `PyBot` and
+//! `PyArbEngine` call with their shared driver handle (the typed `DriverError`
+//! → Python-exception maps live in [`crate::bot::errmap`]). The
+//! `subscribe`/`resume`/`stop` block_on wrappers moved onto `bot_core::Bot`
+//! (the shells call them directly through the `map_driver_err` seam); `start`
+//! and the registration lifecycles keep their wrappers here.
 
-use degenbot_bot::arb_engine::{DriverError, EngineDriver};
-use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
-use degenbot_bot::bot_core::snapshot_verify::VerifyError;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use degenbot_bot::arb_engine::EngineDriver;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::Bound;
 use std::sync::Arc;
+
+use crate::bot::errmap::{map_driver_err, map_driver_lifecycle_err, map_verify_lifecycle_error};
 
 /// Run the pre-pump startup ritual: `subscribe(ws)` then verify-config
 /// (`http`, optional `view`) — the one-call `EngineDriver::start` detached
@@ -237,121 +237,4 @@ pub(crate) fn run_v4_registration_lifecycle_with_retry_blocking(
             )
             .map_err(map_verify_lifecycle_error)
     })
-}
-
-/// Map a classified [`VerifyError`] from a retry-wrapped lifecycle to the typed
-/// Python exception the verify surface has always raised.
-pub(crate) fn map_verify_lifecycle_error(err: VerifyError) -> PyErr {
-    use crate::bot::engine::{VerificationMismatchError, VerificationRpcError};
-    match err {
-        VerifyError::Snapshot(message) => VerificationMismatchError::new_err(message),
-        VerifyError::Provider(message) | VerifyError::Rpc(message) => {
-            VerificationRpcError::new_err(message)
-        }
-        VerifyError::Other(message) => PyRuntimeError::new_err(message),
-        other => PyRuntimeError::new_err(other.to_string()),
-    }
-}
-
-/// Map a core [`DriverError`] to a Python exception.
-pub(crate) fn map_driver_err(err: DriverError) -> PyErr {
-    match err {
-        // The typed receiver refusal carries no payload; Display is the single
-        // source of the remediation text, so the Python `RuntimeError` string
-        // stays byte-identical to the pre-typing refusal.
-        DriverError::NoResultReceiver => PyRuntimeError::new_err(err.to_string()),
-        // Every other non-lifecycle variant (phase/session/subscribe/resume/
-        // registration) surfaces as the legacy `RuntimeError` with the driver's
-        // message; the registration lifecycles route their verify errors
-        // through the typed `map_driver_lifecycle_err` instead.
-        other => PyRuntimeError::new_err(other.to_string()),
-    }
-}
-
-/// Map a lifecycle [`DriverError`] to the typed Python exception the verify
-/// surface has always raised.
-pub(crate) fn map_driver_lifecycle_err(err: DriverError) -> PyErr {
-    match err {
-        DriverError::Verify(e) => match e {
-            RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
-            RegistrationLifecycleError::MissingProvider => {
-                crate::bot::engine::VerificationRpcError::new_err(
-                    "registration verify requires an RPC provider for tracked pools — configure the bot's single provider"
-                        .to_string(),
-                )
-            }
-            RegistrationLifecycleError::MissingTickSpacing => PyRuntimeError::new_err(
-                RegistrationLifecycleError::MissingTickSpacing.to_string(),
-            ),
-        },
-        other => PyRuntimeError::new_err(other.to_string()),
-    }
-}
-
-/// Map a `LiquidityVerifyError` (from `liquidity_verifier::verify_v3/v4_pools`)
-/// to a typed Python exception, mirroring `engine::verify::map_verify_err`.
-///
-/// - `Mismatch` → `VerificationMismatchError` (fatal — on-chain tick data
-///   disagrees with the engine).
-/// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure — the
-///   caller may retry/backoff; NOT evidence of a mismatch).
-pub(crate) fn map_liquidity_verify_error(
-    err: degenbot_bot::bot_core::liquidity_verifier::LiquidityVerifyError,
-) -> PyErr {
-    use crate::bot::engine::{VerificationMismatchError, VerificationRpcError};
-    use degenbot_bot::bot_core::liquidity_verifier::LiquidityVerifyError;
-    match err {
-        LiquidityVerifyError::Mismatch(m) => VerificationMismatchError::new_err(m.to_string()),
-        LiquidityVerifyError::Rpc { message } => VerificationRpcError::new_err(message),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    //! Pin the per-family verify exception mapping. The
-    //! `verify_v3_liquidity_maps` / `verify_v4_liquidity_maps` methods must
-    //! route `LiquidityVerifyError` through `map_liquidity_verify_error` so
-    //! that a genuine on-chain mismatch surfaces as
-    //! `VerificationMismatchError` (the fatal arm in `build_paths`) and a
-    //! per-call RPC transport failure surfaces as `VerificationRpcError`
-    //! (retryable), NOT a plain `PyRuntimeError` (which the broad
-    //! `except RuntimeError` arm silently swallows as a skipped path).
-    use super::map_liquidity_verify_error;
-    use crate::bot::engine::{VerificationMismatchError, VerificationRpcError};
-    use degenbot_bot::bot_core::liquidity_verifier::{LiquidityVerifyError, VerificationMismatch};
-
-    #[test]
-    fn mismatch_surfaces_as_verification_mismatch_error() {
-        pyo3::Python::attach(|py| {
-            let err =
-                map_liquidity_verify_error(LiquidityVerifyError::Mismatch(VerificationMismatch {
-                    message: "V3 pool 0x.. block=1: tick 5 liquidityGross mismatch".to_string(),
-                }));
-            assert!(
-                err.is_instance_of::<VerificationMismatchError>(py),
-                "LiquidityVerifyError::Mismatch must surface as VerificationMismatchError (fatal), not PyRuntimeError"
-            );
-            assert!(
-                !err.is_instance_of::<VerificationRpcError>(py),
-                "genuine mismatch is NOT an Rpc error (distinct types)"
-            );
-        });
-    }
-
-    #[test]
-    fn rpc_failure_surfaces_as_verification_rpc_error() {
-        pyo3::Python::attach(|py| {
-            let err = map_liquidity_verify_error(LiquidityVerifyError::Rpc {
-                message: "V3 pool 0x..: tickBitmap(0) RPC call failed: timeout".to_string(),
-            });
-            assert!(
-                err.is_instance_of::<VerificationRpcError>(py),
-                "LiquidityVerifyError::Rpc must surface as VerificationRpcError (retryable), not PyRuntimeError"
-            );
-            assert!(
-                !err.is_instance_of::<VerificationMismatchError>(py),
-                "RPC transport failure is NOT a mismatch (distinct types)"
-            );
-        });
-    }
 }

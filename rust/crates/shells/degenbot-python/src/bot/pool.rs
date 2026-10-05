@@ -17,22 +17,11 @@ use std::sync::Arc;
 
 use pyo3::types::{PyDict, PyList, PyTuple};
 
-use crate::bot::journal_err_to_py;
+use crate::bot::errmap::journal_err_to_py;
 use degenbot_bot::bot_core::TickInfo;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 use degenbot_substrate::BotState;
-
-/// Encode a byte slice as a lowercase hex string (no "0x" prefix).
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        s.push(HEX_CHARS[(b >> 4) as usize] as char);
-        s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
-    }
-    s
-}
 
 /// `PyO3` adapter wrapping a Python fetch-word callable as a
 /// [`TickWordFetcher`] (ADR-005 sparse-map parity, slice 3).
@@ -1357,7 +1346,7 @@ impl PyLiquidityPool {
         match result {
             Ok(call) => Ok(Some((
                 format!("{:#x}", call.to),
-                format!("0x{}", bytes_to_hex(&call.data)),
+                alloy::hex::encode_prefixed(&call.data),
                 call.value.to::<u64>(),
             ))),
             // The Python handle's own `encode_swap` resolves its pool id at
@@ -1684,7 +1673,7 @@ impl PyLiquidityPool {
     #[getter]
     fn pool_id_hex(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| match core.get_v4_identity(self.pool_id) {
-            Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
+            Some(i) => alloy::hex::encode_prefixed(&i.pool_id),
             None => String::new(),
         })
     }
@@ -1773,7 +1762,7 @@ impl PyLiquidityPool {
     fn balancer_pool_id_hex(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
             match core.get_balancer_weighted_identity(self.pool_id) {
-                Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
+                Some(i) => alloy::hex::encode_prefixed(&i.pool_id),
                 None => String::new(),
             }
         })
@@ -2779,7 +2768,7 @@ impl PyLiquidityPool {
     fn balancer_stable_pool_id_hex(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
             match core.get_balancer_stable_identity(self.pool_id) {
-                Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
+                Some(i) => alloy::hex::encode_prefixed(&i.pool_id),
                 None => String::new(),
             }
         })

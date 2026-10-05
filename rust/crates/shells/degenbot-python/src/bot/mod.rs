@@ -8,6 +8,7 @@ pub mod build_flights;
 pub mod deployments;
 pub mod dex_identity;
 pub mod engine;
+mod errmap;
 pub mod intake;
 pub mod pool;
 pub mod pump;
@@ -31,10 +32,12 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 
-use crate::bot::engine::{
-    hex_string_to_pool_id, map_build_err, map_builder_err, map_calc_tokens_in_err,
-    map_calc_tokens_out_err, map_no_construction_io, map_register_v2_err, map_register_v3_err,
-    map_register_v4_err, map_v2_build_err, map_v3_build_err, map_v4_build_err, SpecViolationError,
+use crate::bot::engine::{hex_string_to_pool_id, SpecViolationError};
+use crate::bot::errmap::{
+    journal_err_to_py, map_aerodrome_registration_err, map_build_err, map_calc_tokens_in_err,
+    map_calc_tokens_out_err, map_driver_err, map_no_construction_io, map_register_v2_err,
+    map_register_v4_err, map_resolve_v4_identity_err, map_v2_build_err, map_v2_registration_err,
+    map_v3_build_err, map_v3_registration_err, map_v4_build_err,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -54,7 +57,6 @@ use degenbot_bot::bot_core::{
     Bot, RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
     RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
-use degenbot_pools::state_history::JournalError;
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
@@ -577,7 +579,7 @@ impl PyBot {
         // the core `Bot::subscribe`): the handshake future (WS subscribe +
         // header polling) does NOT need the GIL to complete.
         py.detach(|| Bot::subscribe(&driver, rpc_url))
-            .map_err(crate::bot::pump::map_driver_err)
+            .map_err(map_driver_err)
     }
 
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
@@ -591,8 +593,7 @@ impl PyBot {
         // GIL-release across the backfill block_on (the block_on lives in the
         // core `Bot::resume`): the backfill (`eth_getLogs` + `BotState`
         // mutation) is pure Rust async and does not need the GIL.
-        py.detach(|| Bot::resume(&driver))
-            .map_err(crate::bot::pump::map_driver_err)
+        py.detach(|| Bot::resume(&driver)).map_err(map_driver_err)
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
@@ -605,7 +606,7 @@ impl PyBot {
     /// `PumpState`.
     fn stop(&self, _py: Python<'_>) -> PyResult<()> {
         let driver = self.pump_state()?;
-        Bot::stop(&driver).map_err(crate::bot::pump::map_driver_err)
+        Bot::stop(&driver).map_err(map_driver_err)
     }
 
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
@@ -707,13 +708,9 @@ impl PyBot {
             pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
         })?;
 
-        // Incident 2026-08-20 #2: never hold the GIL while parked on the
-        // BotState write - the dispatch fan-out's per-candidate tasks hold
-        // the read end across provider fetches, and a parked GIL-writer
-        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
-        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        // The CREATE2 verify (Fork A) + deployer/init-hash resolution + params
-        // assembly live inside the core method ([`Bot::register_v2_pool`]).
+        // The write guard is acquired inside the core method
+        // ([`Bot::register_v2_pool`]); the GIL is released across this
+        // py.detach — never hold the GIL while parked on the BotState write.
         let pool_id = py
             .detach(|| {
                 self.bot.register_v2_pool(
@@ -784,14 +781,10 @@ impl PyBot {
             &key,
             || Ok(self.registered_v2_payload(py, &addr)),
             || {
-                // The io fetch, the builder run on the shared runtime, the
-                // identity shaping (token0/token1/address/variant — the
-                // builder's return surface, kebab-case e.g. "uniswap-v2"),
-                // the BotState registration write, and the telemetry span are
-                // core-owned ([`Bot::build_and_register_v2`]); the GIL is
-                // released across the WHOLE scope (incident 2026-08-20 #2:
-                // never hold the GIL while parked on the runtime or the
-                // BotState write).
+                // The fetch/build/register choreography is core-owned
+                // ([`Bot::build_and_register_v2`]); the GIL is released
+                // across the whole scope — never hold the GIL while parked
+                // on the runtime or the BotState write.
                 let (pool_id, identity) = py
                     .detach(|| self.bot.build_and_register_v2(addr, block))
                     .map_err(map_v2_build_err)?;
@@ -1022,11 +1015,9 @@ impl PyBot {
                         )));
                     }
                 };
-                // The ONE core entry (get-or-register + route order + build +
-                // register) plus the identity-echo shaping and the telemetry
-                // span are core-owned ([`Bot::build_and_register_v3`]); the
-                // GIL is released across the whole scope (incident
-                // 2026-08-20 #2 — see `build_v2_pool`).
+                // The get-or-register + route-order + build + register
+                // choreography is core-owned ([`Bot::build_and_register_v3`]);
+                // the GIL is released across the whole scope.
                 let (pool_id, identity) = py
                     .detach(|| {
                         self.bot.build_and_register_v3(
@@ -1261,12 +1252,9 @@ impl PyBot {
                 let fetcher = tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.unbind()));
-                // The io fetch, the builder run on the shared runtime, the
-                // fetcher injection, the coverage mapping, the BotState
-                // registration write, and the telemetry span are core-owned
+                // The fetch/build/register choreography is core-owned
                 // ([`Bot::build_and_register_v4`]); the GIL is released
-                // across the WHOLE scope (incident 2026-08-20 #2 — see
-                // `build_v2_pool`).
+                // across the whole scope.
                 let (registered, coverage, protocol_fee, lp_fee) = py
                     .detach(|| {
                         self.bot.build_and_register_v4(
@@ -1614,12 +1602,9 @@ impl PyBot {
                  V4 unregister is engine-side — use the engine’s unregister path.",
             ));
         }
-        // Incident 2026-08-20 (GIL/BotState inversion): never hold the GIL
-        // while parked on the BotState write - the dispatch fan-out reader
-        // can hold the read end across provider RPCs for seconds, and a
-        // parked GIL-writer freezes the main asyncio loop (the observed
-        // 'GIL deadlock'). The write guard is acquired inside the core
-        // method under this py.detach.
+        // The write guard is acquired inside the core method under this
+        // py.detach — the GIL is released while parked on the BotState
+        // write.
         Ok(py.detach(|| self.bot.unregister_pool(addr)))
     }
 
@@ -2239,13 +2224,9 @@ impl PyBot {
             data_provider: data_provider
                 .map(|b| crate::bot::pool::make_curve_data_provider(b.unbind())),
         };
-        // Incident 2026-08-20 #2: never hold the GIL while parked on the
-        // BotState write - the dispatch fan-out's per-candidate tasks hold
-        // the read end across provider fetches, and a parked GIL-writer
-        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
-        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
         // The write guard is acquired inside the core method under this
-        // py.detach.
+        // py.detach — the GIL is released while parked on the BotState
+        // write.
         Ok(py.detach(|| self.bot.register_curve_pool(&p)))
     }
 
@@ -2276,10 +2257,9 @@ impl PyBot {
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let registry = parse_address_list(registry_addresses)?;
-        // The io fetch, the detection choreography on the shared runtime, and
-        // the registration write are core-owned
+        // The fetch/detect/register choreography is core-owned
         // ([`Bot::build_and_register_curve_pool`]); the GIL is released
-        // across the whole scope (incident 2026-08-20: no GIL while parked).
+        // across the whole scope.
         Ok(py
             .detach(|| {
                 self.bot
@@ -2349,11 +2329,8 @@ impl PyBot {
             balances: bal_vals,
             update_block,
         };
-        // Incident 2026-08-20 #2: never hold the GIL while parked on the
-        // BotState write - the dispatch fan-out's per-candidate tasks hold
-        // the read end across provider fetches, and a parked GIL-writer
-        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
-        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        // The GIL is released across this py.detach — never hold the GIL
+        // while parked on the BotState write.
         Ok(py.detach(|| self.bot.register_balancer_weighted_pool(&p)))
     }
 
@@ -2426,8 +2403,7 @@ impl PyBot {
             update_block,
             rate_provider: provider,
         };
-        // Incident 2026-08-20: see unregister_pool (no GIL while parked on
-        // the BotState write).
+        // No GIL while parked on the BotState write (see `unregister_pool`).
         Ok(py.detach(|| self.bot.register_balancer_stable_pool(&params)))
     }
 
@@ -2478,14 +2454,11 @@ impl PyBot {
             pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
         })?;
 
-        // Incident 2026-08-20 #2: never hold the GIL while parked on the
-        // BotState write - the dispatch fan-out's per-candidate tasks hold
-        // the read end across provider fetches, and a parked GIL-writer
-        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
-        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        // The EIP-1167 verify (Fork A follow-on — the Aerodrome parity gap;
-        // skipped for non-JSON (chain, factory) rows) + params assembly live
-        // inside the core method ([`Bot::register_aerodrome_pool`]).
+        // The EIP-1167 verify (skipped for non-JSON (chain, factory) rows) +
+        // params assembly live inside the core method
+        // ([`Bot::register_aerodrome_pool`]); the GIL is released across
+        // this py.detach — never hold the GIL while parked on the BotState
+        // write.
         py.detach(|| {
             self.bot.register_aerodrome_pool(
                 addr,
@@ -2545,9 +2518,8 @@ impl PyBot {
     /// is past the newest delta. Raises `ValueError` on error (ADR-005 slice 4).
     #[pyo3(signature = (pool_id, block))]
     fn v3_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
-        // Incident 2026-08-20: the whole write scope runs detached - the GIL
-        // is released while parked behind a live reader. The write guard is
-        // acquired inside the core method under this py.detach.
+        // The write guard is acquired inside the core method under this
+        // py.detach — the GIL is released while parked behind a live reader.
         py.detach(|| self.bot.v3_discard_before_block(pool_id, block))
             .map_err(journal_err_to_py)
     }
@@ -2568,9 +2540,9 @@ impl PyBot {
         // the `V3RestoreResult.scalar_priors` previously carried. The core
         // copies the owned scalars out under its write guard; this shell
         // marshals them after release.
-        // Incident 2026-08-20: the whole write scope runs under the core
-        // method's py.detach - the GIL is released while parked behind a
-        // live reader, and the !Send guard never leaves the core.
+        // The write scope runs under the core method's py.detach — the GIL
+        // is released while parked behind a live reader, and the !Send guard
+        // never leaves the core.
         let restored = py
             .detach(|| self.bot.v3_restore_before_block(pool_id, block))
             .map_err(journal_err_to_py)?;
@@ -2666,11 +2638,9 @@ impl PyBot {
         block: Option<u64>,
     ) -> PyResult<PyErc20Token> {
         let addr = parse_address(address)?;
-        // The io fetch, the metadata resolution (DB row → on-chain batched
-        // read → alternate-prototype fallback → UNKNOWN sentinels, with a DB
-        // write-back), and the token registration are core-owned
+        // The metadata resolution and token registration are core-owned
         // ([`Bot::build_and_register_erc20_token`]); the GIL is released
-        // across the whole scope (incident 2026-08-20 discipline).
+        // across the whole scope.
         let _registered = py
             .detach(|| {
                 self.bot
@@ -2726,9 +2696,8 @@ impl PyBot {
     ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (pool_id, block))]
     fn v2_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
-        // Incident 2026-08-20: the whole write scope runs detached - the GIL
-        // is released while parked behind a live reader. The write guard is
-        // acquired inside the core method under this py.detach.
+        // The write guard is acquired inside the core method under this
+        // py.detach — the GIL is released while parked behind a live reader.
         py.detach(|| self.bot.v2_discard_before_block(pool_id, block))
             .map_err(journal_err_to_py)
     }
@@ -2756,9 +2725,9 @@ impl PyBot {
         // post-restore reserves ARE the before-values the per-family tuple
         // previously carried. The core copies the owned scalars out under its
         // write guard; this shell marshals them after release.
-        // Incident 2026-08-20: the whole write scope runs under the core
-        // method's py.detach - the GIL is released while parked behind a
-        // live reader, and the !Send guard never leaves the core.
+        // The write scope runs under the core method's py.detach — the GIL
+        // is released while parked behind a live reader, and the !Send guard
+        // never leaves the core.
         let restored = py
             .detach(|| self.bot.v2_restore_before_block(pool_id, block))
             .map_err(journal_err_to_py)?;
@@ -2781,9 +2750,13 @@ impl PyBot {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Parse one address string, raising the historical `ValueError`. The
+/// `Invalid address '<input>': <source>` vocabulary is core-owned
+/// ([`degenbot_bot::bot_core::registration::parse_address_str`]); this
+/// adapter only crosses the error into Python.
 fn parse_address(s: &str) -> PyResult<Address> {
-    s.parse()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address '{s}': {e}")))
+    degenbot_bot::bot_core::registration::parse_address_str(s)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
 }
 
 /// Build a Python `{tick: (liquidity_gross, liquidity_net, block)}` dict from
@@ -2833,74 +2806,6 @@ pub(crate) fn extract_u256_list(
     list.iter()
         .map(|item| crate::conversion::alloy::extract_python_u256(&item))
         .collect()
-}
-
-/// Map a [`JournalError`] to a Python `ValueError` with the `NoPoolStateAvailable`
-///-shaped message the Python pool companion expects (and re-raises as
-/// `NoPoolStateAvailable`). ADR-005 slice 4 decision 2: reorg errors that used
-/// to panic must surface as `ValueError`. Shared by `PyBot` and `PyLiquidityPool`.
-pub(crate) fn journal_err_to_py(e: JournalError) -> PyErr {
-    match e {
-        JournalError::NoStatePriorToBlock { block } => pyo3::exceptions::PyValueError::new_err(
-            format!("No pool state known prior to block {block}"),
-        ),
-        JournalError::NoStateAtOrAfterBlock { block } => pyo3::exceptions::PyValueError::new_err(
-            format!("No pool state known at or after block {block}"),
-        ),
-    }
-}
-
-/// Map a core [`V2RegistrationError`](degenbot_bot::bot_core::registration::V2RegistrationError)
-/// to the shell's two historical surfaces: the bare CREATE2-mismatch
-/// `ValueError` and the `PoolRegistrationError` hierarchy map
-/// ([`map_register_v2_err`]).
-fn map_v2_registration_err(
-    err: degenbot_bot::bot_core::registration::V2RegistrationError,
-) -> PyErr {
-    use degenbot_bot::bot_core::registration::V2RegistrationError;
-    match err {
-        V2RegistrationError::Create2(m) => pyo3::exceptions::PyValueError::new_err(m.to_string()),
-        V2RegistrationError::Register(e) => map_register_v2_err(e),
-    }
-}
-
-/// The V3 twin of [`map_v2_registration_err`].
-fn map_v3_registration_err(
-    err: degenbot_bot::bot_core::registration::V3RegistrationError,
-) -> PyErr {
-    use degenbot_bot::bot_core::registration::V3RegistrationError;
-    match err {
-        V3RegistrationError::Create2(m) => pyo3::exceptions::PyValueError::new_err(m.to_string()),
-        V3RegistrationError::Register(e) => map_register_v3_err(e),
-    }
-}
-
-/// Map an Aerodrome registration refusal (only the EIP-1167 verify can
-/// refuse) to the bare-mismatch `ValueError` the shell has always raised.
-fn map_aerodrome_registration_err(
-    err: degenbot_bot::bot_core::registration::AerodromeRegistrationError,
-) -> PyErr {
-    match err {
-        degenbot_bot::bot_core::registration::AerodromeRegistrationError::Create2(m) => {
-            pyo3::exceptions::PyValueError::new_err(m.to_string())
-        }
-    }
-}
-
-/// Map a core
-/// [`ResolveV4IdentityError`](degenbot_bot::bot_core::registration::ResolveV4IdentityError)
-/// to the shell's historical surfaces: the method-prefixed "no
-/// ConstructionIo attached" `RuntimeError` and the builder error map.
-fn map_resolve_v4_identity_err(
-    err: degenbot_bot::bot_core::registration::ResolveV4IdentityError,
-) -> PyErr {
-    use degenbot_bot::bot_core::registration::ResolveV4IdentityError;
-    match err {
-        ResolveV4IdentityError::NoConstructionIo => pyo3::exceptions::PyRuntimeError::new_err(
-            "resolve_v4_identity: no ConstructionIo attached (requires an alloy provider)",
-        ),
-        ResolveV4IdentityError::Builder(e) => map_builder_err(e),
-    }
 }
 
 #[cfg(test)]

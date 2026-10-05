@@ -1,16 +1,20 @@
-//! Concentrated-liquidity (CL) structural family — `impl BotState` orchestration (V3 + V4).
+//! Concentrated-liquidity (CL) structural family — orchestration capability (V3 + V4).
 //!
-//! Carved out of `bot_core/mod.rs` (the `BotState` god-file). This module owns the CL-family
-//! `BotState` method set — V3/V4 registration + apply, the CL-common dual
-//! liquidity buffer, the snapshot seeds, and the coverage/quarantine/lifecycle
-//! state accessors. Pure `impl BotState` orchestration: the family state types
-//! live in `degenbot-pools` (I/O-free, ADR-001), and the
+//! This module owns the CL family's state surfaces — V3/V4 registration +
+//! apply, the CL-common dual liquidity buffer, the snapshot seeds, and the
+//! coverage/quarantine/lifecycle state accessors — on [`ClOrchestration`],
+//! the capability struct `BotState` composes as its `cl` field. The family
+//! state types live in `degenbot-pools` (I/O-free, ADR-001), and the
 //! `ConcentratedLiquidityPool(Mut)` trait is the CL family's unified seam.
+//! The routing verbs the orchestration shares with the event pump live in
+//! `cl_route.rs`.
 //!
-//! Child-module impl blocks reach `BotState`'s private fields directly (same
-//! pattern as `divergence_probe.rs`); the public surface is unchanged because
-//! these are inherent methods on `BotState`, and `bot_core/mod.rs` remains the
-//! assembly + re-export hub.
+//! CL methods never touch `BotState`'s private fields: they reach the
+//! family-agnostic pool tables through the [`RegistryCore`] view parameter
+//! each caller passes — a split borrow that lets one call mutate capability
+//! state and registry core together. `BotState`'s public CL surface stays on
+//! `BotState` as one-line delegation wrappers (the delegating
+//! composition-root impl at the bottom of this module).
 
 use degenbot_core::diag;
 use degenbot_core::op_warn;
@@ -2423,15 +2427,6 @@ impl ClOrchestration {
     }
 }
 
-/// Delegating composition-root surface: every CL capability method stays
-/// reachable on `BotState` (the pub surface external crates consume);
-/// each wrapper is a one-line split-borrow delegation.
-/// Delegating composition-root surface: every CL capability method stays
-/// reachable on `BotState` (the pub surface external crates consume);
-/// each wrapper is a one-line split-borrow delegation.
-/// Delegating composition-root surface: every CL capability method stays
-/// reachable on `BotState` (the pub surface external crates consume);
-/// each wrapper is a one-line split-borrow delegation.
 /// Delegating composition-root surface: every CL capability method stays
 /// reachable on `BotState` (the pub surface external crates consume);
 /// each wrapper is a one-line split-borrow delegation.
