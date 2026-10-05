@@ -50,6 +50,60 @@ for d in .agents .config/degenbot .local/state/degenbot .foundry .pi; do
 done
 
 echo ">>> rebuilding container via devcontainer CLI + podman"
-devcontainer up --workspace-folder "$WORKSPACE" --docker-path podman \
-  --remove-existing-container
+
+# Self-heal (devcontainers/cli#1236, unfixed as of CLI 0.89.0 + podman 5.8.7):
+# on create/recreate the CLI can block FOREVER after "Container started". It
+# spawns `podman events --filter event=start` and then `podman run`; when the
+# container's start event lands before that listener is subscribed, the CLI
+# waits for an event that already fired. The container is left Up but
+# UNPROVISIONED (postCreateCommand never execs). Workaround: watchdog the
+# create attempt; if the container is Up but the post-create venv (the first
+# thing post-create.sh makes; mirrors UV_PROJECT_ENVIRONMENT) never appears
+# within the grace window, kill the CLI and resume with a plain
+# `devcontainer up` — the existing-container path is unaffected by the bug
+# and re-runs postCreateCommand (verified 2026-10-01: full provisioning on
+# resume after a killed hung create).
+VENV_PY="/home/dev/.venvs/degenbot/bin/python"
+GRACE_SECONDS=45
+
+dc_up() {
+  devcontainer up --workspace-folder "$WORKSPACE" --docker-path podman "$@"
+}
+
+dc_up --remove-existing-container &
+dc_pid=$!
+
+container_up_at=""
+hang=false
+while kill -0 "$dc_pid" 2>/dev/null; do
+  cid="$(podman ps -q --filter "$SELECTOR" | head -1)"
+  if [ -n "$cid" ] && podman exec "$cid" test -x "$VENV_PY" 2>/dev/null; then
+    break  # post-create started — the hang can only strike before this point
+  fi
+  now=$(date +%s)
+  if [ -n "$cid" ]; then
+    container_up_at="${container_up_at:-$now}"
+    if [ $((now - container_up_at)) -ge "$GRACE_SECONDS" ]; then
+      hang=true
+      break
+    fi
+  fi
+  sleep 2
+done
+
+if $hang; then
+  echo ">>> detected devcontainers/cli#1236 hang (container Up, post-create never started)"
+  kill "$dc_pid" 2>/dev/null || true
+  pkill -TERM -P "$dc_pid" 2>/dev/null || true
+  sleep 2
+  kill -9 "$dc_pid" 2>/dev/null || true
+  # The orphaned `podman events` child would otherwise linger; no other
+  # process on this host runs the CLI's exact argument vector.
+  pkill -f 'podman events --format json --filter event=start' 2>/dev/null || true
+  echo ">>> resuming with existing-container up (runs postCreateCommand)"
+  dc_up
+else
+  wait "$dc_pid"
+fi
+
 echo ">>> rebuild complete — attach with: .devcontainer/attach.sh"
