@@ -169,6 +169,12 @@ pub enum LockSite {
     Sim,
     /// General bot-core machinery (incl. the lock's own internals).
     Core,
+    /// The `Bot` orchestrator facade's shell-initiated acquisitions
+    /// (`bot_core/bot.rs` journal/state-read + lifecycle clusters,
+    /// `registration.rs`, `build_register.rs`, `lifecycle.rs`). Distinct from
+    /// [`LockSite::Core`] so a GIL-deadlock dump can tell a wait the PyO3
+    /// shell drove through the facade from a genuinely core/pump/solver one.
+    Orchestrator,
 }
 
 impl LockSite {
@@ -183,6 +189,7 @@ impl LockSite {
             Self::Solver => "solver",
             Self::Sim => "sim",
             Self::Core => "core",
+            Self::Orchestrator => "orchestrator",
         }
     }
 }
@@ -815,6 +822,7 @@ mod tests {
             LockSite::Solver,
             LockSite::Sim,
             LockSite::Core,
+            LockSite::Orchestrator,
         ];
         assert_eq!(LockSite::Python.label(), "python");
         assert_eq!(LockSite::Pump.label(), "pump");
@@ -822,6 +830,7 @@ mod tests {
         assert_eq!(LockSite::Solver.label(), "solver");
         assert_eq!(LockSite::Sim.label(), "sim");
         assert_eq!(LockSite::Core.label(), "core");
+        assert_eq!(LockSite::Orchestrator.label(), "orchestrator");
         let mut labels: Vec<&str> = all.iter().map(|s| s.label()).collect();
         labels.sort_unstable();
         labels.dedup();

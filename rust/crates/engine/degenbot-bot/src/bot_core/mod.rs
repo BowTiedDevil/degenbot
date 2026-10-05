@@ -18,6 +18,12 @@ pub mod build_register;
 pub mod construction_io;
 pub mod curve_data_provider_impl;
 pub mod curve_state;
+/// The snapshot + pump-lifecycle + block-stream cluster on the `Bot`
+/// facade: the retained-tx snapshot open/teardown pair, the driver
+/// subscribe/resume/stop wrappers, the verification-config setters, and the
+/// once-only block-stream hand-off. The cluster's typed errors re-export
+/// through `bot.rs` so the shell's import paths hold.
+pub mod lifecycle;
 pub mod liquidity_verifier;
 pub mod pool_builder;
 pub mod pump_control;

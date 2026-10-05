@@ -294,7 +294,7 @@ impl Bot {
             fee_denominator,
         };
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_v2_pool(&params)
             .map_err(V2RegistrationError::Register)
     }
@@ -366,7 +366,7 @@ impl Bot {
             slot_layout,
         };
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_v3_pool(&params)
             .map_err(V3RegistrationError::Register)
     }
@@ -386,7 +386,7 @@ impl Bot {
         params: &RegisterV4PoolParams,
     ) -> Result<u64, RegisterV4PoolError> {
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_v4_pool(params)
     }
 
@@ -394,7 +394,7 @@ impl Bot {
     /// caller; the insert runs under ONE core write guard.
     pub fn register_curve_pool(&self, params: &RegisterCurvePoolParams) -> u64 {
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_curve_pool(params)
     }
 
@@ -404,14 +404,14 @@ impl Bot {
         params: &RegisterBalancerWeightedPoolParams,
     ) -> u64 {
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_balancer_weighted_pool(params)
     }
 
     /// Register a Balancer V2 stable pool — see [`Self::register_curve_pool`].
     pub fn register_balancer_stable_pool(&self, params: &RegisterBalancerStablePoolParams) -> u64 {
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_balancer_stable_pool(params)
     }
 
@@ -464,7 +464,7 @@ impl Bot {
         };
         Ok(self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_aerodrome_pool(&params))
     }
 
@@ -479,14 +479,14 @@ impl Bot {
         chain_id: u64,
     ) {
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_token(address, name, symbol, decimals, chain_id);
     }
 
     /// Seed the Rust-owned V4 `StateView` registry (ADR-005 / Option 2).
     pub fn register_v4_state_view(&self, pool_manager: Address, state_view: Address) {
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_v4_state_view(pool_manager, state_view);
     }
 
@@ -497,7 +497,7 @@ impl Bot {
     #[must_use]
     pub fn unregister_pool(&self, address: Address) -> bool {
         self.state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .unregister_pool(address, None)
     }
 
@@ -512,7 +512,7 @@ impl Bot {
         addr: &Address,
     ) -> Option<(u64, String, String, String, String)> {
         let core = self.state_arc();
-        let state = core.read_at(LockSite::Core);
+        let state = core.read_at(LockSite::Orchestrator);
         let (pool_id, RegisteredPoolFamily::V2) = state.registered_pool_by_address(addr)? else {
             return None;
         };
@@ -536,7 +536,7 @@ impl Bot {
         chain_id: u64,
     ) -> Option<(u64, String, String, String, String)> {
         let core = self.state_arc();
-        let state = core.read_at(LockSite::Core);
+        let state = core.read_at(LockSite::Orchestrator);
         let (pool_id, RegisteredPoolFamily::V3) = state.registered_pool_by_address(addr)? else {
             return None;
         };
@@ -562,7 +562,7 @@ impl Bot {
         want: RegisteredPoolFamily,
     ) -> Option<u64> {
         let core = self.state_arc();
-        let state = core.read_at(LockSite::Core);
+        let state = core.read_at(LockSite::Orchestrator);
         let (pool_id, family) = state.registered_pool_by_address(addr)?;
         (family == want).then_some(pool_id)
     }
@@ -585,7 +585,7 @@ impl Bot {
     ) -> Result<Option<V4RegisteredPayload>, RegisterV4PoolError> {
         if let Some(verdict) = self
             .state_arc()
-            .read_at(LockSite::Core)
+            .read_at(LockSite::Orchestrator)
             .admission_verdict(pm, pid)
         {
             let core_err = match verdict {
@@ -598,7 +598,7 @@ impl Bot {
         }
         let Some(existing) = self
             .state_arc()
-            .read_at(LockSite::Core)
+            .read_at(LockSite::Orchestrator)
             .try_registered_v4(pm, pid)
         else {
             return Ok(None);

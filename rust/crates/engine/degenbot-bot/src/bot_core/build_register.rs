@@ -153,7 +153,7 @@ impl Bot {
         );
         let pool_id = self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_v2_pool(&params)
             .map_err(V2BuildError::Register)?;
         // Telemetry: one Jaeger node per pool construction+registration
@@ -193,7 +193,7 @@ impl Bot {
             .map_err(BuildError::Builder)?;
         Ok(self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_aerodrome_pool(&params))
     }
 
@@ -217,7 +217,7 @@ impl Bot {
             .map_err(BuildError::Builder)?;
         Ok(self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_balancer_weighted_pool(&params))
     }
 
@@ -249,7 +249,7 @@ impl Bot {
             .map_err(BuildError::Builder)?;
         Ok(self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_balancer_stable_pool(&params))
     }
 
@@ -278,7 +278,7 @@ impl Bot {
             .map_err(BuildError::Builder)?;
         Ok(self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_curve_pool(&params))
     }
 
@@ -307,13 +307,9 @@ impl Bot {
                 block,
             ))
             .map_err(BuildError::Builder)?;
-        self.state_arc().write_at(LockSite::Core).register_token(
-            address,
-            name.clone(),
-            symbol.clone(),
-            decimals,
-            chain_id,
-        );
+        self.state_arc()
+            .write_at(LockSite::Orchestrator)
+            .register_token(address, name.clone(), symbol.clone(), decimals, chain_id);
         Ok((name, symbol, decimals))
     }
 
@@ -452,7 +448,7 @@ impl Bot {
         };
         let registered = self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .register_v4_pool(&params)
             .map_err(V4BuildError::Register)?;
         // Telemetry: one Jaeger node per V4 registration (pool.manager is
@@ -505,7 +501,7 @@ impl Bot {
         };
         let result = self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .swap_simulation(0, pool_id, request);
         // cdbc03bb: surface `NotComputable` (uint256 overflow = on-chain
         // revert) as a typed error; keep unrecovered sparse-map misses mapped
@@ -545,7 +541,7 @@ impl Bot {
         };
         let read = self
             .state_arc()
-            .write_at(LockSite::Core)
+            .write_at(LockSite::Orchestrator)
             .swap_simulation(0, pool_id, request);
         match read {
             SwapRead::Computed(outcome) => Ok(match &outcome {
@@ -562,7 +558,7 @@ impl Bot {
     }
 
     /// The raw stableswap `get_dy` for a Curve pool — the read guard is
-    /// taken here (`LockSite::Core`); the math + provider resolution are
+    /// taken here (`LockSite::Orchestrator`); the math + provider resolution are
     /// `BotState::curve_get_dy`'s (their error type passes through, and the
     /// shell's `Debug`-format surface is unchanged).
     ///
@@ -577,14 +573,9 @@ impl Bot {
         block_number: u64,
         override_balances: Option<&[U256]>,
     ) -> Result<U256, super::CurveInputsError> {
-        self.state_arc().read_at(LockSite::Core).curve_get_dy(
-            pool_id,
-            i,
-            j,
-            dx,
-            block_number,
-            override_balances,
-        )
+        self.state_arc()
+            .read_at(LockSite::Orchestrator)
+            .curve_get_dy(pool_id, i, j, dx, block_number, override_balances)
     }
 
     /// Apply a V2 `Sync` event (reserves + journaling) under ONE core write
@@ -596,12 +587,9 @@ impl Bot {
         reserve1: alloy::primitives::aliases::U112,
         block_number: u64,
     ) {
-        self.state_arc().write_at(LockSite::Core).update_v2_pool(
-            address,
-            reserve0,
-            reserve1,
-            block_number,
-        );
+        self.state_arc()
+            .write_at(LockSite::Orchestrator)
+            .update_v2_pool(address, reserve0, reserve1, block_number);
     }
 
     /// Apply a V3 `Swap` event (scalars + reorg journal priors; no per-tick
@@ -615,14 +603,16 @@ impl Bot {
         tick: i32,
         block_number: u64,
     ) {
-        self.state_arc().write_at(LockSite::Core).update_v3_pool(
-            address,
-            sqrt_price_x96,
-            liquidity,
-            tick,
-            block_number,
-            vec![],
-        );
+        self.state_arc()
+            .write_at(LockSite::Orchestrator)
+            .update_v3_pool(
+                address,
+                sqrt_price_x96,
+                liquidity,
+                tick,
+                block_number,
+                vec![],
+            );
     }
 
     /// Open the construction DB half for `attach_construction_io`:
