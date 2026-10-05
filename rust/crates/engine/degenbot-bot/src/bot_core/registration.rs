@@ -1,5 +1,4 @@
-//! The registration cluster on the `Bot` facade (ergo ND7GW7 — cycle 3 of
-//! the PyBot shell deepening). Moved from the PyO3 shell
+//! The registration cluster on the `Bot` facade. Moved from the PyO3 shell
 //! (`degenbot-python/src/bot/mod.rs`): the shell keeps only arg parsing +
 //! `PyErr` mapping, while the CREATE2 verification, deployer/init-hash
 //! resolution, params assembly, registry-of-record payload shaping,
@@ -235,7 +234,7 @@ pub fn tick_rows(ticks: &hashbrown::HashMap<i32, TickInfo>) -> Vec<TickRow> {
 }
 
 impl Bot {
-    // === Registration cluster (moved from the PyO3 shell, ergo ND7GW7): ===
+    // === Registration cluster (moved from the PyO3 shell): ===
     // === the shell keeps only arg parsing + PyErr mapping; the CREATE2    ===
     // === verification, deployer/init-hash resolution, params assembly,   ===
     // === and the lock discipline live here so the standalone-Rust path   ===

@@ -10,8 +10,8 @@ pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod block_pump;
 pub mod bot;
-/// The build cluster on the `Bot` facade (moved from the PyO3 shell,
-/// ergo QPRUJN): the build-and-register entry points per family, the
+/// The build cluster on the `Bot` facade (moved from the PyO3 shell):
+/// the build-and-register entry points per family, the
 /// swap-simulation calc entries, and the construction-DB open — the shell
 /// keeps only arg parsing + `PyErr` mapping + the single-flight claim.
 pub mod build_register;
@@ -22,8 +22,8 @@ pub mod liquidity_verifier;
 pub mod pool_builder;
 pub mod pump_control;
 pub mod pump_telemetry;
-/// The registration cluster on the `Bot` facade (moved from the PyO3 shell,
-/// ergo ND7GW7): CREATE2-verified pool/token registration, registry-of-record
+/// The registration cluster on the `Bot` facade (moved from the PyO3 shell):
+/// CREATE2-verified pool/token registration, registry-of-record
 /// payload shaping, skip-label collapsing, and the tick-map assembly entry
 /// points the shell's `assemble_*` methods drive.
 pub mod registration;

@@ -140,7 +140,7 @@ fn map_mismatch(m: AddressMismatch) -> pyo3::PyErr {
 }
 
 // The V2 / V3 / Aerodrome-V2 registration-time verify wrappers retired with
-// the registration cluster's move onto the `Bot` facade (ergo ND7GW7): the
+// the registration cluster's move onto the `Bot` facade: the
 // core `register_*_pool` methods call
 // `degenbot_uniswap::deployments::verify_*_pool_address` directly and the
 // shell maps the typed `Create2` arm to the same bare `ValueError`.

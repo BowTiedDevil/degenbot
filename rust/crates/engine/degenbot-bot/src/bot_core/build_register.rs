@@ -1,5 +1,4 @@
-//! The build cluster on the `Bot` facade (ergo QPRUJN — cycle 4 of the PyBot
-//! shell deepening). Moved from the PyO3 shell
+//! The build cluster on the `Bot` facade. Moved from the PyO3 shell
 //! (`degenbot-python/src/bot/mod.rs`): the shell keeps only arg parsing +
 //! `PyErr` mapping + the single-flight claim, while the construction-io
 //! fetch, the builder run on the shared runtime, the identity shaping, the

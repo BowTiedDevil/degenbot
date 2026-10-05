@@ -521,8 +521,8 @@ impl Bot {
         self.delta.record_affected(hop, pool_id, block);
     }
 
-    // === Journal/state-read cluster (moved from the PyO3 shell, ergo
-    // === 2IIHQA): the shell keeps only arg parsing + PyErr mapping; the lock
+    // === Journal/state-read cluster (moved from the PyO3
+    // === shell): the shell keeps only arg parsing + PyErr mapping; the lock
     // === discipline and the per-family guards live here so the
     // === standalone-Rust path gets the same reads.
 
@@ -897,7 +897,7 @@ mod tests {
         );
     }
 
-    // === Journal/state-read cluster moved onto the facade (ergo 2IIHQA) ===
+    // === Journal/state-read cluster moved onto the facade ===
     // The PyO3 shell (`degenbot-python/bot/mod.rs`) keeps only arg parsing +
     // error mapping; the logic these tests pin lives on `Bot`.
 
