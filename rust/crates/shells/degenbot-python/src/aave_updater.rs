@@ -161,13 +161,22 @@ fn run_aave_update(
     // never re-enters Python.
     let report = py
         .detach(move || {
+            // The thin live-provider wrapper (ADR-068 D5): the shell builds
+            // the live transport from `rpc_url` on the shared runtime (the
+            // worker thread carries no ambient tokio context, so the
+            // block_on is legal) and the core only injects it.
+            use degenbot_core::runtime::get_runtime;
+            use degenbot_rpc::provider::AlloyProvider;
+            let provider = get_runtime()
+                .block_on(AlloyProvider::new(rpc_url, 5))
+                .map_err(RunError::from)?;
             core_run_aave_update(
                 &path,
                 chain_id,
                 market_id,
                 to_block,
                 chunk_size,
-                rpc_url,
+                provider,
                 cancel,
                 progress,
                 verify_chunk,

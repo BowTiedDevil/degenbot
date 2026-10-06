@@ -3,8 +3,9 @@
 //!
 //! The recorder wraps the live endpoint in the recording transport
 //! (`degenbot-rpc`'s `cassette` module) and drives the updaters' real fetch
-//! surface — one pool-updater `PoolCreated` chunk or one Aave market chunk —
-//! plus the ancillary `eth_chainId`/`eth_blockNumber` round trips. The
+//! surface — one pool-updater chunk (the `PoolCreated` fetch plus the
+//! whole-chain V3 liquidity scan) or one Aave market chunk — plus the
+//! ancillary `eth_chainId`/`eth_blockNumber` round trips. The
 //! cassette is flushed with the recorder's canonical writer; the same writer
 //! is what the drift gate (`--check`, and the `degenbot-rpc` corpus test)
 //! re-runs, so regeneration is byte-identical.
@@ -21,7 +22,7 @@
 //!         --example record_updater_cassette -- --kind pool --family v3 \
 //!         --factory 0x1F98431c8aD98523631AE4a59f267346ea31F984 \
 //!         --from 26102622 --to 26102626 \
-//!         --out tests/fixtures/cassettes/pool_v3_created_26102622-26102626.json
+//!         --out tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json
 //!
 //!     ... --kind aave --pool 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 \
 //!         --from 26130440 --to 26130445 --out tests/fixtures/cassettes/…
@@ -42,7 +43,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use degenbot::aave::updater::aave_fetch::fetch_pool_logs;
-use degenbot::pool_updater::fetch::{fetch_pool_created_logs, PoolFamily};
+use degenbot::pool_updater::fetch::{
+    fetch_pool_created_logs, fetch_v3_liquidity_logs_grouped, PoolFamily,
+};
 use degenbot::rpc::cassette::{
     rfc3339_utc, verify_cassette_bytes, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
@@ -301,7 +304,21 @@ async fn record(args: RecordSpec) -> Result<usize, String> {
             )
             .await
             .map_err(|e| format!("fetch_pool_created_logs: {e}"))?;
-            events.len()
+            // The chunk loop's OTHER fetch surface: the whole-chain V3
+            // Mint/Burn liquidity scan over the same span (run_pool_update
+            // issues it unconditionally per chunk). Recording it here is what
+            // makes the committed corpus cover the run's full fetch surface
+            // for an offline replay.
+            let v3_liquidity = fetch_v3_liquidity_logs_grouped(
+                &fetcher,
+                args.from_block,
+                args.to_block,
+                None, // whole-chain (the run's V3 scan is unfiltered)
+            )
+            .await
+            .map_err(|e| format!("fetch_v3_liquidity_logs_grouped: {e}"))?;
+            let liquidity_events: usize = v3_liquidity.values().map(Vec::len).sum();
+            events.len() + liquidity_events
         }
         Kind::Aave { pool } => {
             let logs = fetch_pool_logs(&fetcher, args.from_block, args.to_block, *pool)

@@ -146,8 +146,10 @@ fn pool_update_rejects_a_malformed_to_block_before_any_rpc() {
 
 #[test]
 fn pool_update_with_no_active_exchanges_is_a_noop_without_rpc() {
-    // `run_pool_update` returns before it builds the provider when no exchange
-    // is active, so this exercises the success path offline.
+    // The CLI's live-provider wrapper builds an HTTP transport WITHOUT
+    // dialing (connection-pool construction is lazy), and `run_pool_update`
+    // returns its trivial report before any fetch when no exchange is
+    // active, so this exercises the success path offline.
     let dir = TempDir::new().unwrap();
     let db = write_db(dir.path());
     let e = env_with_rpc();

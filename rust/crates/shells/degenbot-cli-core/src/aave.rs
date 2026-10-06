@@ -19,6 +19,7 @@ use degenbot_aave::{
     activate_aave_market, deactivate_aave_market, run_aave_update, NoProgress, RunError,
 };
 use degenbot_db::{ops, DbError, DegenbotDb};
+use degenbot_rpc::provider::AlloyProvider;
 
 use crate::block::{parse_to_block, resolve_to_block};
 use crate::cancel::CancelHandle;
@@ -28,6 +29,10 @@ use crate::prompt::{PromptPlan, Prompter};
 use crate::report::{
     AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome, DeactivateOutcome,
 };
+
+/// The RPC retry budget the update arm's per-run transport build uses
+/// (mirrors `crate::pool`'s budget).
+const RPC_MAX_RETRIES: u32 = 5;
 
 /// An Aave V3 deployment (the Python `aave/deployments.py` constants).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,20 +337,32 @@ fn update(
                 });
                 continue;
             }
-            match run_aave_update(
-                &database_path,
-                chain,
-                market.id,
-                resolved,
-                args.chunk_size,
-                &rpc_url,
-                cancel.flag(),
-                Arc::new(NoProgress),
-                args.verify_chunk,
-                interval,
-                args.verify_all,
-                max_chunks,
-            ) {
+            // The thin live-provider wrapper (ADR-068 D5): one build per
+            // market run on the shared runtime — the same transport count the
+            // core's old internal `AlloyProvider::new` site produced — and
+            // the core only injects it. A build failure surfaces as the same
+            // `CliError::AaveUpdate` the run's own failures use.
+            let run = match crate::pool::shared_runtime_block_on(async {
+                AlloyProvider::new(&rpc_url, RPC_MAX_RETRIES).await
+            }) {
+                Ok(Ok(provider)) => run_aave_update(
+                    &database_path,
+                    chain,
+                    market.id,
+                    resolved,
+                    args.chunk_size,
+                    provider,
+                    cancel.flag(),
+                    Arc::new(NoProgress),
+                    args.verify_chunk,
+                    interval,
+                    args.verify_all,
+                    max_chunks,
+                ),
+                Ok(Err(err)) => Err(RunError::from(err)),
+                Err(cli_err) => return Err(cli_err),
+            };
+            match run {
                 Ok(report) => {
                     entries.push(AaveUpdateEntry {
                         chain_id: chain,

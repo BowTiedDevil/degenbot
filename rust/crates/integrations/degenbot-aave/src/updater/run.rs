@@ -44,8 +44,9 @@ use crate::aave_fetch::{
 use crate::config_dispatch::ConfigDispatchError;
 use crate::transaction_processor::ProcessTxError;
 
-/// The max RPC retries for the runtime-bound `AlloyProvider` (mirrors
-/// `degenbot-pool-updater`'s `RPC_MAX_RETRIES`).
+/// The max RPC retries for the runtime-bound `AlloyProvider` the activation
+/// path still builds from its `rpc_url` (the run entries are provider-INJECTED
+/// per ADR-068 D5 and build nothing).
 const RPC_MAX_RETRIES: u32 = 5;
 
 /// The cadence for the chunk loop's operator-facing progress line. A short
@@ -241,7 +242,7 @@ pub fn run_aave_update(
     market_id: i64,
     to_block: Option<u64>,
     chunk_size: u64,
-    rpc_url: &str,
+    provider: AlloyProvider,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
     verify_chunk: bool,
@@ -274,7 +275,7 @@ pub fn run_aave_update(
         market_id,
         to_block,
         chunk_size,
-        rpc_url,
+        provider,
         cancel,
         progress,
         verify_chunk,
@@ -312,7 +313,7 @@ async fn run_aave_update_driver(
     market_id: i64,
     to_block: Option<u64>,
     chunk_size: u64,
-    rpc_url: &str,
+    provider: AlloyProvider,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
     verify_chunk: bool,
@@ -340,7 +341,8 @@ async fn run_aave_update_driver(
     // The RPC fetches + the per-tx verification ride the ONE driver future
     // (`get_runtime().block_on` at the entry fn); the DB writes stay
     // synchronous substrate ops on the calling thread.
-    let provider = AlloyProvider::new(rpc_url, RPC_MAX_RETRIES).await?;
+    // The injected provider serves the whole run (ADR-068 D5) — the core
+    // never builds a transport; the caller owns the construction.
     let provider = Arc::new(provider);
     let fetcher = LogFetcher::new(provider.clone(), chunk_size);
 

@@ -185,18 +185,31 @@ fn update(
     // requested target.
     let cursors = read_exchange_cursors(database_path.as_path(), chain).unwrap_or_default();
     let from_block = initial_run_start_block(&cursors, resolved);
-    match run_pool_update(
-        &database_path,
-        chain,
-        resolved,
-        chunk_size,
-        &rpc_url,
-        cancel.flag(),
-        Arc::new(NoProgress),
-        verify_chunk,
-        interval,
-        verify_all,
-    ) {
+    // The thin live-provider wrapper (ADR-068 D5): the CLI owns the transport
+    // construction — ONE build per run on the shared runtime, exactly where
+    // the core's old internal `AlloyProvider::new` site sat — and the core
+    // only injects it. A build failure flows through the SAME
+    // [`PoolUpdateFailure`] report as a mid-run failure (endpoint + chain +
+    // the committed resume cursors), since it IS the run's transport dying.
+    let run = match shared_runtime_block_on(async {
+        degenbot_rpc::provider::AlloyProvider::new(&rpc_url, RPC_MAX_RETRIES).await
+    }) {
+        Ok(Ok(provider)) => run_pool_update(
+            &database_path,
+            chain,
+            resolved,
+            chunk_size,
+            provider,
+            cancel.flag(),
+            Arc::new(NoProgress),
+            verify_chunk,
+            interval,
+            verify_all,
+        ),
+        Ok(Err(err)) => Err(RunError::from(err)),
+        Err(cli_err) => return Err(cli_err),
+    };
+    match run {
         Ok(report) => Ok(PoolReport::Updated {
             chain_id: report.chain_id,
             from_block: report.from_block,
@@ -355,7 +368,7 @@ fn verify(
 /// # Errors
 ///
 /// [`CliError::RuntimeNested`] when called from inside an existing runtime.
-fn shared_runtime_block_on<F: Future>(fut: F) -> Result<F::Output, CliError> {
+pub(crate) fn shared_runtime_block_on<F: Future>(fut: F) -> Result<F::Output, CliError> {
     if tokio::runtime::Handle::try_current().is_ok() {
         return Err(CliError::RuntimeNested);
     }
