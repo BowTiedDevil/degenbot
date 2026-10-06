@@ -62,6 +62,7 @@ from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.utils.bytes import to_bytes
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
+from tests.helpers.balancer_queries_abi import BALANCERQUERIES_ABI
 from tests.helpers.contract_compat import ContractCompat
 from tests.helpers.erc20_factory import make_erc20
 
@@ -93,42 +94,6 @@ _AMOUNT_MULTIPLIERS = (
 )
 _SWAP_KIND_GIVEN_IN = 0
 _SWAP_KIND_GIVEN_OUT = 1
-
-# Minimal ABI for the deferred on-chain oracle call (record mode only).
-_BALANCERQUERIES_ABI: list[dict[str, Any]] = [
-    {
-        "inputs": [
-            {
-                "components": [
-                    {"name": "poolId", "type": "bytes32"},
-                    {"name": "kind", "type": "uint8"},
-                    {"name": "assetIn", "type": "address"},
-                    {"name": "assetOut", "type": "address"},
-                    {"name": "amount", "type": "uint256"},
-                    {"name": "userData", "type": "bytes"},
-                ],
-                "internalType": "struct IVault.SingleSwap",
-                "name": "singleSwap",
-                "type": "tuple",
-            },
-            {
-                "components": [
-                    {"name": "sender", "type": "address"},
-                    {"name": "fromInternalBalance", "type": "bool"},
-                    {"name": "recipient", "type": "address"},
-                    {"name": "toInternalBalance", "type": "bool"},
-                ],
-                "internalType": "struct IVault.FundManagement",
-                "name": "funds",
-                "type": "tuple",
-            },
-        ],
-        "name": "querySwap",
-        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-        "stateMutability": "nonpayable",
-        "type": "function",
-    },
-]
 
 
 class _CapturedRateProvider:
@@ -242,7 +207,7 @@ def _query_swap_callable(
         assert fork.fork is not None
         query_contract = ContractCompat(
             BALANCERQUERIES_CONTRACT_ADDRESS,
-            _BALANCERQUERIES_ABI,
+            BALANCERQUERIES_ABI,
             fork.fork.provider,
         )
         return query_contract.functions.querySwap(

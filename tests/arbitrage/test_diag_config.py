@@ -15,12 +15,12 @@ import pytest
 
 from degenbot.runner.diag import DiagConfig, arm_diagnostics
 from tests.helpers import verdict_probe as probe
+from tests.helpers.rpc_env import rpc_env
 
 
 @pytest.fixture(autouse=True)
 def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "https://eth.example.com")
-    monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "wss://ws.eth.example.com")
+    rpc_env(monkeypatch)
 
 
 def _full_env() -> dict[str, str]:

@@ -29,6 +29,7 @@ from degenbot.dispatch import (
 )
 from degenbot.runner._dispatch import MergedOutcome
 from degenbot.runner._sim_submit import BatchWork
+from tests.helpers.sim_records import inline_sim_payload
 
 # Canonical mainnet addresses (the seam-suite constants).
 OWNER = "0x9c56a29c7231974c269e24f9fb3c29203039089e"
@@ -71,23 +72,6 @@ def _executor(
     )
 
 
-def _payload(pid: int, *, net: int = 500_000_000_000) -> dict[str, Any]:
-    """One inline-sim payload row (the engine's result-channel field set)."""
-    return {
-        "path_id": pid,
-        "gross_profit": 600_000_000_000,
-        "net_profit": net,
-        "gas_used": 300_000,
-        "priority_fee": 2,
-        "base_fee_next": 30,
-        "execute_calldata": b"\xab\x58\x98\xe8\x01",
-        "access_list": None,
-        "captured_swaps": [],
-        "hop_count": 2,
-        "failure": None,
-    }
-
-
 class TestConstruction:
     """The construction boundary: policy values in, executor out."""
 
@@ -112,7 +96,7 @@ class TestPayloadResolveMiss:
                     block_timestamp=1_700_000_000,
                     base_fee_next=30,
                     current_block=100,
-                    payloads={999: _payload(999)},
+                    payloads={999: inline_sim_payload(999)},
                 )
             )
 
@@ -129,7 +113,7 @@ class TestEnqueueDrainFold:
                 block_timestamp=1_700_000_000,
                 base_fee_next=30,
                 current_block=100,
-                payloads={path_id: _payload(path_id)},
+                payloads={path_id: inline_sim_payload(path_id)},
             )
         )
         await executor.shutdown()

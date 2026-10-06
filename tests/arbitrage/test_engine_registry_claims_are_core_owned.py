@@ -42,19 +42,26 @@ class _CountingFakeEngine:
     state that no longer exists, and the reason this count is N and not 1.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, lifecycle_gate: asyncio.Barrier | None = None) -> None:
         self.v3_lifecycle_calls = 0
         self.v4_lifecycle_calls = 0
+        # When set, every lifecycle entry waits for all workers to arrive
+        # before returning: the overlap is arranged, not scheduled.
+        self._lifecycle_gate = lifecycle_gate
 
     async def run_v3_registration_lifecycle(self, address: str, snapshot_block: object) -> None:
         self.v3_lifecycle_calls += 1
-        await asyncio.sleep(0.005)
+        await self._hold_for_overlap()
 
     async def run_v4_registration_lifecycle(
         self, address: str, pool_id_hex: str, snapshot_block: object
     ) -> None:
         self.v4_lifecycle_calls += 1
-        await asyncio.sleep(0.005)
+        await self._hold_for_overlap()
+
+    async def _hold_for_overlap(self) -> None:
+        if self._lifecycle_gate is not None:
+            await self._lifecycle_gate.wait()
 
 
 @dataclass
@@ -120,11 +127,16 @@ async def test_concurrent_v3_registrations_dispatch_one_core_lifecycle_each() ->
     per registration. A Python-side table would have collapsed these N entries
     into one call here, which is precisely the state this migration removed.
     """
-    engine = _CountingFakeEngine()
+    engine = _CountingFakeEngine(lifecycle_gate=asyncio.Barrier(N_WORKERS))
     registry = EngineRegistry(engine=engine)  # type: ignore[arg-type]
     pool = _fake_v3_pool(V3_POOL_ID)
 
-    results = await asyncio.gather(*(registry.register_v3_pool(pool) for _ in range(N_WORKERS)))
+    # Deadlock guard only — the gate arranges the overlap; this converts a
+    # worker that never arrives into a failure instead of a hang.
+    results = await asyncio.wait_for(
+        asyncio.gather(*(registry.register_v3_pool(pool) for _ in range(N_WORKERS))),
+        timeout=10.0,
+    )
 
     assert engine.v3_lifecycle_calls == N_WORKERS, (
         "each registration enters the core claim; the core decides at-most-once"
@@ -136,11 +148,16 @@ async def test_concurrent_v3_registrations_dispatch_one_core_lifecycle_each() ->
 
 async def test_concurrent_v4_registrations_dispatch_one_core_lifecycle_each() -> None:
     """The V4 twin, keyed by the (PoolManager, pool_id) pair in the core."""
-    engine = _CountingFakeEngine()
+    engine = _CountingFakeEngine(lifecycle_gate=asyncio.Barrier(N_WORKERS))
     registry = EngineRegistry(engine=engine)  # type: ignore[arg-type]
     pool = _fake_v4_pool(V4_POOL_ID)
 
-    results = await asyncio.gather(*(registry.register_v4_pool(pool) for _ in range(N_WORKERS)))
+    # Deadlock guard only — the gate arranges the overlap; this converts a
+    # worker that never arrives into a failure instead of a hang.
+    results = await asyncio.wait_for(
+        asyncio.gather(*(registry.register_v4_pool(pool) for _ in range(N_WORKERS))),
+        timeout=10.0,
+    )
 
     assert engine.v4_lifecycle_calls == N_WORKERS
     assert set(results) == {V4_POOL_ID}

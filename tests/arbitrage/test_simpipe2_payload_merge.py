@@ -35,6 +35,7 @@ from degenbot._ffi import ArbitrageEngine, Bot
 from degenbot._ffi.simulation import merge_payload_results_py
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.sim_records import inline_sim_payload
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v4_pool_factory import make_v4_pool
 
@@ -45,22 +46,6 @@ V4_POOL_MANAGER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 V4_POOL_ID = "0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7"
 V2_POOL_A = "0x1100000000000000000000000000000000000000"
 V2_POOL_B = "0x1200000000000000000000000000000000000000"
-
-
-def _payload(pid: int, *, net: int = 500_000_000_000, failure: dict | None = None) -> dict:
-    return {
-        "path_id": pid,
-        "gross_profit": 600_000_000_000,
-        "net_profit": net,
-        "gas_used": 300_000,
-        "priority_fee": 2,
-        "base_fee_next": 30,
-        "execute_calldata": b"\xab\x58\x98\xe8\x01",
-        "access_list": None,
-        "captured_swaps": [],
-        "hop_count": 2,
-        "failure": failure,
-    }
 
 
 def _pool_key(hop: dict[str, Any]) -> str:
@@ -161,10 +146,12 @@ class TestPayloadSeamArms:
         engine, v2_pid, v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
         out = merge_payload_results_py(
             [
-                _payload(v2_pid),
-                _payload(v4v2_pid),
-                _payload(v2_pid, net=0),
-                _payload(v2_pid, failure={"fail_index": 1, "revert_data": "", "bucket": None}),
+                inline_sim_payload(v2_pid),
+                inline_sim_payload(v4v2_pid),
+                inline_sim_payload(v2_pid, net=0),
+                inline_sim_payload(
+                    v2_pid, failure={"fail_index": 1, "revert_data": "", "bucket": None}
+                ),
             ],
             engine,
             EXECUTOR,
@@ -196,7 +183,7 @@ class TestPayloadSeamArms:
         """
         engine, v2_pid, _v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
         out = merge_payload_results_py(
-            [_payload(v2_pid, net=1), _payload(v2_pid, net=0)],
+            [inline_sim_payload(v2_pid, net=1), inline_sim_payload(v2_pid, net=0)],
             engine,
             EXECUTOR,
         )
@@ -217,7 +204,11 @@ class TestPathPoolsParityAcrossEntryArms:
 
     def test_payload_rows_carry_typed_hop_pool_keys(self, mixed_engine_and_paths) -> None:
         engine, v2_pid, v4v2_pid, v2_pools, v4v2_pools = mixed_engine_and_paths
-        out = merge_payload_results_py([_payload(v2_pid), _payload(v4v2_pid)], engine, EXECUTOR)
+        out = merge_payload_results_py(
+            [inline_sim_payload(v2_pid), inline_sim_payload(v4v2_pid)],
+            engine,
+            EXECUTOR,
+        )
         by_pid = {c.path_id: c for c in out.candidates}
         # The V2 path: checksummed-address keys (checksummed V2 addresses).
         assert by_pid[v2_pid].path_pools == v2_pools
@@ -234,7 +225,7 @@ class TestPathPoolsParityAcrossEntryArms:
         payload arm's submit-row path_pools must be byte-identical for the
         same path id — one typed-hop source, one derive walk."""
         engine, _v2_pid, v4v2_pid, _v2_pools, v4v2_pools = mixed_engine_and_paths
-        out = merge_payload_results_py([_payload(v4v2_pid)], engine, EXECUTOR)
+        out = merge_payload_results_py([inline_sim_payload(v4v2_pid)], engine, EXECUTOR)
         join_map_hops = engine.payload_path_info(v4v2_pid)
         assert join_map_hops is not None
         row = next(c for c in out.candidates if c.path_id == v4v2_pid)
@@ -249,7 +240,11 @@ class TestPathPoolsParityAcrossEntryArms:
         from degenbot._ffi.submission import Dispatcher
 
         engine, v2_pid, v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
-        out = merge_payload_results_py([_payload(v2_pid), _payload(v4v2_pid)], engine, EXECUTOR)
+        out = merge_payload_results_py(
+            [inline_sim_payload(v2_pid), inline_sim_payload(v4v2_pid)],
+            engine,
+            EXECUTOR,
+        )
         dispatcher = Dispatcher.for_block(100)
         rows_by_pid = {c.path_id: c for c in out.candidates}
         v2_pools = rows_by_pid[v2_pid].path_pools

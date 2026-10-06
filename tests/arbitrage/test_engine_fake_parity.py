@@ -27,6 +27,7 @@ from tests.fakes.engine import (
     FakeEngine,
 )
 from tests.helpers.identity_env import identity_env
+from tests.helpers.rpc_env import rpc_env
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STUB = _REPO_ROOT / "src/degenbot/_ffi/__init__.pyi"
@@ -34,8 +35,7 @@ _STUB = _REPO_ROOT / "src/degenbot/_ffi/__init__.pyi"
 
 @pytest.fixture(autouse=True)
 def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "http://localhost:8545")
-    monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "ws://localhost:8546")
+    rpc_env(monkeypatch)
 
 
 def _cfg() -> ArbitrageConfig:

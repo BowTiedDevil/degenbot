@@ -26,12 +26,12 @@ from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
 from tests.helpers.boot_actors import inline_registration_scheduler
 from tests.helpers.identity_env import identity_env
+from tests.helpers.rpc_env import rpc_env
 
 
 @pytest.fixture(autouse=True)
 def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "http://localhost:8545")
-    monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "ws://localhost:8546")
+    rpc_env(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

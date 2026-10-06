@@ -48,6 +48,7 @@ from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.swap_amount_multipliers import UNISWAP_TOKEN_AMOUNT_MULTIPLIERS
 
 WBTC_WETH_V3_POOL_ADDRESS = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -77,18 +78,6 @@ UNISWAP_V3_QUOTER_ABI = pydantic_core.from_json(
     [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountOut","type":"uint256"}],"name":"quoteExactOutput","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactOutputSingle","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"int256","name":"amount0Delta","type":"int256"},{"internalType":"int256","name":"amount1Delta","type":"int256"},{"internalType":"bytes","name":"path","type":"bytes"}],"name":"uniswapV3SwapCallback","outputs":[],"stateMutability":"view","type":"function"}]
     """,
 )
-
-TOKEN_AMOUNT_MULTIPLIERS = [
-    0.000000001,
-    0.00000001,
-    0.0000001,
-    0.000001,
-    0.00001,
-    0.0001,
-    0.001,
-    0.01,
-    0.1,
-]
 
 
 _V3_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v3/wbtc_weth/17600000.json")
@@ -170,7 +159,7 @@ def test_first_200_pools(
         max_reserves_token0 = 1 * 10**lp.token0.decimals
         max_reserves_token1 = 1 * 10**lp.token1.decimals
 
-        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+        for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = max(1, int(token_mult * max_reserves_token0))
 
             try:
@@ -197,7 +186,7 @@ def test_first_200_pools(
 
             assert helper_amount_out == quoter_amount_out
 
-        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+        for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = max(1, int(token_mult * max_reserves_token1))
 
             try:
@@ -259,7 +248,7 @@ def test_first_200_pools_with_snapshot(
         max_reserves_token0 = 1 * 10**lp.token0.decimals
         max_reserves_token1 = 1 * 10**lp.token1.decimals
 
-        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+        for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = max(1, int(token_mult * max_reserves_token0))
 
             try:
@@ -286,7 +275,7 @@ def test_first_200_pools_with_snapshot(
 
             assert helper_amount_out == quoter_amount_out
 
-        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+        for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = max(1, int(token_mult * max_reserves_token1))
 
             try:

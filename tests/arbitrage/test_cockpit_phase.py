@@ -22,15 +22,14 @@ from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors, PhaseError
 from degenbot.runner.config import ArbitrageConfig
 from tests.helpers.identity_env import identity_env
+from tests.helpers.rpc_env import rpc_env
 from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
 
 @pytest.fixture(autouse=True)
 def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Chain-1 RPC envvars must be present for ``ArbitrageConfig.build`` (never connected)."""
-    monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "http://localhost:8545")
-    monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "ws://localhost:8546")
+    rpc_env(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

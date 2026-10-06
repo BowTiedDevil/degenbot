@@ -23,6 +23,7 @@ from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import ContractCompat, make_contract
+from tests.helpers.swap_amount_multipliers import UNISWAP_TOKEN_AMOUNT_MULTIPLIERS
 
 if TYPE_CHECKING:
     from degenbot.types.chain import HexStr
@@ -42,18 +43,6 @@ UNISWAP_V4_QUOTER_ADDRESS = get_checksum_address("0x52F0E24D1c21C8A0cB1e5a5dD619
 UNISWAP_V4_QUOTER_ABI = """
 [{"inputs":[{"internalType":"contract IPoolManager","name":"_poolManager","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[{"internalType":"PoolId","name":"poolId","type":"bytes32"}],"name":"NotEnoughLiquidity","type":"error"},{"inputs":[],"name":"NotPoolManager","type":"error"},{"inputs":[],"name":"NotSelf","type":"error"},{"inputs":[{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"QuoteSwap","type":"error"},{"inputs":[],"name":"UnexpectedCallSuccess","type":"error"},{"inputs":[{"internalType":"bytes","name":"revertData","type":"bytes"}],"name":"UnexpectedRevertBytes","type":"error"},{"inputs":[{"components":[{"internalType":"Currency","name":"exactCurrency","type":"address"},{"components":[{"internalType":"Currency","name":"intermediateCurrency","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct PathKey[]","name":"path","type":"tuple[]"},{"internalType":"uint128","name":"exactAmount","type":"uint128"}],"internalType":"struct IV4Quoter.QuoteExactParams","name":"params","type":"tuple"}],"name":"_quoteExactInput","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"Currency","name":"currency0","type":"address"},{"internalType":"Currency","name":"currency1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"}],"internalType":"struct PoolKey","name":"poolKey","type":"tuple"},{"internalType":"bool","name":"zeroForOne","type":"bool"},{"internalType":"uint128","name":"exactAmount","type":"uint128"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct IV4Quoter.QuoteExactSingleParams","name":"params","type":"tuple"}],"name":"_quoteExactInputSingle","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"internalType":"Currency","name":"exactCurrency","type":"address"},{"components":[{"internalType":"Currency","name":"intermediateCurrency","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct PathKey[]","name":"path","type":"tuple[]"},{"internalType":"uint128","name":"exactAmount","type":"uint128"}],"internalType":"struct IV4Quoter.QuoteExactParams","name":"params","type":"tuple"}],"name":"_quoteExactOutput","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"Currency","name":"currency0","type":"address"},{"internalType":"Currency","name":"currency1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"}],"internalType":"struct PoolKey","name":"poolKey","type":"tuple"},{"internalType":"bool","name":"zeroForOne","type":"bool"},{"internalType":"uint128","name":"exactAmount","type":"uint128"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct IV4Quoter.QuoteExactSingleParams","name":"params","type":"tuple"}],"name":"_quoteExactOutputSingle","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"poolManager","outputs":[{"internalType":"contract IPoolManager","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"components":[{"internalType":"Currency","name":"exactCurrency","type":"address"},{"components":[{"internalType":"Currency","name":"intermediateCurrency","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct PathKey[]","name":"path","type":"tuple[]"},{"internalType":"uint128","name":"exactAmount","type":"uint128"}],"internalType":"struct IV4Quoter.QuoteExactParams","name":"params","type":"tuple"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"Currency","name":"currency0","type":"address"},{"internalType":"Currency","name":"currency1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"}],"internalType":"struct PoolKey","name":"poolKey","type":"tuple"},{"internalType":"bool","name":"zeroForOne","type":"bool"},{"internalType":"uint128","name":"exactAmount","type":"uint128"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct IV4Quoter.QuoteExactSingleParams","name":"params","type":"tuple"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"internalType":"Currency","name":"exactCurrency","type":"address"},{"components":[{"internalType":"Currency","name":"intermediateCurrency","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct PathKey[]","name":"path","type":"tuple[]"},{"internalType":"uint128","name":"exactAmount","type":"uint128"}],"internalType":"struct IV4Quoter.QuoteExactParams","name":"params","type":"tuple"}],"name":"quoteExactOutput","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"Currency","name":"currency0","type":"address"},{"internalType":"Currency","name":"currency1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"}],"internalType":"struct PoolKey","name":"poolKey","type":"tuple"},{"internalType":"bool","name":"zeroForOne","type":"bool"},{"internalType":"uint128","name":"exactAmount","type":"uint128"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct IV4Quoter.QuoteExactSingleParams","name":"params","type":"tuple"}],"name":"quoteExactOutputSingle","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"data","type":"bytes"}],"name":"unlockCallback","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"}]
 """  # ruff: ignore[line-too-long]
-
-TOKEN_AMOUNT_MULTIPLIERS = [
-    0.000000001,
-    0.00000001,
-    0.0000001,
-    0.000001,
-    0.00001,
-    0.0001,
-    0.001,
-    0.01,
-    0.1,
-]
 
 SNAPSHOT_BLOCK = 21883665
 
@@ -134,7 +123,7 @@ def _test_pool_exact_input(
     if max_reserves_token0 == 0 or max_reserves_token1 == 0:
         return
 
-    for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+    for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
         token0_in_amount = max(1, int(token_mult * max_reserves_token0))
 
         try:
@@ -171,7 +160,7 @@ def _test_pool_exact_input(
             f"Failed calc with {token_mult}x mult, token0 in, {lp.pool_id=} {lp.pool_key.hooks=}"
         )
 
-    for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+    for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
         token1_in_amount = max(1, int(token_mult * max_reserves_token1))
 
         try:
@@ -254,7 +243,7 @@ def _test_pool_exact_output(
     if max_reserves_token0 == 0 or max_reserves_token1 == 0:
         return
 
-    for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+    for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
         token0_out_amount = int(token_mult * max_reserves_token0)
 
         try:
@@ -291,7 +280,7 @@ def _test_pool_exact_output(
             f"Failed calc with {token_mult}x mult, token0 out, {lp.pool_id=} {lp.pool_key.hooks=}"
         )
 
-    for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+    for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
         token1_out_amount = int(token_mult * max_reserves_token1)
 
         try:

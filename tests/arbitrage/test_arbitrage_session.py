@@ -19,7 +19,6 @@ import asyncio
 import contextlib
 import logging
 import signal
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -1453,23 +1452,11 @@ class _ScriptedReceipt:
         return True
 
 
-_POOL_ID_LOCK = threading.Lock()
-_POOL_IDS: dict[str, int] = {}
-
-
 @dataclass(frozen=True)
 class _PoolHandle:
     """The Rust pool-handle slice the engine reads: the pool id."""
 
     pool_id: int
-
-
-def _pool_id_for(address: str) -> int:
-    """Deterministic fake pool ids keyed by address (the dedup key)."""
-    with _POOL_ID_LOCK:
-        if address not in _POOL_IDS:
-            _POOL_IDS[address] = len(_POOL_IDS) + 1
-        return _POOL_IDS[address]
 
 
 class TestPathRegistrationPipeline:
@@ -1498,6 +1485,8 @@ class TestPathRegistrationPipeline:
             self.chain_id = 1
             self.database_path = Path("unused.db")
             self.receipts: list[object] = []
+            # Per-bot fake pool ids, keyed by address (the dedup key).
+            self._pool_ids: dict[str, int] = {}
 
         # PRG-5: the pipeline constructs ONLY over the fleet intake.
         def registration_fleet_hosted(self) -> bool:
@@ -1512,8 +1501,14 @@ class TestPathRegistrationPipeline:
             pool = TestPathRegistrationPipeline._FakePool(address)
             # Deterministic per-address engine key: the engine dedup keys on
             # the hop signature, so a repeat path must resolve the SAME id.
-            pool._py_pool = _PoolHandle(pool_id=_pool_id_for(address))
+            pool._py_pool = _PoolHandle(pool_id=self._pool_id_for(address))
             return pool
+
+        def _pool_id_for(self, address: str) -> int:
+            """Deterministic fake pool ids keyed by address (the dedup key)."""
+            if address not in self._pool_ids:
+                self._pool_ids[address] = len(self._pool_ids) + 1
+            return self._pool_ids[address]
 
     class _FakeReg:
         def __init__(self) -> None:
@@ -1600,6 +1595,16 @@ class TestPathRegistrationPipeline:
         assert pipeline.path_count == 1
         assert reg.register_path_calls == 1
         assert pipeline.dup_count == 1
+
+    def test_pool_ids_resolve_identically_per_fresh_bot(self) -> None:
+        """Ids are owned per bot instance: two fresh bots resolve the same
+        address sequence to the same ids, whatever ran before them."""
+        addresses = ["0x" + "b" * 40, "0x" + "c" * 40, "0x" + "b" * 40]
+        first_bot = self._FakeCtxBot()
+        second_bot = self._FakeCtxBot()
+        first = [first_bot._pool_id_for(a) for a in addresses]
+        second = [second_bot._pool_id_for(a) for a in addresses]
+        assert first == second == [1, 2, 1]
 
     async def test_trigger_discovery_bounded_feeds_shared_consume(self) -> None:
         pipeline, _reg, _t_base = self._make_pipeline()
@@ -1960,10 +1965,13 @@ class TestPumpFinishedWatchdog:
         assert consumer_exited.is_set(), "panicked pump must cancel the consumer"
         assert cancel_count == 1, "the consumer is cancelled exactly once"
 
-    async def test_watchdog_parks_on_injected_engine_future(self) -> None:
-        # Injected engines satisfy the real awaitable contract: a future that
-        # never resolves. The watchdog stays parked (does not trip) while the
-        # consumer is alive — the pre-finish consumer shape.
+    async def test_watchdog_parks_while_pump_is_live_and_resolves_at_pump_finish(self) -> None:
+        # Injected engines satisfy the real awaitable contract: a completion
+        # future the fake pump owns as a gate. The test drives both sides of
+        # the ordering: parked while the gate is closed, resolved once it
+        # opens — turn boundaries, not a wall-clock window.
+        fake_engine = _FakeEngine()
+
         async def hanging_consumer(**kwargs):
             await asyncio.Event().wait()
 
@@ -1972,7 +1980,7 @@ class TestPumpFinishedWatchdog:
             actors=InjectedActors(
                 settlement_arm=True,
                 bot=_FakeBot(),
-                engine_registry=_FakeEngineRegistry(),
+                engine_registry=_FakeEngineRegistry(engine=fake_engine),
                 async_w3=_FakeAsyncW3(),
                 snapshots=(None, None, None, None),
                 path_builder=lambda **_kw: _noop_coro(),
@@ -1985,9 +1993,22 @@ class TestPumpFinishedWatchdog:
         async with session:
             watchdog = asyncio.create_task(session._pump_finished_watchdog())
             try:
-                _done, pending = await asyncio.wait({watchdog}, timeout=0.1)
-                assert watchdog in pending, "a fake live pump must park the watchdog"
-                assert not watchdog.done()
+                # Gate closed (pump live): the completion surface cannot
+                # resolve. Two yields let the watchdog reach its session-end
+                # await; the parked assertion is then ordering, not a duration.
+                await asyncio.sleep(0)  # yield: start the watchdog task
+                await asyncio.sleep(0)  # yield: reach the session-end await
+                assert not watchdog.done(), "a live pump must park the watchdog"
+
+                # The pump finishes: the gate opens, so the watchdog's
+                # completion future resolves and the watchdog with it.
+                fake_engine.finish_pump()
+
+                # Deadlock guard only — not an ordering assertion.
+                done, _pending = await asyncio.wait({watchdog}, timeout=5.0)
+                assert watchdog in done, (
+                    "the watchdog must resolve when the pump-finish gate opens"
+                )
             finally:
                 watchdog.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

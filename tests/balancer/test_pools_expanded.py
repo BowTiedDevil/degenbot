@@ -31,6 +31,7 @@ from degenbot.utils.bytes import to_bytes
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import make_contract
+from tests.helpers.swap_amount_multipliers import BALANCER_TOKEN_AMOUNT_MULTIPLIERS
 
 pytestmark = pytest.mark.online_rpc
 
@@ -125,20 +126,6 @@ class SwapKind(enum.IntEnum):
     GIVEN_OUT = 1
 
 
-# Amount multipliers as fractions of the pool's token reserves.
-TOKEN_AMOUNT_MULTIPLIERS = [
-    0.0000001,
-    0.000001,
-    0.00001,
-    0.0001,
-    0.001,
-    0.01,
-    0.1,
-    0.125,
-    0.25,
-]
-
-
 # ---------- Helpers ----------
 
 
@@ -214,7 +201,7 @@ def _run_given_in_swaps(
     for token_in_idx, token_out_idx in swap_directions:
         max_reserve = lp.balances[token_in_idx]
 
-        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+        for token_mult in BALANCER_TOKEN_AMOUNT_MULTIPLIERS:
             token_in_amount = int(token_mult * max_reserve)
             if token_in_amount == 0:
                 continue
@@ -296,7 +283,7 @@ def _run_given_out_swaps(
     for token_in_idx, token_out_idx in swap_directions:
         max_reserve = lp.balances[token_out_idx]
 
-        for token_mult in TOKEN_AMOUNT_MULTIPLIERS:
+        for token_mult in BALANCER_TOKEN_AMOUNT_MULTIPLIERS:
             token_out_amount = int(token_mult * max_reserve)
             if token_out_amount == 0:
                 continue

@@ -18,12 +18,12 @@ from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness
 from tests.helpers.boot_actors import FakeBootReadiness, boot_runner, noop_coro
 from tests.helpers.identity_env import identity_env
+from tests.helpers.rpc_env import rpc_env
 
 
 @pytest.fixture(autouse=True)
 def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "http://localhost:8545")
-    monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "ws://localhost:8546")
+    rpc_env(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

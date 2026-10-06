@@ -72,6 +72,24 @@ Dispositions: `leave` (safe or already mitigated; reason recorded), `gate`
 | `degenbot-uniswap` `deployments.rs` `TABLE`; `degenbot-python` `dex_identity` `PRESETS`, `conversion/rpc_types.rs` field sets, `diagnostics/thread_registry.rs`/`gil_probe.rs` | read-only tables / thread-scoped diagnostics | safe-serialized | **leave** — `LazyLock`-initialized read-only data; diagnostics are thread-scoped or monotone. |
 | `degenbot-config` `holder.rs` `CFG`/`DEFAULT` `OnceLock`s | init-once typed config | host-shape-coupled (config source) | **leave** — no test installs a config (verified across `degenbot-config/tests`); config enters tests as values, not via the holder. `cpu_budget` reads it once (cached) — see the core rows above. |
 
+## Python test suite (`tests/**`)
+
+The Python side of the same class. Method: an AST sweep over every
+module-level assignment in `tests/**/*.py` whose value is a mutable literal
+or constructor (`dict`/`list`/`set` literals and comprehensions,
+`dict()`/`list()`/`set()`, `threading.Lock` kin) — 77 sites at sweep time —
+followed by a whole-module walk of each site for runtime mutation (mutating
+method calls, subscript assignment, augmented assignment). Env writes are
+swept separately (`os.environ` outside `monkeypatch`), as is host-shape
+reach (`sched_getaffinity`, cgroup reads, `cpu_count`).
+
+| Site | Kind | Classification | Disposition |
+|---|---|---|---|
+| `tests/arbitrage/test_arbitrage_session.py` `_POOL_ID_LOCK`/`_POOL_IDS` — module-level id cache mutated by `_pool_id_for`, never reset | cross-test shared dict (pool ids depended on test execution order under pytest-randomly/xdist) | racy-by-parallelism | **inject — fixed (arb-session determinism pass)**: the cache moved into the `_FakeCtxBot` double that needs it; ids are per-bot-instance and `test_pool_ids_resolve_identically_per_fresh_bot` pins order-independence. The re-sweep reports zero runtime-mutated module-level mutable assignments in `tests/**`. |
+| the remaining module-level `dict`/`list`/`set`/comprehension sites — 76 at sweep time, 72 after the pass consolidated the constant tables into `tests/helpers/` — constant fixture tables: ABI fragments, golden address tables, expected-vector matrices, `__all__` exports | import-time constants, read-only by usage (the mutation walk finds zero writers) | safe-serialized | **leave** — each module is re-imported per xdist worker and no site is written after import, so no test can observe another test's window. A future runtime-mutated site should fail this sweep; the row above is the worked example of the fix shape. |
+| env writes in `tests/**` | process env | safe-serialized | **leave** — all writes ride `monkeypatch` (auto-undone; `tests/helpers/rpc_env.py` is the one canonical chain-1 RPC env installer behind the six autouse fixtures), or live inside child-subprocess script templates (`_CHILD`/`_FLEET_DRIVER`/`_LEGACY_CHILD`/`_BASE_LEVEL_PROBE` in `test_runtime_status`/`test_registration_intake_station`/`test_boot_refusal`/`test_env_read_timing`), where the child controls its own env by construction — the documented pass/skip-wobble hermeticity fix. No parent-level bare `os.environ` write exists. |
+| host-shape reach: `os.sched_getaffinity`/cgroup mirrors in `test_registration_intake_station.py`/`test_runtime_status.py`; `os.sched_setaffinity(0, {0})` in `test_boot_refusal.py` | host-derived sizing / simulated small host | host-shape-coupled | **property** — the affinity/quota reads are parent-side *prediction* mirrors (`_fractional_quota_cpus`) that adapt the test's own expectation (xfail gating) and never assert an absolute host count; the child subprocess stays the sizing authority. `test_boot_refusal` simulates the small host inside the child; the parent's affinity is untouched. No Python test asserts a `cpu_count()`-derived value. |
+
 ## Systemic guards already in place
 
 - `degenbot-config/tests/no_stray_env_reads.rs` — inventoried env-read sweep.

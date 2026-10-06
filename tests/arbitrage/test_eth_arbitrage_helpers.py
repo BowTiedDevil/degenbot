@@ -14,32 +14,7 @@ classifier infra).
 import json
 
 from degenbot.runner._render import SimDiagWindow, format_sim_diag_line
-
-
-def _failure(**overrides: object) -> dict[str, object]:
-    """A minimal failure-record dict (the shape outcome.failures() emits)."""
-    base: dict[str, object] = {
-        "path_id": 7,
-        "bucket": "unknown:0xcafebabe",
-        "fail_index": 3,
-        "revert_data": "0xcafebabe",
-        "reverting_frame": None,
-        "captured_swaps": [
-            {
-                "family": "v2",
-                "emitter": "0x" + "aa" * 20,
-                "amount0": -1000,
-                "amount1": 3000,
-                "sqrt_price_x96": 0,
-                "liquidity": 0,
-                "tick": 0,
-            }
-        ],
-        "optimal_input": 1000,
-        "hop_outputs": [3000],
-    }
-    base.update(overrides)
-    return base
+from tests.helpers.sim_records import failure_record
 
 
 def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> None:
@@ -51,7 +26,7 @@ def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> Non
     i-th captured swap's output amount.
     """
     line = format_sim_diag_line(
-        _failure(),
+        failure_record(),
         path_id=7,
         path_type="V2-V3-V4",
         window=SimDiagWindow(solve_block=100, block=103, age=3),
@@ -95,7 +70,7 @@ def test_format_sim_diag_line_omits_retired_recompute_fields() -> None:
     the diagnostic.rs onchain-recompute half). Only captured_swaps +
     hop_outputs + optimal_input + revert_info remain."""
     line = format_sim_diag_line(
-        _failure(),
+        failure_record(),
         path_id=1,
         path_type="V2-V3",
         window=SimDiagWindow(solve_block=1, block=1, age=0),

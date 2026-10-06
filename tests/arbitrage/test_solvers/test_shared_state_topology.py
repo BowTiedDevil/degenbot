@@ -896,6 +896,8 @@ class TestSharedStateTopologyConcurrency:
 
         thread = threading.Thread(target=writer)
         thread.start()
+        # Deadlock guard only — the postcondition assertions below are the
+        # real check.
         thread.join(timeout=30.0)
         assert not thread.is_alive(), (
             "writer thread deadlocked (engine-then-core lock ordering broken)"
@@ -968,10 +970,12 @@ class TestSharedStateTopologyConcurrency:
         writer_thread.start()
         for t in readers:
             t.start()
+        # Deadlock guard only — the error assertions below are the real check.
         writer_thread.join(timeout=30.0)
         assert not writer_thread.is_alive(), "writer deadlocked"
         stop.set()
         for t in readers:
+            # Deadlock guard only.
             t.join(timeout=10.0)
             assert not t.is_alive(), "reader deadlocked"
         assert not errors, errors
@@ -1019,10 +1023,12 @@ class TestSharedStateTopologyConcurrency:
         solver_thread.start()
         for t in reader_threads:
             t.start()
+        # Deadlock guard only — the error assertions below are the real check.
         solver_thread.join(timeout=60.0)
         assert not solver_thread.is_alive(), "solver deadlocked"
         done.set()
         for t in reader_threads:
+            # Deadlock guard only.
             t.join(timeout=10.0)
             assert not t.is_alive(), "reader deadlocked"
         assert not errors, errors
