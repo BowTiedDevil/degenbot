@@ -87,6 +87,7 @@ aave/transformations/*
 cache-lab-report
 hotpath-crossing-cache-verification
 cow-protocol-survey
+updater-rpc-sql-survey
 rayon-parallelism-lab
 mimalloc-purge-delay-decision
 ratr5a-cxrhw3-closure-census

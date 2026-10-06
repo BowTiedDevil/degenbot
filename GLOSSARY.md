@@ -461,6 +461,28 @@ treated as evidence. Cheap insurance against inert pass-throughs, stale comparis
 and accidentally-dead checks.
 _Avoid_: trusting an unprobed pass; running a gate whose failure branch is unknown.
 
+## Capture and replay
+
+**Golden capture**:
+The committed recording of a pinned span's real chain answers and database effects;
+the fixed truth that replay tests and replay benches compare against.
+_Avoid_: "fixture" for recorded traffic, "snapshot"
+
+**Cassette**:
+The wire-form half of a golden capture — the ordered RPC question→answer ledger for
+the pinned span, replayable in place of a live node.
+_Avoid_: "mock", "stub", "recording"
+
+**Statement ledger**:
+The SQL half of a golden capture — the normalized statement sequence one chunk apply
+runs, in order, with argument shapes and effects.
+_Avoid_: "query log", "SQL trace"
+
+**Replay bench**:
+The benchmark that runs a fixed workload against a golden capture rather than a live
+node.
+_Avoid_: "offline bench", "fixture benchmark"
+
 ## Piecewise CL solving
 
 **Piecewise walker**:
