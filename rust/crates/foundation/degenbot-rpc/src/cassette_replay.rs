@@ -12,7 +12,9 @@
 //!   stores u64 hex quantities as decimal strings (`"0x1234"` → `"4660"`,
 //!   see `canonical_hex_quantity`), while the typed clients expect the wire
 //!   form back (`"0x1234"`). Addresses, topics, and data hex are verbatim in
-//!   the canonical form and pass through unchanged.
+//!   the canonical form and pass through unchanged — non-minimal short hex
+//!   (a leading-zero digit) included, so the wire form comes back
+//!   byte-exactly for both canonicalization classes.
 //! - `Failure` entries replay as JSON-RPC errors with their recorded
 //!   `code`/`message`/`data`, so a recorded failure classifies at the
 //!   provider layer exactly as it did live: a revert-classified message stays
@@ -331,8 +333,12 @@ fn success<T: serde::Serialize>(value: &T) -> Result<ResponsePayload, ErrorPaylo
 /// Restore the wire form of a canonical response value: decimal quantity
 /// strings re-hex to `0x…` (the inverse of `canonical_hex_quantity` — the
 /// canonical form stores u64 hex quantities as decimal), while addresses,
-/// topics, and data hex pass through verbatim.
-fn wire_value(value: &Value) -> Value {
+/// topics, and data hex pass through verbatim — non-minimal short hex
+/// included, so both canonicalization classes restore byte-exactly.
+///
+/// `pub(crate)` so the `cassette` corpus guard can prove the committed
+/// corpus is a byte-exact fixed point of this restoration.
+pub(crate) fn wire_value(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
             let mut out = serde_json::Map::with_capacity(map.len());
@@ -353,7 +359,10 @@ fn wire_value(value: &Value) -> Value {
 /// Re-hex a decimal quantity string: the inverse of the recorder's
 /// `canonical_hex_quantity` (`"4660"` → `"0x1234"`). Verbatim hex (addresses,
 /// data, topics) never parses as decimal and stays untouched.
-fn wire_hex_quantity(s: &str) -> Option<String> {
+///
+/// `pub(crate)` so the `cassette` corpus guard can demonstrate the pre-rule
+/// lossy restore on a non-minimal token (its red-path counterfactual).
+pub(crate) fn wire_hex_quantity(s: &str) -> Option<String> {
     if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }

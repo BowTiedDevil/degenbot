@@ -128,6 +128,37 @@ chunks/sec. Gates follow the glossary idioms: machine-emitted captures are **dri
 gates** (regenerate-and-diff with the same pipeline that writes them) and every gate
 carries a **negative probe** (mutate a captured response or DB dump, observe red).
 
+### Cassette canonicalization: the short-hex precision rule
+
+The cassette format's hex canonicalization is a precision rule, not a blanket
+rewrite: ONLY minimal-form quantities (`0x` + 1..=16 hex digits with no leading
+zero digit; `0x0` is the canonical zero) decimalize, and that decimalization is
+exact — replay re-hexes the decimal to the same minimal wire form (`0x6fdde03` →
+`117300739` → `0x6fdde03`; `0xf30dba93` → `4077763219` → `0xf30dba93`). A
+leading-zero digit marks a NON-minimal string — byte-hex, not a quantity (`0x00`,
+`0x00000000`, `0x06fdde03`) — which decimalizing would mangle (`0x00000000` → `0`
+→ replayed `0x0`: different bytes, in an odd-length form `Bytes` decoding
+rejects), so non-minimal hex is preserved verbatim; ≥17-digit hex (addresses,
+topics, data words) was never parsed as a quantity and stays verbatim as before.
+Replay therefore restores the wire form byte-exactly for both classes, and the
+drift gate's byte-identity precondition holds for either class in a committed
+cassette.
+
+Corpus status (the committed seed corpus, 5 cassettes): a full token scan of every
+ledger key and response value finds 594 `0x`-hex tokens, ALL ≥17-digit verbatim
+forms — zero short tokens of either class — so the rule change is corpus-silent
+and no reserialization was needed. The corpus guard test
+(`committed_corpus_hex_tokens_round_trip_byte_exactly` in `degenbot-rpc::cassette`)
+pins this continuously: every token must be untouched-by-construction and every
+entry a byte-exact fixed point of canonicalization ∘ wire restoration, with the
+red path demonstrated on an in-memory copy carrying a non-minimal value.
+
+Residual (v2 note): canonicalization still decides quantity-vs-data by SHAPE (the
+leading-zero digit), not by field — a non-minimal short quantity sent by a node
+(some emit padded block tags) records verbatim and would not collide with its
+minimal-form spelling in the ledger. Field-aware canonicalization is the v2
+format note, filed for the capture decision (ergo `QR7QVT`).
+
 ## Baseline (ergo NNCPXA — the measurement gate)
 
 The replay bench's first baseline, recorded — where a chunk spends its time

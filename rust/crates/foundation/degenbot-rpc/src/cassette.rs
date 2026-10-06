@@ -12,12 +12,27 @@
 //! Entry keys canonicalize params so regeneration is **byte-identical**:
 //!
 //! - object keys are sorted recursively;
-//! - hex quantity strings (`0x` + up to 16 hex digits — block tags, gas,
-//!   value) are normalized to decimal ("decimal block keys");
+//! - hex quantity strings are normalized to decimal under a precision rule
+//!   ("decimal block keys"): ONLY minimal-form quantities decimalize — a
+//!   `0x` prefix followed by 1..=16 hex digits with no leading zero digit,
+//!   with `0x0` the canonical zero — and that decimalization is exact
+//!   (replay re-hexes the decimal to the same minimal wire form). A
+//!   leading-zero digit marks a NON-minimal string — byte-hex, not a
+//!   quantity (`0x00`, `0x00000000`, `0x06fdde03`) — which decimalizing
+//!   would mangle (`0x00000000` → `0` → replayed `0x0`: different bytes,
+//!   in an odd-length form `Bytes` decoding rejects), so non-minimal hex
+//!   is preserved verbatim;
 //! - everything else recorded on the wire stays verbatim: addresses and data
-//!   hex are NOT rewritten (the wire form is already canonical for them);
+//!   hex are NOT rewritten (the wire form is already canonical for them),
+//!   and ≥17-digit hex never parsed as a quantity anyway;
 //! - entries live in a `BTreeMap`, so the ledger serializes sorted by
 //!   `(method, canonical params)`.
+//!
+//! Replay restores the wire form byte-exactly for both classes
+//! (`cassette_replay::wire_value`). The residual — deciding
+//! quantity-vs-data by FIELD instead of by shape — is the v2
+//! field-aware-canonicalization note (see
+//! `docs/updater-rpc-sql-survey.md`, "Cassette hex canonicalization").
 //!
 //! Responses are canonicalized the same way, so any byte-level mutation of a
 //! recorded response changes the canonical bytes — the drift gate
@@ -229,15 +244,34 @@ pub fn canonicalize_value(value: &Value) -> Value {
     }
 }
 
-/// Normalize a hex *quantity* string to decimal: `0x` + 1..=16 hex digits
-/// (a `u64`). Long hex forms — addresses (40 digits), data words, topics —
-/// and `0x` itself stay verbatim: their wire form is already canonical.
+/// Decimalize a minimal-form hex *quantity* string: `0x` + 1..=16 hex
+/// digits with no leading zero digit (`0x0` is the canonical zero) — a
+/// `u64`.
+///
+/// The precision rule behind this shape: decimalization must be exact,
+/// because replay re-hexes the decimal and the wire form has to come back
+/// byte-identical. A minimal form does (`0x6fdde03` → `117300739` →
+/// `0x6fdde03`; `0xf30dba93` → `4077763219` → `0xf30dba93`). A
+/// leading-zero digit marks a NON-minimal string — byte-hex, not a
+/// quantity (`0x00`, `0x00000000`, `0x06fdde03`) — and decimalizing it is
+/// lossy: `0x00000000` → `0` → replayed `0x0`, different bytes in an
+/// odd-length form `Bytes` decoding rejects. Non-minimal forms therefore
+/// stay verbatim. Long hex — addresses (40 digits), data words, topics
+/// (≥17 digits) — and `0x` itself stay verbatim too: their wire form is
+/// already canonical.
 fn canonical_hex_quantity(s: &str) -> Option<String> {
     let hex = s.strip_prefix("0x")?;
     if hex.is_empty() || hex.len() > 16 {
         return None;
     }
     if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    // The precision rule: a leading zero digit is a non-minimal form —
+    // byte-hex, not a quantity — and stays verbatim (decimalizing it would
+    // not re-hex back to the same wire string). The one-digit `0x0` is the
+    // canonical zero and decimalizes.
+    if hex.len() > 1 && hex.starts_with('0') {
         return None;
     }
     let n = u64::from_str_radix(hex, 16).ok()?;
@@ -467,6 +501,7 @@ impl tower::Service<RequestPacket> for RecordingTransport {
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::cassette_replay::{wire_hex_quantity, wire_value};
     use alloy::rpc::json_rpc::ErrorPayload;
     use alloy::transports::mock::Asserter;
     use std::borrow::Cow;
@@ -538,8 +573,25 @@ mod tests {
             canonical_hex_quantity("0xffffffffffffffff"),
             Some("18446744073709551615".to_string())
         );
-        // Leading zeros collapse.
-        assert_eq!(canonical_hex_quantity("0x0010"), Some("16".to_string()));
+        // The precision rule: minimal forms decimalize exactly — odd- and
+        // even-length alike (independent decimal literals).
+        assert_eq!(
+            canonical_hex_quantity("0x6fdde03"),
+            Some("117300739".to_string())
+        );
+        assert_eq!(
+            canonical_hex_quantity("0xf30dba93"),
+            Some("4077763219".to_string())
+        );
+        // `0x0` is the canonical zero.
+        assert_eq!(canonical_hex_quantity("0x0"), Some("0".to_string()));
+        // Leading-zero forms are NON-minimal — byte-hex, not quantities:
+        // verbatim, not decimalized (decimalizing 0x0010 to 16 would
+        // replay as 0x10, a different wire string; 0x00000000 would replay
+        // as the odd-length 0x0, which Bytes decoding rejects).
+        assert_eq!(canonical_hex_quantity("0x0010"), None);
+        assert_eq!(canonical_hex_quantity("0x00000000"), None);
+        assert_eq!(canonical_hex_quantity("0x06fdde03"), None);
         // Not hex.
         assert_eq!(canonical_hex_quantity("latest"), None);
     }
@@ -705,5 +757,260 @@ mod tests {
             verify_cassette_bytes(&bytes)
                 .unwrap_or_else(|e| panic!("drift gate RED for {}: {e}", path.display()));
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Short-hex precision rule: the corpus guard.
+    //
+    // The recorder decimalizes minimal-form quantities at record time and
+    // preserves every other 0x form verbatim, so a committed cassette can
+    // only carry hex the rule leaves untouched — and replay must restore
+    // every token byte-exactly. These tests pin both halves.
+    // ------------------------------------------------------------------
+
+    /// The precision-rule class of one `0x`-hex token. Total and explicit:
+    /// every token lands in exactly one named class, and
+    /// [`assert_token_matches_rule`] asserts each class's canonicalization
+    /// outcome — there is no catch-all arm.
+    #[derive(Debug, PartialEq, Eq)]
+    enum HexTokenClass {
+        /// Minimal form (no leading-zero digit, ≤16 digits): decimalized
+        /// at record time; replay re-hexes to the same wire string.
+        MinimalQuantity,
+        /// ≥17 digits: verbatim on both sides (never parsed as a quantity).
+        LongHex,
+        /// Leading-zero digit, ≤16 digits: byte-hex, not a quantity —
+        /// preserved verbatim by the precision rule.
+        NonMinimalHex,
+        /// `0x` with no digits or a non-hex tail: not a quantity — verbatim.
+        NotAQuantity,
+    }
+
+    /// Classify one `0x`-hex token exactly as [`canonical_hex_quantity`]
+    /// dispatches it (the two must never diverge — the guard asserts it).
+    fn hex_token_class(token: &str) -> HexTokenClass {
+        let hex = token
+            .strip_prefix("0x")
+            .expect("the scanner yields 0x-prefixed tokens");
+        if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return HexTokenClass::NotAQuantity;
+        }
+        if hex.len() > 16 {
+            return HexTokenClass::LongHex;
+        }
+        if hex.len() > 1 && hex.starts_with('0') {
+            return HexTokenClass::NonMinimalHex;
+        }
+        HexTokenClass::MinimalQuantity
+    }
+
+    /// The guard's per-token dispatch: each class's canonicalization
+    /// outcome, asserted against the real rule function.
+    fn assert_token_matches_rule(token: &str) {
+        let decimalized = canonical_hex_quantity(token);
+        match hex_token_class(token) {
+            HexTokenClass::MinimalQuantity => {
+                assert!(decimalized.is_some(), "{token:?} must decimalize");
+            }
+            HexTokenClass::LongHex | HexTokenClass::NonMinimalHex | HexTokenClass::NotAQuantity => {
+                assert!(
+                    decimalized.is_none(),
+                    "{token:?} must stay verbatim (untouched-by-construction)"
+                );
+            }
+        }
+    }
+
+    /// Scan one raw string (a serialized ledger key or a string value) for
+    /// `0x` + hex-digit runs. Ledger keys embed hex inside JSON string
+    /// literals; the quote characters are not hex digits and end a run.
+    fn push_hex_tokens(s: &str, tokens: &mut Vec<String>) {
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'0' && bytes[i + 1] == b'x' {
+                let mut end = i + 2;
+                while end < bytes.len() && bytes[end].is_ascii_hexdigit() {
+                    end += 1;
+                }
+                tokens.push(s[i..end].to_string());
+                i = end;
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Walk a parsed cassette JSON and collect every `0x`-hex token from
+    /// object keys (the serialized ledger keys) and string values.
+    fn collect_hex_tokens(value: &Value, tokens: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                for (key, item) in map {
+                    push_hex_tokens(key, tokens);
+                    collect_hex_tokens(item, tokens);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    collect_hex_tokens(item, tokens);
+                }
+            }
+            Value::String(s) => push_hex_tokens(s, tokens),
+            _ => {}
+        }
+    }
+
+    /// Corpus guard (green path): every `0x`-hex token in the committed
+    /// corpus — ledger keys AND response values — must be
+    /// untouched-by-construction (≥17 digits or non-minimal, now preserved
+    /// verbatim), and every entry must be a byte-exact fixed point of
+    /// canonicalization ∘ wire restoration. Together with the drift gate
+    /// this proves the corpus replays byte-identically under the rule.
+    #[test]
+    fn committed_corpus_hex_tokens_round_trip_byte_exactly() {
+        let dir = corpus_dir();
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("cassette corpus missing at {}: {e}", dir.display()))
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+            .collect();
+        files.sort();
+
+        let mut total_tokens = 0usize;
+        let mut total_entries = 0usize;
+        for path in &files {
+            let bytes = std::fs::read(path).unwrap();
+            verify_cassette_bytes(&bytes)
+                .unwrap_or_else(|e| panic!("drift gate RED for {}: {e}", path.display()));
+            let cassette = Cassette::from_json_bytes(&bytes).unwrap();
+            let parsed = serde_json::to_value(&cassette).unwrap();
+
+            let mut tokens = Vec::new();
+            collect_hex_tokens(&parsed, &mut tokens);
+            for token in &tokens {
+                // The class dispatch agrees with the rule function...
+                assert_token_matches_rule(token);
+                // ...and a committed cassette carries NO minimal-form
+                // quantity: the recorder decimalizes it at record time, so
+                // one in a committed file means a hand edit or a bypassed
+                // recorder (the drift gate would also fail the mutated
+                // canonical bytes).
+                assert!(
+                    !matches!(hex_token_class(token), HexTokenClass::MinimalQuantity),
+                    "{token:?} in {}: a minimal-form quantity cannot survive \
+                     recording — regenerate through the recorder",
+                    path.display()
+                );
+            }
+            total_tokens += tokens.len();
+
+            // Entry-level byte-exactness: the ledger key re-derives from
+            // its parsed (method, params), and the canonical response is a
+            // fixed point of canonicalize ∘ wire — replay restores the
+            // recorded wire form and re-recording it reproduces the
+            // committed bytes, for both classes.
+            for (key, entry) in &cassette.entries {
+                let pair: Value = serde_json::from_str(key).unwrap();
+                let items = pair.as_array().expect("ledger key is [method, params]");
+                let method = items[0].as_str().expect("method is a string");
+                assert_eq!(
+                    entry_key(method, &items[1]),
+                    *key,
+                    "ledger key does not re-derive in {}",
+                    path.display()
+                );
+                let response_value = serde_json::to_value(&entry.response).unwrap();
+                let restored = canonicalize_value(&wire_value(&response_value));
+                assert_eq!(
+                    restored,
+                    response_value,
+                    "canonicalize ∘ wire is not the identity on a response in {}",
+                    path.display()
+                );
+                total_entries += 1;
+            }
+        }
+        assert!(
+            total_tokens > 0,
+            "the corpus guard scanned zero 0x-hex tokens — vacuous; the corpus changed shape"
+        );
+        assert!(
+            total_entries > 0,
+            "the corpus guard scanned zero ledger entries — vacuous; the corpus changed shape"
+        );
+    }
+
+    /// Red path for the precision rule, demonstrated on an in-memory copy:
+    /// a committed cassette's copy carrying a short NON-minimal value —
+    /// `0x00000000`, the exact class the earlier rule decimalized — is
+    /// flagged, and both halves of the rule's necessity are asserted. Under
+    /// the implemented rule the token is preserved verbatim
+    /// (`canonical_hex_quantity` refuses it; the canonicalize ∘ wire round
+    /// trip is byte-exact). Under the pre-fix rule the same token
+    /// decimalized to `0` and replay re-hexed it to `0x0` — different
+    /// bytes, in an odd-length form `Bytes` decoding rejects; that lossy
+    /// decimalize-then-restore is asserted here as the counterfactual the
+    /// rule exists to prevent.
+    #[test]
+    fn corpus_guard_flags_nonminimal_short_hex_on_in_memory_copy() {
+        // In-memory copy (never written to disk): the pool cassette's
+        // recorded eth_blockNumber answer becomes the non-minimal token.
+        let path = corpus_dir().join("pool_v3_created_26102622-26102626.json");
+        let bytes = std::fs::read(&path).unwrap();
+        let mut cassette = Cassette::from_json_bytes(&bytes).unwrap();
+        let block_key = cassette
+            .entries
+            .keys()
+            .find(|k| k.starts_with("[\"eth_blockNumber\""))
+            .expect("the pool cassette records eth_blockNumber")
+            .clone();
+        // Mutate the recorded answer inside a scoped borrow; the mutated
+        // response's canonical JSON form is what the fixed-point check
+        // replays below.
+        let response_value = {
+            let entry = cassette.entries.get_mut(&block_key).expect("entry present");
+            entry.response = CassetteResponse::Success {
+                result: Value::String("0x00000000".to_string()),
+            };
+            serde_json::to_value(&entry.response).unwrap()
+        };
+
+        // The guard's scan flags the injected token: it classes as
+        // NonMinimalHex — the protected byte-hex class — and the rule
+        // function refuses to decimalize it (preserved verbatim).
+        let copy = serde_json::to_value(&cassette).unwrap();
+        let mut tokens = Vec::new();
+        collect_hex_tokens(&copy, &mut tokens);
+        assert!(
+            tokens.contains(&"0x00000000".to_string()),
+            "the scanner must see the injected non-minimal token"
+        );
+        assert_token_matches_rule("0x00000000");
+        assert_eq!(hex_token_class("0x00000000"), HexTokenClass::NonMinimalHex);
+        assert_eq!(canonical_hex_quantity("0x00000000"), None);
+
+        // The mutated entry round-trips byte-exactly: replay restores the
+        // recorded wire form and re-recording it reproduces the canonical
+        // bytes — the rule working as designed on this input class.
+        assert_eq!(
+            canonicalize_value(&wire_value(&response_value)),
+            response_value
+        );
+
+        // The counterfactual (what the pre-fix rule did to this token): the
+        // lossy decimalize-then-restore that mangled such values —
+        // 0x00000000 → "0" → replayed "0x0".
+        let pre_fix_decimal = u64::from_str_radix("00000000", 16)
+            .expect("8 hex digits fit a u64")
+            .to_string();
+        assert_eq!(pre_fix_decimal, "0");
+        let pre_fix_restored = wire_hex_quantity(&pre_fix_decimal).expect("decimal re-hexes");
+        assert_eq!(pre_fix_restored, "0x0");
+        assert_ne!(
+            pre_fix_restored, "0x00000000",
+            "the pre-fix decimalize-then-restore mangled this value class; \
+             the precision rule must keep preserving it verbatim"
+        );
     }
 }
