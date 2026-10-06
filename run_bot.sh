@@ -4,7 +4,7 @@
 # A self-contained launcher so the bot can be started/stopped deterministically
 # without rediscovering the launch mechanics each time.
 #
-# One launcher, two drivers (RSP-16 / ergo V6SUQO):
+# One launcher, two drivers:
 #
 #   ./run_bot.sh [--python|--rust] [--strategy settlement|backrun] [start|stop|status|foreground|print-cmd] [-- args...]
 #
@@ -17,8 +17,8 @@
 #                         but activation is NOT a launcher concern anymore:
 #                         the per-facet `active` keys in the holder config
 #                         (`degenbot strategy activate <facet> ...`) own it
-#                         (ADR-055 cutover; the retired single-arm selector
-#                         key is gone from the schema). `settlement` is a
+#                         (ADR-055; the single-arm selector key is gone from
+#                         the schema). `settlement` is a
 #                         no-op; `backrun` likewise — the backrun arm runs
 #                         as a hosted driver in the SAME process this
 #                         launcher starts when its facet is active. Ignored
@@ -41,30 +41,23 @@ PIDFILE="$LOGDIR/bot_run.pid"
 mkdir -p "$LOGDIR"
 
 # --------------------------------------------------------------------------
-# POST-LW-T9 CUTOVER (epic XR62VX, commit f3750093d): the fleet executor is
-# the ONLY stance now — the DEGENBOT_FLEET stance key itself is RETIRED and
-# fails the config load loudly if exported; registration/sim/solve host on
-# the ADR-042 fleet unconditionally. (This launcher used to export
-# DEGENBOT_FLEET=fleet — do NOT restore it.)
+# The fleet executor is the ONLY stance: registration/sim/solve host on the
+# ADR-042 fleet unconditionally. DEGENBOT_FLEET is not a config key —
+# exporting it fails the config load loudly; do NOT set it here.
 #
-# Conservative (HARD/LOUD) defaults now live in the CODE, not here (Z4KQXF).
-# Every invocation — run_bot.sh, a hand-run, a CI/harness — gets loud failure
-# by default; there is no liberal default posture anymore. Flags that follow
+# Conservative (HARD/LOUD) defaults live in the CODE, not here. Every
+# invocation — run_bot.sh, a hand-run, a CI/harness — gets loud failure
+# by default; there is no liberal default posture. Flags that follow
 # are all default-ON in code via `bot_env_flag_default_on` (opt OUT with =0):
-#   (RETIRED: DEGENBOT_ASSERT_SOLVER_STATE — the ADR-021 per-solve solver-state
-#     tripwire is GONE with MROOY7 task 2UVG3E and the key no longer exists in
-#     the config schema (docs/rust-config-keys.md). Standing verification is
-#     on-demand: sim failures arm the sim-divergence probe unconditionally, and
-#     DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD adds random ops spot-checks. The
-#     verify-dbg / V2-calc / reverted-swap diagnostics are now always-on DEBUG
-#     events on the sim/state OTel domains, gated only by the sink filter.)
 #   DEGENBOT_DUMP_CALL_TRACE     (full revm call trace on sim failure)
 #   DEGENBOT_SIM_EXIT_ON_FAIL  (stop on first sim failure) - see below: this
 #     script DEFAULTS it to 0; failing sims are identified via OTel traces.
 #   DEGENBOT_WS_COMPLETENESS    (per-block eth_getLogs vs WS delivery cross-
-#     check; NEW default-ON since B4GX7C, so a live WS log drop aborts loudly)
+#     check; default-ON, so a live WS log drop aborts loudly)
+# The verify-dbg / V2-calc / reverted-swap diagnostics are always-on DEBUG
+# events on the sim/state OTel domains, gated only by the sink filter.
 # High-noise per-event traces (WS delivery, drain, apply-route, swap-apply,
-# register-seed) are now always-on DEBUG events on the ingest/pump/state/path
+# register-seed) are always-on DEBUG events on the ingest/pump/state/path
 # domains. They do not reach the console unless the Rust log level enables
 # `degenbot=debug` / `degenbot=trace`; see docs/logging.md.
 # Forensic full-field dumps (sim call traces, seed/verifier tick maps) are
@@ -74,11 +67,11 @@ mkdir -p "$LOGDIR"
 # Sim-failure policy: this script DEFAULTS DEGENBOT_SIM_EXIT_ON_FAIL=0 (keep
 # running through thin-margin/no-profit reverts - the routine arb-filter
 # outcome). Failing simulations are identified from OTel traces/metrics going
-# forward, not by killing the bot. Override to 1 to restore the old fail-fast.
+# forward, not by killing the bot. Override to 1 for fail-fast.
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
-# INFO-visible runs (default; log-volume cut OPBD7L).
+# INFO-visible runs (default).
 #
 # The default posture prints INFO status lines ([sim], [bundle]-summaries,
 # pump/block lifecycle) and WARN/ERROR only — no debug/trace diagnostics.
@@ -95,7 +88,7 @@ mkdir -p "$LOGDIR"
 # writer per process, derived from binding-present. In the Python driver the
 # Rust→Python bridge owns the console and the Rust stderr `fmt` layer is
 # routed to a sink, so every record reaches bot_run.log exactly once (the
-# retired DEGENBOT_LOG_FMT two-tunnel switch is gone and warns at boot).
+# DEGENBOT_LOG_FMT two-tunnel switch is gone and warns at boot).
 # The console filter comes from the typed telemetry config (Python-driver
 # default `info`, plus the alloy noise throttles) — no RUST_LOG needed here;
 # set RUST_LOG yourself for a one-off (`RUST_LOG=warn ./run_bot.sh` wins
@@ -104,8 +97,8 @@ mkdir -p "$LOGDIR"
 # --------------------------------------------------------------------------
 export DEGENBOT_DEBUG="${DEGENBOT_DEBUG:-0}"
 export DEGENBOT_OTEL="${DEGENBOT_OTEL:-1}"
-# SIMPIPE2 T4 soak arm: the ENGINE-side inline sim (worker seam). Default 0
-# (legacy option-A FFI pipeline); the soak flips 0/1 across equal windows.
+# The ENGINE-side inline sim (worker seam): default ON (=1); =0 selects the
+# legacy option-A FFI pipeline.
 export DEGENBOT_SOLVE_INLINE_SIM="${DEGENBOT_SOLVE_INLINE_SIM:-1}"
 export DEGENBOT_SIM_EXIT_ON_FAIL="${DEGENBOT_SIM_EXIT_ON_FAIL:-0}"
 # Publish-debounce window (ms), last dirty log -> settle decision. A/B'd on
@@ -114,30 +107,27 @@ export DEGENBOT_SIM_EXIT_ON_FAIL="${DEGENBOT_SIM_EXIT_ON_FAIL:-0}"
 # settle tax. 15 ms cuts ~33 ms/block with no extra solve cycles observed.
 # Code default stays 50 ms; invalid/zero env values fall back to 50 ms.
 export DEGENBOT_PUMP_DEBOUNCE_MS="${DEGENBOT_PUMP_DEBOUNCE_MS:-15}"
-# Registration crawl hosting (PRG-5 hard cutover, epic IRUMXD): the crawl is
-# FLEET-HOSTED ONLY, and since LW-T9 (epic XR62VX) the stance key is retired:
-# DEGENBOT_FLEET / fleet.stance in a config FAIL the config load loudly if
+# Registration crawl hosting: the crawl is FLEET-HOSTED ONLY. DEGENBOT_FLEET
+# / fleet.stance in a config FAIL the config load loudly if
 # set — the fleet is unconditional. Alongside it, DEGENBOT_REG_QUEUE_BOUND /
 # DEGENBOT_REG_WORKERS (crawl shell) and DEGENBOT_SOLVE_SIM_INFLIGHT
 # (solve.solve_sim_inflight, sim-slots shadow cap) all fail the load loudly
 # too; survivals are fleet.pool_state_updater_slots / fleet.sim_slot_cap and
 # solve.inline_sim_workers.
-# Typed-config parity (KAHU5W): every DEGENBOT_* env above still works
+# Typed-config parity: every DEGENBOT_* env above still works
 # (12-factor parity) but each key also has a typed TOML path — these exports
 # map to telemetry.otel, solve.solve_inline_sim, simulation.sim_exit_on_fail,
 # trace.ws_trace, and pump.pump_debounce_ms in config.toml; the full key
-# table lives in docs/rust-config-keys.md. Observability note (MROOY7): the
-# retired pump/queue surface (spans degenbot.pump.block / pump.log_wait /
+# table lives in docs/rust-config-keys.md. Observability: the pump/queue
+# surface (spans degenbot.pump.block / pump.log_wait /
 # pump.apply_stream, series degenbot_drain_queue_depth) is succeeded by the
 # stage telemetry — spans degenbot.epoch.run + degenbot.stage.{streaming,quiesced,
 # publish,finalize,rewind}, series degenbot_stage_publish_cycle_seconds /
 # degenbot_stage_rewind_total / _duration_seconds; the metrics endpoint is
 # DEGENBOT_METRICS_ADDR (default 127.0.0.1:9464).
 # Solver-state verification policy: ON-DEMAND ONLY (the ADR-021 publish
-# tripwire and its DEGENBOT_ASSERT_SOLVER_STATE knob are RETIRED — MROOY7
-# task 2UVG3E: the overnight scan measured 29k tripwire WARNs and tens-of-
-# seconds verify spans with zero caught desyncs in 6.5h, and the knob is no
-# longer in the config schema, so exporting it here would be a dead knob).
+# tripwire and its DEGENBOT_ASSERT_SOLVER_STATE knob are gone — the key is
+# not in the config schema, so exporting it here would be a dead knob).
 # Standing verification: sim failures arm a divergence probe on the failing
 # path's next sim (the sim-divergence probe merges the engine-vs-RPC
 # divergence logs), DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD adds random spot-
@@ -146,16 +136,16 @@ export DEGENBOT_PUMP_DEBOUNCE_MS="${DEGENBOT_PUMP_DEBOUNCE_MS:-15}"
 # through the resolve-seam quarantine gate (watch the
 # degenbot_engine_quarantined_pools gauge / DegenbotDesyncQuarantine alert).
 
-# Two-runtime contract (7LV6VN T5): solve bins, rayon resolve, sim runtime,
+# Two-runtime contract: solve bins, rayon resolve, sim runtime,
 # and the sim-driver cap all derive from the detected cgroup budget inside
 # the Rust core (cpu_budget::leftover_worker_budget), leaving the I/O
 # headroom to the ambient runtime by construction. An operator export of
 # DEGENBOT_SOLVE_CPUS / DEGENBOT_INLINE_SIM_WORKERS / DEGENBOT_FLEET_SIM_SLOT_CAP
 # still wins when set explicitly - none are pre-set here.
-# (DEGENBOT_SOLVE_SIM_INFLIGHT is retired — fails the load loudly, LW-T9.)
+# (DEGENBOT_SOLVE_SIM_INFLIGHT fails the config load loudly.)
 
 # --------------------------------------------------------------------------
-# Driver selection (RSP-16 / ergo V6SUQO): one launcher, two drivers.
+# Driver selection: one launcher, two drivers.
 #
 #   --python  runs examples/eth_settlement_arbitrage_v2_v3_v4_rust.py over the
 #             PyO3-bound Rust core — the legacy command/env, byte-identical,

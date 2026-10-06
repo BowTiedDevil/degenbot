@@ -3,13 +3,13 @@
 
 Usage: python3 scripts/soak_percentiles.py [metrics_url] [label]
 
-Examples (PLRGIN final-integration soak, epic MROOY7):
+Examples:
   python3 scripts/soak_percentiles.py                       # 127.0.0.1:9464, all series
   python3 scripts/soak_percentiles.py http://127.0.0.1:9464/metrics
 
 Percentiles are the ceil-index estimate over cumulative `*_bucket` le
 values (same method as stateview-feasibility doc §3), so numbers are
-byte-comparable against the pre-epic baseline table there.
+byte-comparable against the baseline table there.
 """
 
 from __future__ import annotations

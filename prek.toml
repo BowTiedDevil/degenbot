@@ -47,12 +47,16 @@ hooks = [
   { id = "forbid-noqa-PLC0415", name = "forbid noqa for PLC0415", language = "pygrep", entry = "noqa:.*PLC0415", types = ["python"], stages = ["pre-commit"] },
 
   # Comment hygiene (AGENTS.md / docs/comments.md): work-tracker (ergo) IDs
-  # and RED/GREEN gate narration are banned in code comments. 237 pre-rule
-  # citations exist across 237 waived files
-  # (scripts/hooks/comment-hygiene-waivers.txt); the gate blocks NEW ones
-  # and the waiver list shrinks as comment-strip waves land. Whole-tree
-  # grep (one git grep) is ~instant, so it rides the per-commit tier.
-  { id = "comment-hygiene", name = "Comment hygiene gate", language = "system", entry = "just lint-comment-hygiene", types = ["python", "rust"], stages = ["pre-commit"], pass_filenames = false },
+  # and RED/GREEN gate narration are banned in code comments. The waiver
+  # list (scripts/hooks/comment-hygiene-waivers.txt) is empty and the census
+  # (scripts/hooks/comment-hygiene-census.txt) is lexicon-only, so the gate
+  # blocks every tracker citation outright. Its scan covers *.py and *.rs
+  # (executor excluded) plus *.sh under src/ tests/ rust/crates scripts/
+  # examples/ and run_bot.sh, so the trigger must match python, rust, OR
+  # shell: `types` ANDs its tags (no file is both python and rust), which
+  # had silently disabled this hook. One git grep plus one rg pass are
+  # ~instant, so it rides the per-commit tier.
+  { id = "comment-hygiene", name = "Comment hygiene gate", language = "system", entry = "just lint-comment-hygiene", types_or = ["python", "rust", "shell"], stages = ["pre-commit"], pass_filenames = false },
 
   # Whole-crate instant checks (pass_filenames = false, always_run), ordered
   # fastest first so formatting drift fails before the slower checks.

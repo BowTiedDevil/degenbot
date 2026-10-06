@@ -1,4 +1,4 @@
-"""OULU5O — a thin Python user-defined `ExecutionStrategy` (foreign contract).
+"""A thin Python user-defined `ExecutionStrategy` (foreign contract).
 
 Mirror of the standalone-Rust sample (`degenbot-execution-sample`,
 `SimpleExecutor` foreign strategy) at the PYTHON layer, using the ADR-025 PyO3

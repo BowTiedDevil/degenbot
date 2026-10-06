@@ -73,7 +73,7 @@ async def main() -> None:
     # KeyboardInterrupt is caught here so the operator sees a single clean line.
     try:
         async with BotRunner(cfg) as session:
-            # NWTUM3: optional operator command channel on a Unix socket.
+            # Optional operator command channel on a Unix socket.
             operator = None
             operator_task = None
             if args.operator_socket:
@@ -94,9 +94,9 @@ async def main() -> None:
                         n = await session.trigger_discovery(bound=bound)
                         return {"detail": f"discovery processed {n} paths"}
                     if op in {"set_fleet_posture", "get_fleet_posture"}:
-                        # JCI2FW Part B: the live cordon-threshold re-tune
-                        # + read, routed through the shared helper (the
-                        # degenbot.fleet mirror home mints on first use).
+                        # The live cordon-threshold re-tune + read, routed
+                        # through the shared helper (the degenbot.fleet
+                        # mirror home mints on first use).
                         return handle_fleet_posture_op(op, payload)
                     return {"error": f"unknown op {op!r}"}
 
@@ -117,11 +117,11 @@ async def main() -> None:
         bot_logger.error(f"[activation-gate] REFUSED — {exc}")
         sys.exit(78)
     except BootRefused as exc:
-        # FF-T1 (BPHR6F): the library surfaced the TYPED fleet boot
-        # refusal (it never aborts the host process); the BINARY owns the
-        # loud fail-fast exit — one named line, non-zero status, the same
-        # message discipline the process abort used to carry. 78 is
-        # sysexits EX_CONFIG: the host cannot host the fleet configuration.
+        # The library surfaces the TYPED fleet boot refusal (it never aborts
+        # the host process); the BINARY owns the loud fail-fast exit — one
+        # named line, non-zero status, the same message discipline as the
+        # abort path. 78 is sysexits EX_CONFIG: the host cannot host the
+        # fleet configuration.
         bot_logger.error(f"[fleet-boot] REFUSED — {exc}")
         sys.exit(78)
     except (KeyboardInterrupt, asyncio.CancelledError):

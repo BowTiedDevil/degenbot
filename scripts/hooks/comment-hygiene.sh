@@ -27,9 +27,11 @@
 #     ratcheted
 #   - anything inside a longer word or identifier: the word-boundary rule
 #     excludes SCREAMING_SNAKE members and 0x-prefixed hex fragments
-#   Scope: src/ and tests/ (all lines) and rust/crates/*.rs comment lines
-#   only, excluding rust tests/benches/examples. Keep it fast (it runs in
-#   pre-commit): one rg pass + one awk pass, no per-token subprocesses.
+#   Scope: src/ tests/ examples/ (all lines), scripts/ and run_bot.sh
+#   (all lines), and rust/crates/*.rs comment lines only, excluding rust
+#   tests/benches/examples and the gate's own census/hook/waiver files.
+#   Keep it fast (it runs in pre-commit): one rg pass + one awk pass, no
+#   per-token subprocesses.
 #   Override the census for testing: CHF=/dev/null <this script> (fails on
 #   every bare token).
 
@@ -58,19 +60,23 @@ if [ -n "$hits" ]; then
 fi
 
 # --- Detector 2: bare-ID census ratchet ---
-if [ ! -f "$census" ]; then
+# -e, not -f: an empty census (the documented CHF=/dev/null probe) is a
+# character device, so -f would wrongly take the missing-file exit. An
+# empty/unlistable census must reach the ratchet and fail every bare token.
+if [ ! -e "$census" ]; then
   echo "comment-hygiene: census file missing: $census" >&2
   exit 1
 fi
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 rg -n --no-heading -P \
-  -g '*.py' -g '*.rs' \
+  -g '*.py' -g '*.rs' -g '*.sh' \
   -g '!rust/crates/**/tests/**' \
   -g '!rust/crates/**/benches/**' \
   -g '!rust/crates/**/examples/**' \
+  -g '!scripts/hooks/comment-hygiene*' \
   '(?<![A-Za-z0-9_])[A-Z0-9]{6}(?![A-Za-z0-9_])' \
-  src tests rust/crates >"$tmp" 2>/dev/null || true
+  src tests rust/crates run_bot.sh scripts examples >"$tmp" 2>/dev/null || true
 
 bare_fail="$(awk -v CENSUS="$census" '
   BEGIN {
