@@ -80,7 +80,8 @@ pub use discovery_read::{
 pub use error::DbError;
 pub use heal::{heal_database, HealReport};
 pub use liquidity_updater::{
-    BlockLog, ComputedLiquidityUpdate, LiquidityUpdateEvent, PoolUpdateState,
+    derive_liquidity_delta_from_computed, BlockLog, ComputedLiquidityUpdate, LiquidityDelta,
+    LiquidityUpdateEvent, PoolUpdateState,
 };
 pub use migrate::{SchemaState, AUTO_HEAL_ENV};
 pub use migrations::{apply_rust_migrations, MigrationOutcome, MigrationStep, RUST_MIGRATIONS};

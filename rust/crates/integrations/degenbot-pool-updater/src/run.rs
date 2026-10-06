@@ -91,8 +91,8 @@ use degenbot_core::errors::ProviderError;
 use degenbot_core::op_info;
 use degenbot_core::updater_telemetry::{UpdaterKind, UpdaterStage};
 use degenbot_db::{
-    ComputedLiquidityUpdate, DegenbotDb, LiquidityUpdateEvent, V2PoolRowInput, V3PoolRowInput,
-    V4PoolRowInput,
+    derive_liquidity_delta_from_computed, ComputedLiquidityUpdate, DegenbotDb, LiquidityDelta,
+    LiquidityUpdateEvent, V2PoolRowInput, V3PoolRowInput, V4PoolRowInput,
 };
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 use rusqlite::Connection;
@@ -265,8 +265,19 @@ pub struct ChunkInputs {
 /// byte-equal by construction (same empty base, same events, same spacing).
 #[derive(Debug, Clone)]
 pub struct PlannedLiquidityMap {
-    /// The computed (and, when the gate is on, on-chain-verified) map.
+    /// The computed map. When full maps were required (ANY verification
+    /// armed — the per-pool gate or a market-wide gate), this is the FULL
+    /// post-apply map the on-chain-truth gate consumes. Otherwise it is the
+    /// DIRTY-KEY OVERLAY (the post-apply state of the event-touched keys
+    /// only) — never hand an ungated plan's `computed` to the verifier: the
+    /// verifier's contract is a complete map, and the read pass only builds
+    /// one when a gate will run (the driver passes
+    /// `verify_chunk || run_full`).
     pub computed: ComputedLiquidityUpdate,
+    /// The event-touched write set the apply persists (Perf B): dirty
+    /// survivors + drained keys, O(events) — the full map is verification
+    /// input, the delta is the write set.
+    pub delta: LiquidityDelta,
     /// `true` = chunk-new pool (the apply takes the fused in-transaction path).
     pub is_new_pool: bool,
 }
@@ -422,21 +433,22 @@ pub fn map_pool_creation(
 /// `Transaction` uncommitted → it drops → the whole chunk reverts →
 /// `last_update_block` unchanged → restart re-processes (restart-invariant).
 ///
-/// # Perf A: the RPC and the O(map) compute live OUTSIDE this fn
+/// # Perf A: the RPC and the map compute live OUTSIDE this fn
 ///
-/// The per-pool full-map compute + the on-chain-truth verification RPC run
+/// The per-pool map compute + the on-chain-truth verification RPC run
 /// in the pre-transaction read pass ([`compute_preverified_liquidity`] plus
 /// the driver's gate), NOT here: zero RPC round trips (and none of the
-/// O(map) read SELECTs for planned pools) sit between the caller's
+/// per-pool read SELECTs for planned pools) sit between the caller's
 /// `transaction()` open and its commit/drop. Pools with a planned non-new
-/// map persist the pre-computed map directly; chunk-new pools (whose row is
-/// created by this chunk's upsert) take the fused in-transaction
-/// compute→persist path - their planned map (empty base + events) is
-/// byte-equal to the in-transaction re-derivation, so a gated run persists
-/// exactly what the gate verified. The stamp is OPTIMISTIC (the assumed
-/// marker rides the WHERE clause) so the restart invariant is structural:
-/// a moved marker changes zero rows → [`RunError::MarkerMoved`] → the
-/// caller drops the transaction and re-loops.
+/// state persist the plan's DELTA (Perf B: only the event-touched keys —
+/// dirty survivors upserted, drained keys deleted by key); chunk-new pools
+/// (whose row is created by this chunk's upsert) take the fused
+/// in-transaction dirty compute→delta-persist path — their plan (empty base
+/// and the same events) is byte-equal to the in-transaction re-derivation,
+/// so a gated run persists exactly what the gate verified. The stamp is
+/// OPTIMISTIC (the assumed marker rides the WHERE clause) so the restart
+/// invariant is structural: a moved marker changes zero rows →
+/// [`RunError::MarkerMoved`] → the caller drops the transaction and re-loops.
 ///
 /// # The V3 liquidity in-scope filter
 ///
@@ -490,14 +502,9 @@ pub fn apply_chunk_writes_on_conn(
         // write lock, and (gated) the map is the one the verify RPC checked.
         if let Some(plan) = preverified.v3.get(pool_address) {
             if !plan.is_new_pool {
-                let c = &plan.computed;
-                DegenbotDb::persist_v3_liquidity_update_on_conn(
-                    conn,
-                    c.pool_id,
-                    &c.tick_bitmap,
-                    &c.tick_data,
-                    c.last_event,
-                )?;
+                // Perf B: persist ONLY the event-touched keys (the plan's
+                // delta) — the full-map complement rewrite is gone.
+                DegenbotDb::persist_v3_liquidity_delta_on_conn(conn, &plan.delta)?;
                 report.liquidity_apply_count += 1;
                 continue;
             }
@@ -526,7 +533,12 @@ pub fn apply_chunk_writes_on_conn(
             continue; // pool belongs to an exchange not being updated this chunk
         }
         let compute_started = Instant::now();
-        let Some(c) = DegenbotDb::compute_v3_liquidity_update_on_conn(
+        // Perf B: the fused path is the chunk-new pools' dirty compute — the
+        // base is the just-upserted EMPTY row, so the dirty read (the
+        // touched keys' rows + words) is the whole read, and the delta is
+        // the whole write set. Byte-equal to the pre-Perf-B full re-derive
+        // (same empty base, same events, same spacing).
+        let Some(delta) = DegenbotDb::compute_v3_liquidity_delta_on_conn(
             conn,
             chain_id,
             &pool_address.to_checksum(None),
@@ -537,13 +549,7 @@ pub fn apply_chunk_writes_on_conn(
             continue;
         };
         report.decode_compute_time += compute_started.elapsed();
-        DegenbotDb::persist_v3_liquidity_update_on_conn(
-            conn,
-            c.pool_id,
-            &c.tick_bitmap,
-            &c.tick_data,
-            c.last_event,
-        )?;
+        DegenbotDb::persist_v3_liquidity_delta_on_conn(conn, &delta)?;
         report.liquidity_apply_count += 1;
     }
 
@@ -556,14 +562,9 @@ pub fn apply_chunk_writes_on_conn(
     for (pool_hash, events) in v4_pools {
         if let Some(plan) = preverified.v4.get(pool_hash) {
             if !plan.is_new_pool {
-                let c = &plan.computed;
-                DegenbotDb::persist_v4_liquidity_update_on_conn(
-                    conn,
-                    c.pool_id,
-                    &c.tick_bitmap,
-                    &c.tick_data,
-                    c.last_event,
-                )?;
+                // Perf B: persist ONLY the event-touched keys (the plan's
+                // delta) — the full-map complement rewrite is gone.
+                DegenbotDb::persist_v4_liquidity_delta_on_conn(conn, &plan.delta)?;
                 report.liquidity_apply_count += 1;
                 continue;
             }
@@ -579,7 +580,9 @@ pub fn apply_chunk_writes_on_conn(
             continue;
         }
         let compute_started = Instant::now();
-        let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
+        // Perf B: the fused path is the chunk-new pools' dirty compute (the
+        // V4 mirror of the V3 arm above).
+        let Some(delta) = DegenbotDb::compute_v4_liquidity_delta_on_conn(
             conn,
             pool_hash,
             inputs.pool_manager_chain,
@@ -590,13 +593,7 @@ pub fn apply_chunk_writes_on_conn(
             continue;
         };
         report.decode_compute_time += compute_started.elapsed();
-        DegenbotDb::persist_v4_liquidity_update_on_conn(
-            conn,
-            c.pool_id,
-            &c.tick_bitmap,
-            &c.tick_data,
-            c.last_event,
-        )?;
+        DegenbotDb::persist_v4_liquidity_delta_on_conn(conn, &delta)?;
         report.liquidity_apply_count += 1;
     }
 
@@ -815,27 +812,40 @@ fn in_scope_v4_creation_tick_spacing(
     })
 }
 
-/// The pre-transaction read pass (Perf A): compute every in-scope pool's
-/// post-chunk liquidity map BEFORE the chunk `Transaction` opens. The O(map)
-/// full-map SELECTs (the baseline's in-lock compute) and the per-pool scope
-/// fetches run on the plain guarded connection - a WAL reader takes no write
-/// lock - and the maps come back owned by the caller, so the verify RPC and
-/// the apply's persists run with the write lock free.
+/// The pre-transaction read pass (Perf A + Perf B): compute every in-scope
+/// pool's post-chunk liquidity state BEFORE the chunk `Transaction` opens.
+/// The per-pool map SELECTs (the baseline's in-lock compute) and the per-pool
+/// scope fetches run on the plain guarded connection - a WAL reader takes no
+/// write lock - and the plans come back owned by the caller, so the verify
+/// RPC and the apply's persists run with the write lock free.
+///
+/// **Perf B: the map read is O(dirty) unless a gate needs the full map.**
+/// With NO verification armed (`full_maps_required = false`), each existing
+/// in-scope pool's read fetches ONLY the event-touched keys' rows + their
+/// bitmap words (`compute_v3/v4_liquidity_delta_on_conn`) and the plan's
+/// `delta` is the whole write set. When ANY verification is armed (the
+/// per-pool gate, a market-wide interval/completion gate), the read pass
+/// builds the FULL map exactly as pre-Perf-B did — the gate's contract is a
+/// complete map vs chain, and that contract is preserved byte-for-byte — and
+/// the delta is derived from it in memory (the projection is lossless: the
+/// apply loop only ever mutates the event-touched keys).
 ///
 /// Per V3 pool (address-sorted): a chunk-new pool (this chunk's creations
-/// upsert it) has no committed base - under the gate its planned map (empty
-/// base + events) feeds the pre-transaction verify; ungated, no entry is
-/// stored (the apply's fused path re-derives it in-transaction from the
+/// upsert it) has no committed base - under the per-pool gate its planned map
+/// (empty base + events) feeds the pre-transaction verify; ungated, no entry
+/// is stored (the apply's fused path re-derives it in-transaction from the
 /// just-upserted row). An existing in-scope pool is scope-fetched + computed
 /// exactly as the in-transaction path did - same SELECTs, moved out of the
 /// lock. Unknown/out-of-scope pools are dropped here (the apply skips them
 /// without re-fetching).
+#[expect(clippy::too_many_lines)]
 fn compute_preverified_liquidity(
     db: &DegenbotDb,
     chain_id: i64,
     chunk_specs: &[ExchangeSpec],
     inputs: &ChunkInputs,
     verify_chunk: bool,
+    full_maps_required: bool,
 ) -> Result<PreVerifiedLiquidity, degenbot_db::DbError> {
     let mut preverified = PreVerifiedLiquidity::default();
     let guard = db.lock();
@@ -861,12 +871,17 @@ fn compute_preverified_liquidity(
                         "pool {pool_address} creation tick_spacing {tick_spacing} out of i32: {e}"
                     ))
                 })?;
+                let computed =
+                    DegenbotDb::compute_v3_liquidity_update_for_new_pool(spacing, events);
+                // The new-pool plan is never persisted (the apply's fused path
+                // re-derives it in-transaction); the delta rides along for
+                // shape parity with the existing-pool plans.
+                let delta = derive_liquidity_delta_from_computed(&computed, events);
                 preverified.v3.insert(
                     *pool_address,
                     PlannedLiquidityMap {
-                        computed: DegenbotDb::compute_v3_liquidity_update_for_new_pool(
-                            spacing, events,
-                        ),
+                        computed,
+                        delta,
                         is_new_pool: true,
                     },
                 );
@@ -880,22 +895,53 @@ fn compute_preverified_liquidity(
         if !chunk_specs.iter().any(|s| s.id == pool.exchange_id) {
             continue; // out-of-scope - the apply skips it too
         }
-        let Some(c) = DegenbotDb::compute_v3_liquidity_update_on_conn(
-            conn,
-            chain_id,
-            &pool_address.to_checksum(None),
-            events,
-        )?
-        else {
-            continue;
-        };
-        preverified.v3.insert(
-            *pool_address,
+        let plan = if full_maps_required {
+            // A gate will consume the FULL map: the exact pre-Perf-B read +
+            // compute (the gate's input contract, preserved byte-for-byte),
+            // with the delta derived from it in memory.
+            let Some(c) = DegenbotDb::compute_v3_liquidity_update_on_conn(
+                conn,
+                chain_id,
+                &pool_address.to_checksum(None),
+                events,
+            )?
+            else {
+                continue;
+            };
+            let delta = derive_liquidity_delta_from_computed(&c, events);
             PlannedLiquidityMap {
                 computed: c,
+                delta,
                 is_new_pool: false,
-            },
-        );
+            }
+        } else {
+            // No gate: the O(dirty) read — ONLY the event-touched keys' rows
+            // + their words. The plan's `computed` is the dirty overlay (the
+            // post-apply state of the touched keys); the `delta` is the write
+            // set.
+            let Some(delta) = DegenbotDb::compute_v3_liquidity_delta_on_conn(
+                conn,
+                chain_id,
+                &pool_address.to_checksum(None),
+                events,
+            )?
+            else {
+                continue;
+            };
+            let computed = ComputedLiquidityUpdate {
+                pool_id: delta.pool_id,
+                tick_spacing: delta.tick_spacing,
+                tick_data: delta.tick_data.clone(),
+                tick_bitmap: delta.tick_bitmap.clone(),
+                last_event: delta.last_event,
+            };
+            PlannedLiquidityMap {
+                computed,
+                delta,
+                is_new_pool: false,
+            }
+        };
+        preverified.v3.insert(*pool_address, plan);
     }
 
     let mut v4_pools: Vec<(&String, &Vec<LiquidityUpdateEvent>)> =
@@ -911,34 +957,60 @@ fn compute_preverified_liquidity(
                         "pool_hash {pool_hash} creation tick_spacing {tick_spacing} out of i32: {e}"
                     ))
                 })?;
+                let computed =
+                    DegenbotDb::compute_v4_liquidity_update_for_new_pool(spacing, events);
+                let delta = derive_liquidity_delta_from_computed(&computed, events);
                 preverified.v4.insert(
                     (*pool_hash).clone(),
                     PlannedLiquidityMap {
-                        computed: DegenbotDb::compute_v4_liquidity_update_for_new_pool(
-                            spacing, events,
-                        ),
+                        computed,
+                        delta,
                         is_new_pool: true,
                     },
                 );
             }
             continue;
         }
-        let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
-            conn,
-            pool_hash,
-            inputs.pool_manager_chain,
-            events,
-        )?
-        else {
-            continue; // unknown managed pool - the apply skips it too
-        };
-        preverified.v4.insert(
-            (*pool_hash).clone(),
+        let plan = if full_maps_required {
+            let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
+                conn,
+                pool_hash,
+                inputs.pool_manager_chain,
+                events,
+            )?
+            else {
+                continue; // unknown managed pool - the apply skips it too
+            };
+            let delta = derive_liquidity_delta_from_computed(&c, events);
             PlannedLiquidityMap {
                 computed: c,
+                delta,
                 is_new_pool: false,
-            },
-        );
+            }
+        } else {
+            let Some(delta) = DegenbotDb::compute_v4_liquidity_delta_on_conn(
+                conn,
+                pool_hash,
+                inputs.pool_manager_chain,
+                events,
+            )?
+            else {
+                continue; // unknown managed pool - the apply skips it too
+            };
+            let computed = ComputedLiquidityUpdate {
+                pool_id: delta.pool_id,
+                tick_spacing: delta.tick_spacing,
+                tick_data: delta.tick_data.clone(),
+                tick_bitmap: delta.tick_bitmap.clone(),
+                last_event: delta.last_event,
+            };
+            PlannedLiquidityMap {
+                computed,
+                delta,
+                is_new_pool: false,
+            }
+        };
+        preverified.v4.insert((*pool_hash).clone(), plan);
     }
 
     Ok(preverified)
@@ -1440,18 +1512,38 @@ pub fn run_pool_update_on_db(
             pool_manager_chain: chain_id,
         };
 
-        // Perf A: the read pass computes every in-scope pool's post-chunk map
-        // BEFORE the transaction opens - the O(map) full-map SELECTs leave the
-        // write lock (survey finding 1). The returned plan owns the maps; the
-        // guard it used drops inside.
+        // The market-wide gate's chunk predicate (interval boundary crossing +
+        // run completion), evaluated BEFORE the read pass: the pure block math
+        // is the same value the gate block below consumes, and Perf B's read
+        // pass needs it NOW — full maps are built iff any verification will
+        // consume them, the dirty overlay + delta otherwise.
+        let run_full = crate::verify::should_run_full_verify_at_interval(
+            working_start_block,
+            working_end_block,
+            verify_all_interval,
+        ) || (verify_all_at_completion && working_end_block >= last_block);
+
+        // Perf A: the read pass computes every in-scope pool's post-chunk
+        // state BEFORE the transaction opens - the per-pool map SELECTs leave
+        // the write lock (survey finding 1). Perf B: the read is O(dirty)
+        // unless a gate needs the full map (the gate's input contract is
+        // preserved byte-for-byte — see `compute_preverified_liquidity`). The
+        // returned plans own the maps + deltas; the guard they used drops
+        // inside.
         // The compute stage span wraps the read pass — the same boundary
-        // the `read_pass_time` anchor times (the O(map) full-map SELECTs,
-        // Perf A). SQL-only: no RPC, no writes outside the later tx.
+        // the `read_pass_time` anchor times. SQL-only: no RPC, no writes
+        // outside the later tx.
         let compute_span = tracing::info_span!("degenbot.updater.pool.compute");
         let compute_guard = compute_span.enter();
         let read_pass_started = Instant::now();
-        let preverified =
-            compute_preverified_liquidity(db, chain_id, &chunk_specs, &inputs, verify_chunk)?;
+        let preverified = compute_preverified_liquidity(
+            db,
+            chain_id,
+            &chunk_specs,
+            &inputs,
+            verify_chunk,
+            verify_chunk || run_full,
+        )?;
         let read_pass_time = read_pass_started.elapsed();
         drop(compute_guard);
 
@@ -1484,11 +1576,8 @@ pub fn run_pool_update_on_db(
         // pre-transaction) overlay the planned maps for this chunk's touched
         // pools, so the verified state is exactly what the in-transaction
         // gate used to see post-apply; a divergence never opens the tx.
-        let run_full = crate::verify::should_run_full_verify_at_interval(
-            working_start_block,
-            working_end_block,
-            verify_all_interval,
-        ) || (verify_all_at_completion && working_end_block >= last_block);
+        // (`run_full` is computed above the read pass — the same value; the
+        // read pass consumed it as its full-map requirement.)
         if run_full {
             let full_verify_span = tracing::info_span!(
                 "degenbot.updater.pool.verify",

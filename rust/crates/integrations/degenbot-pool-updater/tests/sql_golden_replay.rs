@@ -76,7 +76,16 @@ const DUMP_GOLDEN_PATH: &str = concat!(
 /// over this corpus. Any N+1-style regression (a query hoisted out of a loop
 /// going back in, a per-row re-read) changes this and fails the plain test
 /// run — before the byte-diff even consults the committed golden.
-const EXPECTED_LEDGER_STATEMENTS: usize = 23;
+///
+/// Perf B (23 → 21): the delta persist removed the two full-map complement
+/// deletes (`DELETE … WHERE pool_id = ? AND tick NOT IN (?, ?)` and the
+/// `initialization_maps` twin) — a chunk-new pool's drained set is empty, so
+/// the delta path issues no delete at all (both removed statements carried
+/// `rows_changed: 0` on this corpus). The two map READS changed SHAPE, not
+/// count: the full-map SELECTs became the dirty-key IN-form
+/// (`… WHERE pool_id = ? AND tick IN (?, ?)` — the Perf B read surface).
+/// Classified in the task sign-off; the DB dump golden is byte-identical.
+const EXPECTED_LEDGER_STATEMENTS: usize = 21;
 
 /// The tables one pool-chunk apply touches, in the dump's fixed (alphabetical)
 /// order. `exchanges` is the chunk's commit stamp; `erc20_tokens` the token

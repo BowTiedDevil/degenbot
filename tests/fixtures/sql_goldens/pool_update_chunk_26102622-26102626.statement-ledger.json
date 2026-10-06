@@ -67,29 +67,19 @@
       "sql": "SELECT tick_spacing, liquidity_update_block, liquidity_update_log_index FROM uniswap_v3_pools WHERE pool_id = ? LIMIT ?"
     },
     {
-      "arg_count": 1,
+      "arg_count": 3,
       "rows_changed": 0,
-      "sql": "SELECT word, bitmap FROM initialization_maps WHERE pool_id = ?"
-    },
-    {
-      "arg_count": 1,
-      "rows_changed": 0,
-      "sql": "SELECT tick, liquidity_gross, liquidity_net FROM liquidity_positions WHERE pool_id = ?"
+      "sql": "SELECT word, bitmap FROM initialization_maps WHERE pool_id = ? AND word IN (?, ?)"
     },
     {
       "arg_count": 3,
       "rows_changed": 0,
-      "sql": "DELETE FROM liquidity_positions WHERE pool_id = ? AND tick NOT IN (?, ?)"
+      "sql": "SELECT tick, liquidity_gross, liquidity_net FROM liquidity_positions WHERE pool_id = ? AND tick IN (?, ?)"
     },
     {
       "arg_count": 8,
       "rows_changed": 2,
       "sql": "INSERT INTO liquidity_positions (pool_id, tick, liquidity_net, liquidity_gross) VALUES (?, ?, ?, ?), (?, ?, ?, ?) ON CONFLICT (pool_id, tick) DO UPDATE SET liquidity_net = excluded.liquidity_net, liquidity_gross = excluded.liquidity_gross WHERE liquidity_positions.liquidity_net != excluded.liquidity_net OR liquidity_positions.liquidity_gross != excluded.liquidity_gross"
-    },
-    {
-      "arg_count": 3,
-      "rows_changed": 0,
-      "sql": "DELETE FROM initialization_maps WHERE pool_id = ? AND word NOT IN (?, ?)"
     },
     {
       "arg_count": 6,
