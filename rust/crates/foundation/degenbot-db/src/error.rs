@@ -9,6 +9,12 @@ pub enum DbError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
+    /// The statement-ledger capture session is already armed (one per
+    /// process — the `rusqlite` trace hook routes through a process-global
+    /// session slot; see [`crate::sql_ledger`]).
+    #[error("sql-ledger capture session already armed")]
+    LedgerArmed,
+
     /// A filesystem I/O error from a file-level admin operation (rename, remove,
     /// sidecar cleanup) — distinct from [`DbError::Sqlite`] (a connection/query
     /// failure). Used by the out-of-place heal (ADR-011) for the atomic-swap step.

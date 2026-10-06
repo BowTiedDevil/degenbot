@@ -17,7 +17,7 @@
 //! and a restarted run must be a no-op (the restart invariant over the
 //! replayed surface).
 
-#![expect(clippy::unwrap_used)]
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -90,8 +90,8 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
     let cassette = Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette");
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
     let span = cassette.provenance.span;
-    assert_eq!(span.from_block, 2_610_2622);
-    assert_eq!(span.to_block, 2_610_2626);
+    assert_eq!(span.from_block, 26_102_622);
+    assert_eq!(span.to_block, 26_102_626);
 
     // D5 injection: the replay transport presents as a live AlloyProvider —
     // the chunk loop runs unchanged, and its answers come only from the

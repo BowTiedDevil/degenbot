@@ -44,8 +44,19 @@ parking_lot = { version = "^0.12" }
 # See ADR-010/ADR-011 before reining this in — the on-disk SQLite version
 # this ships is the one creating/reading the Alembic-era .db files.
 rusqlite = { version = "^0.40", features = ["bundled", "backup"] }
+# Golden-artifact serialization for the `sql-ledger` feature (the canonical
+# statement-ledger + DB-dump JSON writers). Optional: production builds never
+# enable the feature, so serde_json stays out of the default dependency graph
+# here (it remains a dev-dependency for the schema tests).
+serde_json = { version = "^1.0", optional = true }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
+
+[features]
+# Test/bench-only SQL statement ledger + canonical DB dump (ADR-068 D3).
+# Default OFF — production paths compile none of `src/sql_ledger.rs` and
+# install no trace hooks (zero-overhead when the wrapper is absent).
+sql-ledger = ["dep:serde_json", "rusqlite/trace"]
 
 [dev-dependencies]
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }

@@ -35,6 +35,10 @@ default = []
 
 [dev-dependencies]
 alloy = { version = "^2.5" }
+# The statement-ledger golden tests capture the chunk apply's SQL through the
+# test-only `LedgerDb` wrapper (ADR-068 D3). Dev-only: the feature (and with it
+# the trace hooks) never reaches production builds of this crate.
+degenbot-db = { workspace = true, features = ["sql-ledger"] }
 degenbot-rpc.workspace = true
 # The lifecycle contract test parses the JSON-RPC requests its local stub
 # node receives (method/route matching only — the crate proper never

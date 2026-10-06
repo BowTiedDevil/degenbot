@@ -937,8 +937,13 @@ impl DegenbotDb {
             return Ok(());
         }
         let chunk_cap = SQLITE_MAX_VARIABLES / POSITION_KEYS_PER_ROW;
-        let entries: Vec<(i32, &LiquidityAtTick)> =
+        let mut entries: Vec<(i32, &LiquidityAtTick)> =
             tick_data.iter().map(|(t, v)| (*t, v)).collect();
+        // Deterministic write order: the chunk apply is replayed against
+        // golden captures (ADR-068 D3/D6), so both the statement's VALUES
+        // order and the autoincrement row ids it assigns must not depend on
+        // hashbrown iteration order.
+        entries.sort_by_key(|(t, _)| *t);
         for chunk in entries.chunks(chunk_cap) {
             let placeholders = (0..chunk.len())
                 .map(|i| {
@@ -1018,8 +1023,12 @@ impl DegenbotDb {
             return Ok(());
         }
         let chunk_cap = SQLITE_MAX_VARIABLES / POSITION_KEYS_PER_ROW;
-        let entries: Vec<(i32, &LiquidityAtTick)> =
+        // Deterministic write order (see the V3 positions upsert — golden
+        // captures replay this statement, so VALUES order + row ids must be
+        // stable across runs).
+        let mut entries: Vec<(i32, &LiquidityAtTick)> =
             tick_data.iter().map(|(t, v)| (*t, v)).collect();
+        entries.sort_by_key(|(t, _)| *t);
         for chunk in entries.chunks(chunk_cap) {
             let placeholders = (0..chunk.len())
                 .map(|i| {
@@ -1317,11 +1326,14 @@ fn upsert_init_maps_impl(
     table: &str,
     id_col: &str,
 ) -> Result<(), DbError> {
-    let entries: Vec<(i32, &BitmapAtWord)> = tick_bitmap
+    let mut entries: Vec<(i32, &BitmapAtWord)> = tick_bitmap
         .iter()
         .filter(|(_, bw)| bw.bitmap != U256::ZERO)
         .map(|(w, bw)| (*w, bw))
         .collect();
+    // Deterministic write order (see the positions upserts — golden captures
+    // replay this statement, so VALUES order + row ids must be stable).
+    entries.sort_by_key(|(w, _)| *w);
     if entries.is_empty() {
         return Ok(());
     }

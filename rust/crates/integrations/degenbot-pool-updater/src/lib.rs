@@ -40,9 +40,9 @@ pub use fetch::{
     DecodedPoolCreated, LiquidityLogSource, PoolFamily,
 };
 pub use run::{
-    apply_chunk_writes_on_conn, map_pool_creation, run_pool_update, ChunkInputs, ChunkProgress,
-    ChunkWriteReport, MapError, NoProgress, PoolCreationToWrite, ProgressSink, RunError,
-    UpdateReport,
+    apply_chunk_writes_on_conn, map_pool_creation, run_pool_update, run_pool_update_on_db,
+    ChunkInputs, ChunkProgress, ChunkWriteReport, MapError, NoProgress, PoolCreationToWrite,
+    ProgressSink, RunError, UpdateReport,
 };
 pub use spec::{load_active_exchange_specs, ExchangeSpec, RpcFeeCall};
 pub use verify::{

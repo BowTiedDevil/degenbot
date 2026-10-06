@@ -53,6 +53,11 @@ pub mod schema;
 pub mod snapshot;
 pub mod snapshot_db;
 pub mod species;
+/// The statement-ledger + canonical DB-dump golden machinery (ADR-068 D3).
+/// Test/bench-only: compiled ONLY under the `sql-ledger` feature (default
+/// OFF) — see [`sql_ledger`] for the structural zero-overhead argument.
+#[cfg(feature = "sql-ledger")]
+pub mod sql_ledger;
 pub mod write;
 
 pub use aave::{

@@ -378,7 +378,14 @@ pub fn apply_chunk_writes_on_conn(
     //    With `verify` set: compute → verify the FULL in-memory map against
     //    on-chain `ticks()`/`tickBitmap()` at `block_number` → persist only
     //    on GREEN (divergence → `RunError::Verification`, the tx rolls back).
-    for (pool_address, events) in &inputs.v3_liquidity {
+    // Deterministic per-pool order: the map iteration is hashbrown-random,
+    // but each pool issues its own statements (the scope-filter fetch below),
+    // so the chunk apply's statement sequence — and the row ids its upserts
+    // assign — must not depend on it (golden-capture replay, ADR-068 D3/D6).
+    let mut v3_pools: Vec<(Address, &Vec<LiquidityUpdateEvent>)> =
+        inputs.v3_liquidity.iter().map(|(a, e)| (*a, e)).collect();
+    v3_pools.sort_by_key(|(a, _)| *a);
+    for (pool_address, events) in &v3_pools {
         let pool = DegenbotDb::fetch_pool_by_address_on_conn(conn, *pool_address, chain_id)?;
         let in_scope = pool
             .as_ref()
@@ -426,7 +433,11 @@ pub fn apply_chunk_writes_on_conn(
     //    With `verify` set: compute → verify the FULL in-memory map against
     //    on-chain tick/bitmap storage via `extsload(bytes32[])` at
     //    `block_number` → persist only on GREEN.
-    for (pool_hash, events) in &inputs.v4_liquidity {
+    // Deterministic per-pool order (same reason as the V3 loop above).
+    let mut v4_pools: Vec<(&String, &Vec<LiquidityUpdateEvent>)> =
+        inputs.v4_liquidity.iter().collect();
+    v4_pools.sort_by_key(|(h, _)| *h);
+    for (pool_hash, events) in v4_pools {
         let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
             conn,
             pool_hash,
@@ -712,11 +723,7 @@ pub enum RunError {
 /// Returns [`RunError`] on a DB/RPC failure (the in-flight chunk is rolled
 /// back before returning — the committed chunks stay durable) or
 /// [`RunError::Cancelled`] if the `cancel` flag was set.
-#[expect(
-    clippy::too_many_lines,
-    clippy::needless_pass_by_value,
-    clippy::too_many_arguments
-)]
+#[expect(clippy::too_many_arguments)]
 pub fn run_pool_update(
     database_path: &Path,
     chain_id: i64,
@@ -747,7 +754,61 @@ pub fn run_pool_update(
     // it per chunk (the `*_on_conn` variants take a `&Connection`, so the
     // chunk's `Transaction` borrows this handle's guarded connection).
     let (db, _schema_state) = DegenbotDb::open_for_writes(database_path)?;
-    let specs = load_active_exchange_specs(&db, chain_id)?;
+    run_pool_update_on_db(
+        &db,
+        chain_id,
+        to_block,
+        chunk_size,
+        provider,
+        cancel,
+        progress,
+        verify_chunk,
+        verify_all_interval,
+        verify_all_at_completion,
+    )
+}
+
+/// Pre-opened-handle variant of [`run_pool_update`] — behaviorally identical
+/// (same chunk loop, same PRAGMA/open contract minus the open itself). The
+/// statement-ledger golden machinery ([`degenbot_db::sql_ledger::LedgerDb`],
+/// ADR-068 D3) needs to hand the run ITS traced connection, so the chunk loop
+/// must accept a handle it did not open. [`run_pool_update`] opens then
+/// delegates here.
+///
+/// # Errors
+///
+/// Same conditions as [`run_pool_update`].
+#[expect(
+    clippy::too_many_arguments,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines
+)]
+pub fn run_pool_update_on_db(
+    db: &DegenbotDb,
+    chain_id: i64,
+    to_block: Option<u64>,
+    chunk_size: u64,
+    provider: AlloyProvider,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<dyn ProgressSink>,
+    verify_chunk: bool,
+    // When `Some(n)`, run a pre-commit FULL (market-wide, all in-scope
+    // pools) verification when a chunk crosses/lands-on a multiple of `n`
+    // blocks. A divergence rolls back the chunk + does NOT advance
+    // `last_update_block`. `None` = no interval gate.
+    verify_all_interval: Option<u64>,
+    // When `true`, run a pre-commit FULL verification on the run's final
+    // chunk (`working_end_block >= last_block`). A divergence rolls back
+    // the chunk + does NOT advance `last_update_block`.
+    verify_all_at_completion: bool,
+) -> Result<UpdateReport, RunError> {
+    if chunk_size == 0 {
+        return Err(RunError::Provider(ProviderError::InvalidBlockRange {
+            from: 1,
+            to: 0,
+        }));
+    }
+    let specs = load_active_exchange_specs(db, chain_id)?;
     if specs.is_empty() {
         // Nothing to do — return a trivial report (no chunks, no advance).
         return Ok(UpdateReport {
@@ -1007,7 +1068,7 @@ pub fn run_pool_update(
         }
         // Re-load specs to refresh `last_update_block` for the next iteration's
         // laggard filter (the DB now has the advanced stamp).
-        let refreshed = load_active_exchange_specs(&db, chain_id)?;
+        let refreshed = load_active_exchange_specs(db, chain_id)?;
         for spec in &mut specs_to_update {
             if let Some(r) = refreshed.iter().find(|r| r.id == spec.id) {
                 spec.last_update_block = r.last_update_block;

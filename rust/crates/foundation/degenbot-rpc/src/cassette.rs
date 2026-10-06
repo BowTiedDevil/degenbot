@@ -261,7 +261,9 @@ pub(crate) fn entry_key(method: &str, params: &Value) -> String {
 pub fn rfc3339_utc(unix_secs: u64) -> String {
     let days = unix_secs / 86_400;
     let secs_of_day = unix_secs % 86_400;
-    let (year, month, day) = civil_from_days(days as i64);
+    // `days` is a quotient of non-negative integers, so the `i64` widening
+    // `civil_from_days` expects cannot wrap.
+    let (year, month, day) = civil_from_days(days.cast_signed());
     format!(
         "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
         secs_of_day / 3_600,
@@ -277,10 +279,13 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let doe = z - era * 146_097; // [0, 146096]
     let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
     let y = yoe + era * 400;
+    // Hinnant-algorithm invariants: the day-of-month below lands in [1, 31]
+    // and the month in [1, 12] (pinned by the `rfc3339_utc_known_instants`
+    // test), so the u32 widenings never fail; the `unwrap_or` is unreachable.
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
     let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    let d = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap_or(0);
+    let m = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(0);
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
@@ -392,13 +397,11 @@ impl RecordingTransport {
         let response = match &resp.payload {
             ResponsePayload::Success(raw) => CassetteResponse::Success {
                 result: serde_json::from_str::<Value>(raw.get())
-                    .map(|v| canonicalize_value(&v))
-                    .unwrap_or(Value::Null),
+                    .map_or_else(|_| Value::Null, |v| canonicalize_value(&v)),
             },
             ResponsePayload::Failure(err) => CassetteResponse::Failure {
                 error: serde_json::to_value(err)
-                    .map(|v| canonicalize_value(&v))
-                    .unwrap_or(Value::Null),
+                    .map_or_else(|_| Value::Null, |v| canonicalize_value(&v)),
             },
         };
         let entry = CassetteEntry {
@@ -458,7 +461,10 @@ impl tower::Service<RequestPacket> for RecordingTransport {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+// Test assertions fail by design through panic!/expect, so the panic-family
+// deny is expected away for this module only — the same scoping as the
+// unwrap/expect allowances beside it.
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use alloy::rpc::json_rpc::ErrorPayload;
@@ -556,8 +562,8 @@ mod tests {
             source: "mock-node/1.0".to_string(),
             recorded_at: rfc3339_utc(1_770_000_000),
             span: CassetteSpan {
-                from_block: 26102618,
-                to_block: 26102619,
+                from_block: 26_102_618,
+                to_block: 26_102_619,
             },
         }
     }

@@ -264,13 +264,63 @@ pub fn run_aave_update(
         }));
     }
 
+    // Open ONE writeable handle for the whole run, then delegate to the
+    // pre-opened-handle variant (same shape as the pool updater's seam).
+    let (db, _schema_state) = DegenbotDb::open_for_writes(database_path)?;
+    run_aave_update_on_db(
+        &db,
+        chain_id,
+        market_id,
+        to_block,
+        chunk_size,
+        provider,
+        cancel,
+        progress,
+        verify_chunk,
+        verify_all_interval,
+        verify_all_at_completion,
+        max_chunks,
+    )
+}
+
+/// Pre-opened-handle variant of [`run_aave_update`] — behaviorally identical.
+/// The statement-ledger golden machinery ([`degenbot_db::sql_ledger::LedgerDb`],
+/// ADR-068 D3) needs to hand the run ITS traced connection, so the chunk loop
+/// must accept a handle it did not open (the Aave golden captures are wired to
+/// this seam; the committed goldens land with the replay-suite chunk).
+///
+/// # Errors
+///
+/// Same conditions as [`run_aave_update`].
+#[expect(clippy::too_many_arguments)]
+pub fn run_aave_update_on_db(
+    db: &DegenbotDb,
+    chain_id: i64,
+    market_id: i64,
+    to_block: Option<u64>,
+    chunk_size: u64,
+    provider: AlloyProvider,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<dyn ProgressSink>,
+    verify_chunk: bool,
+    verify_all_interval: Option<u64>,
+    verify_all_at_completion: bool,
+    max_chunks: Option<usize>,
+) -> Result<AaveUpdateReport, RunError> {
+    if chunk_size == 0 {
+        return Err(RunError::Provider(ProviderError::InvalidBlockRange {
+            from: 1,
+            to: 0,
+        }));
+    }
+
     // ONE block_on of the process-wide SHARED runtime at the fleet/CLI entry
     // seam — see "# Shared runtime" above. The driver future is polled
     // on the calling thread only, so the `!Send` `&Transaction` borrow and
     // the DB ` MutexGuard` held across `.await` stay sound (no `Send` hop,
     // no concurrent poll).
     get_runtime().block_on(run_aave_update_driver(
-        database_path,
+        db,
         chain_id,
         market_id,
         to_block,
@@ -308,7 +358,7 @@ pub fn run_aave_update(
     clippy::too_many_lines
 )]
 async fn run_aave_update_driver(
-    database_path: &Path,
+    db: &DegenbotDb,
     chain_id: i64,
     market_id: i64,
     to_block: Option<u64>,
@@ -321,9 +371,6 @@ async fn run_aave_update_driver(
     verify_all_at_completion: bool,
     max_chunks: Option<usize>,
 ) -> Result<AaveUpdateReport, RunError> {
-    // Open ONE writeable handle for the whole run.
-    let (db, _schema_state) = DegenbotDb::open_for_writes(database_path)?;
-
     // Resolve the market row (the `last_update_block` cursor).
     let market = db
         .fetch_aave_market_row(market_id)?
@@ -372,13 +419,13 @@ async fn run_aave_update_driver(
     // re-encounter of the same events is a no-op). No-op on a warm boot (both
     // rows already present). Mirrors the Python `update_aave_market` Phase-1
     // bootstrap (commands.py:1010-1062 + `_process_proxy_creation_event`).
-    bootstrap_pool_contracts(&db, &provider, &fetcher, market_id, from_block).await?;
+    bootstrap_pool_contracts(db, &provider, &fetcher, market_id, from_block).await?;
 
     // Build the fetch spec + the GHO asset (chain-unique). The per-chunk
     // loop's refresh re-reads `scaled_token_addresses` +
     // `stk_aave_address` from the DB at the START of each chunk, so the
     // frozen run-start snapshot here is just the seed for chunk 1.
-    let (mut spec, _gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
+    let (mut spec, _gho_asset) = build_fetch_spec(db, market_id, chain_id)?;
     let pool_address = spec.pool_address;
     let oracle_address = spec.oracle_address;
 
