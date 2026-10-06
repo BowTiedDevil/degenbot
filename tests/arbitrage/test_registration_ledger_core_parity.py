@@ -26,7 +26,17 @@ from degenbot.exceptions import (
     HighFeePoolRejectedError,
     HookedPoolRejectedError,
 )
+from degenbot.exceptions.base import DegenbotValueError
+from degenbot.pathfinding import PoolKind
 from degenbot.runner._registration_ledger import RegistrationLedger, RegistrationOutcome
+
+
+class _Step:
+    """A minimal discovery-edge hop: the fields ``pool_memo_key`` reads."""
+
+    type = PoolKind.V4
+    address = None
+    hash = None
 
 #: The closed tag set, pinned. Any change here is a change to the bounded
 #: metric vocabulary in the core, not a Python-side edit.
@@ -118,39 +128,39 @@ def test_the_first_stable_refusal_wins() -> None:
 
 
 @pytest.mark.parametrize(
-    ("exc", "pool_type", "expected_tag", "stable", "counts_as_skip"),
+    ("exc", "pool_kind", "expected_tag", "stable", "counts_as_skip"),
     [
         (
             HookedPoolRejectedError(),
-            "V4",
+            PoolKind.V4,
             RegistrationOutcome.V4_HOOK_REJECTED,
             True,
             False,
         ),
         (
             DynamicFeePoolRejectedError(),
-            "V4",
+            PoolKind.V4,
             RegistrationOutcome.V4_DYNAMIC_FEE_REJECTED,
             True,
             False,
         ),
         (
             HighFeePoolRejectedError(),
-            "V3",
+            PoolKind.V3,
             RegistrationOutcome.BUILD_V3_REFUSED,
             True,
             True,
         ),
         (
             HighFeePoolRejectedError(),
-            "V2",
+            PoolKind.V2,
             RegistrationOutcome.BUILD_V2_REFUSED,
             True,
             True,
         ),
         (
             RuntimeError("rpc blip"),
-            "V3",
+            PoolKind.V3,
             RegistrationOutcome.BUILD_V3_REFUSED,
             False,
             True,
@@ -159,13 +169,13 @@ def test_the_first_stable_refusal_wins() -> None:
 )
 def test_build_refusal_classification_is_the_cores_taxonomy(
     exc: BaseException,
-    pool_type: str,
+    pool_kind: PoolKind,
     expected_tag: RegistrationOutcome,
     stable: bool,
     counts_as_skip: bool,
 ) -> None:
     """Python names the TYPED failure; the core decides the taxonomy."""
-    refusal = RegistrationLedger.classify_build_refusal(exc, pool_type=pool_type)
+    refusal = RegistrationLedger.classify_build_refusal(exc, pool_kind=pool_kind)
 
     assert refusal.outcome == expected_tag.value
     assert refusal.stable is stable
@@ -183,7 +193,7 @@ def test_a_class_name_that_impersonates_a_stable_refusal_stays_transient() -> No
 
     impostor = HighFeePoolRejectedErrorImpostor("looks stable")
     impostor.__class__.__name__ = "HighFeePoolRejectedError"
-    refusal = RegistrationLedger.classify_build_refusal(impostor, pool_type="V3")
+    refusal = RegistrationLedger.classify_build_refusal(impostor, pool_kind=PoolKind.V3)
     assert refusal.stable is False, (
         "a matching class NAME is not the refusal TYPE the core classifies on"
     )
@@ -194,3 +204,30 @@ def test_an_unknown_outcome_tag_is_a_loud_refusal() -> None:
     ledger = RegistrationLedger()
     with pytest.raises(ValueError, match="unknown registration outcome"):
         ledger.memoize_unregistrable("p:0x1", "not-a-real-outcome", counts_as_skip=True)
+
+
+def test_an_unrecognized_family_is_not_the_no_identity_answer() -> None:
+    """The two ``None``-shaped facts are different facts.
+
+    A hop with no identity answers ``None`` (the docstring contract); an
+    unrecognized pool family is Rust/Python wire drift and must never join
+    that answer — it raises, naming the raw value and the known set.
+    """
+    step = _Step()
+
+    # The legitimate no-identity answer: a V4 hop carrying no pool id.
+    assert RegistrationLedger.pool_memo_key(step, PoolKind.V4) is None
+
+    # The unrecognized family: NOT the same answer.
+    with pytest.raises(DegenbotValueError, match=r"SUSHISWAP_V5.*V2, V3, V4"):
+        RegistrationLedger.pool_memo_key(step, "SUSHISWAP_V5")
+
+
+def test_an_unrecognized_family_never_classifies_as_another_family() -> None:
+    """``classify_build_refusal`` on an unrecognized family raises naming the
+    raw value and the known set — never a silently misclassified tag."""
+    with pytest.raises(DegenbotValueError, match=r"SUSHISWAP_V5.*V2, V3, V4"):
+        RegistrationLedger.classify_build_refusal(
+            RuntimeError("rpc blip"),
+            pool_kind="SUSHISWAP_V5",
+        )

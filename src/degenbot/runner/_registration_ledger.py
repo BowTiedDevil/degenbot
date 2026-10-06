@@ -49,6 +49,8 @@ from degenbot.exceptions import (
     HighFeePoolRejectedError,
     HookedPoolRejectedError,
 )
+from degenbot.exceptions.base import DegenbotValueError
+from degenbot.pathfinding import PoolKind
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
@@ -85,6 +87,39 @@ _FAILURE_KINDS: tuple[tuple[type[BaseException], str], ...] = (
 )
 
 
+def _core_pool_kind_label(pool_kind: PoolKind) -> str:
+    """Spell the pool-family label the core's memo/refusal seam takes.
+
+    The typed `PoolKind` is what a hop carries; the core seam takes the
+    family label string. One home for that conversion, matched on the enum:
+    Python cannot exhaustiveness-check a PyO3 enum, so the unmatched arm
+    raises instead of guessing a family.
+
+    Returns:
+        The core's family label for the kind.
+
+    Raises:
+        DegenbotValueError: On a kind outside the closed family set, naming
+            the raw value and the known set — Rust/Python wire drift, never
+            a silently guessed family.
+
+    """
+    match pool_kind:
+        case PoolKind.V2:
+            return "V2"
+        case PoolKind.V3:
+            return "V3"
+        case PoolKind.V4:
+            return "V4"
+        case _:
+            msg = (
+                f"Unrecognized pool kind {pool_kind!r}: the registration seam "
+                "spells only V2, V3, V4 (PoolKind members) — Rust/Python "
+                "wire drift."
+            )
+            raise DegenbotValueError(message=msg)
+
+
 class RegistrationLedger:
     """The four registration memos + typed build-refusal classification.
 
@@ -99,30 +134,34 @@ class RegistrationLedger:
     # ── hop identity ──
 
     @staticmethod
-    def pool_memo_key(step: Any, pool_type: str) -> str | None:
+    def pool_memo_key(step: Any, pool_kind: PoolKind) -> str | None:
         """Hop identity the negative memos key on — known BEFORE any build.
 
         V2/V3 key off the subgraph address; V4 off the pool id (the DB edge
         carries it pre-build, so a refused pool is recognizable without an
-        RPC). ``None`` = not memoizable (no identity on this step).
+        RPC). ``None`` = not memoizable (no identity on this step) — an
+        unrecognized family is never that answer: the kind leaves through
+        the closed-set gate first, which raises `DegenbotValueError` naming
+        the raw value and the known set.
 
         Returns:
             The memo key, or ``None`` when the step carries no memoizable
             identity.
 
         """
-        if pool_type == "V4":
+        label = _core_pool_kind_label(pool_kind)
+        if pool_kind == PoolKind.V4:
             if not step.hash:
                 return None
-            return registration_pool_memo_key(pool_type, None, to_0x_hex(step.hash))
-        if pool_type in {"V2", "V3"} and step.address:
-            return registration_pool_memo_key(pool_type, str(step.address).lower(), None)
-        return None
+            return registration_pool_memo_key(label, None, to_0x_hex(step.hash))
+        if not step.address:
+            return None
+        return registration_pool_memo_key(label, str(step.address).lower(), None)
 
     # ── typed build-refusal classification ──
 
     @staticmethod
-    def classify_build_refusal(exc: BaseException, *, pool_type: str) -> BuildRefusalView:
+    def classify_build_refusal(exc: BaseException, *, pool_kind: PoolKind) -> BuildRefusalView:
         """Classify a hop-build exception by TYPE — never by class name.
 
         ``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError`` are the
@@ -130,6 +169,9 @@ class RegistrationLedger:
         fact for every family. Any other exception is transient (retryable)
         even when its class name happens to match a stable refusal's. The
         detail text rides the record for logging and never becomes a label.
+        An unrecognized family is never classified as some other family: the
+        kind leaves through the closed-set gate first, which raises
+        `DegenbotValueError` naming the raw value and the known set.
 
         Returns:
             The typed refusal view (kind label + detail text).
@@ -142,7 +184,7 @@ class RegistrationLedger:
                 break
         return _core_classify_build_refusal(
             failure_kind,
-            pool_type,
+            _core_pool_kind_label(pool_kind),
             f"{type(exc).__name__}: {exc}",
         )
 

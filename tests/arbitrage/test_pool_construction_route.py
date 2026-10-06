@@ -130,20 +130,22 @@ class TestRouteFailureClassification:
         )
         pipeline = _make_pipeline(bot)
         with pytest.raises(UnsupportedPoolFamilyError):
-            pipeline._build_hop_pools([_step()], ["V3"])
+            pipeline._build_hop_pools([_step()], [PoolKind.V3])
 
     def test_transient_rpc_failure_is_a_counted_skip(self) -> None:
         """A transient failure keeps skip semantics: a counted skip outcome,
         never memoized (a retriable blip must stay retryable)."""
         bot = _RouteRecordingBot(exc=RuntimeError("connection blip"))
         pipeline = _make_pipeline(bot)
-        outcome = pipeline._build_hop_pools([_step()], ["V3"])
+        outcome = pipeline._build_hop_pools([_step()], [PoolKind.V3])
         assert outcome is not None
         assert outcome.kind == "skip"
         assert outcome.tag == "build-v3-refused"
         assert outcome.counts_as_skip is True
         assert (
-            pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(_step(), "V3"))
+            pipeline._ledger.unregistrable_record(
+                pipeline._ledger.pool_memo_key(_step(), PoolKind.V3)
+            )
             is None
         ), "a transient failure is never memoized"
 
@@ -153,20 +155,22 @@ class TestRouteFailureClassification:
         bot = _RouteRecordingBot(exc=HookedPoolRejectedError("hooked"))
         pipeline = _make_pipeline(bot)
         step = _v4_step()
-        outcome = pipeline._build_hop_pools([step], ["V4"])
+        outcome = pipeline._build_hop_pools([step], [PoolKind.V4])
         assert outcome is not None
         assert outcome.kind == "skip"
         assert outcome.tag == "v4-hook-rejected"
         assert outcome.counts_as_skip is False
         assert (
-            pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(step, "V4"))
+            pipeline._ledger.unregistrable_record(
+                pipeline._ledger.pool_memo_key(step, PoolKind.V4)
+            )
             is not None
         ), "a stable admission fact memoizes"
 
     def test_v4_dynamic_fee_refusal_keeps_stable_fact_semantics(self) -> None:
         bot = _RouteRecordingBot(exc=DynamicFeePoolRejectedError("dynamic"))
         pipeline = _make_pipeline(bot)
-        outcome = pipeline._build_hop_pools([_v4_step()], ["V4"])
+        outcome = pipeline._build_hop_pools([_v4_step()], [PoolKind.V4])
         assert outcome is not None
         assert outcome.tag == "v4-dynamic-fee-rejected"
 
@@ -177,7 +181,7 @@ class TestRoutePolicyFlows:
         one core build entry — no tracker rungs, no driver-side chain."""
         bot = _RouteRecordingBot()
         pipeline = _make_pipeline(bot)
-        outcome = pipeline._build_hop_pools([_step()], ["V3"])
+        outcome = pipeline._build_hop_pools([_step()], [PoolKind.V3])
         assert isinstance(outcome, list), "a successful build returns the pools, not an outcome"
         assert len(bot.build_calls) == 1, "one core entry, not a rung chain"
         call = bot.build_calls[0]

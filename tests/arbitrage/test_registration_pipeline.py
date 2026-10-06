@@ -835,7 +835,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
     pipeline3, _ = _pipeline_with_bot(bot)
     v4_steps = [_OpaqueStep(type=PoolKind.V4, address=None, hash=0xDEAD)]
     assert pipeline3._registration_unit(v4_steps).tag == "v4-hook-rejected"
-    key = pipeline3._ledger.pool_memo_key(v4_steps[0], "V4")
+    key = pipeline3._ledger.pool_memo_key(v4_steps[0], PoolKind.V4)
     assert pipeline3._ledger.unregistrable_record(key) is not None, "unregistrable-pool memo"
 
 
@@ -852,19 +852,24 @@ def test_build_refusal_classification_is_typed_not_class_name_based() -> None:
     from degenbot.runner._registration_ledger import RegistrationLedger
 
     impostor = type("HighFeePoolRejectedError", (RuntimeError,), {})
-    transient = RegistrationLedger.classify_build_refusal(impostor("x"), pool_type="V3")
+    transient = RegistrationLedger.classify_build_refusal(impostor("x"), pool_kind=PoolKind.V3)
     assert transient.stable is False
 
-    high_fee = RegistrationLedger.classify_build_refusal(HighFeePoolRejectedError(), pool_type="V3")
+    high_fee = RegistrationLedger.classify_build_refusal(
+        HighFeePoolRejectedError(), pool_kind=PoolKind.V3
+    )
     assert high_fee.stable is True
     assert high_fee.counts_as_skip is True
 
-    hooked = RegistrationLedger.classify_build_refusal(HookedPoolRejectedError(), pool_type="V4")
+    hooked = RegistrationLedger.classify_build_refusal(
+        HookedPoolRejectedError(), pool_kind=PoolKind.V4
+    )
     assert hooked.stable is True
     assert hooked.counts_as_skip is False
 
     dynamic = RegistrationLedger.classify_build_refusal(
-        DynamicFeePoolRejectedError(), pool_type="V4"
+        DynamicFeePoolRejectedError(),
+        pool_kind=PoolKind.V4,
     )
     assert dynamic.stable is True
     assert dynamic.counts_as_skip is False
@@ -892,7 +897,9 @@ def test_impostor_class_name_is_never_memoized() -> None:
     assert pipeline._registration_unit(steps).kind == "skip"
     assert builds == [POOL_A, POOL_A], "a name-only match must never be memoized"
     assert (
-        pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(steps[0], "V3"))
+        pipeline._ledger.unregistrable_record(
+            pipeline._ledger.pool_memo_key(steps[0], PoolKind.V3)
+        )
         is None
     )
 

@@ -1562,7 +1562,7 @@ class TestPathRegistrationPipeline:
 
     @dataclass
     class _Step:
-        type: object
+        type: PoolKind
         address: str
         hash: object | None = None
 
@@ -1678,12 +1678,11 @@ class TestPathRegistrationPipeline:
 
         A 1-hop V2 path with explicit `directions=[True]` is used so the add
         fully registers through the real `_consume` offline (no live RPC
-        token-direction resolution needed). Forever discovery yields deliberately
-        opaque path shapes (a step whose type is not a pool table class) that
-        `_consume` skips (counted as `skip_count`), exercising the pipeline body
-        + backpressure forever without live construction — and, crucially,
-        WITHOUT aborting the pipeline (a raw ``object()`` would make `_consume`
-        do `list(object())` → TypeError, masking the real composition).
+        token-direction resolution needed). Forever discovery yields typed V4
+        hops carrying no pool id — the pipeline's legitimate pre-RPC skip arm
+        (`V4_NO_HASH`, counted as `skip_count`) — exercising the pipeline body
+        + backpressure forever without live construction and WITHOUT aborting
+        the pipeline.
         """
         pipeline, reg, t_base = self._make_pipeline()
         prior_skips = pipeline.skip_count
@@ -1691,14 +1690,14 @@ class TestPathRegistrationPipeline:
         async def forever_producer():
             i = 0
             while True:
-                # Opaque path shape `_consume` skips (step type = `object`, not
-                # a V2/V3/V4 pool table class) — exercises the pipeline body +
-                # backpressure forever, and safe (no list(object()) TypeError).
+                # A TYPED V4 hop carrying no pool id: the pipeline's legitimate
+                # pre-RPC skip arm (V4_NO_HASH) — exercises the pipeline body
+                # + backpressure forever, counted, never aborting the unit.
                 i += 1
                 await asyncio.sleep(
                     0
                 )  # yield per item: stands in for the real discovery sweep's per-path await
-                yield [self._Step(type=object, address="0x" + f"{i:x}" * 40)]
+                yield [self._Step(type=PoolKind.V4, address="0x" + f"{i:x}" * 40)]
 
         # Run the unbounded discovery producer through the crawl as a
         # background task (never returns). PRG-5: the bounded producer/consumer

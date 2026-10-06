@@ -23,6 +23,7 @@ from degenbot.arbitrage import RetryPolicy
 from degenbot.builders.request import BuildManagedPoolRequest, ConstructionRoute
 from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
+    DegenbotValueError,
     DirectionResolutionError,
     PathRegistryFullError,
     PathRejectedError,
@@ -72,11 +73,6 @@ _POOL_VERSION_MAP: dict[str, PoolKind] = {
     "V2": PoolKind.V2,
     "V3": PoolKind.V3,
     "V4": PoolKind.V4,
-}
-_POOL_KIND_TO_VERSION: dict[PoolKind, str] = {
-    PoolKind.V2: "V2",
-    PoolKind.V3: "V3",
-    PoolKind.V4: "V4",
 }
 
 
@@ -454,20 +450,20 @@ class PathRegistrationPipeline:
 
         """
         steps = list(path_steps)
-        pool_type_strs = self._hop_pool_types(steps)
+        pool_kinds = self._hop_pool_kinds(steps)
 
-        memoized = self._memoized_unregistrable_outcome(steps, pool_type_strs)
+        memoized = self._memoized_unregistrable_outcome(steps, pool_kinds)
         if memoized is not None:
             return memoized
 
-        built = self._build_hop_pools(steps, pool_type_strs)
+        built = self._build_hop_pools(steps, pool_kinds)
         if isinstance(built, RegistrationUnitOutcome):
             return built
         pools = built
 
         # Pools that reached the registration stage are the v4_pool_count
         # parity witness (counted on registered AND rejected outcomes).
-        v4_hops = sum(1 for pt in pool_type_strs if pt == "V4")
+        v4_hops = pool_kinds.count(PoolKind.V4)
         reg = self.engine_registry
 
         # Fatal contract: VerificationMismatchError / VerificationRpcError /
@@ -480,7 +476,7 @@ class PathRegistrationPipeline:
                 return plan
             engine_hops, hop_sig = plan
 
-            self._run_verify_lifecycles(pools, pool_type_strs, reg)
+            self._run_verify_lifecycles(pools, pool_kinds, reg)
 
             outcome = self._register_path_outcome(reg, engine_hops, hop_sig, v4_hops)
             if outcome.kind == "registered":
@@ -504,33 +500,37 @@ class PathRegistrationPipeline:
             return outcome
 
     @staticmethod
-    def _hop_pool_types(steps: list[Any]) -> list[str]:
-        """Map typed pool families to registration version labels.
+    def _hop_pool_kinds(steps: list[Any]) -> list[PoolKind]:
+        """Resolve each hop's typed pool family.
+
+        The hop's `PoolKind` is the discovery edge's discriminant, carried by
+        `PathStep.type`.
 
         Returns:
-            The version label per step (``""`` when the step's family is
-            unknown to the map).
+            The `PoolKind` each step carries.
 
         """
-        return [_POOL_KIND_TO_VERSION.get(step.type, "") for step in steps]
+        return [step.type for step in steps]
 
     def _memoized_unregistrable_outcome(
         self,
         steps: list[Any],
-        pool_type_strs: list[str],
+        pool_kinds: list[PoolKind],
     ) -> RegistrationUnitOutcome | None:
         """Answer a hop whose stable build refusal is already memoized.
 
         The pathological DFS region re-yielded one refused pool alongside
-        thousands of candidate paths; the ledger owns the record.
+        thousands of candidate paths; the ledger owns the record. An
+        unrecognized hop family never reaches a memo ask: the ledger's
+        closed-set gate raises `DegenbotValueError` (wire drift).
 
         Returns:
             The memoized refusal outcome for the path, or ``None`` when no
             hop carries a stable memoized refusal.
 
         """
-        for step, pt in zip(steps, pool_type_strs, strict=True):
-            memo = self._ledger.unregistrable_record(self._ledger.pool_memo_key(step, pt))
+        for step, pool_kind in zip(steps, pool_kinds, strict=True):
+            memo = self._ledger.unregistrable_record(self._ledger.pool_memo_key(step, pool_kind))
             if memo is not None:
                 return RegistrationUnitOutcome(
                     kind="skip",
@@ -539,10 +539,41 @@ class PathRegistrationPipeline:
                 )
         return None
 
+    def _refusal_skip(
+        self,
+        step: Any,
+        exc: Exception,
+        pool_kind: PoolKind,
+    ) -> RegistrationUnitOutcome:
+        """Classify one hop-build failure and shape its skip outcome.
+
+        A stable refusal also memoizes the hop's unregistrable-pool record;
+        a transient failure is never memoized (a retriable blip must stay
+        retryable). An unrecognized hop family never reaches the classifier:
+        the ledger's closed-set gate raises `DegenbotValueError` (wire drift).
+
+        Returns:
+            The classified skip outcome.
+
+        """
+        refusal = self._ledger.classify_build_refusal(exc, pool_kind=pool_kind)
+        if refusal.stable:
+            self._ledger.memoize_unregistrable(
+                self._ledger.pool_memo_key(step, pool_kind),
+                refusal.outcome,
+                counts_as_skip=refusal.counts_as_skip,
+            )
+        return RegistrationUnitOutcome(
+            kind="skip",
+            tag=refusal.outcome,
+            counts_as_skip=refusal.counts_as_skip,
+            detail=refusal.detail,
+        )
+
     def _build_hop_pools(
         self,
         steps: list[Any],
-        pool_type_strs: list[str],
+        pool_kinds: list[PoolKind],
     ) -> list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] | RegistrationUnitOutcome:
         """Build (or registry-answer) every hop, or return the refusal outcome.
 
@@ -558,60 +589,65 @@ class PathRegistrationPipeline:
         Raises:
             UnsupportedPoolFamilyError: On a family-level stable refusal —
                 the route's loud arm; never swallowed or counted as a skip.
+            DegenbotValueError: On a hop family outside the closed `PoolKind`
+                set — wire drift is a loud abort, never a classified refusal,
+                so the unmatched arm raises OUTSIDE the classified try.
 
         """
         pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] = []
-        for step, pt in zip(steps, pool_type_strs, strict=True):
-            if pt not in {"V2", "V3", "V4"}:
-                return RegistrationUnitOutcome(
-                    kind="skip",
-                    tag=RegistrationOutcome.UNKNOWN_POOL_TYPE.value,
-                )
-            if pt == "V4" and not step.hash:
-                return RegistrationUnitOutcome(
-                    kind="skip",
-                    tag=RegistrationOutcome.V4_NO_HASH.value,
-                )
-            try:
-                if pt == "V2":
-                    pool = self.constr_bot.build_pool(step.address, silent=True)
-                elif pt == "V3":
-                    # ONE core entry: the construction route (route order +
-                    # DB two-step identity + get-or-register) lives in
-                    # ``pool_builder::route`` — the cockpit supplies the
-                    # resolved policy value and receives the constructed,
-                    # registered pool or a typed refusal.
-                    pool = self.constr_bot.build_pool(
-                        step.address,
-                        silent=True,
-                        construction_route=self.construction_route,
+        for step, pool_kind in zip(steps, pool_kinds, strict=True):
+            match pool_kind:
+                case PoolKind.V4:
+                    if not step.hash:
+                        return RegistrationUnitOutcome(
+                            kind="skip",
+                            tag=RegistrationOutcome.V4_NO_HASH.value,
+                        )
+                    try:
+                        pool = self.constr_bot.build_managed_pool(
+                            UNISWAP_V4_POOL_MANAGER_ADDRESS,
+                            BuildManagedPoolRequest(pool_id=step.hash, silent=True),
+                        )
+                    except UnsupportedPoolFamilyError:
+                        # The route's loud arm (ADR-055 D4): a family-level
+                        # stable refusal — no rung serves this pool's factory,
+                        # no DEX preset, no identity selector, CREATE2
+                        # contradiction — aborts the unit LOUDLY. Never
+                        # swallowed into the next rung (the retired bare
+                        # except-and-continue), never a benign skip.
+                        raise
+                    except Exception as exc:
+                        return self._refusal_skip(step, exc, pool_kind)
+                case PoolKind.V2:
+                    try:
+                        pool = self.constr_bot.build_pool(step.address, silent=True)
+                    except UnsupportedPoolFamilyError:
+                        raise
+                    except Exception as exc:
+                        return self._refusal_skip(step, exc, pool_kind)
+                case PoolKind.V3:
+                    try:
+                        # ONE core entry: the construction route (route order +
+                        # DB two-step identity + get-or-register) lives in
+                        # ``pool_builder::route`` — the cockpit supplies the
+                        # resolved policy value and receives the constructed,
+                        # registered pool or a typed refusal.
+                        pool = self.constr_bot.build_pool(
+                            step.address,
+                            silent=True,
+                            construction_route=self.construction_route,
+                        )
+                    except UnsupportedPoolFamilyError:
+                        raise
+                    except Exception as exc:
+                        return self._refusal_skip(step, exc, pool_kind)
+                case _:
+                    msg = (
+                        f"Unrecognized pool kind {pool_kind!r}: the registration "
+                        "pipeline builds only PoolKind.V2, PoolKind.V3, "
+                        "PoolKind.V4 hops — Rust/Python wire drift."
                     )
-                else:
-                    pool = self.constr_bot.build_managed_pool(
-                        UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                        BuildManagedPoolRequest(pool_id=step.hash, silent=True),
-                    )
-            except UnsupportedPoolFamilyError:
-                # The route's loud arm (ADR-055 D4): a family-level stable
-                # refusal — no rung serves this pool's factory, no DEX preset,
-                # no identity selector, CREATE2 contradiction — aborts the
-                # unit LOUDLY. Never swallowed into the next rung (the retired
-                # bare except-and-continue), never counted as a benign skip.
-                raise
-            except Exception as exc:
-                refusal = self._ledger.classify_build_refusal(exc, pool_type=pt)
-                if refusal.stable:
-                    self._ledger.memoize_unregistrable(
-                        self._ledger.pool_memo_key(step, pt),
-                        refusal.outcome,
-                        counts_as_skip=refusal.counts_as_skip,
-                    )
-                return RegistrationUnitOutcome(
-                    kind="skip",
-                    tag=refusal.outcome,
-                    counts_as_skip=refusal.counts_as_skip,
-                    detail=refusal.detail,
-                )
+                    raise DegenbotValueError(message=msg)
             pools.append(cast("UniswapV2Pool | UniswapV3Pool | UniswapV4Pool", pool))
         return pools
 
@@ -682,7 +718,7 @@ class PathRegistrationPipeline:
     def _run_verify_lifecycles(
         self,
         pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
-        pool_type_strs: list[str],
+        pool_kinds: list[PoolKind],
         reg: EngineRegistry,
     ) -> None:
         """Run the per-pool verify choreography before path registration.
@@ -691,14 +727,27 @@ class PathRegistrationPipeline:
         seat-claims table keeps them at-most-once per live window, and the
         verify-once memo makes a completed lifecycle a pool fact for this
         pipeline lifetime.
+
+        Raises:
+            DegenbotValueError: On a hop family outside the closed `PoolKind`
+                set — wire drift, never a silently skipped verify.
+
         """
-        for pool, pt in zip(pools, pool_type_strs, strict=True):
-            if pt == "V2":
-                self._warn_asymmetric_v2_fees(cast("UniswapV2Pool", pool))
-            elif pt == "V3":
-                self._verify_v3_pool(cast("UniswapV3Pool", pool), reg)
-            elif pt == "V4":
-                self._verify_v4_pool(cast("UniswapV4Pool", pool), reg)
+        for pool, pool_kind in zip(pools, pool_kinds, strict=True):
+            match pool_kind:
+                case PoolKind.V2:
+                    self._warn_asymmetric_v2_fees(cast("UniswapV2Pool", pool))
+                case PoolKind.V3:
+                    self._verify_v3_pool(cast("UniswapV3Pool", pool), reg)
+                case PoolKind.V4:
+                    self._verify_v4_pool(cast("UniswapV4Pool", pool), reg)
+                case _:
+                    msg = (
+                        f"Unrecognized pool kind {pool_kind!r}: the verify "
+                        "choreography runs only PoolKind.V2, PoolKind.V3, "
+                        "PoolKind.V4 hops — Rust/Python wire drift."
+                    )
+                    raise DegenbotValueError(message=msg)
 
     @staticmethod
     def _warn_asymmetric_v2_fees(v2_pool: UniswapV2Pool) -> None:
@@ -1206,9 +1255,7 @@ async def build_paths(
             "[build_paths] Permutation filter active: "
             f"{perms} → depths={pipeline.pool_type_per_depth}",
         )
-    bot_logger.info(
-        f"[build_paths] Pool types: {[_POOL_KIND_TO_VERSION[kind] for kind in pipeline.pool_types]}"
-    )
+    bot_logger.info(f"[build_paths] Pool types: {pipeline.pool_types}")
 
     start = time.perf_counter()
 
