@@ -153,6 +153,22 @@ pub(super) async fn process_chunk_on_conn(
             }
         }
 
+        // The per-tx decode+compute stage span (the Jaeger twin of the
+        // `compute_started` anchor): the GHO/revision reads, the discount
+        // pre-pass + the config dispatch — all under the chunk's write lock.
+        // The guard rides the driver future's single-thread poll (the
+        // `await_holding_lock` soundness argument covers the span context
+        // exactly as it covers the `&Transaction` borrow). One span per tx:
+        // Jaeger grain answers WHICH transaction is slow; the chunk-total
+        // metric still rides the ChunkProgress boundary (one observation per
+        // committed chunk).
+        let compute_span = tracing::info_span!(
+            "degenbot.updater.aave.compute",
+            tx.block = block_number,
+            rpc.round_trips = tracing::field::Empty,
+        );
+        let compute_rt_start = degenbot_rpc::provider::rpc_round_trips();
+        let compute_guard = compute_span.enter();
         let compute_started = Instant::now();
         // (0) Re-resolve the GHO asset for THIS tx — sees the prior tx's
         //     `ReserveInitialized` write that set `aave_gho_tokens.v_token_id`
@@ -263,12 +279,31 @@ pub(super) async fn process_chunk_on_conn(
         })?;
 
         decode_compute_time += compute_started.elapsed();
+        drop(compute_guard);
+        compute_span.record(
+            "rpc.round_trips",
+            degenbot_rpc::provider::rpc_round_trips().saturating_sub(compute_rt_start),
+        );
         // (f) Apply THIS tx's op events to `conn` — so tx N+1 sees them via
         //     read-your-own-writes (surface #2: the `Upgraded` revision bump +
         //     scaled-token balance deltas land before the next tx's reads).
+        // The per-tx apply stage span (the Jaeger twin of the
+        // `apply_started` anchor): this tx's op-event applies to `conn` —
+        // read-your-own-writes for tx N+1's reads. SQL-only.
+        let apply_span = tracing::info_span!(
+            "degenbot.updater.aave.apply",
+            apply.kind = "tx",
+            events.n = tracing::field::Empty,
+        );
+        let apply_guard = apply_span.enter();
         let apply_started = Instant::now();
         apply_chunk_events_on_conn(conn, market_id, &op_events, &mut substrate)?;
         apply_time += apply_started.elapsed();
+        drop(apply_guard);
+        apply_span.record(
+            "events.n",
+            u64::try_from(op_events.len()).unwrap_or(u64::MAX),
+        );
         events_applied_total += op_events.len();
 
         // (f.4) DEBUG: per-tx touched-position trace (env-gated). When
@@ -392,6 +427,12 @@ pub(super) async fn process_chunk_on_conn(
     //     the cleanup are durable only when the caller's `Transaction`
     //     commits; on rollback the whole chunk (events + cleanup + stamp)
     //     reverts (§3.4 restart-invariant).
+    // The end-of-chunk cleanup + stamp span (the Jaeger twin of this
+    // `apply_started` anchor): the deferred `ReserveDataUpdated` flush, the
+    // zero-balance cleanup, + the stamp — the chunk's remaining
+    // in-transaction SQL. The stamp stays the LAST write (§3.4).
+    let cleanup_span = tracing::info_span!("degenbot.updater.aave.apply", apply.kind = "cleanup");
+    let cleanup_guard = cleanup_span.enter();
     let apply_started = Instant::now();
     // Perf C: flush the deferred `ReserveDataUpdated` writes (one sorted
     // multi-row UPDATE — the liquidity_updater deterministic-order idiom)
@@ -404,6 +445,7 @@ pub(super) async fn process_chunk_on_conn(
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;
     apply_time += apply_started.elapsed();
+    drop(cleanup_guard);
 
     Ok(ChunkCoreReport {
         events_applied: events_applied_total,

@@ -10,6 +10,7 @@ use alloy::network::Ethereum;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
+use alloy::rpc::json_rpc::{RequestPacket, ResponsePacket};
 use alloy::rpc::types::eth::{
     simulate::{SimulatePayload, SimulatedBlock},
     FeeHistory,
@@ -22,7 +23,7 @@ use alloy::rpc::types::{Filter, Log};
 use alloy::transports::ipc::IpcConnect;
 use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::{WebSocketConfig, WsConnect};
-use alloy::transports::{RpcError, TransportErrorKind};
+use alloy::transports::{RpcError, TransportErrorKind, TransportFut};
 use degenbot_core::diag;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_core::retry::RetryPolicy;
@@ -30,6 +31,7 @@ use degenbot_core::{op_error, op_warn};
 use rand::RngExt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -809,6 +811,132 @@ impl LogFilter {
     }
 }
 
+/// The process-wide HTTP JSON-RPC round-trip counter — the production twin of
+/// the cassette gates' round-trip counters (ADR-068 D6): every request packet
+/// the standard-constructor HTTP transport dispatches counts once (a batch
+/// packet is ONE wire round trip; a transport-level retry re-enters `call`,
+/// so each attempt counts, exactly as a replay-served request would).
+///
+/// PASSIVE: one `Relaxed` `fetch_add` per dispatch — the request stream, its
+/// order, and its bytes are untouched, so the golden RPC gates cannot move.
+///
+/// SCOPE, stated rather than papered over: HTTP only. The WS/IPC
+/// constructors (the bot's subscription surfaces) are not layered, and
+/// cassette/offline providers never reach [`AlloyProvider::build_provider`].
+/// Under the single-writer one-shot updater processes this telemetry targets
+/// (the CLI / fleet updater runs), the counted transport IS the updater
+/// run's; a mixed-traffic process attributes concurrent HTTP traffic to
+/// whichever updater chunk boundary brackets it. Delta two reads around a
+/// phase to scope it — the same protocol the replay transport's
+/// `served_snapshot` prescribes.
+static HTTP_RPC_ROUND_TRIPS: AtomicU64 = AtomicU64::new(0);
+
+/// The process-wide HTTP JSON-RPC round-trip count so far.
+#[must_use]
+pub fn rpc_round_trips() -> u64 {
+    HTTP_RPC_ROUND_TRIPS.load(Ordering::Relaxed)
+}
+
+/// The counting tower layer: one increment per dispatched request packet.
+/// Attached in [`AlloyProvider::build_provider`] next to the `ThrottleLayer`
+/// arm (tower-shaped exactly like it — a `Layer` over the transport service).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RoundTripCountLayer;
+
+impl<S> tower::Layer<S> for RoundTripCountLayer {
+    type Service = RoundTripCountService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        RoundTripCountService { inner }
+    }
+}
+
+/// The counting service — counts, then delegates; the delegate future is
+/// boxed straight through (no clone, no `poll_ready` dance beyond the inner's).
+#[derive(Debug, Clone)]
+pub(crate) struct RoundTripCountService<S> {
+    inner: S,
+}
+
+impl<S> tower::Service<RequestPacket> for RoundTripCountService<S>
+where
+    S: tower::Service<
+            RequestPacket,
+            Response = ResponsePacket,
+            Error = alloy::transports::TransportError,
+        > + Send
+        + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = ResponsePacket;
+    type Error = alloy::transports::TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        HTTP_RPC_ROUND_TRIPS.fetch_add(1, Ordering::Relaxed);
+        Box::pin(self.inner.call(req))
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test fixture serialization fails loudly"
+)]
+mod round_trip_layer_tests {
+    use super::*;
+    use tower::Layer as _;
+    use tower::Service as _;
+
+    /// A pending-forever inner: the test only asserts the COUNT, never a
+    /// response — the layer's contract is count-then-delegate.
+    struct PendingInner;
+
+    impl tower::Service<RequestPacket> for PendingInner {
+        type Response = ResponsePacket;
+        type Error = alloy::transports::TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(
+            &mut self,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _req: RequestPacket) -> Self::Future {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    /// One dispatched packet = exactly one counted round trip.
+    #[test]
+    fn counting_layer_counts_then_delegates() {
+        let request = alloy::rpc::json_rpc::Request::<()>::new(
+            "eth_blockNumber",
+            alloy::rpc::json_rpc::Id::Number(1),
+            (),
+        )
+        .serialize()
+        .expect("request serializes");
+        let mut service = RoundTripCountLayer.layer(PendingInner);
+        let before = rpc_round_trips();
+        let _future = service.call(RequestPacket::from(request));
+        assert_eq!(
+            rpc_round_trips(),
+            before + 1,
+            "one dispatched packet = one counted round trip"
+        );
+    }
+}
+
 /// High-performance Ethereum RPC provider.
 pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
@@ -1008,11 +1136,19 @@ impl AlloyProvider {
                         message: format!("Invalid RPC URL: {e}"),
                     })?;
 
+                // The round-trip counter rides OUTERMOST (layers added first
+                // are called with the request first), so every dispatched
+                // packet counts exactly once regardless of the throttle arm.
                 let client = if let Some((rps, burst)) = rate_limit {
                     let throttle = ThrottleLayer::new_with_burst(rps, burst);
-                    ClientBuilder::default().layer(throttle).http(url)
+                    ClientBuilder::default()
+                        .layer(RoundTripCountLayer)
+                        .layer(throttle)
+                        .http(url)
                 } else {
-                    ClientBuilder::default().http(url)
+                    ClientBuilder::default()
+                        .layer(RoundTripCountLayer)
+                        .http(url)
                 };
 
                 let provider = ProviderBuilder::default()

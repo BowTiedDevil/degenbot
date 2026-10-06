@@ -241,6 +241,12 @@ pub fn init_global_metrics_with_addr(addr: SocketAddr) -> Result<(), MetricsInit
     };
     GLOBAL.get_or_init(|| global);
 
+    // The updater telemetry port rides the metrics boot: the port exists iff
+    // the meter its hooks forward to can exist (one install site; the hooks
+    // resolve the instrument set lazily, so install order is irrelevant —
+    // the same discipline as the substrate port install at shell boot).
+    crate::instruments::install_updater_telemetry_port();
+
     // self-register the scrape thread (before the spawn below).
     degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {
         resource: "metrics_scrape",

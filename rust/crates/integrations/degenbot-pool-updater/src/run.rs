@@ -89,6 +89,7 @@ use std::time::{Duration, Instant};
 use alloy::primitives::{Address, B256};
 use degenbot_core::errors::ProviderError;
 use degenbot_core::op_info;
+use degenbot_core::updater_telemetry::{UpdaterKind, UpdaterStage};
 use degenbot_db::{
     ComputedLiquidityUpdate, DegenbotDb, LiquidityUpdateEvent, V2PoolRowInput, V3PoolRowInput,
     V4PoolRowInput,
@@ -1283,6 +1284,26 @@ pub fn run_pool_update_on_db(
 
         let working_end_block = last_block.min(working_start_block + chunk_size - 1);
 
+        // The chunk's trace ROOT (the `degenbot.epoch` shape): every stage
+        // span below parents onto it through the thread-local span stack, so
+        // one chunk = one Jaeger waterfall. PASSIVE telemetry: the guard only
+        // carries span context — the loop body below is untouched, so the
+        // statement ledger, the RPC request stream, and the stamp contract
+        // (the three golden gates) cannot move.
+        let chunk_span = tracing::info_span!(
+            "degenbot.updater.pool.chunk",
+            chain.id = chain_id,
+            chunk.start = working_start_block,
+            chunk.end = working_end_block,
+        );
+        let _chunk_guard = chunk_span.enter();
+        // The JSON-RPC round trips this chunk's stages issue (the production
+        // twin of the cassette gates' round-trip counters). The count is
+        // process-wide (see `degenbot_rpc::provider::rpc_round_trips`); under
+        // the single-writer one-shot updater processes this telemetry
+        // targets, the counted transport IS this run's.
+        let chunk_rpc_round_trips_start = degenbot_rpc::provider::rpc_round_trips();
+
         // The in-scope subset for THIS chunk + each spec's per-exchange fetch
         // start. A spec is in-scope iff it still has unprocessed work at or
         // before `working_end_block`; its fetch start is `max(marker + 1,
@@ -1330,6 +1351,16 @@ pub fn run_pool_update_on_db(
         // consumed in the sequential order (creations, V3, V4) so the first
         // surfaced error keeps its precedence, loudly (no result is dropped
         // or defaulted when a sibling phase fails).
+        // The fetch stage span wraps the SAME region the plain-`Instant`
+        // `fetch_started` anchor times (the replay-driven baseline): the
+        // three overlapped RPC phases ride ONE span (summing per-phase spans
+        // would double-count wall time that runs concurrently — Perf E).
+        let fetch_span = tracing::info_span!(
+            "degenbot.updater.pool.fetch",
+            rpc.round_trips = tracing::field::Empty,
+        );
+        let fetch_rt_start = degenbot_rpc::provider::rpc_round_trips();
+        let fetch_guard = fetch_span.enter();
         let fetch_started = Instant::now();
         let (pool_creations, v3_liquidity, v4_fetched) = rt.block_on(async {
             tokio::join!(
@@ -1396,6 +1427,11 @@ pub fn run_pool_update_on_db(
         // One span for the overlapped phases: summing per-phase spans would
         // double-count wall time that now runs concurrently.
         chunk_fetch_time += fetch_started.elapsed();
+        drop(fetch_guard);
+        fetch_span.record(
+            "rpc.round_trips",
+            degenbot_rpc::provider::rpc_round_trips().saturating_sub(fetch_rt_start),
+        );
         let inputs = ChunkInputs {
             pool_creations,
             v3_liquidity,
@@ -1408,10 +1444,16 @@ pub fn run_pool_update_on_db(
         // BEFORE the transaction opens - the O(map) full-map SELECTs leave the
         // write lock (survey finding 1). The returned plan owns the maps; the
         // guard it used drops inside.
+        // The compute stage span wraps the read pass — the same boundary
+        // the `read_pass_time` anchor times (the O(map) full-map SELECTs,
+        // Perf A). SQL-only: no RPC, no writes outside the later tx.
+        let compute_span = tracing::info_span!("degenbot.updater.pool.compute");
+        let compute_guard = compute_span.enter();
         let read_pass_started = Instant::now();
         let preverified =
             compute_preverified_liquidity(db, chain_id, &chunk_specs, &inputs, verify_chunk)?;
         let read_pass_time = read_pass_started.elapsed();
+        drop(compute_guard);
 
         // The pre-commit on-chain-truth gate (Full per-pool verification),
         // hoisted out of the transaction (Perf A): each planned map is
@@ -1420,9 +1462,21 @@ pub fn run_pool_update_on_db(
         // observable RED contract is unchanged (`RunError::Verification`, zero
         // rows written, the stamp unadvanced) while the RPC leaves the lock.
         if verify_chunk {
+            let verify_span = tracing::info_span!(
+                "degenbot.updater.pool.verify",
+                verify.kind = "chunk",
+                rpc.round_trips = tracing::field::Empty,
+            );
+            let verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
+            let verify_guard = verify_span.enter();
             let verify_started = Instant::now();
             verify_precomputed_maps(&provider, rt, working_end_block, &preverified, &inputs)?;
             chunk_verify_time += verify_started.elapsed();
+            drop(verify_guard);
+            verify_span.record(
+                "rpc.round_trips",
+                degenbot_rpc::provider::rpc_round_trips().saturating_sub(verify_rt_start),
+            );
         }
 
         // Full (market-wide) verification gate: interval boundary crossing +
@@ -1436,6 +1490,13 @@ pub fn run_pool_update_on_db(
             verify_all_interval,
         ) || (verify_all_at_completion && working_end_block >= last_block);
         if run_full {
+            let full_verify_span = tracing::info_span!(
+                "degenbot.updater.pool.verify",
+                verify.kind = "full",
+                rpc.round_trips = tracing::field::Empty,
+            );
+            let full_verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
+            let full_verify_guard = full_verify_span.enter();
             let full_verify_started = Instant::now();
             crate::verify::verify_all_pools_pre_commit(&crate::verify::PreCommitFullVerifyCtx {
                 db,
@@ -1448,6 +1509,11 @@ pub fn run_pool_update_on_db(
                 v4_manager_addresses: &inputs.v4_manager_addresses,
             })?;
             chunk_full_verify_time += full_verify_started.elapsed();
+            drop(full_verify_guard);
+            full_verify_span.record(
+                "rpc.round_trips",
+                degenbot_rpc::provider::rpc_round_trips().saturating_sub(full_verify_rt_start),
+            );
         }
 
         // The single-transaction chunk write (section-1 atomicity). On ANY
@@ -1455,6 +1521,17 @@ pub fn run_pool_update_on_db(
         // unchanged -> restart re-processes clean (restart-invariant). The
         // only retryable error is `MarkerMoved` (the optimistic stamp's
         // structural check): drop, refresh the specs, re-plan the chunk.
+        // The apply stage span wraps the single-transaction write block —
+        // for the pool loop this IS the write-lock hold (the read pass + the
+        // verify gates run outside the tx, Perf A), so the span's Jaeger
+        // duration and the `write_lock_hold_time` ChunkProgress number are
+        // the same boundary.
+        let apply_span = tracing::info_span!(
+            "degenbot.updater.pool.apply",
+            lock.hold_us = tracing::field::Empty,
+            events.applied = tracing::field::Empty,
+        );
+        let apply_guard = apply_span.enter();
         let chunk_report = {
             let mut guard = db.lock();
             // The write-lock hold starts at the `transaction()` open and
@@ -1473,6 +1550,9 @@ pub fn run_pool_update_on_db(
                 Ok(r) => {
                     tx.commit().map_err(degenbot_db::DbError::from)?;
                     chunk_lock_hold_time = lock_hold_started.elapsed();
+                    if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+                        t.observe_lock_hold(UpdaterKind::Pool, chunk_lock_hold_time.as_secs_f64());
+                    }
                     r
                 }
                 Err(RunError::MarkerMoved { exchange_id }) => {
@@ -1484,6 +1564,9 @@ pub fn run_pool_update_on_db(
                     // pathological flip cannot spin the loop.
                     drop(tx);
                     chunk_lock_hold_time = lock_hold_started.elapsed();
+                    if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+                        t.observe_lock_hold(UpdaterKind::Pool, chunk_lock_hold_time.as_secs_f64());
+                    }
                     marker_retries += 1;
                     if marker_retries > MARKER_RETRY_CAP {
                         progress.report_chunk(&ChunkProgress {
@@ -1511,6 +1594,9 @@ pub fn run_pool_update_on_db(
                     // Verification - all rollback the chunk).
                     drop(tx);
                     chunk_lock_hold_time = lock_hold_started.elapsed();
+                    if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+                        t.observe_lock_hold(UpdaterKind::Pool, chunk_lock_hold_time.as_secs_f64());
+                    }
                     progress.report_chunk(&ChunkProgress {
                         chain_id,
                         chunk_start: working_start_block,
@@ -1529,6 +1615,15 @@ pub fn run_pool_update_on_db(
                 }
             }
         };
+        drop(apply_guard);
+        apply_span.record(
+            "lock.hold_us",
+            u64::try_from(chunk_lock_hold_time.as_micros()).unwrap_or(u64::MAX),
+        );
+        apply_span.record(
+            "events.applied",
+            u64::try_from(chunk_report.liquidity_apply_count).unwrap_or(u64::MAX),
+        );
 
         // Perf E: advance the in-memory markers straight from the write
         // report — the stamps the just-committed transaction wrote are
@@ -1565,6 +1660,39 @@ pub fn run_pool_update_on_db(
             apply_time: chunk_report.apply_time,
             write_lock_hold_time: chunk_lock_hold_time,
         });
+        // The stage metrics ride the SAME ChunkProgress boundaries the
+        // replay bench reports (one observation per committed chunk; the
+        // golden numbers stay the source of truth — this is the passive
+        // production twin). On a rollback the stage costs don't sample (a
+        // rolled-back chunk's numbers are not attributable); the lock hold
+        // DOES — it was held (the three assignment sites above).
+        if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+            t.observe_stage(
+                UpdaterKind::Pool,
+                UpdaterStage::Fetch,
+                chunk_fetch_time.as_secs_f64(),
+            );
+            t.observe_stage(
+                UpdaterKind::Pool,
+                UpdaterStage::Compute,
+                (read_pass_time + chunk_report.decode_compute_time).as_secs_f64(),
+            );
+            t.observe_stage(
+                UpdaterKind::Pool,
+                UpdaterStage::Verify,
+                (chunk_verify_time + chunk_full_verify_time).as_secs_f64(),
+            );
+            t.observe_stage(
+                UpdaterKind::Pool,
+                UpdaterStage::Apply,
+                chunk_report.apply_time.as_secs_f64(),
+            );
+            t.add_rpc_round_trips(
+                UpdaterKind::Pool,
+                degenbot_rpc::provider::rpc_round_trips()
+                    .saturating_sub(chunk_rpc_round_trips_start),
+            );
+        }
         report.chunks_committed += 1;
         report.total_pools_written += chunk_report.pools_written;
         report.total_liquidity_applies += chunk_report.liquidity_apply_count;

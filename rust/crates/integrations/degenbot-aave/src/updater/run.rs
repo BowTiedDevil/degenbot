@@ -35,6 +35,7 @@ use alloy::primitives::Address;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::op_info;
 use degenbot_core::runtime::get_runtime;
+use degenbot_core::updater_telemetry::{UpdaterKind, UpdaterStage};
 use degenbot_db::{DbError, DegenbotDb};
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
@@ -470,6 +471,28 @@ async fn run_aave_update_driver(
 
         let chunk_end = last_block.min(working_start + chunk_size - 1);
 
+        // The chunk's trace ROOT (the `degenbot.epoch` shape): every stage
+        // span below parents onto it through the thread-local span stack —
+        // one chunk = one Jaeger waterfall. The guards ride the driver
+        // future's single-thread poll (the same soundness argument as the
+        // `await_holding_lock` expectation above: the future is never polled
+        // concurrently, so the thread-local span context cannot tear).
+        // PASSIVE telemetry: the loop body below is untouched, so the
+        // statement ledger, the RPC request stream, and the §3.4 rollback
+        // boundary (the three golden gates) cannot move.
+        let chunk_span = tracing::info_span!(
+            "degenbot.updater.aave.chunk",
+            chain.id = chain_id,
+            market.id = market_id,
+            chunk.start = working_start,
+            chunk.end = chunk_end,
+        );
+        let _chunk_guard = chunk_span.enter();
+        // The JSON-RPC round trips this chunk issues (the production twin of
+        // the cassette gates' round-trip counters). Process-wide count — see
+        // `degenbot_rpc::provider::rpc_round_trips` for the scope contract.
+        let chunk_rpc_round_trips_start = degenbot_rpc::provider::rpc_round_trips();
+
         // The replay-bench stage spans (plain `Instant`; the telemetry chunk lands
         // its own spans later). `chunk_lock_hold_time` is the write-lock
         // hold: `transaction()` open → commit/drop.
@@ -514,6 +537,16 @@ async fn run_aave_update_driver(
             .as_ref()
             .and_then(|g| g.v_gho_discount_token.as_deref())
             .and_then(|s| s.parse().ok());
+        // The fetch stage span wraps the same region the plain-`Instant`
+        // `fetch_started` anchors time: the main pass + the same-chunk
+        // staleness re-fetches below (the replay-bench baseline boundary).
+        let fetch_span = tracing::info_span!(
+            "degenbot.updater.aave.fetch",
+            rpc.round_trips = tracing::field::Empty,
+            logs.n = tracing::field::Empty,
+        );
+        let fetch_rt_start = degenbot_rpc::provider::rpc_round_trips();
+        let fetch_guard = fetch_span.enter();
         let fetch_started = Instant::now();
         let mut logs = fetch_aave_chunk_logs(&spec, &fetcher, working_start, chunk_end).await?;
         chunk_fetch_time += fetch_started.elapsed();
@@ -614,6 +647,12 @@ async fn run_aave_update_driver(
                 sort_logs_by_block_and_index(&mut logs);
             }
         }
+        drop(fetch_guard);
+        fetch_span.record(
+            "rpc.round_trips",
+            degenbot_rpc::provider::rpc_round_trips().saturating_sub(fetch_rt_start),
+        );
+        fetch_span.record("logs.n", u64::try_from(logs.len()).unwrap_or(u64::MAX));
 
         let tx_groups = group_logs_by_tx(&logs);
 
@@ -657,6 +696,13 @@ async fn run_aave_update_driver(
                         // chunk has nothing to verify). Passing `None`
                         // would verify ALL positions rather than none.
                         if !touched.is_empty() {
+                            let verify_span = tracing::info_span!(
+                                "degenbot.updater.aave.verify",
+                                verify.kind = "touched",
+                                rpc.round_trips = tracing::field::Empty,
+                            );
+                            let verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
+                            let verify_guard = verify_span.enter();
                             let verify_started = Instant::now();
                             let divergences = crate::verify::verify_touched_positions_on_conn(
                                 &tx,
@@ -667,11 +713,23 @@ async fn run_aave_update_driver(
                             )
                             .await?;
                             chunk_verify_time += verify_started.elapsed();
+                            drop(verify_guard);
+                            verify_span.record(
+                                "rpc.round_trips",
+                                degenbot_rpc::provider::rpc_round_trips()
+                                    .saturating_sub(verify_rt_start),
+                            );
                             if !divergences.is_empty() {
                                 // Drop `tx` (rollback) — the chunk's writes +
                                 // the stamp advance are reverted.
                                 drop(tx);
                                 chunk_lock_hold_time = lock_hold_started.elapsed();
+                                if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+                                    t.observe_lock_hold(
+                                        UpdaterKind::Aave,
+                                        chunk_lock_hold_time.as_secs_f64(),
+                                    );
+                                }
                                 progress.report_chunk(&AaveChunkProgress {
                                     chain_id,
                                     market_id,
@@ -711,15 +769,34 @@ async fn run_aave_update_driver(
                             max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit),
                         ));
                     if run_full {
+                        let verify_span = tracing::info_span!(
+                            "degenbot.updater.aave.verify",
+                            verify.kind = "full",
+                            rpc.round_trips = tracing::field::Empty,
+                        );
+                        let full_verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
+                        let full_verify_guard = verify_span.enter();
                         let verify_started = Instant::now();
                         let divergences = crate::verify::verify_all_positions_on_conn(
                             &tx, &provider, market_id, chain_id, chunk_end, None,
                         )
                         .await?;
                         chunk_verify_time += verify_started.elapsed();
+                        drop(full_verify_guard);
+                        verify_span.record(
+                            "rpc.round_trips",
+                            degenbot_rpc::provider::rpc_round_trips()
+                                .saturating_sub(full_verify_rt_start),
+                        );
                         if !divergences.is_empty() {
                             drop(tx);
                             chunk_lock_hold_time = lock_hold_started.elapsed();
+                            if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+                                t.observe_lock_hold(
+                                    UpdaterKind::Aave,
+                                    chunk_lock_hold_time.as_secs_f64(),
+                                );
+                            }
                             progress.report_chunk(&AaveChunkProgress {
                                 chain_id,
                                 market_id,
@@ -744,6 +821,9 @@ async fn run_aave_update_driver(
                     }
                     tx.commit().map_err(DbError::from)?;
                     chunk_lock_hold_time = lock_hold_started.elapsed();
+                    if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+                        t.observe_lock_hold(UpdaterKind::Aave, chunk_lock_hold_time.as_secs_f64());
+                    }
                     r
                 }
                 Err(e) => {
@@ -751,6 +831,9 @@ async fn run_aave_update_driver(
                     // advance are reverted; the committed prior chunks stand.
                     drop(tx);
                     chunk_lock_hold_time = lock_hold_started.elapsed();
+                    if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+                        t.observe_lock_hold(UpdaterKind::Aave, chunk_lock_hold_time.as_secs_f64());
+                    }
                     progress.report_chunk(&AaveChunkProgress {
                         chain_id,
                         market_id,
@@ -789,6 +872,39 @@ async fn run_aave_update_driver(
             apply_time: chunk_report.apply_time,
             write_lock_hold_time: chunk_lock_hold_time,
         });
+        // The stage metrics ride the SAME AaveChunkProgress boundaries the
+        // replay bench reports (one observation per committed chunk; the
+        // golden numbers stay the source of truth — this is the passive
+        // production twin). On a rollback the stage costs don't sample (a
+        // rolled-back chunk's numbers are not attributable); the lock hold
+        // DOES — it was held (the four assignment sites above).
+        if let Some(t) = degenbot_core::updater_telemetry::updaters() {
+            t.observe_stage(
+                UpdaterKind::Aave,
+                UpdaterStage::Fetch,
+                chunk_fetch_time.as_secs_f64(),
+            );
+            t.observe_stage(
+                UpdaterKind::Aave,
+                UpdaterStage::Compute,
+                chunk_report.decode_compute_time.as_secs_f64(),
+            );
+            t.observe_stage(
+                UpdaterKind::Aave,
+                UpdaterStage::Verify,
+                chunk_verify_time.as_secs_f64(),
+            );
+            t.observe_stage(
+                UpdaterKind::Aave,
+                UpdaterStage::Apply,
+                chunk_report.apply_time.as_secs_f64(),
+            );
+            t.add_rpc_round_trips(
+                UpdaterKind::Aave,
+                degenbot_rpc::provider::rpc_round_trips()
+                    .saturating_sub(chunk_rpc_round_trips_start),
+            );
+        }
         report.chunks_committed += 1;
         report.total_events_applied += chunk_report.events_applied;
 

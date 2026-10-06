@@ -44,4 +44,5 @@ pub mod retry;
 pub mod runtime;
 pub mod session_positions;
 pub mod telemetry;
+pub mod updater_telemetry;
 pub mod worker_census;

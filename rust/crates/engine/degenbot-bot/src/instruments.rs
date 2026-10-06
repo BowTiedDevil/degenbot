@@ -1296,6 +1296,156 @@ pub fn install_substrate_telemetry_port() {
     }));
 }
 
+/// The updater chunk-loop instruments (`degenbot.updater.*`) — the numeric
+/// twins of the `degenbot.updater.{pool,aave}.{chunk,fetch,compute,verify,
+/// apply}` trace spans, reported through the
+/// `degenbot_core::updater_telemetry` function-pointer port (an integration
+/// may not depend on this crate; the port is the layer both sides already
+/// share, the same seam the position seam and the substrate telemetry port
+/// use). One observation per committed chunk, riding the SAME `Instant`
+/// boundaries the replay bench reports — the goldens stay the source of
+/// truth; these are the passive production twins.
+///
+/// Cardinality: the labels are small CLOSED sets only (`updater` ∈
+/// {`pool`,`aave`}, `stage` ∈ {`chunk`,`fetch`,`compute`,`verify`,`apply`,
+/// `cleanup`}), compile-pinned by the typed
+/// `degenbot_core::updater_telemetry` enums: emitters reach these
+/// instruments only through [`install_updater_telemetry_port`], the single
+/// enum→`&'static str` conversion seam (ADR-043 §9 review, 2026-10-06
+/// telemetry dispatch approved by the project manager — full citation in
+/// `tests/metric_cardinality.rs::ALLOWED_LABELS`). Per-chunk detail (chain,
+/// block range, counts) belongs in the trace spans.
+pub struct UpdaterInstruments {
+    /// Per-stage wall time, seconds. Long-tail buckets: a backfill chunk's
+    /// fetch can legitimately run minutes (the `LATENCY_BUCKETS_SECONDS` tail
+    /// tops at 60s, sized for the drain path's block-scale races), so this
+    /// set extends to 30 min before fusing into +inf.
+    stage_duration: Histogram<f64>,
+    /// Write-lock hold distribution (`transaction()` open → commit/drop).
+    write_lock_hold: Histogram<f64>,
+    /// The most recent write-lock hold — the instantaneous headline the
+    /// `pump.seconds_since_*` gauges serve for the drain path.
+    write_lock_hold_last: Gauge<f64>,
+    /// JSON-RPC round trips attributed to the updater's HTTP transport (the
+    /// production twin of the cassette gates' round-trip counters).
+    rpc_round_trips: Counter<u64>,
+}
+
+impl UpdaterInstruments {
+    /// Build all instruments from a meter. Visible for tests — production
+    /// callers go through [`updater_pipeline`].
+    #[must_use]
+    pub fn new(meter: &Meter) -> Self {
+        Self {
+            stage_duration: meter
+                .f64_histogram("degenbot.updater.stage.duration")
+                .with_unit("s")
+                .with_boundaries(UPDATER_STAGE_BUCKETS_SECONDS.to_vec())
+                .with_description(
+                    "Updater chunk stage wall time (updater=pool|aave, stage=chunk|fetch|compute|verify|apply|cleanup)",
+                )
+                .build(),
+            write_lock_hold: meter
+                .f64_histogram("degenbot.updater.write_lock_hold")
+                .with_unit("s")
+                .with_boundaries(UPDATER_STAGE_BUCKETS_SECONDS.to_vec())
+                .with_description(
+                    "Write-lock hold: transaction() open to commit/drop (updater=pool|aave)",
+                )
+                .build(),
+            write_lock_hold_last: meter
+                .f64_gauge("degenbot.updater.write_lock_hold_last")
+                .with_unit("s")
+                .with_description(
+                    "Most recent write-lock hold observation (updater=pool|aave)",
+                )
+                .build(),
+            rpc_round_trips: meter
+                .u64_counter("degenbot.updater.rpc_round_trips")
+                .with_description(
+                    "JSON-RPC round trips on the updater's HTTP transport (updater=pool|aave)",
+                )
+                .build(),
+        }
+    }
+
+    /// One stage's wall time observation.
+    pub fn observe_stage(&self, updater: &'static str, stage: &'static str, secs: f64) {
+        self.stage_duration.record(
+            secs,
+            &[
+                KeyValue::new("updater", updater),
+                KeyValue::new("stage", stage),
+            ],
+        );
+    }
+
+    /// One write-lock hold observation (distribution + last-value gauge).
+    pub fn observe_lock_hold(&self, updater: &'static str, secs: f64) {
+        let label = [KeyValue::new("updater", updater)];
+        self.write_lock_hold.record(secs, &label);
+        self.write_lock_hold_last.record(secs, &label);
+    }
+
+    /// Add counted JSON-RPC round trips.
+    pub fn add_round_trips(&self, updater: &'static str, count: u64) {
+        self.rpc_round_trips
+            .add(count, &[KeyValue::new("updater", updater)]);
+    }
+}
+
+/// Stage/lock-hold latency bucket boundaries, in SECONDS: the
+/// [`LATENCY_BUCKETS_SECONDS`] resolution below 1s plus a long backfill tail
+/// (chunk fetches over large ranges run minutes) up to 30 min.
+const UPDATER_STAGE_BUCKETS_SECONDS: &[f64] = &[
+    0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+    5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0,
+];
+
+static UPDATER_PIPELINE: OnceLock<Option<UpdaterInstruments>> = OnceLock::new();
+
+/// The process-wide updater instrument set, or `None` while metrics are
+/// disabled (gate off / not yet initialized). Idempotent — cheap to call per
+/// observation; same lazy discipline as [`pipeline`].
+fn updater_pipeline() -> Option<&'static UpdaterInstruments> {
+    UPDATER_PIPELINE
+        .get_or_init(|| {
+            crate::metrics::try_global_meter().map(|meter| UpdaterInstruments::new(&meter))
+        })
+        .as_ref()
+}
+
+/// The updater crates (`degenbot-pool-updater`, `degenbot-aave`) report their
+/// chunk-loop numbers through the `degenbot_core::updater_telemetry`
+/// function-pointer port — the architecture gates pin that an integration
+/// may not depend on this crate, so the host installs the delegating bundle
+/// once at metrics boot. Each hook resolves the updater registry lazily, so
+/// install order relative to meter construction is irrelevant and un-built
+/// builds stay silent — exactly the [`install_substrate_telemetry_port`]
+/// shape. Each `.label()` call is the ONE enum→`&'static str` conversion of
+/// the closed label sets (ADR-043 §9; the reviewed names + citation live in
+/// `tests/metric_cardinality.rs::ALLOWED_LABELS`).
+pub fn install_updater_telemetry_port() {
+    use degenbot_core::updater_telemetry::UpdaterInstruments as PortBundle;
+    degenbot_core::updater_telemetry::register(Some(PortBundle {
+        observe_stage: |updater, stage, seconds| {
+            if let Some(p) = updater_pipeline() {
+                p.observe_stage(updater.label(), stage.label(), seconds);
+            }
+        },
+        observe_lock_hold: |updater, seconds| {
+            if let Some(p) = updater_pipeline() {
+                p.observe_lock_hold(updater.label(), seconds);
+            }
+        },
+        add_rpc_round_trips: |updater, count| {
+            if let Some(p) = updater_pipeline() {
+                p.add_round_trips(updater.label(), count);
+            }
+        },
+    }));
+}
+
 static PIPELINE: OnceLock<Option<PipelineInstruments>> = OnceLock::new();
 
 /// The process-wide instrument set, or `None` while metrics are disabled
@@ -1373,9 +1523,53 @@ fn census_count_f64(n: usize) -> f64 {
 mod kind_tests {
     use opentelemetry::metrics::MeterProvider as _;
 
-    use crate::instruments::{export_worker_census_with, PipelineInstruments};
+    use crate::instruments::{export_worker_census_with, PipelineInstruments, UpdaterInstruments};
     use crate::telemetry::error_kind;
     use std::collections::HashSet;
+
+    /// The updater stage/lock/round-trip instruments render under their
+    /// documented Prometheus names with the closed-set labels only, and the
+    /// long-tail bucket set separates a minute-scale backfill sample (the
+    /// 90s aave-apply sample must land in the 120s bucket band, not fuse
+    /// into a 60s top bucket).
+    #[test]
+    fn updater_instruments_render_with_closed_set_labels() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = UpdaterInstruments::new(&provider.meter("test"));
+        instruments.observe_stage("pool", "fetch", 0.25);
+        instruments.observe_stage("aave", "apply", 90.0);
+        instruments.observe_lock_hold("pool", 0.01);
+        instruments.add_round_trips("pool", 7);
+        let text = crate::metrics::render(&registry);
+        for family in [
+            "degenbot_updater_stage_duration_seconds",
+            "degenbot_updater_write_lock_hold_seconds",
+            "degenbot_updater_write_lock_hold_last_seconds",
+            "degenbot_updater_rpc_round_trips_total",
+        ] {
+            assert!(
+                text.contains(family),
+                "updater family {family} missing from exposition:\n{text}"
+            );
+        }
+        for label in [
+            "updater=\"pool\"",
+            "updater=\"aave\"",
+            "stage=\"fetch\"",
+            "stage=\"apply\"",
+        ] {
+            assert!(
+                text.contains(label),
+                "expected closed-set label {label} in exposition:\n{text}"
+            );
+        }
+        assert!(
+            text.contains("le=\"120\""),
+            "the 90s sample must separate into the updater set's 120s tail band:\n{text}"
+        );
+        drop(provider);
+    }
 
     /// True when `line` is the Prometheus sample line for exactly `name` —
     /// the name followed by a label brace or the value whitespace, never a

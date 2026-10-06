@@ -5,6 +5,17 @@
 //! looks like an unbounded value (pool/path/token/address/hash/block/tx/id)
 //! fails outright — those belong in spans and logs, where cardinality is free.
 //!
+//! The FULL telemetry gate set — run BOTH commands when touching instruments,
+//! the updater telemetry port, or this file (a 2026-10 telemetry dispatch ran
+//! only the updater-crate suites and slipped new label vocabulary past this
+//! gate):
+//!
+//!     cargo test --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-bot -p degenbot-core -p degenbot-rpc
+//!     cargo test --locked --manifest-path rust/Cargo.toml \
+//!         -p degenbot-pool-updater -p degenbot-aave -p degenbot-db \
+//!         --features degenbot-db/sql-ledger
+//!
 //! Plus the §9 self-metric: `degenbot.metric_series` exposes the live distinct
 //! series count so a blowup is visible before the collector falls over.
 
@@ -60,6 +71,22 @@ const ALLOWED_LABELS: &[&str] = &[
     "probe.kind",
     "kind",
     "binding",
+    // `degenbot_updater_*{updater}`: the emitting updater's identity — a
+    // two-value closed set (`pool` = `degenbot-pool-updater`, `aave` =
+    // `degenbot-aave`), compile-pinned by
+    // `degenbot_core::updater_telemetry::UpdaterKind` (variants only; the
+    // host install in `degenbot-bot/src/instruments.rs` is the single
+    // enum→`&'static str` conversion, so a stray value cannot compile).
+    // ADR-043 §9 review, DVLOOW/NGJBSF telemetry, approved by project
+    // manager 2026-10-06.
+    "updater",
+    // `degenbot_updater_stage_duration_seconds{stage}`: the updater
+    // chunk-loop stage — a six-value closed set (`chunk`, `fetch`,
+    // `compute`, `verify`, `apply`, `cleanup`), compile-pinned by
+    // `degenbot_core::updater_telemetry::UpdaterStage`.
+    // ADR-043 §9 review, DVLOOW/NGJBSF telemetry, approved by project
+    // manager 2026-10-06.
+    "stage",
 ];
 
 /// Name fragments that signal an unbounded value (a cardinality bomb).
