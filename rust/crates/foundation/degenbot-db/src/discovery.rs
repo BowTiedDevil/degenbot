@@ -452,6 +452,41 @@ impl DegenbotDb {
         Ok(())
     }
 
+    /// The chunk loop's end-of-chunk stamp WITH the restart-invariant guard
+    /// (Perf A): the UPDATE carries the caller's assumed `last_update_block`
+    /// in its WHERE clause, so a stamp whose marker moved between the
+    /// pre-transaction read pass and the chunk transaction changes ZERO rows -
+    /// the caller drops the transaction and re-loops (the single-writer bot
+    /// cannot have a concurrent stamper, so the check is structural rather
+    /// than argued). `assumed = None` guards the never-stamped
+    /// fresh-exchange case (`last_update_block IS NULL`). Returns `true` iff
+    /// the stamp fired (the marker still matched).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on an UPDATE failure.
+    pub fn set_exchange_last_update_block_if_unchanged_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+        exchange_id: i64,
+        block: i64,
+        assumed: Option<i64>,
+    ) -> Result<bool, DbError> {
+        let changed = match assumed {
+            Some(marker) => conn.execute(
+                "UPDATE exchanges SET last_update_block = ?1 \
+                 WHERE chain_id = ?2 AND id = ?3 AND last_update_block = ?4",
+                params![block, chain_id, exchange_id, marker],
+            )?,
+            None => conn.execute(
+                "UPDATE exchanges SET last_update_block = ?1 \
+                 WHERE chain_id = ?2 AND id = ?3 AND last_update_block IS NULL",
+                params![block, chain_id, exchange_id],
+            )?,
+        };
+        Ok(changed > 0)
+    }
+
     /// Resolve an `exchanges` row by `(chain_id, name)`, inserting a new
     /// `active = false`, `last_update_block = NULL` row if none exists. This is
     /// the substrate the `exchange activate/deactivate` CLI delegates to for

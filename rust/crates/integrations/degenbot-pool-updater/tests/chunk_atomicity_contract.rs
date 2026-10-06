@@ -49,7 +49,8 @@ use std::collections::HashMap;
 use alloy::primitives::{Address, B256};
 use degenbot_db::{DegenbotDb, V3PoolRowInput};
 use degenbot_pool_updater::{
-    apply_chunk_writes_on_conn, ChunkInputs, ExchangeSpec, PoolCreationToWrite, PoolFamily,
+    apply_chunk_writes_on_conn, ChunkInputs, ChunkWriteReport, ExchangeSpec, PoolCreationToWrite,
+    PoolFamily, PreVerifiedLiquidity,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -127,6 +128,34 @@ fn count_pools(conn: &Connection) -> i64 {
     .unwrap()
 }
 
+/// Apply one chunk on a fresh transaction; `commit = false` drops the tx
+/// without committing (the interrupt arm - the writes stage, then roll
+/// back). Mirrors the driver's apply+commit shape so each test block stays
+/// scannable.
+fn run_chunk(
+    db: &DegenbotDb,
+    specs: &[ExchangeSpec],
+    end: u64,
+    inputs: &ChunkInputs,
+    commit: bool,
+) -> ChunkWriteReport {
+    let mut guard = db.lock();
+    let tx = guard.transaction().unwrap();
+    let report = apply_chunk_writes_on_conn(
+        &tx,
+        CHAIN,
+        specs,
+        end,
+        inputs,
+        &PreVerifiedLiquidity::default(),
+    )
+    .unwrap();
+    if commit {
+        tx.commit().unwrap();
+    }
+    report
+}
+
 #[test]
 fn chunk_interrupt_rolls_back_and_restart_is_clean() {
     let (db, spec) = seeded_db_with_v3_exchange();
@@ -139,21 +168,15 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
     //    (The pool was written inside the tx, but tx.commit() never ran —
     //    simulating a SIGINT/panic/power-loss BEFORE the chunk boundary.)
     // ============================================================
-    {
-        let mut guard = db.lock();
-        let tx = guard.transaction().unwrap();
-        let report =
-            apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_B, &inputs, None).unwrap();
-        // The fn returned Ok (no injected failure) — the writes are staged in
-        // the tx's buffer, visible to this connection, NOT yet durable.
-        assert_eq!(
-            report.pools_written, 1,
-            "the chunk staged one pool write inside the transaction",
-        );
-        // INTERRUPT: drop the tx WITHOUT commit -> `SQLite` rolls back EVERY
-        // write in the chunk (the pool row + the stamp advance).
-        drop(tx);
-    }
+    // The fn returns Ok (no injected failure) - the writes are staged in the
+    // tx's buffer, NOT durable. INTERRUPT: `commit = false` drops the tx
+    // WITHOUT commit -> `SQLite` rolls back EVERY write in the chunk (the
+    // pool row + the stamp advance).
+    let report = run_chunk(&db, &specs, BLOCK_B, &inputs, false);
+    assert_eq!(
+        report.pools_written, 1,
+        "the chunk staged one pool write inside the transaction",
+    );
 
     // §1.1 atomicity: no intermediate state observable across the interrupt.
     let stamp_after_interrupt = db
@@ -185,17 +208,11 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
     //    §1.3 restart-invariant: re-processes only uncommitted work -> no
     //    duplicates.
     // ============================================================
-    {
-        let mut guard = db.lock();
-        let tx = guard.transaction().unwrap();
-        let report =
-            apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_B, &inputs, None).unwrap();
-        assert_eq!(
-            report.pools_written, 1,
-            "restart re-processes the rolled-back chunk + the INSERT succeeds (no UNIQUE failure)",
-        );
-        tx.commit().unwrap();
-    }
+    let report = run_chunk(&db, &specs, BLOCK_B, &inputs, true);
+    assert_eq!(
+        report.pools_written, 1,
+        "restart re-processes the rolled-back chunk + the INSERT succeeds (no UNIQUE failure)",
+    );
 
     let stamp_after_restart = db
         .fetch_exchange(spec.id)
@@ -226,17 +243,18 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
     // ============================================================
     let new_pool_addr = Address::from([0x44; 20]);
     let inputs_chunk2 = chunk_inputs_with_v3_pool(spec.id, new_pool_addr);
-    {
-        let mut guard = db.lock();
-        let tx = guard.transaction().unwrap();
-        let report =
-            apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_C, &inputs_chunk2, None).unwrap();
-        assert_eq!(
-            report.pools_written, 1,
-            "the second chunk staged one new pool"
-        );
-        tx.commit().unwrap();
-    }
+    // The driver refreshes each spec's in-memory marker from the DB between
+    // chunks (`load_active_exchange_specs`); the optimistic stamp's WHERE
+    // clause carries that refreshed marker (Perf A's structural check). The
+    // stale pre-chunk marker here is exactly what `MarkerMoved` guards.
+    let mut refreshed_spec = spec.clone();
+    refreshed_spec.last_update_block = Some(i64::try_from(BLOCK_B).unwrap());
+    let specs_chunk2 = [refreshed_spec];
+    let report = run_chunk(&db, &specs_chunk2, BLOCK_C, &inputs_chunk2, true);
+    assert_eq!(
+        report.pools_written, 1,
+        "the second chunk staged one new pool"
+    );
 
     let stamp_after_chunk2 = db
         .fetch_exchange(spec.id)

@@ -7,6 +7,16 @@
       "sql": "SELECT id, chain_id, name, active, last_update_block, factory, deployer FROM exchanges WHERE chain_id = ? AND active = ? ORDER BY id"
     },
     {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id, address, chain, kind, token0_id, token1_id, exchange_id FROM pools WHERE address = ? AND chain = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id, address, chain, kind, token0_id, token1_id, exchange_id FROM pools WHERE address = ? AND chain = ?"
+    },
+    {
       "arg_count": 0,
       "rows_changed": 0,
       "sql": "BEGIN DEFERRED"
@@ -97,19 +107,9 @@
       "sql": "UPDATE uniswap_v3_pools SET liquidity_update_block = ?, liquidity_update_log_index = ? WHERE pool_id = ?"
     },
     {
-      "arg_count": 2,
-      "rows_changed": 0,
-      "sql": "SELECT id, address, chain, kind, token0_id, token1_id, exchange_id FROM pools WHERE address = ? AND chain = ?"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 0,
-      "sql": "SELECT id, address, chain, kind, token0_id, token1_id, exchange_id FROM pools WHERE address = ? AND chain = ?"
-    },
-    {
-      "arg_count": 3,
+      "arg_count": 4,
       "rows_changed": 1,
-      "sql": "UPDATE exchanges SET last_update_block = ? WHERE chain_id = ? AND id = ?"
+      "sql": "UPDATE exchanges SET last_update_block = ? WHERE chain_id = ? AND id = ? AND last_update_block = ?"
     },
     {
       "arg_count": 0,

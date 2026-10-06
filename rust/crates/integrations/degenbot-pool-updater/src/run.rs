@@ -30,6 +30,34 @@
 //!   `last_update_block`, so a restarted run resumes exactly where it left
 //!   off (no double-processing of committed chunks).
 //!
+//! # Perf A: the transaction boundary (hoisted read pass + verify)
+//!
+//! Since Perf A, the per-pool O(map) compute and the pre-commit verify RPC
+//! run BEFORE the chunk `Transaction` opens ([`compute_preverified_liquidity`]
+//! + the driver's gates): zero RPC round trips - and none of the planned
+//!   pools' map SELECTs - sit between `transaction()` open and commit/drop.
+//!   The soundness argument for the moved boundary:
+//!
+//! 1. The read pass computes each in-scope pool's map from the COMMITTED DB
+//!    state; the apply persists either that exact map (planned pools) or the
+//!    byte-equal in-transaction re-derivation (chunk-new pools: empty base +
+//!    the same events - the base is created by the chunk's own upsert inside
+//!    the tx, so read-pass and in-tx bases agree by construction). The only
+//!    way the two diverge is a concurrent writer mutating the base between
+//!    the read pass and the tx.
+//! 2. A concurrent writer cannot exist in the bot's single-writer discipline
+//!    (one `run_pool_update` per DB; the write path is the chunk loop). The
+//!    invariant is nevertheless made STRUCTURAL: the end-of-chunk stamp is an
+//!    optimistic UPDATE carrying the marker the read pass assumed
+//!    (`set_exchange_last_update_block_if_unchanged_on_conn`); a moved marker
+//!    matches zero rows -> [`RunError::MarkerMoved`] -> the transaction drops
+//!    (nothing staged survives) and the chunk re-plans from refreshed specs.
+//! 3. A verification RED today never opens the transaction. The observable
+//!    contract is byte-identical to the pre-Perf-A rollback shape:
+//!    [`RunError::Verification`] raised, ZERO rows written, the stamp
+//!    unadvanced - the verification-gate probes assert exactly this triple
+//!    (post-run state) and stay green with unchanged assertions.
+//!
 //! # Why the write half is split out ([`apply_chunk_writes_on_conn`])
 //!
 //! The hard-to-test RPC boundary (fetch + decode) is separated from the
@@ -62,7 +90,8 @@ use alloy::primitives::{Address, B256};
 use degenbot_core::errors::ProviderError;
 use degenbot_core::op_info;
 use degenbot_db::{
-    DegenbotDb, LiquidityUpdateEvent, V2PoolRowInput, V3PoolRowInput, V4PoolRowInput,
+    ComputedLiquidityUpdate, DegenbotDb, LiquidityUpdateEvent, V2PoolRowInput, V3PoolRowInput,
+    V4PoolRowInput,
 };
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 use rusqlite::Connection;
@@ -82,6 +111,13 @@ use crate::spec::{load_active_exchange_specs, ExchangeSpec};
 /// proving forward progress; the final chunk always logs regardless of the
 /// throttle (see the loop's log site).
 const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(2);
+
+/// The optimistic stamp's retry budget: how many times one run may drop a
+/// chunk because its assumed `last_update_block` marker moved under it
+/// (`RunError::MarkerMoved`) before the run surfaces the error. Under the
+/// bot's single-writer discipline this is unreachable; the bound is the
+/// loud-failure backstop.
+const MARKER_RETRY_CAP: usize = 4;
 
 // ── progress reporting ─────────────────────────────────────────────────
 
@@ -219,21 +255,33 @@ pub struct ChunkInputs {
     pub pool_manager_chain: i64,
 }
 
-/// The pre-commit on-chain-truth gate context — when `Some`, the chunk's
-/// per-pool liquidity applies run compute → verify(Full) → persist (the V3/V4
-/// `verify_*_liquidity_map_on_chain` gate); a divergence rolls back the chunk's
-/// transaction + does NOT advance `last_update_block`. `None` = the no-gate
-/// backward-compat path (fused compute→persist).
-pub struct VerifyCtx<'a> {
-    /// The HTTP RPC provider for on-chain `ticks()`/`tickBitmap()`/`extsload` reads.
-    pub provider: &'a AlloyProvider,
-    /// The shared process runtime (`degenbot_core::runtime::get_runtime()`) —
-    /// the `&'static` singleton — to `block_on` the async verify.
-    pub rt: &'static tokio::runtime::Runtime,
-    /// The block number to read on-chain truth at (= the chunk's `chunk_end`).
-    pub block_number: u64,
-    /// V4 `pool_hash` hex → the `PoolManager` address (for `extsload`).
-    pub v4_manager_addresses: &'a HashMap<String, Address>,
+/// A pre-transaction-computed liquidity map for one in-scope pool - the
+/// read pass's output (Perf A). `is_new_pool` marks a pool whose row is
+/// created by THIS chunk's pool-creation upsert: it has no committed base
+/// state to read pre-transaction, so its planned map (empty base + events,
+/// sentinel `pool_id`) exists ONLY to feed the pre-transaction verify RPC;
+/// the in-transaction apply re-derives the map from the just-upserted row -
+/// byte-equal by construction (same empty base, same events, same spacing).
+#[derive(Debug, Clone)]
+pub struct PlannedLiquidityMap {
+    /// The computed (and, when the gate is on, on-chain-verified) map.
+    pub computed: ComputedLiquidityUpdate,
+    /// `true` = chunk-new pool (the apply takes the fused in-transaction path).
+    pub is_new_pool: bool,
+}
+
+/// The read pass's output: per-pool planned maps for the chunk's in-scope
+/// liquidity applies, computed BEFORE the chunk `Transaction` opens - the
+/// O(map) full-map SELECTs leave the write lock (survey finding 1, Perf A).
+/// When the gate is on, the maps are also verified against on-chain truth
+/// pre-transaction (no lock held across the RPC), and the apply persists
+/// only verified maps; a RED never opens the transaction.
+#[derive(Debug, Default, Clone)]
+pub struct PreVerifiedLiquidity {
+    /// V3 planned maps by pool address.
+    pub v3: HashMap<Address, PlannedLiquidityMap>,
+    /// V4 planned maps by `pool_hash` hex.
+    pub v4: HashMap<String, PlannedLiquidityMap>,
 }
 
 /// What [`apply_chunk_writes_on_conn`] wrote in the chunk.
@@ -356,7 +404,7 @@ pub fn map_pool_creation(
 
 /// The testable, pure-synchronous inner core: write a chunk's worth of
 /// decoded events (pool creations + V3/V4 liquidity) + stamp the in-scope
-/// exchanges' `last_update_block` — ALL under the ONE borrowed
+/// exchanges' `last_update_block` - ALL under the ONE borrowed
 /// [`Connection`] (the chunk's `Transaction`).
 ///
 /// This is the §1 atomicity invariant's enforcement point: every write of
@@ -366,20 +414,36 @@ pub fn map_pool_creation(
 /// `Transaction` uncommitted → it drops → the whole chunk reverts →
 /// `last_update_block` unchanged → restart re-processes (restart-invariant).
 ///
+/// # Perf A: the RPC and the O(map) compute live OUTSIDE this fn
+///
+/// The per-pool full-map compute + the on-chain-truth verification RPC run
+/// in the pre-transaction read pass ([`compute_preverified_liquidity`] plus
+/// the driver's gate), NOT here: zero RPC round trips (and none of the
+/// O(map) read SELECTs for planned pools) sit between the caller's
+/// `transaction()` open and its commit/drop. Pools with a planned non-new
+/// map persist the pre-computed map directly; chunk-new pools (whose row is
+/// created by this chunk's upsert) take the fused in-transaction
+/// compute→persist path - their planned map (empty base + events) is
+/// byte-equal to the in-transaction re-derivation, so a gated run persists
+/// exactly what the gate verified. The stamp is OPTIMISTIC (the assumed
+/// marker rides the WHERE clause) so the restart invariant is structural:
+/// a moved marker changes zero rows → [`RunError::MarkerMoved`] → the
+/// caller drops the transaction and re-loops.
+///
 /// # The V3 liquidity in-scope filter
 ///
-/// The whole-chain V3 scan returns pools across ALL V3 exchanges. The in-scope
-/// set is `specs_to_update` (the chunk's laggard subset) — a V3 pool whose
-/// `exchange_id` is NOT in `specs_to_update` is skipped (its exchange either
-/// already advanced or isn't being updated this run). This mirrors `main`'s
-/// `if exchange.id not in exchanges_to_update: continue` filter.
+/// The whole-chain V3 scan returns pools across ALL V3 exchanges. The
+/// in-scope set is `specs_to_update` (the chunk's laggard subset). The
+/// read pass applies the SAME filter pre-transaction; pools it filtered
+/// out (unknown or out-of-scope) are skipped here with no in-transaction
+/// fetch - their scope fetch moved pre-`BEGIN` with the rest of the pass.
 ///
 /// # Errors
 ///
-/// Returns [`DbError`](degenbot_db::DbError) on any write/query failure — the
-/// caller drops the `Transaction` (rollback) on `Err`. When `verify` is
-/// `Some`, a pre-commit on-chain-truth divergence surfaces as
-/// [`RunError::Verification`] (also a rollback — the stamp does NOT advance).
+/// Returns [`DbError`](degenbot_db::DbError) on any write/query failure - the
+/// caller drops the `Transaction` (rollback) on `Err`. A stamp whose assumed
+/// marker no longer matches surfaces as [`RunError::MarkerMoved`] (also a
+/// rollback - the caller re-plans the chunk from refreshed specs).
 #[expect(clippy::too_many_lines)]
 pub fn apply_chunk_writes_on_conn(
     conn: &Connection,
@@ -387,12 +451,12 @@ pub fn apply_chunk_writes_on_conn(
     specs_to_update: &[ExchangeSpec],
     chunk_end: u64,
     inputs: &ChunkInputs,
-    verify: Option<&VerifyCtx>,
+    preverified: &PreVerifiedLiquidity,
 ) -> Result<ChunkWriteReport, RunError> {
     let fn_started = Instant::now();
     let mut report = ChunkWriteReport::default();
 
-    // 1. Pool creations — group by (exchange_id, family) + upsert per batch.
+    // 1. Pool creations - group by (exchange_id, family) + upsert per batch.
     upsert_pool_creations_on_conn(
         conn,
         chain_id,
@@ -401,20 +465,50 @@ pub fn apply_chunk_writes_on_conn(
         &mut report,
     )?;
 
-    // 2. V3 liquidity — in-scope filter per pool, then per-pool apply.
-    //    The whole-chain scan grouped by emitter; here we keep only pools whose
-    //    `exchange_id` is in `specs_to_update` (the chunk's laggard subset).
-    //    With `verify` set: compute → verify the FULL in-memory map against
-    //    on-chain `ticks()`/`tickBitmap()` at `block_number` → persist only
-    //    on GREEN (divergence → `RunError::Verification`, the tx rolls back).
-    // Deterministic per-pool order: the map iteration is hashbrown-random,
-    // but each pool issues its own statements (the scope-filter fetch below),
-    // so the chunk apply's statement sequence — and the row ids its upserts
-    // assign — must not depend on it (golden-capture replay, ADR-068 D3/D6).
+    // 2. V3 liquidity - in-scope filter per pool, then per-pool apply.
+    //    The whole-chain scan grouped by emitter; the read pass already
+    //    kept only in-scope pools (and computed their maps pre-transaction).
+    //    Deterministic per-pool order: the map iteration is hashbrown-random,
+    //    but each pool issues its own statements (the scope-filter fetch on
+    //    the fused path, the persist on the planned path), so the chunk
+    //    apply's statement sequence - and the row ids its upserts assign -
+    //    must not depend on it (golden-capture replay, ADR-068 D3/D6).
     let mut v3_pools: Vec<(Address, &Vec<LiquidityUpdateEvent>)> =
         inputs.v3_liquidity.iter().map(|(a, e)| (*a, e)).collect();
     v3_pools.sort_by_key(|(a, _)| *a);
     for (pool_address, events) in &v3_pools {
+        // Perf A: a planned, non-new pool persists its pre-computed map -
+        // the read pass's compute SELECTs ran before `BEGIN`, not under the
+        // write lock, and (gated) the map is the one the verify RPC checked.
+        if let Some(plan) = preverified.v3.get(pool_address) {
+            if !plan.is_new_pool {
+                let c = &plan.computed;
+                DegenbotDb::persist_v3_liquidity_update_on_conn(
+                    conn,
+                    c.pool_id,
+                    &c.tick_bitmap,
+                    &c.tick_data,
+                    c.last_event,
+                )?;
+                report.liquidity_apply_count += 1;
+                continue;
+            }
+        } else if in_scope_v3_creation_tick_spacing(
+            pool_address,
+            specs_to_update,
+            &inputs.pool_creations,
+        )
+        .is_none()
+        {
+            // Neither planned nor created by this chunk: the read pass
+            // already scope-filtered this pool (its fetch ran pre-transaction)
+            // and found it unknown or out-of-scope - skip with no
+            // in-transaction fetch (the fetch moved pre-`BEGIN`).
+            continue;
+        }
+        // The fused in-transaction path (chunk-new pools, and ungated
+        // creations): the row exists - the upsert above created it - so
+        // re-derive the map from the committed base and persist.
         let pool = DegenbotDb::fetch_pool_by_address_on_conn(conn, *pool_address, chain_id)?;
         let in_scope = pool
             .as_ref()
@@ -435,23 +529,6 @@ pub fn apply_chunk_writes_on_conn(
             continue;
         };
         report.decode_compute_time += compute_started.elapsed();
-        if let Some(vc) = verify {
-            let verify_started = Instant::now();
-            let divergences = vc.rt.block_on(verify_v3_liquidity_map_on_chain(
-                vc.provider,
-                *pool_address,
-                &c,
-                vc.block_number,
-            ))?;
-            report.verify_time += verify_started.elapsed();
-            if !divergences.is_empty() {
-                return Err(RunError::Verification {
-                    pool: pool_address.to_checksum(None),
-                    block_number: vc.block_number,
-                    divergences,
-                });
-            }
-        }
         DegenbotDb::persist_v3_liquidity_update_on_conn(
             conn,
             c.pool_id,
@@ -462,16 +539,37 @@ pub fn apply_chunk_writes_on_conn(
         report.liquidity_apply_count += 1;
     }
 
-    // 3. V4 liquidity — per-pool apply. The V4 fetch is per-PoolManager
-    //    (already per-exchange-scoped), so all fetched events are in-scope.
-    //    With `verify` set: compute → verify the FULL in-memory map against
-    //    on-chain tick/bitmap storage via `extsload(bytes32[])` at
-    //    `block_number` → persist only on GREEN.
-    // Deterministic per-pool order (same reason as the V3 loop above).
+    // 3. V4 liquidity - per-pool apply (the V4 fetch is per-PoolManager,
+    //    already per-exchange-scoped). Same Perf A split as the V3 loop.
+    //    Deterministic per-pool order (same reason as the V3 loop above).
     let mut v4_pools: Vec<(&String, &Vec<LiquidityUpdateEvent>)> =
         inputs.v4_liquidity.iter().collect();
     v4_pools.sort_by_key(|(h, _)| *h);
     for (pool_hash, events) in v4_pools {
+        if let Some(plan) = preverified.v4.get(pool_hash) {
+            if !plan.is_new_pool {
+                let c = &plan.computed;
+                DegenbotDb::persist_v4_liquidity_update_on_conn(
+                    conn,
+                    c.pool_id,
+                    &c.tick_bitmap,
+                    &c.tick_data,
+                    c.last_event,
+                )?;
+                report.liquidity_apply_count += 1;
+                continue;
+            }
+        } else if in_scope_v4_creation_tick_spacing(
+            pool_hash,
+            specs_to_update,
+            &inputs.pool_creations,
+        )
+        .is_none()
+        {
+            // Not planned and not created by this chunk - the read pass
+            // filtered it (its state fetch ran pre-transaction).
+            continue;
+        }
         let compute_started = Instant::now();
         let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
             conn,
@@ -484,39 +582,6 @@ pub fn apply_chunk_writes_on_conn(
             continue;
         };
         report.decode_compute_time += compute_started.elapsed();
-        if let Some(vc) = verify {
-            let verify_started = Instant::now();
-            let pool_manager_address =
-                vc.v4_manager_addresses
-                    .get(pool_hash)
-                    .copied()
-                    .ok_or_else(|| {
-                        RunError::Provider(ProviderError::DecodingError {
-                            message: format!(
-                                "v4 verify: no PoolManager address for pool_hash {pool_hash:?}"
-                            ),
-                        })
-                    })?;
-            let pool_id = B256::from_str(pool_hash.strip_prefix("0x").unwrap_or(pool_hash))
-                .map_err(|e| ProviderError::DecodingError {
-                    message: format!("v4 verify: bad pool_hash {pool_hash:?}: {e}"),
-                })?;
-            let divergences = vc.rt.block_on(verify_v4_liquidity_map_on_chain(
-                vc.provider,
-                pool_manager_address,
-                pool_id,
-                &c,
-                vc.block_number,
-            ))?;
-            report.verify_time += verify_started.elapsed();
-            if !divergences.is_empty() {
-                return Err(RunError::Verification {
-                    pool: pool_hash.clone(),
-                    block_number: vc.block_number,
-                    divergences,
-                });
-            }
-        }
         DegenbotDb::persist_v4_liquidity_update_on_conn(
             conn,
             c.pool_id,
@@ -527,21 +592,38 @@ pub fn apply_chunk_writes_on_conn(
         report.liquidity_apply_count += 1;
     }
 
-    // 4. Stamp `last_update_block` for each in-scope exchange — the LAST write
-    //    in the transaction (the §1 restart-invariant: on rollback the stamp
-    //    does NOT advance, so a restart re-processes the chunk).
+    // 4. Stamp `last_update_block` for each in-scope exchange - the LAST
+    //    write in the transaction (the section-1 restart-invariant: on
+    //    rollback the stamp does NOT advance, so a restart re-processes the
+    //    chunk). Perf A: the stamp is OPTIMISTIC - it carries the marker the
+    //    read pass assumed, so a marker that moved under the chunk
+    //    (impossible under the bot's single-writer discipline; the check
+    //    makes the invariant structural rather than argued) changes ZERO rows
+    //    and surfaces `RunError::MarkerMoved` - the caller drops the tx and
+    //    re-plans the chunk.
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     for spec in specs_to_update {
-        DegenbotDb::set_exchange_last_update_block_on_conn(conn, chain_id, spec.id, chunk_end_i64)?;
+        let fired = DegenbotDb::set_exchange_last_update_block_if_unchanged_on_conn(
+            conn,
+            chain_id,
+            spec.id,
+            chunk_end_i64,
+            spec.last_update_block,
+        )?;
+        if !fired {
+            return Err(RunError::MarkerMoved {
+                exchange_id: spec.id,
+            });
+        }
     }
 
-    // The remaining in-transaction wall time is the SQL apply (upserts,
-    // per-pool reads, persists, stamp) - the fn's span minus the measured
-    // compute + verify spans.
+    // The remaining in-transaction wall time is the SQL apply (upserts, the
+    // planned persists, the fused-path computes, the stamp) - the fn's span
+    // minus the measured in-transaction compute spans (the read pass's
+    // compute time is reported by the driver separately).
     report.apply_time = fn_started
         .elapsed()
-        .saturating_sub(report.decode_compute_time)
-        .saturating_sub(report.verify_time);
+        .saturating_sub(report.decode_compute_time);
 
     Ok(report)
 }
@@ -683,6 +765,243 @@ fn in_scope_fetch_start(
     Some((marker + 1).max(working_start))
 }
 
+/// The tick spacing of an in-scope V3 `PoolCreated` row for `pool_address`,
+/// when this chunk's creations upsert it (Perf A's chunk-new-pool classifier:
+/// the read pass and the apply must agree on which pools the chunk creates -
+/// a pool both planned and created would double-persist).
+fn in_scope_v3_creation_tick_spacing(
+    pool_address: &Address,
+    specs_to_update: &[ExchangeSpec],
+    pool_creations: &[PoolCreationToWrite],
+) -> Option<i64> {
+    pool_creations.iter().find_map(|c| match c {
+        PoolCreationToWrite::V3 { exchange_id, row }
+            if row.address == *pool_address
+                && specs_to_update.iter().any(|s| s.id == *exchange_id) =>
+        {
+            Some(row.tick_spacing)
+        }
+        _ => None,
+    })
+}
+
+/// The V4 twin of [`in_scope_v3_creation_tick_spacing`] (keyed by `pool_hash`).
+fn in_scope_v4_creation_tick_spacing(
+    pool_hash: &str,
+    specs_to_update: &[ExchangeSpec],
+    pool_creations: &[PoolCreationToWrite],
+) -> Option<i64> {
+    pool_creations.iter().find_map(|c| match c {
+        PoolCreationToWrite::V4 { exchange_id, row }
+            if row.pool_hash == pool_hash
+                && specs_to_update.iter().any(|s| s.id == *exchange_id) =>
+        {
+            Some(row.tick_spacing)
+        }
+        _ => None,
+    })
+}
+
+/// The pre-transaction read pass (Perf A): compute every in-scope pool's
+/// post-chunk liquidity map BEFORE the chunk `Transaction` opens. The O(map)
+/// full-map SELECTs (the baseline's in-lock compute) and the per-pool scope
+/// fetches run on the plain guarded connection - a WAL reader takes no write
+/// lock - and the maps come back owned by the caller, so the verify RPC and
+/// the apply's persists run with the write lock free.
+///
+/// Per V3 pool (address-sorted): a chunk-new pool (this chunk's creations
+/// upsert it) has no committed base - under the gate its planned map (empty
+/// base + events) feeds the pre-transaction verify; ungated, no entry is
+/// stored (the apply's fused path re-derives it in-transaction from the
+/// just-upserted row). An existing in-scope pool is scope-fetched + computed
+/// exactly as the in-transaction path did - same SELECTs, moved out of the
+/// lock. Unknown/out-of-scope pools are dropped here (the apply skips them
+/// without re-fetching).
+fn compute_preverified_liquidity(
+    db: &DegenbotDb,
+    chain_id: i64,
+    chunk_specs: &[ExchangeSpec],
+    inputs: &ChunkInputs,
+    verify_chunk: bool,
+) -> Result<PreVerifiedLiquidity, degenbot_db::DbError> {
+    let mut preverified = PreVerifiedLiquidity::default();
+    let guard = db.lock();
+    let conn = &*guard;
+
+    let mut v3_pools: Vec<(Address, &Vec<LiquidityUpdateEvent>)> =
+        inputs.v3_liquidity.iter().map(|(a, e)| (*a, e)).collect();
+    v3_pools.sort_by_key(|(a, _)| *a);
+    for (pool_address, events) in &v3_pools {
+        if let Some(tick_spacing) =
+            in_scope_v3_creation_tick_spacing(pool_address, chunk_specs, &inputs.pool_creations)
+        {
+            // Chunk-new pool: no committed base to read. Under the gate the
+            // planned map (empty base + events, sentinel `pool_id`) is what
+            // the pre-transaction verify RPC checks; the apply's fused path
+            // re-derives the byte-equal map in-transaction.
+            if verify_chunk {
+                // The creation row carries the event's tick spacing (i64); the
+                // map math is i32-keyed. A spacing outside i32 is a decode-
+                // level impossibility - fail loud, never clamp.
+                let spacing = i32::try_from(tick_spacing).map_err(|e| {
+                    degenbot_db::DbError::Decode(format!(
+                        "pool {pool_address} creation tick_spacing {tick_spacing} out of i32: {e}"
+                    ))
+                })?;
+                preverified.v3.insert(
+                    *pool_address,
+                    PlannedLiquidityMap {
+                        computed: DegenbotDb::compute_v3_liquidity_update_for_new_pool(
+                            spacing, events,
+                        ),
+                        is_new_pool: true,
+                    },
+                );
+            }
+            continue;
+        }
+        let Some(pool) = DegenbotDb::fetch_pool_by_address_on_conn(conn, *pool_address, chain_id)?
+        else {
+            continue; // unknown pool - the apply skips it without re-fetching
+        };
+        if !chunk_specs.iter().any(|s| s.id == pool.exchange_id) {
+            continue; // out-of-scope - the apply skips it too
+        }
+        let Some(c) = DegenbotDb::compute_v3_liquidity_update_on_conn(
+            conn,
+            chain_id,
+            &pool_address.to_checksum(None),
+            events,
+        )?
+        else {
+            continue;
+        };
+        preverified.v3.insert(
+            *pool_address,
+            PlannedLiquidityMap {
+                computed: c,
+                is_new_pool: false,
+            },
+        );
+    }
+
+    let mut v4_pools: Vec<(&String, &Vec<LiquidityUpdateEvent>)> =
+        inputs.v4_liquidity.iter().collect();
+    v4_pools.sort_by_key(|(h, _)| *h);
+    for (pool_hash, events) in v4_pools {
+        if let Some(tick_spacing) =
+            in_scope_v4_creation_tick_spacing(pool_hash, chunk_specs, &inputs.pool_creations)
+        {
+            if verify_chunk {
+                let spacing = i32::try_from(tick_spacing).map_err(|e| {
+                    degenbot_db::DbError::Decode(format!(
+                        "pool_hash {pool_hash} creation tick_spacing {tick_spacing} out of i32: {e}"
+                    ))
+                })?;
+                preverified.v4.insert(
+                    (*pool_hash).clone(),
+                    PlannedLiquidityMap {
+                        computed: DegenbotDb::compute_v4_liquidity_update_for_new_pool(
+                            spacing, events,
+                        ),
+                        is_new_pool: true,
+                    },
+                );
+            }
+            continue;
+        }
+        let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
+            conn,
+            pool_hash,
+            inputs.pool_manager_chain,
+            events,
+        )?
+        else {
+            continue; // unknown managed pool - the apply skips it too
+        };
+        preverified.v4.insert(
+            (*pool_hash).clone(),
+            PlannedLiquidityMap {
+                computed: c,
+                is_new_pool: false,
+            },
+        );
+    }
+
+    Ok(preverified)
+}
+
+/// The pre-transaction verify gate (Perf A): compare each planned map against
+/// on-chain truth at `block_number` with NO lock held (the read pass's guard
+/// is long dropped by the time this runs). A non-empty divergence list
+/// surfaces [`RunError::Verification`] - the chunk transaction never opens,
+/// so the observable RED contract (error raised, zero rows written, stamp
+/// unadvanced) holds with the RPC out of the lock. Per-pool order is the
+/// read pass's sorted order (the in-transaction gate's relative order).
+fn verify_precomputed_maps(
+    provider: &AlloyProvider,
+    rt: &'static tokio::runtime::Runtime,
+    block_number: u64,
+    preverified: &PreVerifiedLiquidity,
+    inputs: &ChunkInputs,
+) -> Result<(), RunError> {
+    let mut v3_addrs: Vec<&Address> = preverified.v3.keys().collect();
+    v3_addrs.sort();
+    for addr in v3_addrs {
+        let plan = &preverified.v3[addr];
+        let divergences = rt.block_on(verify_v3_liquidity_map_on_chain(
+            provider,
+            *addr,
+            &plan.computed,
+            block_number,
+        ))?;
+        if !divergences.is_empty() {
+            return Err(RunError::Verification {
+                pool: addr.to_checksum(None),
+                block_number,
+                divergences,
+            });
+        }
+    }
+    let mut v4_hashes: Vec<&String> = preverified.v4.keys().collect();
+    v4_hashes.sort();
+    for pool_hash in v4_hashes {
+        let plan = &preverified.v4[pool_hash];
+        let pool_manager_address = inputs
+            .v4_manager_addresses
+            .get(pool_hash)
+            .copied()
+            .ok_or_else(|| {
+                RunError::Provider(ProviderError::DecodingError {
+                    message: format!(
+                        "v4 verify: no PoolManager address for pool_hash {pool_hash:?}"
+                    ),
+                })
+            })?;
+        let pool_id =
+            B256::from_str(pool_hash.strip_prefix("0x").unwrap_or(pool_hash)).map_err(|e| {
+                ProviderError::DecodingError {
+                    message: format!("v4 verify: bad pool_hash {pool_hash:?}: {e}"),
+                }
+            })?;
+        let divergences = rt.block_on(verify_v4_liquidity_map_on_chain(
+            provider,
+            pool_manager_address,
+            pool_id,
+            &plan.computed,
+            block_number,
+        ))?;
+        if !divergences.is_empty() {
+            return Err(RunError::Verification {
+                pool: pool_hash.clone(),
+                block_number,
+                divergences,
+            });
+        }
+    }
+    Ok(())
+}
+
 // ── the outer chunk loop (RPC-bound; integration-tested) ─────────────────
 
 /// The final report from a [`run_pool_update`] run.
@@ -735,6 +1054,19 @@ pub enum RunError {
         block_number: u64,
         /// The named, bisect-able divergences (empty = GREEN).
         divergences: Vec<LiquidityDivergence>,
+    },
+    /// The chunk's `last_update_block` marker moved between the
+    /// pre-transaction read pass and the chunk transaction (the optimistic
+    /// stamp matched zero rows). The chunk's staged writes were rolled back
+    /// with its transaction; the driver refreshes the specs and re-plans the
+    /// chunk. Unreachable under the bot's single-writer discipline - the
+    /// check makes the restart invariant structural rather than argued.
+    #[error(
+        "exchange {exchange_id} marker moved under the chunk (optimistic stamp matched zero rows)"
+    )]
+    MarkerMoved {
+        /// The exchange whose stored marker no longer matches the assumed one.
+        exchange_id: i64,
     },
 }
 
@@ -925,6 +1257,11 @@ pub fn run_pool_update_on_db(
 
     let mut working_start_block = initial_start_block;
     let mut last_progress_log = Instant::now();
+    // The optimistic stamp's retry budget (Perf A's structural marker check).
+    // Unreachable under the bot's single-writer discipline; a bound keeps a
+    // pathological flip from spinning the loop. NOT reset on commit: four
+    // marker moves per RUN is already far past any real contention shape.
+    let mut marker_retries = 0usize;
     while working_start_block <= last_block {
         // Cooperative cancel at the chunk boundary (the most recent committed
         // chunk is durable; we haven't started the next chunk's writes yet).
@@ -965,6 +1302,7 @@ pub fn run_pool_update_on_db(
         // its own spans later). `chunk_lock_hold_time` is the write-lock
         // hold: `transaction()` open → commit/drop.
         let mut chunk_fetch_time = Duration::ZERO;
+        let mut chunk_verify_time = Duration::ZERO;
         let mut chunk_full_verify_time = Duration::ZERO;
         // Assigned (then read) in every branch that reaches a report; left
         // uninitialized so the compiler proves that.
@@ -1026,24 +1364,57 @@ pub fn run_pool_update_on_db(
             pool_manager_chain: chain_id,
         };
 
-        // The pre-commit on-chain-truth gate (Full per-pool verification):
-        // when `verify` is on, each pool's in-memory map is compared against
-        // on-chain truth at `working_end_block` before the persist commits — a
-        // divergence drops `tx` (rollback) + the stamp does NOT advance.
-        let verify_ctx = if verify_chunk {
-            Some(VerifyCtx {
+        // Perf A: the read pass computes every in-scope pool's post-chunk map
+        // BEFORE the transaction opens - the O(map) full-map SELECTs leave the
+        // write lock (survey finding 1). The returned plan owns the maps; the
+        // guard it used drops inside.
+        let read_pass_started = Instant::now();
+        let preverified =
+            compute_preverified_liquidity(db, chain_id, &chunk_specs, &inputs, verify_chunk)?;
+        let read_pass_time = read_pass_started.elapsed();
+
+        // The pre-commit on-chain-truth gate (Full per-pool verification),
+        // hoisted out of the transaction (Perf A): each planned map is
+        // compared against on-chain truth at `working_end_block` with NO lock
+        // held - a divergence means the transaction NEVER OPENS, so the
+        // observable RED contract is unchanged (`RunError::Verification`, zero
+        // rows written, the stamp unadvanced) while the RPC leaves the lock.
+        if verify_chunk {
+            let verify_started = Instant::now();
+            verify_precomputed_maps(&provider, rt, working_end_block, &preverified, &inputs)?;
+            chunk_verify_time += verify_started.elapsed();
+        }
+
+        // Full (market-wide) verification gate: interval boundary crossing +
+        // run completion - hoisted the same way. The committed maps (read
+        // pre-transaction) overlay the planned maps for this chunk's touched
+        // pools, so the verified state is exactly what the in-transaction
+        // gate used to see post-apply; a divergence never opens the tx.
+        let run_full = crate::verify::should_run_full_verify_at_interval(
+            working_start_block,
+            working_end_block,
+            verify_all_interval,
+        ) || (verify_all_at_completion && working_end_block >= last_block);
+        if run_full {
+            let full_verify_started = Instant::now();
+            crate::verify::verify_all_pools_pre_commit(&crate::verify::PreCommitFullVerifyCtx {
+                db,
+                chain_id,
+                pool_manager_chain: inputs.pool_manager_chain,
+                block_number: working_end_block,
                 provider: &provider,
                 rt,
-                block_number: working_end_block,
+                preverified: &preverified,
                 v4_manager_addresses: &inputs.v4_manager_addresses,
-            })
-        } else {
-            None
-        };
+            })?;
+            chunk_full_verify_time += full_verify_started.elapsed();
+        }
 
-        // The single-transaction chunk write (§1 atomicity). On ANY error the
-        // `Transaction` drops → rollback → `last_update_block` unchanged →
-        // restart re-processes clean (restart-invariant).
+        // The single-transaction chunk write (section-1 atomicity). On ANY
+        // error the `Transaction` drops -> rollback -> `last_update_block`
+        // unchanged -> restart re-processes clean (restart-invariant). The
+        // only retryable error is `MarkerMoved` (the optimistic stamp's
+        // structural check): drop, refresh the specs, re-plan the chunk.
         let chunk_report = {
             let mut guard = db.lock();
             // The write-lock hold starts at the `transaction()` open and
@@ -1056,63 +1427,48 @@ pub fn run_pool_update_on_db(
                 &chunk_specs,
                 working_end_block,
                 &inputs,
-                verify_ctx.as_ref(),
+                &preverified,
             );
             match result {
                 Ok(r) => {
-                    // Full (market-wide) verification gate: interval
-                    // boundary crossing + run completion. Loads ALL
-                    // in-scope pools' committed maps (visible in this `tx`)
-                    // and compares against on-chain truth pre-commit. A
-                    // divergence drops `tx` (rollback) so `last_update_block`
-                    // does NOT advance.
-                    let run_full = crate::verify::should_run_full_verify_at_interval(
-                        working_start_block,
-                        working_end_block,
-                        verify_all_interval,
-                    ) || (verify_all_at_completion
-                        && working_end_block >= last_block);
-                    if run_full {
-                        let full_ctx = crate::verify::FullVerifyCtx {
-                            provider: &provider,
-                            rt,
-                            block_number: working_end_block,
-                            chain_id,
-                            pool_manager_chain: inputs.pool_manager_chain,
-                        };
-                        let full_verify_started = Instant::now();
-                        let full_result =
-                            crate::verify::verify_all_pools_committed_on_conn(&tx, &full_ctx);
-                        chunk_full_verify_time += full_verify_started.elapsed();
-                        if let Err(e) = full_result {
-                            drop(tx);
-                            chunk_lock_hold_time = lock_hold_started.elapsed();
-                            progress.report_chunk(&ChunkProgress {
-                                chain_id,
-                                chunk_start: working_start_block,
-                                chunk_end: working_end_block,
-                                pools_written: 0,
-                                liquidity_apply_count: 0,
-                                committed: false,
-                                is_final: false,
-                                fetch_time: chunk_fetch_time,
-                                decode_compute_time: Duration::ZERO,
-                                verify_time: chunk_full_verify_time,
-                                apply_time: Duration::ZERO,
-                                write_lock_hold_time: chunk_lock_hold_time,
-                            });
-                            return Err(e);
-                        }
-                    }
                     tx.commit().map_err(degenbot_db::DbError::from)?;
                     chunk_lock_hold_time = lock_hold_started.elapsed();
                     r
                 }
+                Err(RunError::MarkerMoved { exchange_id }) => {
+                    // The assumed marker moved under the chunk (structural:
+                    // single-writer means this is unreachable in production;
+                    // the check exists so the invariant is not merely argued).
+                    // Drop the tx (rollback - nothing staged survives) and
+                    // re-plan the chunk with refreshed specs. Bounded so a
+                    // pathological flip cannot spin the loop.
+                    drop(tx);
+                    chunk_lock_hold_time = lock_hold_started.elapsed();
+                    marker_retries += 1;
+                    if marker_retries > MARKER_RETRY_CAP {
+                        progress.report_chunk(&ChunkProgress {
+                            chain_id,
+                            chunk_start: working_start_block,
+                            chunk_end: working_end_block,
+                            pools_written: 0,
+                            liquidity_apply_count: 0,
+                            committed: false,
+                            is_final: false,
+                            fetch_time: chunk_fetch_time,
+                            decode_compute_time: read_pass_time,
+                            verify_time: chunk_verify_time + chunk_full_verify_time,
+                            apply_time: Duration::ZERO,
+                            write_lock_hold_time: chunk_lock_hold_time,
+                        });
+                        return Err(RunError::MarkerMoved { exchange_id });
+                    }
+                    continue;
+                }
                 Err(e) => {
-                    // Drop `tx` (rollback) — the chunk's writes + the stamp
+                    // Drop `tx` (rollback) - the chunk's writes + the stamp
                     // advance are reverted; the committed prior chunks stand.
                     // `e` is already a `RunError` (Db, Provider, or
-                    // Verification — all rollback the chunk).
+                    // Verification - all rollback the chunk).
                     drop(tx);
                     chunk_lock_hold_time = lock_hold_started.elapsed();
                     progress.report_chunk(&ChunkProgress {
@@ -1124,10 +1480,8 @@ pub fn run_pool_update_on_db(
                         committed: false,
                         is_final: false,
                         fetch_time: chunk_fetch_time,
-                        // The failed apply's report is consumed by the `Err`,
-                        // so its stage splits are not attributable here.
-                        decode_compute_time: Duration::ZERO,
-                        verify_time: Duration::ZERO,
+                        decode_compute_time: read_pass_time,
+                        verify_time: chunk_verify_time + chunk_full_verify_time,
                         apply_time: Duration::ZERO,
                         write_lock_hold_time: chunk_lock_hold_time,
                     });
@@ -1166,8 +1520,10 @@ pub fn run_pool_update_on_db(
             committed: true,
             is_final: working_end_block >= last_block,
             fetch_time: chunk_fetch_time,
-            decode_compute_time: chunk_report.decode_compute_time,
-            verify_time: chunk_report.verify_time + chunk_full_verify_time,
+            // The read pass's compute (pre-transaction) + whatever fused-path
+            // compute ran in-transaction (chunk-new pools).
+            decode_compute_time: read_pass_time + chunk_report.decode_compute_time,
+            verify_time: chunk_verify_time + chunk_full_verify_time,
             apply_time: chunk_report.apply_time,
             write_lock_hold_time: chunk_lock_hold_time,
         });
@@ -1306,7 +1662,15 @@ mod tests {
         // ONE transaction wraps the pool write + the stamp.
         let mut guard = db.lock();
         let tx = guard.transaction().unwrap();
-        let report = apply_chunk_writes_on_conn(&tx, 1, &specs, 100, &inputs, None).unwrap();
+        let report = apply_chunk_writes_on_conn(
+            &tx,
+            1,
+            &specs,
+            100,
+            &inputs,
+            &PreVerifiedLiquidity::default(),
+        )
+        .unwrap();
         tx.commit().unwrap();
         drop(guard);
 
@@ -1361,7 +1725,15 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            apply_chunk_writes_on_conn(&tx, 1, &specs, 100, &inputs_ok, None).unwrap();
+            apply_chunk_writes_on_conn(
+                &tx,
+                1,
+                &specs,
+                100,
+                &inputs_ok,
+                &PreVerifiedLiquidity::default(),
+            )
+            .unwrap();
             tx.commit().unwrap();
         }
 
@@ -1371,7 +1743,14 @@ mod tests {
         let err = {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_chunk_writes_on_conn(&tx, 1, &specs, 200, &inputs_dup, None);
+            let result = apply_chunk_writes_on_conn(
+                &tx,
+                1,
+                &specs,
+                200,
+                &inputs_dup,
+                &PreVerifiedLiquidity::default(),
+            );
             // The duplicate insert must surface as an error (UNIQUE constraint).
             assert!(result.is_err(), "duplicate pool insert must error");
             // Drop tx without commit → rollback (the inner fn's `?` already returned).

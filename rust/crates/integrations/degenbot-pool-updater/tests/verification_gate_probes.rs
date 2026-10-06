@@ -276,7 +276,11 @@ fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
     eprintln!("PROBE A red transcript: {err}");
     eprintln!("PROBE A divergences: {divergences:#?}");
 
-    // (2) The chunk rolled back: no pool rows committed.
+    // (2) The chunk never reached the DB: since Perf A the verify RPC runs
+    //     pre-transaction, so a RED never OPENS the chunk transaction (the
+    //     pre-Perf-A shape was an open-transaction rollback - the observable
+    //     contract is the same triple: error raised, zero rows, stamp
+    //     unadvanced). Asserted via post-run state either way: no pool rows.
     assert_eq!(
         committed_pool_count(&path, chain_id),
         0,

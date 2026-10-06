@@ -210,6 +210,59 @@ What the numbers say (first read, to be re-ranked per fix):
 5. Overlap/pipeline chunk fetches.
 6. Delete the dead `fetch_exchange` refresh loop.
 
+### Post-Perf-A rows (ergo YN5QAF — hoist RPC out of the SQLite write transaction)
+
+Same workload, same command (`just bench-updaters`), same devcontainer, median
+of 9 after 2 warmups. Perf A moved the pool loop's per-pool O(map) compute and
+the pre-commit per-pool + market-wide verification RPC into a pre-transaction
+read pass (`compute_preverified_liquidity` + the hoisted gates): zero RPC
+awaits — and none of the planned pools' map SELECTs — sit between
+`transaction()` open and commit/drop. A verification RED now never opens the
+transaction (the observable contract — `RunError::Verification`, zero rows,
+stamp unadvanced — is unchanged; the probes assert the same triple).
+
+| capture | rt | resp bytes | stmts | sql µs | fetch µs | dc+cmp µs | verify µs | apply µs | lock-hold µs | chunk µs | chunks/sec |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| pool_update_chunk_26102622-26102626 (gate OFF) | 2 | 4289 | 25 | 1000 | 131 | 74 | 0 | 190 | 1494 | 4241 | 235 |
+| pool_verify_chunk_26102622-26102626 (gate ON) | 7 | 5510 | 25 | 1000 | 143 | 74 | 49 | 181 | 1576 | 4494 | 222 |
+| aave_update_chunk_26130440-26130445 (Perf A NOT landed — see note) | 6 | 28274 | 150 | 1000 | 559 | 1396 | 0 | 169 | 2869 | 6060 | 165 |
+
+Statement ledgers: the pool gate-OFF golden regenerated ORDER-ONLY — count
+25 = 25, the DB dump BYTE-IDENTICAL, and exactly one statement TEXT changed:
+the end-of-chunk stamp now carries the read pass's assumed marker in its
+WHERE (`UPDATE exchanges SET last_update_block = ? WHERE chain_id = ? AND id = ?
+AND last_update_block = ?`, arg_count 3 -> 4) — the structural restart-invariant
+check. The two unknown-pool scope fetches moved pre-`BEGIN` (order-only). The
+aave golden is untouched (no aave code landed in this task).
+
+**Findings from the post-Perf-A measurement (re-ranking input):**
+
+- **The pool lock-hold is now COMMIT-BOUND, not RPC/compute-bound.** The
+  after rows show apply 210 -> 190 µs and dc+cmp absorbing the read pass;
+  the hold moved 1502 -> 1494 µs (gate OFF). The probe evidence (temporary
+  instrumentation, since removed): `tx.commit()` costs ~1100-1460 µs INSIDE
+  the bench process for this corpus's 22-statement transaction, while an
+  immediate empty `transaction()+commit()` control on the same connection
+  costs 4-7 µs — and the IDENTICAL write shape commits in ~124 µs in a plain
+  test process. The brief's ~200-300 µs (pool) / ~200-400 µs (aave)
+  post-Perf-A expectations are therefore not reachable on this devcontainer
+  by ANY hoist: the remaining ~1.25 ms is the chunk commit itself, not
+  lock-held work. Attributing it (WAL checkpoint? fsync? bench-process
+  context?) is the measurement gate's next finding; a WAL/synchronous
+  PRAGMA change is production-semantics territory and was NOT touched.
+- **The aave corpus has ZERO in-lock RPC to hoist.** The aave cassette
+  records 6 `eth_getLogs` (the fetch surface) and no `eth_call`s — this span
+  dispatches no config events and no GHO-discount path, so the
+  discount pre-pass and config dispatch early-return. The baseline row's
+  1.33 ms dc+cmp ("in-lock RPC" per the first read) is per-tx DECODE +
+  substrate SQL reads + the operations parse, not RPC. Hoisting it is a
+  different shape than the pool hoist: exact fact prediction requires either
+  an in-memory overlay that mirrors the operations parser's substrate writes
+  (user/position creation is log-driven but not topics-extractable), or a
+  shadow-DB fact run whose recorded events replay against the real
+  transaction. Ergo the aave half of Perf A needs its own task with that
+  design settled; the pool half above is the template.
+
 ## Glossary terms
 
 `golden capture`, `cassette`, `statement ledger`, `replay bench` are defined in

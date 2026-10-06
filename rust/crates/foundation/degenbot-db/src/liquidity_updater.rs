@@ -665,6 +665,71 @@ impl DegenbotDb {
         Ok(true)
     }
 
+    /// The **new-pool** compute half (V3): the in-memory map for a pool whose
+    /// row is created by THIS chunk's `PoolCreated` upsert (no committed base
+    /// state exists yet). Applies `events` to an EMPTY base map under the same
+    /// `apply_event_loop` semantics, returning the map WITHOUT persisting -
+    /// the pre-transaction verification seam (Perf A: the verify RPC must not
+    /// hold the write lock, so the map is computed before the chunk
+    /// `Transaction` opens; the in-transaction apply re-derives it from the
+    /// just-upserted row - byte-equal by construction: same empty base, same
+    /// events, same spacing).
+    ///
+    /// `pool_id` is a 0 sentinel (no row exists to key yet); the consumer
+    /// verifies `tick_data`/`tick_bitmap`/`last_event`, never the id - the
+    /// in-transaction apply resolves the real id after the upsert.
+    #[must_use]
+    pub fn compute_v3_liquidity_update_for_new_pool(
+        tick_spacing: i32,
+        events: &[LiquidityUpdateEvent],
+    ) -> ComputedLiquidityUpdate {
+        let state = PoolUpdateState {
+            pool_id: 0,
+            tick_spacing,
+            last_update: None,
+        };
+        Self::compute_liquidity_update_from_base(state, events)
+    }
+
+    /// The **new-pool** compute half (V4 mirror of
+    /// [`Self::compute_v3_liquidity_update_for_new_pool`]): empty base +
+    /// events, no persist, sentinel `pool_id`. The V4 event math is
+    /// spacing-keyed and identical to V3's (the table target is the only
+    /// difference, chosen at persist time).
+    #[must_use]
+    pub fn compute_v4_liquidity_update_for_new_pool(
+        tick_spacing: i32,
+        events: &[LiquidityUpdateEvent],
+    ) -> ComputedLiquidityUpdate {
+        Self::compute_v3_liquidity_update_for_new_pool(tick_spacing, events)
+    }
+
+    /// The shared empty-base compute: `apply_event_loop` over an EMPTY
+    /// tick/bitmap pair with the caller's synthetic state. Private - the two
+    /// `compute_*_for_new_pool` fns are the public surface.
+    fn compute_liquidity_update_from_base(
+        state: PoolUpdateState,
+        events: &[LiquidityUpdateEvent],
+    ) -> ComputedLiquidityUpdate {
+        let mut tick_bitmap = HashMap::new();
+        let mut tick_data = HashMap::new();
+        let mut current_liquidity = U128::ZERO;
+        let last_event = apply_event_loop(
+            &mut tick_bitmap,
+            &mut tick_data,
+            &mut current_liquidity,
+            state,
+            events,
+        );
+        ComputedLiquidityUpdate {
+            pool_id: state.pool_id,
+            tick_spacing: state.tick_spacing,
+            tick_data,
+            tick_bitmap,
+            last_event,
+        }
+    }
+
     /// Set the V3 pool's `liquidity_update_block`/`liquidity_update_log_index`
     /// stamp to `(block, log_index)` — mirrors the Python
     /// `pool_in_db.liquidity_update_block = ...`.
