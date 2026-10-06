@@ -1,18 +1,18 @@
 use super::util::{clone_scaled_event, is_part_of_burn, is_part_of_mint};
 use super::{
-    aave_event_decoder, addr_to_hex, parse_address, Address, DecodedAaveEvent, DegenbotDb, HashSet,
-    Log, Operation, OperationType, ScaledTokenEvent, ScaledTokenEventType,
-    TransactionOperationsParser, U256,
+    aave_event_decoder, addr_to_hex, parse_address, Address, DecodedAaveEvent, HashSet, Log,
+    Operation, OperationType, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser,
+    U256,
 };
 
-impl<'a> TransactionOperationsParser<'a> {
+impl<'a> TransactionOperationsParser<'a, '_> {
     /// The v8-vs-v9+ `ray_div`
     /// subtlety (DP3): for `pool_revision` <= 8, `amountMinted` is in underlying
     /// units → apply `ray_div(amountMinted, liquidity_index, HALF_UP)` to
     /// derive the scaled amount; for `pool_revision` >= 9, `amountMinted`
     /// equals the scaled amount directly.
     pub(super) fn create_mint_to_treasury_operations(
-        &self,
+        &mut self,
         scaled_events: &[ScaledTokenEvent<'a>],
         assigned_indices: &mut HashSet<u64>,
         next_op_id: &mut u32,
@@ -39,14 +39,16 @@ impl<'a> TransactionOperationsParser<'a> {
             }
 
             // Determine the underlying asset (the Mint event's aToken → asset row).
-            let asset_row = DegenbotDb::lookup_asset_by_token_address_on_conn(
-                self.conn,
-                self.market_id,
-                &addr_to_hex(ev.token_address),
-                "a_token",
-            )
-            .ok()
-            .flatten();
+            let asset_row = self
+                .substrate
+                .lookup_asset_row(
+                    self.conn,
+                    self.market_id,
+                    "a_token",
+                    &addr_to_hex(ev.token_address),
+                )
+                .ok()
+                .flatten();
             let underlying_addr = asset_row
                 .as_ref()
                 .and_then(|a| parse_address(&a.underlying_token_address))

@@ -12,6 +12,7 @@ use degenbot_db::DegenbotDb;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
+use super::substrate::{candidate_addresses, ChunkSubstrate};
 use super::{apply_chunk_events_on_conn, AaveChunkEvent, RunError};
 use crate::config_dispatch::{build_discount_snapshot, dispatch_config_events};
 use crate::transaction_processor::process_transaction;
@@ -104,6 +105,33 @@ pub(super) async fn process_chunk_on_conn(
     // chunk reverts).
     let mut events_applied_total: usize = 0;
     let mut touched_user_addresses: HashSet<Address> = HashSet::new();
+    // Perf C: the chunk-level substrate cache — a handful of set-shaped
+    // `SELECT ... IN` prefetches over the chunk's touched entity sets (the
+    // topic-derived candidate users + their positions/configs, the market's
+    // assets/contracts, the chain's GHO row), then in-memory map hits for the
+    // per-event substrate reads, with EVERY cache-visible write landing an
+    // overlay update (the apply arms in `apply.rs` + the config dispatch).
+    // The §3.4 read-your-own-writes contract: reads for log-transaction N
+    // consult the cache ONLY where its state reflects all writes of
+    // transactions < N — the overlay guarantees it (see
+    // `substrate.rs`'s module doc). An empty chunk skips the prefetch (its
+    // only writes are the end-of-chunk cleanup + stamp).
+    let mut substrate = if tx_groups.is_empty() {
+        ChunkSubstrate::lazy(chain_id)
+    } else {
+        let all_logs: Vec<&Log> = tx_groups
+            .iter()
+            .flat_map(|g| g.logs.iter().copied())
+            .collect();
+        let (user_candidates, asset_candidates) = candidate_addresses(&all_logs);
+        ChunkSubstrate::prefetch_on_conn(
+            conn,
+            market_id,
+            chain_id,
+            &user_candidates,
+            &asset_candidates,
+        )?
+    };
     // The replay-bench stage spans (plain `Instant`; the telemetry chunk lands its
     // own spans later): the per-tx decode+compute block (the GHO/revision
     // reads, the discount pre-pass + config dispatch - BOTH hold the write
@@ -126,19 +154,22 @@ pub(super) async fn process_chunk_on_conn(
         }
 
         let compute_started = Instant::now();
-        // (0) Re-resolve the GHO asset from `conn` for THIS tx — sees the
-        //     prior tx's `ReserveInitialized` write that set
-        //     `aave_gho_tokens.v_token_id` (surface #3: the drive-startup
-        //     snapshot had `v_token_address=None` when the GHO reserve wasn't
-        //     yet initialized at coldboot, masking a mid-drive init + causing
-        //     the GHO vToken's `Mint` to classify as plain `DebtMint` instead of
-        //     `GhoDebtMint` → the borrow matcher found no DebtMint → NoMatch
-        //     crash). Mirrors Python's lazy `tx_context.gho_vtoken_address`
-        //     reload (re-reads the `v_token` relationship from the session on
-        //     each tx's `_process_transaction` entry — line 81). The
-        //     drive-startup `gho_asset`/addresses params are now only the
-        //     coldboot seed; this per-tx fetch is authoritative.
-        let gho_asset_tx = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
+        // (0) Re-resolve the GHO asset for THIS tx — sees the prior tx's
+        //     `ReserveInitialized` write that set `aave_gho_tokens.v_token_id`
+        //     (surface #3: the drive-startup snapshot had `v_token_address=None`
+        //     when the GHO reserve wasn't yet initialized at coldboot, masking a
+        //     mid-drive init + causing the GHO vToken's `Mint` to classify as
+        //     plain `DebtMint` instead of `GhoDebtMint` → the borrow matcher
+        //     found no DebtMint → NoMatch crash). Mirrors Python's lazy
+        //     `tx_context.gho_vtoken_address` reload (re-reads the `v_token`
+        //     relationship from the session on each tx's `_process_transaction`
+        //     entry — line 81). The drive-startup `gho_asset`/addresses params
+        //     are now only the coldboot seed; this per-tx fetch is
+        //     authoritative. Perf C: served from the chunk substrate's cached
+        //     GHO row — which every `aave_gho_tokens` write marks dirty, so
+        //     the read-your-own-writes freshness contract is unchanged (a
+        //     dirty mark forces one re-query here).
+        let gho_asset_tx = substrate.gho_asset(conn)?;
         let gho_token_address_tx: Option<&str> = gho_asset_tx
             .as_ref()
             .and_then(|g| g.gho_token_address.as_deref());
@@ -155,14 +186,15 @@ pub(super) async fn process_chunk_on_conn(
             .and_then(|g| g.v_gho_discount_token.as_deref())
             .and_then(|s| s.parse().ok());
 
-        // (a) Re-resolve the GHO vToken's revision from `conn` for THIS tx —
+        // (a) Re-resolve the GHO vToken's revision for THIS tx —
         //     sees the prior tx's in-chunk `Upgraded` write via
-        //     read-your-own-writes (surface #1).
+        //     read-your-own-writes (surface #1). Perf C: the asset row comes
+        //     from the chunk substrate (the `Upgraded` apply bumps the cached
+        //     revision in place).
         let vtoken_revision: Option<u32> = match (gho_vtoken_address_tx, gho_asset_tx.as_ref()) {
-            (Some(addr_str), Some(_)) => DegenbotDb::lookup_asset_by_token_address_on_conn(
-                conn, market_id, addr_str, "v_token",
-            )?
-            .map(|row| row.v_token_revision),
+            (Some(addr_str), Some(_)) => substrate
+                .lookup_asset_row(conn, market_id, "v_token", addr_str)?
+                .map(|row| row.v_token_revision),
             _ => None,
         };
 
@@ -190,6 +222,7 @@ pub(super) async fn process_chunk_on_conn(
             oracle_address,
             gho_asset_tx.as_ref(),
             block_number,
+            &mut substrate,
         )
         .await?;
 
@@ -216,6 +249,7 @@ pub(super) async fn process_chunk_on_conn(
             &tx_hashes_refs,
             group.tx_hash,
             &discounts,
+            &mut substrate,
         )
         .map_err(|e| {
             #[expect(clippy::print_stderr)] // auditable stderr parse-fail line
@@ -233,7 +267,7 @@ pub(super) async fn process_chunk_on_conn(
         //     read-your-own-writes (surface #2: the `Upgraded` revision bump +
         //     scaled-token balance deltas land before the next tx's reads).
         let apply_started = Instant::now();
-        apply_chunk_events_on_conn(conn, market_id, &op_events)?;
+        apply_chunk_events_on_conn(conn, market_id, &op_events, &mut substrate)?;
         apply_time += apply_started.elapsed();
         events_applied_total += op_events.len();
 
@@ -359,6 +393,13 @@ pub(super) async fn process_chunk_on_conn(
     //     commits; on rollback the whole chunk (events + cleanup + stamp)
     //     reverts (§3.4 restart-invariant).
     let apply_started = Instant::now();
+    // Perf C: flush the deferred `ReserveDataUpdated` writes (one sorted
+    // multi-row UPDATE — the liquidity_updater deterministic-order idiom)
+    // BEFORE the cleanup + stamp: the stamp stays the LAST write (§3.4), and
+    // the flush sits inside the chunk's transaction (a rollback reverts it
+    // with the chunk; the in-memory buffer drops with the substrate). The
+    // post-commit verification gate reads the flushed values.
+    substrate.flush_reserve_data_updates(conn)?;
     DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;

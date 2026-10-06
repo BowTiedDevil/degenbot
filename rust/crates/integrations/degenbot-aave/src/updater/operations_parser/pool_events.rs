@@ -3,11 +3,11 @@ use super::{
     TransactionOperationsParser,
 };
 
-impl<'a> TransactionOperationsParser<'a> {
+impl<'a> TransactionOperationsParser<'a, '_> {
     // ── the per-pool-event dispatch (`_create_operation_from_pool_event`) ──
 
     pub(super) fn create_operation_from_pool_event(
-        &self,
+        &mut self,
         operation_id: u32,
         pool_event: &'a Log,
         scaled_events: &[ScaledTokenEvent<'a>],

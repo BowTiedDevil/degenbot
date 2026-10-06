@@ -13,6 +13,7 @@ mod activate;
 mod apply;
 mod fetch;
 mod process;
+pub mod substrate;
 
 pub use activate::{activate_aave_market, deactivate_aave_market, ActivatedMarket};
 pub use apply::{

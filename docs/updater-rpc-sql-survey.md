@@ -267,3 +267,62 @@ aave golden is untouched (no aave code landed in this task).
 
 `golden capture`, `cassette`, `statement ledger`, `replay bench` are defined in
 `GLOSSARY.md` under "Capture and replay".
+
+
+### Post-Perf-C rows (ergo B2U4VL — Aave apply-stage SQL batching)
+
+Same workload, same command (`just bench-updaters`), same devcontainer. Perf C
+is the chunk-level substrate cache (`run/substrate.rs`): a handful of
+set-shaped `SELECT ... IN` prefetches at chunk start (the topic- and
+emitter-derived candidate users + their positions/configs, the market's asset
+rows + contract revisions, the chain's GHO row), an in-memory write-overlay
+consulted before those indexes, and ONE sorted multi-row `UPDATE ... FROM
+(VALUES ...)` for the chunk's `ReserveDataUpdated` writes (the
+`liquidity_updater.rs` deterministic-order idiom). The parser, the config
+dispatch, and the apply arms all consult the cache; every cache-visible write
+lands an overlay update.
+
+| capture | rt | resp bytes | stmts | sql µs | fetch µs | dc+cmp µs | verify µs | apply µs | lock-hold µs | chunk µs | chunks/sec |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| aave_update_chunk_26130440-26130445 (post-Perf-C) | 6 | 28274 | 52 | 1000-2000 | 534 | 216-269 | 0 | 152-181 | 1758-2128 | 5484-5747 | 174-182 |
+
+Statement ledger: 150 -> 52 (the drift gate's `EXPECTED_LEDGER_STATEMENTS`
+updated with the measured literal; the golden regenerated through the same
+writer). Class-by-class: the 51 per-event asset-resolution JOINs -> 1 lazy
+probe (the candidate set pre-answers positives AND negatives — an address
+absent from the market's asset rows is a proven SQL `Ok(None)`, cached with
+zero statements); the 16 in-tx GHO re-resolves -> 0 (one prefetch + dirty-mark
+re-query on any `aave_gho_tokens` write — none in this span); the 11
+get-or-create-user probes -> 0 (candidate absence is proven by the prefetch —
+the INSERT runs probe-less; row ids and order unchanged); the 9 position
+by-key probes + 9 per-apply balance reads -> 0 (the overlay carries id +
+`(balance, last_index)`); the 7 per-parse POOL-revision reads -> 1 prefetch;
+the 9 per-event `ReserveDataUpdated` UPDATEs -> 1 multi-row statement (sorted
+by asset id, last-event-wins per asset, loud short-count error). The DB dump
+golden is BYTE-IDENTICAL (row ids, insertion order, and every value
+unchanged — the §3.4 observable outcome). The RPC counters are untouched:
+6 round trips / 28274 bytes.
+
+**Findings from the post-Perf-C measurement (re-ranking input):**
+
+- **The aave in-lock compute was statement-COUNT-bound, as ranked.** dc+cmp
+  moved 1396 -> 216-269 µs (−81..−85%) and the lock-hold 2869 -> 1758-2128 µs
+  with ZERO RPC change — the §3.4 read-your-own-writes ordering is preserved
+  by the overlay (tx N+1 consults cache entries only where they reflect all
+  writes of txs < N; every cache-visible write updates the overlay at the
+  apply site, and the GHO row re-queries on any dirty mark).
+- **The residual in-lock time is the chunk commit, not lock-held work.** The
+  same commit-bound finding the pool lane measured applies: ~1.2 ms of the
+  remaining hold is `tx.commit()` inside the bench process. No further
+  statement-count lever moves it; a WAL/synchronous PRAGMA change is
+  production-semantics territory and was NOT touched.
+- **Perf D (config-dispatch RPC batching) re-rank: still corpus-blind, and
+  the corpus now shows config dispatch is NOT RPC-free in general.** This
+  span's config dispatch handled 9 discount-config events through
+  pure-decode + substrate reads (no `eth_call` — the recorded 6 round trips
+  are all `eth_getLogs`), so the revision-read multicall still has no
+  measured weight HERE (its value is corpus-blind like the aave half of Perf
+  A was). What Perf C removed is the config dispatch's per-event SQL: its
+  handlers now ride the same substrate cache. The remaining measured lever
+  for THIS corpus is the chunk commit (the measurement gate's next finding),
+  then Perf F's dead-query tail.

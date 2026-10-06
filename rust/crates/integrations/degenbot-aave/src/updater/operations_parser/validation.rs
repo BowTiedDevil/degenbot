@@ -1,6 +1,6 @@
 use super::{Operation, OperationType, ScaledTokenEventType, TransactionOperationsParser};
 
-impl TransactionOperationsParser<'_> {
+impl TransactionOperationsParser<'_, '_> {
     // ── the validators (`_validate_operation` + per-op) ───────────────────
 
     ///  dispatch. Mutates `op.validation_errors`

@@ -1,18 +1,17 @@
 use super::util::{assigned_log_idx_for_event, clone_scaled_event, clone_scaled_event_from_ref};
 use super::{
-    addr_to_hex, log_idx_value, parse_address, Address, DegenbotDb, HashSet, Log, Operation,
-    OperationType, ParseError, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser,
-    U256,
+    addr_to_hex, log_idx_value, parse_address, Address, HashSet, Log, Operation, OperationType,
+    ParseError, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser, U256,
 };
 
-impl<'a> TransactionOperationsParser<'a> {
+impl<'a> TransactionOperationsParser<'a, '_> {
     // ── the 9 standard builders ─────────────────────────────────────────
 
     /// Pool Supply → match `CollateralMint`
     /// by `onBehalfOf` + amount (value - `balance_increase` vs `supply_amount`).
     #[expect(clippy::panic_in_result_fn)] // deliberate panic guard surfaces a bad state lazily
     pub(super) fn create_supply_operation(
-        &self,
+        &mut self,
         operation_id: u32,
         supply_event: &'a Log,
         scaled_events: &[ScaledTokenEvent<'a>],
@@ -109,7 +108,7 @@ impl<'a> TransactionOperationsParser<'a> {
     /// §4.2-drift edge — verify plumbing equivalence.
     #[expect(clippy::too_many_lines)] // mirror's body intrinsic — §4.2-drift match has 6 branches
     pub(super) fn create_withdraw_operation(
-        &self,
+        &mut self,
         operation_id: u32,
         withdraw_event: &'a Log,
         scaled_events: &[ScaledTokenEvent<'a>],
@@ -348,7 +347,7 @@ impl<'a> TransactionOperationsParser<'a> {
     /// `useATokens=true`.
     #[expect(clippy::panic_in_result_fn)] // deliberate panic guard surfaces a bad state lazily
     pub(super) fn create_repay_operation(
-        &self,
+        &mut self,
         operation_id: u32,
         repay_event: &'a Log,
         scaled_events: &[ScaledTokenEvent<'a>],
@@ -412,7 +411,7 @@ impl<'a> TransactionOperationsParser<'a> {
     ///   (asserted in caller).
     #[expect(clippy::too_many_arguments)]
     fn create_repay_with_atokens_operation(
-        &self,
+        &mut self,
         operation_id: u32,
         repay_event: &'a Log,
         reserve: Address,
@@ -506,7 +505,7 @@ impl<'a> TransactionOperationsParser<'a> {
     /// vToken-Burn + aToken-Transfer matching). Both Burn + Mint branches
     /// (the interest-exceeds-repayment edge).
     fn find_collateral_adjustment_event<'b>(
-        &self,
+        &mut self,
         user: Address,
         reserve: Address,
         expected_amount: U256,
@@ -593,12 +592,13 @@ impl<'a> TransactionOperationsParser<'a> {
     /// [`DegenbotDb::lookup_asset_by_underlying_address_on_conn`] substrate
     /// (the §3 surface — no ad-hoc SQL JOINs in the parser).
     pub(super) fn get_a_token_for_asset(
-        &self,
+        &mut self,
         underlying: Address,
     ) -> Result<Option<Address>, ParseError> {
-        let row = DegenbotDb::lookup_asset_by_underlying_address_on_conn(
+        let row = self.substrate.lookup_asset_row(
             self.conn,
             self.market_id,
+            "underlying",
             &addr_to_hex(underlying),
         )?;
         Ok(row.and_then(|a| parse_address(&a.a_token_address)))
@@ -608,12 +608,13 @@ impl<'a> TransactionOperationsParser<'a> {
     /// for an underlying debt asset (None if not a market asset). Required by
     /// `_create_liquidation_operation`'s `SEPARATE_BURNS` pattern detection.
     pub(super) fn get_v_token_for_asset(
-        &self,
+        &mut self,
         underlying: Address,
     ) -> Result<Option<Address>, ParseError> {
-        let row = DegenbotDb::lookup_asset_by_underlying_address_on_conn(
+        let row = self.substrate.lookup_asset_row(
             self.conn,
             self.market_id,
+            "underlying",
             &addr_to_hex(underlying),
         )?;
         Ok(row.and_then(|a| parse_address(&a.v_token_address)))

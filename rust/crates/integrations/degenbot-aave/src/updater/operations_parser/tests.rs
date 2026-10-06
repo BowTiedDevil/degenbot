@@ -1,5 +1,6 @@
 use super::*;
 use crate::operations::{LiquidationGroup, LiquidationPattern};
+use crate::updater::run::substrate::ChunkSubstrate;
 
 #[test]
 fn amounts_match_exact_below_threshold() {
@@ -876,7 +877,8 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     // Crate the parser with the in-memory DB. The Pool contract revision 8
     // is configured in `aave_v3_contracts` → `lookup_pool_revision_on_conn`
     // returns 8 (= the bug path, `pool_revision < 9`).
-    let parser = TransactionOperationsParser::new(
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser = TransactionOperationsParser::new(
         1, // market_id
         1, // chain_id
         pool_address,
@@ -884,6 +886,7 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
         None, // gho_token_address
         None, // gho_vtoken_address
         &conn,
+        &mut substrate,
     )
     .unwrap();
 
@@ -931,6 +934,7 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
         1, // market_id
         &conn,
         &mut events,
+        &mut ChunkSubstrate::lazy(1),
     )
     .unwrap();
     assert_eq!(events.len(), 1);

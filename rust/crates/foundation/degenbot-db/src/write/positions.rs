@@ -63,16 +63,11 @@ impl ScaledTokenPosition {
 }
 
 /// The shared `mint`/`burn` apply body (both are signed deltas). Reads the
-/// position's current `balance` + `last_index`, adds the signed
-/// `balance_delta`, conditionally advances `last_index`, writes both back.
-///
-/// # `last_index` reconciliation
-///
-/// Advances `last_index` to `new_index` ONLY when `new_index >
-/// COALESCE(current_last_index, 0)` — mirrors the Python
-/// `if mint_result.new_index > (position.last_index or 0) { position.last_index
-/// = mint_result.new_index }`. The max-with-prev guard prevents an out-of-log-
-/// order event from clobbering a newer event's index.
+/// position's current `balance` + `last_index`, then delegates to
+/// [`DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn`] for
+/// the compute + write. The read arm is `prepare_cached` (the chunk apply
+/// loop's hottest read when its caller runs without the chunk substrate
+/// cache).
 ///
 /// # Errors
 ///
@@ -95,7 +90,8 @@ fn apply_scaled_token_balance_delta_on_conn(
         _ => unreachable!("ScaledTokenPosition: bad table {table:?}"),
     };
     let row: Option<(Option<String>, Option<String>)> = conn
-        .query_row(sql, params![position_id], |r| {
+        .prepare_cached(sql)?
+        .query_row(params![position_id], |r| {
             Ok((
                 r.get::<_, Option<String>>(0)?,
                 r.get::<_, Option<String>>(1)?,
@@ -115,6 +111,41 @@ fn apply_scaled_token_balance_delta_on_conn(
         Some(s) => Some(parse_decimal_u256(&s)?),
         None => None,
     };
+    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+        conn,
+        position,
+        position_id,
+        current_balance,
+        current_index,
+        balance_delta,
+        new_index,
+    )?;
+    Ok(())
+}
+/// The pure balance-state computation behind the scaled-token apply (shared
+/// by the read-then-write shell and the chunk substrate's with-current
+/// variant): the signed-delta add, the `_burnScaled` clamp, and the
+/// `last_index` max-with-prev reconciliation.
+///
+/// # `last_index` reconciliation
+///
+/// Advances `last_index` to `new_index` ONLY when `new_index >
+/// COALESCE(current_last_index, 0)` — mirrors the Python
+/// `if mint_result.new_index > (position.last_index or 0) { position.last_index
+/// = mint_result.new_index }`. The max-with-prev guard prevents an out-of-log-
+/// order event from clobbering a newer event's index.
+///
+/// # Errors
+///
+/// Returns [`DbError::Decode`] if the computed new balance overflows `U256`.
+fn finish_scaled_token_balance_state(
+    table: &str,
+    position_id: i64,
+    current_balance: alloy::primitives::U256,
+    current_index: Option<alloy::primitives::U256>,
+    balance_delta: alloy::primitives::I256,
+    new_index: alloy::primitives::U256,
+) -> Result<(alloy::primitives::U256, Option<alloy::primitives::U256>), DbError> {
     // Compute new balance (I256 arithmetic — delta may be negative).
     let current_balance_i =
         alloy::primitives::I256::try_from(current_balance).unwrap_or(alloy::primitives::I256::MAX);
@@ -168,6 +199,20 @@ fn apply_scaled_token_balance_delta_on_conn(
         Some(_) => current_index, // keep the prior higher index
         None => Some(new_index),  // first event: set it
     };
+    Ok((new_balance, new_last_index))
+}
+
+/// The scaled-token apply's write arm (the shell's + the chunk substrate's
+/// with-current variant share it): the `prepare_cached` position UPDATE the
+/// ledger golden replays, parameterized `(balance, last_index, id)` in the
+/// single-row shape's order.
+fn write_scaled_token_balance_state(
+    conn: &rusqlite::Connection,
+    table: &str,
+    position_id: i64,
+    new_balance: alloy::primitives::U256,
+    new_last_index: Option<alloy::primitives::U256>,
+) -> Result<(), DbError> {
     let update_sql = match table {
         "aave_v3_collateral_positions" => {
             "UPDATE aave_v3_collateral_positions SET balance = ?1, last_index = ?2 WHERE id = ?3"
@@ -177,14 +222,11 @@ fn apply_scaled_token_balance_delta_on_conn(
         }
         _ => unreachable!(),
     };
-    conn.execute(
-        update_sql,
-        params![
-            new_balance.to_string(),
-            new_last_index.map(|i| i.to_string()),
-            position_id,
-        ],
-    )?;
+    conn.prepare_cached(update_sql)?.execute(params![
+        new_balance.to_string(),
+        new_last_index.map(|i| i.to_string()),
+        position_id,
+    ])?;
     Ok(())
 }
 
@@ -211,7 +253,8 @@ fn get_or_create_position_on_conn(
         _ => unreachable!("get_or_create_position: bad table {table:?}"),
     };
     if let Some(id) = conn
-        .query_row::<i64, _, _>(sql, params![user_id, asset_id], |r| r.get(0))
+        .prepare_cached(sql)?
+        .query_row::<i64, _, _>(params![user_id, asset_id], |r| r.get(0))
         .optional()?
     {
         return Ok(id);
@@ -227,10 +270,45 @@ fn get_or_create_position_on_conn(
         }
         _ => unreachable!(),
     };
-    conn.execute(insert_sql, params![user_id, asset_id])?;
+    conn.prepare_cached(insert_sql)?
+        .execute(params![user_id, asset_id])?;
     Ok(conn.last_insert_rowid())
 }
 impl DegenbotDb {
+    /// The scaled-token apply's compute+write arm with the CURRENT balance
+    /// state SUPPLIED by the caller (the chunk substrate cache serves the
+    /// read — the cache overlay guarantees the supplied state is exactly what
+    /// the SQL probe would have returned). Runs the shared clamp/max-with-prev
+    /// math, writes the row, and returns the new `(balance, last_index)` so
+    /// the caller can record it (the overlay's read-your-own-writes
+    /// backbone).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on the UPDATE failure, or
+    /// [`DbError::Decode`] if the computed new balance overflows `U256`.
+    pub fn apply_scaled_token_balance_delta_with_current_on_conn(
+        conn: &rusqlite::Connection,
+        position: ScaledTokenPosition,
+        position_id: i64,
+        current_balance: alloy::primitives::U256,
+        current_index: Option<alloy::primitives::U256>,
+        balance_delta: alloy::primitives::I256,
+        new_index: alloy::primitives::U256,
+    ) -> Result<(alloy::primitives::U256, Option<alloy::primitives::U256>), DbError> {
+        let table = position.table();
+        let (new_balance, new_last_index) = finish_scaled_token_balance_state(
+            table,
+            position_id,
+            current_balance,
+            current_index,
+            balance_delta,
+            new_index,
+        )?;
+        write_scaled_token_balance_state(conn, table, position_id, new_balance, new_last_index)?;
+        Ok((new_balance, new_last_index))
+    }
+
     /// Get-or-create an `aave_v3_collateral_positions` row by `(user_id,
     /// asset_id)`. Port of `db_positions.py::get_or_create_collateral_position`
     /// (L51–…). On create, inserts `balance='0'`, `last_index=NULL` (the
@@ -564,7 +642,8 @@ impl DegenbotDb {
             _ => unreachable!("bad table"),
         };
         let row: (String, Option<String>) = conn
-            .query_row(sql, rusqlite::params![position_id], |r| {
+            .prepare_cached(sql)?
+            .query_row(rusqlite::params![position_id], |r| {
                 Ok((r.get(0)?, r.get(1)?))
             })
             .map_err(|e| match e {
@@ -668,11 +747,8 @@ impl DegenbotDb {
         // Read the current last_index (max-with-prev reconciliation — mirrors
         // the Python's `if scaled_event.index > current_index` guard).
         let current_index: Option<String> = conn
-            .query_row(
-                "SELECT last_index FROM aave_v3_debt_positions WHERE id = ?1",
-                rusqlite::params![position_id],
-                |r| r.get(0),
-            )
+            .prepare_cached("SELECT last_index FROM aave_v3_debt_positions WHERE id = ?1")?
+            .query_row(rusqlite::params![position_id], |r| r.get(0))
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => DbError::MissingRow(format!(
                     "aave_v3_debt_positions id={position_id} (reset target)"
@@ -682,15 +758,43 @@ impl DegenbotDb {
         let current_index_u256 = current_index
             .as_deref()
             .and_then(|s| parse_decimal_u256(s).ok());
-        let new_last_index = match current_index_u256 {
-            Some(cur) if new_index > cur => Some(new_index),
-            Some(_) => current_index_u256, // keep the prior higher index
-            None => Some(new_index),       // first event: set it
-        };
-        conn.execute(
-            "UPDATE aave_v3_debt_positions SET balance = ?1, last_index = ?2 WHERE id = ?3",
-            rusqlite::params!["0", new_last_index.map(|i| i.to_string()), position_id],
+        Self::reset_debt_position_to_zero_with_current_on_conn(
+            conn,
+            position_id,
+            current_index_u256,
+            new_index,
         )?;
         Ok(())
+    }
+
+    /// The bad-debt reset's compute+write arm with the CURRENT `last_index`
+    /// SUPPLIED by the caller (the chunk substrate cache serves the read —
+    /// the overlay guarantees the supplied state is exactly what the SQL
+    /// probe would have returned). Returns the written `last_index` so the
+    /// caller can record it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on the UPDATE failure.
+    pub fn reset_debt_position_to_zero_with_current_on_conn(
+        conn: &rusqlite::Connection,
+        position_id: i64,
+        current_index: Option<alloy::primitives::U256>,
+        new_index: alloy::primitives::U256,
+    ) -> Result<Option<alloy::primitives::U256>, DbError> {
+        let new_last_index = match current_index {
+            Some(cur) if new_index > cur => Some(new_index),
+            Some(_) => current_index, // keep the prior higher index
+            None => Some(new_index),  // first event: set it
+        };
+        conn.prepare_cached(
+            "UPDATE aave_v3_debt_positions SET balance = ?1, last_index = ?2 WHERE id = ?3",
+        )?
+        .execute(rusqlite::params![
+            "0",
+            new_last_index.map(|i| i.to_string()),
+            position_id,
+        ])?;
+        Ok(new_last_index)
     }
 }

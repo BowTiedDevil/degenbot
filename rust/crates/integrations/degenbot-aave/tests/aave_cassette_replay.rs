@@ -75,11 +75,22 @@ const SPAN_TO: u64 = 26_130_445;
 const EXPECTED_APPLIED_EVENTS: usize = 20;
 
 /// Independent literal: the exact number of statements one chunk apply runs
-/// over this corpus - the N+1 tripwire for the Perf-C work (a query hoisted
-/// out of the per-tx loop going back in, a per-row re-read, an unbatched
-/// revision call's re-read all change this count and fail the plain run
-/// before the byte-diff consults the committed golden).
-const EXPECTED_LEDGER_STATEMENTS: usize = 150;
+/// over this corpus - the N+1 tripwire (a query hoisted out of the per-tx
+/// loop going back in, a per-row re-read, an unbatched revision call's
+/// re-read all change this count and fail the plain run before the
+/// byte-diff consults the committed golden).
+///
+/// Perf C (the chunk substrate cache) measured 150 before it: the
+/// per-event asset/user/position lookups + the per-tx GHO/revision reads
+/// now ride set-shaped prefetches + a write-overlay (the config dispatch
+/// and the parser both consult it; the GHO fresh-resolution paths ride
+/// the dirty-marked cache), and the `ReserveDataUpdated` writes flush as
+/// one sorted multi-row UPDATE. 52 = 7 pre-tx run-setup statements +
+/// BEGIN/COMMIT + 7 prefetches + the (unchanged-shape) immediate writes:
+/// user/position INSERTs, position UPDATEs, the collateral-config
+/// writes, the zero-balance DELETEs, the multi-row asset UPDATE, and the
+/// end-of-chunk stamp.
+const EXPECTED_LEDGER_STATEMENTS: usize = 52;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the

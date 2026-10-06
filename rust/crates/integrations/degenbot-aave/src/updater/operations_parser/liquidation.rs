@@ -4,7 +4,7 @@ use super::{
     ParseError, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser, U256,
 };
 
-impl<'a> TransactionOperationsParser<'a> {
+impl<'a> TransactionOperationsParser<'a, '_> {
     // ── the liquidation engine ────────────────────────────────────────────
 
     // ── the liquidation engine fns ──────────────────────────────────
@@ -20,7 +20,7 @@ impl<'a> TransactionOperationsParser<'a> {
     /// `LiquidationCall` event → resolves `debt_asset` → vToken via
     /// `_get_v_token_for_asset`; we mirror the same per-event vToken resolution.
     fn analyze_liquidation_scenarios(
-        &self,
+        &mut self,
         all_events: &[&Log],
     ) -> Result<HashMap<(Address, Address), usize>, ParseError> {
         let mut counts: HashMap<(Address, Address), usize> = HashMap::new();
@@ -338,7 +338,7 @@ impl<'a> TransactionOperationsParser<'a> {
     /// lookup fails (parity: `assert debt_v_token_address is not None`).
     #[expect(clippy::too_many_lines)] // 5-nested-branch fn — intrinsic
     pub(super) fn create_liquidation_operation(
-        &self,
+        &mut self,
         operation_id: u32,
         liquidation_event: &'a Log,
         scaled_events: &[ScaledTokenEvent<'a>],

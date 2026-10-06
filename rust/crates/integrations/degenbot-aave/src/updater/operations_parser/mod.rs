@@ -45,6 +45,7 @@
 //! `ScaledTokenProcessor::process_*` on an edge branch, escalate (don't paper
 //! over).
 
+use super::run::substrate::ChunkSubstrate;
 use crate::operations::{
     Operation, OperationType, ScaledTokenEvent, ScaledTokenEventData, ScaledTokenEventType,
     SCALED_AMOUNT_POOL_REVISION, TOKEN_AMOUNT_MATCH_TOLERANCE,
@@ -52,7 +53,6 @@ use crate::operations::{
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 use degenbot_core::address_utils::address_to_checksum_string;
-use degenbot_db::DegenbotDb;
 use degenbot_decoders::aave_event_decoder::{
     self, AaveV3Erc20TransferEvent, AaveV3ScaledTokenBalanceTransferEvent,
     AaveV3ScaledTokenBurnEvent, AaveV3ScaledTokenMintEvent, DecodedAaveEvent,
@@ -94,7 +94,7 @@ use pool_events::extract_pool_events;
 /// doesn't borrow the logs.
 #[derive(Debug)]
 #[expect(clippy::module_name_repetitions)]
-pub struct TransactionOperationsParser<'a> {
+pub struct TransactionOperationsParser<'a, 's> {
     /// `aave_v3_markets.id`.
     pub market_id: i64,
     /// `aave_v3_markets.chain_id` (for the `aave_gho_tokens` JOIN).
@@ -114,8 +114,15 @@ pub struct TransactionOperationsParser<'a> {
     /// The borrowed `&Connection` — every substrate lookup runs on this
     /// (the §3.4 invariant).
     pub conn: &'a rusqlite::Connection,
-    /// The Pool contract revision resolved at parse-start (DP4). Read once
-    /// via [`DegenbotDb::lookup_pool_revision_on_conn`]; mid-tx `PoolUpdated`
+    /// The chunk substrate cache (Perf C) — the parse-time lookups + the
+    /// POOL-revision read ride its prefetch + write-overlay (the §3.4
+    /// read-your-own-writes contract lives in `run/substrate.rs`). The `'s`
+    /// lifetime is INDEPENDENT of `'a` (the conn/log borrow): the substrate
+    /// reborrow ends when the parser drops, so the run loop can keep using
+    /// the cache for the apply + the liquidation patterns.
+    pub(crate) substrate: &'s mut ChunkSubstrate,
+    /// The Pool contract revision resolved at parse-start (DP4). Served from
+    /// the chunk substrate cache (the per-parse read behind it); mid-tx `PoolUpdated`
     /// config events are the orchestrator's concern.
     pub pool_revision: u32,
 }
@@ -160,13 +167,14 @@ pub struct TransactionOperations<'a> {
 
 // ── the parser impl ───────────────────────────────────────────────────────
 
-impl<'a> TransactionOperationsParser<'a> {
+impl<'a, 's> TransactionOperationsParser<'a, 's> {
     /// Construct a parser with the per-tx context pre-resolved by the caller
     /// (the orchestrator does the GHO-token / treasury resolution
     /// before instantiation; the parser doesn't RPC).
     /// # Errors
     /// Returns [`ParseError::Substrate`] if the pool-revision lookup fails.
     #[expect(clippy::similar_names)] // gho_token vs gho_vtoken is intrinsic to the domain
+    #[expect(clippy::too_many_arguments)] // mirrors the Python context-construction arg list
     pub fn new(
         market_id: i64,
         chain_id: i64,
@@ -175,8 +183,10 @@ impl<'a> TransactionOperationsParser<'a> {
         gho_token_address: Option<Address>,
         gho_vtoken_address: Option<Address>,
         conn: &'a rusqlite::Connection,
+        substrate: &'s mut ChunkSubstrate,
     ) -> Result<Self, ParseError> {
-        let pool_revision = DegenbotDb::lookup_pool_revision_on_conn(conn, market_id, "POOL")?
+        let pool_revision = substrate
+            .pool_revision(conn, market_id, "POOL")?
             .ok_or_else(|| {
                 ParseError::Substrate(format!(
                     "POOL contract revision missing for market_id={market_id}"
@@ -190,6 +200,7 @@ impl<'a> TransactionOperationsParser<'a> {
             gho_token_address,
             gho_vtoken_address,
             conn,
+            substrate,
             pool_revision,
         })
     }
@@ -246,7 +257,7 @@ impl<'a> TransactionOperationsParser<'a> {
         clippy::panic_in_result_fn
     )] // parse() is intrinsic — §4.2-drift mirror
     pub fn parse(
-        &self,
+        &mut self,
         events: &'a [&'a Log],
         tx_hash: [u8; 32],
     ) -> Result<TransactionOperations<'a>, ParseError> {

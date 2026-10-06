@@ -3,10 +3,12 @@
 //! See the crate-level docs for the §3.4 atomicity invariant this file enforces.
 
 use alloy::primitives::U256;
-use degenbot_db::DegenbotDb;
+use degenbot_db::{DegenbotDb, ScaledTokenPosition};
 #[cfg(test)]
 use rusqlite::params;
 use rusqlite::Connection;
+
+use super::substrate::ChunkSubstrate;
 
 /// One pre-decoded Aave V3 event for the chunk apply loop.
 ///
@@ -409,6 +411,15 @@ pub struct AaveChunkWriteReport {
 /// caller owns the stamp (per-tx apply in [`process_chunk_on_conn`], or the
 /// batched [`apply_aave_chunk_writes_on_conn`]).
 ///
+/// `substrate` is the chunk-level cache (Perf C): the per-event substrate
+/// reads ride its prefetch + write-overlay, and EVERY cache-visible write
+/// lands an overlay update here — the asset re-binds (`ReserveInitialized`),
+/// the revision bumps (`Upgraded`), the position state writes (the scaled
+/// token applies + the bad-debt reset), the contract revisions, the GHO-row
+/// dirty marks, and the deferred `ReserveDataUpdated` buffer. See
+/// [`crate::updater::run::substrate`] for the §3.4 read-your-own-writes
+/// contract the overlay enforces.
+///
 /// Written per-tx: the apply loop writes each tx's events to `conn` BEFORE
 /// the next tx's
 /// dispatch/parse reads — fixing the two staleness surfaces (the prior tx's
@@ -429,6 +440,7 @@ pub fn apply_chunk_events_on_conn(
     conn: &Connection,
     _market_id: i64,
     events: &[AaveChunkEvent],
+    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkWriteReport, degenbot_db::DbError> {
     let mut report = AaveChunkWriteReport::default();
 
@@ -495,9 +507,7 @@ pub fn apply_chunk_events_on_conn(
                 asset_id,
                 enabled,
             } => {
-                DegenbotDb::apply_reserve_used_as_collateral_on_conn(
-                    conn, *user_id, *asset_id, *enabled,
-                )?;
+                substrate.apply_reserve_used_as_collateral(conn, *user_id, *asset_id, *enabled)?;
                 report.reserve_used_as_collateral += 1;
             }
             AaveChunkEvent::UserEModeSet { user_id, e_mode } => {
@@ -513,6 +523,10 @@ pub fn apply_chunk_events_on_conn(
                     *ev_market_id,
                     new_oracle_address,
                 )?;
+                // A mid-chunk PRICE_ORACLE INSERT (the coldboot gap) is a new
+                // contract row — cache it (a pre-existing row keeps its cached
+                // revision; the upsert only rewrites the address).
+                substrate.record_contract_insert(*ev_market_id, "PRICE_ORACLE", None);
                 report.price_oracle_updated += 1;
             }
             AaveChunkEvent::AssetSourceUpdated {
@@ -530,15 +544,23 @@ pub fn apply_chunk_events_on_conn(
                 variable_borrow_index,
                 block_number,
             } => {
-                DegenbotDb::apply_reserve_data_updated_on_conn(
-                    conn,
+                // Perf C: the asset rate/index write is DEFERRED to the
+                // chunk-level multi-row flush (no mid-chunk reader of these
+                // columns — the asset lookups read only id/revisions/addresses,
+                // the verification gate runs post-commit, the position math
+                // uses the EVENT's index). The loud missing-asset probe still
+                // fires HERE: byte-parity with the single-row UPDATE's
+                // `updated == 0 → DbError::MissingRow` contract, so a bad id
+                // aborts the chunk at its event, not at the flush.
+                substrate.require_asset(conn, *asset_id)?;
+                substrate.buffer_reserve_data_update(
                     *asset_id,
                     *liquidity_rate,
                     *variable_borrow_rate,
                     *liquidity_index,
                     *variable_borrow_index,
                     *block_number,
-                )?;
+                );
                 report.reserve_data_updated += 1;
             }
             AaveChunkEvent::ReserveInitialized {
@@ -551,7 +573,7 @@ pub fn apply_chunk_events_on_conn(
                 price_source,
                 gho_link_token_id,
             } => {
-                DegenbotDb::apply_reserve_initialized_on_conn(
+                let asset_row_id = DegenbotDb::apply_reserve_initialized_on_conn(
                     conn,
                     *ev_market_id,
                     *underlying_asset_id,
@@ -562,6 +584,16 @@ pub fn apply_chunk_events_on_conn(
                     price_source.as_deref(),
                     *gho_link_token_id,
                 )?;
+                // The create/re-point changed the asset row's token bindings —
+                // re-read the fresh row + re-bind the address indexes (the
+                // overlay's read-your-own-writes for the asset lookups; a
+                // re-initialized reserve's OLD addresses must stop resolving,
+                // exactly as the SQL JOIN would). The GHO link (divergence #8)
+                // wrote `aave_gho_tokens` — the cached GHO row is stale.
+                substrate.refresh_asset_row(conn, asset_row_id)?;
+                if gho_link_token_id.is_some() {
+                    substrate.mark_gho_dirty();
+                }
                 report.reserve_initialized += 1;
             }
             AaveChunkEvent::ScaledTokenMint {
@@ -570,13 +602,29 @@ pub fn apply_chunk_events_on_conn(
                 balance_delta,
                 new_index,
             } => {
-                DegenbotDb::apply_scaled_token_mint_on_conn(
-                    conn,
+                // The apply's read comes from the chunk substrate (the
+                // overlay's state — byte-exact with the SQL probe), the math
+                // + write ride the shared substrate body, and the written
+                // state lands back in the overlay (the next read — this tx's
+                // next event or the next tx's parse — is a map hit).
+                let (current_balance, current_index) =
+                    substrate.position_state_for_apply(conn, *position, *position_id)?;
+                let (new_balance, new_last_index) =
+                    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+                        conn,
+                        *position,
+                        *position_id,
+                        current_balance,
+                        current_index,
+                        *balance_delta,
+                        *new_index,
+                    )?;
+                substrate.record_position_write(
                     *position,
                     *position_id,
-                    *balance_delta,
-                    *new_index,
-                )?;
+                    new_balance,
+                    new_last_index,
+                );
                 report.scaled_token_mint += 1;
             }
             AaveChunkEvent::ScaledTokenBurn {
@@ -585,13 +633,26 @@ pub fn apply_chunk_events_on_conn(
                 balance_delta,
                 new_index,
             } => {
-                DegenbotDb::apply_scaled_token_burn_on_conn(
-                    conn,
+                // Mirror of the mint arm (see its comment): overlay-read →
+                // shared compute+write → overlay-record.
+                let (current_balance, current_index) =
+                    substrate.position_state_for_apply(conn, *position, *position_id)?;
+                let (new_balance, new_last_index) =
+                    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+                        conn,
+                        *position,
+                        *position_id,
+                        current_balance,
+                        current_index,
+                        *balance_delta,
+                        *new_index,
+                    )?;
+                substrate.record_position_write(
                     *position,
                     *position_id,
-                    *balance_delta,
-                    *new_index,
-                )?;
+                    new_balance,
+                    new_last_index,
+                );
                 report.scaled_token_burn += 1;
             }
             // C3.3 (C refresh): no synchronous apply — the chunk loop's async
@@ -607,13 +668,60 @@ pub fn apply_chunk_events_on_conn(
                 scaled_amount,
                 transfer_index,
             } => {
-                DegenbotDb::apply_scaled_token_transfer_on_conn(
+                // The transfer fn's two legs, with each leg's CURRENT state
+                // supplied by the chunk substrate + recorded back (the exact
+                // deltas the substrate fn computes: debit the sender
+                // (negative; `I256::MIN` saturation), credit the recipient
+                // (positive; `I256::MAX` saturation) — the recipient leg
+                // SKIPPED for the ZERO_ADDRESS leg (`None`, the crash #8
+                // guard). Both legs are collateral (BalanceTransfer is
+                // aToken-only).
+                let (from_balance, from_index) = substrate.position_state_for_apply(
                     conn,
+                    ScaledTokenPosition::Collateral,
                     *from_position_id,
-                    *to_position_id,
-                    *scaled_amount,
-                    *transfer_index,
                 )?;
+                let (from_new_balance, from_new_last_index) =
+                    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+                        conn,
+                        ScaledTokenPosition::Collateral,
+                        *from_position_id,
+                        from_balance,
+                        from_index,
+                        -alloy::primitives::I256::try_from(*scaled_amount)
+                            .unwrap_or(alloy::primitives::I256::MIN),
+                        *transfer_index,
+                    )?;
+                substrate.record_position_write(
+                    ScaledTokenPosition::Collateral,
+                    *from_position_id,
+                    from_new_balance,
+                    from_new_last_index,
+                );
+                if let Some(to_position_id) = to_position_id {
+                    let (to_balance, to_index) = substrate.position_state_for_apply(
+                        conn,
+                        ScaledTokenPosition::Collateral,
+                        *to_position_id,
+                    )?;
+                    let (to_new_balance, to_new_last_index) =
+                        DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+                            conn,
+                            ScaledTokenPosition::Collateral,
+                            *to_position_id,
+                            to_balance,
+                            to_index,
+                            alloy::primitives::I256::try_from(*scaled_amount)
+                                .unwrap_or(alloy::primitives::I256::MAX),
+                            *transfer_index,
+                        )?;
+                    substrate.record_position_write(
+                        ScaledTokenPosition::Collateral,
+                        *to_position_id,
+                        to_new_balance,
+                        to_new_last_index,
+                    );
+                }
                 report.scaled_token_transfer += 1;
             }
             AaveChunkEvent::GhoDiscountPercentUpdated {
@@ -636,6 +744,9 @@ pub fn apply_chunk_events_on_conn(
                     *gho_token_id,
                     new_strategy.as_deref(),
                 )?;
+                // The write touched `aave_gho_tokens` — the cached GHO row is
+                // stale (the next per-tx re-resolve re-queries).
+                substrate.mark_gho_dirty();
                 report.gho_discount_rate_strategy_updated += 1;
             }
             AaveChunkEvent::GhoDiscountTokenUpdated {
@@ -647,6 +758,10 @@ pub fn apply_chunk_events_on_conn(
                     *gho_token_id,
                     new_discount_token.as_deref(),
                 )?;
+                // The write touched `aave_gho_tokens` — the cached GHO row is
+                // stale (the next per-tx re-resolve re-queries; the discount
+                // refresh must hit the NEW contract).
+                substrate.mark_gho_dirty();
                 report.gho_discount_token_updated += 1;
             }
             AaveChunkEvent::StkAaveTransfer {
@@ -681,7 +796,23 @@ pub fn apply_chunk_events_on_conn(
                 position_id,
                 new_index,
             } => {
-                DegenbotDb::reset_debt_position_to_zero_on_conn(conn, *position_id, *new_index)?;
+                // The reset's read (its max-with-prev seed) comes from the
+                // chunk substrate; the compute+write rides the shared
+                // substrate body; the written state lands back in the overlay.
+                let (_, current_index) =
+                    substrate.debt_position_state_for_reset(conn, *position_id)?;
+                let new_last_index = DegenbotDb::reset_debt_position_to_zero_with_current_on_conn(
+                    conn,
+                    *position_id,
+                    current_index,
+                    *new_index,
+                )?;
+                substrate.record_position_write(
+                    ScaledTokenPosition::Debt,
+                    *position_id,
+                    alloy::primitives::U256::ZERO,
+                    new_last_index,
+                );
                 report.debt_position_reset += 1;
             }
             // ── the 6 missing-variant config events ─────────
@@ -699,6 +830,14 @@ pub fn apply_chunk_events_on_conn(
                     *new_revision,
                     *deprecated_gho_token_id,
                 )?;
+                // The revision bump changed the cached asset row in place (the
+                // address indexes point at the row id — every lookup sees the
+                // fresh revision). The deprecation side effect cleared
+                // `aave_gho_tokens` — the cached GHO row is stale.
+                substrate.record_asset_revision(*asset_id, *is_a_token, *new_revision);
+                if deprecated_gho_token_id.is_some() {
+                    substrate.mark_gho_dirty();
+                }
                 report.upgraded += 1;
             }
             AaveChunkEvent::ContractRevisionUpdated {
@@ -712,6 +851,7 @@ pub fn apply_chunk_events_on_conn(
                     contract_name,
                     *new_revision,
                 )?;
+                substrate.record_contract_revision(*ev_market_id, contract_name, *new_revision);
                 report.contract_revision_updated += 1;
             }
             AaveChunkEvent::PoolDataProviderUpdated {
@@ -725,6 +865,7 @@ pub fn apply_chunk_events_on_conn(
                     old_address.as_deref(),
                     new_address,
                 )?;
+                substrate.record_contract_insert(*ev_market_id, "POOL_DATA_PROVIDER", None);
                 report.pool_data_provider_updated += 1;
             }
             AaveChunkEvent::ContractInserted {
@@ -744,13 +885,16 @@ pub fn apply_chunk_events_on_conn(
                 // unconditional INSERT — parity with the Python which
                 // unconditional-appends them.
                 if name == "POOL" || name == "POOL_CONFIGURATOR" {
-                    DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+                    let inserted = DegenbotDb::apply_contract_inserted_if_absent_on_conn(
                         conn,
                         *ev_market_id,
                         name,
                         address,
                         *revision,
                     )?;
+                    if inserted {
+                        substrate.record_contract_insert(*ev_market_id, name, *revision);
+                    }
                 } else {
                     DegenbotDb::apply_contract_inserted_on_conn(
                         conn,
@@ -759,6 +903,7 @@ pub fn apply_chunk_events_on_conn(
                         address,
                         *revision,
                     )?;
+                    substrate.record_contract_insert(*ev_market_id, name, *revision);
                 }
                 report.contract_inserted += 1;
             }
@@ -794,7 +939,19 @@ pub fn apply_aave_chunk_writes_on_conn(
     events: &[AaveChunkEvent],
     chunk_end_block: u64,
 ) -> Result<AaveChunkWriteReport, degenbot_db::DbError> {
-    let mut report = apply_chunk_events_on_conn(conn, market_id, events)?;
+    // The batched entrypoint runs WITHOUT the per-tx substrate prefetch (the
+    // chunk loop's `process_chunk_on_conn` owns that): a lazy cache — every
+    // read probes SQL once and caches, every apply records its overlay — so
+    // the observable DB outcome matches the chunk-loop path byte-for-byte.
+    // `chain_id` is never read here (this entrypoint issues no GHO re-resolve).
+    let mut substrate = ChunkSubstrate::lazy(0);
+    let mut report = apply_chunk_events_on_conn(conn, market_id, events, &mut substrate)?;
+
+    // Perf C: flush the deferred `ReserveDataUpdated` writes (one sorted
+    // multi-row UPDATE) BEFORE the cleanup + the stamp — the stamp stays the
+    // LAST write (§3.4 restart-invariant), and the flush sits inside the
+    // caller's transaction (a rollback reverts it with the chunk).
+    substrate.flush_reserve_data_updates(conn)?;
 
     // End-of-chunk zero-balance cleanup (the ported Python
     // `cleanup_zero_balance_positions`): the chunk's apply may have zeroed
