@@ -503,10 +503,10 @@ mod tests {
     #[test]
     fn manifest_family_matches_the_graph_vocabulary() {
         for s in &manifest().species {
-            let expected = match PoolKind::from_kind_str(&s.kind) {
-                Some(PoolKind::V2) => Family::V2,
-                Some(PoolKind::V3) => Family::V3,
-                Some(PoolKind::V4) => Family::V4,
+            let expected = match PoolKind::try_from(s.kind.as_str()) {
+                Ok(PoolKind::V2) => Family::V2,
+                Ok(PoolKind::V3) => Family::V3,
+                Ok(PoolKind::V4) => Family::V4,
                 _ => unreachable!("parity test pins every kind"),
             };
             assert_eq!(s.family, expected, "{}", s.kind);
@@ -734,7 +734,7 @@ mod tests {
         assert_eq!(species.family.pool_kind(), Some(PoolKind::V4));
         assert_eq!(
             species.family.pool_kind(),
-            Some(PoolKind::from_kind_str("uniswap_v4").unwrap())
+            PoolKind::try_from("uniswap_v4").ok()
         );
         assert_eq!(PoolKind::KNOWN_KINDS.len(), 11);
         // A V4 kind never carries a V2/V3 subclass table.

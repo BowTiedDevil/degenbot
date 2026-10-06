@@ -101,17 +101,17 @@ pub mod table {
     /// (a `UniswapV3PoolTableBase` subclass polymorphic identity).
     ///
     /// Projects through the graph vocabulary's single kind table
-    /// ([`PoolKind::from_kind_str`]) — ADR-059 D1: the schema helper is a
+    /// ([`PoolKind::try_from`]) — ADR-059 D1: the schema helper is a
     /// view of the taxonomy projection, not a second enumeration.
     #[must_use]
     pub fn is_v3_kind(kind: &str) -> bool {
-        matches!(PoolKind::from_kind_str(kind), Some(PoolKind::V3))
+        matches!(PoolKind::try_from(kind), Ok(PoolKind::V3))
     }
 
     /// `true` if `kind` is a V2 family discriminator.
     #[must_use]
     pub fn is_v2_kind(kind: &str) -> bool {
-        matches!(PoolKind::from_kind_str(kind), Some(PoolKind::V2))
+        matches!(PoolKind::try_from(kind), Ok(PoolKind::V2))
     }
 
     /// `true` if `kind` is a V4 discriminator (only `uniswap_v4` today — the
@@ -119,7 +119,7 @@ pub mod table {
     /// `uniswap_v4_pools`).
     #[must_use]
     pub fn is_v4_kind(kind: &str) -> bool {
-        matches!(PoolKind::from_kind_str(kind), Some(PoolKind::V4))
+        matches!(PoolKind::try_from(kind), Ok(PoolKind::V4))
     }
 
     /// `true` if `kind` is a declared-but-unsupported family discriminator
@@ -169,7 +169,7 @@ mod table_tests {
     #[test]
     fn schema_helpers_agree_with_the_projection() {
         for (kind, expected) in GOLDEN {
-            assert_eq!(PoolKind::from_kind_str(kind), Some(*expected));
+            assert_eq!(PoolKind::try_from(*kind), Ok(*expected));
             assert_eq!(is_v2_kind(kind), *expected == PoolKind::V2);
             assert_eq!(is_v3_kind(kind), *expected == PoolKind::V3);
             assert_eq!(is_v4_kind(kind), *expected == PoolKind::V4);
@@ -178,8 +178,8 @@ mod table_tests {
 
     #[test]
     fn every_kind_has_a_graph_tag_or_is_loudly_refused() {
-        assert_eq!(PoolKind::from_kind_str("lfj_binned"), None);
-        assert_eq!(PoolKind::from_kind_str(""), None);
+        assert!(PoolKind::try_from("lfj_binned").is_err());
+        assert!(PoolKind::try_from("").is_err());
     }
 
     #[test]
@@ -210,7 +210,7 @@ mod table_tests {
                 "{kind} lost its subclass table"
             );
             assert!(
-                PoolKind::from_kind_str(kind).is_some(),
+                PoolKind::try_from(*kind).is_ok(),
                 "{kind} lost its graph tag"
             );
         }

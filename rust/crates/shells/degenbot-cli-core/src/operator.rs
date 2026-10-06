@@ -58,7 +58,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
-use crate::error::CliError;
+use crate::error::{CliError, UnknownVariant};
 
 /// The environment variable naming the live bot's operator socket (the shell
 /// layer of the cascade). Empty is treated exactly like unset.
@@ -114,6 +114,10 @@ pub enum PathFamily {
 }
 
 impl PathFamily {
+    /// Every family, in declaration order — the set an unrecognized hop
+    /// family is judged against.
+    pub const ALL: [Self; 3] = [Self::V2, Self::V3, Self::V4];
+
     /// The wire spelling (uppercase).
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -123,15 +127,27 @@ impl PathFamily {
             Self::V4 => "V4",
         }
     }
+}
+
+impl TryFrom<&str> for PathFamily {
+    type Error = UnknownVariant;
 
     /// Parse a case-insensitive family string.
-    #[must_use]
-    pub fn parse(raw: &str) -> Option<Self> {
+    ///
+    /// # Errors
+    ///
+    /// [`UnknownVariant`] for a family outside the closed set, naming the raw
+    /// input and the known families: a hop naming no family on the wire is
+    /// refused before the socket is touched, never silently routed.
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
         match raw.to_ascii_uppercase().as_str() {
-            "V2" => Some(Self::V2),
-            "V3" => Some(Self::V3),
-            "V4" => Some(Self::V4),
-            _ => None,
+            "V2" => Ok(Self::V2),
+            "V3" => Ok(Self::V3),
+            "V4" => Ok(Self::V4),
+            _ => Err(UnknownVariant {
+                raw: raw.to_owned(),
+                known: Self::ALL.iter().map(|family| family.as_str()).collect(),
+            }),
         }
     }
 }
@@ -158,6 +174,10 @@ pub enum PathDirection {
 }
 
 impl PathDirection {
+    /// Every direction, in declaration order — the set an unrecognized argv
+    /// spelling is judged against.
+    pub const ALL: [Self; 2] = [Self::Zfo, Self::Ozf];
+
     /// The argv spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -167,20 +187,31 @@ impl PathDirection {
         }
     }
 
-    /// Parse the argv spelling (case-sensitive, mirroring click's Choice).
-    #[must_use]
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "zfo" => Some(Self::Zfo),
-            "ozf" => Some(Self::Ozf),
-            _ => None,
-        }
-    }
-
     /// The per-hop wire bit.
     #[must_use]
     pub const fn is_zfo(self) -> bool {
         matches!(self, Self::Zfo)
+    }
+}
+
+impl TryFrom<&str> for PathDirection {
+    type Error = UnknownVariant;
+
+    /// Parse the argv spelling (case-sensitive, mirroring click's Choice).
+    ///
+    /// # Errors
+    ///
+    /// [`UnknownVariant`] for a spelling outside the closed set, naming the
+    /// raw input and the known spellings.
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        match raw {
+            "zfo" => Ok(Self::Zfo),
+            "ozf" => Ok(Self::Ozf),
+            _ => Err(UnknownVariant {
+                raw: raw.to_owned(),
+                known: Self::ALL.iter().map(|d| d.as_str()).collect(),
+            }),
+        }
     }
 }
 
@@ -195,7 +226,7 @@ impl PathDirection {
 pub fn parse_hop_token(hop: &str) -> Result<PathStep, CliError> {
     let parts: Vec<&str> = hop.split(':').collect();
     let raw_family = parts.first().copied().unwrap_or_default();
-    let family = PathFamily::parse(raw_family).ok_or_else(|| {
+    let family = PathFamily::try_from(raw_family).map_err(|_| {
         CliError::OperatorHygiene(format!("--hop family must be V2|V3|V4, got {raw_family:?}"))
     })?;
     let address = parts
@@ -676,4 +707,48 @@ async fn exchange(socket: &Path, line: String) -> Result<WireResponse, CliError>
         CliError::OperatorProtocol(format!("operator response is not valid UTF-8: {err}"))
     })?;
     decode_response(&text)
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn path_family_try_from_is_case_insensitive() {
+        assert_eq!(PathFamily::try_from("v2"), Ok(PathFamily::V2));
+        assert_eq!(PathFamily::try_from("V3"), Ok(PathFamily::V3));
+        assert_eq!(PathFamily::try_from("v4"), Ok(PathFamily::V4));
+    }
+
+    #[test]
+    fn path_family_try_from_unknown_names_the_raw_value_and_known_set() {
+        let err = PathFamily::try_from("v5").unwrap_err();
+        assert_eq!(err.raw, "v5");
+        let message = err.to_string();
+        assert!(message.contains("v5"), "raw value missing from: {message}");
+        assert!(
+            message.contains("V2") && message.contains("V3") && message.contains("V4"),
+            "known set missing from: {message}"
+        );
+    }
+
+    #[test]
+    fn path_direction_try_from_round_trips_the_argv_spellings() {
+        for direction in PathDirection::ALL {
+            assert_eq!(PathDirection::try_from(direction.as_str()), Ok(direction));
+        }
+    }
+
+    #[test]
+    fn path_direction_try_from_unknown_names_the_raw_value_and_known_set() {
+        let err = PathDirection::try_from("zof").unwrap_err();
+        assert_eq!(err.raw, "zof");
+        let message = err.to_string();
+        assert!(
+            message.contains("zof") && message.contains("zfo") && message.contains("ozf"),
+            "raw value and known set missing from: {message}"
+        );
+    }
 }

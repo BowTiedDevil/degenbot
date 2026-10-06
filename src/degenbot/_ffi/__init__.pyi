@@ -4138,8 +4138,9 @@ def classify_build_refusal(
 
     # Errors
 
-    `ValueError` for an unknown `failure_kind`: a caller that cannot name a
-    failure gets no tag rather than a guessed one.
+    `ValueError` for an unknown `failure_kind` or an unrecognized `pool_type`:
+    a caller that cannot name a failure or a family gets no tag rather than a
+    guessed one.
     """
 
 def classify_pool_kind(kind: Any) -> PoolKind:
@@ -4411,6 +4412,11 @@ def registration_pool_memo_key(
     """
     The hop identity the negative memos key on, or `None` when the hop carries
     no identity.
+
+    # Errors
+
+    `ValueError` for an unrecognized `pool_type`: wire drift, never a guessed
+    family.
     """
 
 def resolve_directions(

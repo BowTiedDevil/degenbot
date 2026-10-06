@@ -163,13 +163,15 @@ impl DegenbotDb {
                 let address: String = row.get(3)?;
                 let kind: String = row.get(4)?;
 
-                let pool_kind = match PoolKind::from_kind_str(&kind) {
-                    Some(PoolKind::V2) => PoolKind::V2,
-                    Some(PoolKind::V3) => PoolKind::V3,
+                let pool_kind = match PoolKind::try_from(kind.as_str()) {
+                    Ok(PoolKind::V2) => PoolKind::V2,
+                    Ok(PoolKind::V3) => PoolKind::V3,
                     // A `pools` row whose family the graph cannot represent
-                    // (including a V4 kind, which lives in `managed_pools`):
-                    // refuse instead of dropping it, so a forward-kind row
-                    // cannot silently vanish from every consumer's graph.
+                    // (including a V4 kind, which lives in `managed_pools`,
+                    // and any kind the vocabulary does not know — an unknown
+                    // kind is schema drift): refuse instead of dropping it,
+                    // so a forward-kind row cannot silently vanish from every
+                    // consumer's graph.
                     _ => return Err(DbError::UnknownPoolKind { kind, pool_id: id }),
                 };
 

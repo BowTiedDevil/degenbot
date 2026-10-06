@@ -189,15 +189,22 @@ pub fn registration_outcome_tags() -> Vec<&'static str> {
 
 /// The hop identity the negative memos key on, or `None` when the hop carries
 /// no identity.
-#[must_use]
+///
+/// # Errors
+///
+/// `ValueError` for an unrecognized `pool_type`: wire drift, never a guessed
+/// family.
 #[pyfunction]
 #[pyo3(name = "registration_pool_memo_key", signature = (pool_type, address, pool_hash))]
 pub fn registration_pool_memo_key(
     pool_type: &str,
     address: Option<&str>,
     pool_hash: Option<&str>,
-) -> Option<String> {
-    RegistrationLedger::pool_memo_key(to_pool_kind(pool_type), address, pool_hash)
+) -> PyResult<Option<String>> {
+    let pool_kind = to_pool_kind(pool_type)?;
+    Ok(RegistrationLedger::pool_memo_key(
+        pool_kind, address, pool_hash,
+    ))
 }
 
 /// Classify a hop-build failure. `failure_kind` is the TYPED refusal a Python
@@ -207,8 +214,9 @@ pub fn registration_pool_memo_key(
 ///
 /// # Errors
 ///
-/// `ValueError` for an unknown `failure_kind`: a caller that cannot name a
-/// failure gets no tag rather than a guessed one.
+/// `ValueError` for an unknown `failure_kind` or an unrecognized `pool_type`:
+/// a caller that cannot name a failure or a family gets no tag rather than a
+/// guessed one.
 #[pyfunction]
 #[pyo3(name = "classify_build_refusal", signature = (failure_kind, pool_type, detail))]
 pub fn classify_build_refusal(
@@ -227,10 +235,9 @@ pub fn classify_build_refusal(
             )));
         }
     };
+    let pool_kind = to_pool_kind(pool_type)?;
     Ok(to_view(RegistrationLedger::classify_build_refusal(
-        &failure,
-        to_pool_kind(pool_type),
-        detail,
+        &failure, pool_kind, detail,
     )))
 }
 
@@ -254,13 +261,69 @@ fn to_outcome(tag: &str) -> PyResult<RegistrationOutcome> {
     })
 }
 
-/// The pool family a Python pool-type label names. An unmodelled family falls
-/// back to V3, matching the core's own build-refusal fallback: the answer is
-/// still bounded.
-fn to_pool_kind(pool_type: &str) -> PoolKind {
+/// The pool-family labels the registration seam spells — the wire vocabulary
+/// the Python adapter sends, and the set an unknown label is judged against.
+const POOL_FAMILY_LABELS: [&str; 3] = ["V2", "V3", "V4"];
+
+/// The pool family a Python pool-type label names.
+///
+/// # Errors
+///
+/// `ValueError` for a label outside the closed set, naming the raw value and
+/// the known set: an unrecognized family is Rust/Python wire drift and is
+/// never classified (or memoized) under a family it does not have.
+fn to_pool_kind(pool_type: &str) -> PyResult<PoolKind> {
     match pool_type {
-        "V2" | "v2" => PoolKind::V2,
-        "V4" | "v4" => PoolKind::V4,
-        _ => PoolKind::V3,
+        "V2" => Ok(PoolKind::V2),
+        "V3" => Ok(PoolKind::V3),
+        "V4" => Ok(PoolKind::V4),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown pool family {other:?}: expected one of {POOL_FAMILY_LABELS:?}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn known_family_labels_map_to_their_kind() {
+        pyo3::Python::attach(|_py| {
+            assert!(matches!(to_pool_kind("V2"), Ok(PoolKind::V2)));
+            assert!(matches!(to_pool_kind("V3"), Ok(PoolKind::V3)));
+            assert!(matches!(to_pool_kind("V4"), Ok(PoolKind::V4)));
+        });
+    }
+
+    #[test]
+    fn unknown_family_label_never_classifies_as_v3() {
+        pyo3::Python::attach(|_py| {
+            let unknown = format!("{:?}", to_pool_kind("sushiswap_v9"));
+            let genuine_v3 = format!("{:?}", to_pool_kind("V3"));
+            assert_ne!(
+                unknown, genuine_v3,
+                "an unrecognized family label classified identically to a genuine V3 hop"
+            );
+        });
+    }
+
+    #[test]
+    fn unknown_family_label_errors_naming_the_raw_value_and_known_set() {
+        pyo3::Python::attach(|_py| {
+            for label in ["uniswap-v4", "v2", "V5", "sushiswap_v2", ""] {
+                let message = to_pool_kind(label).unwrap_err().to_string();
+                assert!(
+                    message.contains(&format!("{label:?}")),
+                    "raw value {label:?} missing from: {message}"
+                );
+                assert!(
+                    message.contains("V2") && message.contains("V3") && message.contains("V4"),
+                    "known set missing from: {message}"
+                );
+            }
+        });
     }
 }

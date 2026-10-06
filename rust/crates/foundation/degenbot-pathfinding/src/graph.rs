@@ -33,6 +33,29 @@ pub use spec::SearchSpec;
 use expansion::WalkExpansion;
 use progress::ProgressReporter;
 
+/// An unrecognized label for a closed variant set: the rejected input plus the
+/// known labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownVariant {
+    /// The rejected input, verbatim.
+    pub raw: String,
+    /// The known labels, in declaration order.
+    pub known: Vec<&'static str>,
+}
+
+impl std::fmt::Display for UnknownVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown variant {:?}: expected one of {}",
+            self.raw,
+            self.known.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for UnknownVariant {}
+
 /// Discriminant for the three pool-table families.
 ///
 /// `V2` corresponds to `UniswapV2PoolTableBase` (Uniswap V2 and V2-style
@@ -87,7 +110,7 @@ impl PoolKind {
     /// The single table of persisted `kind` discriminators the graph
     /// vocabulary admits, paired with their tag.
     ///
-    /// ADR-059 D1: this is the one enumeration [`Self::from_kind_str`] (and
+    /// ADR-059 D1: this is the one enumeration [`Self::try_from`] (and
     /// therefore every schema `is_v*_kind` helper and graph reader) projects
     /// through; `degenbot-db`'s golden test pins its membership so a taxonomy
     /// species cannot be added without a graph tag.
@@ -105,30 +128,11 @@ impl PoolKind {
         ("uniswap_v4", Self::V4),
     ];
 
-    /// Project a persisted pool `kind` discriminator onto the graph vocabulary
-    /// (ADR-059 D1).
-    ///
-    /// The discovery tier receives a pool's taxonomy species as the database
-    /// `pools.kind` / `managed_pools.kind` string, not a `degenbot-pools`
-    /// `Identity`: this crate is the graph leaf and carries no taxonomy
-    /// dependency. The `kind` string is therefore the minimal taxonomy input
-    /// the tier can construct from its own data.
-    ///
-    /// Returns `None` for a kind outside the V2/V3/V4 graph vocabulary; the
-    /// caller refuses it loudly rather than dropping the row.
-    #[must_use]
-    pub fn from_kind_str(kind: &str) -> Option<Self> {
-        Self::KNOWN_KINDS
-            .iter()
-            .find(|(name, _)| *name == kind)
-            .map(|(_, pool_kind)| *pool_kind)
-    }
-
     /// `pools.kind` / `managed_pools.kind` discriminators whose family the
     /// taxonomy declares but this graph vocabulary does not admit (ADR-059
-    /// D8). These are NOT supported: [`Self::from_kind_str`] returns `None`
-    /// for them, and a DB row carrying one flows into the loud
-    /// `load_unsupported` roster instead of being unclassifiable.
+    /// D8). These are NOT supported: [`Self::try_from`] rejects them, and a
+    /// DB row carrying one flows into the loud `load_unsupported` roster
+    /// instead of being unclassifiable.
     ///
     /// `lfj_binned` is the LFJ (Trader Joe) binned-liquidity family — the
     /// first genuinely new pool structure through the kernel, declared here
@@ -140,6 +144,36 @@ impl PoolKind {
     #[must_use]
     pub fn is_declared_unsupported(kind: &str) -> bool {
         Self::DECLARED_UNSUPPORTED_KINDS.contains(&kind)
+    }
+}
+
+impl TryFrom<&str> for PoolKind {
+    type Error = UnknownVariant;
+
+    /// Project a persisted pool `kind` discriminator onto the graph vocabulary
+    /// (ADR-059 D1).
+    ///
+    /// The discovery tier receives a pool's taxonomy species as the database
+    /// `pools.kind` / `managed_pools.kind` string, not a `degenbot-pools`
+    /// `Identity`: this crate is the graph leaf and carries no taxonomy
+    /// dependency. The `kind` string is therefore the minimal taxonomy input
+    /// the tier can construct from its own data.
+    ///
+    /// # Errors
+    ///
+    /// [`UnknownVariant`] for a kind outside the V2/V3/V4 graph vocabulary,
+    /// naming the offending string and the known kinds: an unknown persisted
+    /// `kind` is schema drift and is refused by the caller rather than
+    /// dropped.
+    fn try_from(kind: &str) -> Result<Self, Self::Error> {
+        Self::KNOWN_KINDS
+            .iter()
+            .find(|(name, _)| *name == kind)
+            .map(|(_, pool_kind)| *pool_kind)
+            .ok_or_else(|| UnknownVariant {
+                raw: kind.to_owned(),
+                known: Self::KNOWN_KINDS.iter().map(|(name, _)| *name).collect(),
+            })
     }
 }
 
@@ -1312,8 +1346,34 @@ impl PathGraph {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used)]
+
     use super::*;
     use std::collections::{BTreeSet, HashSet};
+
+    #[test]
+    fn try_from_kind_str_projects_every_known_kind() {
+        for (kind, expected) in PoolKind::KNOWN_KINDS {
+            assert_eq!(PoolKind::try_from(*kind), Ok(*expected));
+        }
+    }
+
+    #[test]
+    fn try_from_kind_str_unknown_names_the_offending_string() {
+        for kind in ["sushiswap_v9", "", "lfj_binned"] {
+            let err = PoolKind::try_from(kind).unwrap_err();
+            assert_eq!(err.raw, kind);
+            let message = err.to_string();
+            assert!(
+                message.contains(&format!("{kind:?}")),
+                "raw value {kind:?} missing from: {message}"
+            );
+            assert!(
+                message.contains("uniswap_v2") && message.contains("uniswap_v4"),
+                "known set missing from: {message}"
+            );
+        }
+    }
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 

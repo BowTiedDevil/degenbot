@@ -54,6 +54,29 @@ pub enum Scope {
     Process,
 }
 
+/// An unrecognized label for a closed variant set: the rejected input plus the
+/// known labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownVariant {
+    /// The rejected input, verbatim.
+    pub raw: String,
+    /// The known labels, in declaration order.
+    pub known: Vec<&'static str>,
+}
+
+impl std::fmt::Display for UnknownVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown variant {:?}: expected one of {}",
+            self.raw,
+            self.known.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for UnknownVariant {}
+
 /// What the seam does after recording the failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -69,17 +92,9 @@ pub enum Action {
 }
 
 impl Action {
-    /// Parse the operator spelling.
-    #[must_use]
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "observe" => Some(Self::Observe),
-            "event" => Some(Self::Event),
-            "quarantine" => Some(Self::Quarantine),
-            "exit" => Some(Self::Exit),
-            _ => None,
-        }
-    }
+    /// Every action, in declaration order — the set an unrecognized operator
+    /// spelling is judged against.
+    pub const ALL: [Self; 4] = [Self::Observe, Self::Event, Self::Quarantine, Self::Exit];
 
     /// The canonical spelling (the pyfunction + config round-trip value).
     #[must_use]
@@ -89,6 +104,30 @@ impl Action {
             Self::Event => "event",
             Self::Quarantine => "quarantine",
             Self::Exit => "exit",
+        }
+    }
+}
+
+impl TryFrom<&str> for Action {
+    type Error = UnknownVariant;
+
+    /// Parse the operator spelling (trimmed, case-insensitive).
+    ///
+    /// # Errors
+    ///
+    /// [`UnknownVariant`] for a spelling outside the closed set, naming the
+    /// raw input and the four actions: an unmatchable operator key is a boot
+    /// refusal, never a silently-chosen action.
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "observe" => Ok(Self::Observe),
+            "event" => Ok(Self::Event),
+            "quarantine" => Ok(Self::Quarantine),
+            "exit" => Ok(Self::Exit),
+            _ => Err(UnknownVariant {
+                raw: raw.to_owned(),
+                known: Self::ALL.iter().map(|action| action.as_str()).collect(),
+            }),
         }
     }
 }
@@ -190,8 +229,8 @@ static KNOWN_REASONS: &[(&str, &str)] = &[
 /// [`OverrideError::UnknownBucket`] for an undeclared bucket; [`OverrideError::UnknownAction`]
 /// for an uncanonical action spelling.
 fn validate_pair(key: &str, action_raw: &str) -> Result<Action, OverrideError> {
-    let action = Action::parse(action_raw)
-        .ok_or_else(|| OverrideError::UnknownAction(action_raw.to_owned()))?;
+    let action = Action::try_from(action_raw)
+        .map_err(|err| OverrideError::UnknownAction(err.to_string()))?;
     let (kind, reason) = key
         .split_once('.')
         .map_or((key, None), |(k, r)| (k, Some(r)));
@@ -305,7 +344,7 @@ pub(crate) fn cooldowns() -> &'static CooldownRegistry {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used)]
+    #![expect(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
 
@@ -404,8 +443,33 @@ mod tests {
         );
         assert_eq!(
             validate_pair("sim_failure", "yolo"),
-            Err(OverrideError::UnknownAction("yolo".to_owned()))
+            Err(OverrideError::UnknownAction(
+                "unknown variant \"yolo\": expected one of observe, event, quarantine, exit"
+                    .to_owned()
+            ))
         );
+    }
+
+    #[test]
+    fn action_try_from_unknown_spelling_names_raw_and_known_set() {
+        let err = Action::try_from("yolo").unwrap_err();
+        assert_eq!(err.raw, "yolo");
+        assert_eq!(
+            err.known,
+            Action::ALL.iter().map(|a| a.as_str()).collect::<Vec<_>>()
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("yolo") && message.contains("quarantine"),
+            "raw value and known set missing from: {message}"
+        );
+    }
+
+    #[test]
+    fn action_try_from_accepts_the_operator_spellings() {
+        assert_eq!(Action::try_from("observe"), Ok(Action::Observe));
+        assert_eq!(Action::try_from(" Exit "), Ok(Action::Exit));
+        assert_eq!(Action::try_from("QUARANTINE"), Ok(Action::Quarantine));
     }
 
     #[test]

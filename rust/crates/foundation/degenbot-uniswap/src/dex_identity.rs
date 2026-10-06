@@ -41,6 +41,38 @@ use alloy::primitives::{address, b256, Address, B256};
 // Enums
 // ---------------------------------------------------------------------------
 
+/// An unrecognized label for a closed variant set: the rejected input plus the
+/// known labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownVariant {
+    /// The rejected input, verbatim.
+    pub raw: String,
+    /// The known labels, in declaration order.
+    pub known: Vec<&'static str>,
+}
+
+impl UnknownVariant {
+    pub(crate) fn new(raw: &str, known: impl IntoIterator<Item = &'static str>) -> Self {
+        Self {
+            raw: raw.to_owned(),
+            known: known.into_iter().collect(),
+        }
+    }
+}
+
+impl std::fmt::Display for UnknownVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown variant {:?}: expected one of {}",
+            self.raw,
+            self.known.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for UnknownVariant {}
+
 /// The DEX + variant discriminator for a `DexIdentity`.
 ///
 /// Stable kebab-case string form (via [`DexVariant::as_str`]) is the canonical
@@ -126,27 +158,6 @@ impl DexVariant {
         }
     }
 
-    /// Parse from the canonical kebab-case form (the inverse of [`as_str`]).
-    /// Case-insensitive.
-    ///
-    /// # Errors
-    /// Returns `None` for an unrecognized string (the Python seam maps this to
-    /// a `PanicException`-free `None` return).
-    #[must_use]
-    pub fn from_kebab(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "uniswap-v2" => Some(Self::UniswapV2),
-            "sushiswap-v2" => Some(Self::SushiswapV2),
-            "pancakeswap-v2" => Some(Self::PancakeswapV2),
-            "swapbased-v2" => Some(Self::SwapbasedV2),
-            "camelot-v2-volatile" => Some(Self::CamelotV2Volatile),
-            "camelot-v2-stable" => Some(Self::CamelotV2Stable),
-            "aerodrome-v2-volatile" => Some(Self::AerodromeV2Volatile),
-            "aerodrome-v2-stable" => Some(Self::AerodromeV2Stable),
-            _ => None,
-        }
-    }
-
     /// All variants in declaration order (for exhaustive iteration in tests).
     pub const ALL: [Self; 8] = [
         Self::UniswapV2,
@@ -158,6 +169,35 @@ impl DexVariant {
         Self::AerodromeV2Volatile,
         Self::AerodromeV2Stable,
     ];
+}
+
+impl TryFrom<&str> for DexVariant {
+    type Error = UnknownVariant;
+
+    /// Parse from the canonical kebab-case form (the inverse of [`as_str`]).
+    /// Case-insensitive.
+    ///
+    /// # Errors
+    ///
+    /// [`UnknownVariant`] for a label outside the closed set, naming the raw
+    /// input and the known labels: a variant string that names no preset is
+    /// caller drift, never an absent lookup.
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s.to_ascii_lowercase().as_str() {
+            "uniswap-v2" => Ok(Self::UniswapV2),
+            "sushiswap-v2" => Ok(Self::SushiswapV2),
+            "pancakeswap-v2" => Ok(Self::PancakeswapV2),
+            "swapbased-v2" => Ok(Self::SwapbasedV2),
+            "camelot-v2-volatile" => Ok(Self::CamelotV2Volatile),
+            "camelot-v2-stable" => Ok(Self::CamelotV2Stable),
+            "aerodrome-v2-volatile" => Ok(Self::AerodromeV2Volatile),
+            "aerodrome-v2-stable" => Ok(Self::AerodromeV2Stable),
+            _ => Err(UnknownVariant::new(
+                s,
+                Self::ALL.iter().map(|variant| variant.as_str()),
+            )),
+        }
+    }
 }
 
 /// The ABI struct-type shape a DEX uses for its `Sync`-event reserve decoding.
@@ -231,15 +271,16 @@ impl DexIdentity {
     }
 }
 
-/// Look up the `DexIdentity` preset for a variant (`from_kebab` → preset).
+/// Look up the `DexIdentity` preset for a variant label (kebab-case).
 ///
-/// Returns `None` for an unrecognized string. The Python seam wraps this as a
-/// `dex_identity(variant: str) -> Optional[PyDexIdentity]` callable so slice 7
-/// can resolve presets by string from a Python builder.
-#[must_use]
-pub fn preset(variant: &str) -> Option<DexIdentity> {
-    let v = DexVariant::from_kebab(variant)?;
-    Some(preset_for_variant(v))
+/// # Errors
+///
+/// [`UnknownVariant`] for a label outside the closed set, naming the raw
+/// label and the known labels — a Python caller that cannot name a preset is
+/// surfaced its error, never handed a silently-absent lookup.
+pub fn preset(variant: &str) -> Result<DexIdentity, UnknownVariant> {
+    let v = DexVariant::try_from(variant)?;
+    Ok(preset_for_variant(v))
 }
 
 /// Look up the preset for a typed `DexVariant`.
@@ -366,7 +407,7 @@ pub const AERODROME_V2_STABLE: DexIdentity = DexIdentity {
 };
 
 #[cfg(test)]
-#[expect(clippy::expect_used)]
+#[expect(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -376,31 +417,37 @@ mod tests {
     fn variant_str_round_trips_for_all_variants() {
         for v in DexVariant::ALL {
             let s = v.as_str();
-            assert_eq!(
-                DexVariant::from_kebab(s),
-                Some(v),
-                "round-trip failed for {s}"
-            );
+            assert_eq!(DexVariant::try_from(s), Ok(v), "round-trip failed for {s}");
         }
     }
 
     #[test]
     fn variant_from_str_is_case_insensitive() {
         assert_eq!(
-            DexVariant::from_kebab("UNISWAP-V2"),
-            Some(DexVariant::UniswapV2)
+            DexVariant::try_from("UNISWAP-V2"),
+            Ok(DexVariant::UniswapV2)
         );
         assert_eq!(
-            DexVariant::from_kebab("Camelot-V2-Stable"),
-            Some(DexVariant::CamelotV2Stable)
+            DexVariant::try_from("Camelot-V2-Stable"),
+            Ok(DexVariant::CamelotV2Stable)
         );
     }
 
     #[test]
-    fn variant_from_str_rejects_unknown() {
-        assert_eq!(DexVariant::from_kebab("curve"), None);
-        assert_eq!(DexVariant::from_kebab(""), None);
-        assert_eq!(DexVariant::from_kebab("uniswap"), None); // missing -v2 suffix
+    fn variant_from_unknown_label_names_the_raw_value_and_known_set() {
+        for label in ["curve", "", "uniswap"] {
+            let err = DexVariant::try_from(label).unwrap_err();
+            assert_eq!(err.raw, label);
+            let message = err.to_string();
+            assert!(
+                message.contains(&format!("{label:?}")),
+                "raw value {label:?} missing from: {message}"
+            );
+            assert!(
+                message.contains("uniswap-v2") && message.contains("aerodrome-v2-stable"),
+                "known set missing from: {message}"
+            );
+        }
     }
 
     // ---- Preset lookup helpers --------------------------------------------
@@ -415,8 +462,10 @@ mod tests {
     }
 
     #[test]
-    fn preset_for_unknown_string_is_none() {
-        assert!(preset("nonexistent-dex").is_none());
+    fn preset_for_unknown_string_names_the_label() {
+        let err = preset("nonexistent-dex").unwrap_err();
+        assert_eq!(err.raw, "nonexistent-dex");
+        assert_eq!(err.known.len(), DexVariant::ALL.len());
     }
 
     // ---- UNISWAP_V2 — cross-checked against Python source -----------------

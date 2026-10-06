@@ -38,6 +38,29 @@ impl ExitCode {
     }
 }
 
+/// An unrecognized label for a closed variant set: the rejected input plus the
+/// known labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownVariant {
+    /// The rejected input, verbatim.
+    pub raw: String,
+    /// The known labels, in declaration order.
+    pub known: Vec<&'static str>,
+}
+
+impl fmt::Display for UnknownVariant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "unknown variant {:?}: expected one of {}",
+            self.raw,
+            self.known.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for UnknownVariant {}
+
 /// One exchange's committed resume state, snapshotted read-only from the
 /// operator database's `exchanges.last_update_block` cursor column.
 #[derive(Debug, Clone, PartialEq, Eq)]

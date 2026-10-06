@@ -36,5 +36,7 @@ pub mod graph;
 pub mod plan;
 
 pub use directions::{resolve_directions, DirectionError, DirectionHop};
-pub use graph::{Edge, EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind, SearchSpec};
+pub use graph::{
+    Edge, EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind, SearchSpec, UnknownVariant,
+};
 pub use plan::{prepare_traversal_plan, TraversalSpec};

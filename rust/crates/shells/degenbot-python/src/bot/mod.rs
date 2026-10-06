@@ -707,9 +707,8 @@ impl PyBot {
             crate::conversion::alloy::extract_python_u256(reserve1)?,
             "reserve1",
         )?;
-        let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
-        })?;
+        let variant_enum = DexVariant::try_from(variant)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
         // The write guard is acquired inside the core method
         // ([`Bot::register_v2_pool`]); the GIL is released across this
@@ -1334,9 +1333,8 @@ impl PyBot {
             crate::conversion::alloy::extract_python_u256(reserve1)?,
             "reserve1",
         )?;
-        let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
-        })?;
+        let variant_enum = DexVariant::try_from(variant)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         // T1-scan-exempt: test-only seam (pure-Rust test callers, no GIL held).
         self.bot
             .state_arc()
@@ -2453,9 +2451,8 @@ impl PyBot {
             crate::conversion::alloy::extract_python_u256(reserve1)?,
             "reserve1",
         )?;
-        let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
-        })?;
+        let variant_enum = DexVariant::try_from(variant)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
         // The EIP-1167 verify (skipped for non-JSON (chain, factory) rows) +
         // params assembly live inside the core method

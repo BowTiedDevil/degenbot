@@ -88,9 +88,8 @@ impl PyDexIdentity {
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         let init_hash_b256 = alloy::primitives::B256::from_str(init_hash)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
-        })?;
+        let variant_enum = DexVariant::try_from(variant)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         // `match` consumes `reserves_abi` (moves the Option); the inner Vec is
         // scoped to the arm that resolves `ReservesAbi` without escaping.
         let reserves_abi_enum = match reserves_abi {

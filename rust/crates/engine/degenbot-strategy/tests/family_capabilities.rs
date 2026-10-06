@@ -178,7 +178,7 @@ fn connector_index_kinds_match_backrun_discover_per_kind_string() {
             "kind {kind}: declared backrun discover {declared_discover} != connector admission {wired}"
         );
         // The golden projection stays the single kind source.
-        assert_eq!(PoolKind::from_kind_str(kind), Some(pool_kind));
+        assert_eq!(PoolKind::try_from(kind), Ok(pool_kind));
     }
 }
 

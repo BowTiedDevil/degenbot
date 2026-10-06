@@ -85,8 +85,8 @@ fn standalone_rust_consumer_aerodrome_builder_identity_state_matches_fixture() {
     let factory: Address = fx.fixture.factory.parse().unwrap();
     let reserve0: U112 = fx.fixture.reserve0.parse().unwrap();
     let reserve1: U112 = fx.fixture.reserve1.parse().unwrap();
-    let variant = DexVariant::from_kebab(&fx.fixture.variant)
-        .unwrap_or_else(|| panic!("unknown variant {}", fx.fixture.variant));
+    let variant = DexVariant::try_from(fx.fixture.variant.as_str())
+        .unwrap_or_else(|err| panic!("unknown variant {}: {err}", fx.fixture.variant));
 
     let mut bot = BotState::new();
     let pid = bot.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {

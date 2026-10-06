@@ -18,7 +18,7 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::Address;
 use degenbot_rpc::provider::AlloyProvider;
 
-use crate::error::CliError;
+use crate::error::{CliError, UnknownVariant};
 
 /// The `--chunk` default (`10_000`), ported from `cli/pool.py`.
 pub const DEFAULT_CHUNK_SIZE: u64 = 10_000;
@@ -48,18 +48,15 @@ pub enum BlockTag {
 }
 
 impl BlockTag {
-    /// Parse one of the five accepted tags (`_BLOCK_TAGS` in the Python CLI).
-    #[must_use]
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "latest" => Some(Self::Latest),
-            "earliest" => Some(Self::Earliest),
-            "pending" => Some(Self::Pending),
-            "safe" => Some(Self::Safe),
-            "finalized" => Some(Self::Finalized),
-            _ => None,
-        }
-    }
+    /// Every tag, in declaration order — the set an unrecognized `--to-block`
+    /// tag is judged against.
+    pub const ALL: [Self; 5] = [
+        Self::Latest,
+        Self::Earliest,
+        Self::Pending,
+        Self::Safe,
+        Self::Finalized,
+    ];
 
     /// The tag's wire spelling.
     #[must_use]
@@ -82,6 +79,31 @@ impl BlockTag {
             Self::Pending => BlockNumberOrTag::Pending,
             Self::Safe => BlockNumberOrTag::Safe,
             Self::Finalized => BlockNumberOrTag::Finalized,
+        }
+    }
+}
+
+impl TryFrom<&str> for BlockTag {
+    type Error = UnknownVariant;
+
+    /// Parse one of the five accepted tags (`_BLOCK_TAGS` in the Python CLI).
+    ///
+    /// # Errors
+    ///
+    /// [`UnknownVariant`] for a tag outside the closed set, naming the raw
+    /// input and the known tags: a tag the Python CLI would refuse is refused
+    /// here too, never silently dropped.
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        match raw {
+            "latest" => Ok(Self::Latest),
+            "earliest" => Ok(Self::Earliest),
+            "pending" => Ok(Self::Pending),
+            "safe" => Ok(Self::Safe),
+            "finalized" => Ok(Self::Finalized),
+            _ => Err(UnknownVariant {
+                raw: raw.to_owned(),
+                known: Self::ALL.iter().map(|tag| tag.as_str()).collect(),
+            }),
         }
     }
 }
@@ -127,7 +149,7 @@ pub fn parse_to_block(raw: &str) -> Result<ToBlockSpec, CliError> {
         None => (raw, 0),
     };
     let tag =
-        BlockTag::parse(tag_raw).ok_or_else(|| CliError::InvalidBlockTag(tag_raw.to_string()))?;
+        BlockTag::try_from(tag_raw).map_err(|_| CliError::InvalidBlockTag(tag_raw.to_string()))?;
     if offset == 0 {
         Ok(ToBlockSpec::Tip)
     } else {
@@ -236,4 +258,33 @@ pub fn resolve_chain_selector(selector: &str) -> Result<u64, CliError> {
 #[must_use]
 pub fn checksum(address: Address) -> String {
     address.to_checksum(None)
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn block_tag_try_from_round_trips_every_tag() {
+        for tag in BlockTag::ALL {
+            assert_eq!(BlockTag::try_from(tag.as_str()), Ok(tag));
+        }
+    }
+
+    #[test]
+    fn block_tag_try_from_unknown_names_the_raw_value_and_known_set() {
+        let err = BlockTag::try_from("noon").unwrap_err();
+        assert_eq!(err.raw, "noon");
+        let message = err.to_string();
+        assert!(
+            message.contains("noon"),
+            "raw value missing from: {message}"
+        );
+        assert!(
+            message.contains("latest") && message.contains("finalized"),
+            "known set missing from: {message}"
+        );
+    }
 }
