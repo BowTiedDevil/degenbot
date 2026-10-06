@@ -21,6 +21,7 @@
 
 pub mod abi;
 pub mod backrun_feed;
+pub mod cassette;
 pub mod contract;
 pub mod fees;
 pub mod head_watch;

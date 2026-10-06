@@ -1,0 +1,50 @@
+{
+  "schema": "degenbot.cassette/v1",
+  "chain_id": 1,
+  "provenance": {
+    "source": "reth/v2.7.0-3d592ec/x86_64-unknown-linux-gnu",
+    "recorded_at": "2026-10-06T03:04:15Z",
+    "span": {
+      "from_block": 26102622,
+      "to_block": 26102626
+    }
+  },
+  "entries": {
+    "[\"eth_blockNumber\",null]": {
+      "response": {
+        "result": "26130527"
+      },
+      "digest": "0xa83a2fca2215e9c6267bbacf3d6c1cb0f1963c715ee4ff90c7c15cb722675806"
+    },
+    "[\"eth_chainId\",null]": {
+      "response": {
+        "result": "1"
+      },
+      "digest": "0x8dfd224581066fc06a67c2becfb96b35e2b756729861a0c3d2af6cfbe5eb6f8b"
+    },
+    "[\"eth_getLogs\",[{\"address\":\"0x1f98431c8ad98523631ae4a59f267346ea31f984\",\"fromBlock\":\"26102622\",\"toBlock\":\"26102626\",\"topics\":[\"0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118\"]}]]": {
+      "response": {
+        "result": [
+          {
+            "address": "0x1f98431c8ad98523631ae4a59f267346ea31f984",
+            "blockHash": "0xa1a5bb3c37fd83e481030db0443928109d1eef21539f3f5fbdfdaa985e980c55",
+            "blockNumber": "26102624",
+            "blockTimestamp": "1790919803",
+            "data": "0x000000000000000000000000000000000000000000000000000000000000003c0000000000000000000000001cd938df5700d97b393dd9ad3bd5ff2dd7fa8e13",
+            "logIndex": "7",
+            "removed": false,
+            "topics": [
+              "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118",
+              "0x0000000000000000000000006985884c4392d348587b19cb9eaaf157f13271cd",
+              "0x000000000000000000000000c52c326331e9ce41f04484d3b5e5648158028804",
+              "0x0000000000000000000000000000000000000000000000000000000000000bb8"
+            ],
+            "transactionHash": "0x71b80cef7bb9eb804e747c7784f4f46f7178007bf9f5d73aa6d3eddc60308b2c",
+            "transactionIndex": "1"
+          }
+        ]
+      },
+      "digest": "0x540f88485e9694dc85c918b8fe07b10a8b272c527bf21f8af8e206341ea4a784"
+    }
+  }
+}
