@@ -31,11 +31,12 @@
     clippy::missing_panics_doc,
     clippy::doc_markdown,
     clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
     clippy::too_many_arguments
 )]
 
-use alloy::primitives::{keccak256, Address, Bytes, U256, U512};
+use alloy::primitives::aliases::{I24, U24};
+use alloy::primitives::{keccak256, Address, Bytes, U160, U256, U512};
+use alloy::sol_types::{SolCall, SolValue};
 use revm::context::TxEnv;
 use revm::context_interface::result::Output;
 use revm::primitives::TxKind;
@@ -70,10 +71,7 @@ fn load_hex(rel: &str) -> Vec<u8> {
 
 /// ABI-encode the two `__init__(address weth, address pool_manager)` args.
 fn executor_deploy_args(weth: Address, pool_manager: Address) -> Vec<u8> {
-    let mut args = vec![0u8; 64];
-    args[12..32].copy_from_slice(weth.as_slice());
-    args[44..64].copy_from_slice(pool_manager.as_slice());
-    args
+    (weth, pool_manager).abi_encode()
 }
 
 /// Load a `Token`/`Pair`-style foundry artifact's creation bytecode
@@ -733,46 +731,78 @@ impl ExecOutcome {
     }
 }
 
-// ── calldata/selector helpers (hand-rolled ABI, no abigen needed) ──
+// ── calldata/selector helpers (alloy `sol!` encoders over the harness stubs) ──
+
+alloy::sol! {
+    /// Harness `Token` stub (tier3-oracle/src-harness/StubToken.sol): the
+    /// mint/approve funding surface the pool-seeding calls drive.
+    interface HarnessToken {
+        function mint(address to, uint256 amount) external;
+        function approve(address spender, uint256 amount) external returns (bool);
+    }
+
+    /// Harness V2 `Pair` stub (tier3-oracle/src-harness/V2ExecutorStub.sol):
+    /// the seed + reserve-sync surface.
+    interface HarnessPair {
+        function initialize(address tokenA, address tokenB) external;
+        function sync() external;
+    }
+
+    /// Harness V3 `PoolV3` stub (tier3-oracle/src-harness/V3ExecutorStub.sol):
+    /// the seed surface.
+    interface HarnessV3Pool {
+        function initialize(address t0, address t1, uint24 fee_) external;
+        function setPrice(uint160 p) external;
+        function setLiquidity(uint128 l) external;
+    }
+
+    /// Harness V4 `PoolManager` stub (tier3-oracle/src-harness/V4ExecutorStub.sol):
+    /// the seed + ERC-6909 claim-balance surface.
+    interface HarnessV4PoolManager {
+        function initialize(
+            address c0,
+            address c1,
+            uint24 fee,
+            int24 ts,
+            uint160 sqrtPriceX96,
+            uint128 liquidity
+        ) external;
+        function _fund(address currency, uint256 amt) external;
+        function balanceOf(address owner, uint256 id) external view returns (uint256);
+    }
+}
 
 fn init_pair(a: Address, b: Address) -> Vec<u8> {
-    let h = keccak256(b"initialize(address,address)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&pad32(a));
-    out.extend_from_slice(&pad32(b));
-    out
+    HarnessPair::initializeCall {
+        tokenA: a,
+        tokenB: b,
+    }
+    .abi_encode()
 }
 fn mint_to(to: Address, amount: u128) -> Vec<u8> {
-    let h = keccak256(b"mint(address,uint256)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&pad32(to));
-    out.extend_from_slice(&U256::from(amount).to_be_bytes::<32>());
-    out
+    HarnessToken::mintCall {
+        to,
+        amount: U256::from(amount),
+    }
+    .abi_encode()
 }
 fn sync_selector() -> Vec<u8> {
-    keccak256(b"sync()").0[..4].to_vec()
+    HarnessPair::syncCall {}.abi_encode()
 }
 fn approve_data(spender: Address, amount: U256) -> Vec<u8> {
-    let h = keccak256(b"approve(address,uint256)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&pad32(spender));
-    out.extend_from_slice(&amount.to_be_bytes::<32>());
-    out
+    HarnessToken::approveCall { spender, amount }.abi_encode()
 }
 fn balance_of_data(account: Address) -> Vec<u8> {
-    let h = keccak256(b"balanceOf(address)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&pad32(account));
-    out
+    degenbot_rpc::abi::encode_balance_of(&account)
 }
-/// `PM.balanceOf(address,uint256)` ABI: selector + (account, currencyId).
+/// `PM.balanceOf(owner, id)` — the ERC-6909 claim balances, with
+/// `id = uint256(uint160(currency))`.
 fn pm_balance_of_data(account: Address, currency: Address) -> Vec<u8> {
-    let h = keccak256(b"balanceOf(address,uint256)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&pad32(account));
-    // id = uint256(uint160(currency)) → the address occupying the low 20 bytes.
-    out.extend_from_slice(&pad32(currency));
-    out
+    HarnessV4PoolManager::balanceOfCall {
+        owner: account,
+        id: U256::from_be_slice(currency.as_slice()),
+    }
+    .abi_encode()
 }
 /// The `execute(bytes,uint256)` call: selector + (bytes, config=0) ABI encoding.
 #[must_use]
@@ -808,50 +838,51 @@ pub fn execute_data_config(payload: &[u8], config: U256) -> Bytes {
     }
 }
 
-fn pad32(a: Address) -> [u8; 32] {
-    let mut w = [0u8; 32];
-    w[12..32].copy_from_slice(a.as_slice());
-    w
+fn init_v3(a: Address, b: Address, fee: u32) -> Vec<u8> {
+    HarnessV3Pool::initializeCall {
+        t0: a,
+        t1: b,
+        fee_: U24::try_from(fee).expect("fee within uint24"),
+    }
+    .abi_encode()
+}
+/// A Q64.96 sqrt price as its `uint160` ABI word. A sqrt price is strictly
+/// below 2^160, so the assert only fires on a malformed seed.
+fn sqrt_price_word(p: U256) -> U160 {
+    assert_eq!(p >> 160, U256::ZERO, "sqrt price does not fit uint160");
+    let low: [u8; 20] = p.to_be_bytes::<32>()[12..32]
+        .try_into()
+        .expect("low 20 bytes");
+    U160::from_be_bytes(low)
 }
 
-fn init_v3(a: Address, b: Address, fee: u32) -> Vec<u8> {
-    let h = keccak256(b"initialize(address,address,uint24)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&pad32(a));
-    out.extend_from_slice(&pad32(b));
-    out.extend_from_slice(&U256::from(fee).to_be_bytes::<32>());
-    out
-}
 fn set_v3_price(p: U256) -> Vec<u8> {
-    let h = keccak256(b"setPrice(uint160)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&p.to_be_bytes::<32>());
-    out
+    HarnessV3Pool::setPriceCall {
+        p: sqrt_price_word(p),
+    }
+    .abi_encode()
 }
 fn set_v3_liquidity(l: u128) -> Vec<u8> {
-    let h = keccak256(b"setLiquidity(uint128)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&U256::from(l).to_be_bytes::<32>());
-    out
+    HarnessV3Pool::setLiquidityCall { l }.abi_encode()
 }
 
 fn init_v4(c0: Address, c1: Address, fee: u32, ts: i32, sqrt: U256, liq: u128) -> Vec<u8> {
-    let h = keccak256(b"initialize(address,address,uint24,int24,uint160,uint128)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&pad32(c0));
-    out.extend_from_slice(&pad32(c1));
-    out.extend_from_slice(&U256::from(fee).to_be_bytes::<32>());
-    out.extend_from_slice(&U256::from(ts as u32).to_be_bytes::<32>());
-    out.extend_from_slice(&sqrt.to_be_bytes::<32>());
-    out.extend_from_slice(&U256::from(liq).to_be_bytes::<32>());
-    out
+    HarnessV4PoolManager::initializeCall {
+        c0,
+        c1,
+        fee: U24::try_from(fee).expect("fee within uint24"),
+        ts: I24::try_from(ts).expect("tick spacing within int24"),
+        sqrtPriceX96: sqrt_price_word(sqrt),
+        liquidity: liq,
+    }
+    .abi_encode()
 }
 fn fund_v4(currency: Address, amt: u128) -> Vec<u8> {
-    let h = keccak256(b"_fund(address,uint256)");
-    let mut out = h.0[..4].to_vec();
-    out.extend_from_slice(&pad32(currency));
-    out.extend_from_slice(&U256::from(amt).to_be_bytes::<32>());
-    out
+    HarnessV4PoolManager::_fundCall {
+        currency,
+        amt: U256::from(amt),
+    }
+    .abi_encode()
 }
 
 // ── V3 amount math (via the engine's proven `degenbot-concentrated-liquidity-math`) ──
@@ -923,4 +954,314 @@ fn count_swap_events(
             }
         })
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::dyn_abi::DynSolValue;
+    use alloy::primitives::I256;
+
+    // Two independent oracles pin the calldata: selectors hard-coded from
+    // `cast sig` (foundry — a different toolchain than alloy's `sol!`, so a
+    // signature typo cannot pass), argument words from `DynSolValue` (a
+    // different encoder path than the helpers' word assembly).
+
+    const SEL_INIT_PAIR: [u8; 4] = [0x48, 0x5c, 0xc9, 0x55];
+    const SEL_MINT: [u8; 4] = [0x40, 0xc1, 0x0f, 0x19];
+    const SEL_SYNC: [u8; 4] = [0xff, 0xf6, 0xca, 0xe9];
+    const SEL_APPROVE: [u8; 4] = [0x09, 0x5e, 0xa7, 0xb3];
+    const SEL_BALANCE_OF_ERC20: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+    const SEL_BALANCE_OF_6909: [u8; 4] = [0x00, 0xfd, 0xd5, 0x8e];
+    const SEL_INIT_V3: [u8; 4] = [0x33, 0x6c, 0x8d, 0x70];
+    const SEL_SET_V3_PRICE: [u8; 4] = [0xd9, 0x0b, 0xda, 0x4e];
+    const SEL_SET_V3_LIQUIDITY: [u8; 4] = [0x3d, 0x71, 0x8d, 0xa0];
+    const SEL_INIT_V4: [u8; 4] = [0x81, 0x4c, 0xc4, 0xe3];
+    const SEL_FUND_V4: [u8; 4] = [0x9a, 0x3b, 0xcc, 0xf9];
+
+    /// Selector prefix + `DynSolValue` tuple head/tail encoding.
+    fn ref_calldata(selector: [u8; 4], args: Vec<DynSolValue>) -> Vec<u8> {
+        let mut out = selector.to_vec();
+        out.extend_from_slice(&DynSolValue::Tuple(args).abi_encode());
+        out
+    }
+
+    fn a(n: u8) -> Address {
+        Address::new([n; 20])
+    }
+
+    #[test]
+    fn init_pair_calldata() {
+        assert_eq!(
+            init_pair(a(0x11), a(0x22)),
+            ref_calldata(
+                SEL_INIT_PAIR,
+                vec![DynSolValue::Address(a(0x11)), DynSolValue::Address(a(0x22))]
+            )
+        );
+    }
+
+    #[test]
+    fn mint_to_calldata() {
+        let to = a(0x33);
+        for amount in [0u128, 1, 0xdead_beef, u128::MAX] {
+            assert_eq!(
+                mint_to(to, amount),
+                ref_calldata(
+                    SEL_MINT,
+                    vec![
+                        DynSolValue::Address(to),
+                        DynSolValue::Uint(U256::from(amount), 256)
+                    ]
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn sync_selector_calldata() {
+        assert_eq!(sync_selector(), SEL_SYNC.to_vec());
+        assert_eq!(sync_selector().len(), 4);
+    }
+
+    #[test]
+    fn approve_data_calldata() {
+        let spender = a(0x44);
+        // U256::MAX is the production approval the seeding path issues.
+        for amount in [U256::ZERO, U256::from(1u8), U256::MAX] {
+            assert_eq!(
+                approve_data(spender, amount),
+                ref_calldata(
+                    SEL_APPROVE,
+                    vec![
+                        DynSolValue::Address(spender),
+                        DynSolValue::Uint(amount, 256)
+                    ]
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn balance_of_data_calldata() {
+        let account = a(0x55);
+        assert_eq!(
+            balance_of_data(account),
+            ref_calldata(SEL_BALANCE_OF_ERC20, vec![DynSolValue::Address(account)])
+        );
+        // The workspace RPC encoder produces the same bytes.
+        assert_eq!(
+            balance_of_data(account),
+            degenbot_rpc::abi::encode_balance_of(&account)
+        );
+    }
+
+    #[test]
+    fn pm_balance_of_data_calldata() {
+        let (account, currency) = (a(0x66), a(0x77));
+        assert_eq!(
+            pm_balance_of_data(account, currency),
+            ref_calldata(
+                SEL_BALANCE_OF_6909,
+                vec![
+                    DynSolValue::Address(account),
+                    DynSolValue::Uint(U256::from_be_slice(currency.as_slice()), 256)
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn init_v3_calldata() {
+        assert_eq!(
+            init_v3(a(0x11), a(0x22), 3000),
+            ref_calldata(
+                SEL_INIT_V3,
+                vec![
+                    DynSolValue::Address(a(0x11)),
+                    DynSolValue::Address(a(0x22)),
+                    DynSolValue::Uint(U256::from(3000u32), 24)
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn set_v3_price_calldata() {
+        for p in [U256::from(4_295_128_739u64), U256::from(1u8) << 159] {
+            assert_eq!(
+                set_v3_price(p),
+                ref_calldata(SEL_SET_V3_PRICE, vec![DynSolValue::Uint(p, 160)])
+            );
+        }
+    }
+
+    #[test]
+    fn set_v3_liquidity_calldata() {
+        for l in [0u128, u128::MAX] {
+            assert_eq!(
+                set_v3_liquidity(l),
+                ref_calldata(
+                    SEL_SET_V3_LIQUIDITY,
+                    vec![DynSolValue::Uint(U256::from(l), 128)]
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn init_v4_calldata() {
+        let sqrt = U256::from(4_295_128_739u64);
+        assert_eq!(
+            init_v4(a(0x11), a(0x22), 3000, 60, sqrt, 1_000),
+            ref_calldata(
+                SEL_INIT_V4,
+                vec![
+                    DynSolValue::Address(a(0x11)),
+                    DynSolValue::Address(a(0x22)),
+                    DynSolValue::Uint(U256::from(3000u32), 24),
+                    DynSolValue::Int(I256::try_from(60i64).unwrap(), 24),
+                    DynSolValue::Uint(sqrt, 160),
+                    DynSolValue::Uint(U256::from(1_000u64), 128)
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn init_v4_negative_tick_spacing_is_sign_extended() {
+        let cd = init_v4(
+            a(0x11),
+            a(0x22),
+            3000,
+            -60,
+            U256::from(4_295_128_739u64),
+            1_000,
+        );
+        // ts is the fourth ABI word (offset 4 + 3 * 32): canonical int24
+        // encoding sign-extends, so every high byte is 0xff and the low byte
+        // is -60 = 0xc4. A zero-extension word-packer produces different
+        // (non-canonical) bytes here.
+        assert!(
+            cd[100..131].iter().all(|&b| b == 0xff),
+            "ts word high bytes"
+        );
+        assert_eq!(cd[131], 0xc4, "ts word low byte");
+    }
+
+    #[test]
+    fn fund_v4_calldata() {
+        assert_eq!(
+            fund_v4(a(0x88), 5_000),
+            ref_calldata(
+                SEL_FUND_V4,
+                vec![
+                    DynSolValue::Address(a(0x88)),
+                    DynSolValue::Uint(U256::from(5_000u64), 256)
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn executor_deploy_args_calldata() {
+        let args = executor_deploy_args(a(0x11), a(0x22));
+        assert_eq!(
+            args,
+            DynSolValue::Tuple(vec![
+                DynSolValue::Address(a(0x11)),
+                DynSolValue::Address(a(0x22))
+            ])
+            .abi_encode()
+        );
+        assert_eq!(args.len(), 64);
+        assert!(args[0..12].iter().all(|&b| b == 0));
+        assert_eq!(&args[12..32], &a(0x11).into_array());
+        assert!(args[32..44].iter().all(|&b| b == 0));
+        assert_eq!(&args[44..64], &a(0x22).into_array());
+    }
+
+    // The builders are the encoders: every helper's output is byte-identical
+    // to the sol! Call encoding it is named for (and, for balanceOf, the
+    // workspace RPC encoder). Hand-assembled words that diverge from the
+    // encoder fail these asserts.
+    #[test]
+    fn helpers_equal_encoder_output() {
+        let (x, y) = (a(0x11), a(0x22));
+        assert_eq!(
+            init_pair(x, y),
+            HarnessPair::initializeCall {
+                tokenA: x,
+                tokenB: y
+            }
+            .abi_encode()
+        );
+        assert_eq!(
+            mint_to(x, 7),
+            HarnessToken::mintCall {
+                to: x,
+                amount: U256::from(7u8)
+            }
+            .abi_encode()
+        );
+        assert_eq!(sync_selector(), HarnessPair::syncCall {}.abi_encode());
+        assert_eq!(
+            approve_data(x, U256::MAX),
+            HarnessToken::approveCall {
+                spender: x,
+                amount: U256::MAX
+            }
+            .abi_encode()
+        );
+        assert_eq!(balance_of_data(x), degenbot_rpc::abi::encode_balance_of(&x));
+        assert_eq!(
+            pm_balance_of_data(x, y),
+            HarnessV4PoolManager::balanceOfCall {
+                owner: x,
+                id: U256::from_be_slice(y.as_slice())
+            }
+            .abi_encode()
+        );
+        assert_eq!(
+            init_v3(x, y, 3000),
+            HarnessV3Pool::initializeCall {
+                t0: x,
+                t1: y,
+                fee_: U24::from(3000u16)
+            }
+            .abi_encode()
+        );
+        assert_eq!(
+            set_v3_price(U256::from(4_295_128_739u64)),
+            HarnessV3Pool::setPriceCall {
+                p: U160::from(4_295_128_739u64)
+            }
+            .abi_encode()
+        );
+        assert_eq!(
+            set_v3_liquidity(u128::MAX),
+            HarnessV3Pool::setLiquidityCall { l: u128::MAX }.abi_encode()
+        );
+        assert_eq!(
+            init_v4(x, y, 3000, 60, U256::from(4_295_128_739u64), 1_000),
+            HarnessV4PoolManager::initializeCall {
+                c0: x,
+                c1: y,
+                fee: U24::from(3000u16),
+                ts: I24::try_from(60i16).unwrap(),
+                sqrtPriceX96: U160::from(4_295_128_739u64),
+                liquidity: 1_000
+            }
+            .abi_encode()
+        );
+        assert_eq!(
+            fund_v4(x, 5_000),
+            HarnessV4PoolManager::_fundCall {
+                currency: x,
+                amt: U256::from(5_000u64)
+            }
+            .abi_encode()
+        );
+        assert_eq!(executor_deploy_args(x, y), (x, y).abi_encode());
+    }
 }
