@@ -10,7 +10,7 @@
 //! `block_on`/`future_into_py` wrappers, as free functions both `PyBot` and
 //! `PyArbEngine` call with their shared driver handle (the typed `DriverError`
 //! → Python-exception maps live in [`crate::bot::errmap`]). The
-//! `subscribe`/`resume`/`stop` block_on wrappers moved onto `bot_core::Bot`
+//! `subscribe`/`resume`/`stop` `block_on` wrappers moved onto `bot_core::Bot`
 //! (the shells call them directly through the `map_driver_err` seam); `start`
 //! and the registration lifecycles keep their wrappers here.
 

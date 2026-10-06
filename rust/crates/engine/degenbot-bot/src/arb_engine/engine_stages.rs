@@ -553,10 +553,10 @@ fn run_engine_cycle(
 fn expire_buffered_events(engine: &ArbitrageEngine, block_number: u64) {
     if engine.event_buffer_expiry_enabled {
         let (v3_lock_wait_us, v3_work_us) = expire_buffered_telemetry(engine, "v3", |core| {
-            core.cl_mut().expire_v3_buffered(block_number)
+            core.cl_mut().expire_v3_buffered(block_number);
         });
         let (v4_lock_wait_us, v4_work_us) = expire_buffered_telemetry(engine, "v4", |core| {
-            core.cl_mut().expire_v4_buffered(block_number)
+            core.cl_mut().expire_v4_buffered(block_number);
         });
         diag!(
             domain = solver,

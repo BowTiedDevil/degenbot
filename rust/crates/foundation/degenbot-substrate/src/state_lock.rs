@@ -172,7 +172,7 @@ pub enum LockSite {
     /// The `Bot` orchestrator facade's shell-initiated acquisitions
     /// (`bot_core/bot.rs` journal/state-read + lifecycle clusters,
     /// `registration.rs`, `build_register.rs`, `lifecycle.rs`). Distinct from
-    /// [`LockSite::Core`] so a GIL-deadlock dump can tell a wait the PyO3
+    /// [`LockSite::Core`] so a GIL-deadlock dump can tell a wait the `PyO3`
     /// shell drove through the facade from a genuinely core/pump/solver one.
     Orchestrator,
 }

@@ -113,6 +113,11 @@ pub enum CalcTokensInError {
     UnsupportedFamily { pool_id: u64, family: &'static str },
 }
 
+/// The build-and-register return payload: `(pool_id, identity)` with the
+/// core-computed identity `(token0, token1, address, variant)` — the
+/// builder's return surface (checksummed hex strings).
+pub type PoolBuildPayload = (u64, (String, String, String, String));
+
 impl Bot {
     /// The attached `ConstructionIo`, or the typed no-io refusal (the shell
     /// formats the pymethod-prefixed message).
@@ -137,7 +142,7 @@ impl Bot {
         &self,
         address: Address,
         block: Option<u64>,
-    ) -> Result<(u64, (String, String, String, String)), V2BuildError> {
+    ) -> Result<PoolBuildPayload, V2BuildError> {
         let io = self.construction_io_required().map_err(|e| match e {
             BuildError::NoConstructionIo => V2BuildError::NoConstructionIo,
             BuildError::Builder(b) => V2BuildError::Builder(b),
@@ -336,7 +341,7 @@ impl Bot {
         slot_layout: Option<ClSlotLayout>,
         address: Address,
         block: Option<u64>,
-    ) -> Result<(u64, (String, String, String, String)), V3BuildError> {
+    ) -> Result<PoolBuildPayload, V3BuildError> {
         let constructed = degenbot_core::runtime::get_runtime()
             .block_on(route::construct_pool(
                 self,
@@ -369,7 +374,7 @@ impl Bot {
         &self,
         constructed: ConstructedPool,
         address: Address,
-    ) -> Result<(u64, (String, String, String, String)), V3BuildError> {
+    ) -> Result<PoolBuildPayload, V3BuildError> {
         let (pool_id, identity) = if let Some(built) = constructed.built {
             let family = degenbot_uniswap::deployments::resolve_dex_name(
                 self.chain_id(),
@@ -618,7 +623,7 @@ impl Bot {
     /// Open the construction DB half for `attach_construction_io`:
     /// `None` for the no-DB path, a write-capable held connection otherwise
     /// (the construction executor does reads AND the
-    /// `update_erc20_token_metadata` write-back). A missing file (SQLAlchemy
+    /// `update_erc20_token_metadata` write-back). A missing file (`SQLAlchemy`
     /// creates the DB lazily on first write) surfaces as `None` after the
     /// diagnostic — the DB methods then return the no-DB shape (matching the
     /// original `database_path` cold-start skip); a `Bot` restart after the
@@ -645,7 +650,7 @@ impl Bot {
     }
 }
 
-#[expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::super::RegisterCurvePoolParams;

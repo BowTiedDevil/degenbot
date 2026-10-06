@@ -12,6 +12,10 @@
 /// Build an [`alloy::rpc::types::Log`] from the WS-log shape
 /// `(address, topics, data, block_number)`. The `Err` carries the exact
 /// refusal message the Python facade maps onto `ValueError`.
+///
+/// # Errors
+/// A parse-failure message for the address, any topic, or the data hex —
+/// the exact Python `ValueError` text.
 pub fn build_rpc_log(
     address: &str,
     topics: Vec<String>,

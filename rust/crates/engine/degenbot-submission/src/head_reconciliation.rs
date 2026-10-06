@@ -195,6 +195,10 @@ impl HeadReconciliation {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::expect_used,
+        reason = "rig + assert helpers use expect for setup failures"
+    )]
     use std::sync::atomic::AtomicBool;
 
     use degenbot_bot::strategy_host::{FacetStatus, StrategyHost};

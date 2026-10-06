@@ -217,7 +217,7 @@ async fn spawn_head_task(
                 // The poll is the primary clock: publish + trigger each NEW
                 // head at the poll cadence.
                 tokio::time::sleep(HEAD_POLL_TICK).await;
-                if let Some(number) = poll(&poll_provider).await {
+                if let Some(number) = poll(poll_provider.as_ref()).await {
                     if number > last_published {
                         publish_polled(&sender, number);
                         last_published = number;
@@ -237,13 +237,17 @@ async fn spawn_head_task(
                     Ok(Err(_)) => {
                         tracing::warn!("head source closed - polling");
                         tokio::time::sleep(HEAD_POLL_TICK).await;
-                        poll(&poll_provider).await.map(|number| (number, true))
+                        poll(poll_provider.as_ref())
+                            .await
+                            .map(|number| (number, true))
                     }
                     Err(_) => {
                         if watch_live && head.stale(HEAD_STALE) {
                             tracing::warn!("head source stale - polling");
                             tokio::time::sleep(HEAD_POLL_TICK).await;
-                            poll(&poll_provider).await.map(|number| (number, true))
+                            poll(poll_provider.as_ref())
+                                .await
+                                .map(|number| (number, true))
                         } else {
                             None
                         }
@@ -263,8 +267,8 @@ async fn spawn_head_task(
     Ok(())
 }
 
-async fn poll(provider: &Option<Arc<AlloyProvider>>) -> Option<u64> {
-    let provider = provider.as_ref()?;
+async fn poll(provider: Option<&Arc<AlloyProvider>>) -> Option<u64> {
+    let provider = provider?;
     provider.get_block_number().await.ok()
 }
 
@@ -311,7 +315,7 @@ fn spawn_feed_sampler(pumps: Arc<parking_lot::Mutex<Vec<PendingTxPump>>>) {
                         }))
                         .take(current.len()),
                 )
-                .map(|(cur, prev)| (cur.clone(), prev.clone()))
+                .map(|(cur, prev)| (*cur, *prev))
                 .collect();
             if let Some((
                 connected,
@@ -338,13 +342,16 @@ fn spawn_feed_sampler(pumps: Arc<parking_lot::Mutex<Vec<PendingTxPump>>>) {
     });
 }
 
+/// One sampler record: `(connected, seconds_since_event, frames, dropped,
+/// parse, chain-id rejects, reconnects)` — the positional shape the engine
+/// instruments' `record_backrun_feed` consumes.
+type FeedSample = (bool, Option<f64>, u64, u64, u64, u64, u64);
+
 /// One sampler record from every pump's (current, previous) status pair:
 /// `connected` is ANY arm live, `seconds_since_event` the most recent event
 /// across arms, and the counters the summed per-arm deltas. A single arm
 /// records exactly what the per-driver scrape it replaced recorded.
-fn aggregate_feed_sample(
-    samples: &[(BackrunFeedStatus, BackrunFeedStatus)],
-) -> Option<(bool, Option<f64>, u64, u64, u64, u64, u64)> {
+fn aggregate_feed_sample(samples: &[(BackrunFeedStatus, BackrunFeedStatus)]) -> Option<FeedSample> {
     if samples.is_empty() {
         return None;
     }
@@ -396,7 +403,6 @@ fn now_unix_ms() -> u64 {
 
 #[cfg(test)]
 #[expect(
-    clippy::unwrap_used,
     clippy::expect_used,
     reason = "hosted-source tests assert mint and head-edge outcomes"
 )]
@@ -566,7 +572,7 @@ mod tests {
         let prev = status(false, 10, 0);
         let one = status(true, 15, 1_000);
         let (connected, secs, frames, dropped, parse, chain, reconnects) =
-            aggregate_feed_sample(&[(one.clone(), prev)]).expect("one arm");
+            aggregate_feed_sample(&[(one, prev)]).expect("one arm");
         assert!(connected);
         assert_eq!((frames, dropped, parse, chain, reconnects), (5, 0, 0, 0, 0));
         assert!(secs.is_some(), "the event age is carried");

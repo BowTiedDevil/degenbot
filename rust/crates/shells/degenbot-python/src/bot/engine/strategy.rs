@@ -236,201 +236,255 @@ pub(crate) fn boot_host() -> BootedHost {
     }
 
     #[cfg(feature = "submission")]
-    let _head_lanes = {
-        use degenbot_bot::hosted_sources::HostedHeadClock;
-        use degenbot_eventhub::PendingTxSource;
-        use degenbot_rpc::backrun_feed::BackrunFeedConfig;
-        use degenbot_rpc::pending_tx_stream::PendingTxFeedConfig;
-        use degenbot_rpc::txpool_feed::TxpoolFeedConfig;
-        use degenbot_strategy::backrun_driver::BackrunEcosystem;
-        // A hosted driver scopes its run-artifacts under the host state root; a
-        // boot with no resolvable root leaves `namespace_root` unset, so the
-        // driver keeps its process-global path.
-        if degenbot_config::holder::installed() {
-            if let Some(root) = degenbot_submission::resolve_state_root() {
-                host.lock().set_state_root(root);
-            }
-        }
-        // The per-strategy submission ledger is the head feed's
-        // submission-truth arm: the host refreshes the authority per head and
-        // asks this ledger to close outstanding records out, delivering the
-        // typed notices to the owning strategy. Every lane stamps through the
-        // same authority and records into the same ledger.
-        let ledger = Arc::new(degenbot_submission::SubmissionLedger::new());
-        host.lock().attach_reconciler(
-            Arc::clone(&ledger) as Arc<dyn degenbot_bot::strategy_host::HeadReconciler>
-        );
-
-        let settlement_id = StrategyId::new("settlement");
-        let settlement_lane = Arc::new(degenbot_submission::NonceLane::new(
-            Arc::clone(host.lock().nonce()),
-            Arc::clone(&ledger),
-            settlement_id.clone(),
-        ));
-        // The settlement seam is the Python-driven arm of this one hosted
-        // process, so its lane is process-global: every settlement submission
-        // stamps through the shared authority once the boot installs it.
-        crate::submission::submit::install_settlement_lane(Arc::clone(&settlement_lane));
-
-        // Each per-ecosystem backrun gets its own lane and product. The
-        // products share the resolver's held DB and frozen registry. The lanes
-        // are all built first so the head reconciliation owns the full map
-        // before any driver starts.
-        let mut lanes = HeadLanes::new();
-        lanes.insert(settlement_id, settlement_lane);
-        let mut backruns = Vec::new();
-        for (name, ecosystem) in [
-            (
-                "mevblocker_backrun",
-                degenbot_strategy::backrun_driver::BackrunEcosystem::Mevblocker,
-            ),
-            (
-                "txpool_backrun",
-                degenbot_strategy::backrun_driver::BackrunEcosystem::Txpool,
-            ),
-        ] {
-            let id = StrategyId::new(name);
-            let lane = Arc::new(degenbot_submission::NonceLane::new(
-                Arc::clone(host.lock().nonce()),
-                Arc::clone(&ledger),
-                id.clone(),
-            ));
-            backruns.push((id.clone(), ecosystem, Arc::clone(&lane)));
-            lanes.insert(id, lane);
-        }
-
-        // The drivers' once-per-head reconciliation: one instance per
-        // process, built over the resolved node join's provider (a joinless
-        // boot drives no head-feed reconciliation) and the operator address
-        // the signing key names. No configured key is the old loop's
-        // `signer` gate: a boot with no signer reconciles nothing. The
-        // hosted sources' head edge fires it once per observed head through
-        // the trigger closure below — the trigger is the only thing this
-        // shell wires; the drivers never see the reconciliation.
-        let operator = cfg
-            .strategy
-            .mevblocker_backrun
-            .key_file
-            .as_ref()
-            .or(cfg.strategy.txpool_backrun.key_file.as_ref())
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .and_then(|hex| degenbot_submission::TxSigner::from_key_hex(hex.trim(), 1).ok())
-            .map(|signer| signer.address());
-        let head_reconciliation = match (backrun_resources.node_provider().cloned(), operator) {
-            (Some(provider), Some(operator)) => Some(Arc::new(
-                degenbot_submission::head_reconciliation::HeadReconciliation::new(
-                    Arc::clone(&host),
-                    lanes.clone(),
-                    Arc::new(
-                        degenbot_submission::head_reconciliation::AlloyChainNonceRead(provider),
-                    ),
-                    operator,
-                ),
-            )),
-            _ => None,
-        };
-        let head_trigger: Option<degenbot_bot::hosted_sources::HeadTrigger> =
-            head_reconciliation.as_ref().map(|reconciliation| {
-                let reconciliation = Arc::clone(reconciliation);
-                Arc::new(move |head: u64| {
-                    let reconciliation = Arc::clone(&reconciliation);
-                    Box::pin(async move {
-                        reconciliation.reconcile_head(head).await;
-                    })
-                        as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-                }) as _
-            });
-
-        // Host the sources once per process: one pending-tx pump per ACTIVE
-        // arm's source kind (both arms can run simultaneously — each kind
-        // registers its own hub class), the one head watch + fallback
-        // poller, and the one feed sampler. Each arm's spawn factory
-        // receives its own kind's typed stream.
-        let mut arm_boots = Vec::new();
-        for (id, ecosystem, lane) in backruns {
-            let boot = backrun_resources.strategy_boot(ecosystem);
-            arm_boots.push((id, ecosystem, lane, boot));
-        }
-        let head_ws_url = arm_boots
-            .iter()
-            .filter_map(|(_, _, _, boot)| boot.head_ws_url().map(str::to_string))
-            .next();
-        let provider = backrun_resources.node_provider().cloned();
-        let clock = match (head_ws_url, provider) {
-            (Some(ws_url), Some(provider)) => Some(HostedHeadClock::Watch { ws_url, provider }),
-            (None, Some(provider)) => Some(HostedHeadClock::Poll { provider }),
-            _ => None,
-        };
-        let mut arms = Vec::new();
-        for (id, ecosystem, _lane, boot) in &arm_boots {
-            let name = match ecosystem {
-                BackrunEcosystem::Mevblocker => degenbot_strategy::StrategyName::MevblockerBackrun,
-                BackrunEcosystem::Txpool => degenbot_strategy::StrategyName::TxpoolBackrun,
-            };
-            let _ = id;
-            if !name.is_active(cfg) {
-                continue;
-            }
-            let arm = match ecosystem {
-                BackrunEcosystem::Mevblocker => (
-                    PendingTxSource::Mevblocker,
-                    PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
-                        url: boot.feed_url().to_string(),
-                        ..BackrunFeedConfig::for_mainnet()
-                    }),
-                ),
-                BackrunEcosystem::Txpool => {
-                    let Some(ws_url) = boot.head_ws_url().map(str::to_string) else {
-                        // No subscription endpoint: the arm cannot host a
-                        // pump; its live gate reports the same refusal a
-                        // feed-less boot always did.
-                        continue;
-                    };
-                    (
-                        PendingTxSource::Txpool,
-                        PendingTxFeedConfig::Txpool(TxpoolFeedConfig {
-                            ws_url,
-                            ..TxpoolFeedConfig::defaults()
-                        }),
-                    )
-                }
-            };
-            arms.push(arm);
-        }
-        // The hub is cloned OUTSIDE the guarded statement: the receiver's
-        // lock guard is alive while the factory argument evaluates, so a
-        // nested `host.lock()` there would deadlock the non-reentrant mutex.
-        let hub = Arc::clone(host.lock().hub());
-        let mut hosted = degenbot_core::runtime::get_runtime()
-            .block_on(degenbot_bot::hosted_sources::HostedSources::mint(
-                Arc::clone(&hub),
-                arms,
-                clock,
-                head_trigger,
-            ))
-            .expect("a fresh hub hosts the process sources");
-        for (id, ecosystem, lane, _boot) in arm_boots {
-            let kind = match ecosystem {
-                BackrunEcosystem::Mevblocker => PendingTxSource::Mevblocker,
-                BackrunEcosystem::Txpool => PendingTxSource::Txpool,
-            };
-            let stream = hosted.take_stream(kind);
-            host.lock()
-                .attach_spawn(
-                    &id,
-                    degenbot_strategy::backrun_driver::backrun_spawn_factory(
-                        backrun_resources.strategy_boot(ecosystem),
-                        Arc::clone(&hub),
-                        lane,
-                        stream,
-                    ),
-                )
-                .expect("fresh host registers the backrun spawn");
-        }
-        lanes
-    };
+    boot_hosted_head_feed(&host, cfg, &backrun_resources);
 
     BootedHost { host, attached }
+}
+
+/// The hosted head feed's boot: the per-strategy submission lanes, the
+/// once-per-head reconciliation, and the per-active-arm pending-tx pumps.
+/// Split from `boot_host` for function size only — every piece here is
+/// boot-once process state, wired in boot order.
+#[cfg(feature = "submission")]
+fn boot_hosted_head_feed(
+    host: &Arc<parking_lot::Mutex<StrategyHost>>,
+    cfg: &degenbot_config::schema::BotConfig,
+    backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
+) {
+    let (lanes, backruns) = boot_head_lanes(host);
+    let head_trigger = boot_head_reconciliation(host, lanes, cfg, backrun_resources);
+    boot_hosted_arms(host, backruns, cfg, backrun_resources, head_trigger);
+}
+
+/// The per-strategy submission lanes the head reconciliation folds notices
+/// through: the settlement lane (installed process-global — the settlement
+/// seam is the Python-driven arm of this one hosted process) plus one lane
+/// per backrun ecosystem, all stamping one submission ledger, built before
+/// any driver starts.
+#[cfg(feature = "submission")]
+fn boot_head_lanes(
+    host: &Arc<parking_lot::Mutex<StrategyHost>>,
+) -> (
+    HeadLanes,
+    Vec<(
+        StrategyId,
+        degenbot_strategy::backrun_driver::BackrunEcosystem,
+        Arc<degenbot_submission::NonceLane>,
+    )>,
+) {
+    // A hosted driver scopes its run-artifacts under the host state root; a
+    // boot with no resolvable root leaves `namespace_root` unset, so the
+    // driver keeps its process-global path.
+    if degenbot_config::holder::installed() {
+        if let Some(root) = degenbot_submission::resolve_state_root() {
+            host.lock().set_state_root(root);
+        }
+    }
+    // The per-strategy submission ledger is the head feed's
+    // submission-truth arm: the host refreshes the authority per head and
+    // asks this ledger to close outstanding records out, delivering the
+    // typed notices to the owning strategy. Every lane stamps through the
+    // same authority and records into the same ledger.
+    let ledger = Arc::new(degenbot_submission::SubmissionLedger::new());
+    host.lock().attach_reconciler(
+        Arc::clone(&ledger) as Arc<dyn degenbot_bot::strategy_host::HeadReconciler>
+    );
+
+    let settlement_id = StrategyId::new("settlement");
+    let settlement_lane = Arc::new(degenbot_submission::NonceLane::new(
+        Arc::clone(host.lock().nonce()),
+        Arc::clone(&ledger),
+        settlement_id.clone(),
+    ));
+    // The settlement seam is the Python-driven arm of this one hosted
+    // process, so its lane is process-global: every settlement submission
+    // stamps through the shared authority once the boot installs it.
+    crate::submission::submit::install_settlement_lane(Arc::clone(&settlement_lane));
+
+    // Each per-ecosystem backrun gets its own lane and product. The
+    // products share the resolver's held DB and frozen registry. The lanes
+    // are all built first so the head reconciliation owns the full map
+    // before any driver starts.
+    let mut lanes = HeadLanes::new();
+    lanes.insert(settlement_id, settlement_lane);
+    let mut backruns = Vec::new();
+    for (name, ecosystem) in [
+        (
+            "mevblocker_backrun",
+            degenbot_strategy::backrun_driver::BackrunEcosystem::Mevblocker,
+        ),
+        (
+            "txpool_backrun",
+            degenbot_strategy::backrun_driver::BackrunEcosystem::Txpool,
+        ),
+    ] {
+        let id = StrategyId::new(name);
+        let lane = Arc::new(degenbot_submission::NonceLane::new(
+            Arc::clone(host.lock().nonce()),
+            Arc::clone(&ledger),
+            id.clone(),
+        ));
+        backruns.push((id.clone(), ecosystem, Arc::clone(&lane)));
+        lanes.insert(id, lane);
+    }
+    (lanes, backruns)
+}
+
+/// The drivers' once-per-head reconciliation: one instance per process,
+/// built over the resolved node join's provider (a joinless boot drives no
+/// head-feed reconciliation) and the operator address the signing key
+/// names. No configured key is the old loop's `signer` gate: a boot with no
+/// signer reconciles nothing. The hosted sources' head edge fires it once
+/// per observed head through the returned trigger — the trigger is the only
+/// thing this shell wires; the drivers never see the reconciliation.
+#[cfg(feature = "submission")]
+fn boot_head_reconciliation(
+    host: &Arc<parking_lot::Mutex<StrategyHost>>,
+    lanes: HeadLanes,
+    cfg: &degenbot_config::schema::BotConfig,
+    backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
+) -> Option<degenbot_bot::hosted_sources::HeadTrigger> {
+    let operator = cfg
+        .strategy
+        .mevblocker_backrun
+        .key_file
+        .as_ref()
+        .or(cfg.strategy.txpool_backrun.key_file.as_ref())
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|hex| degenbot_submission::TxSigner::from_key_hex(hex.trim(), 1).ok())
+        .map(|signer| signer.address());
+    let head_reconciliation = match (backrun_resources.node_provider().cloned(), operator) {
+        (Some(provider), Some(operator)) => Some(Arc::new(
+            degenbot_submission::head_reconciliation::HeadReconciliation::new(
+                Arc::clone(host),
+                lanes,
+                Arc::new(degenbot_submission::head_reconciliation::AlloyChainNonceRead(provider)),
+                operator,
+            ),
+        )),
+        _ => None,
+    };
+    let head_trigger: Option<degenbot_bot::hosted_sources::HeadTrigger> =
+        head_reconciliation.as_ref().map(|reconciliation| {
+            let reconciliation = Arc::clone(reconciliation);
+            Arc::new(move |head: u64| {
+                let reconciliation = Arc::clone(&reconciliation);
+                Box::pin(async move {
+                    reconciliation.reconcile_head(head).await;
+                })
+                    as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            }) as _
+        });
+    head_trigger
+}
+
+/// Host the sources once per process: one pending-tx pump per ACTIVE arm's
+/// source kind (both arms can run simultaneously — each kind registers its
+/// own hub class), the one head watch + fallback poller, and the one feed
+/// sampler. Each arm's spawn factory receives its own kind's typed stream.
+#[expect(
+    clippy::expect_used,
+    reason = "a fresh hub and a fresh host accept these one-time boot registrations"
+)]
+#[cfg(feature = "submission")]
+fn boot_hosted_arms(
+    host: &Arc<parking_lot::Mutex<StrategyHost>>,
+    backruns: Vec<(
+        StrategyId,
+        degenbot_strategy::backrun_driver::BackrunEcosystem,
+        Arc<degenbot_submission::NonceLane>,
+    )>,
+    cfg: &degenbot_config::schema::BotConfig,
+    backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
+    head_trigger: Option<degenbot_bot::hosted_sources::HeadTrigger>,
+) {
+    use degenbot_bot::hosted_sources::HostedHeadClock;
+    use degenbot_eventhub::PendingTxSource;
+    use degenbot_rpc::backrun_feed::BackrunFeedConfig;
+    use degenbot_rpc::pending_tx_stream::PendingTxFeedConfig;
+    use degenbot_rpc::txpool_feed::TxpoolFeedConfig;
+    use degenbot_strategy::backrun_driver::BackrunEcosystem;
+
+    let mut arm_boots = Vec::new();
+    for (id, ecosystem, lane) in backruns {
+        let boot = backrun_resources.strategy_boot(ecosystem);
+        arm_boots.push((id, ecosystem, lane, boot));
+    }
+    let head_ws_url = arm_boots
+        .iter()
+        .find_map(|(_, _, _, boot)| boot.head_ws_url().map(str::to_string));
+    let provider = backrun_resources.node_provider().cloned();
+    let clock = match (head_ws_url, provider) {
+        (Some(ws_url), Some(provider)) => Some(HostedHeadClock::Watch { ws_url, provider }),
+        (None, Some(provider)) => Some(HostedHeadClock::Poll { provider }),
+        _ => None,
+    };
+    let mut arms = Vec::new();
+    for (id, ecosystem, _lane, boot) in &arm_boots {
+        let name = match ecosystem {
+            BackrunEcosystem::Mevblocker => degenbot_strategy::StrategyName::MevblockerBackrun,
+            BackrunEcosystem::Txpool => degenbot_strategy::StrategyName::TxpoolBackrun,
+        };
+        let _ = id;
+        if !name.is_active(cfg) {
+            continue;
+        }
+        let arm = match ecosystem {
+            BackrunEcosystem::Mevblocker => (
+                PendingTxSource::Mevblocker,
+                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
+                    url: boot.feed_url().to_string(),
+                    ..BackrunFeedConfig::for_mainnet()
+                }),
+            ),
+            BackrunEcosystem::Txpool => {
+                let Some(ws_url) = boot.head_ws_url().map(str::to_string) else {
+                    // No subscription endpoint: the arm cannot host a
+                    // pump; its live gate reports the same refusal a
+                    // feed-less boot always did.
+                    continue;
+                };
+                (
+                    PendingTxSource::Txpool,
+                    PendingTxFeedConfig::Txpool(TxpoolFeedConfig {
+                        ws_url,
+                        ..TxpoolFeedConfig::defaults()
+                    }),
+                )
+            }
+        };
+        arms.push(arm);
+    }
+    // The hub is cloned OUTSIDE the guarded statement: the receiver's
+    // lock guard is alive while the factory argument evaluates, so a
+    // nested `host.lock()` there would deadlock the non-reentrant mutex.
+    let hub = Arc::clone(host.lock().hub());
+    let mut hosted = degenbot_core::runtime::get_runtime()
+        .block_on(degenbot_bot::hosted_sources::HostedSources::mint(
+            Arc::clone(&hub),
+            arms,
+            clock,
+            head_trigger,
+        ))
+        .expect("a fresh hub hosts the process sources");
+    for (id, ecosystem, lane, _boot) in arm_boots {
+        let kind = match ecosystem {
+            BackrunEcosystem::Mevblocker => PendingTxSource::Mevblocker,
+            BackrunEcosystem::Txpool => PendingTxSource::Txpool,
+        };
+        let stream = hosted.take_stream(kind);
+        host.lock()
+            .attach_spawn(
+                &id,
+                degenbot_strategy::backrun_driver::backrun_spawn_factory(
+                    backrun_resources.strategy_boot(ecosystem),
+                    Arc::clone(&hub),
+                    lane,
+                    stream,
+                ),
+            )
+            .expect("fresh host registers the backrun spawn");
+    }
 }
 
 impl PyArbEngine {

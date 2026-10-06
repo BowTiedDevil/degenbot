@@ -32,7 +32,7 @@ use crate::bot_core::V3SwapOutcome;
 pub enum SwapOpError {
     /// The request amount did not fit the signed user-perspective delta, or
     /// the constant-product math overflowed a `uint256` intermediate — one
-    /// historical `ValueError` surface (the on-chain `getAmountOut` SafeMath
+    /// historical `ValueError` surface (the on-chain `getAmountOut` `SafeMath`
     /// revert parity).
     AmountOverflow,
     /// The pool id is not registered.
@@ -142,14 +142,16 @@ pub fn stage_missing_words(
         }
         // Stage the whole batch under ONE short write (the per-word
         // fingerprints gate the installs individually).
-        let Some(staged) = (|| {
+        let staged = {
             let mut guard = state.write_at(LockSite::Orchestrator);
-            missing
+            let Some(staged) = missing
                 .iter()
                 .map(|word| guard.stage_word_fetch_by_pool_id(pool_id, *word, block, pass > 0))
                 .collect::<Option<Vec<_>>>()
-        })() else {
-            return false;
+            else {
+                return false;
+            };
+            staged
         };
         // Fetches: NO state lock held.
         let mut fetched = Vec::new();
@@ -161,7 +163,7 @@ pub fn stage_missing_words(
         }
         // Installs: short writes, fingerprint-gated. Any Raced means the
         // pump wrote this pool mid-batch: retry the whole pass.
-        let raced = (|| {
+        let raced = {
             let mut guard = state.write_at(LockSite::Orchestrator);
             staged
                 .iter()
@@ -172,7 +174,7 @@ pub fn stage_missing_words(
                         degenbot_substrate::InstallWordOutcome::Raced
                     )
                 })
-        })();
+        };
         if !raced {
             return true;
         }
@@ -459,7 +461,7 @@ pub fn encode_swap(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::expect_used)]
+    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
     use alloy::primitives::aliases::U112;

@@ -177,6 +177,14 @@ pub enum InstallWordOutcome {
     Failed,
 }
 
+#[expect(
+    clippy::unused_self,
+    reason = "capability methods operate on a caller-owned RegistryCore threaded as an explicit parameter; converting them to associated functions churns the whole composition seam"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "event-application signatures mirror decoder payload fields; a params-struct refactor is out of scope"
+)]
 impl ClOrchestration {
     /// Register a V3 pool by contract address.
     ///
@@ -2427,6 +2435,11 @@ impl BotState {
 /// each wrapper is a one-line split-borrow delegation.
 impl BotState {
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v3_pool`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegisterV3PoolError`] when the pool address is already
+    /// registered or a registration spec bound is violated.
     pub fn register_v3_pool(
         &mut self,
         params: &RegisterV3PoolParams,
@@ -2452,7 +2465,7 @@ impl BotState {
             tick,
             block_number,
             tick_priors,
-        )
+        );
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::route_v3_event`].
@@ -2580,46 +2593,51 @@ impl BotState {
             tick_upper,
             liquidity_delta,
             block_number,
-        )
+        );
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_backfill_buffer_v3`].
     pub fn apply_backfill_buffer_v3(&mut self, address: &Address) {
         self.cl
-            .apply_backfill_buffer_v3(&mut self.registry, address)
+            .apply_backfill_buffer_v3(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_pump_buffer_v3`].
     pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
-        self.cl.apply_pump_buffer_v3(&mut self.registry, address)
+        self.cl.apply_pump_buffer_v3(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::buffered_v3_event_count`].
+    #[must_use]
     pub fn buffered_v3_event_count(&self, address: &Address) -> usize {
         self.cl.buffered_v3_event_count(address)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v3_pool`].
+    #[must_use]
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
         self.cl.get_v3_pool(&self.registry, pool_id)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v3_identity`].
+    #[must_use]
     pub fn get_v3_identity(&self, pool_id: u64) -> Option<&V3PoolIdentity> {
         self.cl.get_v3_identity(&self.registry, pool_id)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_pools_snapshot`].
+    #[must_use]
     pub fn v3_pools_snapshot(&self) -> HashMap<u64, (V3PoolIdentity, V3PoolState)> {
         self.cl.v3_pools_snapshot(&self.registry)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_snapshot_seed_block`].
     pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
-        self.cl.set_snapshot_seed_block(s)
+        self.cl.set_snapshot_seed_block(s);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_snapshot_seed`].
+    #[must_use]
     pub fn v3_snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
         self.cl.v3_snapshot_seed(&self.registry, address)
     }
@@ -2632,7 +2650,7 @@ impl BotState {
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::pin_v3_post_drain_snapshot`].
     pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
         self.cl
-            .pin_v3_post_drain_snapshot(&mut self.registry, address)
+            .pin_v3_post_drain_snapshot(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::take_v3_post_drain_snapshot`].
@@ -2662,10 +2680,11 @@ impl BotState {
             tick,
             tick_data,
             update_block,
-        )
+        );
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::tick_fingerprint`].
+    #[must_use]
     pub fn tick_fingerprint(&self, pool_id: u64) -> Option<(u64, usize, u64)> {
         self.cl.tick_fingerprint(&self.registry, pool_id)
     }
@@ -2709,16 +2728,23 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_pool_count`].
+    #[must_use]
     pub fn v3_pool_count(&self) -> usize {
         self.cl.v3_pool_count(&self.registry)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v4_state_view`].
     pub fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
-        self.cl.register_v4_state_view(pool_manager, state_view)
+        self.cl.register_v4_state_view(pool_manager, state_view);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v4_pool`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegisterV4PoolError`] on a spec-bound violation, a dynamic
+    /// or un-encodable static fee, or an already-registered
+    /// `(pool_manager, pool_id)` key.
     pub fn register_v4_pool(
         &mut self,
         params: &RegisterV4PoolParams,
@@ -2830,7 +2856,7 @@ impl BotState {
             tick_upper,
             liquidity_delta,
             block_number,
-        )
+        );
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_backfill_buffer_v4`].
@@ -2840,7 +2866,7 @@ impl BotState {
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         self.cl
-            .apply_backfill_buffer_v4(&mut self.registry, pool_manager, pool_id)
+            .apply_backfill_buffer_v4(&mut self.registry, pool_manager, pool_id);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::apply_pump_buffer_v4`].
@@ -2850,15 +2876,17 @@ impl BotState {
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         self.cl
-            .apply_pump_buffer_v4(&mut self.registry, pool_manager, pool_id)
+            .apply_pump_buffer_v4(&mut self.registry, pool_manager, pool_id);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v3_pool_coverage`].
+    #[must_use]
     pub fn v3_pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
         self.cl.v3_pool_coverage(&self.registry, address)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pool_coverage`].
+    #[must_use]
     pub fn v4_pool_coverage(
         &self,
         pool_manager: Address,
@@ -2870,7 +2898,7 @@ impl BotState {
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v3_pool_quarantined`].
     pub fn set_v3_pool_quarantined(&mut self, address: Address) {
-        self.cl.set_v3_pool_quarantined(&mut self.registry, address)
+        self.cl.set_v3_pool_quarantined(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v4_pool_quarantined`].
@@ -2880,12 +2908,12 @@ impl BotState {
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         self.cl
-            .set_v4_pool_quarantined(&mut self.registry, pool_manager, pool_id)
+            .set_v4_pool_quarantined(&mut self.registry, pool_manager, pool_id);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v3_pool_live`].
     pub fn set_v3_pool_live(&mut self, address: Address) {
-        self.cl.set_v3_pool_live(&mut self.registry, address)
+        self.cl.set_v3_pool_live(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::set_v4_pool_live`].
@@ -2895,25 +2923,28 @@ impl BotState {
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         self.cl
-            .set_v4_pool_live(&mut self.registry, pool_manager, pool_id)
+            .set_v4_pool_live(&mut self.registry, pool_manager, pool_id);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::release_all_v3_v4_quarantined`].
     pub fn release_all_v3_v4_quarantined(&mut self) {
-        self.cl.release_all_v3_v4_quarantined(&mut self.registry)
+        self.cl.release_all_v3_v4_quarantined(&mut self.registry);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v4_pool`].
+    #[must_use]
     pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
         self.cl.get_v4_pool(&self.registry, pool_id)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::get_v4_identity`].
+    #[must_use]
     pub fn get_v4_identity(&self, pool_id: u64) -> Option<&V4PoolIdentity> {
         self.cl.get_v4_identity(&self.registry, pool_id)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pool_id_by_key`].
+    #[must_use]
     pub fn v4_pool_id_by_key(
         &self,
         pool_manager: Address,
@@ -2923,6 +2954,7 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::try_registered_v4`].
+    #[must_use]
     pub fn try_registered_v4(
         &self,
         pool_manager: Address,
@@ -2933,6 +2965,7 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_snapshot_seed`].
+    #[must_use]
     pub fn v4_snapshot_seed(
         &self,
         pool_manager: Address,
@@ -2959,7 +2992,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         self.cl
-            .pin_v4_post_drain_snapshot(&mut self.registry, pool_manager, pool_id)
+            .pin_v4_post_drain_snapshot(&mut self.registry, pool_manager, pool_id);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::take_v4_post_drain_snapshot`].
@@ -2973,6 +3006,7 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::v4_pools_snapshot`].
+    #[must_use]
     pub fn v4_pools_snapshot(&self) -> HashMap<u64, (V4PoolIdentity, V4PoolState)> {
         self.cl.v4_pools_snapshot(&self.registry)
     }
@@ -2985,7 +3019,7 @@ impl BotState {
         update: V4StateSync,
     ) {
         self.cl
-            .sync_v4_pool_state(&mut self.registry, pool_manager, pool_id, update)
+            .sync_v4_pool_state(&mut self.registry, pool_manager, pool_id, update);
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::snapshot_seed_block`].

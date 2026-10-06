@@ -1146,7 +1146,7 @@ impl PyLiquidityPool {
             // construction, so an unregistered id keeps the `None` not-found
             // contract.
             Ok(None) => Ok(None),
-            Err(e) => Err(encode_swap_failed(e.to_string())),
+            Err(e) => Err(encode_swap_failed(&e.to_string())),
         }
     }
 
@@ -1464,7 +1464,7 @@ impl PyLiquidityPool {
     #[getter]
     fn pool_id_hex(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| match core.get_v4_identity(self.pool_id) {
-            Some(i) => alloy::hex::encode_prefixed(&i.pool_id),
+            Some(i) => alloy::hex::encode_prefixed(i.pool_id),
             None => String::new(),
         })
     }
@@ -1553,7 +1553,7 @@ impl PyLiquidityPool {
     fn balancer_pool_id_hex(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
             match core.get_balancer_weighted_identity(self.pool_id) {
-                Some(i) => alloy::hex::encode_prefixed(&i.pool_id),
+                Some(i) => alloy::hex::encode_prefixed(i.pool_id),
                 None => String::new(),
             }
         })
@@ -2559,7 +2559,7 @@ impl PyLiquidityPool {
     fn balancer_stable_pool_id_hex(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
             match core.get_balancer_stable_identity(self.pool_id) {
-                Some(i) => alloy::hex::encode_prefixed(&i.pool_id),
+                Some(i) => alloy::hex::encode_prefixed(i.pool_id),
                 None => String::new(),
             }
         })

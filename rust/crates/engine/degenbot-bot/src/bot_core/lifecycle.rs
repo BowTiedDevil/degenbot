@@ -15,7 +15,7 @@ use crate::bot_core::snapshot_verify::SnapshotLoadError;
 
 /// Error from [`Bot::load_snapshot_from_db_path`]: the DB-open failure
 /// (`Open`) is distinguishable from the snapshot-load failure (`Load`) so the
-/// PyO3 shell can preserve its two historical error surfaces byte-identically
+/// `PyO3` shell can preserve its two historical error surfaces byte-identically
 /// (the DB `ValueError` convention and the `load_snapshot_from_db failed:`
 /// `RuntimeError`).
 #[derive(Debug)]
@@ -49,7 +49,7 @@ pub enum BlockStreamError {
 
 impl Bot {
     /// The snapshot seed block `S` (`None` = the cold-start path). The read
-    /// the PyO3 `snapshot_seed_block` getter routes through.
+    /// the `PyO3` `snapshot_seed_block` getter routes through.
     #[must_use]
     pub fn snapshot_seed_block(&self) -> Option<u64> {
         self.state_arc()
@@ -57,7 +57,7 @@ impl Bot {
             .snapshot_seed_block()
     }
 
-    /// Open the retained snapshot DB + load it in one call — the PyO3 shell's
+    /// Open the retained snapshot DB + load it in one call — the `PyO3` shell's
     /// `load_snapshot_from_db` path. Opens a read-only
     /// [`degenbot_db::snapshot_db::SnapshotDb`] handle from `db_path` (one
     /// `Mutex<Connection>` + a held deferred read transaction), runs
@@ -65,7 +65,7 @@ impl Bot {
     /// per-pool `fetch_liquidity_map` read share one frozen DB snapshot
     /// across `build_paths` (the consistency replacement for the retired
     /// `SnapshotStore`), then hands the STILL-OPEN handle back for the caller
-    /// to retain. The PyO3 shell keeps it in its D4 `db` slot and commits it
+    /// to retain. The `PyO3` shell keeps it in its D4 `db` slot and commits it
     /// via [`Bot::close_snapshot_tx`] at end of `build_paths` — that
     /// retained-tx pairing is load-bearing (WAL MVCC).
     ///
@@ -124,7 +124,7 @@ impl Bot {
     }
 
     /// Subscribe to the WS `newHeads` + logs streams — the `block_on` wrapper
-    /// over [`EngineDriver::subscribe`] the PyO3 shells (`PyBot`,
+    /// over [`EngineDriver::subscribe`] the `PyO3` shells (`PyBot`,
     /// `PyArbEngine`) drive detached from the GIL. Blocks (sync, via the
     /// shared tokio runtime) until the first block is observed, then returns
     /// the first WS block number (the backfill target).
@@ -156,7 +156,7 @@ impl Bot {
     }
 
     /// Set the HTTP RPC URL used for verification. `None` (no engine
-    /// constructed against the bot) is a no-op — the guard the PyO3 shell
+    /// constructed against the bot) is a no-op — the guard the `PyO3` shell
     /// held as a swallowed `pump_state` error.
     pub fn set_verify_rpc_url(driver: Option<&EngineDriver>, rpc_url: &str) {
         if let Some(pump) = driver {
@@ -193,7 +193,7 @@ impl Bot {
     }
 }
 
-#[expect(clippy::expect_used)]
+#[expect(clippy::expect_used, clippy::print_stderr)]
 #[cfg(test)]
 mod tests {
     use crate::bot_core::bot::Bot;
@@ -260,11 +260,13 @@ mod tests {
         let bot = Bot::new(1);
         // `SnapshotDb` is not `Debug`, so the Ok arm is matched away rather
         // than `unwrap_err`ed.
-        let err = match bot.load_snapshot_from_db_path("/nonexistent/degenbot-snapshot.db", 1) {
-            Err(e) => e,
-            Ok(_) => panic!("a nonexistent DB path must be refused"),
-        };
-        assert!(matches!(err, super::SnapshotOpenError::Open(_)), "{err:?}");
+        assert!(
+            matches!(
+                bot.load_snapshot_from_db_path("/nonexistent/degenbot-snapshot.db", 1),
+                Err(super::SnapshotOpenError::Open(_))
+            ),
+            "a nonexistent DB path must be refused"
+        );
     }
 
     /// The teardown pair: `close_snapshot_tx` commits the held read tx (the
@@ -318,7 +320,7 @@ mod tests {
     fn block_stream_hands_the_receiver_out_exactly_once() {
         let bot = std::sync::Arc::new(Bot::new(8453));
         let driver =
-            crate::arb_engine::EngineDriver::new(bot, &degenbot_config::holder::config_arc());
+            crate::arb_engine::EngineDriver::new(bot, degenbot_config::holder::config_arc());
 
         assert!(matches!(
             Bot::block_stream(None),
@@ -343,7 +345,7 @@ mod tests {
 
         let bot = std::sync::Arc::new(Bot::new(8453));
         let driver =
-            crate::arb_engine::EngineDriver::new(bot, &degenbot_config::holder::config_arc());
+            crate::arb_engine::EngineDriver::new(bot, degenbot_config::holder::config_arc());
         Bot::set_verify_rpc_url(Some(&driver), "http://127.0.0.1:1");
         Bot::set_verify_state_view(Some(&driver), "0x0000000000000000000000000000000000000001");
     }
@@ -354,7 +356,7 @@ mod tests {
     fn stop_drives_the_driver_stop() {
         let bot = std::sync::Arc::new(Bot::new(8453));
         let driver =
-            crate::arb_engine::EngineDriver::new(bot, &degenbot_config::holder::config_arc());
+            crate::arb_engine::EngineDriver::new(bot, degenbot_config::holder::config_arc());
         Bot::stop(&driver).expect("any-phase stop is Ok");
         Bot::stop(&driver).expect("stop is idempotent");
     }

@@ -40,7 +40,7 @@ use crate::bot_core::{
 
 /// Error from [`Bot::register_v2_pool`]: the CREATE2 address verification
 /// (`Create2`) is distinguishable from the registration refusal (`Register`)
-/// so the PyO3 shell preserves its two historical surfaces byte-identically
+/// so the `PyO3` shell preserves its two historical surfaces byte-identically
 /// (the bare-address-mismatch `ValueError` and the `PoolRegistrationError`
 /// hierarchy map).
 #[derive(Debug)]
@@ -143,7 +143,6 @@ pub type TickRow = (i32, u128, i128, u64);
 /// pool_id_hex, protocol_fee, lp_fee)` — the builder's return surface, read
 /// from the registry of record (identity from the core's immutable pool
 /// key, protocol fee from the state machine, coverage as recorded).
-#[expect(clippy::type_complexity)]
 pub type V4RegisteredPayload = (
     u64,
     String,
@@ -302,7 +301,7 @@ impl Bot {
     /// Register a V3 pool by contract address, with the seeded tick data
     /// inline (ADR-006 rolling-start race closure: the pool is never visible
     /// to the pump in an unseeded state). An explicit `Some` slot layout
-    /// wins; `None` defers to the deployment table (the PancakeSwap factory
+    /// wins; `None` defers to the deployment table (the `PancakeSwap` factory
     /// check), else the canonical Uniswap layout.
     ///
     /// # Errors
@@ -577,7 +576,6 @@ impl Bot {
     /// # Errors
     /// [`RegisterV4PoolError::DynamicFee`] / `FeeExceedsEncoderLimit` when a
     /// recorded admission verdict refuses the pool.
-    #[expect(clippy::type_complexity)]
     pub fn registered_v4_payload(
         &self,
         pm: Address,
@@ -639,8 +637,8 @@ impl Bot {
         }
     }
 
-    /// Resolve the V4 identity (currency0/1, fee, tick_spacing, hook,
-    /// state_view): the DB two-step (manager → V4 row → per-FK tokens) on
+    /// Resolve the V4 identity (currency0/1, fee, `tick_spacing`, hook,
+    /// `state_view`): the DB two-step (manager → V4 row → per-FK tokens) on
     /// the attached `ConstructionIo` first, else the caller-supplied
     /// overrides. Runs the core builder's async resolution on the shared
     /// runtime (the shell detaches the GIL around this call).
@@ -731,7 +729,7 @@ impl Bot {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
+    #![expect(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::bot_core::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
     use alloy::primitives::aliases::U112;
@@ -1118,7 +1116,7 @@ mod tests {
 
     /// `resolve_v4_identity` requires an attached `ConstructionIo` — the
     /// typed `NoConstructionIo` arm the shell maps to its historical
-    /// "<method>: no ConstructionIo attached" `RuntimeError`.
+    /// "<method>: no `ConstructionIo` attached" `RuntimeError`.
     #[test]
     fn resolve_v4_identity_refuses_without_construction_io() {
         let bot = Bot::new(1);
@@ -1127,7 +1125,7 @@ mod tests {
                 1,
                 Address::from([0x50u8; 20]),
                 [0u8; 32],
-                &Default::default(),
+                &builder::V4PoolBuildOverrides::default(),
             )
             .expect_err("no ConstructionIo attached");
         assert!(
@@ -1184,15 +1182,12 @@ mod tests {
         let rows = super::tick_rows(&ticks);
         assert_eq!(rows.len(), 2);
         for (tick, gross, net, block) in rows {
-            match tick {
-                10 => {
-                    assert_eq!((gross, net, block), (5u128, -3i128, 7u64));
-                }
-                -20 => {
-                    assert_eq!(gross, alloy::primitives::U128::MAX.to::<u128>());
-                    assert_eq!((net, block), (0i128, 0u64));
-                }
-                other => panic!("unexpected tick {other}"),
+            if tick == 10 {
+                assert_eq!((gross, net, block), (5u128, -3i128, 7u64));
+            } else {
+                assert_eq!(tick, -20, "unexpected tick {tick}");
+                assert_eq!(gross, alloy::primitives::U128::MAX.to::<u128>());
+                assert_eq!((net, block), (0i128, 0u64));
             }
         }
     }

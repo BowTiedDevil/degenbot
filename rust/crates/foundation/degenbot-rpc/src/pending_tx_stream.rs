@@ -98,7 +98,7 @@ impl PendingTxPump {
         let SourceHandle::DropOldestCounted(sender) = hub.register_source(
             class,
             OverflowPolicy::DropOldestCounted {
-                name: ring_metric(&source),
+                name: ring_metric(source),
             },
             ring_capacity(&cfg),
         )?
@@ -187,7 +187,7 @@ impl PendingTxPump {
     }
 }
 
-fn ring_metric(source: &PendingTxSource) -> &'static str {
+fn ring_metric(source: PendingTxSource) -> &'static str {
     match source {
         PendingTxSource::Mevblocker => DROPPED_RING_METRIC,
         PendingTxSource::Txpool => TXPOOL_DROPPED_RING_METRIC,
@@ -239,7 +239,6 @@ impl PendingTxStream {
 
 #[cfg(test)]
 #[expect(
-    clippy::unwrap_used,
     clippy::expect_used,
     reason = "unit tests assert mint and drain outcomes"
 )]

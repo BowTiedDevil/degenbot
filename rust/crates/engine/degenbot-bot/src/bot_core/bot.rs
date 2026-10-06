@@ -378,7 +378,7 @@ impl Bot {
     }
 
     /// Number of deltas in the reorg journal for a V2 pool. `0` when the id
-    /// is unregistered or NOT a V2 pool — the per-family contract the PyO3
+    /// is unregistered or NOT a V2 pool — the per-family contract the `PyO3`
     /// wrapper's inline guard used to carry.
     #[must_use]
     pub fn v2_journal_len(&self, pool_id: u64) -> usize {
@@ -413,6 +413,10 @@ impl Bot {
     /// the id is unregistered or not a V2 pool — the V2 no-op contract — and
     /// a [`degenbot_pools::state_history::JournalError`] when the target is
     /// past the newest delta (it would remove every known state).
+    ///
+    /// # Errors
+    /// [`degenbot_pools::state_history::JournalError`] when `block` is past
+    /// the newest delta.
     pub fn v2_discard_before_block(
         &self,
         pool_id: u64,
@@ -432,6 +436,9 @@ impl Bot {
 
     /// Discard V3 reorg journal deltas earlier than `block` — the V3 twin of
     /// [`Bot::v2_discard_before_block`]: non-CL ids are `Ok(())` no-ops.
+    ///
+    /// # Errors
+    /// [`JournalError`](degenbot_pools::state_history::JournalError) when `block` is past the newest delta.
     pub fn v3_discard_before_block(
         &self,
         pool_id: u64,
@@ -454,8 +461,15 @@ impl Bot {
     /// `(reserve0, reserve1, update_block)` — the read-after-restore contract
     /// (ADR-016): the restore trait returns `()`, and the post-restore fields
     /// ARE the before-values. `Ok(None)` when the id is unregistered or not a
-    /// V2 pool (the no-op contract); [`JournalError`](degenbot_pools::state_history::JournalError)
-    /// when the target is at/before the registration delta (too deep).
+    /// V2 pool (the no-op contract).
+    ///
+    /// # Errors
+    /// [`JournalError`](degenbot_pools::state_history::JournalError) when the target is at/before the
+    /// registration delta (too deep).
+    ///
+    /// # Panics
+    /// The post-restore state read is `expect`-guarded by the family check
+    /// above, so it cannot fire in practice.
     pub fn v2_restore_before_block(
         &self,
         pool_id: u64,
@@ -492,9 +506,16 @@ impl Bot {
     /// `block` (ADR-005 slice 4). Returns the post-restore
     /// `(sqrt_price_x96, liquidity, tick, update_block)` — the
     /// read-after-restore contract (ADR-016 D4). `Ok(None)` when the id is
-    /// unregistered or not a CL pool; the CL journal panics on an empty
-    /// journal, so a caller must pre-check
-    /// [`has_state_prior_to`](Self::has_state_prior_to) — same discipline as
+    /// unregistered or not a CL pool.
+    ///
+    /// # Errors
+    /// [`JournalError`](degenbot_pools::state_history::JournalError) when the target is at/before the
+    /// registration delta.
+    ///
+    /// # Panics
+    /// The CL journal panics on an empty journal, so a caller must
+    /// pre-check [`has_state_prior_to`](Self::has_state_prior_to) — same
+    /// discipline as
     /// [`restore_pool_before_block`](Self::restore_pool_before_block).
     pub fn v3_restore_before_block(
         &self,
@@ -534,6 +555,10 @@ impl Bot {
     /// is not registered (the Python facade's no-op contract); a typed
     /// [`degenbot_substrate::EncodeSwapError`] otherwise (e.g. a registered
     /// family with no swap-call encoder).
+    ///
+    /// # Errors
+    /// [`degenbot_substrate::EncodeSwapError`] when the registered family
+    /// has no swap-call encoder or the encoding itself fails.
     pub fn encode_swap(
         &self,
         pool_id: u64,
@@ -566,7 +591,7 @@ impl Bot {
     }
 }
 
-#[expect(clippy::expect_used)]
+#[expect(clippy::expect_used, clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use crate::bot_core::RegisterV2PoolParams;
@@ -795,7 +820,7 @@ mod tests {
     }
 
     /// Journal-length reads carry the per-family contract: 0 for unregistered
-    /// ids and for the WRONG family (the guard the PyO3 wrapper used to
+    /// ids and for the WRONG family (the guard the `PyO3` wrapper used to
     /// inline), the live journal length for the right one. V2 registration
     /// pushes a genesis delta; V3 registration pushes none.
     #[test]
@@ -966,8 +991,8 @@ mod tests {
     /// `encode_swap` through the facade: the submission-shaped
     /// `(to, calldata, value)` triple on a hit, `Ok(None)` for an
     /// unregistered id, and a typed `UnsupportedFamily` refusal off-family.
-    /// (Byte-level calldata pinning lives in the Python seam's eth_abi
-    /// oracle tests — tests/arbitrage/test_solvers/test_py_bot.py.)
+    /// (Byte-level calldata pinning lives in the Python seam's `eth_abi`
+    /// oracle tests — `tests/arbitrage/test_solvers/test_py_bot.py`.)
     #[test]
     fn encode_swap_shapes_the_submission_call() {
         let bot = super::Bot::new(5);
@@ -1015,7 +1040,7 @@ mod tests {
         );
     }
 
-    /// `build_rpc_log` (moved from the PyO3 shell) reconstructs the WS-log
+    /// `build_rpc_log` (moved from the `PyO3` shell) reconstructs the WS-log
     /// shape `(address, topics, data, block_number)` into the
     /// `alloy::rpc::types::Log` the dispatcher consumes, with the parse
     /// refusals the shell mapped to `ValueError`.

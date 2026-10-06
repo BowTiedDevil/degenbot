@@ -236,7 +236,6 @@ impl PyBot {
     /// twin uses the same identity/fee/coverage surface as the original
     /// inline block: identity from the core's immutable pool key,
     /// protocol fee from the core's state machine, coverage as recorded.
-    #[expect(clippy::type_complexity)]
     fn registered_v4_payload(
         &self,
         py: Python<'_>,
@@ -311,6 +310,10 @@ impl PyBot {
     /// (detected budget + floor + one operator hint) at this submit and at
     /// every submit after it (the sticky materializer); the host process
     /// survives — the library never aborts on the boot-refusal arm.
+    #[expect(
+        clippy::unused_self,
+        reason = "pymethod keeps its instance surface; the stance gate is process-global"
+    )]
     fn submit_registration_unit(&self, fn_work: Py<PyAny>) -> PyResult<intake::PyIntakeReceipt> {
         // The PRG-3 stance gate is core-owned (the typed refusal carries the
         // historical message); the receipt itself stays pyo3-bound here.
@@ -711,9 +714,9 @@ impl PyBot {
         // The write guard is acquired inside the core method
         // ([`Bot::register_v2_pool`]); the GIL is released across this
         // py.detach — never hold the GIL while parked on the BotState write.
-        let pool_id = py
-            .detach(|| {
-                self.bot.register_v2_pool(
+        let pool_id = py.detach(|| {
+            self.bot
+                .register_v2_pool(
                     addr,
                     t0,
                     t1,
@@ -727,8 +730,8 @@ impl PyBot {
                     stable_swap,
                     fee_denominator,
                 )
-            })
-            .map_err(map_v2_registration_err)?;
+                .map_err(map_v2_registration_err)
+        })?;
         // Telemetry: see build_v2_pool — one Jaeger node per V2 registration.
         let _reg = tracing::info_span!(
             "degenbot.pool.register",
@@ -1405,7 +1408,7 @@ impl PyBot {
         // (inversion class).
         let out = py
             .detach(|| self.bot.calculate_tokens_out(pool_id, zero_for_one, amount))
-            .map_err(map_calc_tokens_out_err)?;
+            .map_err(|e| map_calc_tokens_out_err(&e))?;
         let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
     }
@@ -1485,7 +1488,7 @@ impl PyBot {
         // (inversion class).
         let result = py
             .detach(|| self.bot.calculate_tokens_in(pool_id, zero_for_one, amount))
-            .map_err(map_calc_tokens_in_err)?;
+            .map_err(|e| map_calc_tokens_in_err(&e))?;
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
@@ -1881,26 +1884,27 @@ impl PyBot {
         let fetcher = tick_data_fetcher
             .filter(|f| !f.is_none())
             .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind()));
-        let result = py.detach(|| {
-            self.bot.register_v3_pool(
-                addr,
-                t0,
-                t1,
-                fee,
-                tick_spacing,
-                fac,
-                spx,
-                liq,
-                tick,
-                rust_tick_data,
-                update_block,
-                cov,
-                fetcher,
-                tick_data_block,
-                slot_override,
-            )
-        });
-        result.map_err(map_v3_registration_err)
+        py.detach(|| {
+            self.bot
+                .register_v3_pool(
+                    addr,
+                    t0,
+                    t1,
+                    fee,
+                    tick_spacing,
+                    fac,
+                    spx,
+                    liq,
+                    tick,
+                    rust_tick_data,
+                    update_block,
+                    cov,
+                    fetcher,
+                    tick_data_block,
+                    slot_override,
+                )
+                .map_err(map_v3_registration_err)
+        })
     }
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
@@ -2260,12 +2264,11 @@ impl PyBot {
         // The fetch/detect/register choreography is core-owned
         // ([`Bot::build_and_register_curve_pool`]); the GIL is released
         // across the whole scope.
-        Ok(py
-            .detach(|| {
-                self.bot
-                    .build_and_register_curve_pool(addr, &registry, block)
-            })
-            .map_err(|e| map_build_err("build_curve_pool", e))?)
+        py.detach(|| {
+            self.bot
+                .build_and_register_curve_pool(addr, &registry, block)
+        })
+        .map_err(|e| map_build_err("build_curve_pool", e))
     }
 
     /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
@@ -2476,7 +2479,7 @@ impl PyBot {
                 update_block,
             )
         })
-        .map_err(map_aerodrome_registration_err)
+        .map_err(|e| map_aerodrome_registration_err(&e))
     }
 
     /// Update a V3 pool's state from a Swap event.
@@ -2594,7 +2597,7 @@ impl PyBot {
         // parsed `addr`.
         py.detach(|| {
             self.bot
-                .register_token(addr, name, symbol, decimals, chain_id)
+                .register_token(addr, name, symbol, decimals, chain_id);
         });
         Ok(PyErc20Token::new(self.bot.state_arc(), addr))
     }

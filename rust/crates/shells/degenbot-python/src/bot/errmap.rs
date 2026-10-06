@@ -313,7 +313,7 @@ pub(crate) fn map_v3_build_err(
 /// unknown-pool and unsupported-family `ValueError`s, and the legacy `0`
 /// mapping for unrecovered sparse-map misses (done core-side).
 pub(crate) fn map_calc_tokens_out_err(
-    err: degenbot_bot::bot_core::build_register::CalcTokensOutError,
+    err: &degenbot_bot::bot_core::build_register::CalcTokensOutError,
 ) -> pyo3::PyErr {
     use degenbot_bot::bot_core::build_register::CalcTokensOutError;
     match err {
@@ -338,7 +338,7 @@ pub(crate) fn map_calc_tokens_out_err(
 /// Map a core `CalcTokensInError` to the shell's historical surfaces: the
 /// overflow `ValueError` and the typed exact-output family gap.
 pub(crate) fn map_calc_tokens_in_err(
-    err: degenbot_bot::bot_core::build_register::CalcTokensInError,
+    err: &degenbot_bot::bot_core::build_register::CalcTokensInError,
 ) -> pyo3::PyErr {
     use degenbot_bot::bot_core::build_register::CalcTokensInError;
     match err {
@@ -384,7 +384,7 @@ pub(crate) fn map_v3_registration_err(
 /// Map an Aerodrome registration refusal (only the EIP-1167 verify can
 /// refuse) to the bare-mismatch `ValueError` the shell has always raised.
 pub(crate) fn map_aerodrome_registration_err(
-    err: degenbot_bot::bot_core::registration::AerodromeRegistrationError,
+    err: &degenbot_bot::bot_core::registration::AerodromeRegistrationError,
 ) -> pyo3::PyErr {
     match err {
         degenbot_bot::bot_core::registration::AerodromeRegistrationError::Create2(m) => {
@@ -396,7 +396,7 @@ pub(crate) fn map_aerodrome_registration_err(
 /// Map a core
 /// [`ResolveV4IdentityError`](degenbot_bot::bot_core::registration::ResolveV4IdentityError)
 /// to the shell's historical surfaces: the method-prefixed "no
-/// ConstructionIo attached" `RuntimeError` and the builder error map.
+/// `ConstructionIo` attached" `RuntimeError` and the builder error map.
 pub(crate) fn map_resolve_v4_identity_err(
     err: degenbot_bot::bot_core::registration::ResolveV4IdentityError,
 ) -> pyo3::PyErr {
@@ -492,7 +492,7 @@ pub(crate) fn hooked_pool_approximation(
 }
 
 /// `ValueError` carrying the `encode_swap:`-prefixed encoder detail.
-pub(crate) fn encode_swap_failed(detail: String) -> PyErr {
+pub(crate) fn encode_swap_failed(detail: &str) -> PyErr {
     PyValueError::new_err(format!("encode_swap: {detail}"))
 }
 
@@ -504,7 +504,7 @@ mod tests {
     //! Addresses used in pins are all-digit hex so their rendering is
     //! identical under any case convention.
 
-    #![expect(clippy::unwrap_used, clippy::expect_used)]
+    #![expect(clippy::unwrap_used)]
 
     use super::*;
     use alloy::primitives::{Address, B256, U256};
@@ -528,11 +528,11 @@ mod tests {
         }
     }
 
-    fn message(err: PyErr) -> String {
+    fn message(err: &PyErr) -> String {
         strip_class(err.to_string())
     }
 
-    fn value_error(err: PyErr) -> String {
+    fn value_error(err: &PyErr) -> String {
         let rendered = Python::attach(|py| {
             assert!(
                 err.is_instance_of::<PyValueError>(py),
@@ -543,7 +543,7 @@ mod tests {
         strip_class(rendered)
     }
 
-    fn runtime_error(err: PyErr) -> String {
+    fn runtime_error(err: &PyErr) -> String {
         let rendered = Python::attach(|py| {
             assert!(
                 err.is_instance_of::<PyRuntimeError>(py),
@@ -558,12 +558,12 @@ mod tests {
     fn driver_err_passthrough_uses_display_text() {
         let err = map_driver_err(DriverError::NoResultReceiver);
         assert_eq!(
-            runtime_error(err),
+            runtime_error(&err),
             DriverError::NoResultReceiver.to_string(),
             "the receiver refusal keeps Display as the single source of its text"
         );
         let err = map_driver_err(DriverError::SessionState("already subscribed".to_string()));
-        assert_eq!(runtime_error(err), "already subscribed");
+        assert_eq!(runtime_error(&err), "already subscribed");
     }
 
     #[test]
@@ -575,7 +575,7 @@ mod tests {
             assert!(err.is_instance_of::<VerificationRpcError>(py));
         });
         assert_eq!(
-            message(err),
+            message(&err),
             "registration verify requires an RPC provider for tracked pools — configure the bot's single provider"
         );
 
@@ -583,7 +583,7 @@ mod tests {
             RegistrationLifecycleError::MissingTickSpacing,
         ));
         assert_eq!(
-            runtime_error(err),
+            runtime_error(&err),
             RegistrationLifecycleError::MissingTickSpacing.to_string()
         );
     }
@@ -594,22 +594,22 @@ mod tests {
         Python::attach(|py| {
             assert!(err.is_instance_of::<VerificationMismatchError>(py));
         });
-        assert_eq!(message(err), "tick drift");
+        assert_eq!(message(&err), "tick drift");
 
         let err = map_verify_lifecycle_error(VerifyError::Provider("http down".to_string()));
         Python::attach(|py| {
             assert!(err.is_instance_of::<VerificationRpcError>(py));
         });
-        assert_eq!(message(err), "http down");
+        assert_eq!(message(&err), "http down");
 
         let err = map_verify_lifecycle_error(VerifyError::Rpc("timeout".to_string()));
         Python::attach(|py| {
             assert!(err.is_instance_of::<VerificationRpcError>(py));
         });
-        assert_eq!(message(err), "timeout");
+        assert_eq!(message(&err), "timeout");
 
         let err = map_verify_lifecycle_error(VerifyError::Other("boom".to_string()));
-        assert_eq!(runtime_error(err), "boom");
+        assert_eq!(runtime_error(&err), "boom");
     }
 
     #[test]
@@ -629,7 +629,7 @@ mod tests {
             );
         });
         assert_eq!(
-            message(err),
+            message(&err),
             "V3 pool 0x.. block=1: tick 5 liquidityGross mismatch"
         );
 
@@ -647,7 +647,7 @@ mod tests {
             );
         });
         assert_eq!(
-            message(err),
+            message(&err),
             "V3 pool 0x..: tickBitmap(0) RPC call failed: timeout"
         );
     }
@@ -658,7 +658,7 @@ mod tests {
             address: addr("0x0101010101010101010101010101010101010101"),
         });
         assert_eq!(
-            message(err),
+            message(&err),
             "V2 pool already registered: address=0x0101010101010101010101010101010101010101"
         );
 
@@ -668,7 +668,7 @@ mod tests {
             bound: "uint112 (≤ 2^112 − 1)",
         }));
         assert_eq!(
-            message(err),
+            message(&err),
             "V2 pool registration failed: field `reserve0` value 7 is out of bounds: uint112 (≤ 2^112 − 1)"
         );
     }
@@ -679,7 +679,7 @@ mod tests {
             address: addr("0x0202020202020202020202020202020202020202"),
         });
         assert_eq!(
-            message(err),
+            message(&err),
             "V3 pool already registered: address=0x0202020202020202020202020202020202020202"
         );
 
@@ -689,7 +689,7 @@ mod tests {
             bound: "|tick| ≤ 887272",
         }));
         assert_eq!(
-            message(err),
+            message(&err),
             "V3 pool registration failed: field `tick` value 887273 is out of bounds: |tick| ≤ 887272"
         );
     }
@@ -698,7 +698,7 @@ mod tests {
     fn register_v4_err_pins_the_vocabulary() {
         let err = map_register_v4_err(RegisterV4PoolError::HookedPool { hook_flags: 1 });
         assert_eq!(
-            message(err),
+            message(&err),
             format!(
                 "V4 pool has amount-modifying hooks (flags=0x0001, mask=0x{:04X}) — excluded from arbitrage",
                 degenbot_bot::bot_core::AMOUNT_MODIFYING_HOOK_MASK
@@ -707,13 +707,13 @@ mod tests {
 
         let err = map_register_v4_err(RegisterV4PoolError::DynamicFee { fee: 0x80_0000 });
         assert_eq!(
-            message(err),
+            message(&err),
             "V4 pool has dynamic fee (fee=0x800000) — excluded from arbitrage"
         );
 
         let err = map_register_v4_err(RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 70_000 });
         assert_eq!(
-            message(err),
+            message(&err),
             "V4 pool fee (fee=70000) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage"
         );
 
@@ -722,7 +722,7 @@ mod tests {
             pool_id: [0u8; 32],
         });
         assert_eq!(
-            message(err),
+            message(&err),
             format!(
                 "V4 pool already registered: pool_manager={}, pool_id=0x{}",
                 addr("0x0303030303030303030303030303030303030303"),
@@ -736,7 +736,7 @@ mod tests {
             bound: "nonzero",
         }));
         assert_eq!(
-            message(err),
+            message(&err),
             "V4 pool registration failed: field `tick_spacing` value 0 is out of bounds: nonzero"
         );
     }
@@ -748,7 +748,7 @@ mod tests {
                 "path crosses itself".to_string(),
             ),
         );
-        assert_eq!(value_error(err), "path crosses itself");
+        assert_eq!(value_error(&err), "path crosses itself");
 
         let err = map_path_registration_err(
             degenbot_bot::arb_engine::lifecycle::PathRegistrationError::RegistryFull {
@@ -757,7 +757,7 @@ mod tests {
             },
         );
         assert_eq!(
-            message(err),
+            message(&err),
             "registered-path cap reached (128/100) — the crawl must stop discovery"
         );
     }
@@ -767,35 +767,35 @@ mod tests {
         use degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError;
 
         assert_eq!(
-            message(map_builder_err(PoolBuilderError::Spec)),
+            message(&map_builder_err(PoolBuilderError::Spec)),
             "pool build out-of-spec V2 reserve"
         );
         assert_eq!(
-            message(map_builder_err(PoolBuilderError::Create2)),
+            message(&map_builder_err(PoolBuilderError::Create2)),
             "pool build CREATE2 address verification failed"
         );
         assert_eq!(
-            message(map_builder_err(PoolBuilderError::Decoding {
+            message(&map_builder_err(PoolBuilderError::Decoding {
                 message: "bad data".to_string(),
             })),
             "pool build decode failure: bad data"
         );
         assert_eq!(
-            message(map_builder_err(PoolBuilderError::MissingIdentity {
+            message(&map_builder_err(PoolBuilderError::MissingIdentity {
                 message: "no ticks".to_string(),
             })),
             "V4 identity incomplete: no ticks"
         );
         let factory = addr("0x0404040404040404040404040404040404040404");
         assert_eq!(
-            message(map_builder_err(PoolBuilderError::UnknownVariant {
+            message(&map_builder_err(PoolBuilderError::UnknownVariant {
                 factory
             })),
             format!("pool build unknown factory {factory} — no built-in DEX variant preset")
         );
         let address = addr("0x0505050505050505050505050505050505050505");
         assert_eq!(
-            message(map_builder_err(PoolBuilderError::UnknownPoolIdentity {
+            message(&map_builder_err(PoolBuilderError::UnknownPoolIdentity {
                 address
             })),
             format!("pool build unknown identity at {address}: no identity selector answered")
@@ -805,7 +805,7 @@ mod tests {
     #[test]
     fn no_construction_io_pins_the_method_prefix() {
         assert_eq!(
-            message(map_no_construction_io("build_v2_pool")),
+            message(&map_no_construction_io("build_v2_pool")),
             "build_v2_pool: no ConstructionIo attached (requires an alloy provider)"
         );
     }
@@ -813,14 +813,14 @@ mod tests {
     #[test]
     fn build_err_pins_the_no_io_prefix_and_builder_routing() {
         assert_eq!(
-            message(map_build_err(
+            message(&map_build_err(
                 "build_curve_pool",
                 degenbot_bot::bot_core::build_register::BuildError::NoConstructionIo,
             )),
             "build_curve_pool: no ConstructionIo attached (requires an alloy provider)"
         );
         assert_eq!(
-            message(map_build_err(
+            message(&map_build_err(
                 "build_curve_pool",
                 degenbot_bot::bot_core::build_register::BuildError::Builder(
                     degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Spec,
@@ -833,13 +833,13 @@ mod tests {
     #[test]
     fn v2_build_err_pins_the_no_io_prefix_and_routing() {
         assert_eq!(
-            message(map_v2_build_err(
+            message(&map_v2_build_err(
                 degenbot_bot::bot_core::build_register::V2BuildError::NoConstructionIo,
             )),
             "build_v2_pool: no ConstructionIo attached (requires an alloy provider)"
         );
         assert_eq!(
-            message(map_v2_build_err(
+            message(&map_v2_build_err(
                 degenbot_bot::bot_core::build_register::V2BuildError::Register(
                     RegisterV2PoolError::AlreadyRegistered {
                         address: addr("0x0101010101010101010101010101010101010101"),
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn v3_build_err_pins_the_refusal_and_race_answer() {
         assert_eq!(
-            message(map_v3_build_err(
+            message(&map_v3_build_err(
                 degenbot_bot::bot_core::build_register::V3BuildError::NoReadableIdentity {
                     address: addr("0x0606060606060606060606060606060606060606"),
                 },
@@ -867,22 +867,22 @@ mod tests {
         use degenbot_bot::bot_core::build_register::CalcTokensOutError;
         let overflow = "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)";
         assert_eq!(
-            value_error(map_calc_tokens_out_err(CalcTokensOutError::Overflow)),
+            value_error(&map_calc_tokens_out_err(&CalcTokensOutError::Overflow)),
             overflow
         );
         assert_eq!(
-            value_error(map_calc_tokens_out_err(CalcTokensOutError::NotComputable)),
+            value_error(&map_calc_tokens_out_err(&CalcTokensOutError::NotComputable)),
             overflow
         );
         assert_eq!(
-            value_error(map_calc_tokens_out_err(CalcTokensOutError::UnknownPool {
+            value_error(&map_calc_tokens_out_err(&CalcTokensOutError::UnknownPool {
                 pool_id: 5
             })),
             "swap_simulation: pool 5 is not registered"
         );
         assert_eq!(
-            value_error(map_calc_tokens_out_err(
-                CalcTokensOutError::UnsupportedFamily {
+            value_error(&map_calc_tokens_out_err(
+                &CalcTokensOutError::UnsupportedFamily {
                     pool_id: 5,
                     family: "v9",
                 }
@@ -895,12 +895,12 @@ mod tests {
     fn calc_tokens_in_err_pins_the_vocabulary() {
         use degenbot_bot::bot_core::build_register::CalcTokensInError;
         assert_eq!(
-            value_error(map_calc_tokens_in_err(CalcTokensInError::Overflow)),
+            value_error(&map_calc_tokens_in_err(&CalcTokensInError::Overflow)),
             "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)"
         );
         assert_eq!(
-            value_error(map_calc_tokens_in_err(
-                CalcTokensInError::UnsupportedFamily {
+            value_error(&map_calc_tokens_in_err(
+                &CalcTokensInError::UnsupportedFamily {
                     pool_id: 5,
                     family: "v9",
                 }
@@ -921,7 +921,7 @@ mod tests {
         };
         let expected = mismatch.to_string();
         assert_eq!(
-            value_error(map_v2_registration_err(V2RegistrationError::Create2(
+            value_error(&map_v2_registration_err(V2RegistrationError::Create2(
                 mismatch
             ))),
             expected
@@ -937,7 +937,7 @@ mod tests {
             },
         ));
         assert_eq!(
-            message(err),
+            message(&err),
             "V2 pool already registered: address=0x0101010101010101010101010101010101010101"
         );
     }
@@ -954,8 +954,8 @@ mod tests {
         };
         let expected = mismatch.to_string();
         assert_eq!(
-            value_error(map_aerodrome_registration_err(
-                AerodromeRegistrationError::Create2(mismatch),
+            value_error(&map_aerodrome_registration_err(
+                &AerodromeRegistrationError::Create2(mismatch),
             )),
             expected
         );
@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn resolve_v4_identity_err_pins_the_no_io_refusal() {
         assert_eq!(
-            message(map_resolve_v4_identity_err(
+            message(&map_resolve_v4_identity_err(
                 ResolveV4IdentityError::NoConstructionIo,
             )),
             "resolve_v4_identity: no ConstructionIo attached (requires an alloy provider)"
@@ -974,11 +974,11 @@ mod tests {
     #[test]
     fn pool_swap_math_overflow_pins_the_on_chain_revert_text() {
         assert_eq!(
-            value_error(swap_math_overflow()),
+            value_error(&swap_math_overflow()),
             "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)"
         );
         assert_eq!(
-            value_error(swap_math_in_overflow()),
+            value_error(&swap_math_in_overflow()),
             "Pool swap math overflowed uint256 intermediate (on-chain getAmountIn SafeMath revert)"
         );
     }
@@ -986,19 +986,19 @@ mod tests {
     #[test]
     fn pool_swap_family_surfaces_pin_their_vocabulary() {
         assert_eq!(
-            value_error(swap_unknown_pool(7)),
+            value_error(&swap_unknown_pool(7)),
             "swap_simulation: pool 7 is not registered"
         );
         assert_eq!(
-            value_error(swap_family_gap(7, "v2")),
+            value_error(&swap_family_gap(7, "v2")),
             "swap_simulation: pool 7 family v2 is not supported for this operation"
         );
         assert_eq!(
-            value_error(exact_output_family_gap("calculate_tokens_in", 7, "curve")),
+            value_error(&exact_output_family_gap("calculate_tokens_in", 7, "curve")),
             "calculate_tokens_in: pool 7 family curve has no exact-output path"
         );
         assert_eq!(
-            value_error(exact_output_family_gap(
+            value_error(&exact_output_family_gap(
                 "simulate_exact_output_swap_with_fetch",
                 9,
                 "balancer-stable"
@@ -1011,16 +1011,16 @@ mod tests {
     fn pool_override_and_handle_surfaces_pin_their_vocabulary() {
         // The family tag renders in its historical Debug (quoted) form.
         assert_eq!(
-            value_error(override_family_gap(7, "v2")),
+            value_error(&override_family_gap(7, "v2")),
             "simulate_override: pool 7 family \"v2\" has no concentrated-liquidity override state"
         );
         assert_eq!(
-            value_error(pool_unregistered(12)),
+            value_error(&pool_unregistered(12)),
             "pool 12 is not registered"
         );
         assert_eq!(
-            value_error(encode_swap_failed(
-                "pool 7 family [\"v3\"] has no swap encoder".to_string()
+            value_error(&encode_swap_failed(
+                "pool 7 family [\"v3\"] has no swap encoder"
             )),
             "encode_swap: pool 7 family [\"v3\"] has no swap encoder"
         );
@@ -1047,13 +1047,13 @@ mod tests {
     #[test]
     fn journal_err_pins_the_no_state_vocabulary() {
         assert_eq!(
-            value_error(journal_err_to_py(JournalError::NoStatePriorToBlock {
+            value_error(&journal_err_to_py(JournalError::NoStatePriorToBlock {
                 block: 9
             })),
             "No pool state known prior to block 9"
         );
         assert_eq!(
-            value_error(journal_err_to_py(JournalError::NoStateAtOrAfterBlock {
+            value_error(&journal_err_to_py(JournalError::NoStateAtOrAfterBlock {
                 block: 11
             })),
             "No pool state known at or after block 11"
