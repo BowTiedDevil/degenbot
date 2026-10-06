@@ -25,6 +25,16 @@
 //!   revisions + `getSourceOfAsset`) + [`resolve_collateral_configuration`]
 //!   (`getConfiguration(address)`).
 //! - The discount pre-pass: [`build_discount_snapshot`] (the 3-way hybrid).
+//! - The revision memo: [`RevisionMemo`] — a per-run, block-pinned
+//!   `(implementation, selector, block) → revision` cache over the 4
+//!   revision reads, so repeated same-implementation probes inside one
+//!   chunk issue one RPC.
+//! - The multicall batching: a dispatch's same-block, mutually-independent
+//!   `eth_call`s (the discount pre-pass's per-user fan, the
+//!   `ReserveInitialized` metadata + revision/`getSourceOfAsset` bursts)
+//!   fold into ONE Multicall3 `aggregate3` round trip — but only when 2+
+//!   calls are pending, so a single-call dispatch keeps its exact
+//!   sequential wire shape.
 //!
 //! # Out-of-scope references (the 6 missing-variant events live elsewhere)
 //!
@@ -54,7 +64,7 @@
 
 #![expect(clippy::missing_errors_doc, clippy::doc_markdown)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::run::substrate::ChunkSubstrate;
 use crate::ray_mul;
@@ -62,6 +72,7 @@ use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::{DbError, DebtPositionRefreshContext, DegenbotDb};
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
+use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
@@ -110,6 +121,76 @@ pub enum ConfigDispatchError {
     /// `is_discount_supported` gate).
     #[error("missing vtoken revision for market {0}")]
     MissingVtokenRevision(i64),
+}
+
+// ── the revision memo ──────────────────────────────────────────────────────
+
+/// Per-run, block-pinned memo over the config dispatch's revision reads
+/// (`ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` / `POOL_REVISION()` /
+/// `CONFIGURATOR_REVISION()`).
+///
+/// The key is `(implementation, selector, block)`: a revision is chain state
+/// at a block, so one triple can never observe two values within a run — a
+/// memo hit is definitionally the same read. The block lane is what makes an
+/// `Upgraded` chunk safe: the upgrade dispatch reads the NEW implementation
+/// at the upgrade block, and every later read sits at a later block (its own
+/// key), so no read can be served a pre-upgrade value across the boundary.
+///
+/// Lifetime: one instance per chunk apply (`process_chunk_on_conn`), which
+/// is the whole read span the dispatch can observe — chunks partition the
+/// block range, so no cross-chunk key collision exists, and the memo never
+/// outlives the run (a plain local, not global state).
+#[derive(Debug, Default)]
+pub(crate) struct RevisionMemo {
+    entries: HashMap<(Address, [u8; 4], u64), U256>,
+}
+
+impl RevisionMemo {
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// The memo hit for one revision-read key, if any.
+    fn get(&self, target: &Address, selector: [u8; 4], block_number: u64) -> Option<U256> {
+        self.entries
+            .get(&(*target, selector, block_number))
+            .copied()
+    }
+
+    /// Record one revision read (the value the chain answered at `block_number`).
+    fn insert(&mut self, target: &Address, selector: [u8; 4], block_number: u64, value: U256) {
+        self.entries
+            .insert((*target, selector, block_number), value);
+    }
+
+    /// The memoized [`read_uint256_return`]: one RPC per
+    /// `(implementation, selector, block)` per run, identical results after.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the underlying `eth_call` failure on a memo miss.
+    pub(crate) async fn read(
+        &mut self,
+        provider: &AlloyProvider,
+        target: &Address,
+        sig: &str,
+        block_number: u64,
+    ) -> Result<U256, ConfigDispatchError> {
+        let selector = revision_selector(sig);
+        if let Some(v) = self.get(target, selector, block_number) {
+            return Ok(v);
+        }
+        let v = read_uint256_return(provider, target, sig, block_number).await?;
+        self.insert(target, selector, block_number, v);
+        Ok(v)
+    }
+}
+
+/// The 4-byte selector of a revision signature (the memo key's middle lane).
+fn revision_selector(sig: &str) -> [u8; 4] {
+    let hash = keccak256(sig.as_bytes());
+    [hash[0], hash[1], hash[2], hash[3]]
 }
 
 // ── the 8 sync config handlers (no RPC — testable with in-memory DB) ───────
@@ -706,7 +787,7 @@ pub async fn resolve_collateral_configuration(
 /// param, so this is consistent with the existing contract — the gap is
 /// isolated to this fn's token resolution).
 #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
-pub async fn resolve_reserve_initialized(
+pub(crate) async fn resolve_reserve_initialized(
     provider: &AlloyProvider,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
     market_id: i64,
@@ -715,67 +796,78 @@ pub async fn resolve_reserve_initialized(
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     conn: &Connection,
+    memo: &mut RevisionMemo,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken),
     //    RPC-fetching the name/symbol/decimals from the chain (the
     //    standalone-Rust-core constraint — Rust owns the loop, no PyO3 FFI for
-    //    metadata). Port of `erc20_utils._fetch_erc20_token_metadata`.
+    //    metadata). Port of `erc20_utils._fetch_erc20_token_metadata`. The 3
+    //    tokens' fields ride ONE Multicall3 pass (same block, mutually
+    //    independent reads; the per-field selector fallbacks are part of the
+    //    batch — both spellings are issued and the decision consumes the
+    //    batched results in the sequential logic's exact order).
     let underlying_str = checksum(&decoded.asset);
-    let (name, symbol, decimals) =
-        fetch_erc20_metadata(provider, &decoded.asset, block_number).await;
+    let a_token_str = checksum(&decoded.a_token);
+    let v_token_str = checksum(&decoded.variable_debt_token);
+    let metadata = fetch_erc20_metadata_batched(
+        provider,
+        [
+            &decoded.asset,
+            &decoded.a_token,
+            &decoded.variable_debt_token,
+        ],
+        block_number,
+    )
+    .await;
+    let [(underlying_name, underlying_symbol, underlying_decimals), (a_name, a_symbol, a_decimals), (v_name, v_symbol, v_decimals)] =
+        metadata;
     let underlying_asset_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
         chain_id,
         &underlying_str,
-        name.as_deref(),
-        symbol.as_deref(),
-        decimals,
+        underlying_name.as_deref(),
+        underlying_symbol.as_deref(),
+        underlying_decimals,
     )?;
-    let a_token_str = checksum(&decoded.a_token);
-    let (name, symbol, decimals) =
-        fetch_erc20_metadata(provider, &decoded.a_token, block_number).await;
     let a_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
         chain_id,
         &a_token_str,
-        name.as_deref(),
-        symbol.as_deref(),
-        decimals,
+        a_name.as_deref(),
+        a_symbol.as_deref(),
+        a_decimals,
     )?;
-    let v_token_str = checksum(&decoded.variable_debt_token);
-    let (name, symbol, decimals) =
-        fetch_erc20_metadata(provider, &decoded.variable_debt_token, block_number).await;
     let v_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
         chain_id,
         &v_token_str,
-        name.as_deref(),
-        symbol.as_deref(),
-        decimals,
+        v_name.as_deref(),
+        v_symbol.as_deref(),
+        v_decimals,
     )?;
 
     // 2. EIP-1967: resolve the aToken + vToken implementation addresses.
+    //    `get_storage_at` has no Multicall3 shape — these two stay sequential.
     let atoken_impl = read_implementation_slot(provider, &decoded.a_token, block_number).await?;
     let vtoken_impl =
         read_implementation_slot(provider, &decoded.variable_debt_token, block_number).await?;
 
-    // 3. ATOKEN_REVISION() / DEBT_TOKEN_REVISION() on the implementations.
-    let a_token_revision =
-        read_uint256_return(provider, &atoken_impl, "ATOKEN_REVISION()", block_number).await?;
-    let v_token_revision = read_uint256_return(
-        provider,
-        &vtoken_impl,
-        "DEBT_TOKEN_REVISION()",
-        block_number,
-    )
-    .await?;
-
-    // 4. getSourceOfAsset(address) on the PRICE_ORACLE contract.
-    let source_calldata = encode_single_address_call("getSourceOfAsset(address)", &decoded.asset);
-    let source_ret = provider
-        .eth_call(&oracle_address, source_calldata, Some(block_number))
+    // 3. + 4. ATOKEN_REVISION() / DEBT_TOKEN_REVISION() on the implementations
+    //    + getSourceOfAsset(address) on the PRICE_ORACLE — three
+    //    mutually-independent same-block reads folded into ONE transport pass
+    //    when 2+ remain after the memo (a lone remaining call keeps the exact
+    //    sequential shape; see `eth_calls_batched_or_direct`).
+    let (a_token_revision, v_token_revision, price_source) =
+        read_reserve_init_revisions_and_source(
+            provider,
+            memo,
+            atoken_impl,
+            vtoken_impl,
+            &decoded.asset,
+            &oracle_address,
+            block_number,
+        )
         .await?;
-    let price_source = decode_address_return(&source_ret);
 
     Ok(AaveChunkEvent::ReserveInitialized {
         market_id,
@@ -841,6 +933,15 @@ pub async fn build_discount_snapshot(
     let discount_supported = rev < GHO_DISCOUNT_DEPRECATION_REVISION;
 
     let mut snapshot: HashMap<Address, U256> = HashMap::new();
+    // path #2 is DEFERRED: the users the DB cache cannot answer collect here
+    // (first-encounter order) and resolve in ONE transport pass after the
+    // scan. The DB reads keep their per-log position + order; nothing writes
+    // to `conn` between them, so the deferral cannot observe different DB
+    // state — the only change is the transport shape (2+ same-block
+    // `getDiscountPercent` calls fold into one Multicall3 `aggregate3`; a
+    // single pending user keeps the exact sequential request shape).
+    let mut rpc_users: Vec<Address> = Vec::new();
+    let mut rpc_pending: HashSet<Address> = HashSet::new();
     for log in tx_logs {
         let topics = log.topics();
         if topics.is_empty() || log.address() != vtoken_addr {
@@ -855,7 +956,7 @@ pub async fn build_discount_snapshot(
         } else {
             continue;
         };
-        if snapshot.contains_key(&user) {
+        if snapshot.contains_key(&user) || rpc_pending.contains(&user) {
             continue; // first-encounter wins (matches the Python `if user_address not in user_discounts`)
         }
         // path #1: DB-cache.
@@ -872,13 +973,28 @@ pub async fn build_discount_snapshot(
             snapshot.insert(user, U256::ZERO);
             continue;
         }
-        // path #2: RPC getDiscountPercent(user) at block_number.
-        let calldata = encode_single_address_call("getDiscountPercent(address)", &user);
-        let ret = provider
-            .eth_call(&vtoken_addr, calldata, Some(block_number))
-            .await?;
+        // path #2: deferred — collect the user; the batched read below.
+        rpc_pending.insert(user);
+        rpc_users.push(user);
+    }
+    // path #2 resolution: one transport pass over the deferred users. Every
+    // call is independent (same target, same block; no call's result gates
+    // another), so the batch is semantically identical to the sequential
+    // reads; a failed sub-call is LOUD (a hard error), never a silent zero
+    // default.
+    let calldatas: Vec<(Address, Bytes)> = rpc_users
+        .iter()
+        .map(|user| {
+            (
+                vtoken_addr,
+                encode_single_address_call("getDiscountPercent(address)", user),
+            )
+        })
+        .collect();
+    let rets = eth_calls_batched_or_direct(provider, &calldatas, block_number).await?;
+    for (user, ret) in rpc_users.iter().zip(rets) {
         let discount = word0_to_u256(&ret).unwrap_or(U256::ZERO);
-        snapshot.insert(user, discount);
+        snapshot.insert(*user, discount);
     }
     Ok(snapshot)
 }
@@ -894,7 +1010,7 @@ pub async fn build_discount_snapshot(
 /// scope: `Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
 /// `PoolDataProviderUpdated`/`AddressSet`/`ProxyCreated`).
 #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
-pub async fn dispatch_config_events(
+pub(crate) async fn dispatch_config_events(
     provider: &AlloyProvider,
     tx_logs: &[&alloy::rpc::types::Log],
     market_id: i64,
@@ -905,6 +1021,7 @@ pub async fn dispatch_config_events(
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     substrate: &mut ChunkSubstrate,
+    memo: &mut RevisionMemo,
 ) -> Result<Vec<AaveChunkEvent>, ConfigDispatchError> {
     let mut events = Vec::new();
     for log in tx_logs {
@@ -922,6 +1039,7 @@ pub async fn dispatch_config_events(
             gho_asset,
             block_number,
             &mut *substrate,
+            memo,
         )
         .await?
         {
@@ -987,6 +1105,7 @@ async fn dispatch_single_config_event(
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     substrate: &mut ChunkSubstrate,
+    memo: &mut RevisionMemo,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     let ev =
         match decoded {
@@ -1068,6 +1187,7 @@ async fn dispatch_single_config_event(
                         gho_asset,
                         block_number,
                         conn,
+                        memo,
                     )
                     .await?,
                 )
@@ -1111,6 +1231,7 @@ async fn dispatch_single_config_event(
                     block_number,
                     conn,
                     substrate,
+                    memo,
                 )
                 .await?
             }
@@ -1123,6 +1244,7 @@ async fn dispatch_single_config_event(
 /// `clippy::too_many_lines` limit. Returns `Ok(None)` for non-missing-variant
 /// events (operation events) + for `ProxyCreated` when the `id` doesn't match
 /// `POOL`/`POOL_CONFIGURATOR`.
+#[expect(clippy::too_many_arguments)] // the dispatch's substrate + memo threading
 ///
 /// # Events
 ///
@@ -1143,6 +1265,7 @@ async fn resolve_missing_variant_event(
     block_number: u64,
     conn: &Connection,
     substrate: &mut ChunkSubstrate,
+    memo: &mut RevisionMemo,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     let ev = match decoded {
         DecodedAaveEvent::Upgraded(ev) => Some(
@@ -1154,6 +1277,7 @@ async fn resolve_missing_variant_event(
                 block_number,
                 conn,
                 substrate,
+                memo,
             )
             .await?,
         ),
@@ -1165,6 +1289,7 @@ async fn resolve_missing_variant_event(
                 "POOL_REVISION()",
                 market_id,
                 block_number,
+                memo,
             )
             .await?,
         ),
@@ -1176,6 +1301,7 @@ async fn resolve_missing_variant_event(
                 "CONFIGURATOR_REVISION()",
                 market_id,
                 block_number,
+                memo,
             )
             .await?,
         ),
@@ -1208,6 +1334,7 @@ async fn resolve_missing_variant_event(
                 &ev.implementation_address,
                 provider,
                 block_number,
+                memo,
             )
             .await?
             {
@@ -1286,6 +1413,154 @@ async fn read_uint256_return(
         .eth_call(target, calldata, Some(block_number))
         .await?;
     Ok(word0_to_u256(&ret).unwrap_or(U256::ZERO))
+}
+
+// ── the multicall batching seam ────────────────────────────────────────────
+
+/// Run a set of same-block read-only `eth_call`s in ONE transport pass when
+/// 2+ are pending, or as the exact single sequential `eth_call` when exactly
+/// one is — the config dispatch's batching seam.
+///
+/// The batch rides [`degenbot_rpc::multicall3::multicall3_batch`]
+/// (`aggregate3`, `allowFailure = true` — the liquidity verifier's idiom). A
+/// failed sub-call is a HARD error here, never a silent default: the
+/// sequential reads this replaces propagate an `eth_call` failure as
+/// [`ConfigDispatchError::Rpc`] (the chunk rolls back), and the batch
+/// preserves that contract — only the failure payload is coarser (Multicall3
+/// reports revert/no-answer as `success = false` with empty return data; the
+/// provider's per-call error body is not recoverable through the batch). A
+/// batch of one degrades to the direct call so a single-call dispatch keeps
+/// its exact wire shape — a 1-call `aggregate3` wrapper would change the
+/// recorded request set for no round-trip gain.
+///
+/// # Errors
+///
+/// Propagates the direct `eth_call`'s error (the 1-call shape) or fails on
+/// any batch sub-call that reverted or went unanswered.
+async fn eth_calls_batched_or_direct(
+    provider: &AlloyProvider,
+    calls: &[(Address, Bytes)],
+    block_number: u64,
+) -> Result<Vec<Bytes>, ConfigDispatchError> {
+    match calls {
+        [] => Ok(Vec::new()),
+        [(target, data)] => {
+            let ret = provider
+                .eth_call(target, data.clone(), Some(block_number))
+                .await?;
+            Ok(vec![ret])
+        }
+        many => {
+            let results = multicall3_batch(provider, many, Some(block_number)).await?;
+            let mut out = Vec::with_capacity(results.len());
+            for (i, r) in results.into_iter().enumerate() {
+                if !r.success {
+                    return Err(ConfigDispatchError::Rpc(
+                        degenbot_core::errors::ProviderError::RpcError {
+                            code: -32000,
+                            message: format!(
+                                "multicall3 sub-call {i} of {} reverted or went unanswered                                  (target {}); the sequential reads would have failed the chunk                                  the same way",
+                                many.len(),
+                                checksum(&many[i].0)
+                            ),
+                        },
+                    ));
+                }
+                out.push(r.return_data);
+            }
+            Ok(out)
+        }
+    }
+}
+
+/// Which pending same-block read one `ReserveInitialized` dispatch slot
+/// feeds — the two memo-carrying revision reads + the always-pending price
+/// source read.
+#[derive(Debug)]
+enum PendingRead {
+    /// `ATOKEN_REVISION()` on the aToken implementation — carries the memo
+    /// key to record the answered value under.
+    ATokenRevision((Address, [u8; 4], u64)),
+    /// `DEBT_TOKEN_REVISION()` on the vToken implementation — same key shape.
+    VTokenRevision((Address, [u8; 4], u64)),
+    /// `getSourceOfAsset(address)` on the PRICE_ORACLE (not a revision — no
+    /// memo; it is a distinct contract read at the same block).
+    SourceOfAsset,
+}
+
+/// The `ReserveInitialized` dispatch's step-3+4 reads —
+/// `ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` on the two implementations +
+/// `getSourceOfAsset(underlying)` on the oracle — folded into ONE transport
+/// pass when 2+ remain after the memo (the price-source read is always
+/// pending, so the batch runs whenever either revision misses; when both
+/// revisions are memo hits the lone source call keeps the exact sequential
+/// shape). Revision results are recorded into `memo` under their
+/// `(implementation, selector, block)` keys.
+///
+/// # Errors
+///
+/// Propagates the batch's error contract (see
+/// [`eth_calls_batched_or_direct`]).
+async fn read_reserve_init_revisions_and_source(
+    provider: &AlloyProvider,
+    memo: &mut RevisionMemo,
+    atoken_impl: Address,
+    vtoken_impl: Address,
+    underlying: &Address,
+    oracle_address: &Address,
+    block_number: u64,
+) -> Result<(U256, U256, Option<String>), ConfigDispatchError> {
+    let a_selector = revision_selector("ATOKEN_REVISION()");
+    let v_selector = revision_selector("DEBT_TOKEN_REVISION()");
+    let mut a_revision = memo.get(&atoken_impl, a_selector, block_number);
+    let mut v_revision = memo.get(&vtoken_impl, v_selector, block_number);
+
+    let mut pending: Vec<(Address, Bytes, PendingRead)> = Vec::new();
+    if a_revision.is_none() {
+        pending.push((
+            atoken_impl,
+            encode_no_arg_call("ATOKEN_REVISION()"),
+            PendingRead::ATokenRevision((atoken_impl, a_selector, block_number)),
+        ));
+    }
+    if v_revision.is_none() {
+        pending.push((
+            vtoken_impl,
+            encode_no_arg_call("DEBT_TOKEN_REVISION()"),
+            PendingRead::VTokenRevision((vtoken_impl, v_selector, block_number)),
+        ));
+    }
+    let source_calldata = encode_single_address_call("getSourceOfAsset(address)", underlying);
+    pending.push((*oracle_address, source_calldata, PendingRead::SourceOfAsset));
+
+    let pairs: Vec<(Address, Bytes)> = pending.iter().map(|(t, d, _)| (*t, d.clone())).collect();
+    let rets = eth_calls_batched_or_direct(provider, &pairs, block_number).await?;
+    let mut source = None;
+    for ((_, _, slot), ret) in pending.iter().zip(rets) {
+        match slot {
+            PendingRead::ATokenRevision((t, s, b)) => {
+                let v = word0_to_u256(&ret).unwrap_or(U256::ZERO);
+                memo.insert(t, *s, *b, v);
+                a_revision = Some(v);
+            }
+            PendingRead::VTokenRevision((t, s, b)) => {
+                let v = word0_to_u256(&ret).unwrap_or(U256::ZERO);
+                memo.insert(t, *s, *b, v);
+                v_revision = Some(v);
+            }
+            PendingRead::SourceOfAsset => source = decode_address_return(&ret),
+        }
+    }
+    // Both revision slots are filled by construction — a memo hit or the
+    // batched read above (the source slot is always pending, so the batch
+    // always runs). The guard keeps the invariant loud rather than assumed.
+    match (a_revision, v_revision) {
+        (Some(a), Some(v)) => Ok((a, v, source)),
+        _ => Err(ConfigDispatchError::DecodeShape(
+            "ReserveInitialized: a revision slot was left unfilled after the batched reads"
+                .to_string(),
+        )),
+    }
 }
 
 /// Decode the first 32-byte word of an `eth_call` return as a `U256`.
@@ -1464,6 +1739,7 @@ pub(crate) struct ProxyCreationResolution {
 ///    and the new revision ≥ `GHO_DISCOUNT_DEPRECATION_REVISION` (4). It clears
 ///    `v_gho_discount_token`/`v_gho_discount_rate_strategy` and bulk-resets
 ///    all users' `gho_discount` to 0 (the apply fn does the writes).
+#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 async fn resolve_upgraded(
     provider: &AlloyProvider,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UpgradedEvent,
@@ -1472,6 +1748,7 @@ async fn resolve_upgraded(
     block_number: u64,
     conn: &Connection,
     substrate: &mut ChunkSubstrate,
+    memo: &mut RevisionMemo,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let proxy_str = checksum(&decoded.proxy_address);
     // 1. asset lookup: a_token first, then v_token.
@@ -1488,14 +1765,19 @@ async fn resolve_upgraded(
         };
         (row.id, false)
     };
-    // 2. RPC the revision on the new implementation.
+    // 2. RPC the revision on the new implementation (memoized per
+    //    (implementation, selector, block) — an `Upgraded` fires once per
+    //    contract per market lifetime, so the memo's role here is the
+    //    re-encounter case: a rolled-and-replayed span or a same-block
+    //    sibling event re-reading the same implementation).
     let rev_fn = if is_a_token {
         "ATOKEN_REVISION()"
     } else {
         "DEBT_TOKEN_REVISION()"
     };
-    let new_revision =
-        read_uint256_return(provider, &decoded.implementation, rev_fn, block_number).await?;
+    let new_revision = memo
+        .read(provider, &decoded.implementation, rev_fn, block_number)
+        .await?;
     let new_revision_i64 = discount_to_i64(new_revision);
     // 3. GHO-discount-deprecation (vToken only).
     let deprecated_gho_token_id = if is_a_token {
@@ -1533,8 +1815,11 @@ async fn resolve_contract_revision_updated(
     revision_fn: &str,
     market_id: i64,
     block_number: u64,
+    memo: &mut RevisionMemo,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    let revision = read_uint256_return(provider, &new_address, revision_fn, block_number).await?;
+    let revision = memo
+        .read(provider, &new_address, revision_fn, block_number)
+        .await?;
     Ok(AaveChunkEvent::ContractRevisionUpdated {
         market_id,
         contract_name: contract_name.to_string(),
@@ -1554,6 +1839,7 @@ pub(crate) async fn match_proxy_id(
     implementation_address: &Address,
     provider: &AlloyProvider,
     block_number: u64,
+    memo: &mut RevisionMemo,
 ) -> Result<Option<ProxyCreationResolution>, ConfigDispatchError> {
     let (name, rev_fn) = if id.as_slice() == POOL_PROXY_ID {
         ("POOL", "POOL_REVISION()")
@@ -1562,8 +1848,9 @@ pub(crate) async fn match_proxy_id(
     } else {
         return Ok(None);
     };
-    let revision =
-        read_uint256_return(provider, implementation_address, rev_fn, block_number).await?;
+    let revision = memo
+        .read(provider, implementation_address, rev_fn, block_number)
+        .await?;
     Ok(Some(ProxyCreationResolution {
         name: name.to_string(),
         address: checksum(proxy_address),
@@ -1608,6 +1895,101 @@ pub(crate) async fn fetch_erc20_metadata(
     (name, symbol, decimals)
 }
 
+/// RPC-fetch `(name, symbol, decimals)` for SEVERAL tokens in ONE Multicall3
+/// `aggregate3` pass — the `ReserveInitialized` metadata burst (3 tokens ×
+/// 3 fields × 2 selector spellings = 18 same-block reads → 1 round trip).
+///
+/// Per-field semantics mirror [`fetch_erc20_metadata`]'s sequential logic
+/// exactly (`string_field_from_batch` / `decimals_from_batch`): a failed
+/// lower-spelling result (the revert/transport class the sequential path
+/// sees as an `eth_call` error) makes the field `None` WITHOUT consulting
+/// the fallback spelling — the sequential `.ok()?` early-return — and a
+/// succeeded-but-undecodable return falls through to the fallback spelling.
+/// BOTH spellings are always issued (`allowFailure = true`): the per-field
+/// decision consumes the batched results, so the values are identical to
+/// the sequential shape; only the request set always carries the fallback
+/// spelling (read-only calls; a recorder records the batched shape whole).
+pub(crate) async fn fetch_erc20_metadata_batched(
+    provider: &AlloyProvider,
+    tokens: [&Address; 3],
+    block_number: u64,
+) -> [(Option<String>, Option<String>, Option<i64>); 3] {
+    const FIELD_FNS: [&str; 6] = [
+        "name()",
+        "NAME()",
+        "symbol()",
+        "SYMBOL()",
+        "decimals()",
+        "DECIMALS()",
+    ];
+    let mut calls: Vec<(Address, Bytes)> = Vec::with_capacity(tokens.len() * FIELD_FNS.len());
+    for token in tokens {
+        for func in FIELD_FNS {
+            calls.push((*token, encode_no_arg_call(func)));
+        }
+    }
+    // `multicall3_batch` already degrades a failed/malformed batch to
+    // sequential per-call `eth_call`s mapped to per-item `success` flags; an
+    // `Err` can only mean its own encode step failed (defensively
+    // unreachable) — mirror it as all-failed results, which the per-field
+    // decisions turn into the sequential shape's `None` fields.
+    let results: Vec<MulticallResult> =
+        match multicall3_batch(provider, &calls, Some(block_number)).await {
+            Ok(r) => r,
+            Err(_) => calls
+                .iter()
+                .map(|_| MulticallResult {
+                    success: false,
+                    return_data: Bytes::new(),
+                })
+                .collect(),
+        };
+    let field = |i: usize| -> (Option<String>, Option<String>, Option<i64>) {
+        let base = i * FIELD_FNS.len();
+        let name = string_field_from_batch(&results[base], &results[base + 1]);
+        let symbol = string_field_from_batch(&results[base + 2], &results[base + 3]);
+        let decimals = decimals_from_batch(&results[base + 4], &results[base + 5]);
+        (name, symbol, decimals)
+    };
+    [field(0), field(1), field(2)]
+}
+
+/// The `(name|symbol)` decision over one field's batched `[lower, upper]`
+/// selector results — the exact sequential order of
+/// [`fetch_erc20_string_metadata`]: a failed lower result (the revert /
+/// transport class) returns `None` WITHOUT consulting the upper spelling
+/// (the sequential `.ok()?` early-return); a succeeded-but-undecodable lower
+/// return falls through to the upper spelling; each spelling decodes the
+/// dynamic `string` form before the bytes32 fallback.
+fn string_field_from_batch(lower: &MulticallResult, upper: &MulticallResult) -> Option<String> {
+    if !lower.success {
+        return None;
+    }
+    decode_string_return(&lower.return_data).or_else(|| {
+        if !upper.success {
+            return None;
+        }
+        decode_string_return(&upper.return_data)
+    })
+}
+
+/// The `decimals` decision over one field's batched `[lower, upper]` results
+/// — mirrors [`fetch_erc20_decimals`]'s sequential order with the same
+/// failed-lower early-`None`.
+fn decimals_from_batch(lower: &MulticallResult, upper: &MulticallResult) -> Option<i64> {
+    if !lower.success {
+        return None;
+    }
+    word0_to_u256(&lower.return_data)
+        .map(|v| v.to::<u64>().cast_signed())
+        .or_else(|| {
+            if !upper.success {
+                return None;
+            }
+            word0_to_u256(&upper.return_data).map(|v| v.to::<u64>().cast_signed())
+        })
+}
+
 async fn fetch_erc20_string_metadata(
     provider: &AlloyProvider,
     token: &Address,
@@ -1621,18 +2003,26 @@ async fn fetch_erc20_string_metadata(
             .eth_call(token, calldata, Some(block_number))
             .await
             .ok()?;
-        if let Some(s) = decode_dynamic_string(&ret) {
+        if let Some(s) = decode_string_return(&ret) {
             return Some(s);
         }
-        // Fallback: bytes32 decode (older tokens). Take the first 32 bytes +
-        // strip the trailing NULs.
-        if ret.len() >= 32 {
-            let s = String::from_utf8_lossy(&ret[..32])
-                .trim_end_matches('\0')
-                .to_string();
-            if !s.is_empty() {
-                return Some(s);
-            }
+    }
+    None
+}
+
+/// The per-spelling string decode shared by the sequential and batched
+/// metadata paths: dynamic `string` first, then the bytes32 fallback (older
+/// tokens — first 32 bytes, trailing NULs stripped, non-empty).
+fn decode_string_return(ret: &[u8]) -> Option<String> {
+    if let Some(s) = decode_dynamic_string(ret) {
+        return Some(s);
+    }
+    if ret.len() >= 32 {
+        let s = String::from_utf8_lossy(&ret[..32])
+            .trim_end_matches('\0')
+            .to_string();
+        if !s.is_empty() {
+            return Some(s);
         }
     }
     None
@@ -2467,5 +2857,368 @@ mod tests {
             }
             other => panic!("expected Some(GhoDiscountRateStrategyUpdated), got {other:?}"),
         }
+    }
+
+    // ── the revision memo + the multicall batching seam ─────────────────
+    //
+    // The offline provider seam: an in-memory cassette ledger built from a
+    // JSON literal (the recorder's own format) + the replay transport — the
+    // same D5 injection the committed-corpus replay suites use, so the
+    // served/request counters are the SAME measurement the replay gates read.
+
+    use degenbot_rpc::cassette::Cassette;
+    use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+    use degenbot_rpc::multicall3::{encode_aggregate3, MULTICALL3_ADDRESS};
+
+    /// The independent `eth_abi`-encoded `(bool,bytes)[]` aggregate3 return
+    /// for two 32-byte successes (`0x…2a`, `0x…2b`) — the multicall3 module's
+    /// reference-vector precedent (computed with a DIFFERENT ABI encoder).
+    const AGGREGATE3_RETURN_2_SUCCESSES: &str = "00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002b";
+
+    /// An in-memory cassette from `(ledger key, result hex)` pairs — the
+    /// recorder's JSON format parsed through the crate's own parser, with
+    /// the write digest computed over the same compact response JSON the
+    /// recorder digests.
+    fn test_cassette(entries: Vec<(String, String)>) -> Cassette {
+        let body: Vec<String> = entries
+            .into_iter()
+            .map(|(key, result_hex)| {
+                let response_json = format!(r#"{{"result":"{result_hex}"}}"#);
+                let digest = alloy::primitives::keccak256(response_json.as_bytes()).to_string();
+                // The ledger key is itself a JSON STRING in the file form —
+                // the embedded quotes escape (the keys are pure ASCII, so
+                // `escape_default` produces exactly the recorder's `\"`).
+                let escaped_key = key.escape_default().to_string();
+                format!(r#""{escaped_key}": {{"response": {response_json}, "digest": "{digest}"}}"#)
+            })
+            .collect();
+        let json = format!(
+            "{{\"schema\":\"degenbot.cassette/v1\",\"chain_id\":1,             \"provenance\":{{\"source\":\"test\",\"recorded_at\":\"1970-01-01T00:00:00Z\",             \"span\":{{\"from_block\":0,\"to_block\":0}}}},\"entries\":{{{}}}}}",
+            body.join(",")
+        );
+        Cassette::from_json_str(&json).expect("the in-memory test cassette parses")
+    }
+
+    /// The canonical ledger key for an `eth_call`: the compact JSON pair the
+    /// recorder writes — the calldata under `input` in its ALREADY-CANONICAL
+    /// form (the caller canonicalizes), the target lowercase (a ≥17-digit
+    /// verbatim hex address), and the block tag in the canonical
+    /// decimal-string form.
+    fn eth_call_key(canonical_input: &str, to_hex: &str, block: u64) -> String {
+        format!(
+            "[\"eth_call\",[{{\"input\":\"{canonical_input}\",\"to\":\"{to_hex}\"}},\"{block}\"]]"
+        )
+    }
+
+    /// The canonical form of a 4-byte selector-only calldata — the cassette
+    /// short-hex precision rule applied to the selector the code encodes: a
+    /// minimal-form short quantity (≤16 hex digits, no leading zero, `0x0`
+    /// aside) DECIMALIZES; a leading-zero digit marks a NON-minimal byte-hex
+    /// that stays verbatim. `ATOKEN_REVISION()` = `0x0bd7ad3b` (leading zero
+    /// → verbatim) and `DEBT_TOKEN_REVISION()` = `0xb9a7b622` (→ decimal)
+    /// cover both classes. Mirrors `canonical_hex_quantity` (the committed
+    /// corpus guard in `degenbot-rpc::cassette` pins the rule).
+    fn canonical_selector_input(sig: &str) -> String {
+        let selector = revision_selector(sig);
+        let digits = alloy::hex::encode(selector);
+        if digits.starts_with('0') {
+            // Non-minimal byte-hex — stays verbatim (decimalizing would not
+            // re-hex back to the same wire string).
+            format!("0x{digits}")
+        } else {
+            u64::from_str_radix(&digits, 16)
+                .expect("an 8-hex-digit selector parses as u64")
+                .to_string()
+        }
+    }
+
+    /// The verbatim (≥17-digit) form of a selector+address calldata —
+    /// canonicalization leaves it untouched (the recorded getDiscountPercent
+    /// entry's shape).
+    fn address_arg_input(sig: &str, user: &Address) -> String {
+        format!("0x{}{}", alloy::hex::encode(revision_selector(sig)), {
+            let mut word = [0u8; 32];
+            word[12..].copy_from_slice(user.as_slice());
+            alloy::hex::encode(word)
+        })
+    }
+
+    /// A 32-byte big-endian word as a `0x`-prefixed hex string (the wire form
+    /// an `eth_call` result carries).
+    fn word_result_hex(v: u64) -> String {
+        format!("0x{v:064x}")
+    }
+
+    fn batch_success(data: &[u8]) -> MulticallResult {
+        MulticallResult {
+            success: true,
+            return_data: Bytes::from(data.to_vec()),
+        }
+    }
+
+    fn batch_failure() -> MulticallResult {
+        MulticallResult {
+            success: false,
+            return_data: Bytes::new(),
+        }
+    }
+
+    /// An ABI dynamic-`string` return: the 0x20 offset word, the length word,
+    /// the data right-padded to a 32-byte multiple.
+    fn dynamic_string_return(s: &str) -> Vec<u8> {
+        let len = u8::try_from(s.len()).expect("the test strings fit one length word");
+        let mut v = vec![0u8; 64];
+        v[31] = 0x20;
+        v[63] = len;
+        v.extend_from_slice(s.as_bytes());
+        while !v.len().is_multiple_of(32) {
+            v.push(0);
+        }
+        v
+    }
+
+    #[test]
+    fn string_field_from_batch_mirrors_the_sequential_fallback_order() {
+        // lower succeeds with a dynamic string — the upper spelling is never
+        // consulted (and a garbage upper must not matter).
+        assert_eq!(
+            string_field_from_batch(
+                &batch_success(&dynamic_string_return("WETH")),
+                &batch_failure()
+            ),
+            Some("WETH".to_string())
+        );
+        // lower succeeds but is undecodable as a string (32 zero bytes — the
+        // bytes32 fallback strips to empty) → falls through to the upper
+        // spelling.
+        assert_eq!(
+            string_field_from_batch(
+                &batch_success(&[0u8; 32]),
+                &batch_success(&dynamic_string_return("MKR"))
+            ),
+            Some("MKR".to_string())
+        );
+        // A bytes32-returning lower spelling (older tokens) decodes without
+        // the upper spelling.
+        let mut bytes32 = [0u8; 32];
+        bytes32[..3].copy_from_slice(b"DAI");
+        assert_eq!(
+            string_field_from_batch(&batch_success(&bytes32), &batch_failure()),
+            Some("DAI".to_string())
+        );
+        // A FAILED lower result (the revert/transport class the sequential
+        // path saw as an `eth_call` error) returns None WITHOUT consulting
+        // the upper spelling — the sequential `.ok()?` early-return.
+        assert_eq!(
+            string_field_from_batch(
+                &batch_failure(),
+                &batch_success(&dynamic_string_return("WETH"))
+            ),
+            None
+        );
+        // A succeeded-but-undecodable lower + a failed upper → None.
+        assert_eq!(
+            string_field_from_batch(&batch_success(&[0u8; 32]), &batch_failure()),
+            None
+        );
+    }
+
+    #[test]
+    fn decimals_from_batch_mirrors_the_sequential_fallback_order() {
+        let word = |v: u64| {
+            let mut w = [0u8; 32];
+            w[24..32].copy_from_slice(&v.to_be_bytes());
+            w
+        };
+        // lower succeeds → the upper spelling is never consulted.
+        assert_eq!(
+            decimals_from_batch(&batch_success(&word(18)), &batch_failure()),
+            Some(18)
+        );
+        // lower succeeds but is undecodable (short return) → the upper
+        // spelling answers.
+        assert_eq!(
+            decimals_from_batch(&batch_success(&[0u8; 16]), &batch_success(&word(6))),
+            Some(6)
+        );
+        // A FAILED lower result returns None WITHOUT the upper spelling.
+        assert_eq!(
+            decimals_from_batch(&batch_failure(), &batch_success(&word(18))),
+            None
+        );
+        assert_eq!(
+            decimals_from_batch(&batch_success(&[0u8; 16]), &batch_failure()),
+            None
+        );
+    }
+
+    #[test]
+    fn revision_memo_second_same_key_read_serves_no_new_entry() {
+        let target = Address::repeat_byte(0x11);
+        let input = encode_no_arg_call("ATOKEN_REVISION()");
+        // The wire calldata is the 4-byte selector; its canonical ledger-key
+        // form is the DECIMALIZED quantity (the short-hex precision rule).
+        assert_eq!(
+            input.as_ref(),
+            revision_selector("ATOKEN_REVISION()"),
+            "the memo read issues the selector-only calldata"
+        );
+        let key = eth_call_key(
+            &canonical_selector_input("ATOKEN_REVISION()"),
+            &format!("0x{}", alloy::hex::encode(target)),
+            100,
+        );
+        let transport =
+            CassetteReplayTransport::new(test_cassette(vec![(key, word_result_hex(7))]));
+        let provider = transport.as_alloy_provider();
+        degenbot_core::runtime::get_runtime().block_on(async {
+            let mut memo = RevisionMemo::new();
+            let v1 = memo
+                .read(&provider, &target, "ATOKEN_REVISION()", 100)
+                .await
+                .unwrap();
+            let v2 = memo
+                .read(&provider, &target, "ATOKEN_REVISION()", 100)
+                .await
+                .unwrap();
+            assert_eq!(v1, U256::from(7));
+            assert_eq!(v2, U256::from(7), "the memo hit returns the recorded value");
+            let snap = transport.served_snapshot();
+            assert_eq!(
+                snap.served, 1,
+                "the second same-(impl, selector, block) read must be a memo hit, not a new RPC"
+            );
+            assert_eq!(snap.requests, 1, "no extra request left the transport");
+            // A different block is a different key — the memo never serves a
+            // read across blocks (the `Upgraded` safety lane).
+            let miss = memo
+                .read(&provider, &target, "ATOKEN_REVISION()", 101)
+                .await;
+            assert!(
+                miss.is_err(),
+                "an unrecorded key is a loud miss, never a memo hit"
+            );
+            assert_eq!(
+                transport.served_snapshot().served,
+                1,
+                "the miss served no ledger entry"
+            );
+        });
+    }
+
+    #[test]
+    fn batched_calls_single_call_keeps_the_direct_wire_shape() {
+        let target = Address::repeat_byte(0x22);
+        // A 36-byte selector+address calldata (the recorded getDiscountPercent
+        // shape) stays verbatim under canonicalization — the exact form the
+        // committed corpus's single eth_call entry carries.
+        let user = Address::repeat_byte(0x33);
+        let input = encode_single_address_call("getDiscountPercent(address)", &user);
+        let key = eth_call_key(
+            &address_arg_input("getDiscountPercent(address)", &user),
+            &format!("0x{}", alloy::hex::encode(target)),
+            100,
+        );
+        let transport =
+            CassetteReplayTransport::new(test_cassette(vec![(key, word_result_hex(9))]));
+        let provider = transport.as_alloy_provider();
+        degenbot_core::runtime::get_runtime().block_on(async {
+            let calls = vec![(target, input)];
+            let rets = eth_calls_batched_or_direct(&provider, &calls, 100)
+                .await
+                .unwrap();
+            assert_eq!(word0_to_u256(&rets[0]), Some(U256::from(9)));
+            let snap = transport.served_snapshot();
+            assert_eq!(
+                snap.requests, 1,
+                "a single pending call must stay the exact direct eth_call —                  no aggregate3 wrapper attempt"
+            );
+            assert_eq!(snap.served, 1);
+        });
+    }
+
+    #[test]
+    fn batched_calls_two_calls_fold_into_one_aggregate3_entry() {
+        let a = Address::repeat_byte(0xaa);
+        let b = Address::repeat_byte(0xbb);
+        let calls = vec![
+            (a, encode_no_arg_call("ATOKEN_REVISION()")),
+            (b, encode_no_arg_call("DEBT_TOKEN_REVISION()")),
+        ];
+        let encoded = encode_aggregate3(&calls).unwrap();
+        let key = eth_call_key(
+            &format!("0x{}", alloy::hex::encode(encoded.as_ref())),
+            &format!("0x{}", alloy::hex::encode(MULTICALL3_ADDRESS)),
+            100,
+        );
+        let transport = CassetteReplayTransport::new(test_cassette(vec![(
+            key,
+            format!("0x{AGGREGATE3_RETURN_2_SUCCESSES}"),
+        )]));
+        let provider = transport.as_alloy_provider();
+        degenbot_core::runtime::get_runtime().block_on(async {
+            let rets = eth_calls_batched_or_direct(&provider, &calls, 100)
+                .await
+                .unwrap();
+            assert_eq!(rets.len(), 2);
+            assert_eq!(word0_to_u256(&rets[0]), Some(U256::from(42)));
+            assert_eq!(word0_to_u256(&rets[1]), Some(U256::from(43)));
+            let snap = transport.served_snapshot();
+            assert_eq!(
+                snap.requests, 1,
+                "2+ same-block independent calls fold into ONE aggregate3 request"
+            );
+            assert_eq!(snap.served, 1, "the batch serves exactly one ledger entry");
+        });
+    }
+
+    #[test]
+    fn batched_calls_fall_back_to_sequential_when_the_batch_is_unrecorded() {
+        // The degradation contract: on a chain (or against a ledger) without
+        // the aggregate3 entry, the batch request misses and the per-call
+        // fallback serves the DIRECT entries — values correct, but the
+        // request set carries the failed wrapper (requests 3, served 2).
+        // This is why the batch only fires where 2+ calls are pending: the
+        // recorded shapes of single-call dispatches never change.
+        let a = Address::repeat_byte(0xaa);
+        let b = Address::repeat_byte(0xbb);
+        let calls = vec![
+            (a, encode_no_arg_call("ATOKEN_REVISION()")),
+            (b, encode_no_arg_call("DEBT_TOKEN_REVISION()")),
+        ];
+        // Each direct entry's key carries the selector's CANONICAL form (the
+        // short-hex precision rule: `ATOKEN_REVISION()`'s leading-zero
+        // selector stays verbatim, `DEBT_TOKEN_REVISION()`'s decimalizes).
+        let sigs = ["ATOKEN_REVISION()", "DEBT_TOKEN_REVISION()"];
+        let direct_keys: Vec<(String, String)> = calls
+            .iter()
+            .zip(sigs)
+            .map(|((t, _), sig)| {
+                (
+                    eth_call_key(
+                        &canonical_selector_input(sig),
+                        &format!("0x{}", alloy::hex::encode(*t)),
+                        100,
+                    ),
+                    word_result_hex(5),
+                )
+            })
+            .collect();
+        let transport = CassetteReplayTransport::new(test_cassette(direct_keys));
+        let provider = transport.as_alloy_provider();
+        degenbot_core::runtime::get_runtime().block_on(async {
+            let rets = eth_calls_batched_or_direct(&provider, &calls, 100)
+                .await
+                .unwrap();
+            assert_eq!(rets.len(), 2);
+            assert_eq!(word0_to_u256(&rets[0]), Some(U256::from(5)));
+            assert_eq!(word0_to_u256(&rets[1]), Some(U256::from(5)));
+            let snap = transport.served_snapshot();
+            assert_eq!(
+                snap.requests, 3,
+                "the failed aggregate3 attempt + the two fallback eth_calls"
+            );
+            assert_eq!(snap.served, 2, "both direct entries served");
+        });
     }
 }

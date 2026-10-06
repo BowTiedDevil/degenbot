@@ -14,7 +14,7 @@ use rusqlite::Connection;
 
 use super::substrate::{candidate_addresses, ChunkSubstrate};
 use super::{apply_chunk_events_on_conn, AaveChunkEvent, RunError};
-use crate::config_dispatch::{build_discount_snapshot, dispatch_config_events};
+use crate::config_dispatch::{build_discount_snapshot, dispatch_config_events, RevisionMemo};
 use crate::transaction_processor::process_transaction;
 
 /// One transaction's grouped logs. Sorted by `(block_number, first log_index)`
@@ -138,6 +138,16 @@ pub(super) async fn process_chunk_on_conn(
     // lock across their RPC reads) and the per-tx + end-of-chunk SQL apply.
     let mut decode_compute_time = Duration::ZERO;
     let mut apply_time = Duration::ZERO;
+    // Perf D: the per-chunk revision memo — one `RevisionMemo` per chunk
+    // apply, threaded through the config dispatch so the 4 revision reads
+    // (`ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` / `POOL_REVISION()` /
+    // `CONFIGURATOR_REVISION()`) dedupe per `(implementation, selector,
+    // block)`. Chunks partition the block range, so chunk scope is the full
+    // read span the dispatch can observe; the block-pinned key keeps the
+    // memo safe across an in-chunk `Upgraded` (the upgrade's own read sits
+    // at the upgrade block; every later read sits at a later block — a
+    // distinct key — so no pre-upgrade value can leak across the boundary).
+    let mut revision_memo = RevisionMemo::new();
 
     for group in tx_groups {
         let block_number = group.block_number;
@@ -227,7 +237,9 @@ pub(super) async fn process_chunk_on_conn(
         )
         .await?;
 
-        // (c) The config-event dispatch (RPC + substrate lookups).
+        // (c) The config-event dispatch (RPC + substrate lookups). The
+        //     revision reads ride the per-chunk memo (Perf D); the
+        //     same-block independent `eth_call`s ride the multicall batch.
         let config_events = dispatch_config_events(
             provider,
             &tx_hashes_refs,
@@ -239,6 +251,7 @@ pub(super) async fn process_chunk_on_conn(
             gho_asset_tx.as_ref(),
             block_number,
             &mut substrate,
+            &mut revision_memo,
         )
         .await?;
 

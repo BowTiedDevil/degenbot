@@ -73,8 +73,13 @@ pub(super) async fn bootstrap_pool_contracts(
     // 3. Decode + resolve each `ProxyCreated` (async RPC for the revision).
     //    `match_proxy_id` returns `None` for non-POOL/non-POOL_CONFIGURATOR ids
     //    (e.g. the `POOL_DATA_PROVIDER` proxy id) — those are skipped (the chunk
-    //    loop's `PoolDataProviderUpdated`/`AddressSet` arms handle them).
+    //    loop's `PoolDataProviderUpdated`/`AddressSet` arms handle them). The
+    //    revision read rides a bootstrap-local revision memo (the same
+    //    `(implementation, selector, block)`-keyed cache the chunk dispatch
+    //    uses — this pass is the pre-chunk phase, so it owns its own
+    //    instance; the key's block lane keeps it correct regardless).
     let mut resolutions: Vec<ProxyCreationResolution> = Vec::new();
+    let mut revision_memo = crate::config_dispatch::RevisionMemo::new();
     for log in &logs {
         let Some(degenbot_decoders::aave_event_decoder::DecodedAaveEvent::ProxyCreated(ev)) =
             degenbot_decoders::aave_event_decoder::decode_aave_log(log)
@@ -87,6 +92,7 @@ pub(super) async fn bootstrap_pool_contracts(
             &ev.implementation_address,
             provider,
             from_block,
+            &mut revision_memo,
         )
         .await?
         {
