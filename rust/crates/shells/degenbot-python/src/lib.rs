@@ -366,8 +366,9 @@ mod _ffi {
     // label enum FROM the core vocabulary rather than re-declaring it.
     #[pymodule_export]
     use crate::registration::{
-        classify_build_refusal, registration_outcome_tags, registration_pool_memo_key,
-        PyBuildRefusal, PyRegistrationLedger, PyUnregistrablePoolRecord,
+        classify_build_refusal, fold_registration_unit, registration_outcome_tags,
+        registration_pool_memo_key, registration_unit_kinds, PyBuildRefusal,
+        PyRegistrationFoldDelta, PyRegistrationLedger, PyUnregistrablePoolRecord,
     };
 
     // Uniswap mixed V2/V3/V4 engine (feature = "bot") + the block-stream

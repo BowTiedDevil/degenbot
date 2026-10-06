@@ -13,7 +13,8 @@
 use crate::prelude::*;
 
 use degenbot_bot::bot_core::registration_ledger::{
-    BuildFailure, BuildRefusal, HopSignature, RegistrationLedger, RegistrationOutcome,
+    BuildFailure, BuildRefusal, HopSignature, OutcomeLabel, PipelineReport, RegistrationLedger,
+    RegistrationOutcome, RegistrationUnitOutcome,
 };
 use degenbot_pathfinding::PoolKind;
 
@@ -250,6 +251,186 @@ fn to_view(refusal: BuildRefusal) -> PyBuildRefusal {
     }
 }
 
+/// The delta one unit fold applies to a driver's summary counters — the
+/// core's [`PipelineReport`] after exactly one `absorb`. The counter
+/// ARITHMETIC is the core's (one definition in
+/// `degenbot_bot::bot_core::registration_ledger`); a driver that keeps its
+/// own counter storage applies this answer mechanically, field for field.
+#[pyclass(name = "RegistrationFoldDelta", module = "degenbot._ffi")]
+pub struct PyRegistrationFoldDelta {
+    report: PipelineReport,
+}
+
+#[pymethods]
+impl PyRegistrationFoldDelta {
+    /// New paths registered by this fold.
+    #[getter]
+    fn path_count(&self) -> usize {
+        self.report.path_count
+    }
+
+    /// Skips added by this fold.
+    #[getter]
+    fn skip_count(&self) -> usize {
+        self.report.skip_count
+    }
+
+    /// Benign post-cap skips added by this fold.
+    #[getter]
+    fn cap_skip_count(&self) -> usize {
+        self.report.cap_skip_count
+    }
+
+    /// Engine rejections added by this fold.
+    #[getter]
+    fn engine_reject_count(&self) -> usize {
+        self.report.engine_reject_count
+    }
+
+    /// Duplicates added by this fold.
+    #[getter]
+    fn dup_count(&self) -> usize {
+        self.report.dup_count
+    }
+
+    /// Register failures added by this fold.
+    #[getter]
+    fn register_fail_count(&self) -> usize {
+        self.report.register_fail_count
+    }
+
+    /// V4 hops witnessed by this fold (`Registered` outcomes only).
+    #[getter]
+    fn v4_pool_count(&self) -> usize {
+        self.report.v4_pool_count
+    }
+
+    /// V4 hook rejections added by this fold.
+    #[getter]
+    fn v4_hook_rejected(&self) -> usize {
+        self.report.v4_hook_rejected
+    }
+
+    /// V4 dynamic-fee rejections added by this fold.
+    #[getter]
+    fn v4_dynamic_fee_rejected(&self) -> usize {
+        self.report.v4_dynamic_fee_rejected
+    }
+
+    /// Other counted exceptions added by this fold (folds with
+    /// `engine_reject_count`).
+    #[getter]
+    fn other_exc_count(&self) -> usize {
+        self.report.other_exc_count
+    }
+
+    /// Whether this fold latched the benign cap stop.
+    #[getter]
+    fn capped(&self) -> bool {
+        self.report.capped
+    }
+
+    /// Units folded (always 1 — the one-fold-per-unit witness a driver
+    /// accumulates against its own unit count).
+    #[getter]
+    fn units_folded(&self) -> usize {
+        self.report.units_folded
+    }
+
+    /// Uncounted skips added by this fold (`counts_as_skip == false`).
+    #[getter]
+    fn uncounted_skip_count(&self) -> usize {
+        self.report.uncounted_skip_count
+    }
+
+    /// The reason-label deltas as `(label, count)` pairs (a fold records at
+    /// most one label).
+    #[getter]
+    fn skip_reasons(&self) -> Vec<(String, usize)> {
+        self.report
+            .skip_reasons
+            .iter()
+            .map(|(label, count)| (label.clone(), *count))
+            .collect()
+    }
+}
+
+/// The closed unit-kind set — the vocabulary a Python consumer builds its
+/// kind labels from, so a kind cannot drift between the core and a driver.
+#[must_use]
+#[pyfunction]
+#[pyo3(name = "registration_unit_kinds")]
+pub fn registration_unit_kinds() -> Vec<&'static str> {
+    RegistrationUnitOutcome::KINDS.to_vec()
+}
+
+/// Fold one unit outcome with the core's arithmetic and return the delta.
+///
+/// `kind` is one of `registration_unit_kinds()`; `tag` is the skip's reason
+/// tag (a bounded `RegistrationOutcome` tag, or a free-form driver label
+/// recorded verbatim — a skip without one is a caller bug); `detail` is the
+/// log-only failure text.
+///
+/// # Errors
+///
+/// `ValueError` for a kind outside the closed set, or a skip with no tag:
+/// wire drift is a loud construction failure, never a guessed outcome.
+#[pyfunction]
+#[pyo3(
+    name = "fold_registration_unit",
+    signature = (kind, tag, counts_as_skip, created, v4_hops, detail)
+)]
+pub fn fold_registration_unit(
+    kind: &str,
+    tag: Option<&str>,
+    counts_as_skip: bool,
+    created: bool,
+    v4_hops: usize,
+    detail: Option<String>,
+) -> PyResult<PyRegistrationFoldDelta> {
+    let outcome = to_unit_outcome(kind, tag, counts_as_skip, created, v4_hops, detail)?;
+    let mut report = PipelineReport::default();
+    report.absorb(&outcome);
+    Ok(PyRegistrationFoldDelta { report })
+}
+
+/// The core unit outcome the driver's (kind, tag, ...) unit names.
+///
+/// # Errors
+///
+/// `ValueError` for an unknown kind or an untagged skip.
+fn to_unit_outcome(
+    kind: &str,
+    tag: Option<&str>,
+    counts_as_skip: bool,
+    created: bool,
+    v4_hops: usize,
+    detail: Option<String>,
+) -> PyResult<RegistrationUnitOutcome> {
+    match kind {
+        "skip" => {
+            let tag = tag.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "a skip outcome names its refusal tag: expected a bounded                      registration-outcome tag or the driver's own label",
+                )
+            })?;
+            Ok(RegistrationUnitOutcome::Skip {
+                label: OutcomeLabel::from_driver_tag(tag),
+                counts_as_skip,
+                detail,
+            })
+        }
+        "reject" => Ok(RegistrationUnitOutcome::Reject { detail }),
+        "cap" => Ok(RegistrationUnitOutcome::Cap),
+        "register-fail" => Ok(RegistrationUnitOutcome::RegisterFailed { detail }),
+        "registered" => Ok(RegistrationUnitOutcome::Registered { created, v4_hops }),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown registration unit kind {other:?}: expected one of {:?}",
+            RegistrationUnitOutcome::KINDS
+        ))),
+    }
+}
+
 /// The core outcome a bounded tag names, or a `ValueError` naming the closed
 /// set — an unknown tag is a caller bug, never a silent default.
 fn to_outcome(tag: &str) -> PyResult<RegistrationOutcome> {
@@ -285,7 +466,11 @@ fn to_pool_kind(pool_type: &str) -> PyResult<PoolKind> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used)]
+    #![expect(clippy::unwrap_used, reason = "tests assert on known-valid inputs")]
+    #![expect(
+        clippy::panic,
+        reason = "negative-probe teeth: these panic! arms fail the test when a refusal wrongly folds"
+    )]
 
     use super::*;
 
@@ -325,5 +510,81 @@ mod tests {
                 );
             }
         });
+    }
+
+    /// The fold's counter arithmetic over the FFI — the Python driver's
+    /// delta path answers exactly what the core's own fold test pins
+    /// (`registration_ledger::tests::fold_lands_every_outcome_in_its_counter_bucket`).
+    #[test]
+    fn fold_registration_unit_answers_the_core_delta_per_kind() {
+        pyo3::Python::attach(|_py| {
+            let skip =
+                fold_registration_unit("skip", Some("v4-hook-rejected"), false, false, 0, None)
+                    .unwrap();
+            assert_eq!(skip.v4_hook_rejected(), 1);
+            assert_eq!(skip.skip_count(), 0, "V4 admission refusals are not skips");
+            assert_eq!(skip.uncounted_skip_count(), 1);
+            assert_eq!(skip.skip_reasons(), vec![("v4-hook-rejected".into(), 1)]);
+
+            let reject = fold_registration_unit("reject", None, true, false, 0, None).unwrap();
+            assert_eq!(reject.engine_reject_count(), 1);
+            assert_eq!(reject.other_exc_count(), 1);
+            assert!(reject.skip_reasons().is_empty());
+
+            let registered =
+                fold_registration_unit("registered", None, true, true, 2, None).unwrap();
+            assert_eq!(registered.path_count(), 1);
+            assert_eq!(registered.v4_pool_count(), 2);
+            assert_eq!(registered.units_folded(), 1);
+            assert!(!registered.capped());
+
+            let cap =
+                fold_registration_unit("cap", Some("path-cap"), true, false, 0, None).unwrap();
+            assert!(cap.capped());
+            assert_eq!(cap.cap_skip_count(), 1);
+            assert_eq!(cap.skip_count(), 1);
+
+            let fail = fold_registration_unit(
+                "register-fail",
+                Some("register-fail"),
+                true,
+                false,
+                0,
+                Some("boom".into()),
+            )
+            .unwrap();
+            assert_eq!(fail.register_fail_count(), 1);
+            assert_eq!(fail.skip_reasons(), vec![("register-fail".into(), 1)]);
+        });
+    }
+
+    /// An unknown kind or an untagged skip is a loud construction failure —
+    /// the fold never guesses an outcome.
+    #[test]
+    fn fold_registration_unit_refuses_unknown_kinds_and_untagged_skips() {
+        pyo3::Python::attach(|_py| {
+            let unknown = match fold_registration_unit("dedup", None, true, false, 0, None) {
+                Ok(_) => panic!("an unknown kind must not fold"),
+                Err(e) => e.to_string(),
+            };
+            assert!(unknown.contains("dedup"), "{unknown}");
+            assert!(unknown.contains("skip"), "{unknown}");
+
+            let untagged = match fold_registration_unit("skip", None, true, false, 0, None) {
+                Ok(_) => panic!("an untagged skip must not fold"),
+                Err(e) => e.to_string(),
+            };
+            assert!(untagged.contains("refusal tag"), "{untagged}");
+        });
+    }
+
+    /// The kind list is the closed set the Python adapter builds its kind
+    /// labels from — pinned here and in the core.
+    #[test]
+    fn registration_unit_kinds_is_the_closed_set() {
+        assert_eq!(
+            registration_unit_kinds(),
+            vec!["skip", "reject", "cap", "register-fail", "registered"]
+        );
     }
 }

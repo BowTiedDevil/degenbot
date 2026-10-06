@@ -9,8 +9,8 @@ results.
 
 The former ``core.py`` (pure math + dataclasses) + ``protocols.py`` (typing
 seams) were retired once the Rust core reached byte-identical parity (verified
-by the parity gate (``docs/architecture/parity-gate.md``) before deletion). The ``PositionAnalysisResult``
-bucket-sorter stays here (it's trivial Python, not math).
+by the parity gate (``docs/architecture/parity-gate.md``) before deletion).
+The ``PositionAnalysisResult`` bucket-sorter stays here (it's trivial Python, not math).
 """
 
 from __future__ import annotations

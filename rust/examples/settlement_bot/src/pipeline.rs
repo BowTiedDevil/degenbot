@@ -1,12 +1,16 @@
 //! The discovery→registration pipeline — parity-ledger rows 9 + 12 + 13
 //!
-//! Mirrors `src/degenbot/runner/build_paths.py`:
+//! Mirrors `src/degenbot/runner/build_paths.py`'s
 //! `PathRegistrationPipeline._registration_unit` (the per-path build/verify/
-//! register unit), `resolve_directions`, the D7KMQO policy gate, the W73FVY
-//! dup fast-path, and the `_absorb_outcome` counter fold; plus the
-//! [`RegistrationLedger`](degenbot::bot::bot_core::registration_ledger::RegistrationLedger)
-//! memos. The at-most-once verify window is the CORE's
-//! (`degenbot::bot::bot_core::VerifyClaims`, entered by
+//! register unit) hand-wired: the D7KMQO policy gate, the W73FVY dup
+//! fast-path, and the prepare→arm→fold sequence. The CONTRACT it coordinates
+//! is the core's (`degenbot::bot::bot_core::registration_ledger`): the typed
+//! [`RegistrationUnitOutcome`](degenbot::bot::bot_core::registration_ledger::RegistrationUnitOutcome)
+//! vocabulary, the
+//! [`PipelineReport`](degenbot::bot::bot_core::registration_ledger::PipelineReport)
+//! counter fold, and the [`RegistrationLedger`](degenbot::bot::bot_core::registration_ledger::RegistrationLedger)
+//! memos — this module declares none of them. The at-most-once verify window
+//! is the CORE's too (`degenbot::bot::bot_core::VerifyClaims`, entered by
 //! `EngineDriver::run_*_registration_lifecycle`); this layer keeps only the
 //! verify-once memo and the bounded retry dance over a released window.
 //!
@@ -19,8 +23,6 @@
 //!   verify lifecycle under the claim table, then
 //!   `EngineDriver::register_and_solve_path`.
 
-use std::collections::BTreeMap;
-
 use degenbot::pathfinding::{
     resolve_directions as core_resolve_directions, DirectionHop, PoolKind,
 };
@@ -28,40 +30,10 @@ use degenbot::pathfinding::{
 use crate::discovery::{BuiltGraph, DiscoveryParams};
 use crate::policy::{HopView, PathPolicy};
 use degenbot::bot::bot_core::registration_ledger::{
-    HopSignature, RegistrationLedger, RegistrationOutcome,
+    HopSignature, OutcomeLabel, PipelineReport, RegistrationLedger, RegistrationOutcome,
+    RegistrationUnitOutcome,
 };
 use degenbot::bot_core::verification_retry::RetryPolicy;
-
-/// The registration unit outcome (mirrors `RegistrationUnitOutcome`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CandidateOutcome {
-    /// A benign build/direction skip with its bounded tag.
-    Skip {
-        /// The bounded tag.
-        outcome: RegistrationOutcome,
-        /// Whether the skip adds to `skip_count`.
-        counts_as_skip: bool,
-    },
-    /// A counted engine rejection.
-    Reject {
-        /// The bounded tag.
-        outcome: RegistrationOutcome,
-        /// Detail text.
-        detail: Option<String>,
-    },
-    /// The benign registered-path-cap stop.
-    Cap,
-    /// A transient register failure.
-    RegisterFailed {
-        /// Detail text.
-        detail: String,
-    },
-    /// A completed registration (`created == false` = engine dedup).
-    Registered {
-        /// Whether a NEW path id was created.
-        created: bool,
-    },
-}
 
 /// A path that passed every driver gate and is ready for the registration
 /// stage.
@@ -86,49 +58,12 @@ pub enum PrepareOutcome {
     Ready(PreparedCandidate),
     /// A benign skip (unregistrable memo, unknown type, no hash, direction
     /// mismatch).
-    Skip(CandidateOutcome),
+    Skip(RegistrationUnitOutcome),
     /// A counted rejection (path-rejected memo / policy deny).
-    Reject(CandidateOutcome),
+    Reject(RegistrationUnitOutcome),
     /// A fatal direction-resolution failure (subgraph vs constructed pool
     /// disagreement) — the Python pipeline aborts loudly.
     DirectionFatal(String),
-}
-
-/// The summary counters (mirrors the `PathRegistrationPipeline` summary).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PipelineReport {
-    /// New paths registered.
-    pub path_count: usize,
-    /// Total skips.
-    pub skip_count: usize,
-    /// Benign post-cap skips.
-    pub cap_skip_count: usize,
-    /// Token-filtered paths.
-    pub token_filter_count: usize,
-    /// Counted engine rejections.
-    pub engine_reject_count: usize,
-    /// Engine-dedup duplicates.
-    pub dup_count: usize,
-    /// Transient register failures.
-    pub register_fail_count: usize,
-    /// V4 hops that reached the registration stage.
-    pub v4_pool_count: usize,
-    /// V4 hook rejections.
-    pub v4_hook_rejected: usize,
-    /// V4 dynamic-fee rejections.
-    pub v4_dynamic_fee_rejected: usize,
-    /// Other counted exceptions.
-    pub other_exc_count: usize,
-    /// Paths that passed the policy gate (the offline candidate witness).
-    pub candidates: usize,
-    /// Paths that failed direction resolution.
-    pub direction_errors: usize,
-    /// Paths rejected by the driver policy.
-    pub policy_rejected: usize,
-    /// Whether the benign registered-path cap was hit.
-    pub capped: bool,
-    /// Reason-tagged skip breakdown.
-    pub skip_reasons: BTreeMap<String, usize>,
 }
 
 /// The reusable registration pipeline (mirrors `PathRegistrationPipeline`).
@@ -153,58 +88,14 @@ impl RegistrationPipeline {
         }
     }
 
-    /// Run the pre-registration stages (mirrors `_registration_unit` up to the
-    /// build/verify/register turns).
-    #[must_use]
-    pub fn prepare_candidate(
-        &mut self,
+    /// Resolve the per-hop directions and orient the hop views — the driver's
+    /// direction-resolution step, over the graph nodes the candidate indexes.
+    fn resolve_hops(
         built: &BuiltGraph,
-        path: &[(u64, PoolKind)],
+        pool_indices: &[usize],
         input_token_lower: &str,
         weth_lower: &str,
-    ) -> PrepareOutcome {
-        let mut pool_indices: Vec<usize> = Vec::with_capacity(path.len());
-        let mut kinds: Vec<PoolKind> = Vec::with_capacity(path.len());
-        for (graph_id, kind) in path {
-            let Some(idx) = built.by_graph_id.get(graph_id).copied() else {
-                return PrepareOutcome::Skip(CandidateOutcome::Skip {
-                    outcome: RegistrationOutcome::UnknownPoolType,
-                    counts_as_skip: true,
-                });
-            };
-            if built.nodes[idx].kind != *kind {
-                return PrepareOutcome::Skip(CandidateOutcome::Skip {
-                    outcome: RegistrationOutcome::UnknownPoolType,
-                    counts_as_skip: true,
-                });
-            }
-            pool_indices.push(idx);
-            kinds.push(*kind);
-        }
-
-        // Unregistrable-pool memo: a stable-refused hop answers before any
-        // build/verify (mirrors the ledger ask).
-        for (idx, kind) in pool_indices.iter().zip(kinds.iter()) {
-            let node = &built.nodes[*idx];
-            if node.kind == PoolKind::V4 && node.pool_hash.is_none() {
-                return PrepareOutcome::Skip(CandidateOutcome::Skip {
-                    outcome: RegistrationOutcome::V4NoHash,
-                    counts_as_skip: true,
-                });
-            }
-            let memo_key = RegistrationLedger::pool_memo_key(
-                *kind,
-                node.address.as_deref(),
-                node.pool_hash.as_deref(),
-            );
-            if let Some(record) = self.ledger.unregistrable_record(memo_key.as_deref()) {
-                return PrepareOutcome::Skip(CandidateOutcome::Skip {
-                    outcome: record.outcome,
-                    counts_as_skip: record.counts_as_skip,
-                });
-            }
-        }
-
+    ) -> Result<(Vec<bool>, Vec<HopView>), String> {
         let direction_hops: Vec<DirectionHop<'_>> = pool_indices
             .iter()
             .map(|idx| {
@@ -216,12 +107,10 @@ impl RegistrationPipeline {
                 }
             })
             .collect();
-        let zfos = match core_resolve_directions(&direction_hops, input_token_lower, weth_lower) {
-            Ok(zfos) => zfos,
-            Err(error) => return PrepareOutcome::DirectionFatal(error.to_string()),
-        };
+        let zfos = core_resolve_directions(&direction_hops, input_token_lower, weth_lower)
+            .map_err(|error| error.to_string())?;
 
-        let hops: Vec<HopView> = pool_indices
+        let hops = pool_indices
             .iter()
             .zip(zfos.iter())
             .map(|(idx, zfo)| {
@@ -239,6 +128,70 @@ impl RegistrationPipeline {
                 }
             })
             .collect();
+        Ok((zfos, hops))
+    }
+
+    /// Run the pre-registration stages (mirrors `_registration_unit` up to the
+    /// build/verify/register turns).
+    #[must_use]
+    pub fn prepare_candidate(
+        &mut self,
+        built: &BuiltGraph,
+        path: &[(u64, PoolKind)],
+        input_token_lower: &str,
+        weth_lower: &str,
+    ) -> PrepareOutcome {
+        let mut pool_indices: Vec<usize> = Vec::with_capacity(path.len());
+        let mut kinds: Vec<PoolKind> = Vec::with_capacity(path.len());
+        for (graph_id, kind) in path {
+            let Some(idx) = built.by_graph_id.get(graph_id).copied() else {
+                return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
+                    label: OutcomeLabel::Vocabulary(RegistrationOutcome::UnknownPoolType),
+                    counts_as_skip: true,
+                    detail: None,
+                });
+            };
+            if built.nodes[idx].kind != *kind {
+                return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
+                    label: OutcomeLabel::Vocabulary(RegistrationOutcome::UnknownPoolType),
+                    counts_as_skip: true,
+                    detail: None,
+                });
+            }
+            pool_indices.push(idx);
+            kinds.push(*kind);
+        }
+
+        // Unregistrable-pool memo: a stable-refused hop answers before any
+        // build/verify (mirrors the ledger ask).
+        for (idx, kind) in pool_indices.iter().zip(kinds.iter()) {
+            let node = &built.nodes[*idx];
+            if node.kind == PoolKind::V4 && node.pool_hash.is_none() {
+                return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
+                    label: OutcomeLabel::Vocabulary(RegistrationOutcome::V4NoHash),
+                    counts_as_skip: true,
+                    detail: None,
+                });
+            }
+            let memo_key = RegistrationLedger::pool_memo_key(
+                *kind,
+                node.address.as_deref(),
+                node.pool_hash.as_deref(),
+            );
+            if let Some(record) = self.ledger.unregistrable_record(memo_key.as_deref()) {
+                return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
+                    label: OutcomeLabel::Vocabulary(record.outcome),
+                    counts_as_skip: record.counts_as_skip,
+                    detail: None,
+                });
+            }
+        }
+
+        let (zfos, hops) =
+            match Self::resolve_hops(built, &pool_indices, input_token_lower, weth_lower) {
+                Ok(resolved) => resolved,
+                Err(error) => return PrepareOutcome::DirectionFatal(error),
+            };
 
         // Offline stand-in for the engine hop id: the graph id. The live path
         // replaces this with the BotState pool id before registering.
@@ -251,24 +204,25 @@ impl RegistrationPipeline {
 
         // Deterministic reject memo (D7KMQO gate deny).
         if self.ledger.path_rejected(&hop_sig) {
-            return PrepareOutcome::Reject(CandidateOutcome::Reject {
-                outcome: RegistrationOutcome::PathRejected,
-                detail: None,
-            });
+            return PrepareOutcome::Reject(RegistrationUnitOutcome::Reject { detail: None });
         }
 
         // Policy gate: hop bounds, allow/deny, duplicate pools.
         if let Err(rejection) = self.policy.evaluate(&hops) {
             self.ledger.memoize_rejected_path(hop_sig);
-            return PrepareOutcome::Reject(CandidateOutcome::Reject {
-                outcome: RegistrationOutcome::PathRejected,
+            return PrepareOutcome::Reject(RegistrationUnitOutcome::Reject {
                 detail: Some(rejection.to_string()),
             });
         }
 
         // Dup fast-path (W73FVY): answer registered signatures before verify.
+        // The dedup outcome carries the unit's V4 hops so the fold's
+        // `v4_pool_count` witness matches the Python driver's memo answer.
         if self.ledger.path_registered(&hop_sig) {
-            return PrepareOutcome::Skip(CandidateOutcome::Registered { created: false });
+            return PrepareOutcome::Skip(RegistrationUnitOutcome::Registered {
+                created: false,
+                v4_hops,
+            });
         }
 
         PrepareOutcome::Ready(PreparedCandidate {
@@ -278,74 +232,6 @@ impl RegistrationPipeline {
             zfos,
             v4_hops,
         })
-    }
-
-    /// Fold one unit outcome into the report (mirrors `_absorb_outcome`).
-    pub fn absorb(report: &mut PipelineReport, outcome: &CandidateOutcome, v4_hops: usize) {
-        match outcome {
-            CandidateOutcome::Skip {
-                outcome,
-                counts_as_skip,
-            } => {
-                if *counts_as_skip {
-                    report.skip_count += 1;
-                }
-                match outcome {
-                    RegistrationOutcome::V4HookRejected => report.v4_hook_rejected += 1,
-                    RegistrationOutcome::V4DynamicFeeRejected => {
-                        report.v4_dynamic_fee_rejected += 1;
-                    }
-                    _ => {}
-                }
-                *report
-                    .skip_reasons
-                    .entry(outcome.as_str().to_string())
-                    .or_insert(0) += 1;
-            }
-            CandidateOutcome::Reject { outcome, detail } => {
-                report.engine_reject_count += 1;
-                report.other_exc_count += 1;
-                let tag = detail.as_deref().map_or_else(
-                    || outcome.as_str().to_string(),
-                    |d| format!("{}:{d}", outcome.as_str()),
-                );
-                *report.skip_reasons.entry(tag).or_insert(0) += 1;
-            }
-            CandidateOutcome::RegisterFailed { detail } => {
-                report.register_fail_count += 1;
-                *report
-                    .skip_reasons
-                    .entry(RegistrationOutcome::RegisterFailed.as_str().to_string())
-                    .or_insert(0) += 1;
-                // RSP-14: the single choke point every
-                // CandidateOutcome::RegisterFailed funnels through — the
-                // verify folds in live::verify_one return before the
-                // register_and_solve_path arm, so sampling at the producer
-                // sites would miss them. Env-gated + cardinality-bounded.
-                crate::live::emit_register_failure_sample(detail);
-            }
-            CandidateOutcome::Cap => {
-                report.skip_count += 1;
-                report.cap_skip_count += 1;
-                report.capped = true;
-                *report
-                    .skip_reasons
-                    .entry(RegistrationOutcome::PathCap.as_str().to_string())
-                    .or_insert(0) += 1;
-            }
-            CandidateOutcome::Registered { created } => {
-                report.v4_pool_count += v4_hops;
-                if *created {
-                    report.path_count += 1;
-                } else {
-                    report.dup_count += 1;
-                    *report
-                        .skip_reasons
-                        .entry(RegistrationOutcome::Dup.as_str().to_string())
-                        .or_insert(0) += 1;
-                }
-            }
-        }
     }
 }
 
@@ -371,11 +257,9 @@ pub async fn run_offline(
                     report.candidates += 1;
                     report.v4_pool_count += candidate.v4_hops;
                 }
-                PrepareOutcome::Skip(outcome) => {
-                    RegistrationPipeline::absorb(&mut report, &outcome, 0);
-                }
+                PrepareOutcome::Skip(outcome) => report.absorb(&outcome),
                 PrepareOutcome::Reject(outcome) => {
-                    RegistrationPipeline::absorb(&mut report, &outcome, 0);
+                    report.absorb(&outcome);
                     report.policy_rejected += 1;
                 }
                 PrepareOutcome::DirectionFatal(message) => {

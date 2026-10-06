@@ -43,7 +43,14 @@ from degenbot._ffi import RegistrationLedger as _CoreRegistrationLedger
 from degenbot._ffi import (
     classify_build_refusal as _core_classify_build_refusal,
 )
-from degenbot._ffi import registration_outcome_tags, registration_pool_memo_key
+from degenbot._ffi import (
+    fold_registration_unit as _core_fold_registration_unit,
+)
+from degenbot._ffi import (
+    registration_outcome_tags,
+    registration_pool_memo_key,
+    registration_unit_kinds,
+)
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
@@ -54,7 +61,7 @@ from degenbot.pathfinding import PoolKind
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
-    from degenbot._ffi import BuildRefusalView, UnregistrablePoolRecord
+    from degenbot._ffi import BuildRefusalView, RegistrationFoldDelta, UnregistrablePoolRecord
 
 #: A path's hop signature: tuple of ``(engine pool_id, zero_for_one)``.
 HopSignature = tuple[tuple[int, bool], ...]
@@ -76,6 +83,46 @@ RegistrationOutcome = StrEnum(
     module=__name__,
     qualname="RegistrationOutcome",
 )
+
+#: The per-unit outcome kinds, BUILT from the core's kind list.
+#:
+#: The unit-sequence contract (one outcome per unit, folded exactly once
+#: through the core's counter fold) is the core's
+#: (`degenbot_bot::bot_core::registration_ledger::RegistrationUnitOutcome`);
+#: these members are minted FROM ``registration_unit_kinds()`` so a kind
+#: added or renamed in the core shows up on the next build instead of
+#: drifting into a Python-only spelling.
+RegistrationUnitKind = StrEnum(
+    "RegistrationUnitKind",
+    [(kind.upper().replace("-", "_"), kind) for kind in registration_unit_kinds()],
+    module=__name__,
+    qualname="RegistrationUnitKind",
+)
+
+
+def fold_registration_unit(  # ruff: ignore[too-many-arguments] - mirrors the core fold seam 1:1
+    *,
+    kind: RegistrationUnitKind | str,
+    tag: str | None,
+    counts_as_skip: bool,
+    created: bool,
+    v4_hops: int,
+    detail: str | None,
+) -> RegistrationFoldDelta:
+    """Fold one unit outcome with the CORE's counter arithmetic.
+
+    The one outcome-counter fold lives in
+    ``degenbot_bot::bot_core::registration_ledger::PipelineReport::absorb``;
+    this forwards the driver's unit fields and returns the fold delta the
+    driver applies to its own counter storage. An unknown kind or an
+    untagged skip raises ``ValueError`` — the fold never guesses an outcome.
+
+    Returns:
+        The fold delta the driver applies to its own counter storage.
+
+    """
+    return _core_fold_registration_unit(str(kind), tag, counts_as_skip, created, v4_hops, detail)
+
 
 #: The core failure kind each typed Python refusal maps to. The mapping is
 #: Python-side because the exception TYPES are; the taxonomy those kinds

@@ -3692,6 +3692,89 @@ class PoolTickCoverage:
     def __ne__(self, value: object, /) -> bool: ...
 
 @final
+class RegistrationFoldDelta:
+    """
+    The delta one unit fold applies to a driver's summary counters — the
+    core's [`PipelineReport`] after exactly one `absorb`. The counter
+    ARITHMETIC is the core's (one definition in
+    `degenbot_bot::bot_core::registration_ledger`); a driver that keeps its
+    own counter storage applies this answer mechanically, field for field.
+    """
+    @property
+    def cap_skip_count(self, /) -> int:
+        """
+        Benign post-cap skips added by this fold.
+        """
+    @property
+    def capped(self, /) -> bool:
+        """
+        Whether this fold latched the benign cap stop.
+        """
+    @property
+    def dup_count(self, /) -> int:
+        """
+        Duplicates added by this fold.
+        """
+    @property
+    def engine_reject_count(self, /) -> int:
+        """
+        Engine rejections added by this fold.
+        """
+    @property
+    def other_exc_count(self, /) -> int:
+        """
+        Other counted exceptions added by this fold (folds with
+        `engine_reject_count`).
+        """
+    @property
+    def path_count(self, /) -> int:
+        """
+        New paths registered by this fold.
+        """
+    @property
+    def register_fail_count(self, /) -> int:
+        """
+        Register failures added by this fold.
+        """
+    @property
+    def skip_count(self, /) -> int:
+        """
+        Skips added by this fold.
+        """
+    @property
+    def skip_reasons(self, /) -> list[tuple[str, int]]:
+        """
+        The reason-label deltas as `(label, count)` pairs (a fold records at
+        most one label).
+        """
+    @property
+    def uncounted_skip_count(self, /) -> int:
+        """
+        Uncounted skips added by this fold (`counts_as_skip == false`).
+        """
+    @property
+    def units_folded(self, /) -> int:
+        """
+        Units folded (always 1 — the one-fold-per-unit witness a driver
+        accumulates against its own unit count).
+        """
+    @property
+    def v4_dynamic_fee_rejected(self, /) -> int:
+        """
+        V4 dynamic-fee rejections added by this fold.
+        """
+    @property
+    def v4_hook_rejected(self, /) -> int:
+        """
+        V4 hook rejections added by this fold.
+        """
+    @property
+    def v4_pool_count(self, /) -> int:
+        """
+        V4 hops witnessed by this fold (`Registered` outcomes only).
+        """
+
+@final
 class RegistrationLedger:
     """
     The core registration ledger: the four memos, owned by the core.
@@ -4413,6 +4496,28 @@ def flush_telemetry() -> None:
     Idempotent and none-safe (telemetry off -> no-op).
     """
 
+def fold_registration_unit(
+    kind: str,
+    tag: str | None,
+    counts_as_skip: bool,
+    created: bool,
+    v4_hops: int,
+    detail: str | None,
+) -> RegistrationFoldDelta:
+    """
+    Fold one unit outcome with the core's arithmetic and return the delta.
+
+    `kind` is one of `registration_unit_kinds()`; `tag` is the skip's reason
+    tag (a bounded `RegistrationOutcome` tag, or a free-form driver label
+    recorded verbatim — a skip without one is a caller bug); `detail` is the
+    log-only failure text.
+
+    # Errors
+
+    `ValueError` for a kind outside the closed set, or a skip with no tag:
+    wire drift is a loud construction failure, never a guessed outcome.
+    """
+
 def generate_v2_pool_address(
     deployer_address: str, token0: str, token1: str, init_hash: str
 ) -> str:
@@ -4485,6 +4590,12 @@ def registration_pool_memo_key(
 
     `ValueError` for an unrecognized `pool_type`: wire drift, never a guessed
     family.
+    """
+
+def registration_unit_kinds() -> list[str]:
+    """
+    The closed unit-kind set — the vocabulary a Python consumer builds its
+    kind labels from, so a kind cannot drift between the core and a driver.
     """
 
 def resolve_directions(
@@ -4711,6 +4822,7 @@ __all__ = [
     "PoolRegistrationError",
     "PoolTickCoverage",
     "PossibleInaccurateResult",
+    "RegistrationFoldDelta",
     "RegistrationLedger",
     "ReservePairView",
     "ResolvedChainId",
@@ -4746,12 +4858,14 @@ __all__ = [
     "find_paths_async_rust",
     "find_paths_rust",
     "flush_telemetry",
+    "fold_registration_unit",
     "generate_v2_pool_address",
     "generate_v3_pool_address",
     "keccak256",
     "prepare_traversal_plan",
     "registration_outcome_tags",
     "registration_pool_memo_key",
+    "registration_unit_kinds",
     "resolve_directions",
     "resolve_hypothetical",
     "resolve_hypothetical_chain_id",

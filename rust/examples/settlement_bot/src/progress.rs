@@ -18,7 +18,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::pipeline::PipelineReport;
+use degenbot::bot::bot_core::registration_ledger::PipelineReport;
 
 /// The engine's registered-path cap from the schema's
 /// `pathfinding.max_registered_paths`. `0` is the operator's uncapped

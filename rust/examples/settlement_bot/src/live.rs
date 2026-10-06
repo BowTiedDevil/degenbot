@@ -12,19 +12,24 @@
 //! 3. `EngineDriver::register_and_solve_path` with the `(pool_id, zfo)` hop
 //!    list (the Python `register_crawl_path` shape).
 //!
+//! The unit outcomes it answers are the CORE's typed
+//! `RegistrationUnitOutcome` vocabulary, folded through the core's
+//! `PipelineReport::absorb`; this module keeps only the hand-wired
+//! build/verify/register turns and its own observation policy (the
+//! register-failure metric sample).
+//!
 //! This module is only reached behind `SMOKE_RPC_URL`; the offline CI gate
 //! exercises the shared preparation stages instead.
 
 use std::time::Instant;
 
 use crate::discovery::{BatchedPathFinder, BuiltGraph, DiscoveryParams};
-use crate::pipeline::{
-    CandidateOutcome, PipelineReport, PrepareOutcome, PreparedCandidate, RegistrationPipeline,
-};
+use crate::pipeline::{PrepareOutcome, PreparedCandidate, RegistrationPipeline};
 use crate::progress::{progress_line, ProgressCadence};
 use alloy::primitives::Address;
 use degenbot::bot::bot_core::registration_ledger::{
-    BuildFailure, RegistrationLedger, RegistrationOutcome,
+    BuildFailure, OutcomeLabel, PipelineReport, RegistrationLedger, RegistrationOutcome,
+    RegistrationUnitOutcome,
 };
 use degenbot::bot_core::construction_io::ConstructionIo;
 use degenbot::bot_core::pool_builder::builder::{
@@ -78,17 +83,15 @@ pub async fn run_live(
             let mut stop = false;
             match pipeline.prepare_candidate(built, path, input_token_lower, weth_lower) {
                 PrepareOutcome::Ready(candidate) => {
-                    let v4_hops = candidate.v4_hops;
                     let outcome =
                         build_and_register(driver, built, rows, pipeline, &candidate, ctx).await;
                     stop = crawl_stops_on(&outcome);
-                    RegistrationPipeline::absorb(&mut report, &outcome, v4_hops);
+                    report.absorb(&outcome);
+                    observe_folded(&outcome);
                 }
-                PrepareOutcome::Skip(outcome) => {
-                    RegistrationPipeline::absorb(&mut report, &outcome, 0);
-                }
+                PrepareOutcome::Skip(outcome) => report.absorb(&outcome),
                 PrepareOutcome::Reject(outcome) => {
-                    RegistrationPipeline::absorb(&mut report, &outcome, 0);
+                    report.absorb(&outcome);
                     report.policy_rejected += 1;
                 }
                 PrepareOutcome::DirectionFatal(message) => {
@@ -118,14 +121,28 @@ pub async fn run_live(
 
 /// Whether the crawl must stop after this unit outcome.
 ///
-/// The typed [`CandidateOutcome::Cap`] is the fold of the engine registry's
-/// `PathRegistrationError::RegistryFull` refusal: the BENIGN STOP of
-/// discovery (Python latches `capped` and breaks `run_registration`), never
-/// counted as a per-candidate error and never a reason to keep crawling a
-/// full registry.
+/// The typed [`RegistrationUnitOutcome::Cap`] is the fold of the engine
+/// registry's `PathRegistrationError::RegistryFull` refusal: the BENIGN STOP
+/// of discovery (Python latches `capped` and breaks `run_registration`),
+/// never counted as a per-candidate error and never a reason to keep
+/// crawling a full registry.
 #[must_use]
-pub fn crawl_stops_on(outcome: &CandidateOutcome) -> bool {
-    matches!(outcome, CandidateOutcome::Cap)
+pub fn crawl_stops_on(outcome: &RegistrationUnitOutcome) -> bool {
+    matches!(outcome, RegistrationUnitOutcome::Cap)
+}
+
+/// The driver's observation policy over one folded outcome: the
+/// register-failure metric sample. Every `RegisterFailed` funnels through
+/// the fold here — the verify folds in `verify_one` return before the
+/// `register_and_solve_path` arm, so sampling at the producer sites would
+/// miss them. Env-gated + cardinality-bounded.
+fn observe_folded(outcome: &RegistrationUnitOutcome) {
+    if let RegistrationUnitOutcome::RegisterFailed {
+        detail: Some(detail),
+    } = outcome
+    {
+        emit_register_failure_sample(detail);
+    }
 }
 
 /// Build each hop, register it into `BotState`, verify it under the claims
@@ -137,7 +154,7 @@ async fn build_and_register(
     pipeline: &mut RegistrationPipeline,
     candidate: &PreparedCandidate,
     ctx: &LiveContext<'_>,
-) -> CandidateOutcome {
+) -> RegistrationUnitOutcome {
     let mut pool_ids: Vec<u64> = Vec::with_capacity(candidate.pool_indices.len());
     for node_idx in &candidate.pool_indices {
         let node = &built.nodes[*node_idx];
@@ -159,9 +176,10 @@ async fn build_and_register(
                         refusal.counts_as_skip,
                     );
                 }
-                return CandidateOutcome::Skip {
-                    outcome: refusal.outcome,
+                return RegistrationUnitOutcome::Skip {
+                    label: OutcomeLabel::Vocabulary(refusal.outcome),
                     counts_as_skip: refusal.counts_as_skip,
+                    detail: Some(detail),
                 };
             }
         }
@@ -189,17 +207,20 @@ async fn build_and_register(
             pipeline
                 .ledger
                 .memoize_registered_path(candidate.hop_sig.clone());
-            CandidateOutcome::Registered { created }
+            RegistrationUnitOutcome::Registered {
+                created,
+                v4_hops: candidate.v4_hops,
+            }
         }
         Err(err) => {
             if matches!(
                 err,
                 degenbot::bot::arb_engine::lifecycle::PathRegistrationError::RegistryFull { .. }
             ) {
-                CandidateOutcome::Cap
+                RegistrationUnitOutcome::Cap
             } else {
-                CandidateOutcome::RegisterFailed {
-                    detail: err.to_string(),
+                RegistrationUnitOutcome::RegisterFailed {
+                    detail: Some(err.to_string()),
                 }
             }
         }
@@ -400,7 +421,7 @@ async fn verify_one(
     pipeline: &mut RegistrationPipeline,
     row: &DiscoveryPoolRow,
     ctx: &LiveContext<'_>,
-) -> Result<(), CandidateOutcome> {
+) -> Result<(), RegistrationUnitOutcome> {
     match row {
         DiscoveryPoolRow::V3(r) => {
             let key = format!(
@@ -425,8 +446,8 @@ async fn verify_one(
                     pipeline.ledger.memoize_verified_pool(key);
                     Ok(())
                 }
-                Err(err) => Err(CandidateOutcome::RegisterFailed {
-                    detail: format!("verify-v3: {err}"),
+                Err(err) => Err(RegistrationUnitOutcome::RegisterFailed {
+                    detail: Some(format!("verify-v3: {err}")),
                 }),
             }
         }
@@ -450,8 +471,8 @@ async fn verify_one(
                     pipeline.ledger.memoize_verified_pool(key);
                     Ok(())
                 }
-                Err(err) => Err(CandidateOutcome::RegisterFailed {
-                    detail: format!("verify-v4: {err}"),
+                Err(err) => Err(RegistrationUnitOutcome::RegisterFailed {
+                    detail: Some(format!("verify-v4: {err}")),
                 }),
             }
         }
@@ -551,7 +572,9 @@ pub(crate) fn emit_register_failure_sample(detail: &str) {
 )]
 mod tests {
     use super::*;
-    use degenbot::bot::bot_core::registration_ledger::RegistrationOutcome;
+    use degenbot::bot::bot_core::registration_ledger::{
+        OutcomeLabel, PipelineReport, RegistrationOutcome, RegistrationUnitOutcome,
+    };
     use degenbot::bot_core::RegisterV2PoolParams;
 
     /// A minimal in-spec V2 fixture keyed by `address`.
@@ -676,19 +699,22 @@ mod tests {
     #[test]
     fn registry_full_is_a_benign_crawl_stop() {
         // `build_and_register` folds the engine registry's `RegistryFull`
-        // refusal to `CandidateOutcome::Cap`; that outcome stops the crawl
-        // and latches the report's capped witness via `absorb`.
-        assert!(crawl_stops_on(&CandidateOutcome::Cap));
-        assert!(!crawl_stops_on(&CandidateOutcome::Registered {
-            created: true
+        // refusal to the core's `RegistrationUnitOutcome::Cap`; that outcome
+        // stops the crawl and latches the report's capped witness via the
+        // core fold.
+        assert!(crawl_stops_on(&RegistrationUnitOutcome::Cap));
+        assert!(!crawl_stops_on(&RegistrationUnitOutcome::Registered {
+            created: true,
+            v4_hops: 0,
         }));
-        assert!(!crawl_stops_on(&CandidateOutcome::Skip {
-            outcome: RegistrationOutcome::V4NoHash,
+        assert!(!crawl_stops_on(&RegistrationUnitOutcome::Skip {
+            label: OutcomeLabel::Vocabulary(RegistrationOutcome::V4NoHash),
             counts_as_skip: true,
+            detail: None,
         }));
 
         let mut report = PipelineReport::default();
-        RegistrationPipeline::absorb(&mut report, &CandidateOutcome::Cap, 0);
+        report.absorb(&RegistrationUnitOutcome::Cap);
         assert!(report.capped, "the cap stop latches the benign witness");
         assert_eq!(report.cap_skip_count, 1);
         assert_eq!(report.skip_count, 1);

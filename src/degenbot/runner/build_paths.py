@@ -43,6 +43,8 @@ from degenbot.pathfinding import (
 from degenbot.runner._registration_ledger import (
     RegistrationLedger,
     RegistrationOutcome,
+    RegistrationUnitKind,
+    fold_registration_unit,
 )
 from degenbot.runner.identity import (
     PANCAKESWAP_V3_MAINNET_FACTORY,
@@ -151,16 +153,20 @@ REG_INTAKE_WINDOW = 32
 class RegistrationUnitOutcome:
     """The per-path unit outcome, reported back to the driver.
 
-    The units run on fleet seats (plain threads, possibly concurrent), so
-    they NEVER touch the pipeline counters — they return one of these and
-    the single-loop driver folds it into the summary counters exactly as the
-    retired inline ``_consume`` did (counter parity is the PRG-3/5 bar).
+    The typed outcome vocabulary and the counter fold are the CORE's
+    (`degenbot_bot::bot_core::registration_ledger` — the pure-Rust driver
+    constructs and folds the same definition): ``kind`` is one of the
+    core's ``RegistrationUnitOutcome`` kinds (minted into
+    :class:`RegistrationUnitKind` from the core's exported list), and the
+    single-loop driver folds each outcome through the core's arithmetic
+    (``fold_registration_unit``), never inline. The units run on fleet
+    seats (plain threads, possibly concurrent), so they NEVER touch the
+    pipeline counters — they return one of these and the driver folds it.
     """
 
-    #: "skip" (build/direction benign skip) | "reject" (engine registration
-    #: refusal, counted as engine_reject) | "registered" | "cap" (the benign
-    #: registered-path-cap stop, PRG-4).
-    kind: str
+    #: The unit kind — the core's closed set (skip / reject / cap /
+    #: register-fail / registered).
+    kind: RegistrationUnitKind
     #: The stable skip/reject tag (never an interpolated address) for
     #: ``_record_skip`` and the engine-reject log line.
     tag: str | None = None
@@ -393,6 +399,13 @@ class PathRegistrationPipeline:
         self.v4_hook_rejected = 0
         self.v4_dynamic_fee_rejected = 0
         self.other_exc_count = 0
+        # The fold's own witnesses (core-owned arithmetic): units folded and
+        # skips that carry only their family counters. The core's fold
+        # identities relate these to the buckets above; a driver that folds
+        # one outcome per unit ends with `units_folded` equal to its unit
+        # count.
+        self.units_folded = 0
+        self.uncounted_skip_count = 0
         # The registration outcome ledger owns the four memos that used to
         # live here ad-hoc — the registered-path dup fast-path, the verify-once
         # pool fact, the unregistrable-pool stable refusals, and the
@@ -495,7 +508,9 @@ class PathRegistrationPipeline:
             bot_logger.info(
                 f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
             )
-            return RegistrationUnitOutcome(kind="reject", tag=tag, v4_hops=v4_hops)
+            return RegistrationUnitOutcome(
+                kind=RegistrationUnitKind.REJECT, tag=tag, v4_hops=v4_hops
+            )
         else:
             return outcome
 
@@ -533,7 +548,7 @@ class PathRegistrationPipeline:
             memo = self._ledger.unregistrable_record(self._ledger.pool_memo_key(step, pool_kind))
             if memo is not None:
                 return RegistrationUnitOutcome(
-                    kind="skip",
+                    kind=RegistrationUnitKind.SKIP,
                     tag=memo.outcome,
                     counts_as_skip=memo.counts_as_skip,
                 )
@@ -564,7 +579,7 @@ class PathRegistrationPipeline:
                 counts_as_skip=refusal.counts_as_skip,
             )
         return RegistrationUnitOutcome(
-            kind="skip",
+            kind=RegistrationUnitKind.SKIP,
             tag=refusal.outcome,
             counts_as_skip=refusal.counts_as_skip,
             detail=refusal.detail,
@@ -600,7 +615,7 @@ class PathRegistrationPipeline:
                 case PoolKind.V4:
                     if not step.hash:
                         return RegistrationUnitOutcome(
-                            kind="skip",
+                            kind=RegistrationUnitKind.SKIP,
                             tag=RegistrationOutcome.V4_NO_HASH.value,
                         )
                     try:
@@ -680,7 +695,7 @@ class PathRegistrationPipeline:
             # the resolved path — name it rather than letting the later
             # zip(strict=True) raise a cryptic TypeError.
             return RegistrationUnitOutcome(
-                kind="skip",
+                kind=RegistrationUnitKind.SKIP,
                 tag=RegistrationOutcome.DIRECTION_MISMATCH.value,
             )
 
@@ -693,7 +708,7 @@ class PathRegistrationPipeline:
         # candidate is answered without a second gate evaluation.
         if self._ledger.path_rejected(hop_sig):
             return RegistrationUnitOutcome(
-                kind="reject",
+                kind=RegistrationUnitKind.REJECT,
                 tag=RegistrationOutcome.PATH_REJECTED_MEMO.value,
             )
 
@@ -709,7 +724,7 @@ class PathRegistrationPipeline:
         # re-pays the old cost, and the only mutation is a GIL-atomic set.add.
         if self._ledger.path_registered(hop_sig):
             return RegistrationUnitOutcome(
-                kind="registered",
+                kind=RegistrationUnitKind.REGISTERED,
                 created=False,
                 v4_hops=v4_hops,
             )
@@ -823,7 +838,7 @@ class PathRegistrationPipeline:
             _path_id, created = reg.register_crawl_path(engine_hops)
         except PathRegistryFullError:
             return RegistrationUnitOutcome(
-                kind="cap",
+                kind=RegistrationUnitKind.CAP,
                 tag=RegistrationOutcome.PATH_CAP.value,
                 v4_hops=v4_hops,
             )
@@ -838,13 +853,13 @@ class PathRegistrationPipeline:
             raise
         except Exception as exc:
             return RegistrationUnitOutcome(
-                kind="register-fail",
+                kind=RegistrationUnitKind.REGISTER_FAIL,
                 tag=RegistrationOutcome.REGISTER_FAIL.value,
                 detail=f"{type(exc).__name__}: {exc}",
                 v4_hops=v4_hops,
             )
         return RegistrationUnitOutcome(
-            kind="registered",
+            kind=RegistrationUnitKind.REGISTERED,
             created=created,
             v4_hops=v4_hops,
         )
@@ -868,9 +883,24 @@ class PathRegistrationPipeline:
     ) -> None:
         """Record a reason-tagged skip so the periodic summary shows WHY.
 
-        `reason` is a short stable tag (e.g. ``"build-v3:ConnectionError"``,
-        ``"dup"``, ``"direction-fail"``) — never an interpolated address, so
-        the aggregate stays compact and greppable.
+        The direct-seed path (tests, future callers) — one breakdown entry
+        plus the observation policy. The FOLD path never routes through
+        here: the core's fold delta owns the breakdown entries, and
+        ``_observe_skip`` carries only the metric/log policy.
+        """
+        self._skip_reasons[reason] += 1
+        self._observe_skip(reason, detail)
+
+    def _observe_skip(
+        self,
+        reason: str,
+        detail: BaseException | str | None = None,
+    ) -> None:
+        """Apply the driver-side observation policy for one skip reason.
+
+        `reason` is a short stable tag (e.g. ``"build-v3-refused"``,
+        ``"dup"``, ``"path-cap"``) — never an interpolated address, so the
+        aggregate stays compact and greppable.
 
         PRG-2: the skip ALSO lands in the Rust `degenbot.registration.skips`
         metric family (closed-set labels — the per-error-class detail stays
@@ -879,7 +909,6 @@ class PathRegistrationPipeline:
         immutable V4 admission verdicts are refused pre-RPC by the core
         registration gate, and raced duplicates self-heal in the build path.
         """
-        self._skip_reasons[reason] += 1
         if detail is not None and self._skip_reasons[reason] <= 3:
             bot_logger.debug(f"[build_paths] Pool-build skip ({reason}): {detail}")
         py_bot = getattr(self.constr_bot, "_py_bot", None)
@@ -1135,46 +1164,65 @@ class PathRegistrationPipeline:
         """Fold one unit outcome into the summary counters (driver-side).
 
         The single-loop mutation point: units on fleet seats never touch the
-        counters (concurrency), so the Progress summary and the completion
-        log keep their retired counter shapes by construction (PRG-3/5
-        counter-parity bar). The tags mirror the retired inline branches.
+        counters (concurrency). The counter ARITHMETIC is the core's — the
+        outcome maps onto the core's typed unit vocabulary and the fold delta
+        applies here, one fold per unit (the core's fold identities relate
+        the buckets; a repeated or dropped fold shows in ``units_folded``).
+        What stays driver-side is the observation policy the retired inline
+        branches carried: the skip metric family, the first-few-occurrence
+        logs, the cap announcement, and the 1000-boundary progress line.
         """
-        if outcome.kind == "skip":
-            if outcome.counts_as_skip:
-                self.skip_count += 1
-            if outcome.tag == "v4-hook-rejected":
-                self.v4_hook_rejected += 1
-            elif outcome.tag == "v4-dynamic-fee-rejected":
-                self.v4_dynamic_fee_rejected += 1
+        delta = fold_registration_unit(
+            kind=outcome.kind,
+            tag=outcome.tag,
+            counts_as_skip=outcome.counts_as_skip,
+            created=outcome.created,
+            v4_hops=outcome.v4_hops,
+            detail=outcome.detail,
+        )
+        self.path_count += delta.path_count
+        self.skip_count += delta.skip_count
+        self.cap_skip_count += delta.cap_skip_count
+        self.engine_reject_count += delta.engine_reject_count
+        self.dup_count += delta.dup_count
+        self.register_fail_count += delta.register_fail_count
+        self.v4_pool_count += delta.v4_pool_count
+        self.v4_hook_rejected += delta.v4_hook_rejected
+        self.v4_dynamic_fee_rejected += delta.v4_dynamic_fee_rejected
+        self.other_exc_count += delta.other_exc_count
+        self.units_folded += delta.units_folded
+        self.uncounted_skip_count += delta.uncounted_skip_count
+        if delta.capped:
+            self.capped = True
+        for reason, count in delta.skip_reasons:
+            self._skip_reasons[reason] += count
+
+        # Driver-side observation policy (the counters above are the fold's).
+        if outcome.kind == RegistrationUnitKind.SKIP:
             if outcome.tag is not None:
-                self._record_skip(outcome.tag, detail=outcome.detail)
+                self._observe_skip(outcome.tag, detail=outcome.detail)
             return
-        if outcome.kind == "reject":
-            self.engine_reject_count += 1
-            self.other_exc_count += 1
+        if outcome.kind == RegistrationUnitKind.REJECT:
+            # A rejection is not a skip: the engine_reject/other_exc pair
+            # carries it; the exception text was logged at the unit site.
             return
-        if outcome.kind == "register-fail":
-            self.register_fail_count += 1
-            self._record_skip(outcome.tag or "register-fail", detail=outcome.detail)
+        if outcome.kind == RegistrationUnitKind.REGISTER_FAIL:
+            self._observe_skip(
+                outcome.tag or RegistrationOutcome.REGISTER_FAIL.value,
+                detail=outcome.detail,
+            )
             if self.register_fail_count <= 5:
                 bot_logger.warning(f"Path registration failed: {outcome.detail}")
             return
-        if outcome.kind == "cap":
-            self.skip_count += 1
-            self.cap_skip_count += 1
-            self.capped = True
-            self._record_skip("path-cap")
+        if outcome.kind == RegistrationUnitKind.CAP:
+            self._observe_skip(RegistrationOutcome.PATH_CAP.value)
             bot_logger.info("[build_paths] Path cap reached — stopping discovery crawl")
             return
         # "registered": the parity witness for v4_pool_count is counted on
         # created AND duplicate outcomes (the retired body incremented the
         # V4 counter inside the registration loop, before the dedup check).
-        self.v4_pool_count += outcome.v4_hops
-        if outcome.created:
-            self.path_count += 1
-        else:
-            self.dup_count += 1
-            self._record_skip("dup")
+        if not outcome.created:
+            self._observe_skip(RegistrationOutcome.DUP.value)
             return
         if self.path_count % 1000 == 0:
             bot_logger.info(

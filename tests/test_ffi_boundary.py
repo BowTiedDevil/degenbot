@@ -47,11 +47,14 @@ ALLOWED_LEAF_FFI_IMPORTS: dict[str, frozenset[str]] = {
     "src/degenbot/runner/_registration_ledger.py": frozenset(
         {
             "BuildRefusalView",
+            "RegistrationFoldDelta",
             "RegistrationLedger",
             "UnregistrablePoolRecord",
             "classify_build_refusal",
+            "fold_registration_unit",
             "registration_outcome_tags",
             "registration_pool_memo_key",
+            "registration_unit_kinds",
         }
     ),
 }
