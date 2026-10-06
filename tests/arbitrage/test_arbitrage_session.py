@@ -1376,6 +1376,43 @@ class TestSubCBgRegistrationConcurrency:
         assert session._session.registration_task.cancelled()
 
 
+@pytest.fixture()
+def started_session():
+    """A started :class:`BotRunner` over the suite's offline injected-actor posture.
+
+    The engine registry + bot + async w3 fakes, the empty snapshot row, and
+    the offline relay are the standard offline session; each test supplies
+    only its path builder + consumer (and, when the scenario needs a distinct
+    bot or registry, those too). The test drives ``run()`` itself — including
+    the fail-fast case where ``run()`` must raise.
+
+    Returns:
+        An async callable that builds and starts a session; await its result.
+
+    """
+
+    async def _start(*, path_builder, consumer, bot=None, engine_registry=None) -> BotRunner:
+        session = BotRunner(
+            _cfg(),
+            actors=InjectedActors(
+                settlement_arm=True,
+                bot=bot if bot is not None else _FakeBot(),
+                engine_registry=(
+                    engine_registry if engine_registry is not None else _FakeEngineRegistry()
+                ),
+                async_w3=_FakeAsyncW3(),
+                snapshots=(None, None, None, None),
+                path_builder=path_builder,
+                consumer=consumer,
+                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
+            ),
+        )
+        await session.start()
+        return session
+
+    return _start
+
+
 class TestOngoingDiscovery:
     """The run()-level wiring when discovery never "completes".
 
@@ -1386,12 +1423,11 @@ class TestOngoingDiscovery:
     "registration completion", so the Sub-B state-trim runs when run() cancels
     the background task at shutdown — still exactly once and not mid-climb."""
 
-    async def test_forever_discovery_trims_state_on_shutdown(self) -> None:
+    async def test_forever_discovery_trims_state_on_shutdown(self, started_session) -> None:
         """With forever (never-returning) discovery there is no "registration
         completion", so the Sub-B state-trim runs when run() cancels the
         background task at shutdown instead — still exactly once and not
         mid-climb."""
-        engine_registry = _FakeEngineRegistry()
         bot = _FakeBot()
 
         async def forever_path_builder(**_kwargs):
@@ -1401,20 +1437,9 @@ class TestOngoingDiscovery:
             for _ in range(3):
                 await asyncio.sleep(0)  # each yield stands in for one hot-loop dispatch await
 
-        session = BotRunner(
-            _cfg(),
-            actors=InjectedActors(
-                settlement_arm=True,
-                bot=bot,
-                engine_registry=engine_registry,
-                async_w3=_FakeAsyncW3(),
-                snapshots=(None, None, None, None),
-                path_builder=forever_path_builder,
-                consumer=consumer,
-                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
-            ),
+        session = await started_session(
+            path_builder=forever_path_builder, consumer=consumer, bot=bot
         )
-        await session.start()
         await session.run()
 
         # Main loop ended (finite consumer) → run()'s finally cancelled the

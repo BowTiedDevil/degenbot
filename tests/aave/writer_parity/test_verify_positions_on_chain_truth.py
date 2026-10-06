@@ -27,6 +27,10 @@ canonical on-chain truth = the Rust writer's scaled-balance output.
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -232,9 +236,61 @@ def _scaled_balance_of(rust_path: str, user_address: str) -> int:
         return int(row[0])
 
 
+@dataclasses.dataclass(frozen=True)
+class _WrittenChunk:
+    """One Rust-written chunk: the open DB + RPC handles and the post-chunk
+    SENDER balance the gate reads."""
+
+    database_path: str
+    rpc_url: str
+    db_balance: int
+
+
+@pytest.fixture()
+def written_chunk(tmp_path: Path) -> Callable[..., AbstractContextManager[_WrittenChunk]]:
+    """Seed the DB + MockRpcServer, then drive one chunk through the Rust writer.
+
+    The fixture's setup assert rides here: a writer that failed to commit its
+    chunk fails HERE, not as a confusing gate divergence. The RPC server and
+    the seeded DB stay open for the life of the ``with`` — the verify gate
+    calls the MockRpcServer over the same socket.
+
+    Returns:
+        A context manager yielding the :class:`_WrittenChunk` for one
+        (logs, eth_call_responses) fixture body.
+
+    """
+
+    @contextlib.contextmanager
+    def _write(
+        *, logs: list[dict[str, object]], eth_call_responses: dict[str, str]
+    ) -> Iterator[_WrittenChunk]:
+        with (
+            seeded_db(tmp_path, name="rust", with_price_oracle=True) as (rust_path, _rust_session),
+            mock_rpc_server(
+                logs=logs,
+                block_number=FIXTURE_BLOCK,
+                eth_call_responses=eth_call_responses,
+            ) as rpc_url,
+        ):
+            # Drive the chunk through the Rust writer — FIX-in-place (the writer
+            # writes its scaled balance for SENDER).
+            report_dict = _drive_rust(rust_path, rpc_url)
+            assert report_dict["chunks_committed"] == 1, (
+                f"fixture setup failed: rust writer didn't commit its chunk; report={report_dict}"
+            )
+            yield _WrittenChunk(
+                database_path=str(rust_path),
+                rpc_url=rpc_url,
+                db_balance=_scaled_balance_of(str(rust_path), _SENDER),
+            )
+
+    return _write
+
+
 @pytest.mark.parametrize("corrupt_db", [False, True], ids=["green", "red"])
 def test_verify_touched_positions_on_chain_catches_corrupted_balance(
-    tmp_path: Path,
+    written_chunk: Callable[..., AbstractContextManager[_WrittenChunk]],
     *,
     corrupt_db: bool,
 ) -> None:
@@ -242,28 +298,11 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
     RED: corrupt the DB balance + verify surfaces a NAMED divergence
     (proving the gate catches masked wrong-value bugs the crash-gate cannot).
     """
-    logs = _build_chunk_logs()
-    with (
-        seeded_db(tmp_path, name="rust", with_price_oracle=True) as (rust_path, _rust_session),
-        mock_rpc_server(
-            logs=logs,
-            block_number=FIXTURE_BLOCK,
-            eth_call_responses=_eth_call_responses(),
-        ) as rpc_url,
-    ):
-        # Drive the chunk through the Rust writer — FIX-in-place (the writer
-        # writes _AMOUNT as SENDER's scaled balance).
-        report_dict = _drive_rust(rust_path, rpc_url)
-        assert report_dict["chunks_committed"] == 1, (
-            f"fixture setup failed: rust writer didn't commit its chunk; report={report_dict}"
-        )
-
-        # The writer's DB state post-chunk.
-        db_balance = _scaled_balance_of(str(rust_path), _SENDER)
-        # The MockRpcServer's on-chain truth.
-        on_chain = _ON_CHAIN_SCALED_BALANCE
-        assert db_balance == on_chain, (
-            f"fixture setup failed: DB balance {db_balance} != on-chain {on_chain}"
+    with written_chunk(logs=_build_chunk_logs(), eth_call_responses=_eth_call_responses()) as chunk:
+        # The writer's DB state post-chunk vs the MockRpcServer's on-chain truth.
+        assert chunk.db_balance == _ON_CHAIN_SCALED_BALANCE, (
+            f"fixture setup failed: DB balance {chunk.db_balance} != "
+            f"on-chain {_ON_CHAIN_SCALED_BALANCE}"
         )
 
         if corrupt_db:
@@ -271,7 +310,7 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
             # masked wrong-value bug — e.g. the earlier user-as-int U256
             # would have left balance = a wildly wrong but always-positive
             # value, structurally invisible to the crash-gate).
-            _corrupt_balance(str(rust_path), _SENDER, db_balance + 1)
+            _corrupt_balance(chunk.database_path, _SENDER, chunk.db_balance + 1)
 
         # The gate fires: verify_touched_positions_on_chain.
         # NOTE: `None` for `touched_users` instructs the verify fn to check
@@ -280,7 +319,7 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
         # introduced in EARLIER chunks surface before their
         # crash-cycle chunk commits). The touched-filter would miss p534
         # here (it wasn't touched in THIS chunk).
-        divergences = _verify_all(str(rust_path), rpc_url)
+        divergences = _verify_all(chunk.database_path, chunk.rpc_url)
 
         if corrupt_db:
             # RED — the gate surfaces the SENDER's collateral balance
@@ -293,8 +332,8 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
             assert d["user_address"].lower() == _SENDER.lower()
             assert d["token_address"].lower() == _A_WETH.lower()
             assert d["block_number"] == FIXTURE_BLOCK
-            assert int(d["expected"]) == db_balance + 1  # the corrupted value
-            assert int(d["actual"]) == on_chain  # the on-chain truth (_AMOUNT)
+            assert int(d["expected"]) == chunk.db_balance + 1  # the corrupted value
+            assert int(d["actual"]) == _ON_CHAIN_SCALED_BALANCE  # the on-chain truth (_AMOUNT)
         else:
             # GREEN — the on-chain truth matches the DB state.
             assert divergences == [], f"expected no divergences on GREEN arm; got: {divergences}"
@@ -486,7 +525,7 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
 
 
 def test_liquidation_burn_side_pair_single_debit(
-    tmp_path: Path,
+    written_chunk: Callable[..., AbstractContextManager[_WrittenChunk]],
 ) -> None:
     """RED pre-fix: `collect_collateral_events` includes the burn-side pair
     ERC20 Transfer-to-0x0 in `op.scaled_events`; `dispatch_liquidation` applies
@@ -498,22 +537,11 @@ def test_liquidation_burn_side_pair_single_debit(
     `dispatch_liquidation` applies only the Burn event → single-debit ==
     on-chain truth → the gate reports no divergence.
     """
-    logs = _build_liquidation_burn_side_chunk_logs()
-    with (
-        seeded_db(tmp_path, name="rust", with_price_oracle=True) as (rust_path, _rust_session),
-        mock_rpc_server(
-            logs=logs,
-            block_number=FIXTURE_BLOCK,
-            eth_call_responses=_liq_eth_call_responses(),
-        ) as rpc_url,
-    ):
-        report_dict = _drive_rust(rust_path, rpc_url)
-        assert report_dict["chunks_committed"] == 1, (
-            f"fixture setup failed: rust writer didn't commit its chunk; report={report_dict}"
-        )
-
+    with written_chunk(
+        logs=_build_liquidation_burn_side_chunk_logs(), eth_call_responses=_liq_eth_call_responses()
+    ) as chunk:
         # The verify gate fires for ALL nonzero positions (verify-all mode).
-        divergences = _verify_all(str(rust_path), rpc_url)
+        divergences = _verify_all(chunk.database_path, chunk.rpc_url)
 
         # GREEN: zero divergences (DB balance == on-chain truth).
         bal_divs = [d for d in divergences if d["field"] == "balance"]

@@ -7,7 +7,9 @@ panic hook, the worker-census boot dump — is installed by the explicit
 ``driver_boot()`` call. A one-shot consumer (the console passthrough, plain
 library imports) pays none of it.
 
-Verified via fresh subprocesses: thread creation and the census table are
+The observable is ``degenbot.runtime_status()``: the worker census (the
+runtimes + drainer inventory, installed by ``driver_boot()`` alone) and the
+fleet boot flag. Verified via fresh subprocesses: census state is
 process-global, so an in-process import would be polluted by any earlier
 import in the pytest session.
 """
@@ -17,22 +19,6 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
-
-
-_BOOT_PROBE = """
-import degenbot
-from degenbot._ffi import driver_boot
-sigs = [d for d in __import__('os').listdir('/proc/self/task')]
-import os, threading
-before = len(os.listdir('/proc/self/task'))
-driver_boot()
-after = len(os.listdir('/proc/self/task'))
-driver_boot()
-after2 = len(os.listdir('/proc/self/task'))
-print(f'TASKS before={before} after_boot={after} after_second={after2}')
-threads = threading.enumerate()
-print(f'PY_THREADS={len(threads)}')
-"""
 
 
 def _run_probe(code: str) -> subprocess.CompletedProcess[str]:
@@ -45,11 +31,19 @@ def _run_probe(code: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_import_alone_spawns_no_threads() -> None:
-    """A bare ``import degenbot`` must not boot runtimes or drainers."""
+def test_import_alone_installs_no_driver_stack() -> None:
+    """A bare ``import degenbot`` must not boot runtimes or drainers.
+
+    The census is the inventory of exactly that machinery; it is empty (and
+    the runtime fleet unbooted) until ``driver_boot()`` installs it.
+    """
     out = _run_probe(
         """
-import degenbot
+from degenbot import runtime_status
+
+status = runtime_status()
+assert status['census'] == [], f'bare import installed the driver stack: {status}'
+assert status['fleet_booted'] is False, f'bare import booted the fleet: {status}'
 print('IMPORT_OK')
 """
     )
@@ -60,16 +54,19 @@ def test_driver_boot_is_explicit_and_idempotent() -> None:
     """driver_boot() installs the driver stack once; a second call is a no-op."""
     out = _run_probe(
         """
-import os
-import degenbot
+from degenbot import runtime_status
 from degenbot._ffi import driver_boot
-before = len(os.listdir('/proc/self/task'))
+
+before = runtime_status()
 driver_boot()
-after = len(os.listdir('/proc/self/task'))
+after = runtime_status()
 driver_boot()
-after2 = len(os.listdir('/proc/self/task'))
-assert after > before, f'driver_boot spawned no threads: {before} -> {after}'
-assert after2 == after, f'second driver_boot spawned threads: {after} -> {after2}'
+after_second = runtime_status()
+assert before['census'] == [], f'pre-boot census already installed: {before}'
+assert len(after['census']) > 0, f'driver_boot installed no census: {after}'
+assert after['census'] == after_second['census'], (
+    f'second driver_boot changed the census: {after} -> {after_second}'
+)
 print('BOOT_OK')
 """
     )

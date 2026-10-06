@@ -18,64 +18,40 @@ from typing import Any
 import pytest  # ruff:ignore[typing-only-third-party-import] — runtime marks
 
 import degenbot.telemetry as telemetry_mod
+from tests.fakes.telemetry import FakeTelemetryTeardown
 
 _FLUSH_FAIL = RuntimeError("exporter down")
-
-
-class _Recorder:
-    """Record call order across the FFI stand-ins."""
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    def flush(self) -> None:
-        self.calls.append("flush")
-
-    def stop_drainer(self) -> None:
-        self.calls.append("drainer")
-
-
-def _install_fakes(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> None:
-    monkeypatch.setattr(telemetry_mod, "flush_telemetry", recorder.flush)
-    monkeypatch.setattr(telemetry_mod, "shutdown_log_drainer", recorder.stop_drainer)
 
 
 class TestShutdownTelemetry:
     """The single teardown sequence: flush first, drainer stop second."""
 
-    def test_flushes_before_stopping_drainer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        recorder = _Recorder()
-        _install_fakes(monkeypatch, recorder)
+    def test_flushes_before_stopping_drainer(self) -> None:
+        fake = FakeTelemetryTeardown()
 
-        telemetry_mod.shutdown_telemetry()
+        telemetry_mod.shutdown_telemetry(fake)
 
-        assert recorder.calls == ["flush", "drainer"]
+        assert fake.calls == ["flush", "drainer"]
 
     def test_flush_error_still_stops_drainer(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A failed flush must not skip the teardown step (order survives)."""
-        recorder = _Recorder()
+        fake = FakeTelemetryTeardown()
+        fake.flush_error = _FLUSH_FAIL
 
-        def boom() -> None:
-            raise _FLUSH_FAIL
-
-        monkeypatch.setattr(telemetry_mod, "flush_telemetry", boom)
-        _install_fakes(monkeypatch, recorder)
         with caplog.at_level(logging.DEBUG):
-            telemetry_mod.shutdown_telemetry()
+            telemetry_mod.shutdown_telemetry(fake)
 
         # The teardown survived the failed flush (drainer stopped either way).
-        assert recorder.calls[-1] == "drainer"
+        assert fake.calls == ["flush", "drainer"]
 
-    def test_idempotent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        recorder = _Recorder()
-        _install_fakes(monkeypatch, recorder)
-        telemetry_mod.shutdown_telemetry()
-        telemetry_mod.shutdown_telemetry()
-        assert recorder.calls == ["flush", "drainer", "flush", "drainer"]
+    def test_idempotent(self) -> None:
+        fake = FakeTelemetryTeardown()
+        telemetry_mod.shutdown_telemetry(fake)
+        telemetry_mod.shutdown_telemetry(fake)
+        assert fake.calls == ["flush", "drainer", "flush", "drainer"]
 
 
 class TestAtexitRegistration:
@@ -99,18 +75,13 @@ class TestAtexitRegistration:
             with contextlib.suppress(ValueError):  # handler re-registration on reload
                 importlib.reload(telemetry_mod)
 
-    def test_atexit_handler_swallows_errors(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_atexit_handler_swallows_errors(self) -> None:
         """Atexit semantics: the shutdown path can never raise out."""
+        fake = FakeTelemetryTeardown()
+        fake.flush_error = RuntimeError("no runtime")
+        fake.drainer_error = RuntimeError("gone")
 
-        flush_fail = RuntimeError("no runtime")
-        stop_fail = RuntimeError("gone")
+        telemetry_mod._at_exit(fake)  # must not raise
 
-        def raise_flush() -> None:
-            raise flush_fail
-
-        def raise_stop() -> None:
-            raise stop_fail
-
-        monkeypatch.setattr(telemetry_mod, "flush_telemetry", raise_flush)
-        monkeypatch.setattr(telemetry_mod, "shutdown_log_drainer", raise_stop)
-        telemetry_mod._at_exit()  # must not raise
+        # The teardown ran to its end despite both steps failing.
+        assert fake.calls == ["flush", "drainer"]

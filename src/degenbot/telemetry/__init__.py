@@ -20,13 +20,40 @@ from __future__ import annotations
 import atexit
 import contextlib
 import logging
+from typing import Protocol, override
 
 from degenbot._ffi import flush_telemetry, shutdown_log_drainer
 
 _AT_EXIT_LOGGER = "degenbot.telemetry"
 
 
-def shutdown_telemetry() -> None:
+class Teardown(Protocol):
+    """The two teardown steps, in the order :func:`shutdown_telemetry` runs them.
+
+    The flush executes while the runtime behind the providers is still up;
+    the drainer stop ends the machinery. Tests install a recording double
+    here instead of patching the module's FFI imports.
+
+    """
+
+    def flush(self) -> None: ...
+
+    def stop_drainer(self) -> None: ...
+
+
+class _FfiTeardown(Teardown):
+    """The default :class:`Teardown` binding: the real FFI entry points."""
+
+    @override
+    def flush(self) -> None:
+        flush_telemetry()
+
+    @override
+    def stop_drainer(self) -> None:
+        shutdown_log_drainer()
+
+
+def shutdown_telemetry(teardown: Teardown | None = None) -> None:
     """Run the one ordered telemetry teardown: flush, then stop the machinery.
 
     Idempotent and none-safe (telemetry off → no-op). Runs on live-callable
@@ -36,18 +63,23 @@ def shutdown_telemetry() -> None:
     A flush failure is logged and does NOT skip the teardown step — the
     ordering survives partial-startup and degraded-exporter states.
 
+    Args:
+        teardown: The teardown steps to run; the FFI entry points when
+            omitted (the process-exit and runner-shutdown paths).
+
     """
+    steps = _FfiTeardown() if teardown is None else teardown
     try:
-        flush_telemetry()
+        steps.flush()
     except Exception as exc:  # ruff:ignore[blind-except] — must not stop on a degraded exporter
         logging.getLogger(_AT_EXIT_LOGGER).debug("telemetry flush failed at shutdown: %r", exc)
-    shutdown_log_drainer()
+    steps.stop_drainer()
 
 
-def _at_exit() -> None:
+def _at_exit(teardown: Teardown | None = None) -> None:
     """Process-exit handler: run the teardown, swallowing any error."""
     with contextlib.suppress(Exception):
-        shutdown_telemetry()
+        shutdown_telemetry(teardown)
 
 
 atexit.register(_at_exit)

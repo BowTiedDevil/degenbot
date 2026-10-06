@@ -26,6 +26,7 @@ import contextlib
 import json
 import socket
 import threading
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -135,19 +136,18 @@ def _spawn_anvil() -> AnvilFork:
     return fork
 
 
-def test_ipc_request_and_subscription_resolve_from_the_operator_file(tmp_path: Path) -> None:
-    """The operator-file ``ipc`` entry serves both scopes and dials the node.
+@pytest.fixture()
+def resolved_ipc_node(tmp_path: Path) -> Iterator[tuple[AnvilFork, dict, dict, dict]]:
+    """A live anvil over IPC plus the operator-file resolution over its socket.
 
-    The endpoint comes from the resolver reading a temporary operator file with
-    no ``DEGENBOT_RPC_*`` environment. Over that endpoint: ``eth_chainId`` and a
-    token read (request scope) and the pump's ``subscribe`` (subscription
-    scope).
+    The fork's teardown rides here. The resolution results are yielded raw:
+    the request/subscription claims are the test's, not setup validation.
+
     """
     fork = _spawn_anvil()
     try:
         socket_path = fork.ipc_path
         body = _nodes_file(ipc={1: socket_path})
-
         request, subscription, absent = _resolve_from_operator_file(
             tmp_path,
             body,
@@ -155,46 +155,61 @@ def test_ipc_request_and_subscription_resolve_from_the_operator_file(tmp_path: P
             ["node", 1, "subscription"],
             ["request", _OTHER_CHAIN_ID],
         )
-
-        assert request == {"uri": socket_path, "source": "file"}, (
-            "the request scope must resolve the operator-file ipc entry"
-        )
-        assert subscription == {"uri": socket_path, "source": "file"}, (
-            "the subscription scope must resolve the operator-file ipc entry"
-        )
-        assert "error" in absent, "an ipc-only file must not satisfy a chain with no entry"
-
-        request_uri = request["uri"]
-        # The resolver handed back the same socket the node is actually bound
-        # to; dial THAT, not a path re-derived from the fixture.
-        assert request_uri == socket_path, "the resolved endpoint is the live socket"
-
-        provider = AlloyProvider(request_uri)
-        try:
-            assert provider.get_chain_id() == _CHAIN_ID, (
-                "eth_chainId over the ipc socket returns the node's chain"
-            )
-            decimals = provider.call(seed_catalog.TOKEN, _DECIMALS_SELECTOR)
-            assert int.from_bytes(decimals, "big") == _TOKEN_DECIMALS, (
-                "a token read (decimals()) over the ipc socket returns the seeded value"
-            )
-        finally:
-            provider.close()
-
-        engine = ArbitrageEngine()
-        try:
-            block_before = fork.provider.block_number
-            boundary = engine.subscribe(subscription["uri"])
-            assert boundary >= block_before, (
-                "the pump's subscribe reaches a live block over the ipc socket"
-            )
-            assert boundary <= fork.provider.block_number, (
-                "the subscription boundary is a real observed block"
-            )
-        finally:
-            engine.stop()
+        yield fork, request, subscription, absent
     finally:
         fork.close()
+
+
+def test_ipc_request_and_subscription_resolve_from_the_operator_file(
+    resolved_ipc_node: tuple[AnvilFork, dict, dict, dict],
+) -> None:
+    """The operator-file ``ipc`` entry serves both scopes and dials the node.
+
+    The endpoint comes from the resolver reading a temporary operator file with
+    no ``DEGENBOT_RPC_*`` environment. Over that endpoint: ``eth_chainId`` and a
+    token read (request scope) and the pump's ``subscribe`` (subscription
+    scope).
+    """
+    fork, request, subscription, absent = resolved_ipc_node
+    socket_path = fork.ipc_path
+
+    assert request == {"uri": socket_path, "source": "file"}, (
+        "the request scope must resolve the operator-file ipc entry"
+    )
+    assert subscription == {"uri": socket_path, "source": "file"}, (
+        "the subscription scope must resolve the operator-file ipc entry"
+    )
+    assert "error" in absent, "an ipc-only file must not satisfy a chain with no entry"
+
+    request_uri = request["uri"]
+    # The resolver handed back the same socket the node is actually bound
+    # to; dial THAT, not a path re-derived from the fixture.
+    assert request_uri == socket_path, "the resolved endpoint is the live socket"
+
+    provider = AlloyProvider(request_uri)
+    try:
+        assert provider.get_chain_id() == _CHAIN_ID, (
+            "eth_chainId over the ipc socket returns the node's chain"
+        )
+        decimals = provider.call(seed_catalog.TOKEN, _DECIMALS_SELECTOR)
+        assert int.from_bytes(decimals, "big") == _TOKEN_DECIMALS, (
+            "a token read (decimals()) over the ipc socket returns the seeded value"
+        )
+    finally:
+        provider.close()
+
+    engine = ArbitrageEngine()
+    try:
+        block_before = fork.provider.block_number
+        boundary = engine.subscribe(subscription["uri"])
+        assert boundary >= block_before, (
+            "the pump's subscribe reaches a live block over the ipc socket"
+        )
+        assert boundary <= fork.provider.block_number, (
+            "the subscription boundary is a real observed block"
+        )
+    finally:
+        engine.stop()
 
 
 class _IpcCallManyNode:

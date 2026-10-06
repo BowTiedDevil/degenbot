@@ -16,8 +16,12 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 
 from degenbot.logging import logger as bot_logger
+
+#: The kernel's view of this process; the sampler's read root in production.
+_DEFAULT_PROC_ROOT = Path("/proc/self")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -97,16 +101,23 @@ def _arm_tracemalloc(interval: float) -> None:
     bot_logger.info(f"[diag] tracemalloc armed: interval={interval}s")
 
 
-def _arm_procmem(interval: float, csv_path: str) -> None:
+def _arm_procmem(interval: float, csv_path: str, proc_root: Path) -> None:
     """Append one CSV row per interval: wall/mono clock, RSS, VmHWM, faults.
 
     Sibling to the tracemalloc probe, but deliberately READ-ONLY — no
     snapshots, no malloc_trim — so it never perturbs the allocator behavior
     being measured (fault staircase per block window is the dependent variable
     of the purge-delay matrix).
+
+    Args:
+        interval: Seconds between CSV rows.
+        csv_path: The CSV file the sampler appends to.
+        proc_root: The ``stat``/``statm``/``status`` read root. Production
+            passes the kernel's live ``/proc/self``; a fixture hands a
+            directory of the same three files.
+
     """
     import csv
-    from pathlib import Path
 
     csv_p = Path(csv_path)
     if csv_p.parent != Path():
@@ -116,12 +127,12 @@ def _arm_procmem(interval: float, csv_path: str) -> None:
         while True:
             time.sleep(interval)
             try:
-                txt = Path("/proc/self/stat").read_bytes()
+                txt = (proc_root / "stat").read_bytes()
                 stat = txt.rsplit(b")", 1)[1].split()
                 min_flt, maj_flt = int(stat[7]), int(stat[9])  # fields 10, 12
-                rss_pages = int(Path("/proc/self/statm").read_bytes().split()[1])
+                rss_pages = int((proc_root / "statm").read_bytes().split()[1])
                 hwm_kb = 0
-                with Path("/proc/self/status").open("rb") as vf:
+                with (proc_root / "status").open("rb") as vf:
                     for line in vf:
                         if line.startswith(b"VmHWM:"):
                             hwm_kb = int(line.split()[1])
@@ -160,12 +171,18 @@ def _arm_faulthandler(timeout: float) -> None:
     bot_logger.info(f"[diag] faulthandler armed: timeout={timeout}s repeat=True")
 
 
-def arm_diagnostics(cfg: DiagConfig) -> list[str]:
+def arm_diagnostics(cfg: DiagConfig, *, proc_root: Path = _DEFAULT_PROC_ROOT) -> list[str]:
     """Arm every configured probe; return the armed probe names (stable order).
 
     Zero-config arms nothing — production default. Called once per session
     from the cockpit's ``start()``; idempotent across runners (threads are
     daemon and probe-scoped).
+
+    Args:
+        cfg: The probe toggles read off the declared diagnostics keys.
+        proc_root: Where the proc-mem sampler reads ``stat``/``statm``/
+            ``status``. The kernel's live ``/proc/self`` unless a test
+            injects a fixture directory with the same shape.
 
     Returns:
         The armed probe names, in stable arm order.
@@ -176,7 +193,7 @@ def arm_diagnostics(cfg: DiagConfig) -> list[str]:
         _arm_tracemalloc(cfg.tracemalloc_secs)
         armed.append("tracemalloc")
     if cfg.procmem_secs > 0:
-        _arm_procmem(cfg.procmem_secs, cfg.procmem_csv)
+        _arm_procmem(cfg.procmem_secs, cfg.procmem_csv, proc_root)
         armed.append("procmem")
     if cfg.faulthandler_timeout_secs > 0:
         _arm_faulthandler(cfg.faulthandler_timeout_secs)

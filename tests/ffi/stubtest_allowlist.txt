@@ -12,6 +12,30 @@
 # Re-triage after a PyO3/pyo3-introspection bump:
 #   uv run --no-sync stubtest --ignore-disjoint-bases --generate-allowlist degenbot._ffi
 #
+# Limitation index — every entry below is tagged with the upstream gap it
+# belongs to; on a bump, look the tag up here, re-run the triage command,
+# and drop an entry only when its limitation closed:
+#
+#   magic-method getattro-slot invisibility
+#     PyO3 installs dunder __getattr__ into the type's tp_getattro slot, not
+#     as a class attribute, so Python-side introspection cannot see it and
+#     the stub member reads as missing at runtime. Permanent — a Python
+#     introspection limit, not an emission bug; no generator bump closes it.
+#   imperative attribute registration
+#     Members bound outside any declarative #[pymethods] block (runtime
+#     setattr on the module) are invisible to pyo3-introspection, which
+#     reads declarative items only. ADR-066 gap list: "imperative U256
+#     attributes".
+#   __all__ emission
+#     The generator emits __all__ from the stub's top-level declarations,
+#     while the runtime __all__ carries members outside that surface.
+#     ADR-066 gap list: "__all__ emission".
+#   parent-stub re-export emission
+#     The generator emits one stub file per submodule without a
+#     `from . import <name> as <name>` re-export in the parent stub, so
+#     stubtest reports each runtime submodule object as absent from the
+#     stub namespace. ADR-066 gap list: module-structure-level deltas.
+#
 # The #2454 annotation frontier (PyO3 "a first step"; the rest of annotation
 # generation tracked upstream) is VISIBLE in the emitted stubs as `Any`
 # annotations on U256/I256-typed members, but produces no stubtest findings —
@@ -36,14 +60,14 @@
 # machinery `__getattr__` in its stub (it is the path-agnostic runtime view),
 # so this one entry covers the getattro-slot invisibility, which no
 # introspection bump can close.
-degenbot._ffi.ConfigSectionValues.__getattr__
+degenbot._ffi.ConfigSectionValues.__getattr__  # magic-method getattro-slot invisibility
 
 # ==== Imperative U256 attributes (2) ====
 # MIN_SQRT_RATIO / MAX_SQRT_RATIO are registered imperatively on the
 # concentrated-liquidity module, outside any declarative pymethods block
 # the introspection covers.
-degenbot._ffi.concentrated_liquidity_math.MAX_SQRT_RATIO
-degenbot._ffi.concentrated_liquidity_math.MIN_SQRT_RATIO
+degenbot._ffi.concentrated_liquidity_math.MAX_SQRT_RATIO  # imperative attribute registration
+degenbot._ffi.concentrated_liquidity_math.MIN_SQRT_RATIO  # imperative attribute registration
 
 # ==== __all__ emission (2) ====
 # The generator emits `__all__` from the stub's top-level declarations
@@ -54,36 +78,36 @@ degenbot._ffi.concentrated_liquidity_math.MIN_SQRT_RATIO
 # (The create_exception! islands are spliced from the stubgen declaration
 # manifest, so they now land in the root's and fleet's emitted `__all__`
 # and no longer gap here.)
-degenbot._ffi.__all__
-degenbot._ffi.concentrated_liquidity_math.__all__
+degenbot._ffi.__all__  # __all__ emission
+degenbot._ffi.concentrated_liquidity_math.__all__  # __all__ emission
 
 # ==== Submodule declaration emission (26) ====
 # The generator emits one stub file per submodule but no `from . import
 # <name> as <name>` re-export in the parent stub, so stubtest reports each
 # runtime submodule object as absent from the stub namespace.
-degenbot._ffi.aave
-degenbot._ffi.abi
-degenbot._ffi.backrun
-degenbot._ffi.balancer_math
-degenbot._ffi.cancel
-degenbot._ffi.concentrated_liquidity_math
-degenbot._ffi.contract
-degenbot._ffi.curve_dy
-degenbot._ffi.curve_math
-degenbot._ffi.db
-degenbot._ffi.deployments
-degenbot._ffi.dex_identity
-degenbot._ffi.diagnostics
-degenbot._ffi.eip_1559
-degenbot._ffi.execution
-degenbot._ffi.executor
-degenbot._ffi.fleet
-degenbot._ffi.fork
-degenbot._ffi.pool
-degenbot._ffi.price
-degenbot._ffi.provider
-degenbot._ffi.simulation
-degenbot._ffi.solady
-degenbot._ffi.solidly_math
-degenbot._ffi.submission
-degenbot._ffi.v2_math
+degenbot._ffi.aave  # parent-stub re-export emission
+degenbot._ffi.abi  # parent-stub re-export emission
+degenbot._ffi.backrun  # parent-stub re-export emission
+degenbot._ffi.balancer_math  # parent-stub re-export emission
+degenbot._ffi.cancel  # parent-stub re-export emission
+degenbot._ffi.concentrated_liquidity_math  # parent-stub re-export emission
+degenbot._ffi.contract  # parent-stub re-export emission
+degenbot._ffi.curve_dy  # parent-stub re-export emission
+degenbot._ffi.curve_math  # parent-stub re-export emission
+degenbot._ffi.db  # parent-stub re-export emission
+degenbot._ffi.deployments  # parent-stub re-export emission
+degenbot._ffi.dex_identity  # parent-stub re-export emission
+degenbot._ffi.diagnostics  # parent-stub re-export emission
+degenbot._ffi.eip_1559  # parent-stub re-export emission
+degenbot._ffi.execution  # parent-stub re-export emission
+degenbot._ffi.executor  # parent-stub re-export emission
+degenbot._ffi.fleet  # parent-stub re-export emission
+degenbot._ffi.fork  # parent-stub re-export emission
+degenbot._ffi.pool  # parent-stub re-export emission
+degenbot._ffi.price  # parent-stub re-export emission
+degenbot._ffi.provider  # parent-stub re-export emission
+degenbot._ffi.simulation  # parent-stub re-export emission
+degenbot._ffi.solady  # parent-stub re-export emission
+degenbot._ffi.solidly_math  # parent-stub re-export emission
+degenbot._ffi.submission  # parent-stub re-export emission
+degenbot._ffi.v2_math  # parent-stub re-export emission

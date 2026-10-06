@@ -11,6 +11,9 @@ readily as the environment.
 
 from __future__ import annotations
 
+import os
+import time
+
 import pytest
 
 from degenbot.runner.diag import DiagConfig, arm_diagnostics
@@ -126,3 +129,46 @@ class TestArmDiagnostics:
         )
         armed = arm_diagnostics(cfg)
         assert armed == ["tracemalloc", "procmem", "faulthandler"]
+
+    def test_procmem_sampler_parses_the_injected_proc_root(self, tmp_path) -> None:
+        """The sampler reads ``proc_root`` — a fixture directory shaped like
+        ``/proc/self`` — so the CSV row's parsed fields are assertable without
+        a fresh interpreter.
+
+        ``stat``'s post-parenthesis fields 10 and 12 (min_flt, maj_flt),
+        ``statm``'s resident word, and ``status``'s ``VmHWM`` line each land
+        in the row under their own name.
+
+        """
+        proc_root = tmp_path / "proc"
+        proc_root.mkdir()
+        (proc_root / "stat").write_bytes(b"1 (python) R 0 1 1 1 1 4194304 42 7 99 0")
+        (proc_root / "statm").write_bytes(b"1000 200 100 50 0 100 0")
+        (proc_root / "status").write_bytes(b"VmHWM:\t1234 kB\n")
+        csv_path = tmp_path / "procmem.csv"
+
+        cfg = DiagConfig(
+            tracemalloc_secs=0.0,
+            procmem_secs=0.01,
+            procmem_csv=str(csv_path),
+            faulthandler_timeout_secs=0.0,
+        )
+        armed = arm_diagnostics(cfg, proc_root=proc_root)
+        assert armed == ["procmem"]
+
+        deadline = time.monotonic() + 5.0
+        rows: list[str] = []
+        while time.monotonic() < deadline:
+            rows = csv_path.read_text(encoding="utf-8").splitlines() if csv_path.exists() else []
+            if len(rows) >= 2:
+                break
+            time.sleep(0.01)
+        assert len(rows) >= 2, f"sampler wrote no CSV row in time: {rows!r}"
+
+        header = rows[0].split(",")
+        assert header == ["t_epoch", "t_mono", "rss_kb", "hwm_kb", "min_flt", "maj_flt"]
+        row = rows[1].split(",")
+        assert int(row[2]) == 200 * (os.sysconf("SC_PAGE_SIZE") // 1024)
+        assert int(row[3]) == 1234
+        assert int(row[4]) == 42
+        assert int(row[5]) == 99

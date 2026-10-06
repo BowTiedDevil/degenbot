@@ -495,7 +495,6 @@ class TestV2SwapEncoding:
         result = core.encode_swap(
             pool_id, zero_for_one=True, amount_out=181, recipient=self.RECIPIENT
         )
-        assert result is not None
         to_hex, calldata_hex, value = result
 
         # Selector is 022c0d9f
@@ -512,7 +511,6 @@ class TestV2SwapEncoding:
         result = core.encode_swap(
             pool_id, zero_for_one=True, amount_out=181, recipient=self.RECIPIENT
         )
-        assert result is not None
         _, calldata_hex, _ = result
 
         # Oracle-built reference calldata: the ABI encoding of
@@ -533,7 +531,6 @@ class TestV2SwapEncoding:
         result = core.encode_swap(
             pool_id, zero_for_one=False, amount_out=181, recipient=self.RECIPIENT
         )
-        assert result is not None
         _, calldata_hex, _ = result
 
         # Oracle-built reference calldata: the ABI encoding of
@@ -561,7 +558,6 @@ class TestV2SwapEncoding:
         assert pool is not None
 
         result = pool.encode_swap(zero_for_one=True, amount_out=181, recipient=self.RECIPIENT)
-        assert result is not None
         _, calldata_hex, _ = result
 
         # Oracle-built reference calldata: the ABI encoding of
@@ -653,7 +649,6 @@ class TestV2ReorgJournal:
         # (after) state (2000, 1000) at block 10 — NOT the block-20 delta's
         # before-values at block 20 (the pre-slice-4 behavior).
         result = core.v2_restore_before_block(pool_id, 20)
-        assert result is not None
         r0, r1, block = result
         assert r0 == 2000
         assert r1 == 1000
@@ -684,7 +679,6 @@ class TestV2ReorgJournal:
 
         # Target (100) is after the newest (10) → no-op, returns current.
         result = core.v2_restore_before_block(pool_id, 100)
-        assert result is not None
         r0, r1, block = result
         assert (r0, r1) == (2000, 1000)
         assert block == 10
@@ -917,7 +911,6 @@ class TestV3PoolState:
         # (the reverted state's update_block = 10 — the restored state is the
         # block-10 snapshot, per ADR-016 "post-restore fields are the before-values").
         result = core.v3_restore_before_block(pool_id, 20)
-        assert result is not None
         spx, liq, tick, block = result
         assert spx == self.SQRT_PRICE_X96 + 1000
         assert liq == 2000000
