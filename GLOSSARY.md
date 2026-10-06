@@ -156,10 +156,18 @@ built-at head, and state `Signed → Broadcast → Landed | Stale | Orphaned` �
 reconcile outcomes are nonce-level facts, not byte-level ones.
 _Avoid_: "submission table", "tx log", "journal".
 
+**Head reconciliation**:
+The once-per-head fold of the operator account's nonce-lifespan facts into each hosted
+strategy's default policy: one claim per chain head drives the refresh and the reconcile,
+and every typed notice folds through the owning lane's **HeadPolicy**. Extra triggers on
+an already-reconciled head are free.
+_Avoid_: "head tick" (the feed's trigger, not the reconciliation); "nonce refresh" (only
+one step of it); per-driver reconcile loops.
+
 **HeadPolicy**:
-The default per-driver reaction to a typed head notice: re-stamp on an orphaned
-submission or a revoked lease, re-evaluate at the decide stage on a stale one, retire on
-a landed one.
+The default per-driver reaction to a typed head notice produced by **Head reconciliation**:
+re-stamp on an orphaned submission or a revoked lease, re-evaluate at the decide stage on
+a stale one, retire on a landed one.
 _Avoid_: "retry policy", "rebroadcast policy".
 
 **Ordered sim-submit pipeline**:

@@ -69,6 +69,7 @@ pub mod bundle;
 pub mod dispatcher;
 pub mod error;
 pub mod fee;
+pub mod head_reconciliation;
 pub mod monitor;
 pub mod params;
 pub mod relay;

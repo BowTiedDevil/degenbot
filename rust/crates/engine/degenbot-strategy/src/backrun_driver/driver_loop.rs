@@ -43,6 +43,7 @@ use crate::gap_quarantine_journal::{
     self, ArchivedResolution, ParkRecord, QuarantineJournal, Resolution, ResolutionArchiveRecord,
 };
 use degenbot_submission::dispatcher::Dispatcher;
+use degenbot_submission::head_reconciliation::HeadReconciliation;
 use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submission_ledger::NonceLane;
 
@@ -983,6 +984,10 @@ struct LoopBoot {
     fixture_frames: Option<Vec<degenbot_rpc::backrun_feed::BackrunFeedEvent>>,
     head_ws_url: Option<String>,
     namespace_root: Option<PathBuf>,
+    /// The once-per-head reconciliation the loop triggers. `None` keeps the
+    /// loop's head feed reconcile-free (a boot with no hosted reconciliation
+    /// to drive).
+    head_reconciliation: Option<Arc<HeadReconciliation>>,
 }
 
 /// The backrun driver entry point.
@@ -1015,6 +1020,7 @@ impl BackrunDriver {
         hub: Arc<Hub>,
         namespace_root: Option<PathBuf>,
         nonce_lane: Arc<NonceLane>,
+        head_reconciliation: Option<Arc<HeadReconciliation>>,
     ) -> Result<DriverHandle, BackrunBootError> {
         let BackrunStrategyBoot {
             cfg,
@@ -1137,6 +1143,7 @@ impl BackrunDriver {
             fixture_frames,
             head_ws_url,
             namespace_root,
+            head_reconciliation,
         };
         let shared = Arc::new(LoopShared::new());
         let run = Box::pin(drive(cfg, hub, boot, Arc::clone(&shared)));
@@ -1242,6 +1249,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         fixture_frames,
         head_ws_url,
         namespace_root,
+        head_reconciliation,
     } = boot;
     shared.begin_running();
     // The per-block replay handle: rebuilt whenever the observed head
@@ -1480,27 +1488,12 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                     .expect("dispatcher mutex poisoned")
                     .advance_block(head);
                 current_block = head;
-                // Refresh the shared nonce authority from the chain's
-                // operator-account nonce: a confirmed broadcast leaves the
-                // outstanding set, and a rewind restores a broadcast the old
-                // head had confirmed. Guarded on outstanding work so an idle
-                // driver pays no per-head chain read.
-                if nonce_lane.authority().has_outstanding() {
-                    if let Some(operator) = signer.as_ref().map(TxSigner::address) {
-                        match provider.get_transaction_count(&operator, None).await {
-                            Ok(confirmed) => {
-                                let _ = nonce_lane.authority().set_confirmed_reorg(confirmed);
-                                let outstanding = nonce_lane.authority().outstanding_nonces();
-                                let _ = nonce_lane.ledger().reconcile(confirmed, &outstanding);
-                            }
-                            Err(error) => {
-                                tracing::warn!(
-                                    %error,
-                                    "head nonce read failed - authority reconcile deferred"
-                                );
-                            }
-                        }
-                    }
+                // The once-per-head reconciliation: the module gates on
+                // hosted activity, claims the head, reads the chain nonce,
+                // and folds every typed notice through the owning lane's
+                // policy. Redundant triggers dedupe inside it.
+                if let Some(reconciliation) = head_reconciliation.as_ref() {
+                    reconciliation.reconcile_head(current_block).await;
                 }
                 pl.wallet_gas_cost_wei.store(
                     u64::try_from(wallet_gas_cost_at(&provider, head, &cfg).await)

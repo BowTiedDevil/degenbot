@@ -86,13 +86,15 @@ pub struct PyArbEngine {
     /// through (`settlement` and `backrun`). Populated at boot when the
     /// submission feature is on.
     #[cfg(feature = "submission")]
-    pub(crate) head_lanes: Arc<
-        parking_lot::Mutex<
-            std::collections::HashMap<
-                degenbot_substrate::nonce::StrategyId,
-                Arc<degenbot_submission::NonceLane>,
-            >,
-        >,
+    pub(crate) head_lanes: Arc<parking_lot::Mutex<strategy::HeadLanes>>,
+
+    /// The hosted head feed's reconciliation, seeded from the boot-built
+    /// instance the spawn factories' driver loops share (one per process).
+    /// A boot that could not build one leaves this empty and the first
+    /// `reconcile_hosted_head` call lazily construct-or-caches it.
+    #[cfg(feature = "submission")]
+    pub(crate) head_reconciliation: parking_lot::Mutex<
+        Option<Arc<degenbot_submission::head_reconciliation::HeadReconciliation>>,
     >,
 
     /// Receiver for the result batch channel.

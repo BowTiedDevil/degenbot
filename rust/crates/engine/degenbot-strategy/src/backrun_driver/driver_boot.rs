@@ -24,6 +24,7 @@ use degenbot_substrate::driver_spawn::{DriverExit, DriverFuture, DriverSpawnFact
 use degenbot_substrate::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerifier, DbArm};
 use degenbot_substrate::RouteRegistry;
 
+use degenbot_submission::head_reconciliation::HeadReconciliation;
 use degenbot_submission::submission_ledger::NonceLane;
 
 use super::driver_loop::BackrunDriver;
@@ -211,6 +212,14 @@ impl BackrunBootResources {
     pub fn connector_db(&self) -> Option<&Arc<DegenbotDb>> {
         self.connector_db.as_ref()
     }
+
+    /// The resolved node join's provider, the one connection pool the boot
+    /// ranker and the driver sign against. `None` when the join never
+    /// resolved (a joinless boot runs no head-feed reconciliation either).
+    #[must_use]
+    pub fn node_provider(&self) -> Option<&Arc<AlloyProvider>> {
+        self.join.as_ref().map(|join| &join.provider)
+    }
     /// The typed refusal this boot carries, if any. A refusing boot still
     /// hands the host a coherent product; the driver reports the error at its
     /// driving edge instead of running on facts the boot could not resolve.
@@ -371,6 +380,7 @@ pub struct BackrunBoot {
     hub: Arc<Hub>,
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
+    head_reconciliation: Option<Arc<HeadReconciliation>>,
 }
 
 impl BackrunBoot {
@@ -383,12 +393,20 @@ impl BackrunBoot {
             hub,
             namespace_root,
             nonce_lane,
+            head_reconciliation,
         } = self;
         Box::pin(async move {
             if let Some(error) = strategy.boot_error.clone() {
                 return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
             }
-            let handle = match BackrunDriver::start(strategy, hub, namespace_root, nonce_lane).await
+            let handle = match BackrunDriver::start(
+                strategy,
+                hub,
+                namespace_root,
+                nonce_lane,
+                head_reconciliation,
+            )
+            .await
             {
                 Ok(handle) => handle,
                 Err(error) => {
@@ -716,6 +734,7 @@ pub fn backrun_boot(
     hub: Arc<Hub>,
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
+    head_reconciliation: Option<Arc<HeadReconciliation>>,
 ) -> BackrunBoot {
     install_frame_trace_sink(&strategy.ecosystem);
     BackrunBoot {
@@ -723,6 +742,7 @@ pub fn backrun_boot(
         hub,
         namespace_root,
         nonce_lane,
+        head_reconciliation,
     }
 }
 
@@ -734,13 +754,20 @@ pub fn backrun_spawn_factory(
     strategy: BackrunStrategyBoot,
     hub: Arc<Hub>,
     nonce_lane: Arc<NonceLane>,
+    head_reconciliation: Option<Arc<HeadReconciliation>>,
 ) -> DriverSpawnFactory {
     Box::new(move |namespace| {
         let namespace_root = namespace.map(|ns| ns.root().to_path_buf());
         Box::pin(async move {
-            backrun_boot(strategy, hub, namespace_root, nonce_lane)
-                .into_driver_future()
-                .await
+            backrun_boot(
+                strategy,
+                hub,
+                namespace_root,
+                nonce_lane,
+                head_reconciliation,
+            )
+            .into_driver_future()
+            .await
         })
     })
 }
