@@ -64,6 +64,12 @@ use serde_json::Value;
 
 use crate::oracle::{self, FixtureEvm, TxSpec, Verdict};
 
+pub mod actor;
+
+pub use actor::{
+    scripted_actor_creation_code, scripted_coordinator_creation_code, ActorBranch, ScriptedLog,
+};
+
 /// One executed frame's log, pinned to its block with a deterministic
 /// `(block, tx_index, log_index)` coordinate.
 struct ScratchLog {
@@ -462,8 +468,12 @@ impl ScratchDriver {
     }
 }
 
-/// Gas the served `eth_call` grants a direct (non-multicall) read.
-const CALL_GAS: u64 = 30_000_000;
+/// Gas the served `eth_call` grants a direct (non-multicall) read. Stays at
+/// or under the oracle transact cap (2^24): a served call is a real
+/// `transact` on the fixture EVM, and a gas limit past that cap is refused
+/// (`TxGasLimitGreaterThanCap`) — the first scratch-chain `eth_call` (the
+/// aave discount pre-pass) drove this in.
+const CALL_GAS: u64 = 16_777_216;
 /// Gas each Multicall3 sub-call grants its real EVM execution.
 const SUBCALL_GAS: u64 = 2_000_000;
 
@@ -977,6 +987,12 @@ pub fn encode_capture_swap(
 /// then the topic words, `PUSH1 len; PUSH1 0; LOGn; STOP; <data>` — the LOGn
 /// stack convention (μs[0] = offset on top, topics deepest).
 ///
+/// Topic order is as-produced: the emitter serves its topics in the order
+/// the wave-2 corpus was recorded with, and the committed pin test
+/// `log_emitter_initcode_is_exact_stack_order` locks that order. Consumers
+/// must treat recorded emitter topics as as-produced — a future order
+/// change is a corpus regen decision, not a silent fix.
+///
 /// # Errors
 ///
 /// Errors when there are no topics, more than 4, or the data exceeds a
@@ -1009,7 +1025,7 @@ pub fn log_emitter_initcode(topics: &[B256], data: &[u8]) -> Result<Vec<u8>, Str
     code.push(0x39); // CODECOPY
                      // LOGn: stack (bottom→top) topics t1..tN, size, offset.
     for topic in topics {
-        code.push(0x7f); // PUSH32 topic
+        code.push(0x7f); // `PUSH32` topic
         code.extend_from_slice(topic.as_slice());
     }
     code.push(0x60);
@@ -1197,7 +1213,7 @@ mod tests {
         assert_eq!(code[4], 0x60);
         assert_eq!(code[5], 0x00); // dest
         assert_eq!(code[6], 0x39); // CODECOPY
-        assert_eq!(code[7], 0x7f); // PUSH32 topic
+        assert_eq!(code[7], 0x7f); // `PUSH32` topic
         assert_eq!(&code[8..40], topic.as_slice());
         assert_eq!(code[40], 0x60);
         assert_eq!(code[41], 2); // size

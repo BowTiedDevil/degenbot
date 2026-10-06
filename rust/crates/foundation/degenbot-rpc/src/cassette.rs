@@ -783,6 +783,37 @@ mod tests {
     // Committed corpus: the drift gate runs over the real fixtures.
     // ------------------------------------------------------------------
 
+    /// The seed-key retirement guard (the wave-3 seed-key adjudication): the
+    /// two legacy aave seed cassettes' `eth_getLogs` ledger keys were
+    /// regenerated through the deterministic writer (`entry_key`), so the
+    /// replay transport's OR-set semantic-key fallback is no longer
+    /// load-bearing for them - the exact canonical key hits. The guard
+    /// re-derives every ledger key through `entry_key` and requires
+    /// identity: a future edit that re-introduces an un-normalized key
+    /// (or a filter whose OR-set order drifts) goes red here.
+    #[test]
+    fn regenerated_seed_cassettes_ledger_keys_are_deterministically_normalized() {
+        for file in [
+            "aave_update_chunk_26130440-26130445.json",
+            "aave_config_chunk_19091050-19091059.json",
+        ] {
+            let bytes = std::fs::read(corpus_dir().join(file)).unwrap();
+            verify_cassette_bytes(&bytes).unwrap_or_else(|e| panic!("{file}: drift gate RED: {e}"));
+            let cassette = Cassette::from_json_bytes(&bytes).unwrap();
+            for key in cassette.entries.keys() {
+                let parsed: Vec<Value> = serde_json::from_str(key).unwrap();
+                let method = parsed[0].as_str().unwrap();
+                let derived = entry_key(method, &parsed[1]);
+                assert_eq!(
+                    &derived, key,
+                    "{file}: ledger key is not the deterministic writer's \
+                     canonical form (the semantic fallback would be \
+                     load-bearing for it)"
+                );
+            }
+        }
+    }
+
     fn corpus_dir() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../../tests/fixtures/cassettes")

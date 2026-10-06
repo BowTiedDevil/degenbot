@@ -1,0 +1,267 @@
+{
+  "schema": "degenbot.db-dump/v1",
+  "tables": [
+    {
+      "columns": [
+        "id",
+        "token_id",
+        "v_token_id",
+        "v_gho_discount_rate_strategy",
+        "v_gho_discount_token"
+      ],
+      "rows": [],
+      "table": "aave_gho_tokens"
+    },
+    {
+      "columns": [
+        "id",
+        "asset_id",
+        "ltv",
+        "liquidation_threshold",
+        "liquidation_bonus",
+        "e_mode_category_id",
+        "borrowing_enabled",
+        "stable_borrowing_enabled",
+        "flash_loan_enabled",
+        "isolation_mode",
+        "borrowable_in_isolation",
+        "debt_ceiling"
+      ],
+      "rows": [],
+      "table": "aave_v3_asset_configs"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "underlying_asset_id",
+        "a_token_id",
+        "a_token_revision",
+        "v_token_id",
+        "v_token_revision",
+        "e_mode_category_id",
+        "price_source",
+        "last_update_block",
+        "liquidity_index",
+        "liquidity_rate",
+        "borrow_index",
+        "borrow_rate"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          1,
+          2,
+          1,
+          3,
+          2,
+          null,
+          null,
+          null,
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          2,
+          1,
+          4,
+          5,
+          1,
+          6,
+          2,
+          null,
+          null,
+          null,
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      ],
+      "table": "aave_v3_assets"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "balance",
+        "last_index"
+      ],
+      "rows": [],
+      "table": "aave_v3_collateral_positions"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "name",
+        "address",
+        "revision"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "POOL_ADDRESS_PROVIDER",
+          "0x7070707070707070707070707070707070707070",
+          null
+        ],
+        [
+          2,
+          1,
+          "POOL",
+          "0x5050505050505050505050505050505050505050",
+          11
+        ],
+        [
+          3,
+          1,
+          "POOL_CONFIGURATOR",
+          "0x7272727272727272727272727272727272727272",
+          8
+        ],
+        [
+          4,
+          1,
+          "PRICE_ORACLE",
+          "0x7474747474747474747474747474747474747474",
+          null
+        ]
+      ],
+      "table": "aave_v3_contracts"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "balance",
+        "last_index"
+      ],
+      "rows": [],
+      "table": "aave_v3_debt_positions"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "category_id",
+        "label",
+        "ltv",
+        "liquidation_threshold",
+        "liquidation_bonus",
+        "price_source"
+      ],
+      "rows": [],
+      "table": "aave_v3_emode_categories"
+    },
+    {
+      "columns": [
+        "id",
+        "chain_id",
+        "name",
+        "active",
+        "last_update_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "Aave Ethereum Market",
+          1,
+          1002
+        ]
+      ],
+      "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "enabled"
+      ],
+      "rows": [],
+      "table": "aave_v3_user_collateral_configs"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "address",
+        "e_mode",
+        "gho_discount",
+        "stk_aave_balance",
+        "isolation_mode_collateral_asset_id",
+        "isolation_mode_debt"
+      ],
+      "rows": [],
+      "table": "aave_v3_users"
+    },
+    {
+      "columns": [
+        "id",
+        "chain",
+        "address",
+        "name",
+        "symbol",
+        "decimals"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "0x5151515151515151515151515151515151515151",
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          1,
+          "0x5252525252525252525252525252525252525252",
+          null,
+          null,
+          null
+        ],
+        [
+          3,
+          1,
+          "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          1,
+          "0x5353535353535353535353535353535353535353",
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          1,
+          "0x5454545454545454545454545454545454545454",
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          1,
+          "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          null,
+          null,
+          null
+        ]
+      ],
+      "table": "erc20_tokens"
+    }
+  ]
+}

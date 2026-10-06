@@ -193,6 +193,11 @@ bench-updaters:
 check-evm-captures:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --example generate_evm_oracle_captures -- --check tests/fixtures/cassettes/wave2 tests/fixtures/sql_goldens/wave2
 
+# The wave-3 aave-side adversarial capture generator's gate (HGOV5W): the
+# same drift gate as check-evm-captures over the wave-3 fixture homes.
+check-aave-captures:
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --example generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
+
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every publishable workspace member in dependency order.
 # ~20-40 min cold. CI's PR gate (check-publish) runs the clean-tree form.

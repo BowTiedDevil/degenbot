@@ -31,6 +31,9 @@ tracing = { version = "^0.1" }
 # reaches production builds of this crate.
 degenbot-db = { workspace = true, features = ["sql-ledger"] }
 tempfile = { version = "^3.27" }
+# The wave-3 replay suite's negative probes mutate a recorded answer inside
+# the parsed cassette (re-signed through the writer's own digest fn).
+serde_json = { version = "^1" }
 
 [features]
 default = []

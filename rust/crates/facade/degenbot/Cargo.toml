@@ -98,6 +98,14 @@ required-features = ["sql-ledger"]
 name = "generate_evm_oracle_captures"
 required-features = ["sql-ledger"]
 
+# The wave-3 aave-side adversarial capture generator (ergo HGOV5W) replays its
+# SQL goldens through the statement-ledger wrapper the same way — the same
+# `sql-ledger` passthrough applies.
+# `just check-aave-captures` is the one command that carries the feature.
+[[example]]
+name = "generate_aave_adversarial_captures"
+required-features = ["sql-ledger"]
+
 [dev-dependencies]
 # The record_updater_cassette example seeds throwaway harness DBs (temp
 # dirs) and drives the raw `exchanges` row the replay suites seed (the
