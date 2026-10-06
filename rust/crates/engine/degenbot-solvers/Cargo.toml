@@ -37,6 +37,9 @@ hotpath = { version = "^0.28.4", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+# Uploads the `hotpath_bench` example's report to hotpath.rs from CI.
+hotpath-cloud = ["hotpath", "hotpath/hotpath-cloud"]
 # Ambient walk telemetry: the per-thread walk-combinator counters, event
 # census, and process-wide timing statics. Off by default so a release build
 # that never reads the counters pays nothing for them; enabling it turns the
