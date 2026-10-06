@@ -82,6 +82,27 @@ pub struct AaveChunkProgress {
     /// after the commit (small-set per-position RPC verification — multicall3
     /// batching is the market-wide extension).
     pub touched_user_addresses: Vec<Address>,
+    /// Wall time of the chunk's RPC log fetches (the multi-pass fetch plus
+    /// the same-chunk staleness re-fetches). Plain `Instant` spans (the
+    /// replay-bench baseline measurement; the telemetry chunk lands its own spans
+    /// later). Mirrors `degenbot-pool-updater::ChunkProgress`.
+    pub fetch_time: Duration,
+    /// Wall time of the in-transaction per-tx decode+compute block (the
+    /// GHO/revision conn reads, the discount pre-pass + the config-event
+    /// dispatch - both hold the write lock across their RPC reads).
+    pub decode_compute_time: Duration,
+    /// Wall time of the pre-commit on-chain-truth verification RPC (the
+    /// touched-positions gate + the market-wide gate). Zero when the gates
+    /// are off.
+    pub verify_time: Duration,
+    /// Wall time of the remaining in-transaction SQL apply (per-tx event
+    /// applies, the zero-balance cleanup, the stamp): the chunk's write-lock
+    /// span minus [`Self::decode_compute_time`] and [`Self::verify_time`].
+    pub apply_time: Duration,
+    /// The write-lock hold: the span from `transaction()` open to
+    /// commit/drop. The headline number for the hoist-RPC-out-of-the-tx fix
+    /// (survey finding 1; the `await_holding_lock` shape).
+    pub write_lock_hold_time: Duration,
 }
 
 /// The sink the chunk loop reports per-chunk progress to. Implementations:
@@ -448,6 +469,15 @@ async fn run_aave_update_driver(
 
         let chunk_end = last_block.min(working_start + chunk_size - 1);
 
+        // The replay-bench stage spans (plain `Instant`; the telemetry chunk lands
+        // its own spans later). `chunk_lock_hold_time` is the write-lock
+        // hold: `transaction()` open → commit/drop.
+        let mut chunk_fetch_time = Duration::ZERO;
+        let mut chunk_verify_time = Duration::ZERO;
+        // Assigned (then read) in every branch that reaches a report; left
+        // uninitialized so the compiler proves that.
+        let chunk_lock_hold_time;
+
         // 1. RPC fetch the chunk's logs (GIL-free, async, sorted by
         //    (block_number, log_index)).
         //
@@ -483,7 +513,9 @@ async fn run_aave_update_driver(
             .as_ref()
             .and_then(|g| g.v_gho_discount_token.as_deref())
             .and_then(|s| s.parse().ok());
+        let fetch_started = Instant::now();
         let mut logs = fetch_aave_chunk_logs(&spec, &fetcher, working_start, chunk_end).await?;
+        chunk_fetch_time += fetch_started.elapsed();
         // (b) Same-chunk staleness: an asset created mid-chunk (a
         //     `ReserveInitialized` in tx N + the first `Supply`/`Borrow` on
         //     it in tx N+M, same chunk) has its aToken/vToken NOT in the
@@ -515,8 +547,10 @@ async fn run_aave_update_driver(
         if !new_tokens.is_empty() {
             new_tokens.sort_unstable();
             new_tokens.dedup();
+            let fetch_started = Instant::now();
             let mut extra =
                 fetch_scaled_token_logs(&fetcher, working_start, chunk_end, &new_tokens).await?;
+            chunk_fetch_time += fetch_started.elapsed();
             // De-dup by (block_number, log_index) — the re-fetch may overlap
             // the frozen fetch for tokens partially known (rare). Logs
             // missing either field sort last (shouldn't happen for fetched
@@ -559,8 +593,10 @@ async fn run_aave_update_driver(
             }
         }
         if let Some(token) = discount_token_from_event.filter(|_| spec.stk_aave_address.is_none()) {
+            let fetch_started = Instant::now();
             let mut extra =
                 fetch_stk_aave_logs(&fetcher, working_start, chunk_end, Some(token)).await?;
+            chunk_fetch_time += fetch_started.elapsed();
             let existing: HashSet<(u64, u64)> = logs
                 .iter()
                 .filter_map(|l| Some((l.block_number?, l.log_index?)))
@@ -586,6 +622,9 @@ async fn run_aave_update_driver(
         //    they MUST be atomic with the chunk's apply.
         let chunk_report = {
             let mut guard = db.lock();
+            // The write-lock hold starts at the `transaction()` open and
+            // ends at the commit/drop (measured in every branch below).
+            let lock_hold_started = Instant::now();
             let tx = guard.transaction().map_err(DbError::from)?;
             let result = process_chunk_on_conn(
                 &tx,
@@ -617,6 +656,7 @@ async fn run_aave_update_driver(
                         // chunk has nothing to verify). Passing `None`
                         // would verify ALL positions rather than none.
                         if !touched.is_empty() {
+                            let verify_started = Instant::now();
                             let divergences = crate::verify::verify_touched_positions_on_conn(
                                 &tx,
                                 &provider,
@@ -625,10 +665,12 @@ async fn run_aave_update_driver(
                                 Some(&touched),
                             )
                             .await?;
+                            chunk_verify_time += verify_started.elapsed();
                             if !divergences.is_empty() {
                                 // Drop `tx` (rollback) — the chunk's writes +
                                 // the stamp advance are reverted.
                                 drop(tx);
+                                chunk_lock_hold_time = lock_hold_started.elapsed();
                                 progress.report_chunk(&AaveChunkProgress {
                                     chain_id,
                                     market_id,
@@ -638,6 +680,11 @@ async fn run_aave_update_driver(
                                     committed: false,
                                     touched_user_addresses: Vec::new(),
                                     is_final: false,
+                                    fetch_time: chunk_fetch_time,
+                                    decode_compute_time: Duration::ZERO,
+                                    verify_time: chunk_verify_time,
+                                    apply_time: Duration::ZERO,
+                                    write_lock_hold_time: chunk_lock_hold_time,
                                 });
                                 return Err(RunError::Verification {
                                     chunk_start: working_start,
@@ -663,12 +710,15 @@ async fn run_aave_update_driver(
                             max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit),
                         ));
                     if run_full {
+                        let verify_started = Instant::now();
                         let divergences = crate::verify::verify_all_positions_on_conn(
                             &tx, &provider, market_id, chain_id, chunk_end, None,
                         )
                         .await?;
+                        chunk_verify_time += verify_started.elapsed();
                         if !divergences.is_empty() {
                             drop(tx);
+                            chunk_lock_hold_time = lock_hold_started.elapsed();
                             progress.report_chunk(&AaveChunkProgress {
                                 chain_id,
                                 market_id,
@@ -678,6 +728,11 @@ async fn run_aave_update_driver(
                                 committed: false,
                                 touched_user_addresses: Vec::new(),
                                 is_final: false,
+                                fetch_time: chunk_fetch_time,
+                                decode_compute_time: Duration::ZERO,
+                                verify_time: chunk_verify_time,
+                                apply_time: Duration::ZERO,
+                                write_lock_hold_time: chunk_lock_hold_time,
                             });
                             return Err(RunError::FullVerification {
                                 chunk_start: working_start,
@@ -687,12 +742,14 @@ async fn run_aave_update_driver(
                         }
                     }
                     tx.commit().map_err(DbError::from)?;
+                    chunk_lock_hold_time = lock_hold_started.elapsed();
                     r
                 }
                 Err(e) => {
                     // Drop `tx` (rollback) — the chunk's writes + the stamp
                     // advance are reverted; the committed prior chunks stand.
                     drop(tx);
+                    chunk_lock_hold_time = lock_hold_started.elapsed();
                     progress.report_chunk(&AaveChunkProgress {
                         chain_id,
                         market_id,
@@ -702,6 +759,13 @@ async fn run_aave_update_driver(
                         committed: false,
                         touched_user_addresses: Vec::new(),
                         is_final: false,
+                        // The failed core's report is consumed by the `Err`,
+                        // so its stage splits are not attributable here.
+                        fetch_time: chunk_fetch_time,
+                        decode_compute_time: Duration::ZERO,
+                        verify_time: chunk_verify_time,
+                        apply_time: Duration::ZERO,
+                        write_lock_hold_time: chunk_lock_hold_time,
                     });
                     return Err(e);
                 }
@@ -718,6 +782,11 @@ async fn run_aave_update_driver(
             touched_user_addresses: chunk_report.touched_user_addresses.into_iter().collect(),
             is_final: chunk_end >= last_block
                 || max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit),
+            fetch_time: chunk_fetch_time,
+            decode_compute_time: chunk_report.decode_compute_time,
+            verify_time: chunk_verify_time,
+            apply_time: chunk_report.apply_time,
+            write_lock_hold_time: chunk_lock_hold_time,
         });
         report.chunks_committed += 1;
         report.total_events_applied += chunk_report.events_applied;

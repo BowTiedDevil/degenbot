@@ -75,6 +75,18 @@ degenbot-eventhub.workspace = true
 # passthrough they are unreachable through the umbrella — the gap that left
 # the pure-Rust settlement-bot example with no telemetry at all.
 otel = ["degenbot-bot/otel"]
+# The replay bench's statement-ledger passthrough (ADR-068 D6 measurement):
+# forwards to degenbot-db's test/bench-only SQL ledger feature. Default OFF,
+# mirroring degenbot-db (the ledger never compiles into production paths).
+sql-ledger = ["degenbot-db/sql-ledger"]
+
+# The replay bench (GLOSSARY "replay bench", ADR-068 D6) measures the
+# statement ledger, so it only builds under the `sql-ledger` passthrough —
+# `just bench-updaters` is the one command that sets it.
+[[bench]]
+name = "updater_replay_bench"
+harness = false
+required-features = ["sql-ledger"]
 
 [dev-dependencies]
 # The record_updater_cassette example seeds throwaway harness DBs (temp

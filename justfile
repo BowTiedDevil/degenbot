@@ -174,6 +174,16 @@ test-timing top='30':
         print(f"  {d:8.3f}s  {name}")
     EOF
 
+# The replay bench (GLOSSARY “replay bench”, ADR-068 D6, ergo NNCPXA): the ONE
+# command reproducing the updater per-chunk baseline — the real chunk loops
+# over the committed seed cassettes through the replay transport (zero
+# network), reporting RPC round trips + response bytes, SQL statement count,
+# stage wall times, the write-lock hold, and chunks/sec. The table this
+# prints is the survey doc's Baseline section (docs/updater-rpc-sql-survey.md);
+# the Perf A–E tasks re-rank against it. Uses the bench profile (release-like).
+bench-updaters:
+    cargo bench --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --bench updater_replay_bench
+
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every publishable workspace member in dependency order.
 # ~20-40 min cold. CI's PR gate (check-publish) runs the clean-tree form.

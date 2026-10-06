@@ -128,6 +128,78 @@ chunks/sec. Gates follow the glossary idioms: machine-emitted captures are **dri
 gates** (regenerate-and-diff with the same pipeline that writes them) and every gate
 carries a **negative probe** (mutate a captured response or DB dump, observe red).
 
+## Baseline (ergo NNCPXA — the measurement gate)
+
+The replay bench's first baseline, recorded — where a chunk spends its time
+and what one chunk costs in round trips and statements. The workload is the
+replay bench (GLOSSARY “replay bench”): the REAL chunk loops
+(`run_pool_update_on_db` / `run_aave_update_on_db`) over the committed seed
+cassettes through the cassette replay transport (ADR-068 D5 injection, zero
+network), each run writing a fresh temp SQLite DB wrapped in the statement
+ledger.
+
+**Reproduce (one command):** `just bench-updaters` (wraps
+`cargo bench --locked --manifest-path rust/Cargo.toml -p degenbot --features
+degenbot/sql-ledger --bench updater_replay_bench`; bench profile, median of 9
+runs after 2 warmups, fresh transport/temp-DB/ledger per run).
+
+**Machine note:** this devcontainer (8 cores, 62 GB RAM); the golden captures
+are reth-recorded (each corpus file's `provenance.source`:
+`reth/v2.7.0-3d592ec/x86_64-unknown-linux-gnu`) with the span pinned in the
+corpus file. Run-to-run spread on this machine is ±10% on the timing
+columns; the counters (round trips, bytes, statements) are deterministic and
+asserted iteration-stable by the bench.
+
+**Capture IDs (corpus file names):**
+`pool_update_chunk_26102622-26102626.json` (verify gate OFF — the replay
+suites' posture), `pool_verify_chunk_26102622-26102626.json` (the same chunk
+replayed with the pre-commit verification gate ON — the gate's per-pool
+tick/bitmap reads ride the recorded `eth_call`s),
+`aave_update_chunk_26130440-26130445.json`.
+
+| capture | rt | resp bytes | stmts | sql µs | fetch µs | dc+cmp µs | verify µs | apply µs | lock-hold µs | chunk µs | chunks/sec |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| pool_update_chunk_26102622-26102626 (gate OFF) | 2 | 4289 | 25 | 1000 | 130 | 34 | 0 | 207 | 1483 | 3997 | 250 |
+| pool_verify_chunk_26102622-26102626 (gate ON) | 7 | 5510 | 25 | 1000 | 132 | 31 | 48 | 209 | 1527 | 4192 | 238 |
+| aave_update_chunk_26130440-26130445 | 6 | 28274 | 150 | 2000 | 558 | 1327 | 0 | 169 | 2933 | 6138 | 162 |
+
+Column semantics: `rt` = ledger entries served per run (the RPC round-trip
+count; pool gate-ON adds the gate's five `eth_call`s to the two `eth_getLogs`
+passes); `resp bytes` = the served answers' serialized payload bytes; `stmts`
+= the statement ledger's record count per chunk apply (the drift-gate
+literals: 25 / 150); stages are the run entries' `Instant` spans — fetch
+(the RPC log fetches), dc+cmp (in-transaction decode+compute: pool per-pool
+full-map read+compute; Aave per-tx discount pre-pass + config dispatch, both
+under the write lock), verify (pre-commit on-chain gate), apply (remaining
+in-transaction SQL); `lock-hold` = `transaction()` open → commit/drop.
+`sql µs` sums the ledger's per-statement profile times — SQLite's legacy
+`CurrentTimeInt64` profile path quantizes each statement to whole
+milliseconds, so treat it as a coarse floor (the `Instant` stage spans carry
+the fine timing).
+
+What the numbers say (first read, to be re-ranked per fix):
+
+- **The write lock is the pool chunk's center of gravity.** Gate OFF, the
+  hold is 1.48 ms of a 4.0 ms chunk; the fetch+decode outside it is ~0.16 ms.
+  With the gate ON the hold absorbs the verification RPC too (1.53 ms) —
+  the structural shape Perf A removes (hoist all RPC out of the transaction).
+  This corpus's gate reads are small (one brand-new pool, five calls), so the
+  headline is the hold itself, not the verify delta; a corpus with real tick
+  depth will widen it.
+- **Aave's in-lock compute is the dominant in-transaction stage.**
+  dc+cmp = 1.33 ms inside a 2.93 ms hold — the per-tx discount pre-pass +
+  config-dispatch RPC reads while `db.lock()` is held (survey findings, Perf
+  A/D), with apply's per-event SQL only ~0.17 ms measured (150 statements,
+  mostly fast; Perf C's N+1 cost is statement COUNT before it is time).
+- **Round-trip shapes are now pinned by gates**: pool 2 (`eth_getLogs`
+  ×2), pool+gate 7 (+5 `eth_call`s), aave 6 (`eth_getLogs` ×6; no
+  config events in this span → no `eth_call`s) — asserted as literals in
+  the replay suites (`EXPECTED_RPC_ROUND_TRIPS`), alongside the statement
+  counts (25/150) and the served-byte totals.
+- **The dead-query tail is visible by subtraction**: pool chunk wall 4.0 ms
+  vs fetch+hold 1.6 ms — the remainder is loop overhead + the post-commit
+  `fetch_exchange` refresh loop (finding 6, Perf F).
+
 ## Predicted fix order (to be re-ranked against the baseline)
 
 1. Hoist all RPC out of the SQLite transaction (pool verification; Aave discount/config

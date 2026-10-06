@@ -1,7 +1,7 @@
 //! Hosted sources: the process-lifetime owner of the strategies' pending-tx
 //! source provisioning and the head clock.
 //!
-//! One typed stream per SOURCE KIND, minted once at boot: each active arm's
+//! One typed stream per source kind, minted once at boot: each active arm's
 //! pump registers its own [`HubClass::PendingTx`] ring under its
 //! [`PendingTxSource`], so two backrun arms can run in one process without a
 //! registration tombstone and each arm's frame corpus is exactly its own

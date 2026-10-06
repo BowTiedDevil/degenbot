@@ -1,7 +1,7 @@
 //! The typed pending-tx stream a hosted driver drains, and the pump its host
 //! keeps.
 //!
-//! One hub class per SOURCE KIND ([`PendingTxSource`]): the `MEVBlocker`
+//! One hub class per source kind ([`PendingTxSource`]): the `MEVBlocker`
 //! searcher feed and the chain-node txpool feed register — and are drained —
 //! independently, so each arm's frame corpus is exactly its own feed's and a
 //! second arm can run in the same process without a registration tombstone.

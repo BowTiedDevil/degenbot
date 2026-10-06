@@ -23,7 +23,7 @@
 //! recorded response changes the canonical bytes — the drift gate
 //! ([`verify_cassette_bytes`]) goes red.
 //!
-//! The pipeline that WRITES a capture ([`RecordingTransport`] flushed through
+//! The pipeline that writes a capture ([`RecordingTransport`] flushed through
 //! [`Cassette::canonical_bytes`]) is the same pipeline the gate runs.
 
 use std::collections::BTreeMap;

@@ -74,7 +74,7 @@ fn object_from_sorted(sorted: BTreeMap<String, serde_json::Value>) -> serde_json
     serde_json::Value::Object(map)
 }
 
-/// A JSON object that serializes with SORTED keys under either `serde_json`
+/// A JSON object that serializes with its keys sorted, under either `serde_json`
 /// map backend. Deduped and ordered through a `BTreeMap` (whose `Serialize`
 /// visits keys sorted), then projected in that order into the `Map` — so
 /// feature unification turning on `serde_json`'s `preserve_order` cannot

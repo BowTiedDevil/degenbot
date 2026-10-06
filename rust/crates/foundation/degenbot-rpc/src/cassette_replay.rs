@@ -31,7 +31,8 @@
 //! `tests/fixtures/cassettes/`.
 
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::client::RpcClient;
@@ -62,6 +63,7 @@ const SERVED_METHODS: [&str; 4] = [
 #[derive(Clone, Debug)]
 pub struct CassetteReplayTransport {
     cassette: Arc<Cassette>,
+    served: Arc<ServedTrace>,
 }
 
 impl CassetteReplayTransport {
@@ -70,7 +72,26 @@ impl CassetteReplayTransport {
     pub fn new(cassette: Cassette) -> Self {
         Self {
             cassette: Arc::new(cassette),
+            served: Arc::new(ServedTrace::default()),
         }
+    }
+
+    /// The serving stats accumulated since construction - every JSON-RPC
+    /// request answered and every ledger entry served, with the wire bytes
+    /// those answers carried. The snapshot is cumulative; delta two
+    /// snapshots around one run (or build a fresh transport per run) to
+    /// scope it. This is the replay bench's and the replay suites' RPC
+    /// round-trip + response-bytes counter (ADR-068 D6 measurement): a run
+    /// over a golden capture reports exactly the fetch surface the chunk
+    /// loop actually issued, so a shaping regression (an added or removed
+    /// round trip) is a plain-assertion red.
+    ///
+    /// Clones of the transport (including the one inside
+    /// [`Self::as_alloy_provider`]'s client) share one trace - snapshot from
+    /// the handle you kept.
+    #[must_use]
+    pub fn served_snapshot(&self) -> ServedSnapshot {
+        self.served.snapshot()
     }
 
     /// Wrap this replay transport as a live [`AlloyProvider`] (no network) —
@@ -94,6 +115,7 @@ impl CassetteReplayTransport {
         // request: hex quantities decimalize, object keys sort, verbatim hex
         // (addresses/topics/data) passes through — so the key collides with
         // the ledger entry exactly as recorded.
+        self.served.record_request(method);
         let key = entry_key(method, &params);
         let Some(entry) = self.lookup(method, &params, &key) else {
             return Err(if SERVED_METHODS.contains(&method) {
@@ -109,9 +131,13 @@ impl CassetteReplayTransport {
                 } else {
                     wire_value(result)
                 };
+                self.served.record_served(method, json_byte_len(&wire));
                 success(&wire)
             }
-            CassetteResponse::Failure { error } => Err(failure_payload(error)),
+            CassetteResponse::Failure { error } => {
+                self.served.record_served(method, json_byte_len(error));
+                Err(failure_payload(error))
+            }
         }
     }
 
@@ -147,6 +173,99 @@ impl CassetteReplayTransport {
             }
         }
     }
+}
+
+/// Per-method serving stats: how many ledger entries the transport answered
+/// for one JSON-RPC method and how many wire bytes those answers carried.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MethodServed {
+    /// Ledger entries served for this method.
+    pub served: u64,
+    /// Serialized payload bytes of the served answers (result or error
+    /// member, wire form - not the JSON-RPC envelope).
+    pub response_bytes: u64,
+}
+
+/// The serving stats a [`CassetteReplayTransport`] accumulates while it
+/// answers a run. Shared by every clone of the transport (the client inside
+/// [`CassetteReplayTransport::as_alloy_provider`] included), so a run's
+/// counter is readable from the handle that built the provider.
+#[derive(Debug, Default)]
+struct ServedTrace {
+    inner: Mutex<ServedTraceInner>,
+}
+
+#[derive(Debug, Default)]
+struct ServedTraceInner {
+    /// Every JSON-RPC request the transport answered (served entries,
+    /// fixture gaps, and method-not-found misses alike).
+    requests: u64,
+    /// Ledger entries served - the RPC round-trip count a replayed run
+    /// reports (ADR-068 D6).
+    served: u64,
+    /// Sum of the served answers' serialized payload bytes.
+    response_bytes: u64,
+    per_method: BTreeMap<String, MethodServed>,
+}
+
+impl ServedTrace {
+    fn record_request(&self, method: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.requests = inner.requests.saturating_add(1);
+            inner.per_method.entry(method.to_string()).or_default();
+        }
+    }
+
+    fn record_served(&self, method: &str, response_bytes: u64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.served = inner.served.saturating_add(1);
+            inner.response_bytes = inner.response_bytes.saturating_add(response_bytes);
+            let entry = inner.per_method.entry(method.to_string()).or_default();
+            entry.served = entry.served.saturating_add(1);
+            entry.response_bytes = entry.response_bytes.saturating_add(response_bytes);
+        }
+    }
+
+    fn snapshot(&self) -> ServedSnapshot {
+        let Ok(inner) = self.inner.lock() else {
+            return ServedSnapshot::default();
+        };
+        ServedSnapshot {
+            requests: inner.requests,
+            served: inner.served,
+            response_bytes: inner.response_bytes,
+            per_method: inner.per_method.clone(),
+        }
+    }
+}
+
+/// A point-in-time copy of a transport's serving stats: the per-run RPC
+/// round-trip count ([`ServedSnapshot::served`]), the response bytes those
+/// answers carried, and the per-method breakdown (the fetch surface's
+/// shape - how many getLogs passes, how many ancillary tag reads).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ServedSnapshot {
+    /// Every JSON-RPC request answered (served + fixture gaps +
+    /// method-not-found). Equal to [`ServedSnapshot::served`] on a healthy
+    /// replay; a gap means the run asked for an unrecorded entry (a loud
+    /// fixture problem, never a silent miss).
+    pub requests: u64,
+    /// Ledger entries served - the run's RPC round-trip count.
+    pub served: u64,
+    /// Serialized payload bytes of the served answers (the recorded
+    /// `result`/`error` member in wire form; the JSON-RPC envelope is not
+    /// counted). The response-bytes measure the perf program tracks.
+    pub response_bytes: u64,
+    /// The per-method breakdown, methods in sorted order.
+    pub per_method: BTreeMap<String, MethodServed>,
+}
+
+/// The serialized byte size of a response value - the response-bytes
+/// measure of one served answer. `serde_json` cannot fail on an in-memory
+/// `Value`; the impossible error contributes 0 bytes rather than poisoning
+/// the counter.
+fn json_byte_len(value: &Value) -> u64 {
+    u64::try_from(serde_json::to_vec(value).map_or(0, |bytes| bytes.len())).unwrap_or(u64::MAX)
 }
 
 impl tower::Service<RequestPacket> for CassetteReplayTransport {

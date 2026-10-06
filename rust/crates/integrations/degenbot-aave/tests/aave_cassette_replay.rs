@@ -81,6 +81,22 @@ const EXPECTED_APPLIED_EVENTS: usize = 20;
 /// before the byte-diff consults the committed golden).
 const EXPECTED_LEDGER_STATEMENTS: usize = 150;
 
+/// Independent literal: the exact number of ledger entries the replayed
+/// chunk serves from the cassette per run - the RPC round-trip count of the
+/// chunk's fetch surface (the recorded getLogs passes; this span dispatches
+/// no config events and no GHO-discount path, so no `eth_call`, and the run
+/// resolves its tip from the pin, so no `eth_chainId`/`eth_blockNumber` -
+/// those recorded entries belong to the recorder's own run shape). The RPC counter
+/// drift gate: an added or removed fetch pass (batching, a new pass, a
+/// re-fetch) changes this and fails the plain `cargo test` run.
+const EXPECTED_RPC_ROUND_TRIPS: u64 = 6;
+
+/// Independent literal: the serialized payload bytes those served answers
+/// carried (the recorded `result` members in wire form). Ties the suite's
+/// expectation to this corpus file: a re-recorded cassette whose answers
+/// carry different traffic fails here too.
+const EXPECTED_RPC_RESPONSE_BYTES: u64 = 28274;
+
 /// The Aave V3 Ethereum bootstrap block (`activate_aave_market`'s fresh-seed
 /// stamp; the substrate constant mirrors `updater/run/activate.rs`).
 const AAVE_BOOTSTRAP_BLOCK: i64 = 16_291_070;
@@ -295,8 +311,10 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
 
     // D5 injection: the replay transport presents as a live AlloyProvider -
     // the chunk loop runs unchanged, its answers come only from the ledger
-    // (no socket exists to dial).
-    let provider = CassetteReplayTransport::new(cassette).as_alloy_provider();
+    // (no socket exists to dial). The handle stays here so the run's
+    // serving stats (the RPC round-trip gate below) are readable.
+    let transport = CassetteReplayTransport::new(cassette);
+    let provider = transport.as_alloy_provider();
 
     let dir = TempDir::new().unwrap();
     let (path, market_id) = seeded_db(dir.path(), "replay.db");
@@ -354,6 +372,26 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
         "the chunk's logs touched users"
     );
 
+    // Gate: the RPC round-trip drift tripwire. The chunk's fetch surface
+    // serves EXACTLY the committed corpus's entries - every request the run
+    // issued is a served ledger entry (a fixture gap would be a loud error
+    // mid-run, so `requests == served` here), and the count/bytes are the
+    // independent literals above. A shaping regression (an added pass, a
+    // dropped scan, a re-recorded corpus) fails this plain assertion.
+    let served = transport.served_snapshot();
+    assert_eq!(
+        served.requests, served.served,
+        "every request must be a served ledger entry - a fixture gap is a loud error, not a silent miss"
+    );
+    assert_eq!(
+        served.served, EXPECTED_RPC_ROUND_TRIPS,
+        "RPC round-trip count drifted - the chunk's fetch surface added or removed a pass"
+    );
+    assert_eq!(
+        served.response_bytes, EXPECTED_RPC_RESPONSE_BYTES,
+        "served response bytes drifted - the corpus's recorded answers changed shape"
+    );
+
     // Restart no-op: the committed stamp roots the second run's cursor past
     // the pin, so it commits nothing and advances nothing.
     let restart = run_aave_update(
@@ -377,6 +415,15 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
         market_last_update_block(&path, market_id),
         Some(i64::try_from(SPAN_TO).unwrap()),
         "the stamp did not move past the pin"
+    );
+
+    // The no-op restart's serving stats: zero round trips - the restart
+    // invariant's RPC face (the cursor check is pure SQL).
+    let after_restart = transport.served_snapshot();
+    assert_eq!(
+        after_restart.served - served.served,
+        0,
+        "the restart no-op must serve nothing"
     );
 }
 

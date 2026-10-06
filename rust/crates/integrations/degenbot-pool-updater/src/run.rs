@@ -108,6 +108,25 @@ pub struct ChunkProgress {
     /// Python shell uses it to fire the completion-time backup). The Rust
     /// completion full-verify computes finality inline.
     pub is_final: bool,
+    /// Wall time of the chunk's RPC fetch passes (pool creations + the V3
+    /// whole-chain + V4 per-manager liquidity scans). Plain `Instant` spans
+    /// (the replay-driven baseline measurement; the telemetry chunk lands its own
+    /// spans later).
+    pub fetch_time: Duration,
+    /// Wall time of the in-transaction per-pool full-map read + compute
+    /// (`compute_v3/v4_liquidity_update_on_conn`) - the O(map) SQL shape.
+    pub decode_compute_time: Duration,
+    /// Wall time of the pre-commit on-chain-truth verification RPC (the
+    /// per-pool gate + the market-wide gate). Zero when the gates are off.
+    pub verify_time: Duration,
+    /// Wall time of the remaining in-transaction SQL apply (pool upserts,
+    /// persists, the stamp): the chunk's write-lock span minus
+    /// [`Self::decode_compute_time`] and [`Self::verify_time`].
+    pub apply_time: Duration,
+    /// The write-lock hold: the span from `transaction()` open to
+    /// commit/drop. The headline number for the hoist-RPC-out-of-the-tx
+    /// fix (survey finding 1).
+    pub write_lock_hold_time: Duration,
 }
 
 /// The sink the chunk loop reports per-chunk progress to. Implementations:
@@ -224,6 +243,15 @@ pub struct ChunkWriteReport {
     pub pools_written: usize,
     /// Per-pool liquidity applies (V3 + V4) that found + mutated a pool row.
     pub liquidity_apply_count: usize,
+    /// Wall time of the per-pool full-map read + compute spans
+    /// (`compute_v3/v4_liquidity_update_on_conn`).
+    pub decode_compute_time: Duration,
+    /// Wall time of the per-pool on-chain verification spans (zero when the
+    /// gate is off).
+    pub verify_time: Duration,
+    /// Wall time of the remaining SQL apply (the fn's total span minus the
+    /// compute + verify spans).
+    pub apply_time: Duration,
 }
 
 /// An error from [`map_pool_creation`] — the pure decode→row-input mapping.
@@ -361,6 +389,7 @@ pub fn apply_chunk_writes_on_conn(
     inputs: &ChunkInputs,
     verify: Option<&VerifyCtx>,
 ) -> Result<ChunkWriteReport, RunError> {
+    let fn_started = Instant::now();
     let mut report = ChunkWriteReport::default();
 
     // 1. Pool creations — group by (exchange_id, family) + upsert per batch.
@@ -394,6 +423,7 @@ pub fn apply_chunk_writes_on_conn(
         if !in_scope {
             continue; // pool belongs to an exchange not being updated this chunk
         }
+        let compute_started = Instant::now();
         let Some(c) = DegenbotDb::compute_v3_liquidity_update_on_conn(
             conn,
             chain_id,
@@ -401,15 +431,19 @@ pub fn apply_chunk_writes_on_conn(
             events,
         )?
         else {
+            report.decode_compute_time += compute_started.elapsed();
             continue;
         };
+        report.decode_compute_time += compute_started.elapsed();
         if let Some(vc) = verify {
+            let verify_started = Instant::now();
             let divergences = vc.rt.block_on(verify_v3_liquidity_map_on_chain(
                 vc.provider,
                 *pool_address,
                 &c,
                 vc.block_number,
             ))?;
+            report.verify_time += verify_started.elapsed();
             if !divergences.is_empty() {
                 return Err(RunError::Verification {
                     pool: pool_address.to_checksum(None),
@@ -438,6 +472,7 @@ pub fn apply_chunk_writes_on_conn(
         inputs.v4_liquidity.iter().collect();
     v4_pools.sort_by_key(|(h, _)| *h);
     for (pool_hash, events) in v4_pools {
+        let compute_started = Instant::now();
         let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
             conn,
             pool_hash,
@@ -445,9 +480,12 @@ pub fn apply_chunk_writes_on_conn(
             events,
         )?
         else {
+            report.decode_compute_time += compute_started.elapsed();
             continue;
         };
+        report.decode_compute_time += compute_started.elapsed();
         if let Some(vc) = verify {
+            let verify_started = Instant::now();
             let pool_manager_address =
                 vc.v4_manager_addresses
                     .get(pool_hash)
@@ -470,6 +508,7 @@ pub fn apply_chunk_writes_on_conn(
                 &c,
                 vc.block_number,
             ))?;
+            report.verify_time += verify_started.elapsed();
             if !divergences.is_empty() {
                 return Err(RunError::Verification {
                     pool: pool_hash.clone(),
@@ -495,6 +534,14 @@ pub fn apply_chunk_writes_on_conn(
     for spec in specs_to_update {
         DegenbotDb::set_exchange_last_update_block_on_conn(conn, chain_id, spec.id, chunk_end_i64)?;
     }
+
+    // The remaining in-transaction wall time is the SQL apply (upserts,
+    // per-pool reads, persists, stamp) - the fn's span minus the measured
+    // compute + verify spans.
+    report.apply_time = fn_started
+        .elapsed()
+        .saturating_sub(report.decode_compute_time)
+        .saturating_sub(report.verify_time);
 
     Ok(report)
 }
@@ -914,13 +961,24 @@ pub fn run_pool_update_on_db(
             continue;
         }
 
+        // The replay-bench stage spans (plain `Instant`; the telemetry chunk lands
+        // its own spans later). `chunk_lock_hold_time` is the write-lock
+        // hold: `transaction()` open → commit/drop.
+        let mut chunk_fetch_time = Duration::ZERO;
+        let mut chunk_full_verify_time = Duration::ZERO;
+        // Assigned (then read) in every branch that reaches a report; left
+        // uninitialized so the compiler proves that.
+        let chunk_lock_hold_time;
+
         // RPC fetches (GIL-free, async) — pool creations per in-scope exchange +
         // the V3 whole-chain + V4 per-PoolManager liquidity scans for the range.
+        let fetch_started = Instant::now();
         let pool_creations = rt.block_on(fetch_pool_creations(
             &fetcher,
             working_end_block,
             &chunk_specs_with_start,
         ))?;
+        chunk_fetch_time += fetch_started.elapsed();
         // V3 `Mint`/`Burn` events can't be efficiently RPC-filtered by pool
         // address, so this is a whole-chain scan over the chunk's range. The
         // apply step (in `apply_chunk_writes_on_conn`) drops pools whose
@@ -928,12 +986,14 @@ pub fn run_pool_update_on_db(
         // ever diverges AHEAD of the grid, this whole-chain range would re-fetch
         // its committed events — currently all V3 forks advance in lockstep at
         // the laggard marker, so the case does not arise.)
+        let fetch_started = Instant::now();
         let v3_liquidity = rt.block_on(fetch_v3_liquidity_logs_grouped(
             &fetcher,
             working_start_block,
             working_end_block,
             None, // whole-chain (V3 events can't be efficiently RPC-filtered)
         ))?;
+        chunk_fetch_time += fetch_started.elapsed();
         // V4 liquidity: fetch per PoolManager (the V4 exchange's `factory` is
         // the PoolManager address), scoped to each spec's per-exchange fetch
         // start. Merge across all V4 chunk-specs into one grouped map (the
@@ -942,12 +1002,14 @@ pub fn run_pool_update_on_db(
         let mut v4_manager_addresses: HashMap<String, Address> = HashMap::new();
         for (spec, fetch_start) in &chunk_specs_with_start {
             if matches!(spec.family, crate::fetch::PoolFamily::V4) {
+                let fetch_started = Instant::now();
                 let per_manager = rt.block_on(fetch_v4_liquidity_logs_grouped(
                     &fetcher,
                     *fetch_start,
                     working_end_block,
                     Some(spec.factory),
                 ))?;
+                chunk_fetch_time += fetch_started.elapsed();
                 for (hash, events) in per_manager {
                     v4_manager_addresses
                         .entry(hash.clone())
@@ -984,6 +1046,9 @@ pub fn run_pool_update_on_db(
         // restart re-processes clean (restart-invariant).
         let chunk_report = {
             let mut guard = db.lock();
+            // The write-lock hold starts at the `transaction()` open and
+            // ends at the commit/drop (measured in every branch below).
+            let lock_hold_started = Instant::now();
             let tx = guard.transaction().map_err(degenbot_db::DbError::from)?;
             let result = apply_chunk_writes_on_conn(
                 &tx,
@@ -1015,10 +1080,13 @@ pub fn run_pool_update_on_db(
                             chain_id,
                             pool_manager_chain: inputs.pool_manager_chain,
                         };
-                        if let Err(e) =
-                            crate::verify::verify_all_pools_committed_on_conn(&tx, &full_ctx)
-                        {
+                        let full_verify_started = Instant::now();
+                        let full_result =
+                            crate::verify::verify_all_pools_committed_on_conn(&tx, &full_ctx);
+                        chunk_full_verify_time += full_verify_started.elapsed();
+                        if let Err(e) = full_result {
                             drop(tx);
+                            chunk_lock_hold_time = lock_hold_started.elapsed();
                             progress.report_chunk(&ChunkProgress {
                                 chain_id,
                                 chunk_start: working_start_block,
@@ -1027,11 +1095,17 @@ pub fn run_pool_update_on_db(
                                 liquidity_apply_count: 0,
                                 committed: false,
                                 is_final: false,
+                                fetch_time: chunk_fetch_time,
+                                decode_compute_time: Duration::ZERO,
+                                verify_time: chunk_full_verify_time,
+                                apply_time: Duration::ZERO,
+                                write_lock_hold_time: chunk_lock_hold_time,
                             });
                             return Err(e);
                         }
                     }
                     tx.commit().map_err(degenbot_db::DbError::from)?;
+                    chunk_lock_hold_time = lock_hold_started.elapsed();
                     r
                 }
                 Err(e) => {
@@ -1040,6 +1114,7 @@ pub fn run_pool_update_on_db(
                     // `e` is already a `RunError` (Db, Provider, or
                     // Verification — all rollback the chunk).
                     drop(tx);
+                    chunk_lock_hold_time = lock_hold_started.elapsed();
                     progress.report_chunk(&ChunkProgress {
                         chain_id,
                         chunk_start: working_start_block,
@@ -1048,6 +1123,13 @@ pub fn run_pool_update_on_db(
                         liquidity_apply_count: 0,
                         committed: false,
                         is_final: false,
+                        fetch_time: chunk_fetch_time,
+                        // The failed apply's report is consumed by the `Err`,
+                        // so its stage splits are not attributable here.
+                        decode_compute_time: Duration::ZERO,
+                        verify_time: Duration::ZERO,
+                        apply_time: Duration::ZERO,
+                        write_lock_hold_time: chunk_lock_hold_time,
                     });
                     return Err(e);
                 }
@@ -1083,6 +1165,11 @@ pub fn run_pool_update_on_db(
             liquidity_apply_count: chunk_report.liquidity_apply_count,
             committed: true,
             is_final: working_end_block >= last_block,
+            fetch_time: chunk_fetch_time,
+            decode_compute_time: chunk_report.decode_compute_time,
+            verify_time: chunk_report.verify_time + chunk_full_verify_time,
+            apply_time: chunk_report.apply_time,
+            write_lock_hold_time: chunk_lock_hold_time,
         });
         report.chunks_committed += 1;
         report.total_pools_written += chunk_report.pools_written;

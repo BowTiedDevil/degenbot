@@ -32,7 +32,7 @@ class AlloyProvider:
         Automatically detects connection type from URL:
         - HTTP/HTTPS URLs use HTTP transport with connection pooling
         - WS/WSS URLs use WebSocket transport
-        - File paths (Unix: /path, Windows: \\.\\pipe\\...) use IPC transport
+        - File paths (Unix: /path, Windows: \\\\.\\pipe\\...) use IPC transport
 
         # Retry Behavior
 

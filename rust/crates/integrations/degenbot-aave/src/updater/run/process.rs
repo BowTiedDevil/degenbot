@@ -4,6 +4,7 @@
 //! caller's `Transaction` connection.
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
 use alloy::rpc::types::Log;
@@ -103,6 +104,12 @@ pub(super) async fn process_chunk_on_conn(
     // chunk reverts).
     let mut events_applied_total: usize = 0;
     let mut touched_user_addresses: HashSet<Address> = HashSet::new();
+    // The replay-bench stage spans (plain `Instant`; the telemetry chunk lands its
+    // own spans later): the per-tx decode+compute block (the GHO/revision
+    // reads, the discount pre-pass + config dispatch - BOTH hold the write
+    // lock across their RPC reads) and the per-tx + end-of-chunk SQL apply.
+    let mut decode_compute_time = Duration::ZERO;
+    let mut apply_time = Duration::ZERO;
 
     for group in tx_groups {
         let block_number = group.block_number;
@@ -118,6 +125,7 @@ pub(super) async fn process_chunk_on_conn(
             }
         }
 
+        let compute_started = Instant::now();
         // (0) Re-resolve the GHO asset from `conn` for THIS tx — sees the
         //     prior tx's `ReserveInitialized` write that set
         //     `aave_gho_tokens.v_token_id` (surface #3: the drive-startup
@@ -220,10 +228,13 @@ pub(super) async fn process_chunk_on_conn(
             e
         })?;
 
+        decode_compute_time += compute_started.elapsed();
         // (f) Apply THIS tx's op events to `conn` — so tx N+1 sees them via
         //     read-your-own-writes (surface #2: the `Upgraded` revision bump +
         //     scaled-token balance deltas land before the next tx's reads).
+        let apply_started = Instant::now();
         apply_chunk_events_on_conn(conn, market_id, &op_events)?;
+        apply_time += apply_started.elapsed();
         events_applied_total += op_events.len();
 
         // (f.4) DEBUG: per-tx touched-position trace (env-gated). When
@@ -347,13 +358,17 @@ pub(super) async fn process_chunk_on_conn(
     //     the cleanup are durable only when the caller's `Transaction`
     //     commits; on rollback the whole chunk (events + cleanup + stamp)
     //     reverts (§3.4 restart-invariant).
+    let apply_started = Instant::now();
     DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;
+    apply_time += apply_started.elapsed();
 
     Ok(ChunkCoreReport {
         events_applied: events_applied_total,
         touched_user_addresses,
+        decode_compute_time,
+        apply_time,
     })
 }
 
@@ -362,6 +377,13 @@ pub(super) async fn process_chunk_on_conn(
 #[derive(Debug, Clone, Default)]
 pub(super) struct ChunkCoreReport {
     pub(super) events_applied: usize,
+    /// Wall time of the per-tx decode+compute block (the GHO/revision conn
+    /// reads, the discount pre-pass + the config-event dispatch - both hold
+    /// the write lock across their RPC reads).
+    pub(super) decode_compute_time: Duration,
+    /// Wall time of the per-tx event apply + the end-of-chunk cleanup/stamp
+    /// (the chunk's remaining in-transaction SQL).
+    pub(super) apply_time: Duration,
     /// User addresses touched by ANY event in the chunk (topics[1]/[2] of every
     /// log extracted as addresses — cheap `O(num_logs * 2)` scan). Drives the
     /// drive harness's per-chunk value-correctness gate (the verify fn

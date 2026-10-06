@@ -42,6 +42,21 @@ const CASSETTE_PATH: &str = concat!(
 /// example's documented `--factory` for this corpus file).
 const V3_FACTORY: &str = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 
+/// Independent literal: the exact number of ledger entries the replayed
+/// chunk serves from the cassette per run - the RPC round-trip count of the
+/// chunk's fetch surface (one `eth_getLogs` for the factory's `PoolCreated`
+/// pass + one whole-chain `eth_getLogs` for the V3 `Mint`/`Burn` scan; the
+/// run resolves its tip from the pin, so no `eth_blockNumber`). The RPC
+/// counter drift gate: an added or removed fetch pass (batching, a new
+/// scan, a re-fetch) changes this and fails the plain `cargo test` run.
+const EXPECTED_RPC_ROUND_TRIPS: u64 = 2;
+
+/// Independent literal: the serialized payload bytes those served answers
+/// carried (the recorded `result` members in wire form). Ties the suite's
+/// expectation to this corpus file: a re-recorded cassette whose answers
+/// carry different traffic fails here too.
+const EXPECTED_RPC_RESPONSE_BYTES: u64 = 4289;
+
 /// A temp DB with one ACTIVE `uniswap_v3` exchange stamped at `from - 1`, so
 /// the run's fetch window is exactly the cassette's recorded span.
 fn seeded_db(dir: &Path, chain_id: i64, from: u64, file_name: &str) -> std::path::PathBuf {
@@ -95,8 +110,10 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
 
     // D5 injection: the replay transport presents as a live AlloyProvider —
     // the chunk loop runs unchanged, and its answers come only from the
-    // ledger (no socket exists to dial).
-    let provider = CassetteReplayTransport::new(cassette).as_alloy_provider();
+    // ledger (no socket exists to dial). The handle stays here so the
+    // run's serving stats (the RPC round-trip gate below) are readable.
+    let transport = CassetteReplayTransport::new(cassette);
+    let provider = transport.as_alloy_provider();
 
     let dir = TempDir::new().unwrap();
     let path = seeded_db(dir.path(), chain_id, span.from_block, "replay.db");
@@ -146,9 +163,30 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
         "the stamp advanced to the span end (the restart cursor)"
     );
 
+    // Gate: the RPC round-trip drift tripwire. The chunk's fetch surface
+    // serves EXACTLY the committed corpus's entries — every request the run
+    // issued is a served ledger entry (a fixture gap would be a loud error
+    // mid-run, so `requests == served` here), and the count/bytes are the
+    // independent literals above. A shaping regression (an added pass, a
+    // dropped scan, a re-recorded corpus) fails this plain assertion.
+    let served = transport.served_snapshot();
+    assert_eq!(
+        served.requests, served.served,
+        "every request must be a served ledger entry — a fixture gap is a loud error, not a silent miss"
+    );
+    assert_eq!(
+        served.served, EXPECTED_RPC_ROUND_TRIPS,
+        "RPC round-trip count drifted — the chunk's fetch surface added or removed a pass"
+    );
+    assert_eq!(
+        served.response_bytes, EXPECTED_RPC_RESPONSE_BYTES,
+        "served response bytes drifted — the corpus's recorded answers changed shape"
+    );
+
     // Restart no-op: the committed stamp roots the second run's cursor past
     // the pin, so it commits nothing and advances nothing — the restart
-    // invariant over the replayed surface.
+    // invariant over the replayed surface (and it serves NOTHING: the
+    // cursor check is pure SQL, zero RPC).
     let restart = run_pool_update(
         &path,
         chain_id,
@@ -168,5 +206,14 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
         committed_last_update_block(&path, chain_id),
         i64::try_from(span.to_block).unwrap(),
         "the stamp did not move past the pin"
+    );
+
+    // The no-op restart's serving stats: zero round trips — the restart
+    // invariant's RPC face (the cursor check is pure SQL).
+    let after_restart = transport.served_snapshot();
+    assert_eq!(
+        after_restart.served - served.served,
+        0,
+        "the restart no-op must serve nothing"
     );
 }
