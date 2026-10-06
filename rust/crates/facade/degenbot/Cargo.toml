@@ -77,6 +77,11 @@ degenbot-eventhub.workspace = true
 otel = ["degenbot-bot/otel"]
 
 [dev-dependencies]
+# The record_updater_cassette example seeds throwaway harness DBs (temp
+# dirs) and drives the raw `exchanges` row the replay suites seed (the
+# same UPDATE the suite code runs - no `activate_exchange` substrate yet).
+rusqlite = { version = "^0.40" }
+tempfile = { version = "^3.27" }
 async-trait = "0.1"
 alloy = { version = "^2.5", features = ["full"] }
 revm = { version = "^43.0", default-features = false }
