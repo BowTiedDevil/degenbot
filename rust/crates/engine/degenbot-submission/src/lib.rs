@@ -33,9 +33,9 @@
 //! `bytes → TxHash`) is the sibling RPC task; this crate owns only
 //! the SIGNING that produces the bytes.
 //!
-//! # Parity (ADR-005 §4.2)
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
-//! The §4.2 oracle is `eth_account.Account.sign_transaction(transaction_dict=
+//! The parity oracle is `eth_account.Account.sign_transaction(transaction_dict=
 //! tx_params, private_key=operator_private_key).raw_transaction`
 //! (`examples/eth_backrun_v2_v3_v4_rust.py` L2623–L2640). Because both
 //! `eth_account` and `alloy-signer-local` use RFC 6979 deterministic ECDSA
@@ -50,7 +50,7 @@
 //! `MIN_PRIORITY_FEE_PERCENTILE` / `MAX_PRIORITY_FEE_PERCENTILE`) live in
 //! `_compute_priority_fee` (Simulation) — NOT this crate's concern.
 //! The `priority_fee` is CONSUMED off `tx_params` (no hard edge — the
-//! Simulation leaf computes it; submission reads it). For §4.2 parity the fee
+//! Simulation leaf computes it; submission reads it). For parity-gate testing the fee
 //! is a fixture value.
 //!
 //! # Non-goals
@@ -58,7 +58,7 @@
 //! - The `eth_sendRawTransaction` broadcast (`bytes → TxHash`) — the sibling RPC task.
 //! - `next_base_fee` (consumed via `base_fee_next`).
 //! - `_compute_priority_fee` (the `priority_fee` value) (consumed
-//!   via `tx_params`; for §4.2 it is a fixture).
+//!   via `tx_params`; for the parity gate it is a fixture).
 //! - The submit orchestration (claim nonce → finalize → re-compute access
 //!   list → sign → broadcast → monitor) — the N6 sibling.
 //! - Private-key CONFIG load — stays Python (the driver loads the key and

@@ -4,7 +4,8 @@
 //! [`degenbot_pathfinding::PathGraph::from_edges`], without Python.
 //!
 //! Mirrors `src/degenbot/pathfinding.py` `_prepare_graph` / `_get_tokens_with_min_degree`
-//! (the parity oracle — §4.2): same query shapes, same row transforms. The
+//! (the parity oracle — `docs/architecture/parity-gate.md`): same query
+//! shapes, same row transforms. The
 //! Python path positions pathfinding DISCOVERY reads against the DB
 //! (`db=bot.db` in `find_paths`/`find_paths_async`); these fns expose that
 //! same substrate to standalone Rust consumers (ADR-005 standalone path:
@@ -18,7 +19,7 @@
 //! construction at any granularity:
 //!
 //! 1. [`DegenbotDb::fetch_tokens_with_min_degree`] — the `GROUP BY token
-//!    HAVING count(*) >= degree` candidate-token set (§2.1 warm path:
+//!    HAVING count(*) >= degree` candidate-token set (warm path:
 //!    construction-time graph build per arbitrage-session startup).
 //! 2. [`DegenbotDb::fetch_path_graph_edges`] — ALL chain-filtered edges
 //!    (unfiltered; the caller applies the degree whitelist just like the
@@ -26,7 +27,7 @@
 //! 3. [`DegenbotDb::fetch_token_ids_by_address`] — start/end +
 //!    `allowed_intermediate_tokens` resolution.
 //!
-//! All three are pure row→struct transforms over [`DegenbotDb`] (§2.1 warm
+//! All three are pure row→struct transforms over [`DegenbotDb`] (warm
 //! path; construction-time graph build per arbitrage-session startup, not
 //! per-tx).
 

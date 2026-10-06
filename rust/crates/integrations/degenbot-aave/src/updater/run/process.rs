@@ -100,7 +100,7 @@ pub(super) async fn process_chunk_on_conn(
     //       `ScaledTokenProcessor` is stateless; its balances come from `conn`
     //       lookups, so per-tx apply is the only seam that matches Python's
     //       per-tx ORM session apply).
-    // The stamp advance stays LAST (end-of-chunk), preserving the §3.4
+    // The stamp advance stays LAST (end-of-chunk), preserving the
     // restart-invariant (on rollback the stamp does NOT advance + the whole
     // chunk reverts).
     let mut events_applied_total: usize = 0;
@@ -111,7 +111,7 @@ pub(super) async fn process_chunk_on_conn(
     // assets/contracts, the chain's GHO row), then in-memory map hits for the
     // per-event substrate reads, with EVERY cache-visible write landing an
     // overlay update (the apply arms in `apply.rs` + the config dispatch).
-    // The §3.4 read-your-own-writes contract: reads for log-transaction N
+    // The read-your-own-writes contract: reads for log-transaction N
     // consult the cache ONLY where its state reflects all writes of
     // transactions < N — the overlay guarantees it (see
     // `substrate.rs`'s module doc). An empty chunk skips the prefetch (its
@@ -439,17 +439,17 @@ pub(super) async fn process_chunk_on_conn(
     //     Python `cleanup_zero_balance_positions`); the per-tx applies above +
     //     the cleanup are durable only when the caller's `Transaction`
     //     commits; on rollback the whole chunk (events + cleanup + stamp)
-    //     reverts (§3.4 restart-invariant).
+    //     reverts (the restart invariant).
     // The end-of-chunk cleanup + stamp span (the Jaeger twin of this
     // `apply_started` anchor): the deferred `ReserveDataUpdated` flush, the
     // zero-balance cleanup, + the stamp — the chunk's remaining
-    // in-transaction SQL. The stamp stays the LAST write (§3.4).
+    // in-transaction SQL. The stamp stays the LAST write (chunk atomicity).
     let cleanup_span = tracing::info_span!("degenbot.updater.aave.apply", apply.kind = "cleanup");
     let cleanup_guard = cleanup_span.enter();
     let apply_started = Instant::now();
     // Perf C: flush the deferred `ReserveDataUpdated` writes (one sorted
     // multi-row UPDATE — the liquidity_updater deterministic-order idiom)
-    // BEFORE the cleanup + stamp: the stamp stays the LAST write (§3.4), and
+    // BEFORE the cleanup + stamp: the stamp stays the LAST write (chunk atomicity), and
     // the flush sits inside the chunk's transaction (a rollback reverts it
     // with the chunk; the in-memory buffer drops with the substrate). The
     // post-commit verification gate reads the flushed values.

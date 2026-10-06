@@ -1,4 +1,4 @@
-"""§4.2: scaled-token fetch staleness — ReserveInitialized + first
+"""Parity: scaled-token fetch staleness — ReserveInitialized + first
 Supply in the SAME chunk (the "missing CollateralMint" crash).
 
 `build_fetch_spec` (`run.rs:1234`) reads `fetch_aave_scaled_token_addresses`
@@ -29,7 +29,7 @@ CollateralMint`. GREEN (after (a)+(b)): the collateral position lands under
 the onBehalfOf (`USER_ADDRESS`), NOT under the referralCode-as-address or a
 garbage slot — the same byte-IDENTITY guarantee as the parity test.
 
-Per §4.3, TEMPORARY — retired with the Python oracle.
+TEMPORARY — retired with the Python oracle.
 """
 
 from __future__ import annotations

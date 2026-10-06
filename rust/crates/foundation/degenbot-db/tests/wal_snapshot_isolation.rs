@@ -3,9 +3,7 @@
 //! deferred read transaction at bot startup and holds it across `build_paths`
 //! so every per-pool `fetch_liquidity_map` + the `fetch_newest_update_block`
 //! read share a single DB snapshot, immune to concurrent `pool_updater`
-//! commits (Approach 1, chosen method — see the snapshot-store scoping notes,
-//! `docs/architecture/snapshot-store-removal-scoping.md` §2
-//! (notes removed in the stale-docs cleanup `71ec78b2`)).
+//! commits (Approach 1, chosen method).
 //!
 //! This is the behavior the `SnapshotStore` was hand-rolling: a single
 //! consistent DB cut frozen at bot startup that concurrent writer commits

@@ -1,4 +1,4 @@
-"""§4.2: standalone aToken Transfer-credit stolen by the deficit_coverage
+"""Parity: standalone aToken Transfer-credit stolen by the deficit_coverage
 scavenger → the recipient's Withdraw crashes "balance would go negative".
 
 Aave V3 moves collateral between users via aToken `Transfer` (+ the
@@ -33,7 +33,7 @@ probes (the (ii) gate): the user's aWETH balanceOf was 0 at block 16496927,
 + the Withdraw tx 0x4a88 contains the incoming Transfer (li=104/107)
 crediting the user before the Burn (li=111).
 
-Per §4.3, TEMPORARY — retired with the Python oracle.
+TEMPORARY — retired with the Python oracle.
 """
 
 from __future__ import annotations

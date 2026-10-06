@@ -9,9 +9,9 @@
 //! `_apply_block_if_ready` `eth_feeHistory` fetch (L2907–L2923).
 //!
 //! This is the orchestration that owns the GIL release across the async
-//! sign+broadcast slice (ADR-005 §3 — "Rust is the engine, Python is the
-//! cockpit"). Owning the sign+broadcast in Rust releases the GIL across the
-//! per-tx RPCs (the §2.1 "GIL?" win).
+//! sign+broadcast slice (ADR-005 — "Python is the cockpit, Rust is the
+//! engine"). Owning the sign+broadcast in Rust releases the GIL across the
+//! per-tx RPCs (the "GIL?" win).
 //!
 //! # Dispositions
 //!
@@ -279,7 +279,7 @@ fn candidate_net_wei(candidate: &SubmitCandidate) -> f64 {
 /// `'static` spawned tasks can clone the handle into the monitor (the umbrella
 /// `Bot` builds a probe wrapping `AlloyProvider::get_transaction_receipt`).
 ///
-/// # §4.2 parity
+/// # Parity gate (`docs/architecture/parity-gate.md`)
 ///
 /// The submit order (net-desc), the mutual-exclusivity skip, the
 /// `dry_run`/`inject_code` skip (with pools still committed), the

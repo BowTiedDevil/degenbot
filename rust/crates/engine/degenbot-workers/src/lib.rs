@@ -6,7 +6,7 @@
 //! F1+F2 migration steps plus the posture skeleton:
 //!
 //! - [`role`] — the sized `WorkerRole` enum (`ALL_ROLES`), its cordon classes
-//!   and pin classes (ADR-042 §3.1, design doc §3.1).
+//!   and pin classes (design doc `docs/architecture/worker-fleet.md` §3.1).
 //! - [`slot`] — worker-slot states and the T1–T9 legal-transition table;
 //!   every off-table move is a loud, typed rejection (design doc §3.2–3.3).
 //! - [`budget`] — `FleetBudget`, the single budget authority bounding the

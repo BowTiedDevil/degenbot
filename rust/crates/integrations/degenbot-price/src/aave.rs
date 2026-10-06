@@ -6,9 +6,9 @@
 //! [`degenbot_rpc::contract::Contract::call_typed`]; the `eth_call` primitive is
 //! already Rust-owned, so this crate owns only the *mechanism*.
 //!
-//! # Parity oracle (ADR-005 §4.2)
+//! # Parity oracle (`docs/architecture/parity-gate.md`)
 //!
-//! The Python `OraclePriceFetcher.fetch` is the parity oracle; the §4.2 gate
+//! The Python `OraclePriceFetcher.fetch` is the parity oracle; the parity gate
 //! pins value-exact parity for the `getAssetPrice` `uint256` decode (tested
 //! against the canonical ABI decode of recorded return bytes — the same bytes
 //! the Python `abi_decode(["uint256"], …)` decodes).

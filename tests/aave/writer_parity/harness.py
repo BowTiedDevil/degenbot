@@ -1,12 +1,13 @@
 """Shared mock-RPC harness for the Aave Rust-writer tests.
 
-The offline mock-RPC harness (ADR-005 §4.2). Drives the Rust writer
+The offline mock-RPC harness (the parity gate,
+``docs/architecture/parity-gate.md``). Drives the Rust writer
 (``degenbot._ffi.run_aave_update``) against a mock JSON-RPC server serving
 canned ``eth_getLogs`` + ``eth_blockNumber`` + ``eth_call`` responses, into a
 temp SQLite DB. The resulting ``aave_*`` rows are asserted against expectations
 (or compared against on-chain truth via the Rust ``verify_*`` seams).
 
-§4.2 retirement: the Python oracle
+Parity-gate retirement: the Python oracle
 (``cli/aave.py::update_aave_market``) + the byte-for-byte Rust-vs-
 Python parity tests that lived here have been DELETED — the Rust writer is
 proven GREEN to the live chain tip. The mock-RPC infrastructure survives

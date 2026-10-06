@@ -34,10 +34,8 @@
 //! This miss-path trait serves the **live-pump miss-detection path** during
 //! swap simulation — keyed by *`pool_id`* (already-registered pools). The two
 //! traits share the same choreography (compute word → fetch bitmap → enumerate
-//! bits → fetch ticks) but differ in key type and call site. See
-//! the chain-bootstrap-tick-map guide (removed in the stale-docs cleanup `71ec78b2`),
-//! §3 — for the
-//! consolidation rationale (keep two traits for now; consolidate later).
+//! bits → fetch ticks) but differ in key type and call site. Keep two
+//! traits for now; consolidation is a follow-up.
 
 use hashbrown::HashMap;
 

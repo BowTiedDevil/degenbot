@@ -24,11 +24,11 @@
 //! row's `balance` and `last_index` columns, taking the pre-computed
 //! `balance_delta` from this processor.
 //!
-//! # §4.2 parity
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
 //! The revision-strategy dicts and the `process_mint_event` /
 //! `process_burn_event` branch logic are byte-for-byte ports of the Python
-//! (the §4.2 cross-check compares Rust-written rows vs the Python oracle, so
+//! (the parity-gate cross-check compares Rust-written rows vs the Python oracle, so
 //! any deviation bites there). The ray-math primitives (`ray_div` with
 //! floor/ceil/half-up) come from `crate::wad_ray_math`.
 
@@ -74,7 +74,7 @@ pub struct RoundingStrategy {
 /// The collateral (aToken) rounding strategy per revision. Port of
 /// `COLLATERAL_STRATEGIES` — V1/V3: `HALF_UP` for all ops; V4/V5: `HALF_UP` mint,
 /// CEIL burn (the V4 burn-rounding-up change is the bit that's bitten ports
-/// before; the §4.2 cross-check will catch a missed branch).
+/// before; the parity-gate cross-check will catch a missed branch).
 #[must_use]
 pub const fn collateral_strategy(revision: u32) -> RoundingStrategy {
     match revision {

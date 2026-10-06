@@ -1,10 +1,10 @@
-"""§4.2 parity + §4.5 delegation tests for the Aave V3 position read-back seam.
+"""Parity + delegation tests for the Aave V3 position read-back seam.
 
 Driven by the frozen `aave_parity_expected.json` oracle (dumped from the
 pre-cutover legacy reader `DatabasePositionQuery`) + a freshly-regenerated
 `aave_parity.db` fixture: the Rust-backed `DatabasePositionQuery` (delegating
 through `DatabasePositionQuery`) produces identical results to the frozen
-legacy reader oracle. Plus a §4.5 delegation spy proving the Python reader hits
+legacy reader oracle. Plus a delegation spy proving the Python reader hits
 Rust with the right args, and an end-to-end `analyze_positions_for_market`
 smoke test (the Rust analysis seam consumes the Rust-backed records).
 """
@@ -36,7 +36,7 @@ def market_id() -> int:
 
 
 class TestParity:
-    """§4.2: the Rust-backed DatabasePositionQuery matches the frozen legacy reader oracle."""
+    """The Rust-backed DatabasePositionQuery matches the frozen legacy reader oracle."""
 
     def test_get_users_with_debt(self, query: DatabasePositionQuery, market_id: int) -> None:
         """User count + fields match the oracle (user 3 with no debt is filtered out)."""
@@ -115,7 +115,7 @@ class TestParity:
 
 
 class TestDelegation:
-    """§4.5: the Python DatabasePositionQuery delegates to the Rust DatabasePositionQuery."""
+    """The Python DatabasePositionQuery delegates to the Rust DatabasePositionQuery."""
 
     def test_get_users_with_debt_hits_rust(
         self, query: DatabasePositionQuery, market_id: int

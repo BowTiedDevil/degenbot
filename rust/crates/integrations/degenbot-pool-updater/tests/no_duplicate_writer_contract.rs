@@ -2,8 +2,7 @@
 //! second writer via the `SQLite` file-level `BUSY`/`busy_timeout` lock -- NOT the
 //! in-process `Mutex<Connection>` .
 //!
-//! Asserts the section 1.3 no-duplicate-writer invariant
-//! (`docs/migration-guides/pool-updater-chunk-atomicity.md` section 1, removed in the stale-docs cleanup `71ec78b2`):
+//! Asserts the no-duplicate-writer invariant (`docs/architecture/chunk-atomicity.md`):
 //! "At most one
 //! connection holds a write transaction on the database during a chunk."
 //! `run_pool_update` opens EXACTLY ONE `DegenbotDb::open_for_writes` handle for

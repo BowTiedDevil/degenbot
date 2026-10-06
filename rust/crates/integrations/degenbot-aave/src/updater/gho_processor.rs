@@ -6,7 +6,8 @@
 //! `process_mint_event` / `process_burn_event` / `accrue_debt_on_action` /
 //! `get_discounted_balance` fns) + the GHO strategy dicts from
 //! `src/degenbot/aave/processors/strategies.py` (`GHO_STRATEGIES` +
-//! `GHO_DISCOUNT_STRATEGIES`). The §4.2 parity cross-check compares
+//! `GHO_DISCOUNT_STRATEGIES`). The parity-gate cross-check
+//! (`docs/architecture/parity-gate.md`) compares
 //! these against the Python oracle byte-for-byte, so the branch logic + the
 //! rounding selection MUST match exactly.
 //!
@@ -143,8 +144,8 @@ impl GhoUserOperation {
 /// `user_operation`, `discount_scaled`, `should_refresh_discount`).
 ///
 /// Note: the task body's `GhoProcessorResult { ..., scaled_amount, ... }`
-/// field is the `discount_scaled` here (the Python's field name — the §4.2
-/// cross-check compares against the Python oracle, so the Python field name
+/// field is the `discount_scaled` here (the Python's field name — the
+/// parity-gate cross-check compares against the Python oracle, so the Python field name
 /// is canonical).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhoScaledTokenMintResult {
@@ -918,14 +919,14 @@ mod tests {
 
     #[test]
     fn mint_v4_value_equals_balance_increase_classifies_as_borrow() {
-        // §4.2-parity quirk: the Python's `else` (GHO_INTEREST_ACCRUAL) branch is
+        // Parity-gate quirk: the Python's `else` (GHO_INTEREST_ACCRUAL) branch is
         // DEAD CODE — the `if value >= balance_increase` catches the `==` case,
         // so `value == balance_increase` classifies as GHO_BORROW (not
         // interest accrual). The BORROW branch computes `requested = 0` →
         // `balance_delta = ray_div(0, index) = 0` — the same the (dead)
         // interest-accrual branch would compute for the no-discount case.
-        // For §4.2 parity, the Rust port mirrors this quirk (NOT a bug to fix —
-        // the §4.2 cross-check compares against the Python oracle).
+        // For parity-gate purposes, the Rust port mirrors this quirk (NOT a bug to fix —
+        // the parity-gate cross-check compares against the Python oracle).
         // Verified against the Python oracle: returns GHO_BORROW, delta=0.
         let p = UnifiedGhoProcessor::new(4);
         let ev = ScaledTokenEventData {
@@ -1057,11 +1058,11 @@ mod tests {
         assert_eq!(r.balance_delta, -I256::try_from(301u64).unwrap());
     }
 
-    // ── the §4.2-drift canary: V1 vs V4 vs V5 ────────────────────────────────
+    // ── the parity-drift canary: V1 vs V4 vs V5 ────────────────────────────────
 
     #[test]
     fn gho_processor_revision_parity_smoke() {
-        // The §4.2 zero-drift surface: a BORROW Mint with value=1000,
+        // The parity-gate zero-drift surface: a BORROW Mint with value=1000,
         // balance_increase=0, index=1 RAY, scaled_amount=None, prev=0, prev_index=RAY.
         // - V4 (no discount, HALF_UP): balance_delta = 1000.
         // - V5 (no discount, CEIL): balance_delta = ray_div(1000, 1 RAY, CEIL) = 1000
@@ -1112,15 +1113,16 @@ mod tests {
         assert!(!GhoUserOperation::InterestAccrual.is_repay());
     }
 
-    // ── §4.2 parity cross-check (vs the Python `UnifiedGhoProcessor` oracle)
+    // ── parity gate (`docs/architecture/parity-gate.md`) cross-check (vs the
+    // Python `UnifiedGhoProcessor` oracle)
     ///
     /// Each fixture is `(rev, value, balance_increase, index, scaled_amount,
     /// prev_balance, prev_index, prev_discount, actual_repay)` → the EXACT
     /// `(user_operation, balance_delta, discount_scaled, should_refresh)` the
     /// Python oracle produces. Captured 2026-07-05 from
     /// `src/degenbot/aave/processors/processor.py::UnifiedGhoProcessor` (the
-    /// `.process_mint_event` / `.process_burn_event` fns). This is the §4.2
-    /// zero-drift surface for the GHO processor — the final arbiter.
+    /// `.process_mint_event` / `.process_burn_event` fns). This is the
+    /// parity-gate zero-drift surface for the GHO processor — the final arbiter.
 
     #[test]
     fn parity_mint_borrow_v1_v2_v4_v5() {
@@ -1220,7 +1222,7 @@ mod tests {
     #[test]
     fn parity_mint_v1_value_equals_balance_increase_with_positive_discount_negates() {
         // Regression: user 0x417afF TX 2 (block 17893923, logIdx=361) — the
-        // §4.2-parity quirk where `value == balance_increase` classifies as
+        // Parity-gate quirk where `value == balance_increase` classifies as
         // BORROW (the Python's `else` interest-accrual branch is dead code).
         // With a POSITIVE `discount_scaled`, the Python oracle returns
         // `balance_delta = -(discount_scaled - raw_delta)` = `-(discount_scaled `
@@ -1291,7 +1293,7 @@ mod tests {
 
     #[test]
     fn parity_mint_value_equals_balance_increase_quirk() {
-        // The §4.2-parity quirk: value==balance_increase classifies as BORROW
+        // The parity-gate quirk: value==balance_increase classifies as BORROW
         // (the Python's `else` interest-accrual branch is dead code — the `>=`
         // catches `==`). delta = ray_div(0, RAY) = 0.
         let p4 = UnifiedGhoProcessor::new(4);

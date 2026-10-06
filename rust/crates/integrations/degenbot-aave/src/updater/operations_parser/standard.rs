@@ -105,8 +105,8 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// Pool Withdraw → match `CollateralBurn`
     /// by user + amount (value + `balance_increase` vs `withdraw_amount`). The
     /// "interest-exceeds-withdrawal → Mint instead of Burn" branch is the
-    /// §4.2-drift edge — verify plumbing equivalence.
-    #[expect(clippy::too_many_lines)] // mirror's body intrinsic — §4.2-drift match has 6 branches
+    /// Parity-drift edge — verify plumbing equivalence.
+    #[expect(clippy::too_many_lines)] // mirror's body intrinsic — parity-drift match has 6 branches
     pub(super) fn create_withdraw_operation(
         &mut self,
         operation_id: u32,
@@ -590,7 +590,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// Resolves the aToken address
     /// for an underlying asset (None if not a market asset). Uses the
     /// [`DegenbotDb::lookup_asset_by_underlying_address_on_conn`] substrate
-    /// (the §3 surface — no ad-hoc SQL JOINs in the parser).
+    /// (the substrate surface — no ad-hoc SQL JOINs in the parser).
     pub(super) fn get_a_token_for_asset(
         &mut self,
         underlying: Address,

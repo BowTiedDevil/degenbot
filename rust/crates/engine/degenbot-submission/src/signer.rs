@@ -14,13 +14,13 @@
 //! (secp256k1, RFC 6979 deterministic nonces) — CPU-bound, no network — so
 //! the `PyO3` wrapper releases the GIL around it (`py.detach`).
 //!
-//! # Parity (ADR-005 §4.2)
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
-//! The §4.2 oracle is `eth_account.Account.sign_transaction(transaction_dict=tx_params,
+//! The parity oracle is `eth_account.Account.sign_transaction(transaction_dict=tx_params,
 //! private_key=operator_private_key).raw_transaction`. Because both `eth_account`
 //! and `alloy-signer-local` use RFC 6979 deterministic ECDSA over secp256k1, a
 //! pinned key + `tx_params` produces **byte-for-byte identical** raw signed
-//! `bytes` in Rust and Python — pinned in the §4.2 test against a canonical
+//! `bytes` in Rust and Python — pinned in the parity-gate test against a canonical
 //! (anvil account 0) fixture.
 
 use crate::error::{SubmissionError, SubmissionResult};
@@ -148,7 +148,7 @@ impl TxSigner {
         };
 
         // Synchronous ECDSA signing — RFC 6979 deterministic nonces, matching
-        // eth_account byte-for-byte (proven in §4.2 parity test).
+        // eth_account byte-for-byte (proven in the parity-gate test).
         let sig = self.signer.sign_transaction_sync(&mut tx)?;
         let signed = tx.into_signed(sig);
         let envelope: TxEnvelope = signed.into();
@@ -159,7 +159,7 @@ impl TxSigner {
     /// [`sign_eip1559`](Self::sign_eip1559)) and recover the sender address.
     ///
     /// Exposed as a static helper for the submission loop's receipt-validation
-    /// path + the §4.2 round-trip parity test: decode the bytes you signed →
+    /// path + the parity-gate round-trip test: decode the bytes you signed →
     /// recover the signer → assert it equals [`address`](Self::address).
     ///
     /// # Errors
@@ -241,7 +241,7 @@ mod tests {
         assert!(dbg.contains("redacted"));
     }
 
-    // ──§4.2 byte-exact parity vs eth_account─────────────────────────────────
+    // ── parity gate: byte-exact parity vs eth_account─────────────────────────────────
 
     #[test]
     fn signed_bytes_match_eth_account_oracle_byte_for_byte() {

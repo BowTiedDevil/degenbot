@@ -1,6 +1,6 @@
 //! The transactional Aave V3 chunk-write apply core + its atomicity tests.
 //!
-//! See the crate-level docs for the §3.4 atomicity invariant this file enforces.
+//! See the crate-level docs for the chunk-atomicity invariant this file enforces.
 
 use alloy::primitives::U256;
 use degenbot_db::{DegenbotDb, ScaledTokenPosition};
@@ -307,7 +307,7 @@ pub enum AaveChunkEvent {
     /// `POOL_REVISION()`/`CONFIGURATOR_REVISION()` on the new address → update
     /// the `aave_v3_contracts` row's `revision` (LOOKED UP BY NAME: "POOL"/
     /// `POOL_CONFIGURATOR`). Port of `_update_contract_revision`
-    /// (event_handlers.py:944-974). **§4.2 parity:** the Python updates ONLY
+    /// (event_handlers.py:944-974). **Parity gate:** the Python updates ONLY
     /// `revision` — NOT `address` (the proxy address is stable; the `new_address`
     /// is used only for the RPC call). The apply mirrors this exactly.
     ContractRevisionUpdated {
@@ -340,7 +340,7 @@ pub enum AaveChunkEvent {
     /// == zero (the dispatch returns Err otherwise). `revision` is `None`.
     /// `ProxyCreated` (event_handlers.py:977-1008): the `id` is matched
     /// against the right-padded ASCII bytes32 `b"POOL"`/`b"POOL_CONFIGURATOR"`
-    /// (NOT `keccak256` — §4.2 finding); the match resolves the `name` + the
+    /// (NOT `keccak256` — a parity-gate finding); the match resolves the `name` + the
     /// revision-function (`POOL_REVISION`/`CONFIGURATOR_REVISION`). The
     /// dispatch RPCs the revision on the implementation address; `revision`
     /// is `Some`.
@@ -417,7 +417,7 @@ pub struct AaveChunkWriteReport {
 /// the revision bumps (`Upgraded`), the position state writes (the scaled
 /// token applies + the bad-debt reset), the contract revisions, the GHO-row
 /// dirty marks, and the deferred `ReserveDataUpdated` buffer. See
-/// [`crate::updater::run::substrate`] for the §3.4 read-your-own-writes
+/// [`crate::updater::run::substrate`] for the read-your-own-writes
 /// contract the overlay enforces.
 ///
 /// Written per-tx: the apply loop writes each tx's events to `conn` BEFORE
@@ -919,9 +919,9 @@ pub fn apply_chunk_events_on_conn(
 ///
 /// Thin wrapper over [`apply_chunk_events_on_conn`] (the per-event dispatch)
 /// that then stamps the block. Kept as the public batched-apply entrypoint so
-/// that the existing §3.4 atomicity tests stay GREEN.
+/// that the existing chunk-atomicity tests stay GREEN.
 ///
-/// # The §3.4 atomicity invariant
+/// # The chunk-atomicity invariant
 ///
 /// All `apply_*` calls + the `last_update_block` stamp go through `_on_conn`
 /// fns on this one connection. Any `?` early-return (a `UNIQUE` violation, a
@@ -949,7 +949,7 @@ pub fn apply_aave_chunk_writes_on_conn(
 
     // Perf C: flush the deferred `ReserveDataUpdated` writes (one sorted
     // multi-row UPDATE) BEFORE the cleanup + the stamp — the stamp stays the
-    // LAST write (§3.4 restart-invariant), and the flush sits inside the
+    // LAST write (the restart invariant), and the flush sits inside the
     // caller's transaction (a rollback reverts it with the chunk).
     substrate.flush_reserve_data_updates(conn)?;
 
@@ -958,11 +958,11 @@ pub fn apply_aave_chunk_writes_on_conn(
     // scaled-token balances (full withdrawals / repays / bad-debt resets);
     // delete those rows BEFORE the stamp so they do not accumulate as
     // permanent '0' rows. Inside the chunk's transaction — a rollback reverts
-    // it with the chunk (§3.4 restart-invariant).
+    // it with the chunk (the restart invariant).
     report.zero_balances_cleared =
         DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
 
-    // Stamp `last_update_block` as the LAST write (§3.4 restart-invariant:
+    // Stamp `last_update_block` as the LAST write (restart invariant:
     // on rollback the stamp does NOT advance, so a restart re-processes the
     // chunk clean).
     let chunk_end_i64 = i64::try_from(chunk_end_block).unwrap_or(i64::MAX);
@@ -1008,7 +1008,7 @@ mod tests {
         .unwrap()
     }
 
-    // ── §3.4 atomicity: commit path writes the rows + stamps together ──────
+    // ── chunk atomicity: commit path writes the rows + stamps together ──────
 
     #[test]
     fn apply_aave_chunk_writes_on_conn_commits_events_and_stamp_together() {
@@ -1068,14 +1068,14 @@ mod tests {
         );
     }
 
-    // ── §3.4 atomicity: rollback path writes NOTHING + stamp unchanged ─────
+    // ── chunk atomicity: rollback path writes NOTHING + stamp unchanged ─────
 
     #[test]
     fn apply_aave_chunk_writes_clears_zero_balance_positions_at_end_of_chunk() {
         // The end-of-chunk zero-balance cleanup (the ported Python
         // cleanup_zero_balance_positions): zero-balance collateral + debt rows
         // are deleted inside the chunk's transaction, BEFORE the stamp (the
-        // §3.4 stamp stays the last write); nonzero balances stay.
+        // chunk-atomicity stamp stays the last write); nonzero balances stay.
         let db = fresh_db();
         {
             let conn = db.lock();
@@ -1258,7 +1258,7 @@ mod tests {
         }
     }
 
-    // ── §3.4 atomicity: empty events still stamps (chunk-end semantics) ─────
+    // ── chunk atomicity: empty events still stamps (chunk-end semantics) ─────
 
     #[test]
     fn apply_aave_chunk_writes_on_conn_empty_events_stamps_block() {
@@ -1527,7 +1527,7 @@ mod tests {
         assert_eq!(li, "0", "index left alone on re-init (RDU owns it)");
     }
 
-    // ── §3.4 atomicity: a Pool-event variant rolls back with the stamp ───────
+    // ── chunk atomicity: a Pool-event variant rolls back with the stamp ───────
 
     #[test]
     fn apply_aave_chunk_writes_on_conn_rolls_back_reserve_data_updated_on_missing_asset() {
@@ -2523,7 +2523,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rev, 2);
-        // §4.2 parity: the address is NOT updated.
+        // Parity gate: the address is NOT updated.
         assert_eq!(
             addr, "0xpool",
             "address untouched (Python updates revision only)"

@@ -60,7 +60,7 @@ use std::sync::Arc;
 // FleetBoot value + the ride ledger the per-role fleet statics consult.
 mod boot_stamp;
 // the ONE engine block cursor — the consolidated owner of the
-// engine-side block-coordinate residue (completes ADR-041 §3.5's
+// engine-side block-coordinate residue (completes ADR-041 §3 item 5's
 // engine-side anchor fold; see the module's own doc header).
 pub(crate) mod block_cursor;
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.

@@ -261,7 +261,8 @@ where
 
 /// LW-T3 (Seam C): the DEFAULT escalation port impl — the inline-sim
 /// runtime IS the port's own capability lane (pyo3 is fine here; the trait
-/// lives pyo3-free in degenbot-workers, ADR-042 §8) and escalated work
+/// lives pyo3-free in degenbot-workers; the FFI boundary rule is
+/// `docs/architecture/worker-fleet.md` §8) and escalated work
 /// NEVER occupies the submitting seat (CPU cannot starve I/O). The
 /// cold-miss budget ceiling is the runtime's drive capacity (worker count)
 /// and is visible at [`EscalationPort::counters`].

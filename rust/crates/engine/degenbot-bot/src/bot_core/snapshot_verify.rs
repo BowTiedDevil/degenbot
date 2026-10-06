@@ -256,9 +256,8 @@ where
 /// The lock ordering is load-bearing: `register` + `apply_backfill` +
 /// `take_backfill_snapshot` + `apply_pump` run under a single lock acquisition
 /// so the WS pump cannot interleave a `dispatch_log`/`dispatch_reorg_log`
-/// between registration and the post-backfill state capture (the
-/// [`crate::bot_core::rust_owned_bot`] §16 register-verify race's structural
-/// closure).
+/// between registration and the post-backfill state capture (the structural
+/// closure of the register/verify race).
 ///
 /// Generic over the engine type `E` (ADR-006 D4): the helper never inspects
 /// the engine, only forwards `&mut E` to the caller's closures, so it can live

@@ -36,7 +36,7 @@ const LATENCY_BUCKETS_SECONDS: &[f64] = &[
 /// Every drain-path instrument, built from one meter.
 pub struct PipelineInstruments {
     /// Header accepted → Published-stage dispatch (the epoch race; ADR-041
-    /// §3.1 — submission/delivery subscribe at the Published edge, so the
+    /// §3 item 1 — submission/delivery subscribe at the Published edge, so the
     /// race ends there, not at solve). Succeeds the drain-era
     /// `block.header_to_solved` stamp retired with the stage machine.
     ///
@@ -101,7 +101,7 @@ pub struct PipelineInstruments {
     late_log_admitted: Counter<u64>,
     /// the currently-armed settle (quiesce) window in ms — fixed
     /// mode the debounce, adaptive mode the estimator's clamped EWMA
-    /// projection. The §6.2 design instrument pair with
+    /// projection. The design instrument pair with
     /// `late_log.admitted`.
     quiesce_window_ms: Gauge<f64>,
     /// Header-gap / settle backfills executed.

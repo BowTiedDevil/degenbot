@@ -8,7 +8,7 @@
 //! it belongs with the rest of the typed RPC surface (`AlloyProvider`,
 //! `EthBlock`, the block fetchers).
 //!
-//! # Parity (§4.2)
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
 //! Ports the `fee_history(block_count=1, newest_block, reward_percentiles)`
 //! and `dict(zip(FEE_PERCENTILES, reward[-1]))` block (L2842–L2851). The

@@ -10,7 +10,7 @@
 //! …)` call, + `_apply_block_if_ready`'s `eth_feeHistory`+hex-decode block
 //! becomes `fetch_fee_history_py(…)`.
 //!
-//! # GIL discipline (ADR-005 §3 C)
+//! # GIL discipline (ADR-005)
 //!
 //! Both `#[pyfunction]`s are `async` + release the GIL across the RPC `.await`s
 //! (`future_into_py` runs the future on the tokio runtime the Python event loop
@@ -188,8 +188,8 @@ impl PySubmitCandidate {
 ///
 /// Held as an `Arc<dyn Provider<Ethereum>>` (cloned from the
 /// `AsyncAlloyProvider` the caller passes) so the spawned monitor tasks can
-/// poll receipts without crossing back into Python per-poll (ADR-005 §3 D —
-/// the monitor is pure Rust-side coordination state release).
+/// poll receipts without crossing back into Python per-poll (ADR-005 — the
+/// monitor is pure Rust-side coordination state release).
 pub(crate) struct PyReceiptProbe {
     provider: Arc<dyn Provider<Ethereum>>,
 }

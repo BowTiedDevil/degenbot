@@ -12,13 +12,13 @@ its delegation is asserted directly against
 ``aerodrome.math.calc_exact_in_stable_solidly``, with no intermediate
 Python callable). The Python oracle's ``calc_d`` / ``calc_k`` /
 ``calc_f`` / ``get_y_solidly`` / ``f_camelot`` / ``k_camelot`` /
-``get_y_camelot`` math is retained as the §4.3 parity-oracle corpus for the
+``get_y_camelot`` math is retained as the parity-oracle corpus for the
 ``test_calculations.py`` unit-math identity tests, and the on-chain-match
 work in ``test_aerodrome_v2_onchain_parity.py``.
 
 The leaf is byte-for-byte cross-checked vs the Python oracle by the frozen
 ``rust/crates/foundation/degenbot-math/tests/oracle_crosscheck_solidly.rs`` snapshot at
-the unit level; per §4.5 this module is the orchestration-level gate that
+the unit level; this module is the orchestration-level gate that
 spies on the Rust seam to prove the routed path hits it with the right
 arguments ('the parity tests already cover the math').
 """
@@ -126,7 +126,7 @@ class TestPoolCalcRouting:
         amount_in = 100_000_000  # 100 USDC
         stable_pool.calculate_tokens_out_from_tokens_in(t0, amount_in)
 
-        # §4.5 delegation-detection: the strategy's stable swap method routed
+        # Delegation-detection: the strategy's stable swap method routed
         # through the Rust seam (not the Python oracle's
         # `calc_exact_in_stable`); the volatile seam was NOT touched.
         assert len(calc_strategy_spies["stable"].calls) == 1
@@ -137,7 +137,7 @@ class TestPoolCalcRouting:
         amount_in = 100_000_000_000_000_000  # 0.1 WETH
         volatile_pool.calculate_tokens_out_from_tokens_in(t0, amount_in)
 
-        # §4.5 delegation-detection: the strategy's volatile swap method routed
+        # Delegation-detection: the strategy's volatile swap method routed
         # through the Rust seam (not the Python oracle's
         # `calc_exact_in_volatile`); the stable seam was NOT touched.
         assert len(calc_strategy_spies["volatile"].calls) == 1
@@ -148,7 +148,7 @@ class TestStableExactOut:
     """Aerodrome stable exact-out roundtrip — the inverse of the stable exact-in.
 
     The stable exact-out (`calc_exact_out_stable_solidly`) exists only on
-    the Rust leaf (the Python side never had one); the §4.2 oracle is the
+    the Rust leaf (the Python side never had one); the parity oracle is the
     property-based
     roundtrip over the Solidly/Aerodrome stable invariant: `exact_out` is the
     MINIMUM input producing at least the requested output, so
@@ -162,7 +162,7 @@ class TestStableExactOut:
         t1 = stable_pool._token1  # the OUT token (exact-out direction)
         stable_pool.calculate_tokens_in_from_tokens_out(1_000_000, t1)
 
-        # §4.5 delegation-detection: the stable exact-out strategy routed
+        # Delegation-detection: the stable exact-out strategy routed
         # through the Rust `calc_exact_out_stable_solidly` seam.
         assert len(calc_strategy_spies["stable_out"].calls) == 1
         assert len(calc_strategy_spies["stable"].calls) == 0

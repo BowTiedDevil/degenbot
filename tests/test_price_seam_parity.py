@@ -1,4 +1,4 @@
-"""Offline §4.2 parity tests for the price-reader PyO3 seam + shells.
+"""Offline parity tests for the price-reader PyO3 seam + shells.
 
 Drives the full ``ChainlinkPriceFeed`` / ``AavePriceOracle`` pyclasses +
 the delegating ``ChainlinkPriceContract`` / ``OraclePriceFetcher`` shells
@@ -6,7 +6,8 @@ through a local in-process JSON-RPC mock that returns canned ABI-encoded
 ``eth_call`` bytes. This exercises the actual ``eth_call`` → Rust ABI decode
 → shell float path end-to-end, with no live RPC and no Anvil fork.
 
-Parity target (ADR-005 §4.2, Python as oracle):
+Parity target (the parity gate,
+``docs/architecture/parity-gate.md``; Python as oracle):
     prior Python ``ChainlinkPriceContract.price`` =
         ``float(answer / 10**decimals)``   (where ``answer`` came from
         ``abi_decode(["uint80","int256","uint256","uint256","uint80"], ...)``)

@@ -38,7 +38,8 @@
 //! # Parity
 //!
 //! The warmup slots are byte-for-byte parity vs
-//! `cmd_executor.initialize()`'s storage layout (§4.2) — canonical mainnet
+//! `cmd_executor.initialize()`'s storage layout (the parity gate,
+//! `docs/architecture/parity-gate.md`) — canonical mainnet
 //! WETH (`0xC02…`) / PoolManager (`0x0000…444c`). The grammar's byte-identity
 //! is pinned by the golden corpus + the revm runtime matrix
 //! (degenbot-simulation).

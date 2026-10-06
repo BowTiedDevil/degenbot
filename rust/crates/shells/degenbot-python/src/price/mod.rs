@@ -5,7 +5,7 @@
 //! companion `ChainlinkPriceContract` / `OraclePriceFetcher` shells delegate
 //! to the Rust `eth_call` + ABI decode path. The wrappers hold no business
 //! logic: arg extraction → `py.detach()` the RPC `eth_call` → wrap the typed
-//! return (ADR-005 §3 PyO3-layer discipline).
+//! return (the ADR-005 PyO3-layer discipline).
 //!
 //! The `eth_call` is the only async boundary — it is driven via
 //! [`runtime::get_runtime().block_on`] inside [`Python::detach`], mirroring

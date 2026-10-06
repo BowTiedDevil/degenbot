@@ -41,7 +41,7 @@ from tests.helpers.database import sqlite_connection
 PROXY_CREATED_TOPIC = "0x4a465a9bd819d9662563c1e11ae958f8109e437e7f4bf1c6ef0b9a7b3f35d478"
 
 # The `id` bytes32 values the bootstrap matches against — right-padded ASCII
-# (NOT keccak — see `match_proxy_id` + the §4.2 finding). b"POOL" = 0x504f4f4c,
+# (NOT keccak — see `match_proxy_id` + the parity-gate finding). b"POOL" = 0x504f4f4c,
 # b"POOL_CONFIGURATOR" = 0x504f4f4c5f434f4e464947555241544f52.
 _POOL_ID = "0x" + b"POOL".hex().ljust(64, "0")
 _POOL_CONFIGURATOR_ID = "0x" + b"POOL_CONFIGURATOR".hex().ljust(64, "0")

@@ -4,7 +4,7 @@
 //! separate mirror (`examples/eth_backrun_v2_v3_v4_rust.py` `class Dispatcher`)
 //! duplicating the Rust-owned [`Dispatcher`] and its
 //! `PathSuppression`). This wrapper makes the Rust-owned state the single
-//! source — Python constructs + drives it via the `PyO3` seam (ADR-005 §3).
+//! source — Python constructs + drives it via the `PyO3` seam (ADR-005).
 //!
 //! The held [`Dispatcher`] is shared behind `Arc<Mutex<Dispatcher>>` so the
 //! submit-orchestration leaf (`dispatch_and_submit`) + the monitor tasks + the

@@ -1,6 +1,6 @@
 """Python-side parity test for the V3/V4 DB-aware liquidity updater seam.
 
-Loads the §4.2 fixture DBs (committed by
+Loads the parity fixture DBs (committed by
 `rust/crates/foundation/degenbot-db/tests/fixtures/generate_liquidity_updater_parity.py`),
 applies the SAME event sequence through the Python `updater/pool_updater_configs.py` apply shells
 (now delegating to the Rust seam), + asserts the resulting
@@ -11,7 +11,7 @@ applies the SAME event sequence through the Python `updater/pool_updater_configs
 This validates the seam wiring end-to-end from Python: the `LogReceipt` decode
 (V3 Burn negation, V4 Modify signed delta) → `LiquidityUpdateEvent` records →
 `db_apply_v3/v4_liquidity_updates` → Rust reconstitute→apply→persist→stamp.
-The §4.2 Rust parity test already proves Rust-apply == old-Python-apply
+The Rust parity test already proves Rust-apply == old-Python-apply
 (byte-identical); this test proves the Python shell decode + delegation reach
 the same Rust result.
 """
@@ -236,7 +236,7 @@ def v4_apply_copy(tmp_path: pathlib.Path) -> pathlib.Path:
 
 
 def test_apply_v3_seam_matches_expected_oracle(v3_apply_copy: pathlib.Path) -> None:
-    """Apply the §4.2 V3 event sequence via the Python shell → matches the JSON oracle."""
+    """Apply the V3 event sequence via the Python shell → matches the JSON oracle."""
     events = [
         _v3_mint_log(block=100, log_idx=0, tick_lower=-10, tick_upper=10, amount=500_000),
         _v3_mint_log(block=100, log_idx=1, tick_lower=100, tick_upper=110, amount=250_000),
@@ -278,7 +278,7 @@ def test_apply_v3_seam_matches_expected_oracle(v3_apply_copy: pathlib.Path) -> N
 
 
 def test_apply_v4_seam_matches_expected_oracle(v4_apply_copy: pathlib.Path) -> None:
-    """Apply the §4.2 V4 event sequence via the Python shell → matches the JSON oracle."""
+    """Apply the V4 event sequence via the Python shell → matches the JSON oracle."""
     events = [
         _v4_modify_log(block=200, log_idx=0, tick_lower=-10, tick_upper=10, delta=500_000),
         _v4_modify_log(block=200, log_idx=1, tick_lower=100, tick_upper=110, delta=250_000),

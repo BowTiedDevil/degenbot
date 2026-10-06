@@ -1,10 +1,10 @@
-"""§4.2 parity + §4.5 delegation tests for the V3/V4 snapshot DB seam.
+"""Parity + delegation tests for the V3/V4 snapshot DB seam.
 
 Driven by the frozen `parity_expected.json` oracle (dumped from the
 prior legacy reader-backed `DatabaseSnapshot`) + a freshly-regenerated
 `parity.db` fixture: the Rust-backed `DatabaseSnapshot` (delegating through
 `DatabaseSnapshot`) produces identical results to the frozen legacy reader
-oracle. Plus a §4.5 delegation spy proving the Python reader hits Rust with
+oracle. Plus a delegation spy proving the Python reader hits Rust with
 the right args.
 """
 
@@ -44,7 +44,7 @@ def v4_snapshot() -> Iterator[V4DatabaseSnapshot]:
         snapshot.close()
 
 
-# ── §4.2 parity: Rust-backed reads == frozen legacy reader oracle ─────────
+# ── parity: Rust-backed reads == frozen legacy reader oracle ─────────
 
 
 class TestV3SnapshotParity:
@@ -108,11 +108,11 @@ class TestV4SnapshotParity:
             assert {int(t): tuple(map(int, v)) for t, v in entry["ticks"].items()} == rust_ticks
 
 
-# ── §4.5 delegation: Python reader hits the Rust seam with the right args ─
+# ── delegation: Python reader hits the Rust seam with the right args ─
 
 
 class TestSnapshotDelegation:
-    """§4.5: the Python DatabaseSnapshot delegates to the Rust DatabaseSnapshot."""
+    """The Python DatabaseSnapshot delegates to the Rust DatabaseSnapshot."""
 
     def test_get_newest_block_delegates_to_rust(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_newest_block calls DatabaseSnapshot.get_newest_block_v3.

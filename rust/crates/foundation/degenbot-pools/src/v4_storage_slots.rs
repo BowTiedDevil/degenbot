@@ -251,7 +251,7 @@ mod tests {
     use std::str::FromStr;
 
     // Pinned mainnet triple (PoolManager singleton 0x000000000004444c5dc75cB358380D2e3De08A90),
-    // recovered from the in_process_sim_served_slots.md write-up (removed in the stale-docs cleanup 71ec78b2).
+    // recovered from mainnet at the pinned block.
     const V4_PINNED_POOL_ID: &str =
         "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27";
     const V4_PINNED_S_STATE: &str =

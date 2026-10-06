@@ -7,7 +7,7 @@
 //! / [`DebtPositionData`] / [`UserPositionSummary`] the CLI risk display
 //! reads. The scaled→actual balance math routes through
 //! [`crate::wad_ray_math`] (`ray_mul_floor` for collateral,
-//! `ray_mul_ceil` for debt) — the §4.2 byte-identical Rust oracle.
+//! `ray_mul_ceil` for debt) — the parity-gate byte-identical Rust oracle.
 //!
 //! # Float discipline
 //!

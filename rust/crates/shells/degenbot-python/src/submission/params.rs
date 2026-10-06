@@ -122,7 +122,8 @@ pub fn finalize_fees_py(
 /// Parse a web3-shape access list (list of ``{"address", "storageKeys"}``
 /// dicts) into alloy's [`alloy::eips::eip2930::AccessList`].
 ///
-/// This is pure arg extraction (ADR-005 §3 B): no business logic, just
+/// This is pure arg extraction (the ADR-005 thin-wrapper discipline): no
+/// business logic, just
 /// translating the Python dict shape the `web3.eth.create_access_list` RPC
 /// returns into the typed Rust `AccessList`.
 pub(crate) fn parse_access_list(

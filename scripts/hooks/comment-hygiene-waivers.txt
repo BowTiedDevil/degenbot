@@ -1,6 +1,6 @@
 # Comment-hygiene gate waivers — scripts/hooks/comment-hygiene.sh
 # Live-detector output over the pre-rule citation census (docs/findings/
-# 2026-09-15-ergo-comment-references.md). Shrink in the strip waves;
+# 2026-09-15-tech-debt-survey.md). Shrink in the strip waves;
 # regenerate via:
 #   WAF=/dev/null scripts/hooks/comment-hygiene.sh 2>&1 |
 #     grep -E '^[^ :]+:[0-9]+:' | cut -d: -f1 | sort -u

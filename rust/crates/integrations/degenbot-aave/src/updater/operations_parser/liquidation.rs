@@ -15,7 +15,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// proper disambiguation when the same user is liquidated multiple times
     /// with the same debt asset in one transaction.
     ///
-    /// §4.2-parity note: the Python reads `decode_address(ev["topics"][3])`
+    /// Parity-gate note: the Python reads `decode_address(ev["topics"][3])`
     /// (user) + `decode_address(ev["topics"][2])` (`debt_asset`) per
     /// `LiquidationCall` event → resolves `debt_asset` → vToken via
     /// `_get_v_token_for_asset`; we mirror the same per-event vToken resolution.
@@ -70,7 +70,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         counts
     }
 
-    /// the §4.2-critical
+    /// the parity-critical
     /// `SINGLE/COMBINED_BURN/SEPARATE_BURNS` pattern-detection debt-burn
     /// collector.
     ///
@@ -85,7 +85,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     ///   - **`COMBINED_BURN`** (`liquidation_count_for_asset > total_burn_count` +
     ///     `liquidation_position == 0`): all burns go to the first liquidation.
     ///
-    /// # §4.2-parity note (the `assigned_indices.add(ev.index)` quirk)
+    /// # Parity-gate note (the `assigned_indices.add(ev.index)` quirk)
     ///
     /// The Python also calls `assigned_indices.add(ev.index)` to store the
     /// Burn event's `index` field (a ray-scale u256 liquidity-index value) in

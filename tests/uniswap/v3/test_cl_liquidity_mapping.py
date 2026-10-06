@@ -9,7 +9,7 @@ compressed >> 8`` + ``bit = compressed.rem_euclid(256)``).
 The 6 V3/V4 callsites (the V3+V4 liquidity pools + the 4 builders) now route
 through this seam, + the pure-Python ``apply_liquidity_mapping_update`` /
 ``flip_tick`` / ``get_tick_word_and_bit_position`` mirrors were RETIRED with
-their parity oracle (§4.3) once the callsite cutover + the Rust
+their parity oracle once the callsite cutover + the Rust
 self-contained ``#[cfg(test)]`` suite in
 ``degenbot-concentrated-liquidity-math/src/liquidity_mapping.rs`` (68 tests) stayed green.
 The Python-side parity test below asserts against HARDCODED expectations

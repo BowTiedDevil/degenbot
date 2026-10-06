@@ -54,7 +54,7 @@ fn seed_user(db: &DegenbotDb, address: &str) -> i64 {
     conn.last_insert_rowid()
 }
 
-// ── the pure bit-decode (§4.2 parity vs the Python oracle) ────────────
+// ── the pure bit-decode (parity gate: vs the Python oracle) ────────────
 
 #[test]
 fn bit_decode_zero_bitmap_yields_zero_defaults() {

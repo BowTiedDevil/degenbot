@@ -649,7 +649,7 @@ mod tests {
         assert!(n <= items.len(), "outcomes can never exceed submissions");
     }
     /// Solver bin keys never collide with the merge pin key (the FSM's
-    /// keyed-pin invariant, ADR-042 §3.4).
+    /// keyed-pin invariant, `docs/architecture/worker-fleet.md` §3.4).
     #[test]
     fn solve_bin_keys_never_collide_with_the_merge_pin_key() {
         assert_ne!(SOLVE_BIN_KEY_BASE, degenbot_workers::slot::MERGE_PIN_KEY);
@@ -1096,7 +1096,8 @@ mod tests {
             self.gate.counters()
         }
     }
-    /// LW-T3 (Seam C, reth research §7): escalation is a SELF-CONTAINED I/O
+    /// LW-T3 (Seam C, `docs/reth-parallelism-research.md` §7): escalation is a
+    /// SELF-CONTAINED I/O
     /// lane — a bin escalates its cold-miss work through its `LaneCtx`
     /// while EVERY solver seat is mid-unit, and the escalations complete on
     /// the port lane (never on a solver seat: CPU cannot starve I/O).

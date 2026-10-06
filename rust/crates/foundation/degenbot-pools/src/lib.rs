@@ -174,10 +174,9 @@ impl TickInfo {
     /// route through the low-16-byte extraction of the old `I256` field.
     ///
     /// The trap this seam historically guarded (the path-13827 1-wei
-    /// over-prediction incident, the 25641093 divergence fixture — then referenced
-    /// as `docs/fixtures/v2_v3_v3_solver_divergence_25641093.md`, a path typo
-    /// for the gitignored logs/ artifact, removed in the stale-docs cleanup `71ec78b2`) is structurally retired: there is no wider
-    /// representation left to mis-project.
+    /// over-prediction incident, the 25641093 divergence fixture) is
+    /// structurally retired: there is no wider representation left to
+    /// mis-project.
     #[must_use]
     pub fn liquidity_net_i128(&self) -> i128 {
         self.liquidity_net

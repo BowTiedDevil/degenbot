@@ -431,7 +431,7 @@ fn role_work_never_crosses_python_the_fleet_graph_is_pyo3_free() {
     let text = std::fs::read_to_string(manifest).expect("crate manifest readable");
     assert!(
         !text.contains("pyo3"),
-        "degenbot-workers must not pull pyo3 (ADR-042 §8: FFI crossed only for runtime/startup concerns)"
+        "degenbot-workers must not pull pyo3 (the FFI boundary rule, docs/architecture/worker-fleet.md §8: FFI crossed only for runtime/startup concerns)"
     );
     // Units dispatch as plain Rust closures: a real thread runs the unit
     // body to completion host-side without any interpreter round-trip.

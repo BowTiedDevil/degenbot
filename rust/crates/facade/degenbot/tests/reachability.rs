@@ -58,8 +58,8 @@ fn umbrella_lib() -> PathBuf {
 
 /// Crates deliberately *not* re-exported by the umbrella yet, with a reason.
 ///
-/// Each entry records the *disposition* decision (per the three-layer-transition
-/// rubric, removed in the stale-docs cleanup `71ec78b2`): a core crate the
+/// Each entry records the *disposition* decision (the three-layer transition
+/// rubric): a core crate the
 /// binding reaches today but that is intentionally on the Python side of the
 /// boundary until its migration slice lands. Adding an entry here is the
 /// documented alternative to `pub use`-ing the crate — it forces the

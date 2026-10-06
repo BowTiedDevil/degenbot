@@ -4,7 +4,8 @@
 //! [`compute_simulation_warmup_slots`], [`pack_config`], [`mapping_slot`],
 //! [`nested_mapping_slot`].
 //!
-//! Architecture (ADR-005 §3.2): each wrapper extracts Python args → releases
+//! Architecture (ADR-005, the thin PyO3-wrapper layer): each wrapper extracts
+//! Python args → releases
 //! the GIL via `py.detach()` for the encode/warmup compute → calls the core →
 //! wraps the result into `bytes`/`dict`/`int`. No business logic lives here.
 //!
@@ -19,7 +20,7 @@
 //! hop-detail render reads `outcome.path_infos` as plain `dict`s (built in
 //! `simulation/outcome.rs`). The Python `hop_info` dataclasses are deleted.
 //! No Python caller reaches `encode_cmd_stream` / `v4_*` on `degenbot._ffi`
-//! anymore — the §4.5 `_DelegateSpy` test pinned them as Rust-bound builtins,
+//! anymore — the `_DelegateSpy` test pinned them as Rust-bound builtins,
 //! but the example never invoked them post-A5.
 
 use alloy::primitives::U256;

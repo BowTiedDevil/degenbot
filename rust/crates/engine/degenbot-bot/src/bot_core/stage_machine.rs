@@ -1418,7 +1418,7 @@ fn f64_ms_to_u64(v: f64) -> u64 {
     }
 }
 
-/// The pure EWMA trailing-quiesce estimator (design §6.1). NO clock, NO I/O:
+/// The pure EWMA trailing-quiesce estimator. NO clock, NO I/O:
 /// all timings arrive as data — the driver feeds each block's observed max
 /// intra-block silence gap at the settle point and the late-admit events
 /// with their driver-clock stamps, exactly like the watchdog's `now_ms`s.
@@ -1561,7 +1561,7 @@ impl StageMachine {
     /// The currently-armed settle (quiesce) window in ms — the value the
     /// driver arms its settle timers with. Fixed mode returns the fixed
     /// window (the `pump_debounce_ms` contract); adaptive mode the clamped
-    /// EWMA projection (design §6.1.
+    /// EWMA projection.
     #[must_use]
     pub fn settle_window_ms(&self) -> u64 {
         self.quiesce.window_ms()
@@ -1577,7 +1577,7 @@ impl StageMachine {
 
     /// Record one benign late-admit event (the counted class) at
     /// driver-clock `now_ms` for the sliding-hour budget backstop: over
-    /// budget → the window is held at the ceiling (design §6.1).
+    /// budget → the window is held at the ceiling.
     pub fn record_late_admit(&mut self, now_ms: u64) {
         self.quiesce.record_late_admit(now_ms);
     }
@@ -1921,7 +1921,7 @@ mod quiesce_estimator_contract {
         assert_eq!(fsm.settle_window_ms(), 1);
     }
 
-    /// Design §6.1: the FIRST observation seeds the EWMA fully (no
+    /// The FIRST observation seeds the EWMA fully (no
     /// halved first update), so the estimator arms at a meaningful window
     /// from the very first block instead of drifting up from the floor.
     #[test]
@@ -2000,7 +2000,7 @@ mod quiesce_estimator_contract {
         assert!(fsm.quiesce_ewma_ms().is_finite(), "EWMA must stay finite");
     }
 
-    /// Late-admit contract §6.1: exceeding the late-admit budget in a sliding
+    /// Late-admit contract: exceeding the late-admit budget in a sliding
     /// hour HOLDS the window at the ceiling; the hold releases once the
     /// ledger ages out. At-budget (not over) must NOT hold.
     #[test]

@@ -23,12 +23,9 @@
 //! `pool=0x.. slot=0x.. kind=V3Slot0 engine=0x.. rpc=0x.. update_block=N`
 //! — the engine's packed word (untracked bits zeroed) vs the RPC word
 //! (masked to the tracked-bit range), plus the engine's `update_block` (the
-//! lag signal: does the engine trail the sim block?). The spike
-//! (the spike checkpoint lived in
-//! `docs/architecture/in_process_sim_served_slots.md`, removed in the stale-docs cleanup `71ec78b2`)
-//! reads these to pick
-//! fix path A (engine missing whole slot classes) / B (shadow-RPC at sim
-//! block) / C (gated serve when caught up).
+//! lag signal: does the engine trail the sim block?). The probe reads
+//! these to pick fix path A (engine missing whole slot classes) / B
+//! (shadow-RPC at sim block) / C (gated serve when caught up).
 //!
 //! A process-wide [`DivergenceTally`] is accumulated (slots compared,
 //! divergent count, distinct divergent pools) and exposed via

@@ -3,7 +3,7 @@
 //!
 //! Given a `&[&Log]` slice (the tx's RPC-fetched receipt logs — decoded
 //! in-place via [`degenbot_decoders::aave_event_decoder::decode_aave_log`])
-//! plus a borrowed chunk-tx `&Connection` (the §3.4 atomicity invariant —
+//! plus a borrowed chunk-tx `&Connection` (the chunk-atomicity invariant —
 //! every get/lookup runs on the caller's single chunk Transaction), the parser
 //! matches Pool events (Supply/Borrow/Repay/Withdraw/MintToTreasury/Deficit)
 //! to their constituent `ScaledToken` events (aToken/vToken mint, burn, and
@@ -112,10 +112,11 @@ pub struct TransactionOperationsParser<'a, 's> {
     /// vToken contract as a `GhoDebtTransfer`.
     pub gho_vtoken_address: Option<Address>,
     /// The borrowed `&Connection` — every substrate lookup runs on this
-    /// (the §3.4 invariant).
+    /// (the chunk-atomicity invariant).
     pub conn: &'a rusqlite::Connection,
     /// The chunk substrate cache (Perf C) — the parse-time lookups + the
-    /// POOL-revision read ride its prefetch + write-overlay (the §3.4
+    /// POOL-revision read ride its prefetch + write-overlay (the
+    /// chunk-atomicity
     /// read-your-own-writes contract lives in `run/substrate.rs`). The `'s`
     /// lifetime is INDEPENDENT of `'a` (the conn/log borrow): the substrate
     /// reborrow ends when the parser drops, so the run loop can keep using
@@ -127,7 +128,7 @@ pub struct TransactionOperationsParser<'a, 's> {
     pub pool_revision: u32,
 }
 
-/// Errors raised by the parser — the §3.4 atomicity invariant surfaces these
+/// Errors raised by the parser — the chunk-atomicity invariant surfaces these
 /// to the caller's chunk-tx loop, which rolls back the whole chunk on any
 /// `Err`. The failure modes are assertion/value errors + the
 /// `[cold]` look-up `MissingRow` errors.
@@ -207,7 +208,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
 
     // ── the matching fns (no `&self` — pure helpers, exposed for tests) ──
 
-    /// The §4.2-critical tolerance gate. Pool revision ≥
+    /// The parity-critical tolerance gate. Pool revision ≥
     /// [`SCALED_AMOUNT_POOL_REVISION`] → allow ±[`TOKEN_AMOUNT_MATCH_TOLERANCE`]
     /// wei; otherwise exact match.
     #[must_use]
@@ -255,7 +256,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         clippy::missing_panics_doc,
         clippy::too_many_lines,
         clippy::panic_in_result_fn
-    )] // parse() is intrinsic — §4.2-drift mirror
+    )] // parse() is intrinsic — parity-drift mirror
     pub fn parse(
         &mut self,
         events: &'a [&'a Log],

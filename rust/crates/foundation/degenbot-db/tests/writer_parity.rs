@@ -1,15 +1,16 @@
-//! End-to-end §4.2 writer-parity: replay a representative Aave V3 event
+//! End-to-end writer parity — the parity gate
+//! (`docs/architecture/parity-gate.md`): replay a representative Aave V3 event
 //! sequence through the Rust apply fns (`get_or_create_*` + `apply_*`) into an
 //! in-memory write-capable DB and assert the resulting multi-table state
 //! matches the Python ORM trajectory field-for-field.
 //!
-//! This is the Rust-internal half of the §4.2 parity gate. The Python-written
+//! This is the Rust-internal half of the parity gate. The Python-written
 //! Aave oracle (`cli/aave/event_handlers.py::_process_*` + the
 //! `get_or_create_*` upsert helpers) is the source of truth; the per-handler
 //! unit tests in `write.rs` pin each handler's field mapping vs the Python
 //! ORM defaults + the create-vs-mutate trajectory, and this integration test
 //! composes them into a realistic per-block backfill sequence (the "warm/bulk
-//! path" of §2.1) to prove the substrate produces a coherent multi-table DB
+//! path") to prove the substrate produces a coherent multi-table DB
 //! state when the handlers fire in event order.
 //!
 //! The cross-DB byte-comparison (Rust-written rows vs a Python-written
@@ -112,7 +113,7 @@ fn replay_event_sequence_produces_coherent_multitable_state() {
     let collat = db.get_or_create_collateral_position(user, asset).unwrap();
     let debt = db.get_or_create_debt_position(user, asset).unwrap();
 
-    // ── §4.2 assertions: the final DB state is coherent across all tables ──
+    // ── parity-gate assertions: the final DB state is coherent across all tables ──
     let conn = db.lock();
 
     // asset_config: the decoded bitmap fields (stable_borrowing_enabled=False —
@@ -262,7 +263,7 @@ fn replay_event_sequence_produces_coherent_multitable_state() {
 
 #[test]
 fn idempotent_replay_of_same_event_yields_unchanged_rows() {
-    // §4.2: replaying the SAME event sequence twice (a re-org / re-indexing
+    // Parity gate: replaying the SAME event sequence twice (a re-org / re-indexing
     // scenario) must yield identical rows — the get-or-create + UPDATE path
     // is idempotent (no duplicate rows, no field drift).
     let (db, asset) = fresh_seeded_db();

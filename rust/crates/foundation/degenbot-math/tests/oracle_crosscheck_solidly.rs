@@ -254,7 +254,7 @@ fn cross_check_calc_exact_in_stable_camelot() {
 // ── calc_exact_out_stable_solidly roundtrip property ──
 //
 // The exact-out leaf has no deployed-contract oracle (the Python `_calc_tokens_in_stable`
-// raised `NotImplementedError`). The §4.2 oracle is the property-based check
+// raised `NotImplementedError`). The parity oracle is the property-based check
 // `exact_out` is the *inverse* of `exact_in` over the Python-oracle snapshot
 // corpus — the same (reserves, decimals, fee, token_in, amount_in) cases the
 // exact-in parity pins. For each case:

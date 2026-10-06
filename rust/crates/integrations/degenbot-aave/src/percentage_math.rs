@@ -2,7 +2,8 @@
 //!
 //! Verbatim port of `src/degenbot/aave/libraries/percentage_math.py` (which is
 //! itself a port of the [Aave V3 Solidity `PercentageMath`][sol] library). The
-//! §4.2 parity cross-check compares these against the Python oracle
+//! The parity-gate cross-check (`docs/architecture/parity-gate.md`)
+//! compares these against the Python oracle
 //! byte-for-byte, so the rounding + overflow semantics MUST match exactly.
 //!
 //! [sol]: https://github.com/aave/aave-v3-core/blob/master/contracts/protocol/libraries/math/PercentageMath.sol
@@ -19,7 +20,7 @@
 //! (`percent_mul_floor` / `percent_mul_ceil` / `percent_div_ceil`). The GHO
 //! processor's `accrue_debt_on_action` + `get_discounted_balance` use the
 //! half-up `percent_mul` (the discount is `percent_mul(balance_increase,
-//! discount_percent)`); the §4.2 cross-check will catch a missed variant.
+//! discount_percent)`); the parity-gate cross-check will catch a missed variant.
 //!
 //! # Overflow
 //!

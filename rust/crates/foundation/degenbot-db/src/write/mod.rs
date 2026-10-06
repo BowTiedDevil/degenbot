@@ -47,7 +47,7 @@
 //! active / frozen / borrowing-enabled / stable-rate / reserve-factor /
 //! borrow-cap / supply-cap / debt-ceiling / liquidation-protocol-fee /
 //! unbacked-mint-cap / e-mode-category-id / flash-loan / isolation-mode /
-//! borrowable-in-isolation). Pure CPU, no I/O — the §4.2 parity pin ports the
+//! borrowable-in-isolation). Pure CPU, no I/O — the parity-gate pin ports the
 //! exact bit masks + shifts.
 //!
 //! # The upsert substrate (`get_or_create_*`)
@@ -59,7 +59,8 @@
 //! `AaveV3UserCollateralConfig` / `AaveV3CollateralPosition` /
 //! `AaveV3DebtPosition` row-create defaults are reproduced verbatim (field
 //! defaults match the `SQLAlchemy` model column defaults so byte-identical DB
-//! state vs the Python ORM trajectory holds — §4.2 AC).
+//! state vs the Python ORM trajectory holds — the parity gate's
+//! acceptance criterion).
 //!
 //! # RPC-coupling carve-out (`stays-python` inside the upserts)
 //!

@@ -1,8 +1,8 @@
 //! The engine block cursor — the ONE owner of the
 //! engine-side block-coordinate residue of the arb engine.
 //!
-//! Completes ADR-041 §3.5's anchor-soup fold on the engine side (no ADR
-//! change — the §3.5 data-plane answer, one block coordinate carried on the
+//! Completes ADR-041 §3 item 5's anchor-soup fold on the engine side (no ADR
+//! change — the §3 data-plane answer, one block coordinate carried on the
 //! epoch context, already landed; what remained was
 //! exactly this engine-side residue). The four block coordinates that used
 //! to live as free-floating engine fields move into one [`BlockCursor`],

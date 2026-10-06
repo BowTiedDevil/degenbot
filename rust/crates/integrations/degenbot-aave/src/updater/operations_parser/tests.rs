@@ -107,14 +107,14 @@ fn test_log(idx: u64, topic0: &alloy::primitives::B256, _data: &[u8]) -> Log {
     }
 }
 
-// ── liquidation engine tests (§4.2 zero-drift surface) ──────────────
+// ── liquidation engine tests (parity-gate zero-drift surface) ──────────────
 //
 // The static pattern-detection fns (`analyze_user_liquidation_count`,
-// `collect_debt_burns`, `collect_collateral_events`) are the §4.2-drift
+// `collect_debt_burns`, `collect_collateral_events`) are the parity-drift
 // critical bit — covered here. The full `create_liquidation_operation`
 // builder needs an in-memory DB substrate (the `get_a_token_for_asset` /
 // `get_v_token_for_asset` sibling lookups); an integration-test fixture
-// is the dispatch glue's concern (the apply dispatch glue + the §4.2 cross-check
+// is the dispatch glue's concern (the apply dispatch glue + the parity-gate cross-check
 // is the consumer).
 
 /// Construct a LiquidationCall-shape Log for tests: 4 topics
@@ -655,7 +655,7 @@ fn collect_collateral_events_no_burn_only_transfers() {
 }
 
 /// `LiquidationGroup::detect_pattern` —
-/// the §4.2-critical pattern classifier.
+/// the parity-critical pattern classifier.
 #[test]
 fn liquidation_group_detect_pattern() {
     // SINGLE: 1 liquidation, 1 burn.

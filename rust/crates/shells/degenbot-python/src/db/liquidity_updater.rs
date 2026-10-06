@@ -1,4 +1,4 @@
-//! `PyO3` seam for the V3/V4 DB-aware liquidity updater — §4.3.
+//! `PyO3` seam for the V3/V4 DB-aware liquidity updater.
 //!
 //! Wraps `degenbot-db`'s apply-and-persist core
 //! ([`degenbot_db::DegenbotDb::apply_v3_liquidity_updates`] /

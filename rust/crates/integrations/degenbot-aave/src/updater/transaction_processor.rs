@@ -4,7 +4,7 @@
 //! [`AaveChunkEvent`] variants the orchestrator batches +
 //! `apply_aave_chunk_writes_on_conn` stamps.
 //!
-//! # The plumbing-equivalence caveat (Finding 1 — the §4.2-drift canary)
+//! # The plumbing-equivalence caveat (Finding 1 — the parity-drift canary)
 //!
 //! The Python pipeline is two stages: (1) `ScaledEventEnricher.enrich` —
 //! extract `raw_amount` from the Operation's Pool event + compute
@@ -24,7 +24,7 @@
 //! extract `raw_amount` from the Operation's Pool event + compute
 //! `scaled_amount = ray_div(raw_amount, index, strategy)` + pass it as
 //! `Some(...)`. This is the plumbing-equivalence caveat materialized; the
-//! §4.2 cross-check is the final arbiter.
+//! The parity-gate cross-check is the final arbiter.
 //!
 //! # Scope (incremental)
 //!
@@ -96,7 +96,7 @@ pub enum ProcessTxError {
 /// `apply_aave_chunk_writes_on_conn`.
 ///
 /// The `conn` is the caller's chunk `Transaction`'s borrowed `&Connection`
-/// (every substrate lookup goes through it — the §3.4 atomicity invariant).
+/// (every substrate lookup goes through it — the chunk-atomicity invariant).
 ///
 /// # Errors
 ///
@@ -1150,7 +1150,7 @@ fn dispatch_interest_accrual(
 /// liquidation`, `token_processor.py:714`) actually checks for a
 /// `DEFICIT_CREATED` event for the user in `tx_logs` — it does NOT consult
 /// `user_liquidation_count`.** C3 implements the `DEFICIT_CREATED`-faithful
-/// path (the §4.2 parity target); NO A-type amend. The orchestrator has been
+/// path (the parity-gate target); NO A-type amend. The orchestrator has been
 /// flagged; if they redirect to `user_liquidation_count`, the change is small
 /// + isolated.
 #[derive(Debug)]
@@ -1380,7 +1380,7 @@ fn dispatch_gho_liquidation(
             // Python oracle checks for a `DEFICIT_CREATED` event for the user
             // in this tx. If present, the contract burns the ENTIRE remaining
             // GHO debt (not just `debtToCover`) → set the position balance to
-            // 0 + advance `last_index`. The §4.2 delta-based apply may be off
+            // 0 + advance `last_index`. The parity-gate delta-based apply may be off
             // by 1 wei on the bad-debt path.
             if gho_ctx.is_bad_debt(ev.user_address) {
                 let asset = lookup_gho_debt_asset(ev, market_id, conn, substrate)?;
@@ -2188,7 +2188,7 @@ mod tests {
 
     /// `OperationType::MintToTreasury` scaled-amount calculation — the
     /// `PoolMath::underlying_to_scaled_collateral` revision split. This is
-    /// the §4.2-zero-drift surface for the `MintToTreasury` path: rev >= 9 →
+    /// the parity-gate zero-drift surface for the `MintToTreasury` path: rev >= 9 →
     /// CEIL, rev <= 8 → `HALF_UP`. Mirrors `calculator.py` +
     /// `pool_math.py::underlying_to_scaled_collateral`.
     #[test]

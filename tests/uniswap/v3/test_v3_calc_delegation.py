@@ -10,7 +10,7 @@ both ``calculate_tokens_out_from_tokens_in`` and
 
 This is the **delegation-detection** counterpart to the parity tests in
 ``tests/test_v3_rust_swap_parity.py`` (which pin the *numbers*). Per the
-three-layer rubric §4.5, a routing cutover where the math already has a
+parity program's delegation rule: a routing cutover where the math already has a
 parity test should add a spy that proves the seam was hit with the right
 args — not just "the result matches". The dense-Rust oracle used by the
 parity tests is, by construction, the same seam a real mainline swap hits,

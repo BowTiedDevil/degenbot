@@ -1,7 +1,7 @@
 use super::*;
 
 // =================================================================
-// Red-first breaker suite (design logs/lane-unify-design.md §5).
+// Red-first breaker suite.
 // Status at HEAD (commit 1): each test below is RED against current
 // code — they pin the POST-merge contracts (one carrier, one ledger,
 // the detached arm's lane witness). They GREEN in commit 2.
@@ -11,7 +11,7 @@ use super::*;
 /// ledger — the fuse refuses the second arrival instead of merging
 /// twice.
 // pins the (solve_seq, pid) key half the merged
-// ledger owns (design §3.3).
+// ledger owns.
 #[test]
 fn merged_ledger_rejects_same_seq_pid_replay() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
@@ -86,8 +86,7 @@ fn merged_ledger_rejects_same_seq_pid_replay() {
 /// detached-issued-seq). Red at HEAD: the in-cycle side has no
 /// ledger/rows at all; the detach-keyed prune ages on any current
 /// seq the claim sees.
-// pins LEDGER_AGE=64 exactly and the anchor choice
-// (design §3.3 + §3.3.1 REV 2).
+// pins LEDGER_AGE=64 exactly and the anchor choice.
 #[test]
 fn merged_ledger_prunes_only_past_ledger_age() {
     use std::sync::atomic::Ordering;
@@ -153,7 +152,7 @@ fn merged_ledger_prunes_only_past_ledger_age() {
         "LEDGER_AGE=64: row (seq-63) must be retained after the seq-{current} claim"
     );
     drop(ledger_rows);
-    // NEGATIVE half (design §3.3.1 REV 2): in-cycle-only advances of
+    // NEGATIVE half: in-cycle-only advances of
     // the shared counter must NOT prune detached-keyed rows. Run two
     // in-cycle solves (the shared counter ticks), then re-assert the
     // retained row survived them.
@@ -182,8 +181,8 @@ fn merged_ledger_prunes_only_past_ledger_age() {
 /// undercount. Red at HEAD: the detached arm has NO lane witness
 /// (sD:2350 submits a raw bin body), so a panicked bin simply never
 /// delivers its undelivered pids.
-// pins the detached arm's witness adoption
-// (design §5.2). GREEN requires Failed records on the detached pipe.
+// pins the detached arm's witness adoption.
+// GREEN requires Failed records on the detached pipe.
 #[test]
 fn detached_undercount_trips_the_fan_in_assert() {
     if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
@@ -265,7 +264,7 @@ fn detached_undercount_trips_the_fan_in_assert() {
 /// bin's flushed Solved items bump at send but the panic kills the
 /// remaining path solves, nothing decrements the orphaned bumps
 // pins constraint (b) THROUGH the panic path AND
-// the variant-gated bump/decrement pairing (design §4.6.1 REV 2).
+// the variant-gated bump/decrement pairing.
 #[test]
 fn detached_panic_does_not_leak_inflight_gauge() {
     if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
@@ -334,7 +333,7 @@ fn detached_panic_does_not_leak_inflight_gauge() {
         if applied >= path_ids.len() as u64 || std::time::Instant::now() > deadline {
             assert_eq!(
                     gauge, g0,
-                    "in-flight gauge must return to its EXACT pre-cycle \\\n                     value g0={g0} through a panicking cycle (variant-gated pairing, \\\n                     design §4.6.1 REV 2) — got {gauge}"
+                    "in-flight gauge must return to its EXACT pre-cycle \\\n                     value g0={g0} through a panicking cycle (variant-gated pairing) — got {gauge}"
                 );
             break;
         }

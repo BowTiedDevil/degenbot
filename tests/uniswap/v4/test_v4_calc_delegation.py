@@ -9,7 +9,7 @@ swap math lives on ``UniswapV4Pool``) routes both
 
 This is the **delegation-detection** counterpart to the parity tests in
 ``tests/test_v4_rust_swap_parity.py`` (which pin the *numbers*). Per the
-three-layer rubric §4.5, a routing cutover where the math already has a parity
+parity program's delegation rule: a routing cutover where the math already has a parity
 test should add a spy that proves the seam was hit with the right args — not
 just "the result matches". Mirrors
 ``tests/pool_companion/test_io_free_behavior.py::TestV2CalcDelegation``.

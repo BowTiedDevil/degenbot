@@ -18,9 +18,7 @@
 //! tick `gross`+`net`) against RPC-fresh *full* state
 //! (`feeGrowthGlobal`, per-tick `feeGrowthOutside`, `tickBitmap` word values,
 //! `observation` index/cardinality) → intra-sim `LOK` reverts on every
-//! cross-tick swap (the served-slot checkpoint answer lived in
-//! `docs/architecture/in_process_sim_served_slots.md`, removed in the stale-docs cleanup `71ec78b2`)
-//! .
+//! cross-tick swap.
 //!
 //! A **test oracle** owns the whole state: it seeds EVERY slot the swap reads
 //! from a single synthetic but *fully-consistent* `V3PoolState`, so the LOK
@@ -352,7 +350,7 @@ mod tests {
     use alloy::primitives::U256;
 
     // Pinned mainnet triple (UniswapV3Pool 0xCBCdF9626bC03E24f779434178A73a0B4bad62eD),
-    // recovered from the in_process_sim_served_slots.md write-up (removed in the stale-docs cleanup 71ec78b2).
+    // recovered from mainnet at the pinned block.
     const V3_PINNED_SLOT0_HEX: &str =
         "0x00016601680168000a040cef000000000008dca6028b78f02240aced87bb387d";
     const V3_PINNED_SQRT_PRICE_X96: &str = "46013657643641178635361266647644285"; // decimal

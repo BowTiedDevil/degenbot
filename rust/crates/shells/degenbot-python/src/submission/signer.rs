@@ -105,7 +105,7 @@ impl PyTxSigner {
     ) -> PyResult<Bound<'py, PyBytes>> {
         // Move the TxParams out (the Python caller built + finalized it; the
         // wrapper owns no business logic — pure arg extraction → GIL release →
-        // core call → result wrap, ADR-005 §3 B).
+        // core call → result wrap; the ADR-005 thin-wrapper discipline).
         let params = tx_params.inner.clone();
         // Release the GIL for the CPU-bound ECDSA signing. No async runtime
         // needed (signing is sync / no I/O).
@@ -117,7 +117,7 @@ impl PyTxSigner {
     ///
     /// Decodes the bytes produced by [`sign_eip1559`](Self::sign_eip1559) and
     /// recovers the signer. Used by the submission loop's receipt-validation
-    /// path + the §4.2 round-trip parity test.
+    /// path + the parity-gate round-trip test.
     ///
     /// Args:
     ///     `raw_signed`: The raw signed transaction bytes.

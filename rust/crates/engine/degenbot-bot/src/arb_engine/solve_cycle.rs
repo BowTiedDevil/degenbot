@@ -1865,7 +1865,7 @@ impl SolveCycle {
                 let lane_pids: Vec<u64> = bin.iter().map(|&i| to_solve[i].0).collect();
                 // the bin's submit closure — send on the DETACHED
                 // merge pipe and bump the in-flight gauge at SEND success
-                // ONLY (variant-gated pairing, design §4.6.1: Suppressed
+                // ONLY (variant-gated pairing: Suppressed
                 // and Failed ride lane.solved/lane.failed, which touch
                 // neither the pipe gauge bump nor this closure). A bin
                 // that dies before sending never leaks a count.
@@ -1924,14 +1924,14 @@ impl SolveCycle {
                         "detached walk must flush every Solved item before the bin body returns"
                     );
                 };
-                // (design §5.2, REV 2 Defect 3): the detached arm
+                // The detached arm
                 // seals its bins with the lane witness. The explicit
                 // `&LaneCtx` annotation is load-bearing: without it the
                 // closure-parameter inference drifts and `run_bin`'s lane
                 // binding re-derives. With the witness, a panicked
                 // detached bin's undelivered pids arrive as typed
                 // `Failed` records on the merge pipe (the silent-
-                // undercount gap — design §1.9 — is closed).
+                // undercount gap is closed).
                 let lane_key =
                     SOLVE_BIN_KEY_BASE.saturating_add(u64::try_from(bin_idx).unwrap_or(u64::MAX));
                 let spawn_job = move |_ctx: &LaneCtx| {

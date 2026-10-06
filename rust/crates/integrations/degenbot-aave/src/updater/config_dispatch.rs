@@ -9,7 +9,8 @@
 //! emit [`AaveChunkEvent`] variants (mirror of Python
 //! `transaction_processor.py::_process_transaction` L328-430 — the Phase 1+2
 //! config-event dispatch). The apply step (`-3`'s `apply_aave_chunk_writes_on_conn`)
-//! consumes the emitted variants on the chunk `Transaction` (§3.4 atomicity).
+//! consumes the emitted variants on the chunk `Transaction` (chunk
+//! atomicity).
 //!
 //! # Scope (this file)
 //!
@@ -39,7 +40,7 @@
 //! # Out-of-scope references (the 6 missing-variant events live elsewhere)
 //!
 //! The 6 config events with NO `AaveChunkEvent` variant + NO apply fn (a
-//! §4.2-parity gap to land in -2b): `Upgraded` (incl. the GHO-discount
+//! parity-gate gap to land in -2b): `Upgraded` (incl. the GHO-discount
 //! deprecation side effect), `PoolUpdated`, `PoolConfiguratorUpdated`,
 //! `PoolDataProviderUpdated`, `AddressSet`, `ProxyCreated`. The dispatch loop
 //! ([`dispatch_config_events`]) skips these + logs them as "not yet ported".
@@ -53,10 +54,11 @@
 //! so this module loops over ALL tx logs (the orchestrator may narrow to
 //! `parser.unassigned_events` in `-3`; the decode + dispatch is identical).
 //!
-//! # §3.4 atomicity
+//! # Chunk atomicity
 //!
 //! The dispatch takes `conn: &Connection` (the chunk's single `Transaction`).
-//! All `get_or_create_*` / `lookup_*` substrate calls run on it — the §3.4
+//! All `get_or_create_*` / `lookup_*` substrate calls run on it — the
+//! chunk-atomicity
 //! invariant (ONE `Transaction` per chunk) holds. The dispatch emits
 //! [`AaveChunkEvent`]s; the apply step (`-3`) consumes them on the same conn.
 //! No `Transaction` lifecycle here — this file owns neither `commit` nor
@@ -781,7 +783,7 @@ pub async fn resolve_collateral_configuration(
 ///
 /// NB: the 3 erc20 tokens (asset/aToken/vToken) are `get_or_create`d with
 /// `None` metadata (name/symbol/decimals) — the Python RPC-fetches these via
-/// `_fetch_erc20_token_metadata`, which is a §4.2 gap flagged for -2b / a
+/// `_fetch_erc20_token_metadata`, which is a parity-gate gap flagged for -2b / a
 /// follow-up (the standalone Rust consumer needs the metadata fetch too; the
 /// substrate `get_or_create_erc20_token_on_conn` takes metadata as a caller
 /// param, so this is consistent with the existing contract — the gap is
@@ -1251,7 +1253,7 @@ async fn dispatch_single_config_event(
 /// - `Upgraded` — RPC `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` + the
 ///   GHO-discount-deprecation side effect.
 /// - `PoolUpdated`/`PoolConfiguratorUpdated` — RPC `*_REVISION()` on the new
-///   address → `ContractRevisionUpdated` (revision ONLY — §4.2 parity).
+///   address → `ContractRevisionUpdated` (revision ONLY — the parity gate).
 /// - `PoolDataProviderUpdated` — pure-decode (INSERT when old==zero, else
 ///   UPDATE-by-old-address).
 /// - `AddressSet` — assert old==zero; ASCII-decode the bits32 id.
@@ -1693,7 +1695,8 @@ pub async fn refresh_gho_discount(
 // ── the 6 missing-variant event resolvers ─────────────────────
 
 /// The right-padded ASCII bytes32 id `b"POOL"` (4 bytes + 28 zeros). The
-/// Python's `eth_abi.abi.encode(["bytes32"], [b"POOL"])` — §4.2 finding:
+/// Python's `eth_abi.abi.encode(["bytes32"], [b"POOL"])` — a parity-gate
+/// finding:
 /// NOT `keccak256("POOL")`, the protocol emits the right-padded ASCII string.
 const POOL_PROXY_ID: [u8; 32] = {
     let mut id = [0u8; 32];
@@ -2578,7 +2581,7 @@ mod tests {
 
     #[test]
     fn is_discount_supported_gate_is_revision_lt_4() {
-        // §4.2-parity pin: the gate is `revision < 4` (matches the Python
+        // Parity-gate pin: the gate is `revision < 4` (matches the Python
         // `revision is not None and revision < GHO_DISCOUNT_DEPRECATION_REVISION`).
         let _: u32 = GHO_DISCOUNT_DEPRECATION_REVISION;
         let supported = [1_u32, 2, 3]
@@ -2595,7 +2598,7 @@ mod tests {
 
     #[test]
     fn strip_trailing_nulls_from_ascii_decodes_pool() {
-        // The AddressSet `id` = right-padded ASCII bytes32 (§4.2 finding: NOT
+        // The AddressSet `id` = right-padded ASCII bytes32 (a parity-gate finding: NOT
         // keccak256). The Python: `contract_id_bytes.decode("ascii").strip("\0")`.
         let mut id = [0u8; 32];
         id[..4].copy_from_slice(b"POOL");
@@ -2619,7 +2622,7 @@ mod tests {
 
     #[test]
     fn proxy_id_consts_are_right_padded_ascii_not_keccak() {
-        // §4.2 finding: the Python's
+        // Parity-gate finding: the Python's
         // `eth_abi.abi.encode(["bytes32"], [b"POOL"])` is right-padded ASCII,
         // NOT `keccak256("POOL")`. Pin this so a future refactor doesn't
         // accidentally switch to keccak256 (which would break the proxy-id

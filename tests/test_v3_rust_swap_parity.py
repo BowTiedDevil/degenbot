@@ -1,6 +1,6 @@
 """ADR-005 sparse-map parity — Rust sparse+fetch vs dense-Rust oracle.
 
-After the §4.3 oracle retirement (the Python ``_v3_swap`` simulator +
+After the oracle retirement (the Python ``_v3_swap`` simulator +
 ``_calculate_swap`` are deleted), the durable regression set for the Rust
 V3 sim is: the Rust ``#[cfg(test)]`` corpus (``tick_bitmap.rs`` gen_ticks
 clamping incl. the MIN/MAX strand-prevention assertions) + the on-chain-quoter

@@ -12,7 +12,7 @@
 //! # GIL discipline
 //!
 //! `py.detach(|| core::run_aave_update(...))` releases the GIL across the
-//! WHOLE run (long RPC polls hold NO GIL — `rust/AGENTS.md` §GIL); the core
+//! WHOLE run (long RPC polls hold NO GIL); the core
 //! never re-acquires it. A Python-side `KeyboardInterrupt` won't
 //! pre-empt mid-chunk (the GIL is released); the CLI signal handler calls
 //! [`crate::cancel::CancelHandle::cancel`] (the cooperative flag the loop
@@ -67,15 +67,17 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 /// Drive the Rust-owned Aave V3 updater chunk loop for `market_id`, advancing
 /// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
 /// `to_block is None`). See
-/// [`degenbot_aave::run::run_aave_update`] for the §3.4 atomicity
-/// invariant (one `Transaction` per chunk; failure mid-chunk → rollback →
+/// [`degenbot_aave::run::run_aave_update`] for the chunk-atomicity
+/// invariant (`docs/architecture/chunk-atomicity.md`; one `Transaction` per
+/// chunk; failure mid-chunk → rollback →
 /// `last_update_block` unchanged → restart re-processes clean).
 ///
 /// The GIL is released across the WHOLE run (`py.detach`) and the core
 /// emits its own throttled operator progress lines — no per-chunk
 /// GIL re-acquisition. A Python-side `KeyboardInterrupt` won't pre-empt
 /// mid-chunk; the SIGINT handler calls `cancel_handle.cancel()` (the
-/// cooperative flag the loop polls between chunks — §3.3 interrupt contract:
+/// cooperative flag the loop polls between chunks — the interrupt contract
+/// (`docs/architecture/chunk-atomicity.md`):
 /// SIGINT between chunks → honored immediately; SIGINT mid-chunk → the chunk
 /// completes atomically first).
 ///
@@ -551,7 +553,7 @@ fn cleanup_zero_balance_positions(
 /// Seed (or re-activate) an Aave V3 market — the ONE-TIME setup the chunk
 /// loop's `run_aave_update` bootstraps from. Rust-owned replacement for the
 /// Python `activate_ethereum_aave_v3` (commands.py) — the last ORM writer on
-/// the Aave path after the §4.2 retirement. Activates the market,
+/// the Aave path after the parity-gate retirement. Activates the market,
 /// inserts the `POOL_ADDRESS_PROVIDER` contract row, + seeds the GHO
 /// `erc20_tokens` + `aave_gho_tokens` rows, all in ONE transaction.
 ///

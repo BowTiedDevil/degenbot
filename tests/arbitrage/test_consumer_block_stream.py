@@ -85,7 +85,7 @@ class _FakeW3:
         # the adapter to drive the Rust `fetch_fee_history_py` leaf. The test
         # fake has no alloy backend — returning ``None`` makes `_apply_block_
         # if_ready` skip the fee-history leaf (the RPC parity is now exercised
-        # by the Rust `fetch_fee_history` tests per §4.3, not this Python
+        # by the Rust `fetch_fee_history` tests (the fee oracle), not this Python
         # mock).
         return None
 
@@ -263,7 +263,7 @@ class TestBlockClockFromStream:
         # Rust submit leaf (`fetch_fee_history_py`), keyed off the block-stream
         # number passed by `_apply_block_if_ready`. The RPC-parity (that the
         # leaf queries the block-stream number's reward percentiles) is
-        # exercised by the Rust `fetch_fee_history` tests per §4.3 — this Python
+        # exercised by the Rust `fetch_fee_history` tests — this Python
         # test now verifies only that the per-block advance drives the clock
         # + records block-time pairs (the latency-baseline ring the leaf feeds).
         dispatcher, _w3, _dispatched = await _run(

@@ -124,7 +124,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
 
     /// Deficit-coverage
     /// `BalanceTransfer` + Burn pair (phase 4c). ERC20-Transfer +
-    /// `BalanceTransfer` + Burn triplet matching (the §4.2-drift knife-edge
+    /// `BalanceTransfer` + Burn triplet matching (the parity-drift knife-edge
     /// per DP6 — kept in A; escalate to B if gnarly).
     pub(super) fn create_deficit_coverage_operations(
         &self,

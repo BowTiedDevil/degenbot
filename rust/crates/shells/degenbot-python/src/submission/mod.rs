@@ -4,7 +4,7 @@
 //! [`degenbot_submission::TxParams`] as [`PyTxParams`] so the Python
 //! submission path can sign EIP-1559 transactions + finalize fees through the
 //! Rust core — the operator key crosses into Rust ONCE at construction and
-//! never round-trips back per-tx (ADR-005 §3 PyO3-layer discipline).
+//! never round-trips back per-tx (the ADR-005 PyO3-layer discipline).
 //!
 //! The signing is **synchronous ECDSA** (CPU-bound secp256k1, no network), so
 //! [`PyTxSigner::sign_eip1559`] releases the GIL around the core

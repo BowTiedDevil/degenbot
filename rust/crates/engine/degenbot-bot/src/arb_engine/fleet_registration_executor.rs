@@ -37,7 +37,8 @@
 //! Units carry no pin key (the role is pooled, T5: run → back-to-idle);
 //! keyed admission is ENGINE-side (PRG-1 build flights), so the host FSM's
 //! pin/merge lanes never fire here. The `WrapDatabaseAsync` runtime-capture
-//! caveat (ADR-042 §8) is unchanged: build callables already enter the
+//! caveat (the FFI boundary rule, `docs/architecture/worker-fleet.md` §8) is
+//! unchanged: build callables already enter the
 //! installed hooks via the existing seams.
 use crate::arb_engine::fleet_intake::IntakeFaultWatch;
 use crate::arb_engine::seat_host::{self, SeatHost};

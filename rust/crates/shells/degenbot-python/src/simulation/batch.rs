@@ -26,7 +26,7 @@
 //! `merge_payload_results_py` contract pins; a RAW-row miss is left
 //! unresolved and the core folds it as the typed `SkipResolveMiss`).
 //!
-//! # GIL discipline (ADR-005 §3 C)
+//! # GIL discipline (ADR-005)
 //!
 //! Construction + `enqueue` are GIL-held (arg extraction + the resolve). The
 //! leaves release the GIL for the whole sim/submit pipeline (the core's

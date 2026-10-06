@@ -35,7 +35,8 @@
 //! Sim units carry no pin key (the `SimDriver` role is pooled, T5: run →
 //! back-to-idle); the merge pin / Solver-pin lanes of the shared host FSM
 //! never fire here because this executor only enqueues `SimDriver` units.
-//! The `WrapDatabaseAsync` runtime-capture caveat (ADR-042 §8) is
+//! The `WrapDatabaseAsync` runtime-capture caveat (the FFI boundary rule,
+//! `docs/architecture/worker-fleet.md` §8) is
 //! unchanged: the sim body still enters via the installed hook, whose
 //! task-spawn executes on a multi-thread runtime worker.
 //!

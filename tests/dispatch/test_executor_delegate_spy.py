@@ -1,7 +1,7 @@
-"""§4.5 DelegateSpy test: prove the example routes encoding through
+"""DelegateSpy test: prove the example routes encoding through
 the Rust seam, not the retired Python encoder.
 
-After §4.3 oracle-retirement, the Python `encode_cmd_stream` /
+After the oracle retirement, the Python `encode_cmd_stream` /
 `compute_simulation_warmup_slots` / `pack_config` / `mapping_slot` /
 `v4_input_is_native` functions are deleted
 from `examples/eth_backrun_helpers.py` and `examples/cmd_stream.py`. The
@@ -36,7 +36,7 @@ REPO = Path(__file__).resolve().parents[2]
 EXAMPLES_DIR = REPO / "examples"
 
 
-# ── §4.5: prove the Python encoder is gone ──────────────────────────────────
+# ── prove the Python encoder is gone ──────────────────────────────────
 
 
 class TestPythonEncoderRetired:
@@ -46,7 +46,7 @@ class TestPythonEncoderRetired:
         """`examples/eth_backrun_helpers.py` is deleted.
 
         The config/display helpers it held moved into ``degenbot.runner.config``;
-        the command-stream encoders were retired in the §4.3 cutover (their
+        the command-stream encoders were retired in the oracle-retirement cutover (their
         byte-exact parity lives in the Rust golden-file tests).
         """
         assert not (EXAMPLES_DIR / "eth_backrun_helpers.py").exists(), (
@@ -56,11 +56,11 @@ class TestPythonEncoderRetired:
     def test_cmd_stream_module_deleted(self) -> None:
         """`examples/cmd_stream.py` is deleted entirely."""
         assert not (EXAMPLES_DIR / "cmd_stream.py").exists(), (
-            "examples/cmd_stream.py must be deleted (§4.3)"
+            "examples/cmd_stream.py must be deleted (retired with its oracle)"
         )
 
 
-# ── §4.5: prove the Rust seam symbols exist ─────────────────────────────────
+# ── prove the Rust seam symbols exist ─────────────────────────────────
 
 
 class TestRustSeamPresent:
@@ -102,7 +102,7 @@ class TestRustSeamPresent:
             )
 
 
-# ── §4.5: prove the example import graph reaches degenbot_rs ─────────────────
+# ── prove the example import graph reaches degenbot_rs ─────────────────
 
 
 class TestExampleRoutesThroughRust:
@@ -164,7 +164,7 @@ class TestExampleRoutesThroughRust:
     def test_does_not_import_cmd_stream(self) -> None:
         src = self._example_source()
         assert "from cmd_stream import" not in src, (
-            "example must not import from cmd_stream (deleted §4.3)"
+            "example must not import from cmd_stream (deleted with its oracle)"
         )
 
     @pytest.mark.parametrize(
@@ -230,7 +230,7 @@ class TestExampleRoutesThroughRust:
         )
 
 
-# ── §4.5: _DelegateSpy — the encode call traverses the Rust seam ───────────────
+# ── _DelegateSpy — the encode call traverses the Rust seam ───────────────
 
 
 class TestDelegateSpyEncodeCall:

@@ -1,5 +1,5 @@
 """Tier-2 behavioral dual-driver parity — in-process sim SUCCESS path
-(ADR-005 §4.2).
+(the parity gate, ``docs/architecture/parity-gate.md``).
 
 The behavioral companion to the Rust `parity_evm_sim.rs` test. Proves the
 **same** canonical fixture (the SELFDESTRUCT-gift success path over
@@ -52,7 +52,7 @@ def _load_fixture() -> dict:
 
 
 def test_evm_sim_success_path_dual_driver_parity() -> None:
-    """The Python half of the ADR-005 §4.2 Tier-2 dual-driver parity pair.
+    """The Python half of the Tier-2 dual-driver parity pair.
 
     Drives the SELFDESTRUCT-gift fixture through the
     `simulate_in_process_success_probe` PyO3 binding (in-process revm EVM,

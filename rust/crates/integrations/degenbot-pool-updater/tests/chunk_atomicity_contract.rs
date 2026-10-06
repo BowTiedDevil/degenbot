@@ -1,8 +1,7 @@
 //! Contract artifact: chunk interrupt -> full rollback -> restart clean .
 //!
-//! THE regression test gating the §1 atomicity + restart invariants
-//! (`docs/migration-guides/pool-updater-chunk-atomicity.md` §1; prose;
-//! removed in the stale-docs cleanup `71ec78b2`). Reproduces
+//! THE regression test gating the chunk-atomicity + restart invariants
+//! (`docs/architecture/chunk-atomicity.md`). Reproduces
 //! the user's original bug — a chunk loop that committed pool rows mid-chunk
 //! but rolled back the `last_update_block` stamp, so a restart re-fetched the
 //! same range + hit `UNIQUE constraint failed: pools.address, pools.chain`.
@@ -27,19 +26,19 @@
 //!    interrupted before `tx.commit()`** (a SIGINT mid-chunk, a panic, a
 //!    power loss). The transaction is dropped -> `SQLite` rolls back EVERY
 //!    write in the chunk. Assert: ZERO pool rows + `last_update_block` STILL
-//!    at `A-1` (the pre-chunk cursor). This is `§1.1` atomicity: no
+//!    at `A-1` (the pre-chunk cursor). This is the atomicity invariant: no
 //!    intermediate state is observable across an interrupt.
 //! 2. **RESTART re-processes chunk [A,B]** (the stamp is still `A-1`, so the
 //!    chunk is the next unprocessed range). The pool rows are GONE (rolled
 //!    back in step 1), so the `INSERT`s succeed — NO `UNIQUE constraint
 //!    failed`. Assert: pools ARE present + `last_update_block == B`. This is
-//!    the `§1.3` restart-invariant + THE bug-fix proof: with the bug (pools
+//!    the restart invariant + THE bug-fix proof: with the bug (pools
 //!    committed mid-chunk + stamp stale), this restart would hit
 //!    `UNIQUE constraint failed: pools.address, pools.chain` on the
 //!    duplicate insert. With the fix (full rollback), the restart succeeds.
 //! 3. **A third chunk [B+1, C] with NEW pools** -> succeeds, stamp -> C. The
 //!    committed chunk [A,B] is NOT re-processed (the stamp is B, so the
-//!    restart continues from B+1). This pins `§1.2`: `last_update_block` is a
+//!    restart continues from B+1). This pins the restart-cursor rule: `last_update_block` is a
 //!    strict upper bound on committed work, so a restart never re-applies
 //!    committed work.
 
@@ -178,7 +177,7 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
         "the chunk staged one pool write inside the transaction",
     );
 
-    // §1.1 atomicity: no intermediate state observable across the interrupt.
+    // atomicity invariant: no intermediate state observable across the interrupt.
     let stamp_after_interrupt = db
         .fetch_exchange(spec.id)
         .unwrap()
@@ -205,7 +204,7 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
     //    `UNIQUE constraint failed: pools.address, pools.chain` on the
     //    duplicate INSERT. With the fix (step 1's full rollback), the pool
     //    table is empty -> the INSERT succeeds -> pools + stamp commit.
-    //    §1.3 restart-invariant: re-processes only uncommitted work -> no
+    //    restart invariant: re-processes only uncommitted work -> no
     //    duplicates.
     // ============================================================
     let report = run_chunk(&db, &specs, BLOCK_B, &inputs, true);
@@ -235,7 +234,7 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
 
     // ============================================================
     // 3. A THIRD chunk [B+1, C] with a NEW pool -> succeeds.
-    //    `§1.2`: `last_update_block == B` is a strict upper bound on committed
+    //    restart-cursor rule: `last_update_block == B` is a strict upper bound on committed
     //    work, so the restart continues from B+1 (does NOT re-process [A,B]).
     //    A re-discovery of `pool_addr` here would be a genuine duplicate
     //    (the pool was created at block A, re-emitting is impossible), so

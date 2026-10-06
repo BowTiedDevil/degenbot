@@ -267,7 +267,7 @@ impl DegenbotDb {
     /// `v_gho_discount_rate_strategy` + bulk-resets all users' `gho_discount`
     /// to 0 in the asset's market (the protocol deprecated the discount).
     ///
-    /// # §4.2 parity
+    /// # Parity gate (`docs/architecture/parity-gate.md`)
     ///
     /// The Python's `_process_scaled_token_upgrade_event` updates the
     /// attribute on the `SQLAlchemy` record + (on deprecation) sets
@@ -331,7 +331,7 @@ impl DegenbotDb {
     /// `contract_name`). Port of `_update_contract_revision`
     /// (event_handlers.py:944-974).
     ///
-    /// # §4.2 parity
+    /// # Parity gate (`docs/architecture/parity-gate.md`)
     ///
     /// The Python updates ONLY `revision` — NOT `address` (the proxy address is
     /// stable; the `new_address` is used only for the `*_REVISION()` RPC call).

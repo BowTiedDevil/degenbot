@@ -1,4 +1,5 @@
-"""Offline §4.2 parity tests for the submission signing PyO3 seam.
+"""Offline parity tests for the submission signing PyO3 seam
+(``docs/architecture/parity-gate.md``).
 
 Drives the full ``TxSigner`` / ``TxParams`` pyclasses + the
 ``finalize_fees`` pyfunction through the Rust core signing path and asserts
@@ -7,7 +8,7 @@ oracle (`examples/eth_backrun_v2_v3_v4_rust.py` L2623–L2640).
 
 Because both ``eth_account`` and the Rust ``alloy-signer-local`` use RFC 6979
 deterministic ECDSA over secp256k1, a pinned key + ``tx_params`` produces
-byte-for-byte identical raw signed bytes in Rust and Python. This is the §4.2
+byte-for-byte identical raw signed bytes in Rust and Python. This is the
 HARD gate.
 """
 
@@ -23,7 +24,7 @@ ANVIL_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 # The exact raw signed bytes the eth_account oracle produced for this key +
 # tx_params (captured once, pinned here — the Rust seam must reproduce them
 # exactly). eth_account is retired from the dev deps; this fixed
-# byte string is the permanent record of the §4.2 HARD gate oracle.
+# byte string is the permanent record of the HARD-gate oracle.
 ETH_ACCOUNT_RAW_HEX = (
     "02f870010784773594008506fc23ac008303d09094"
     "000000000000000000000000000000000000000080"
@@ -79,7 +80,7 @@ def test_py_tx_signer_rejects_bad_key() -> None:
 
 
 # ---------------------------------------------------------------------------
-# §4.2 byte-exact parity vs eth_account
+# parity gate: byte-exact parity vs eth_account
 # ---------------------------------------------------------------------------
 
 

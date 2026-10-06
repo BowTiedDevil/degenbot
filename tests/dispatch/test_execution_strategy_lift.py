@@ -1,4 +1,4 @@
-"""§4.6 / ADR-025 DelegateSpy test: prove the execution-strategy PyO3 lift
+"""DelegateSpy test (ADR-025): prove the execution-strategy PyO3 lift
 (``PayloadComposer`` / ``SolveResult`` / ``abi_encode_call``) is exposed on
 the Rust seam ``degenbot._ffi.execution``.
 

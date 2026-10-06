@@ -555,7 +555,7 @@ impl FailBuckets {
 ///    where `min = max(p10 + 1, 1)` and `max = max(p50 + 1, min)`. If no
 ///    feeHistory percentiles are available, `min = 1` and `max = target`.
 ///
-/// # Float→int truncate semantics (§4.2)
+/// # Float→int truncate semantics (the parity gate)
 ///
 /// Both `target_priority_fee` and `priority_fee` use Python's `int(...)`,
 /// which truncates toward zero. The Rust port uses `as u128` casts on `f64`,
@@ -608,14 +608,14 @@ pub fn compute_priority_fee(
 
 /// Lossy `U256` → `f64` (mirrors Python's `int / float` promotion). The
 /// priority-fee path is inherently lossy (the Python oracle mixes `int` gross
-/// with `float` ratio); the §4.2 parity is on the `int(...)` truncation of the
+/// with `float` ratio); the parity gate is on the `int(...)` truncation of the
 /// final float, not on the f64 precision of the gross (which is exact for any
 /// realistic Wei-denominated gross < 2^53).
 #[expect(clippy::cast_precision_loss)]
 fn u256_to_f64_lossy(v: U256) -> f64 {
     // `U256` → `f64` via the little-endian u64 limbs (high limb first).
     //
-    // The §4.2 parity is on the `int(...)` truncate of the FINAL float (the
+    // The parity gate is on the `int(...)` truncate of the FINAL float (the
     // priority fee), not the f64 precision of the gross. Gross profits are
     // Wei-denominated and realistically < 2^53, where the f64 is exact.
     let limbs: &[u64; 4] = v.as_limbs();
@@ -1989,7 +1989,7 @@ mod tests {
         assert!(!fits_int128(u128::MAX));
     }
 
-    // ── C4: compute_priority_fee — §4.2 parity vs _compute_priority_fee ──
+    // ── C4: compute_priority_fee — parity gate vs _compute_priority_fee ──
 
     #[test]
     fn priority_fee_zero_gas_returns_one() {

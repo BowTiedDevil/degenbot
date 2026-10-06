@@ -1,4 +1,4 @@
-"""Rust-path-only smoke for the §4.2 harness (proves the mock drives run_aave_update offline).
+"""Rust-path-only smoke for the parity harness (proves the mock drives run_aave_update offline).
 
 Proves the mock RPC + the seeded temp DB drive
 ``degenbot._ffi.run_aave_update`` through the full fetch → decode → dispatch →

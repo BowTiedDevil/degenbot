@@ -45,7 +45,7 @@
 //! impl (`PyReceiptProbe`) lives in `degenbot-python` (`submission/submit.rs`)
 //! and consumes the `AlloyProvider` `get_transaction_receipt` leaf.
 //!
-//! # Parity (ADR-005 §4.1 / §4.2)
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
 //! Property tests pin the lifecycle state machine:
 //! - confirm-on-first-receipt (release nonce + pools, return `Confirmed`),
@@ -167,7 +167,7 @@ impl MonitorOutcome {
 ///
 /// A minimal async trait abstracting `get_transaction_receipt` so the
 /// monitor is:
-/// - testable with a mock (the §4.2 property tests inject a controllable
+/// - testable with a mock (the parity-gate property tests inject a controllable
 ///   probe), and
 /// - decoupled from the heavy RPC stack in the pyo3-free submission core
 ///   (ADR-005 standalone constraint — `degenbot-submission` does NOT depend

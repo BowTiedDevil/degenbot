@@ -20,10 +20,10 @@
 //! value, per-token `_price_oracle` plumbing on `Erc20Token`) stays Python
 //! until its own port epic — that is out of scope here.
 //!
-//! # Parity (ADR-005 §4.2)
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
 //! The Python `ChainlinkPriceContract` / `OraclePriceFetcher` are the parity
-//! oracles. The §4.2 gates pin value-exact parity for the `latestRoundData`
+//! oracles. The parity gates pin value-exact parity for the `latestRoundData`
 //! tuple decode, the `decimals` `uint8` decode, the `price()` decimal
 //! correction, and the Aave `getAssetPrice` `uint256` decode — driven from
 //! recorded EVM return bytes (canonical ABI decode, which is what the Python

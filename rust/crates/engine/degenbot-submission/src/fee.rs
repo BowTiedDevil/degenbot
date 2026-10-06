@@ -1,7 +1,7 @@
 //! Fee finalization — the `maxFeePerGas` / `maxPriorityFeePerGas` arithmetic
 //! that the Python oracle performs inline at submission time.
 //!
-//! # Parity oracle (ADR-005 §4.2)
+//! # Parity oracle (`docs/architecture/parity-gate.md`)
 //!
 //! `examples/eth_backrun_v2_v3_v4_rust.py` L2623–L2624:
 //!
@@ -37,7 +37,7 @@ use crate::error::{SubmissionError, SubmissionResult};
 use crate::params::TxParams;
 
 /// The 1.5× headroom multiplier the Python oracle applies to `base_fee_next`
-/// when computing `maxFeePerGas`. Exposed as a `const` so the §4.2 parity
+/// when computing `maxFeePerGas`. Exposed as a `const` so the parity-gate
 /// test can pin the convention without re-deriving the float literal.
 pub const MAX_FEE_HEADROOM: f64 = 1.5;
 
@@ -51,7 +51,7 @@ pub const MAX_FEE_HEADROOM: f64 = 1.5;
 /// `base_fee_next` is the *next-block* base fee (`next_base_fee`,
 /// already computed — this crate consumes it, no edge). `priority_fee` is
 /// the Simulation leaf's `_compute_priority_fee` output (consumed off
-/// `tx_params` — no hard edge; for §4.2 parity it is a fixture value).
+/// `tx_params` — no hard edge; for parity-gate testing it is a fixture value).
 ///
 /// # Errors
 ///
@@ -82,7 +82,7 @@ pub fn finalize_fees(
 
 /// Compute `maxFeePerGas = int(1.5 * base_fee_next) + priority_fee`.
 ///
-/// Exposed separately from [`finalize_fees`] so the §4.2 parity proptest can
+/// Exposed separately from [`finalize_fees`] so the parity-gate proptest can
 /// drive the arithmetic directly without constructing a full `TxParams`.
 /// See the module docs for the float→int truncate boundary.
 ///

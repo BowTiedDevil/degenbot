@@ -13,7 +13,7 @@ pub enum SubmissionError {
     Sign(#[from] alloy::signers::Error),
 
     /// Signature-recovery failure: the decoded `TxEnvelope`'s signature did
-    /// not recover to a valid address (the §4.2 round-trip gate + the
+    /// not recover to a valid address (the parity-gate round trip + the
     /// submission-loop receipt validation path).
     #[error(transparent)]
     Recovery(#[from] alloy::consensus::crypto::RecoveryError),

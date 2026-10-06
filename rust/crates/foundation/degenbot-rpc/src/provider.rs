@@ -2873,9 +2873,9 @@ mod tests {
         assert!(!is_idempotent_rpc_method("custom_method"));
     }
 
-    // ── §4.2 parity: typed RPC struct JSON round-trips match web3.py ───
+    // ── parity gate (`docs/architecture/parity-gate.md`): typed RPC struct JSON round-trips match web3.py ───
     //
-    // The §4.2 oracle is the web3.py JSON shape (the execution-apis spec).
+    // The parity oracle is the web3.py JSON shape (the execution-apis spec).
     // These tests assert that the typed Rust request/response structs
     // deserialize + re-serialize to byte-identical JSON, proving the typed
     // fns' JSON↔struct transforms match web3.py exactly (no field renaming,
@@ -3028,7 +3028,7 @@ mod tests {
     fn send_raw_transaction_request_hex_encoding_matches_web3() {
         // eth_sendRawTransaction sends ("0x"+hexlify(bytes),). web3.py uses
         // `/`-prefixed hex; alloy uses `hex::encode_prefixed`. Assert they
-        // match for a fixture payload (the §4.2 signed-bytes fixture — an
+        // match for a fixture payload (the parity-gate signed-bytes fixture — an
         // anvil-key-0 type-2 envelope prefix).
         let signed_bytes: &[u8] = &[0x02, 0xf8, 0x70, 0x01, 0x07];
         let hex = alloy::hex::encode_prefixed(signed_bytes);

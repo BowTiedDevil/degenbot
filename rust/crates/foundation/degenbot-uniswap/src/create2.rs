@@ -347,7 +347,7 @@ mod tests {
     // Cross-checked byte-for-byte against the Python
     // `generate_aerodrome_v2_pool_address` / `_v3_pool_address` parity oracle
     // (`src/degenbot/aerodrome/functions.py`) over a Base-deployment fixture
-    // corpus (§4.2 red-green parity).
+    // corpus (red-green parity).
 
     const AERODROME_V2_BASE_DEPLOYER: Address =
         address!("420DD381b31aEf6683db6B902084cB0FFECe40Da");

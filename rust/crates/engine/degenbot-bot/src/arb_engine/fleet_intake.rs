@@ -96,7 +96,7 @@ pub trait FleetIntake: Send + Sync {
     fn spawn(&self, work: InnerWork);
 }
 /// The sim-side sibling (one line: the fleet sim executor upcast); consumed
-/// by `executor.rs::global_sim_executor()` so the §3.1 re-route reads
+/// by `executor.rs::global_sim_executor()` so the re-route reads
 /// through ONE module; crate-internal because only the sim dispatch route
 /// needs it.
 /// Construction precondition: the fleet materializes LAZILY on the

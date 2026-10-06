@@ -36,8 +36,9 @@ def run_pool_update(
     Drive the Rust-owned pool-updater chunk loop for `chain_id`, advancing
     every active exchange's `last_update_block` to `to_block` (or the chain
     tip if `to_block is None`). See
-    [`degenbot_pool_updater::run::run_pool_update`] for the §1 three
-    invariants (atomicity / restart-invariance / idempotent re-run) +
+    [`degenbot_pool_updater::run::run_pool_update`] for the
+    chunk-atomicity invariants (`docs/architecture/chunk-atomicity.md`;
+    atomicity / restart-invariance / idempotent re-run) +
     [`degenbot_pool_updater::run::apply_chunk_writes_on_conn`] for the
     transaction-semantics core.
 
@@ -45,7 +46,8 @@ def run_pool_update(
     emits its own throttled operator progress lines — no per-chunk
     GIL re-acquisition. A Python-side `KeyboardInterrupt` won't pre-empt
     mid-chunk; Task 5's SIGINT handler calls `cancel_handle.cancel()` (the
-    cooperative flag the loop polls between chunks — §3.3 interrupt contract:
+    cooperative flag the loop polls between chunks — the interrupt contract
+    (`docs/architecture/chunk-atomicity.md`):
     SIGINT between chunks → honored immediately; SIGINT mid-chunk → the chunk
     completes atomically first).
 

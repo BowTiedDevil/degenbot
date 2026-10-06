@@ -1,6 +1,6 @@
 """ADR-005 sparse-map parity — V4 Rust sparse+fetch vs dense-Rust oracle.
 
-After the §4.3 oracle retirement (the Python ``_v4_swap`` simulator +
+After the oracle retirement (the Python ``_v4_swap`` simulator +
 ``_calculate_swap`` are deleted), the durable regression set for the Rust
 V4 sim is: the Rust ``#[cfg(test)]`` corpus + the on-chain-quoter fork gate
 ``test_cached_calculations``. These offline gates cover the sparse+fetch

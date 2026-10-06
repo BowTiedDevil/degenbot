@@ -8,7 +8,8 @@ use super::{params, DbError, DegenbotDb, OptionalExtension, U256};
 /// The decoded Aave V3 reserve-configuration bitmap. Port of the dict returned
 /// by `_decode_reserve_configuration_bitmap` (`event_handlers.py` L133–L214).
 /// Every field maps 1:1 to a Python dict key (`snake_case` preserved) so the
-/// §4.2 parity fixture asserts field-by-field equivalence.
+/// parity-gate fixture (`docs/architecture/parity-gate.md`) asserts
+/// field-by-field equivalence.
 #[expect(clippy::struct_excessive_bools)] // mirrors the Python dict's flag set 1:1
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReserveConfiguration {

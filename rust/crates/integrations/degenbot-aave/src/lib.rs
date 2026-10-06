@@ -26,7 +26,8 @@
 //! corrupted. Experiments run against a THROWAWAY temp DB; the verified
 //! baseline is rebuilt ONLY by re-driving from genesis, never by mutating it.
 //!
-//! # The §3.4 atomicity invariant (the whole point)
+//! # The chunk-atomicity invariant (`docs/architecture/chunk-atomicity.md`)
+//! (the whole point)
 //!
 //! ONE `rusqlite::Connection`, ONE `Transaction` per chunk. Every apply of a
 //! chunk goes through [`apply_aave_chunk_writes_on_conn`] on ONE borrowed
@@ -46,7 +47,7 @@
 //! file while the `aave_update` driver's `SQLAlchemy` `Session` held an open
 //! mid-chunk write transaction (pending ORM flushes) — empirically proven to
 //! silently corrupt: wrong-row re-fetch via the `SQLAlchemy` identity-map,
-//! silently-lost ORM writes, no `SQLITE_BUSY` serialization. The §3.4 "one
+//! silently-lost ORM writes, no `SQLITE_BUSY` serialization. The "one
 //! state owner" invariant was violated.
 //!
 //! The fix is structural: route the WHOLE chunk's writes through ONE

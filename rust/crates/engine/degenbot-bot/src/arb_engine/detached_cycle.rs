@@ -24,7 +24,8 @@
 //! begin always opens; gauge/disposition events are state-transparent), so
 //! the table can no longer reject — the typed-rejection machinery retired
 //! with the in-cycle arm. The panics and aborts that exist today stay
-//! verbatim (ADR-042 §10 deadlock-ledger / loud-stop discipline: stranded
+//! verbatim (the worker-fleet deadlock ledger,
+//! `docs/architecture/worker-fleet.md` §10 — loud-stop discipline: stranded
 //! merge pipe, vanished pipe — same log wording, same `std::process::abort`).
 //!
 //! # Lock order (preserved verbatim)
@@ -298,7 +299,8 @@ impl DetachedCycle {
         }
         // Clone the Sender out so the 'static bin threads never borrow the
         // engine (they outlive the call). A vanished pipe would strand
-        // every result, so die loudly (ADR-042 §10 — verbatim).
+        // every result, so die loudly (the worker-fleet deadlock ledger,
+        // `docs/architecture/worker-fleet.md` §10 — verbatim).
         let merge_tx = if let Some(existing) = &self.merge_tx {
             existing.clone()
         } else {
@@ -547,7 +549,8 @@ pub(crate) fn detached_merge_sidecar(
 /// caller under whatever engine hold it already owns; this fn registers the
 /// pinned seat and starts the named thread. A spawn failure LOUDLY ABORTS:
 /// a stranded merge pipe would silently orphan every detached result
-/// (ADR-042 §10 — wording + abort verbatim).
+/// (the worker-fleet deadlock ledger, `docs/architecture/worker-fleet.md`
+/// §10 — wording + abort verbatim).
 pub(crate) fn spawn_merge_sidecar(
     engine: &std::sync::Arc<parking_lot::Mutex<super::ArbitrageEngine>>,
     merge_rx: std::sync::mpsc::Receiver<LaneOutcome>,

@@ -1,8 +1,7 @@
 # ADR-005 slice 7 step 4b: this fork-gated test imports the deleted hollow V2
 # DEX subclasses (Sushi/Pancake/Swapbased/Camelot) and/or needs anvil. Skipping
 # at module level unblocks the offline collection; pending a full rewrite under
-# anvil to the `UniswapV2Pool` + `dex.variant` model. See
-# docs/migration-guides/dex-subclass-collapse.md (removed in the stale-docs cleanup `71ec78b2`).
+# anvil to the `UniswapV2Pool` + `dex.variant` model.
 from fractions import Fraction
 from pathlib import Path
 from unittest.mock import MagicMock

@@ -224,7 +224,7 @@ mod tests {
     const PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
 
     /// The executor owner + a fresh injected address (parity corpus addresses
-    /// from `degenbot-simulation`'s §4.2 golden-value tests).
+    /// from `degenbot-simulation`'s golden-value parity tests).
     const OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e");
     const INJECTED: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
@@ -238,7 +238,7 @@ mod tests {
         db.storage_ref(addr, slot).unwrap_or_default()
     }
 
-    /// The §4.2 parity assertion: the `CacheDB` state written by
+    /// The parity-gate assertion: the `CacheDB` state written by
     /// `apply_simulation_overrides` matches the oracle's emitted values
     /// field-for-field — `balance`, `code`, and each warmup slot value — over
     /// the corpus `inject_code` True/False.

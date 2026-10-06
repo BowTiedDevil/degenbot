@@ -9,7 +9,7 @@
 //! to a handful of set-shaped `SELECT ... IN` prefetches at chunk start plus
 //! in-memory map hits.
 //!
-//! # The §3.4 read-your-own-writes contract
+//! # The read-your-own-writes contract (chunk atomicity)
 //!
 //! The chunk loop applies each log-transaction's events to `conn` BEFORE the
 //! next log-transaction's parse reads (`process.rs` step (f)), and the
@@ -60,7 +60,8 @@
 //! order; the golden-captured ledger replays this statement). Same-asset
 //! events collapse to their LAST values (each event overwrites all five
 //! columns — the collapsed write is the same end state). The buffer is
-//! dropped with the struct on rollback (§3.4: the flush sits inside the
+//! dropped with the struct on rollback (chunk atomicity: the flush sits
+//! inside the
 //! chunk's transaction, so an error at flush reverts the chunk exactly as
 //! the per-event write would have).
 
@@ -201,7 +202,7 @@ impl ChunkSubstrate {
     ///
     #[expect(clippy::too_many_lines)] // the seven set-shaped prefetches, one body
     /// `candidate_user_addresses` MUST be checksummed (`addr_to_hex`) — the
-    /// address columns use BINARY collation (the duplicate-user §4.2 guard).
+    /// address columns use BINARY collation (the duplicate-user parity guard).
     ///
     /// # Errors
     ///

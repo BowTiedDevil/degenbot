@@ -6,8 +6,7 @@
 //! **RPC-served storage state** (what the in-process revm sim reads during
 //! `execute()`). The divergence on the failing V4-V3-V3 paths
 //! (`CurrencyNotSettled` — selector `0x5212cba1`) is rooted in this gap;
-//! this accessor answers the spike checkpoint question (recorded in the
-//! `in_process_sim_served_slots.md` write-up, removed in the stale-docs cleanup `71ec78b2`) — *do the engine's
+//! this accessor answers the spike checkpoint question — *do the engine's
 //! scalar slots (sqrtPrice/liquidity/reserves) match the RPC at the sim
 //! block?* — which picks fix path A (extend engine state) / B (shadow-RPC
 //! at sim block) / C (gated serve when caught up).

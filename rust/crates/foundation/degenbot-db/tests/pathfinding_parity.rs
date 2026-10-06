@@ -1,4 +1,5 @@
-//! §4.2 parity for the pathfinding graph-construction read fns.
+//! Parity gate (`docs/architecture/parity-gate.md`) for the pathfinding
+//! graph-construction read fns.
 //!
 //! Opens the frozen `fixtures/pathfinding.db` (built by
 //! `fixtures/generate_pathfinding.py` — a REAL Rust-owned DB seeded with

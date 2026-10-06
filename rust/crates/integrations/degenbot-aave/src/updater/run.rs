@@ -4,9 +4,9 @@
 //! `activate`).
 //!
 //! The runtime-facing invariants — the shared-runtime `block_on` constraint,
-//! the `!Send` `Transaction`-across-`.await` soundness argument, and the §3.4
+//! the `!Send` `Transaction`-across-`.await` soundness argument, and the
 //! atomicity-ownership duties of the loop — are documented on
-//! [`run_aave_update`] / [`run_aave_update_driver`]. The §3.4 atomicity
+//! [`run_aave_update`] / [`run_aave_update_driver`]. The chunk-atomicity
 //! contract itself is owned by the `apply` stage.
 
 mod activate;
@@ -23,7 +23,7 @@ pub use apply::{
 use fetch::{bootstrap_pool_contracts, build_fetch_spec};
 use process::{group_logs_by_tx, process_chunk_on_conn};
 
-// ── the outer chunk loop (RPC-bound; the §4.4 atomicity owner) ──
+// ── the outer chunk loop (RPC-bound; the chunk-atomicity owner) ──
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -207,7 +207,7 @@ pub enum RunError {
 
 /// Run the Aave V3 chunk-update loop for `market_id`, advancing
 /// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
-/// `to_block` is `None`). The §3.4 atomicity owner.
+/// `to_block` is `None`). The chunk-atomicity owner.
 ///
 /// Per market per chunk:
 /// 1. `fetch_aave_chunk_logs` returns the raw `Vec<Log>` sorted by
@@ -224,7 +224,7 @@ pub enum RunError {
 ///    The caller's `Transaction` commits (or drops, rolling back). The stamp
 ///    is the LAST write.
 ///
-/// # The §3.4 atomicity invariant (LOAD-BEARING)
+/// # The chunk-atomicity invariant (LOAD-BEARING)
 ///
 /// ONE `Transaction` per chunk. Failure mid-chunk → drop the tx → the whole
 /// chunk reverts → `last_update_block` unchanged → a restart re-processes the
@@ -247,17 +247,17 @@ pub enum RunError {
 /// inside a runtime — the shared one included — panics ("Cannot start a
 /// runtime from within a runtime"). Mirror `degenbot-pool-updater`'s constraint.
 ///
-/// # §4.2-parity notes (flagged)
+/// # Parity-gate notes (flagged)
 ///
 /// - **`treasury_address` is `None`**: `process_transaction` accepts it but the
 ///   current dispatch doesn't consume it (forward-compat). The Python resolves
 ///   it via the Pool's `RESERVE_TREASURY_ADDRESS()` RPC — not wired here.
 /// - **`vtoken_revision` drift**: the discount pre-pass reads the GHO vToken's
 ///   revision at chunk-start (the in-chunk `Upgraded` write is DEFERRED to
-///   Apply — §3.4). If an `Upgraded` event lands mid-chunk (the deprecation),
+///   Apply). If an `Upgraded` event lands mid-chunk (the deprecation),
 ///   txs AFTER it would see the OLD revision → a non-zero discount instead of
 ///   0. In practice a vToken upgrade fires once per market lifetime, so the
-///   drift is rare; flagged for the orchestrator's §4.2 review.
+///   drift is rare; flagged for the orchestrator's parity-gate review.
 #[expect(clippy::missing_errors_doc, clippy::too_many_arguments)]
 pub fn run_aave_update(
     database_path: &Path,
@@ -360,8 +360,9 @@ pub fn run_aave_update_on_db(
 
 /// The async driver body of [`run_aave_update`] — the ONE future under
 /// `get_runtime().block_on`. Every RPC fetch/verify is an `.await`
-/// inside this future; the doc contract (§3.4 atomicity, shared-runtime
-/// nesting constraint, §4.2-parity notes) lives on the sync entry fn.
+/// inside this future; the doc contract (the chunk-atomicity contract,
+/// shared-runtime nesting constraint, the parity-gate notes) lives on the
+/// sync entry fn.
 ///
 /// # The `await_holding_lock` expectation
 ///
@@ -478,7 +479,7 @@ async fn run_aave_update_driver(
         // `await_holding_lock` expectation above: the future is never polled
         // concurrently, so the thread-local span context cannot tear).
         // PASSIVE telemetry: the loop body below is untouched, so the
-        // statement ledger, the RPC request stream, and the §3.4 rollback
+        // statement ledger, the RPC request stream, and the chunk-atomicity rollback
         // boundary (the three golden gates) cannot move.
         let chunk_span = tracing::info_span!(
             "degenbot.updater.aave.chunk",
@@ -656,7 +657,7 @@ async fn run_aave_update_driver(
 
         let tx_groups = group_logs_by_tx(&logs);
 
-        // 2. The single-transaction chunk write (§4.4 atomicity). The per-tx
+        // 2. The single-transaction chunk write (chunk atomicity). The per-tx
         //    processing (discount pre-pass + config dispatch + parse) borrows
         //    the Transaction's `&Connection` for substrate lookups + writes —
         //    they MUST be atomic with the chunk's apply.

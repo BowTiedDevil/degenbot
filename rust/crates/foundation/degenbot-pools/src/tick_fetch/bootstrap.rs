@@ -14,10 +14,8 @@
 //! `TickWordFetcher` is keyed by *`pool_id`* (the live-pump miss path operates
 //! on already-registered pools). The orchestration choreography is identical
 //! between the two (compute word, fetch bitmap, enumerate bits, fetch ticks)
-//! but the key type differs — see
-//! the chain-bootstrap-tick-map guide (removed in the stale-docs cleanup `71ec78b2`),
-//! §3 — for why they are
-//! kept separate for now (consolidation is a follow-up).
+//! but the key type differs, so they stay separate for now (consolidation
+//! is a follow-up).
 //!
 //! ## Why this trait lives in `degenbot-pools` (not the bot)
 //!
@@ -45,8 +43,8 @@ use crate::TickInfo;
 
 /// One word's bootstrap result. Mirrors `super::miss::FetchedTickWord` in
 /// structure but lives separately for the call-site distinction
-/// (registration-time Chain arm vs live-pump miss path). Both can be unified
-/// (see the chain-bootstrap-tick-map guide, removed in the stale-docs cleanup `71ec78b2`, §3).
+/// (registration-time Chain arm vs live-pump miss path). Both can be
+/// unified by a future consolidation.
 #[derive(Debug, Clone)]
 pub struct BootstrapTickWord {
     /// The exact bitmap word returned by the contract. It is provenance for

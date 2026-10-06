@@ -1,6 +1,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — in-process sim SUCCESS path
-//! (ADR-005 §4.2, the behavioral tier).
+//! (the parity gate, `docs/architecture/parity-gate.md`; the behavioral
+//! tier).
 //!
 //! The **success-path** counterpart to `parity_inspector.rs` (which covers the
 //! REVERT path). Proves the **same** canonical fixture driven through the
@@ -140,7 +141,7 @@ fn mock_no_rpc_provider() -> AlloyProvider {
     AlloyProvider::from_provider(Arc::new(dyn_provider) as Arc<dyn Provider<Ethereum>>)
 }
 
-/// The SUCCESS-path dual-driver parity test (ADR-005 §4.2).
+/// The SUCCESS-path dual-driver parity test (the parity gate).
 ///
 /// Drives the SELFDESTRUCT-gift fixture (executor stub CALLs a gift contract;
 /// the gift self-destructs to the executor, sending 1 ETH → `gross_profit = 1

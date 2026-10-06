@@ -9,7 +9,7 @@
 //! dispatch_profitable_py(...)`; the [sim] summary rendering (the
 //! `format_failure_breakdown` log) stays Python (D4 `stays-python`).
 //!
-//! # GIL discipline (ADR-005 §3 C)
+//! # GIL discipline (ADR-005)
 //!
 //! Mirrors [`dispatch_and_submit_py`] exactly (arg-extract → `py.detach` →
 //! core call → wrap):

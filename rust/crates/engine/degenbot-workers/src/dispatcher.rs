@@ -1406,7 +1406,7 @@ impl FleetHost {
     /// The stranded-pipe tripwire: abandoning a unit whose results feed a
     /// pipe WITHOUT draining it first hits the loud-abort path (log at
     /// error + `std::process::abort`) — the executor discipline carried
-    /// over verbatim (design doc §10.3). The harness injects an observing
+    /// over verbatim (design doc §10, ledger item 3). The harness injects an observing
     /// tripwire via [`FleetHost::with_tripwire_observer`].
     ///
     /// # Errors
@@ -1414,7 +1414,7 @@ impl FleetHost {
     /// before returning).
     pub fn strand_unit(&mut self, slot: SlotId) -> Result<(), HostError> {
         op_error!(domain = pump, slot,
-            "stranded result pipe: a dead host abandons a unit with in-flight result sends — loud abort (design doc §10.3)"
+            "stranded result pipe: a dead host abandons a unit with in-flight result sends — loud abort (design doc §10, ledger item 3)"
         );
         (self.tripwire)("stranded result pipe: unit abandoned mid-drain");
         Err(HostError::StrandedPipe(slot))
@@ -1451,7 +1451,7 @@ impl FleetHost {
     }
 }
 
-/// The default loud-abort tripwire (executor discipline, §10.3): the error
+/// The default loud-abort tripwire (executor discipline, §10 ledger item 3): the error
 /// is logged by [`FleetHost::strand_unit`], then the process aborts —
 /// swallowing the error is never an option.
 fn loud_abort(_reason: &str) {

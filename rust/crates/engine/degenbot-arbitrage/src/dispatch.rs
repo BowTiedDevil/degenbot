@@ -8,7 +8,7 @@
 //! This is the concurrency orchestration that owns the GIL release + the
 //! tokio fan-out over the per-path [`simulate_path_on_evm`] leaf. Owning
 //! the fan-out in Rust releases the GIL across the per-tx sim RPCs
-//! (ADR-005 §3 — "Rust is the engine").
+//! (ADR-005 — "Python is the cockpit, Rust is the engine").
 //!
 //! # Dispositions
 //!
@@ -156,7 +156,7 @@ pub const BPS_DENOM: u128 = 10_000;
 /// min_profit_margin_bps`, OR `optimal_input == 0` (no input basis to ratio
 /// against).
 ///
-/// # §4.2 note
+/// # Parity-gate note
 ///
 /// Ports the reference from `examples/eth_backrun_helpers.py`. The leaf is
 /// standalone-usable (pure int + zero allocation beyond the kept vec); it is
@@ -379,7 +379,7 @@ impl DispatchOutcome {
 /// block context — see [`simulate_path_on_evm`]). `path_suppression` is
 /// mutated in place for the pre-filter + the outcome recording.
 ///
-/// # §4.2 parity
+/// # Parity gate (`docs/architecture/parity-gate.md`)
 ///
 /// The categorization buckets, the pre-filter drops, and the suppression
 /// transitions match the Python oracle's `dispatch_profitable_results`

@@ -1,4 +1,4 @@
-"""Python-side §4.2 parity test for the pool discovery writers seam.
+"""Python-side parity test for the pool discovery writers seam.
 
 Builds a fresh Alembic-stamped SQLite DB, seeds an exchange + a PoolManager,
 then applies a `PoolCreated` event sequence through the Python

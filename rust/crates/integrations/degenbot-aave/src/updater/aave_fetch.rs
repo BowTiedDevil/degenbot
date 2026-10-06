@@ -22,7 +22,7 @@
 //!
 //! The Python's `_build_transaction_contexts` groups raw `LogReceipt`s by
 //! `transactionHash` BEFORE any decode — the orchestrator (`-3`) must do the
-//! same (the sort + group is a §4.2-parity surface). Decoding here would force
+//! same (the sort + group is a parity-gate surface). Decoding here would force
 //! a re-batch + a re-sort at the group boundary. The decoder is pure +
 //! synchronous; the orchestrator calls it after grouping, per tx, on the
 //! in-memory tx-bundle (no extra RPC).
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn topic_groups_match_event_fetchers_py() {
-        // §4.2-parity pin: the topic OR-groups mirror the Python
+        // Parity-gate pin: the topic OR-groups mirror the Python
         // `event_fetchers.py` topic lists EXACTLY. This test fails if a topic
         // is added/removed on one side but not the other — the single source
         // of truth is `degenbot_decoders::aave_event_decoder`'s `*_TOPIC`

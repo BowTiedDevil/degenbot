@@ -22,7 +22,7 @@
 //! `PyAsyncAlloyProvider` + the bytearray + the address strings). The fields
 //! are plain owned data (arc + addresses + bytes); the A4 pyfunction releases
 //! the GIL across the RPC `.await`s. No business logic here — pure config
-//! storage (ADR-005 §3 PyO3-layer discipline).
+//! storage (the ADR-005 PyO3-layer discipline).
 
 use crate::address_utils::parse_address;
 use crate::prelude::*;

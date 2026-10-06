@@ -8,7 +8,7 @@ implementation contract, the salt keyed on ``stable`` (V2) /
 ``degenbot._ffi.compute_aerodrome_v2_pool_address`` /
 ``compute_aerodrome_v3_pool_address`` pyfunctions.
 
-Per the §4.2 red-green parity protocol, this module asserts byte-for-byte
+Per the parity gate (`docs/architecture/parity-gate.md`), this module asserts byte-for-byte
 agreement between the Rust pyfunctions and the Python parity oracle
 (``aerodrome.functions.generate_aerodrome_*``) over a Base-deployment
 fixture corpus. The Rust ``#[cfg(test)]`` corpus pins the same fixtures

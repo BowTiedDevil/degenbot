@@ -433,8 +433,8 @@ impl DegenbotDb {
     /// The single-transaction-bound variant of
     /// [`Self::set_exchange_last_update_block`] — the chunk loop's
     /// end-of-chunk stamp, callable on the chunk's `Transaction` so the stamp
-    /// commits atomically with the chunk's pool + liquidity writes (the §1
-    /// atomicity invariant's structural fix).
+    /// commits atomically with the chunk's pool + liquidity writes (the
+    /// chunk-atomicity invariant's structural fix).
     /// # Errors
     ///
     /// Same error conditions as the `&self` wrapper variant.
@@ -890,7 +890,7 @@ mod tests {
 
     // ── single-transaction chunk atomicity ──────────────────
     //
-    // The §1 atomicity invariant's structural proof: the `*_on_conn` write
+    // The chunk-atomicity invariant's structural proof: the `*_on_conn` write
     // variants run on ONE borrowed `Connection` (the chunk's `Transaction`),
     // so the pool writes + the `last_update_block` stamp commit together OR
     // roll back together. This test exercises both outcomes.
@@ -990,7 +990,7 @@ mod tests {
             )
             .unwrap();
             DegenbotDb::set_exchange_last_update_block_on_conn(&tx, 1, exchange.id, 200).unwrap();
-            // Drop `tx` WITHOUT committing → rollback (the §1 atomicity invariant).
+            // Drop `tx` WITHOUT committing → rollback (the chunk-atomicity invariant).
             drop(tx);
         }
 

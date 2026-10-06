@@ -1,4 +1,5 @@
-//! §4.2 parity for the pool discovery writers. Seed an in-memory
+//! Parity gate (`docs/architecture/parity-gate.md`) for the pool discovery
+//! writers. Seed an in-memory
 //! write-capable DB with an exchange + a `PoolManager` + the V2/V3/V4
 //! `PoolCreated`-event row fixtures, run each `upsert_v*_pools` batch + the
 //! `set_exchange_last_update_block` stamp, + assert the resulting

@@ -615,8 +615,7 @@ fn admission_off_keeps_take_all_and_never_sheds() {
 /// counted and logged, never merged twice. Red at HEAD against the
 /// NEW policy (today the in-cycle drain logs-and-merges anyway —
 /// sD:2550 — because its local set is dropped with the cycle).
-// pins the tightened refuse-the-merge policy
-// (design §4.4 REV 2 decision, Risk 5 option 1).
+// pins the tightened refuse-the-merge policy.
 #[test]
 fn duplicate_lane_outcome_does_not_double_apply() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);

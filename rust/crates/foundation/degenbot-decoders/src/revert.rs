@@ -10,7 +10,7 @@
 //! result. The taxonomy lives here (not under the executor or Simulation
 //! epics) so *both* paths consume it without a cross-epic dependency.
 //!
-//! # §4.2 parity
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
 //! Every revert category produces a **stable label string** — pinned by the
 //! `revert::tests::parity_vs_python_oracle` fixture corpus covering every
@@ -67,7 +67,7 @@ pub const EXECUTOR_REVERT_SELECTORS: &[(&str, &str)] = &[
 
 /// A classified revert category. The structured form (a standalone Rust
 /// consumer matches on the variant); [`RevertClass::label`] renders the exact
-/// Python label string (§4.2 parity).
+/// Python label string (the parity gate).
 ///
 /// Deliberately classifies *every* revert, even malformed ones — a taxonomy
 /// must tally, so the summary always adds up. [`RevertClass::classify`] never
@@ -142,7 +142,7 @@ impl RevertClass {
         ])
     }
 
-    /// Render the canonical label for this category (§4.2 parity).
+    /// Render the canonical label for this category (the parity gate).
     #[must_use]
     pub fn label(&self) -> String {
         match self {
@@ -247,7 +247,7 @@ pub fn classify_revert(revert_data: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    // ── §4.2 parity vs the retired Python `classify_revert` oracle ──────
+    // ── parity gate vs the retired Python `classify_revert` oracle ──────
     //
     // Every fixture's expected label was captured from the Python
     // `classify_revert` porting oracle, which has since been retired (the
@@ -256,7 +256,7 @@ mod tests {
     // undecodable / odd-boundary edge cases; they are the contract the Rust
     // taxonomy must meet.
 
-    /// `(revert_data_hex, expected_python_label)` — the §4.2 parity corpus.
+    /// `(revert_data_hex, expected_python_label)` — the parity-gate corpus.
     /// Built at runtime (Rust `&str` has no repeat operator); the strings are
     /// the same bytes the retired Python oracle was run against.
     fn parity_fixtures() -> Vec<(String, &'static str)> {

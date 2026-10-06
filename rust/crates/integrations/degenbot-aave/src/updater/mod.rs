@@ -1,7 +1,7 @@
 //! The Aave V3 updater chunk-loop — transactional apply of decoded Aave events
 //! under one `rusqlite::Transaction`.
 //!
-//! See the crate-root docs for the §3.4 atomicity invariant + the two-writer
+//! See the crate-root docs for the chunk-atomicity invariant + the two-writer
 //! hazard this structure fixes. This module is the **transactional core**:
 //! pure, synchronous, fixture-testable, NO RPC, NO `pyo3`, NO `database_path`,
 //! NO `open_for_writes`.

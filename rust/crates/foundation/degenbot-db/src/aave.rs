@@ -701,7 +701,7 @@ impl DegenbotDb {
     }
 
     /// The `&Connection`-bound variant (for the chunk-loop's single
-    /// `Transaction` — §3.4 atomicity).
+    /// `Transaction` — the chunk-atomicity invariant).
     ///
     /// # Errors
     ///
@@ -786,7 +786,7 @@ impl DegenbotDb {
     /// `gho_users.get(user_address)` returning `None`). Pure read (does NOT
     /// create a user — `get_or_create_user_on_conn` is the dispatch path's
     /// responsibility). The `_on_conn` bound serves the chunk-loop's single
-    /// `Transaction` (§3.4 atomicity).
+    /// `Transaction` (the chunk-atomicity invariant).
     ///
     /// # Errors
     ///

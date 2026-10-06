@@ -6,11 +6,11 @@
 //! is already Rust-owned, so this crate owns only the *mechanism* (typed feed
 //! readers), not the RPC plumbing.
 //!
-//! # Parity oracle (ADR-005 §4.2)
+//! # Parity oracle (`docs/architecture/parity-gate.md`)
 //!
-//! The Python `ChainlinkPriceContract` is the parity oracle; the §4.2 gate pins
+//! The Python `ChainlinkPriceContract` is the parity oracle; the parity gate pins
 //! value-exact parity for the `latestRoundData` tuple decode, the `decimals`
-//! `uint8` decode, and the `price()` decimal correction (§4.2 parity is exercised
+//! `uint8` decode, and the `price()` decimal correction (parity is exercised
 //! against recorded EVM return bytes — canonical ABI decode, which is what the
 //! Python `abi_decode` performs too — so the two implementations agree by
 //! construction).
@@ -168,7 +168,7 @@ impl ChainlinkPriceFeed {
 
 /// Decode a `Vec<AbiValue>` of five slots into [`RoundData`].
 ///
-/// Pure + RPC-free so the §4.2 parity gate can drive it from recorded EVM
+/// Pure + RPC-free so the parity gate can drive it from recorded EVM
 /// return bytes: `decode_for_types(types, bytes)` → `build_round_data(...)`.
 fn build_round_data(values: &[AbiValue]) -> PriceResult<RoundData> {
     if values.len() != 5 {

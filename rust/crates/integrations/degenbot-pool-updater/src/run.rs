@@ -15,7 +15,8 @@
 //!    unchanged → the next run re-processes the chunk clean (no skipped
 //!    blocks, no duplicate-pool `UNIQUE` violations).
 //!
-//! # The §1 three invariants — hold by construction
+//! # The chunk-atomicity invariants (`docs/architecture/chunk-atomicity.md`) —
+//! hold by construction
 //!
 //! - **Atomicity:** every write of a chunk goes through ONE
 //!   [`apply_chunk_writes_on_conn`] call on ONE `Transaction`; the commit is
@@ -426,7 +427,7 @@ pub fn map_pool_creation(
 /// exchanges' `last_update_block` - ALL under the ONE borrowed
 /// [`Connection`] (the chunk's `Transaction`).
 ///
-/// This is the §1 atomicity invariant's enforcement point: every write of
+/// This is the chunk-atomicity invariant's enforcement point: every write of
 /// the chunk goes through here on ONE connection, + the caller's `Transaction`
 /// commit/rollback is the single point of durability. Any `?` early-return
 /// (a `UNIQUE` violation, a decode failure, ...) leaves the caller's
@@ -1159,7 +1160,7 @@ pub enum RunError {
 /// exchange's `last_update_block` to `to_block` (or the chain tip if
 /// `to_block` is `None`).
 ///
-/// See the [module docs](self) for the §1 three invariants + the shared-runtime
+/// See the [module docs](self) for the chunk-atomicity invariants + the shared-runtime
 /// constraint (D2: do NOT call from within any tokio runtime context).
 ///
 /// # Arguments
@@ -1994,7 +1995,7 @@ mod tests {
 
         // Second chunk: write the SAME pool (duplicate) → UNIQUE violation →
         // the inner fn returns Err → tx drops → rollback. The stamp advance to
-        // 200 must NOT be durable (§1 atomicity + restart-invariant).
+        // 200 must NOT be durable (the chunk-atomicity + restart invariants).
         let err = {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();

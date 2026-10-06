@@ -423,7 +423,7 @@ class TxSigner:
 
         Decodes the bytes produced by [`sign_eip1559`](Self::sign_eip1559) and
         recovers the signer. Used by the submission loop's receipt-validation
-        path + the §4.2 round-trip parity test.
+        path + the parity-gate round-trip test.
 
         Args:
             `raw_signed`: The raw signed transaction bytes.

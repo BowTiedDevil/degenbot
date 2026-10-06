@@ -21,9 +21,9 @@
 //! sign path obtains its nonce from the strategy's `NonceLane`. The dispatcher
 //! coordinates the pool mutual-exclusion set and the monitor task set only.
 //!
-//! # Parity (ADR-005 §4.2)
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
-//! The §4.2 oracle is the Python `Dispatcher`/`PathSuppression` shapes.
+//! The parity oracle is the Python `Dispatcher`/`PathSuppression` shapes.
 //! Property tests pin the behavioral parity:
 //! - pool mutual exclusion (`is_path_blocked` true iff any path pool overlaps
 //!   pending ∪ committed),

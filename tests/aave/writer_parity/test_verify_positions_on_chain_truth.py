@@ -1,4 +1,4 @@
-"""§4.2 + §4.3 — `verify_touched_positions_on_chain` value-correctness
+"""Parity — `verify_touched_positions_on_chain` value-correctness
 gate.
 
 The per-chunk value-correctness gate (the minimal slice — port of

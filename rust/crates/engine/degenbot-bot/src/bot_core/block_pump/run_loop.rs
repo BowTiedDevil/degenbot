@@ -871,7 +871,7 @@ impl BlockPump {
                         pregap.logs += 1;
                         // consecutive-relevant-log silence deltas —
                         // the exact r.v. the adaptive trailing quiesce must
-                        // cover (design §2.1 intra-block gaps).
+                        // cover (intra-block gaps).
                         if let Some(prev) = last_relevant_log_at {
                             let gap_us = now.saturating_duration_since(prev).as_micros() as u64;
                             if gap_us > block_max_gap_us {

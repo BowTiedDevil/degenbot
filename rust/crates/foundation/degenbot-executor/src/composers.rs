@@ -4,14 +4,14 @@
 //! [`crate::encoders`] into a complete `cmd_executor` command-stream `bytes`
 //! payload per path type, returning [`None`] on unsupported or failing paths.
 //!
-//! ## Sign conventions (§10.2)
+//! ## Sign conventions (`docs/architecture/rust-owned-bot.md` §10.2)
 //!
 //! * V3 `amountSpecified` is a positive `uint96` exact-input (the contract
 //!   negates it internally).
 //! * V4 compact amounts are positive `uint96`; the contract negates for
 //!   exact-input direction.
 //!
-//! ## Native ETH / WETH (§10.3)
+//! ## Native ETH / WETH (`docs/architecture/rust-owned-bot.md` §10.3)
 //!
 //! `NATIVE_CURRENCY_ADDRESS` (`address(0)`) is the V4 native-ETH currency.
 //! WETH and native ETH are distinct PM delta currencies — when a path crosses
@@ -154,8 +154,8 @@ pub fn v4_output_is_native(hop: &V4HopInfo) -> bool {
 /// V4 tracks native ETH and WETH as distinct delta currencies. When a
 /// path's hop A outputs one and hop B's input expects the other, an explicit
 /// `WETH_DEPOSIT` (wrap native→WETH) or `WETH_WITHDRAW` (unwrap WETH→native)
-/// must bridge the gap inside `V4_UNLOCK` before hop B runs. See §10.3 of the
-/// crate docs + `executor/tests/test_cmd_executor_v4v4_wrap_unwrap.py`
+/// must bridge the gap inside `V4_UNLOCK` before hop B runs. See `docs/architecture/rust-owned-bot.md` §10.3 +
+/// `executor/tests/test_cmd_executor_v4v4_wrap_unwrap.py`
 /// for the canonical on-chain pattern.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurrencyBridge {

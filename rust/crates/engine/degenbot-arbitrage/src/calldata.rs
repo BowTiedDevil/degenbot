@@ -133,7 +133,7 @@ mod tests {
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 
     // ---------------------------------------------------------------------
-    // §4.2 byte-for-byte golden parity vs the Python oracle
+    // Parity gate (`docs/architecture/parity-gate.md`): byte-for-byte golden parity vs the Python oracle
     // (`encode_balanceof_calldata`, the getEthBalance block, the ERC6909
     // block). The selector hexes are pinned `const`; the encoded tails are
     // captured from `eth_abi.abi.encode(...)` over the corpus addresses.

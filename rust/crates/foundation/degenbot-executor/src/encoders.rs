@@ -15,13 +15,13 @@
 //! wrappers are sibling / cutover tasks. `# Errors` doc sections appear on
 //! every `pub fn` returning `Result`.
 //!
-//! # Parity (§4.2 hard gate)
+//! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
 //! Byte-for-byte parity vs the `cmd_executor` contract layout over a fixture
 //! corpus; the expected hex is embedded in the `tests` module below and is
 //! re-derived from these `enc_*` primitives, not from any external oracle.
 //!
-//! # V4 sign convention (§10.2)
+//! # V4 sign convention (`docs/architecture/rust-owned-bot.md` §10.2)
 //!
 //! V4 uses negative `amountSpecified`; the compact uint96 amount accepted by
 //! `enc_v4_swap_compact` / `enc_v4_batch` is **positive** (exact-input) — the
@@ -513,7 +513,7 @@ pub fn enc_v2_swap_direct(
 /// `V3_SWAP_COMPACT`: `[0x30][pool_idx:1][zfo:1][amount_specified:12][recipient_idx:1][fwd_len:1][fwd:N]` = 17 + N bytes.
 ///
 /// `amount_specified` is a **positive** `uint96` (exact-input — the contract
-/// negates it internally; see §10.2). Sqrt price limit auto-set to widest
+/// negates it internally; see `docs/architecture/rust-owned-bot.md` §10.2). Sqrt price limit auto-set to widest
 /// range. `forward_data` max 255 bytes.
 ///
 /// # Errors
@@ -554,7 +554,7 @@ pub fn enc_v3_swap_delta(pool_idx: u8, zfo: bool, recipient_idx: u8) -> Vec<u8> 
 ///
 /// `fee` is `uint16` (e.g. 3000 = 0.3%). `tick_spacing` is `int16` encoded as
 /// two big-endian bytes. `amount_u96` is a **positive** `uint96` exact-input
-/// amount — the contract negates it to a negative `amountSpecified` (§10.2).
+/// amount — the contract negates it to a negative `amountSpecified` (`docs/architecture/rust-owned-bot.md` §10.2).
 /// Use `hooks_idx = 0xFF` ([`SENTINEL_NATIVE`]) for "no hooks".
 ///
 /// # Errors
@@ -608,7 +608,7 @@ pub fn enc_v4_swap_dynamic(
 /// A single entry in a `V4_BATCH` (`[c0_idx:1][c1_idx:1][fee:2][ts:2][hooks_idx:1][zfo:1][amount:12]` — 20 bytes).
 ///
 /// `amount == 0` means dynamic (from PM `exttload`). `amount_u96` is a positive
-/// `uint96` exact-input amount (§10.2 — the contract negates internally).
+/// `uint96` exact-input amount (`docs/architecture/rust-owned-bot.md` §10.2 — the contract negates internally).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct V4BatchEntry {
     /// Currency-0 table index.

@@ -36,8 +36,7 @@
 //! the pyo3 adapter), and for the standalone consumer that has no GIL at all.
 //!
 //! A future pure-async standalone `Bot` API can introduce a sibling `async`
-//! trait sharing the same value types — out of scope for the
-//! the chain-bootstrap epic (see the chain-bootstrap-tick-map guide, removed in the stale-docs cleanup `71ec78b2`, §1).
+//! trait sharing the same value types — out of scope here.
 
 use hashbrown::HashMap;
 use std::sync::Arc;
