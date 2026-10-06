@@ -30,7 +30,7 @@ degenbot-pool-updater.workspace = true
 degenbot-pools.workspace = true
 degenbot-rpc.workspace = true
 degenbot-uniswap.workspace = true
-hotpath = { version = "^0.29.0", default-features = false }
+hotpath = { version = "^0.29.1", default-features = false }
 parking_lot = { version = "^0.13" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }

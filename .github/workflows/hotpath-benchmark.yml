@@ -1,0 +1,105 @@
+name: hotpath benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Callgrind attributes instructions through the symbol table, which the
+  # workspace release profile strips; keep it for the benchmark build only.
+  CARGO_PROFILE_RELEASE_STRIP: "false"
+
+jobs:
+  upload:
+    name: hotpath benchmark (push)
+    if: github.event_name == 'push'
+    # Instruction counts only compare within one Valgrind build, Rust toolchain
+    # and OS, so the image, the package and the toolchain are pinned.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: hotpath-benchmark
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind=1:3.26.0-0ubuntu1
+          valgrind --version
+      - name: Build benchmark
+        run: |
+          cargo build -q --locked --release --manifest-path rust/Cargo.toml -p degenbot-pools \
+            --example hotpath_bench --features hotpath,hotpath-alloc,hotpath-cloud,hotpath-callgrind
+      - name: Run benchmark under Callgrind and upload report
+        env:
+          HOTPATH_UPLOAD: 1
+          HOTPATH_BENCHMARK: hotpath_bench
+          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=1.98.1,profile=release,valgrind=3.26.0
+          HOTPATH_OUTPUT_FORMAT: json
+          HOTPATH_OUTPUT_PATH: ${{ runner.temp }}/report.json
+          HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
+          # The Cargo workspace lives in rust/, which hotpath cannot infer from
+          # the repository-root working directory; matches the relay's input.
+          HOTPATH_SOURCE_ROOT: rust
+        run: |
+          valgrind -q --tool=callgrind --instr-atstart=no \
+            --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
+            rust/target/release/examples/hotpath_bench
+          jq -e '.functions_icount.data | length > 0' "$HOTPATH_OUTPUT_PATH" > /dev/null
+
+  report:
+    name: hotpath benchmark (pull request)
+    if: github.event_name == 'pull_request'
+    # Instruction counts only compare within one Valgrind build, Rust toolchain
+    # and OS, so the image, the package and the toolchain are pinned.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The pull request's head commit, not the default merge commit.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: hotpath-benchmark
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind=1:3.26.0-0ubuntu1
+          valgrind --version
+      - name: Build benchmark
+        run: |
+          cargo build -q --locked --release --manifest-path rust/Cargo.toml -p degenbot-pools \
+            --example hotpath_bench --features hotpath,hotpath-alloc,hotpath-cloud,hotpath-callgrind
+      - name: Run benchmark under Callgrind and write report
+        env:
+          HOTPATH_BENCHMARK: hotpath_bench
+          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=1.98.1,profile=release,valgrind=3.26.0
+          HOTPATH_OUTPUT_FORMAT: json
+          HOTPATH_OUTPUT_PATH: report.json
+          HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
+        run: |
+          valgrind -q --tool=callgrind --instr-atstart=no \
+            --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
+            rust/target/release/examples/hotpath_bench
+          test -s report.json
+          jq -e '.functions_icount.data | length > 0' report.json > /dev/null
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hotpath-report
+          path: report.json
+          retention-days: 1
+          if-no-files-found: error
