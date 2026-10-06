@@ -184,6 +184,15 @@ test-timing top='30':
 bench-updaters:
     cargo bench --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --bench updater_replay_bench
 
+# The wave-2 EVM-oracle capture generator's gate (LCRP37): regenerate the
+# wave-2 cassettes + SQL goldens into a temp home and exit 1 on any byte
+# drift against the committed artifacts. The example only builds under the
+# `sql-ledger` passthrough (its [[example]] required-features, same shape as
+# the updater_replay_bench [[bench]] entry above) — this recipe is the one
+# command that carries the feature.
+check-evm-captures:
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --example generate_evm_oracle_captures -- --check tests/fixtures/cassettes/wave2 tests/fixtures/sql_goldens/wave2
+
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every publishable workspace member in dependency order.
 # ~20-40 min cold. CI's PR gate (check-publish) runs the clean-tree form.

@@ -14,6 +14,7 @@ OUT_DIR="${OUT_DIR:-${TD}/out}"
 # <out-path> <artifact-path> pairs (out shape → artifacts shape, same layout).
 cp "${OUT_DIR}"/V2SwapOracleHarness.sol/V2SwapOracleHarness.json   artifacts/V2SwapOracleHarness.sol/V2SwapOracleHarness.json
 cp "${OUT_DIR}"/V3SwapOracleHarness.sol/V3SwapOracleHarness.json   artifacts/V3SwapOracleHarness.sol/V3SwapOracleHarness.json
+cp "${OUT_DIR}"/V3CaptureHarness.sol/V3CaptureHarness.json   artifacts/V3CaptureHarness.sol/V3CaptureHarness.json
 cp "${OUT_DIR}"/V4SwapOracleHarness.sol/V4SwapOracleHarness.json   artifacts/V4SwapOracleHarness.sol/V4SwapOracleHarness.json
 cp "${OUT_DIR}"/SwapMathV3Harness.sol/SwapMathV3Harness.json       artifacts/SwapMathV3Harness.sol/SwapMathV3Harness.json
 cp "${OUT_DIR}"/SwapMathV4Harness.sol/SwapMathV4Harness.json       artifacts/SwapMathV4Harness.sol/SwapMathV4Harness.json

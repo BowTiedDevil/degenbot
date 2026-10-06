@@ -40,6 +40,13 @@ pub mod harness;
 /// investigation harness. See [`oracle`] for the API.
 pub mod oracle;
 
+/// The wave-2 golden-capture generator seam (the wave-2 capture program, ADR-068 approach
+/// C): a node-free JSON-RPC chain over the fixture EVM whose served answers
+/// are real frame-execution products, wrapped by the recorder's canonical
+/// writer to manufacture cassettes without a node. See [`capture`] for the
+/// API.
+pub mod capture;
+
 pub use oracle::{
     call_bytes, decode_error_string, deploy, load_foundry_creation_bytecode, native_balance_of,
     new_fixture_evm, parse_foundry_creation_bytecode, read_address, seed_slots, selector,

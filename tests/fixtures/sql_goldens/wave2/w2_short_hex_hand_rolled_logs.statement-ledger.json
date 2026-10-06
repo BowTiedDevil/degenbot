@@ -1,0 +1,25 @@
+{
+  "schema": "degenbot.statement-ledger/v1",
+  "statements": [
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT id, chain_id, name, active, last_update_block, factory, deployer FROM exchanges WHERE chain_id = ? AND active = ? ORDER BY id"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "BEGIN DEFERRED"
+    },
+    {
+      "arg_count": 4,
+      "rows_changed": 1,
+      "sql": "UPDATE exchanges SET last_update_block = ? WHERE chain_id = ? AND id = ? AND last_update_block = ?"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "COMMIT"
+    }
+  ]
+}

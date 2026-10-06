@@ -18,6 +18,7 @@ import json, hashlib
 MAP = {
     "V2SwapOracleHarness.sol/V2SwapOracleHarness.json": "src-v2/V2SwapOracleHarness.sol",
     "V3SwapOracleHarness.sol/V3SwapOracleHarness.json": "src-v3/V3SwapOracleHarness.sol",
+    "V3CaptureHarness.sol/V3CaptureHarness.json": "src-v3/V3CaptureHarness.sol",
     "V4SwapOracleHarness.sol/V4SwapOracleHarness.json": "src-v4/V4SwapOracleHarness.sol",
     "SwapMathV3Harness.sol/SwapMathV3Harness.json": "src-v3/SwapMathV3Harness.sol",
     "SwapMathV4Harness.sol/SwapMathV4Harness.json": "src-v4/SwapMathV4Harness.sol",

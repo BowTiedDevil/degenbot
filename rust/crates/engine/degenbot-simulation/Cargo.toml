@@ -84,6 +84,9 @@ serde_json = { version = "^1.0" }
 # (matches `degenbot-bot` so the `Option<Arc<RwLock<BotState>>>` fan-out param
 # is the same lock family).
 parking_lot = "^0.12"
+# `tower::Service` — the JSON-RPC transport seam the scratch chain serves (the
+# same shape the degenbot-rpc recording/replay transports implement).
+tower = { version = "^0.5", default-features = false }
 # `rt` is required by `WrapDatabaseAsync` (it blocks the async `AlloyDB`
 # `DatabaseAsyncRef` calls on a runtime — `WrapDatabaseAsync::new` needs a
 # current-thread tokio handle). The fan-out/categorization policy + its

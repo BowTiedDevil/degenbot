@@ -27,6 +27,10 @@
     "sha256": "3a23262e2c90d0c520fca826018576e17f41cd859275d8ccbd6276c635b37b0c",
     "source": "src-v2/V2SwapOracleHarness.sol"
   },
+  "V3CaptureHarness.sol/V3CaptureHarness.json": {
+    "sha256": "b4b83dd932e66100ef352d6dc7d12fda58b23622007c06543854684af784f505",
+    "source": "src-v3/V3CaptureHarness.sol"
+  },
   "V3SwapOracleHarness.sol/V3SwapOracleHarness.json": {
     "sha256": "31fae1873b921b47f0aef058a8842d6a161419cf5cd88225f5ceaf762b947efb",
     "source": "src-v3/V3SwapOracleHarness.sol"

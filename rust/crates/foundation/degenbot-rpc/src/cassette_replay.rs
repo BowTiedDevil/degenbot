@@ -45,7 +45,9 @@ use alloy::transports::{TransportError, TransportFut};
 use serde_json::value::to_raw_value;
 use serde_json::Value;
 
-use crate::cassette::{canonicalize_value, entry_key, Cassette, CassetteEntry, CassetteResponse};
+use crate::cassette::{
+    canonicalize_value, entry_key, sort_json_array, Cassette, CassetteEntry, CassetteResponse,
+};
 use crate::provider::AlloyProvider;
 
 /// The methods the replay surface serves from the ledger. A miss on one of
@@ -308,15 +310,6 @@ fn logs_semantic_key(filter: &Value) -> Option<String> {
         }
     }
     serde_json::to_string(&canonical).ok()
-}
-
-/// Sort a JSON array value in place — the OR-set-order normalization. No-op
-/// for non-arrays (a bare-string topic position is a single option, already
-/// order-free).
-fn sort_json_array(value: &mut Value) {
-    if let Some(items) = value.as_array_mut() {
-        items.sort_by_key(std::string::ToString::to_string);
-    }
 }
 
 // ---------------------------------------------------------------------------

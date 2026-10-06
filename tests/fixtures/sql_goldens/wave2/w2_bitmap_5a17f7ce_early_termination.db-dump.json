@@ -1,0 +1,217 @@
+{
+  "schema": "degenbot.db-dump/v1",
+  "tables": [
+    {
+      "columns": [
+        "id",
+        "chain",
+        "address",
+        "name",
+        "symbol",
+        "decimals"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "0xf4d9599afd90b5038b18e3b551bc21a97ed21c37",
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          1,
+          "0x109f93893af4c4b0afc7a9e97b59991260f98313",
+          null,
+          null,
+          null
+        ]
+      ],
+      "table": "erc20_tokens"
+    },
+    {
+      "columns": [
+        "id",
+        "chain_id",
+        "name",
+        "active",
+        "last_update_block",
+        "factory",
+        "deployer"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "uniswap_v3",
+          1,
+          1004,
+          "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          null
+        ]
+      ],
+      "table": "exchanges"
+    },
+    {
+      "columns": [
+        "id",
+        "pool_id",
+        "word",
+        "bitmap"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          0,
+          "30"
+        ]
+      ],
+      "table": "initialization_maps"
+    },
+    {
+      "columns": [
+        "id",
+        "pool_id",
+        "tick",
+        "liquidity_net",
+        "liquidity_gross"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          100,
+          "1000000000000000",
+          "1000000000000000"
+        ],
+        [
+          2,
+          1,
+          200,
+          "0",
+          "2000000000000000"
+        ],
+        [
+          3,
+          1,
+          300,
+          "0",
+          "2000000000000000"
+        ],
+        [
+          4,
+          1,
+          400,
+          "-1000000000000000",
+          "1000000000000000"
+        ]
+      ],
+      "table": "liquidity_positions"
+    },
+    {
+      "columns": [
+        "id",
+        "managed_pool_id",
+        "word",
+        "bitmap"
+      ],
+      "rows": [],
+      "table": "managed_pool_initialization_maps"
+    },
+    {
+      "columns": [
+        "id",
+        "managed_pool_id",
+        "tick",
+        "liquidity_net",
+        "liquidity_gross"
+      ],
+      "rows": [],
+      "table": "managed_pool_liquidity_positions"
+    },
+    {
+      "columns": [
+        "id",
+        "kind",
+        "manager_id"
+      ],
+      "rows": [],
+      "table": "managed_pools"
+    },
+    {
+      "columns": [
+        "id",
+        "address",
+        "chain",
+        "kind",
+        "token0_id",
+        "token1_id",
+        "exchange_id"
+      ],
+      "rows": [
+        [
+          1,
+          "0x689856e2a6eb68fc33099eb2ccba0a5a4e8be52f",
+          1,
+          "uniswap_v3",
+          1,
+          2,
+          1
+        ]
+      ],
+      "table": "pools"
+    },
+    {
+      "columns": [
+        "pool_id",
+        "fee_token0",
+        "fee_token1",
+        "fee_denominator"
+      ],
+      "rows": [],
+      "table": "uniswap_v2_pools"
+    },
+    {
+      "columns": [
+        "pool_id",
+        "tick_spacing",
+        "liquidity_update_block",
+        "liquidity_update_log_index",
+        "fee_token0",
+        "fee_token1",
+        "fee_denominator"
+      ],
+      "rows": [
+        [
+          1,
+          100,
+          1003,
+          0,
+          3000,
+          3000,
+          1000000
+        ]
+      ],
+      "table": "uniswap_v3_pools"
+    },
+    {
+      "columns": [
+        "managed_pool_id",
+        "pool_hash",
+        "hooks",
+        "currency0_id",
+        "currency1_id",
+        "fee_currency0",
+        "fee_currency1",
+        "fee_denominator",
+        "tick_spacing",
+        "liquidity_update_block",
+        "liquidity_update_log_index"
+      ],
+      "rows": [],
+      "table": "uniswap_v4_pools"
+    }
+  ]
+}

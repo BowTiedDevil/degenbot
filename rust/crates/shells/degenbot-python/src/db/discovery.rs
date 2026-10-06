@@ -62,6 +62,10 @@ pub struct PyV2PoolRowInput {
 
 #[pymethods]
 impl PyV2PoolRowInput {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 constructor boundary takes ownership; FFI signature is fixed"
+    )]
     #[new]
     #[pyo3(signature = (address, token0_address, token1_address, fee_token0, fee_token1, stable=None))]
     fn new(
@@ -109,6 +113,10 @@ pub struct PyV3PoolRowInput {
 
 #[pymethods]
 impl PyV3PoolRowInput {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 constructor boundary takes ownership; FFI signature is fixed"
+    )]
     #[new]
     fn new(
         address: String,
@@ -157,6 +165,10 @@ pub struct PyV4PoolRowInput {
 
 #[pymethods]
 impl PyV4PoolRowInput {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 constructor boundary takes ownership; FFI signature is fixed"
+    )]
     #[new]
     fn new(
         pool_hash: String,

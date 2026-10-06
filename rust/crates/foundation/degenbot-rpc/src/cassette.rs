@@ -281,11 +281,47 @@ fn canonical_hex_quantity(s: &str) -> Option<String> {
 /// The ledger key for a request: a compact JSON pair
 /// `[method, canonical params]`. Deterministic by construction.
 pub(crate) fn entry_key(method: &str, params: &Value) -> String {
-    let key = Value::Array(vec![
-        Value::String(method.to_string()),
-        canonicalize_value(params),
-    ]);
+    let canonical = canonicalize_value(params);
+    // The getLogs filter's OR-set option lists (`address`, each topic
+    // position) are serialized by alloy through a `HashSet` (`FilterSet`),
+    // so their wire order is per-process random. The ledger key must not
+    // carry that order — the drift-gate precondition is that the same
+    // request canonicalizes to the same key on every run — so the recorder
+    // sorts the option sets here (semantically exact: an OR-set is
+    // order-free). The replay transport's semantic-key fallback keeps
+    // cassettes recorded before this normalization replayable.
+    let normalized = match method {
+        "eth_getLogs" => normalize_log_filter_or_sets(canonical),
+        _ => canonical,
+    };
+    let key = Value::Array(vec![Value::String(method.to_string()), normalized]);
     serde_json::to_string(&key).unwrap_or_else(|_| format!("{method:?}"))
+}
+
+/// Sort the OR-set option lists of an `eth_getLogs` filter in place. No-op
+/// for non-arrays (a bare-string topic position is a single option, already
+/// order-free).
+pub(crate) fn normalize_log_filter_or_sets(mut params: Value) -> Value {
+    // The filter is the first (only) element of the params array.
+    if let Some(Value::Object(filter)) = params.get_mut(0) {
+        if let Some(address) = filter.get_mut("address") {
+            sort_json_array(address);
+        }
+        if let Some(topics) = filter.get_mut("topics").and_then(Value::as_array_mut) {
+            for position in topics {
+                sort_json_array(position);
+            }
+        }
+    }
+    params
+}
+
+/// Sort a JSON array value in place by its string form — the OR-set-order
+/// normalization shared by the ledger key and the replay semantic key.
+pub(crate) fn sort_json_array(value: &mut Value) {
+    if let Some(items) = value.as_array_mut() {
+        items.sort_by_key(std::string::ToString::to_string);
+    }
 }
 
 /// Format unix seconds as an RFC 3339 UTC timestamp
@@ -544,6 +580,24 @@ mod tests {
     }
 
     #[test]
+    fn entry_key_is_order_insensitive_for_getlogs_or_sets() {
+        // alloy serializes filter option sets through a HashSet — the same
+        // request arrives with per-process-random OR-set order. The ledger
+        // key must collide for both orders (the drift-gate precondition).
+        let a: Value = serde_json::from_str(
+            r#"[{"topics":[["0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde","0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c"]],"fromBlock":"0x10","toBlock":"0x20"}]"#,
+        )
+        .unwrap();
+        let b: Value = serde_json::from_str(
+            r#"[{"topics":[["0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c","0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde"]],"toBlock":"0x20","fromBlock":"0x10"}]"#,
+        )
+        .unwrap();
+        assert_eq!(entry_key("eth_getLogs", &a), entry_key("eth_getLogs", &b));
+        // Non-getLogs methods keep the plain canonical form (no OR-set rule).
+        assert_eq!(entry_key("eth_call", &a), entry_key("eth_call", &a));
+    }
+
+    #[test]
     fn canonical_key_pairs_method_and_params() {
         let params: Value = serde_json::from_str(r#"{"toBlock":"0x10"}"#).unwrap();
         let key = entry_key("eth_getLogs", &params);
@@ -740,12 +794,25 @@ mod tests {
     /// (one pool-updater chunk, one Aave market chunk).
     #[test]
     fn committed_cassette_corpus_is_byte_identical() {
+        // The corpus home carries the seed recordings at the top level and
+        // per-generator scenario subdirectories beneath it (the wave-2
+        // EVM-oracle captures live in `wave2/`) — the guard walks the whole
+        // home so a subdirectory can never hide a drifted cassette.
+        fn collect(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir)
+                .unwrap_or_else(|e| panic!("cassette corpus missing at {}: {e}", dir.display()))
+            {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect(&path, files);
+                } else if path.extension().is_some_and(|ext| ext == "json") {
+                    files.push(path);
+                }
+            }
+        }
         let dir = corpus_dir();
-        let mut files: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("cassette corpus missing at {}: {e}", dir.display()))
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
-            .collect();
+        let mut files = Vec::new();
+        collect(&dir, &mut files);
         files.sort();
         assert!(
             files.len() >= 2,
@@ -914,10 +981,31 @@ mod tests {
                 let pair: Value = serde_json::from_str(key).unwrap();
                 let items = pair.as_array().expect("ledger key is [method, params]");
                 let method = items[0].as_str().expect("method is a string");
+                // The ledger key re-derives from its parsed (method, params).
+                // Compared SEMANTICALLY (the OR-set normalization applied to
+                // both sides): keys recorded before the recorder began
+                // normalizing getLogs OR-set order carry alloy's per-process
+                // random FilterSet order, and the replay transport's semantic
+                // fallback is what keeps them replayable — the guard pins
+                // that both eras collide with their re-derivation under that
+                // same order-free comparison.
+                let rederived = entry_key(method, &items[1]);
+                let semantic_form = |key: &str| -> String {
+                    let pair: Value = serde_json::from_str(key).unwrap();
+                    let mut params = pair.as_array().expect("key is [method, params]")[1].clone();
+                    if method == "eth_getLogs" {
+                        params = crate::cassette::normalize_log_filter_or_sets(params);
+                    }
+                    serde_json::to_string(&Value::Array(vec![
+                        Value::String(method.to_string()),
+                        params,
+                    ]))
+                    .unwrap()
+                };
                 assert_eq!(
-                    entry_key(method, &items[1]),
-                    *key,
-                    "ledger key does not re-derive in {}",
+                    semantic_form(&rederived),
+                    semantic_form(key),
+                    "ledger key does not re-derive semantically in {}",
                     path.display()
                 );
                 let response_value = serde_json::to_value(&entry.response).unwrap();
