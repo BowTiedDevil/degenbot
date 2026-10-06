@@ -20,6 +20,24 @@
 //! read-only handle they fail at the `SQLite` layer
 //! (`attempt to write a readonly database`), surfacing [`DbError::Sqlite`].
 //!
+//! # The chunk-atomicity seam (one connection per write arm)
+//!
+//! Every write arm (`get_or_create_*` / `apply_*`) carries its SQL in exactly
+//! one body: the `_on_conn` form, which takes a borrowed
+//! [`rusqlite::Connection`]. A chunk loop owns one connection inside one
+//! `Transaction` (a `Transaction` derefs to `Connection`) and calls the
+//! `_on_conn` forms on it, so a chunk's Aave writes and its pool writes (the
+//! end-of-chunk `last_update_block` stamp) commit or roll back atomically —
+//! on rollback no chunk write advances, and a restart re-processes the chunk
+//! clean. The chunk loop calls `_on_conn` on its owned connection rather than
+//! re-locking: the connection `Mutex` is non-reentrant, so a re-lock from the
+//! chunk task would deadlock.
+//!
+//! The `&self` forms serve one-shot callers: each locks the shared connection
+//! via [`DegenbotDb::lock`] for the call and delegates to the `_on_conn`
+//! body. No write arm opens a connection or manages transaction scope on its
+//! own.
+//!
 //! # The bit-decode (the pure CPU seam)
 //!
 //! [`decode_reserve_configuration_bitmap`] ports

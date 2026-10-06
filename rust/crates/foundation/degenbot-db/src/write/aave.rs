@@ -1,5 +1,6 @@
 //! Aave market/asset-config/user upserts, config-event applies, and asset lookups.
 
+use super::util::existing_row_id;
 use super::{params, DbError, DegenbotDb, OptionalExtension, U256};
 
 // ── the pure bit-decode (no I/O) ───────────────────────────────────────────
@@ -145,25 +146,23 @@ fn existing_emode_category(
     market_id: i64,
     category_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    // prepare_cached caches the compiled statement across calls (spike-7
-    // measured ~4× over query_row for this constant-SQL single-row shape). Block-
-    // scoped: the `s` drops at the fn boundary, releasing back to the cache before
-    // any commit. FN signature UNCHANGED.
-    let mut s = conn.prepare_cached(
+    existing_row_id(
+        conn,
         "SELECT id FROM aave_v3_emode_categories \
          WHERE market_id = ?1 AND category_id = ?2",
-    )?;
-    Ok(s.query_row(params![market_id, category_id], |r| r.get(0))
-        .optional()?)
+        params![market_id, category_id],
+    )
 }
 
 fn existing_asset_config(
     conn: &rusqlite::Connection,
     asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    // prepare_cached caches the compiled statement across calls.
-    let mut s = conn.prepare_cached("SELECT id FROM aave_v3_asset_configs WHERE asset_id = ?1")?;
-    Ok(s.query_row(params![asset_id], |r| r.get(0)).optional()?)
+    existing_row_id(
+        conn,
+        "SELECT id FROM aave_v3_asset_configs WHERE asset_id = ?1",
+        params![asset_id],
+    )
 }
 
 fn existing_user_collateral_config(
@@ -171,13 +170,12 @@ fn existing_user_collateral_config(
     user_id: i64,
     asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    // prepare_cached caches the compiled statement across calls.
-    let mut s = conn.prepare_cached(
+    existing_row_id(
+        conn,
         "SELECT id FROM aave_v3_user_collateral_configs \
          WHERE user_id = ?1 AND asset_id = ?2",
-    )?;
-    Ok(s.query_row(params![user_id, asset_id], |r| r.get(0))
-        .optional()?)
+        params![user_id, asset_id],
+    )
 }
 
 fn existing_user(
@@ -185,11 +183,11 @@ fn existing_user(
     market_id: i64,
     address: &str,
 ) -> Result<Option<i64>, DbError> {
-    // prepare_cached caches the compiled statement across calls.
-    let mut s =
-        conn.prepare_cached("SELECT id FROM aave_v3_users WHERE market_id = ?1 AND address = ?2")?;
-    Ok(s.query_row(params![market_id, address], |r| r.get(0))
-        .optional()?)
+    existing_row_id(
+        conn,
+        "SELECT id FROM aave_v3_users WHERE market_id = ?1 AND address = ?2",
+        params![market_id, address],
+    )
 }
 impl DegenbotDb {
     /// Get-or-create an `aave_v3_emode_categories` row by `(market_id,
@@ -207,20 +205,15 @@ impl DegenbotDb {
         market_id: i64,
         category_id: i64,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::get_or_create_e_mode_category_on_conn(&conn, market_id, category_id)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_e_mode_category`] — accepts a borrowed
-    /// [`rusqlite::Connection`] (a chunk-loop `Transaction` derefs to one) so
-    /// the Aave-updater chunk loop can call it on its ONE owned connection
-    /// without re-locking the `Mutex` or opening a per-call write handle
-    /// (the §3.4 atomicity fix).
+    /// Connection-bound form of [`Self::get_or_create_e_mode_category`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn get_or_create_e_mode_category_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,
@@ -253,18 +246,15 @@ impl DegenbotDb {
     /// Returns [`DbError::Sqlite`] on a query failure (a write on a read-only
     /// handle surfaces "attempt to write a readonly database").
     pub fn get_or_create_asset_config(&self, asset_id: i64) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::get_or_create_asset_config_on_conn(&conn, asset_id)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_asset_config`] (the §3.4 atomicity
-    /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
-    /// rationale.
+    /// Connection-bound form of [`Self::get_or_create_asset_config`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn get_or_create_asset_config_on_conn(
         conn: &rusqlite::Connection,
         asset_id: i64,
@@ -297,18 +287,15 @@ impl DegenbotDb {
         user_id: i64,
         asset_id: i64,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::get_or_create_user_collateral_config_on_conn(&conn, user_id, asset_id)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_user_collateral_config`] (the §3.4
-    /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
-    /// for the rationale.
+    /// Connection-bound form of [`Self::get_or_create_user_collateral_config`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn get_or_create_user_collateral_config_on_conn(
         conn: &rusqlite::Connection,
         user_id: i64,
@@ -346,17 +333,15 @@ impl DegenbotDb {
         address: &str,
         gho_discount: i64,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::get_or_create_user_on_conn(&conn, market_id, address, gho_discount)
     }
 
-    /// The single-transaction-bound variant of [`Self::get_or_create_user`]
-    /// (the §3.4 atomicity fix). See
-    /// [`Self::get_or_create_e_mode_category_on_conn`] for the rationale.
+    /// Connection-bound form of [`Self::get_or_create_user`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn get_or_create_user_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,
@@ -401,18 +386,15 @@ impl DegenbotDb {
         asset_id: i64,
         config_bitmap: U256,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_collateral_configuration_changed_on_conn(&conn, asset_id, config_bitmap)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_collateral_configuration_changed`] (the §3.4
-    /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
-    /// for the rationale.
+    /// Connection-bound form of [`Self::apply_collateral_configuration_changed`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn apply_collateral_configuration_changed_on_conn(
         conn: &rusqlite::Connection,
         asset_id: i64,
@@ -496,7 +478,7 @@ impl DegenbotDb {
         price_source: Option<&str>,
         label: &str,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_e_mode_category_added_on_conn(
             &conn,
             market_id,
@@ -509,14 +491,11 @@ impl DegenbotDb {
         )
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_e_mode_category_added`] (the §3.4 atomicity
-    /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
-    /// rationale.
+    /// Connection-bound form of [`Self::apply_e_mode_category_added`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
     pub fn apply_e_mode_category_added_on_conn(
         conn: &rusqlite::Connection,
@@ -577,18 +556,15 @@ impl DegenbotDb {
         asset_id: i64,
         new_category_id: i64,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_emode_asset_category_changed_on_conn(&conn, asset_id, new_category_id)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_emode_asset_category_changed`] (the §3.4
-    /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
-    /// for the rationale.
+    /// Connection-bound form of [`Self::apply_emode_asset_category_changed`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn apply_emode_asset_category_changed_on_conn(
         conn: &rusqlite::Connection,
         asset_id: i64,
@@ -615,7 +591,7 @@ impl DegenbotDb {
         category_id: i64,
         is_collateral: bool,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_asset_collateral_in_emode_changed_on_conn(
             &conn,
             asset_id,
@@ -624,14 +600,11 @@ impl DegenbotDb {
         )
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_asset_collateral_in_emode_changed`] (the §3.4
-    /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
-    /// for the rationale.
+    /// Connection-bound form of [`Self::apply_asset_collateral_in_emode_changed`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn apply_asset_collateral_in_emode_changed_on_conn(
         conn: &rusqlite::Connection,
         asset_id: i64,
@@ -663,14 +636,6 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure.
-    /// The single-transaction-bound variant (the only form now exercised — the
-    /// `&self` apply wrappers delegate here via their `_on_conn` siblings).
-    /// the §3.4 atomicity fix. See
-    /// [`Self::get_or_create_e_mode_category_on_conn`] for the rationale.
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the apply wrappers.
     fn set_asset_emode_category_on_conn(
         conn: &rusqlite::Connection,
         asset_id: i64,
@@ -712,18 +677,15 @@ impl DegenbotDb {
         asset_id: i64,
         enabled: bool,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_reserve_used_as_collateral_on_conn(&conn, user_id, asset_id, enabled)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_reserve_used_as_collateral`] (the §3.4
-    /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
-    /// for the rationale.
+    /// Connection-bound form of [`Self::apply_reserve_used_as_collateral`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn apply_reserve_used_as_collateral_on_conn(
         conn: &rusqlite::Connection,
         user_id: i64,
@@ -755,17 +717,15 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on a query failure.
     pub fn apply_user_e_mode_set(&self, user_id: i64, e_mode: i64) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_user_e_mode_set_on_conn(&conn, user_id, e_mode)
     }
 
-    /// The single-transaction-bound variant of [`Self::apply_user_e_mode_set`]
-    /// (the §3.4 atomicity fix). See
-    /// [`Self::get_or_create_e_mode_category_on_conn`] for the rationale.
+    /// Connection-bound form of [`Self::apply_user_e_mode_set`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn apply_user_e_mode_set_on_conn(
         conn: &rusqlite::Connection,
         user_id: i64,
@@ -794,18 +754,15 @@ impl DegenbotDb {
         market_id: i64,
         new_oracle_address: &str,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_price_oracle_updated_on_conn(&conn, market_id, new_oracle_address)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_price_oracle_updated`] (the §3.4 atomicity
-    /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
-    /// rationale.
+    /// Connection-bound form of [`Self::apply_price_oracle_updated`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn apply_price_oracle_updated_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,
@@ -848,18 +805,15 @@ impl DegenbotDb {
         asset_id: i64,
         source_address: &str,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_asset_source_updated_on_conn(&conn, asset_id, source_address)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_asset_source_updated`] (the §3.4 atomicity
-    /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
-    /// rationale.
+    /// Connection-bound form of [`Self::apply_asset_source_updated`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn apply_asset_source_updated_on_conn(
         conn: &rusqlite::Connection,
         asset_id: i64,

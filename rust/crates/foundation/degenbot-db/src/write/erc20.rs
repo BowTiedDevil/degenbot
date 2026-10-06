@@ -1,20 +1,18 @@
 //! ERC-20 token get-or-create + metadata write-back.
 
-use super::{params, DbError, DegenbotDb, OptionalExtension};
+use super::util::existing_row_id;
+use super::{params, DbError, DegenbotDb};
 
 fn existing_erc20_token(
     conn: &rusqlite::Connection,
     chain: i64,
     address: &str,
 ) -> Result<Option<i64>, DbError> {
-    // prepare_cached caches the compiled statement across calls. The only
-    // PRODUCTION caller today (discovery.rs per-pool get_or_create_erc20_token)
-    // is cold/sparse; this banks the ~4× for when the Aave migration ports the
-    // Python event handlers to these Rust get_or_create_* paths.
-    let mut s =
-        conn.prepare_cached("SELECT id FROM erc20_tokens WHERE chain = ?1 AND address = ?2")?;
-    Ok(s.query_row(params![chain, address], |r| r.get(0))
-        .optional()?)
+    existing_row_id(
+        conn,
+        "SELECT id FROM erc20_tokens WHERE chain = ?1 AND address = ?2",
+        params![chain, address],
+    )
 }
 impl DegenbotDb {
     /// Get-or-create an `erc20_tokens` row by `(chain, address)`. Port of
@@ -41,15 +39,11 @@ impl DegenbotDb {
         Self::get_or_create_erc20_token_on_conn(&conn, chain, address, name, symbol, decimals)
     }
 
-    /// The single-transaction-bound variant of [`Self::get_or_create_erc20_token`]
-    /// accepts a borrowed [`rusqlite::Connection`] (a chunk-loop `Transaction`
-    /// derefs to one) so the pool-updater chunk loop can call it on its ONE
-    /// owned connection without re-locking the `Mutex` (avoids the
-    /// `parking_lot` non-reentrant deadlock + retires the per-row lock cycle
-    /// the `discovery::upsert_v*_pools` paths previously needed).
+    /// Connection-bound form of [`Self::get_or_create_erc20_token`].
+    ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn get_or_create_erc20_token_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -118,7 +112,7 @@ impl DegenbotDb {
         symbol: Option<&str>,
         decimals: Option<i64>,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         conn.execute(
             "UPDATE erc20_tokens SET name = ?3, symbol = ?4, decimals = ?5 \
              WHERE chain = ?1 AND address = ?2",

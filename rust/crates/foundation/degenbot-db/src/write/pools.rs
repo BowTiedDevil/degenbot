@@ -1,5 +1,6 @@
 //! Aave Pool-event direct writers: reserve data/init, upgrades, contract rows.
 
+use super::util::existing_row_id;
 use super::{params, DbError, DegenbotDb, OptionalExtension, U256};
 
 /// Lookup `aave_v3_assets.id` by the `(market_id, underlying_asset_id)`
@@ -10,24 +11,20 @@ fn existing_aave_v3_asset(
     market_id: i64,
     underlying_asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    // prepare_cached caches the compiled statement across calls.
-    let mut s = conn.prepare_cached(
+    existing_row_id(
+        conn,
         "SELECT id FROM aave_v3_assets \
          WHERE market_id = ?1 AND underlying_asset_id = ?2",
-    )?;
-    Ok(
-        s.query_row(params![market_id, underlying_asset_id], |r| r.get(0))
-            .optional()?,
+        params![market_id, underlying_asset_id],
     )
 }
 impl DegenbotDb {
     /// Set the `aave_v3_markets.last_update_block` stamp for `market_id`.
     /// This is the Aave-updater chunk loop's end-of-chunk stamp, the mirror of
     /// [`DegenbotDb::set_exchange_last_update_block_on_conn`] for the pool
-    /// loop. Callable on the chunk's `Transaction` so the stamp
-    /// commits atomically with the chunk's Aave writes (the §3.4 atomicity
-    /// invariant's structural fix — on rollback the stamp does NOT advance,
-    /// so a restart re-processes the chunk clean).
+    /// loop. Callable on the chunk's `Transaction` (the write-module
+    /// connection seam) so on rollback the stamp does NOT advance and a
+    /// restart re-processes the chunk clean.
     ///
     /// # Errors
     ///
@@ -68,9 +65,6 @@ impl DegenbotDb {
     ///
     /// No ray-math: the indices/rates are stored raw (as the event emits them,
     /// 27-decimal ray values persisted as decimal `VARCHAR(78)` per the schema).
-    /// Apply a `ReserveDataUpdated` event's decoded fields to the
-    /// `aave_v3_assets` row — the `&self` wrapper.
-    /// See [`Self::apply_reserve_data_updated_on_conn`] for the contract.
     ///
     /// # Errors
     ///
@@ -84,7 +78,7 @@ impl DegenbotDb {
         variable_borrow_index: U256,
         block_number: u64,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_reserve_data_updated_on_conn(
             &conn,
             asset_id,
@@ -96,9 +90,7 @@ impl DegenbotDb {
         )
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_reserve_data_updated`] (the §3.4 atomicity fix;
-    /// see [`Self::get_or_create_e_mode_category_on_conn`] for the rationale).
+    /// Connection-bound form of [`Self::apply_reserve_data_updated`].
     ///
     /// # Errors
     ///
@@ -173,7 +165,7 @@ impl DegenbotDb {
         price_source: Option<&str>,
         gho_link_token_id: Option<i64>,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_reserve_initialized_on_conn(
             &conn,
             market_id,
@@ -187,15 +179,11 @@ impl DegenbotDb {
         )
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::apply_reserve_initialized`] (the §3.4 atomicity fix;
-    /// see [`Self::get_or_create_e_mode_category_on_conn`] for the rationale).
+    /// Connection-bound form of [`Self::apply_reserve_initialized`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
-    ///
-    /// [`DbError::MissingRow`]: crate::error::DbError::MissingRow
+    /// Same error conditions as the `&self` form.
     #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
     pub fn apply_reserve_initialized_on_conn(
         conn: &rusqlite::Connection,

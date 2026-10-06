@@ -6,7 +6,7 @@ use crate::connection::DegenbotDb;
 fn write_db_with_market() -> DegenbotDb {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         conn.execute(
             "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
                  VALUES (1, 1, 'mainnet', 1, NULL)",
@@ -20,7 +20,7 @@ fn write_db_with_market() -> DegenbotDb {
 /// Seed an `aave_v3_assets` parent row (FKs to `erc20_tokens`). Returns the
 /// asset row id (1).
 fn seed_asset(db: &DegenbotDb) -> i64 {
-    let conn = db.conn.lock();
+    let conn = db.lock();
     // three erc20 tokens: underlying / aToken / vToken (ids 1/2/3)
     for (id, addr) in [(1_i64, "0xu1"), (2, "0xa1"), (3, "0xv1")] {
         conn.execute(
@@ -42,7 +42,7 @@ fn seed_asset(db: &DegenbotDb) -> i64 {
 }
 
 fn seed_user(db: &DegenbotDb, address: &str) -> i64 {
-    let conn = db.conn.lock();
+    let conn = db.lock();
     conn.execute(
         "INSERT INTO aave_v3_users \
                 (market_id, address, e_mode, gho_discount, stk_aave_balance, \
@@ -125,7 +125,7 @@ fn bit_decode_e_mode_zero_maps_to_none() {
 #[test]
 fn open_for_writes_is_write_capable() {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     // a write must SUCCEED (no query_only=on)
     conn.execute("CREATE TABLE w (a INTEGER)", []).unwrap();
     conn.execute("INSERT INTO w (a) VALUES (1)", []).unwrap();
@@ -139,7 +139,7 @@ fn open_for_writes_is_write_capable() {
 fn open_read_only_still_blocks_writes() {
     // binding #2 hard AC: the default read handle stays read-only.
     let (db, _state) = DegenbotDb::open_in_memory().unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let r: rusqlite::Result<usize> = conn.execute("CREATE TABLE x (a INT)", []);
     assert!(r.is_err(), "read handle should block writes");
 }
@@ -156,7 +156,7 @@ fn get_or_create_e_mode_category_creates_then_returns_existing() {
     let id3 = db.get_or_create_e_mode_category(1, 6).unwrap();
     assert_ne!(id1, id3);
     // the created row has the Python ORM defaults
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (label, ltv, lt, bonus): (Option<String>, i64, i64, i64) = conn
         .query_row(
             "SELECT label, ltv, liquidation_threshold, liquidation_bonus \
@@ -176,7 +176,7 @@ fn get_or_create_asset_config_creates_with_defaults() {
     let id = db.get_or_create_asset_config(asset).unwrap();
     let id2 = db.get_or_create_asset_config(asset).unwrap();
     assert_eq!(id, id2);
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (ltv, borr, stable, flash, iso, borr_iso, dc, emode): (
         i64,
         bool,
@@ -227,7 +227,7 @@ fn get_or_create_user_collateral_config_creates_with_disabled() {
         .get_or_create_user_collateral_config(user, asset)
         .unwrap();
     assert_eq!(id, id2);
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let enabled: bool = conn
         .query_row(
             "SELECT enabled FROM aave_v3_user_collateral_configs WHERE id = ?1",
@@ -244,7 +244,7 @@ fn get_or_create_user_creates_with_defaults_and_gho_discount() {
     let id = db.get_or_create_user(1, "0xuser2", 1500).unwrap();
     let id2 = db.get_or_create_user(1, "0xuser2", 9999).unwrap();
     assert_eq!(id, id2);
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (e_mode, gho, stk, iso_asset, iso_debt): (i64, i64, Option<String>, Option<i64>, String) =
         conn.query_row(
             "SELECT e_mode, gho_discount, stk_aave_balance, \
@@ -272,7 +272,7 @@ fn get_or_create_erc20_token_creates_then_preserves_metadata() {
         .get_or_create_erc20_token(1, "0xtoken", None, None, None)
         .unwrap();
     assert_eq!(id, id2);
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (name, symbol, decimals): (Option<String>, Option<String>, Option<i64>) = conn
         .query_row(
             "SELECT name, symbol, decimals FROM erc20_tokens WHERE id = ?1",
@@ -301,7 +301,7 @@ fn get_or_create_erc20_token_backfills_null_metadata_on_existing_row() {
     // Seed an existing GHO-like row with NULL metadata (the harness seed
     // path — `INSERT INTO erc20_tokens (chain, address) VALUES (...)`).
     {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         conn.execute(
             "INSERT INTO erc20_tokens (chain, address) VALUES (1, ?1)",
             params!["0xgho"],
@@ -312,7 +312,7 @@ fn get_or_create_erc20_token_backfills_null_metadata_on_existing_row() {
     let id2 = db
         .get_or_create_erc20_token(1, "0xgho", Some("Gho Token"), Some("GHO"), Some(18))
         .unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (name, symbol, decimals): (Option<String>, Option<String>, Option<i64>) = conn
         .query_row(
             "SELECT name, symbol, decimals FROM erc20_tokens WHERE address = ?1",
@@ -344,7 +344,7 @@ fn get_or_create_erc20_token_does_not_overwrite_existing_metadata() {
         .get_or_create_erc20_token(1, "0xtoken2", Some("Other Name"), Some("OTH"), Some(6))
         .unwrap();
     assert_eq!(id, id2);
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (name, symbol, decimals): (Option<String>, Option<String>, Option<i64>) = conn
         .query_row(
             "SELECT name, symbol, decimals FROM erc20_tokens WHERE id = ?1",
@@ -375,7 +375,7 @@ fn get_or_create_collateral_and_debt_positions_create_with_zero_balance() {
         cid
     );
     assert_eq!(db.get_or_create_debt_position(user, asset).unwrap(), did);
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (cbalance, clast): (String, Option<String>) = conn
         .query_row(
             "SELECT balance, last_index FROM aave_v3_collateral_positions WHERE id = ?1",
@@ -421,7 +421,7 @@ fn apply_collateral_configuration_changed_creates_then_updates() {
 
     let id = db.apply_collateral_configuration_changed(asset, b).unwrap();
     // created row has the decoded fields; stable_borrowing_enabled=False
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (ltv, lt, bonus, borr, stable, flash, iso, borr_iso, dc, emode): (
         i64,
         i64,
@@ -476,7 +476,7 @@ fn apply_collateral_configuration_changed_creates_then_updates() {
         .apply_collateral_configuration_changed(asset, b2)
         .unwrap();
     assert_eq!(id, id2, "update returns the existing row id");
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (ltv, is_frozen): (i64, bool) = conn
         .query_row(
             "SELECT ltv, isolation_mode FROM aave_v3_asset_configs WHERE id = ?1",
@@ -501,7 +501,7 @@ fn apply_e_mode_category_added_creates_then_updates() {
         .apply_e_mode_category_added(1, 3, 9100, 9600, 10100, Some("0xoracle2"), "ETH-v2")
         .unwrap();
     assert_eq!(id, id2, "update returns the existing row id");
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (label, ltv, lt, bonus, ps): (String, i64, i64, i64, Option<String>) = conn
         .query_row(
             "SELECT label, ltv, liquidation_threshold, liquidation_bonus, price_source \
@@ -521,7 +521,7 @@ fn apply_e_mode_category_added_zero_oracle_is_none() {
     let id = db
         .apply_e_mode_category_added(1, 1, 0, 0, 0, None, "")
         .unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let ps: Option<String> = conn
         .query_row(
             "SELECT price_source FROM aave_v3_emode_categories WHERE id = ?1",
@@ -539,7 +539,7 @@ fn apply_emode_asset_category_changed_unconditional_set() {
 
     // no existing config → create with e_mode_category_id = Some(5)
     let id = db.apply_emode_asset_category_changed(asset, 5).unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let emode: Option<i64> = conn
         .query_row(
             "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE id = ?1",
@@ -552,7 +552,7 @@ fn apply_emode_asset_category_changed_unconditional_set() {
 
     // new_category_id=0 → clear to None (the `> 0` gate)
     db.apply_emode_asset_category_changed(asset, 0).unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let emode: Option<i64> = conn
         .query_row(
             "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
@@ -565,7 +565,7 @@ fn apply_emode_asset_category_changed_unconditional_set() {
 
     // re-set to 7
     db.apply_emode_asset_category_changed(asset, 7).unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let emode: Option<i64> = conn
         .query_row(
             "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
@@ -588,7 +588,7 @@ fn apply_asset_collateral_in_emode_changed_gated_set() {
     // though category=9
     db.apply_asset_collateral_in_emode_changed(asset, 9, false)
         .unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let emode: Option<i64> = conn
         .query_row(
             "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
@@ -606,7 +606,7 @@ fn apply_asset_collateral_in_emode_changed_gated_set() {
     // category_id=0 + is_collateral=true → leave unchanged (the `> 0` gate)
     db.apply_asset_collateral_in_emode_changed(asset, 0, true)
         .unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let emode: Option<i64> = conn
         .query_row(
             "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
@@ -624,7 +624,7 @@ fn apply_asset_collateral_in_emode_changed_gated_set() {
     // is_collateral=true, category=4 → set
     db.apply_asset_collateral_in_emode_changed(asset, 4, true)
         .unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let emode: Option<i64> = conn
         .query_row(
             "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
@@ -645,7 +645,7 @@ fn apply_reserve_used_as_collateral_enable_then_disable() {
     let id = db
         .apply_reserve_used_as_collateral(user, asset, true)
         .unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let enabled: bool = conn
         .query_row(
             "SELECT enabled FROM aave_v3_user_collateral_configs WHERE id = ?1",
@@ -661,7 +661,7 @@ fn apply_reserve_used_as_collateral_enable_then_disable() {
         .apply_reserve_used_as_collateral(user, asset, false)
         .unwrap();
     assert_eq!(id, id2, "update returns the existing row id");
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let enabled: bool = conn
         .query_row(
             "SELECT enabled FROM aave_v3_user_collateral_configs WHERE id = ?1",
@@ -677,7 +677,7 @@ fn apply_user_e_mode_set_updates_e_mode() {
     let db = write_db_with_market();
     let user = seed_user(&db, "0xuserE");
     db.apply_user_e_mode_set(user, 3).unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let e_mode: i64 = conn
         .query_row(
             "SELECT e_mode FROM aave_v3_users WHERE id = ?1",
@@ -692,7 +692,7 @@ fn apply_user_e_mode_set_updates_e_mode() {
 fn apply_price_oracle_updated_inserts_then_updates() {
     let db = write_db_with_market();
     let id = db.apply_price_oracle_updated(1, "0xoracle1").unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (name, addr, rev): (String, String, Option<i64>) = conn
         .query_row(
             "SELECT name, address, revision FROM aave_v3_contracts WHERE id = ?1",
@@ -707,7 +707,7 @@ fn apply_price_oracle_updated_inserts_then_updates() {
 
     let id2 = db.apply_price_oracle_updated(1, "0xoracle2").unwrap();
     assert_eq!(id, id2);
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let addr: String = conn
         .query_row(
             "SELECT address FROM aave_v3_contracts WHERE id = ?1",
@@ -723,7 +723,7 @@ fn apply_asset_source_updated_sets_price_source() {
     let db = write_db_with_market();
     let asset = seed_asset(&db);
     db.apply_asset_source_updated(asset, "0xsource").unwrap();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let ps: Option<String> = conn
         .query_row(
             "SELECT price_source FROM aave_v3_assets WHERE id = ?1",
@@ -744,7 +744,7 @@ fn seed_debt_position_with_balance(
 ) -> i64 {
     let user = seed_user(db, "0xdebtor");
     let asset = seed_asset(db);
-    let conn = db.conn.lock();
+    let conn = db.lock();
     conn.execute(
         "INSERT INTO aave_v3_debt_positions \
                 (user_id, asset_id, balance, last_index) VALUES (?1, ?2, ?3, ?4)",
@@ -758,7 +758,7 @@ fn seed_debt_position_with_balance(
 fn lookup_position_balance_index_reads_debt_position() {
     let db = write_db_with_market();
     let pid = seed_debt_position_with_balance(&db, "1000", Some("123"));
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let (balance, last_index) =
         DegenbotDb::lookup_position_balance_index_on_conn(&conn, ScaledTokenPosition::Debt, pid)
             .unwrap();
@@ -769,7 +769,7 @@ fn lookup_position_balance_index_reads_debt_position() {
 #[test]
 fn lookup_position_balance_index_missing_row_returns_err() {
     let db = write_db_with_market();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let err =
         DegenbotDb::lookup_position_balance_index_on_conn(&conn, ScaledTokenPosition::Debt, 9999)
             .unwrap_err();
@@ -785,7 +785,7 @@ fn delete_zero_balance_positions_clears_only_this_markets_zero_rows() {
     seed_asset(&db);
     // A second market as the cross-market control.
     {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         conn.execute(
             "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
                  VALUES (2, 1, 'other', 1, NULL)",
@@ -798,7 +798,7 @@ fn delete_zero_balance_positions_clears_only_this_markets_zero_rows() {
     // one position per user+asset).
     let user_m1b = seed_user(&db, "0xm1userb");
     let user_m2 = {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         conn.execute(
             "INSERT INTO aave_v3_users \
                     (market_id, address, e_mode, gho_discount, stk_aave_balance, \
@@ -809,7 +809,7 @@ fn delete_zero_balance_positions_clears_only_this_markets_zero_rows() {
         .unwrap();
         conn.last_insert_rowid()
     };
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let insert = |table: &str, user_id: i64, balance: &str| -> i64 {
         conn.execute(
             &format!(
@@ -830,14 +830,14 @@ fn delete_zero_balance_positions_clears_only_this_markets_zero_rows() {
     drop(conn);
 
     let deleted = {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         DegenbotDb::delete_zero_balance_positions_on_conn(&conn, 1).unwrap()
     };
     assert_eq!(
         deleted, 2,
         "one zero collateral + one zero debt row for market 1"
     );
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let exists = |pid: i64, table: &str| -> bool {
         conn.query_row(
             &format!("SELECT COUNT(*) FROM {table} WHERE id = ?1"),
@@ -889,7 +889,7 @@ fn register_aave_market_creates_inactive_row_and_is_idempotent() {
     assert!(!created2, "idempotent: nothing created");
 
     let count: i64 = {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         conn.query_row(
                 "SELECT COUNT(*) FROM aave_v3_markets WHERE chain_id = 1 AND name = 'Aave Ethereum Market'",
                 [],
@@ -905,7 +905,7 @@ fn reset_debt_position_sets_balance_to_zero_and_advances_index() {
     let db = write_db_with_market();
     // balance=5000, last_index=100. New index=200 > 100 → advances.
     let pid = seed_debt_position_with_balance(&db, "5000", Some("100"));
-    let conn = db.conn.lock();
+    let conn = db.lock();
     DegenbotDb::reset_debt_position_to_zero_on_conn(
         &conn,
         pid,
@@ -924,7 +924,7 @@ fn reset_debt_position_keeps_higher_index_when_new_is_lower() {
     let db = write_db_with_market();
     // balance=5000, last_index=500. New index=200 < 500 → keep 500.
     let pid = seed_debt_position_with_balance(&db, "5000", Some("500"));
-    let conn = db.conn.lock();
+    let conn = db.lock();
     DegenbotDb::reset_debt_position_to_zero_on_conn(
         &conn,
         pid,
@@ -944,7 +944,7 @@ fn reset_debt_position_keeps_higher_index_when_new_is_lower() {
 #[test]
 fn reset_debt_position_missing_row_returns_err() {
     let db = write_db_with_market();
-    let conn = db.conn.lock();
+    let conn = db.lock();
     let err = DegenbotDb::reset_debt_position_to_zero_on_conn(
         &conn,
         9999,
@@ -968,7 +968,7 @@ fn apply_scaled_burn_clamps_to_zero_when_delta_exceeds_balance() {
     let db = write_db_with_market();
     // Stored balance = 1000; burn delta = -1500 (magnitude exceeds).
     let pid = seed_debt_position_with_balance(&db, "1000", Some("123"));
-    let conn = db.conn.lock();
+    let conn = db.lock();
     DegenbotDb::apply_scaled_token_burn_on_conn(
         &conn,
         ScaledTokenPosition::Debt,
@@ -999,7 +999,7 @@ fn apply_scaled_burn_partial_does_not_clamp() {
     let db = write_db_with_market();
     // Stored balance = 1000; burn delta = -600 (partial).
     let pid = seed_debt_position_with_balance(&db, "1000", Some("100"));
-    let conn = db.conn.lock();
+    let conn = db.lock();
     DegenbotDb::apply_scaled_token_burn_on_conn(
         &conn,
         ScaledTokenPosition::Debt,
@@ -1032,7 +1032,7 @@ fn apply_scaled_burn_exact_match_lands_on_zero() {
     let db = write_db_with_market();
     // Stored balance = 1000; burn delta = -1000 (exact full withdraw).
     let pid = seed_debt_position_with_balance(&db, "1000", Some("100"));
-    let conn = db.conn.lock();
+    let conn = db.lock();
     DegenbotDb::apply_scaled_token_burn_on_conn(
         &conn,
         ScaledTokenPosition::Debt,
@@ -1061,12 +1061,12 @@ fn apply_reserve_initialized_links_gho_vtoken_fk_when_set() {
     let db = write_db_with_market();
     // Seed the underlying erc20 (id 1) + the GHO token row referencing it.
     let gho_token_row_id = {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         DegenbotDb::get_or_create_gho_token_on_conn(&conn, 1, "0xgho1").unwrap()
     };
     // The new asset's underlying erc20 + aToken + vToken (ids 2/3/4).
     for (id, addr) in [(2_i64, "0xund"), (3, "0xa1"), (4, "0xv1")] {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         conn.execute(
             "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
             params![id, addr],
@@ -1074,7 +1074,7 @@ fn apply_reserve_initialized_links_gho_vtoken_fk_when_set() {
         .unwrap();
     }
     let v_token_id = 4_i64;
-    let conn = db.conn.lock();
+    let conn = db.lock();
     DegenbotDb::apply_reserve_initialized_on_conn(
         &conn,
         1,
@@ -1107,18 +1107,18 @@ fn apply_reserve_initialized_leaves_gho_vtoken_fk_null_for_regular_reserve() {
     // Seed a GHO token row with v_token_id = NULL — a regular-reserve
     // ReserveInitialized must NOT touch it.
     let gho_token_row_id = {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         DegenbotDb::get_or_create_gho_token_on_conn(&conn, 1, "0xgho1").unwrap()
     };
     for (id, addr) in [(2_i64, "0xund"), (3, "0xa1"), (4, "0xv1")] {
-        let conn = db.conn.lock();
+        let conn = db.lock();
         conn.execute(
             "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
             params![id, addr],
         )
         .unwrap();
     }
-    let conn = db.conn.lock();
+    let conn = db.lock();
     DegenbotDb::apply_reserve_initialized_on_conn(&conn, 1, 2, 3, 7, 4, 9, None, None).unwrap();
     let fk: Option<i64> = conn
         .query_row(
@@ -1131,4 +1131,94 @@ fn apply_reserve_initialized_leaves_gho_vtoken_fk_null_for_regular_reserve() {
         fk, None,
         "a regular-reserve event must not touch the GHO FK"
     );
+}
+// ── the write-seam pin (pair-path equivalence + chunk rollback) ──────────
+
+/// Pin the `get_or_create_e_mode_category` pair: the `&self` form (locks
+/// internally) and the `_on_conn` form (called on a borrowed chunk
+/// `Transaction`) land identical rows, and a rolled-back chunk transaction
+/// discards its `_on_conn` write.
+#[test]
+fn e_mode_category_pair_paths_agree_and_rollback_discards() {
+    // The `&self` form: one row, the Python ORM defaults.
+    let db = write_db_with_market();
+    let id_self = db.get_or_create_e_mode_category(1, 2).unwrap();
+    assert_eq!(id_self, 1);
+    let row_self: (i64, String, i64, i64, i64) = {
+        let conn = db.lock();
+        conn.query_row(
+            "SELECT category_id, label, ltv, liquidation_threshold, liquidation_bonus \
+             FROM aave_v3_emode_categories WHERE id = ?1",
+            params![id_self],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(row_self, (2, String::new(), 0, 0, 0));
+
+    // The `_on_conn` form on a borrowed `Transaction` (the chunk-loop shape):
+    // same row.
+    let db2 = write_db_with_market();
+    let id_tx = {
+        let guard = db2.lock();
+        let tx = guard.unchecked_transaction().unwrap();
+        let id = DegenbotDb::get_or_create_e_mode_category_on_conn(&tx, 1, 2).unwrap();
+        tx.commit().unwrap();
+        id
+    };
+    assert_eq!(id_tx, id_self);
+    let row_tx: (i64, String, i64, i64, i64) = {
+        let conn = db2.lock();
+        conn.query_row(
+            "SELECT category_id, label, ltv, liquidation_threshold, liquidation_bonus \
+             FROM aave_v3_emode_categories WHERE id = ?1",
+            params![id_tx],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(row_tx, row_self);
+
+    // A rolled-back chunk transaction discards the `_on_conn` write.
+    let db3 = write_db_with_market();
+    {
+        let guard = db3.lock();
+        let tx = guard.unchecked_transaction().unwrap();
+        DegenbotDb::get_or_create_e_mode_category_on_conn(&tx, 1, 2).unwrap();
+        tx.rollback().unwrap();
+    }
+    let remaining: i64 = {
+        let conn = db3.lock();
+        conn.query_row("SELECT COUNT(*) FROM aave_v3_emode_categories", [], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(remaining, 0);
+}
+
+/// The `existing_*` lookups route through the ONE shared existing-row probe
+/// (`write::util::existing_row_id`); the probe must return the same id the
+/// per-table lookups see and `None` on a miss.
+#[test]
+fn existing_row_id_shared_probe_matches_per_table_lookup() {
+    let db = write_db_with_market();
+    let id = db.get_or_create_e_mode_category(1, 3).unwrap();
+    let conn = db.lock();
+    let via_probe = super::util::existing_row_id(
+        &conn,
+        "SELECT id FROM aave_v3_emode_categories \
+         WHERE market_id = ?1 AND category_id = ?2",
+        params![1_i64, 3_i64],
+    )
+    .unwrap();
+    assert_eq!(via_probe, Some(id));
+    let miss = super::util::existing_row_id(
+        &conn,
+        "SELECT id FROM aave_v3_emode_categories \
+         WHERE market_id = ?1 AND category_id = ?2",
+        params![1_i64, 9_i64],
+    )
+    .unwrap();
+    assert_eq!(miss, None);
 }

@@ -244,18 +244,15 @@ impl DegenbotDb {
         user_id: i64,
         asset_id: i64,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::get_or_create_collateral_position_on_conn(&conn, user_id, asset_id)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_collateral_position`] (the §3.4
-    /// atomicity fix). See [`Self::get_or_create_e_mode_category_on_conn`]
-    /// for the rationale.
+    /// Connection-bound form of [`Self::get_or_create_collateral_position`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn get_or_create_collateral_position_on_conn(
         conn: &rusqlite::Connection,
         user_id: i64,
@@ -272,18 +269,15 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on a query failure.
     pub fn get_or_create_debt_position(&self, user_id: i64, asset_id: i64) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::get_or_create_debt_position_on_conn(&conn, user_id, asset_id)
     }
 
-    /// The single-transaction-bound variant of
-    /// [`Self::get_or_create_debt_position`] (the §3.4 atomicity
-    /// fix). See [`Self::get_or_create_e_mode_category_on_conn`] for the
-    /// rationale.
+    /// Connection-bound form of [`Self::get_or_create_debt_position`].
     ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant.
+    /// Same error conditions as the `&self` form.
     pub fn get_or_create_debt_position_on_conn(
         conn: &rusqlite::Connection,
         user_id: i64,
@@ -455,7 +449,7 @@ impl DegenbotDb {
         balance_delta: alloy::primitives::I256,
         new_index: alloy::primitives::U256,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_scaled_token_mint_on_conn(
             &conn,
             position,
@@ -477,7 +471,7 @@ impl DegenbotDb {
         balance_delta: alloy::primitives::I256,
         new_index: alloy::primitives::U256,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_scaled_token_burn_on_conn(
             &conn,
             position,
@@ -499,7 +493,7 @@ impl DegenbotDb {
         scaled_amount: alloy::primitives::U256,
         transfer_index: alloy::primitives::U256,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_scaled_token_transfer_on_conn(
             &conn,
             from_position_id,

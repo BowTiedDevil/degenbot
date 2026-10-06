@@ -1,6 +1,6 @@
 //! GHO discount-token writes + stkAAVE / rewards event applies.
 
-use super::util::parse_decimal_u256;
+use super::util::{existing_row_id, parse_decimal_u256};
 use super::{params, DbError, DegenbotDb, OptionalExtension};
 
 /// Look up an `aave_gho_tokens.id` by the underlying GHO token's `(chain, address)`
@@ -11,14 +11,13 @@ fn existing_gho_token(
     chain_id: i64,
     token_address: &str,
 ) -> Result<Option<i64>, DbError> {
-    // prepare_cached caches the compiled statement across calls.
-    let mut s = conn.prepare_cached(
+    existing_row_id(
+        conn,
         "SELECT g.id FROM aave_gho_tokens g
          JOIN erc20_tokens t ON t.id = g.token_id
          WHERE t.chain = ?1 AND t.address = ?2",
-    )?;
-    Ok(s.query_row(params![chain_id, token_address], |r| r.get(0))
-        .optional()?)
+        params![chain_id, token_address],
+    )
 }
 impl DegenbotDb {
     // ── GHO / stkAAVE / Rewards apply fns ──────────────────────────
@@ -64,7 +63,7 @@ impl DegenbotDb {
         user_id: i64,
         new_discount_percent: i64,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_gho_discount_percent_updated_on_conn(&conn, user_id, new_discount_percent)
     }
 
@@ -108,7 +107,7 @@ impl DegenbotDb {
         gho_token_id: i64,
         new_strategy: Option<&str>,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_gho_discount_rate_strategy_updated_on_conn(&conn, gho_token_id, new_strategy)
     }
 
@@ -148,7 +147,7 @@ impl DegenbotDb {
         gho_token_id: i64,
         new_discount_token: Option<&str>,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_gho_discount_token_updated_on_conn(&conn, gho_token_id, new_discount_token)
     }
 
@@ -272,7 +271,7 @@ impl DegenbotDb {
         to_user_id: Option<i64>,
         amount: alloy::primitives::U256,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_stk_aave_transfer_on_conn(&conn, from_user_id, to_user_id, amount)
     }
 
@@ -312,7 +311,7 @@ impl DegenbotDb {
         claimer_id: i64,
         claimed_amount: alloy::primitives::U256,
     ) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::apply_rewards_claimed_on_conn(
             &conn,
             user_id,
@@ -326,7 +325,8 @@ impl DegenbotDb {
     //
     // Four lookups the parser needs. Each mirrors
     // the Python `operations_parser.py::_get_*` helpers in shape — `&Connection`
-    // for the chunk-tx §3.4 invariant (one `Transaction` per chunk).
+    // so a chunk's lookups run inside its one `Transaction` (the write-module
+    // connection seam).
 
     /// Get-or-create an `aave_gho_tokens` row by `(chain_id, token_address)`.
     /// Port of the GHO-token resolution the parser + apply glue uses to
@@ -379,7 +379,7 @@ impl DegenbotDb {
         chain_id: i64,
         token_address: &str,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
+        let conn = self.lock();
         Self::get_or_create_gho_token_on_conn(&conn, chain_id, token_address)
     }
 
