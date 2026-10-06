@@ -294,6 +294,34 @@ aave golden is untouched (no aave code landed in this task).
   transaction. Ergo the aave half of Perf A needs its own task with that
   design settled; the pool half above is the template.
 
+### The Aave pre-lock fact-phase decision (ergo QR7QVT — the config-heavy corpus + the A2 verdict)
+
+Perf A's aave half was refused for want of evidence: the seed corpus records zero in-lock RPC, and the two candidate fact-phase shapes were unmeasured. The gating corpus now exists — `tests/fixtures/cassettes/aave_config_chunk_19091050-19091059.json` (the corpus's 7th cassette, recorder `--kind aave-run`, provenance `reth/v2.7.0-3d592ec` via `eth-mainnet.public.blastapi.io` — the same reth engine family as the rest of the corpus), spanning mainnet 19,091,050..=19,091,059 in the GHO-discount era, ~4.5 months after the discount config landed at block 17,699,249. The span carries THREE variable-debt GHO `Burn`s by the SAME user in three different txs — the fact-dependence shape both candidate designs must preserve, recorded live:
+
+- tx 1 (block 19,091,050): the user is absent from the harness DB → the discount pre-pass takes path #2 — `getDiscountPercent(user)` `eth_call` at the tx's block, RECORDED (the cassette's single `eth_call`; the run's 7 round trips = the 6 getLogs passes + this call). The ops parser then creates the user + the GHO debt position in the chunk apply.
+- txs 2+3 (blocks 19,091,053 / 19,091,057): the SAME user burns again → the pre-pass takes path #1 — the DB-cache read of the row the ops parser created in tx 1 — NO RPC. A pre-lock fact phase computing facts against the COMMITTED DB would re-issue the call (the round-trip gate would read 9, not 7): the fact phase must replay the chunk's own applies. That is the cross-tx overlay case, recorded — and it makes the shadow-DB fact run necessarily a FULL apply replay, not a topic scan.
+
+Bench rows (same workload, same command, median of 9 after 2 warmups):
+
+| capture | rt | resp bytes | stmts | fetch µs | dc+cmp µs | apply µs | lock-hold µs | chunk µs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| aave_update_chunk_26130440-26130445 (current era, no config events) | 6 | 28274 | 52 | 572 | 213 | 147 | 1803 | 5012 |
+| aave_config_chunk_19091050-19091059 (discount-path RPC) | 7 | 34815 | 60 | 584 | 463 | 228 | 2220 | 5441 |
+
+Replay-suite literals for the new capture (`aave_config_cassette_replay.rs`; measured, not assumed): `EXPECTED_APPLIED_EVENTS = 32`, `EXPECTED_LEDGER_STATEMENTS = 60`, `EXPECTED_RPC_ROUND_TRIPS = 7`, `EXPECTED_RPC_RESPONSE_BYTES = 34815` — rt = 7 IS the cross-tx gate (a re-issued `getDiscountPercent` for the later same-user txs reads 9). The committed goldens are new files; every EXISTING golden/literal is untouched (the seed aave suite stays 20 events / 52 statements / 6 rt / 28274 bytes, byte-identical).
+
+**Decision: (c) do-not-fix — the in-lock compute/SQL shape is accepted; the design question closes.**
+
+The rule applied: the config-heavy corpus DOES show in-lock RPC inside the hold, so the choice was (a)-vs-(c) on measured weight — and the measured weight is negligible by rate:
+
+- **The discount-path RPC is dead on the current chain.** The GHO vToken's `DEBT_TOKEN_REVISION()` is 6 ≥ the deprecation revision 4 → the snapshot takes path #3 (no `getDiscountPercent`), and `GhoRefreshDiscount` never fires (the V4+ strategy drops discount support). The current-era corpus (26,130,440-45, recorded Oct 2026) records 6 round trips, ALL `eth_getLogs` — zero in-lock RPC exists to hoist on any chunk without config events, so (a)/(b) buy nothing there while paying per chunk.
+- **The remaining in-lock RPC is config-EVENT-borne and fires at governance/upgrade cadence.** `Upgraded` revision reads, `CollateralConfigurationChanged` `getConfiguration`, `ReserveInitialized`'s ~14-call burst: 3 `Upgraded` events across the market's 134 aTokens/vTokens in 20M..26.1M (22,839,362 / 23,088,584 / 24,247,927 — roughly one every 8 months), and zero `ReserveInitialized` / `CollateralConfigurationChanged` / `AddressSet` in the node-reachable window. A per-chunk pre-lock phase pays every chunk to hoist a burst that arrives months apart.
+- **(a)'s cost is the double-SQL the brief predicted — made worse by the cross-tx finding.** The fact run must replay the FULL chunk apply (the ops-parser user/position creation included) to derive the discount facts correctly; the measured apply+prefetch shape is 60 statements behind a ~1.2ms commit floor per pass (the standing commit-bound finding), so the fact run roughly doubles the chunk's SQL + commit work on EVERY chunk — including the 0-RPC current-era chunks where it hoists nothing.
+- **(b)'s remaining seam work buys nothing Perf C hasn't already bought.** The substrate overlay already carries the cross-tx facts — the recorded path-#1 reads ARE the overlay serving the ops parser's tx-N writes to the discount path in tx N+1. What remains in-lock is the RPC itself, which a read-through facade cannot serve offline.
+- **The lock-hold on both aave corpora is commit-bound** (~1.2ms of the 1.8-2.2ms hold is `tx.commit()` in the bench process — the standing Perf-A/Perf-C finding). Hoisting the rare RPC does not move the floor.
+
+The structural `.await`s inside the lock remain the audited `await_holding_lock` shape; on config-free chunks the two RPC-bearing stages early-return to ZERO recorded RPC (the current-era corpus is the proof), and on config-event chunks the burst is the measured 1-14 calls at event cadence. The acceptance criterion's measurable content — byte-identical goldens, green probes, lock-hold measured on the config-heavy corpus — is met by the corpus itself. A targeted fact phase for config-event chunks only stays available as a future lever if upgrade cadence changes; this corpus pins the exact RPC surface any such phase must reproduce (6 getLogs + 1 `getDiscountPercent` pinned at the first-seen tx's block, and NOT re-issued for the later same-user txs).
+
 ## Glossary terms
 
 `golden capture`, `cassette`, `statement ledger`, `replay bench` are defined in

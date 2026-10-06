@@ -73,6 +73,14 @@ const POOL_UPDATE_CASSETTE: &str = "pool_update_chunk_26102622-26102626.json";
 const POOL_VERIFY_CASSETTE: &str = "pool_verify_chunk_26102622-26102626.json";
 const POOL_DENSE_CASSETTE: &str = "pool_dense_update_26131653-26133246.json";
 const AAVE_UPDATE_CASSETTE: &str = "aave_update_chunk_26130440-26130445.json";
+/// The config-era capture (the pre-lock fact-phase corpus): the GHO-discount
+/// era span 19,091,050..=19,091,059 — THREE variable-debt GHO `Burn`s by the
+/// SAME user in three different txs. The first burn's user is absent from the
+/// harness DB (the discount pre-pass takes the RPC path — the cassette's
+/// single `getDiscountPercent` eth_call at block 19,091,050); the two later
+/// same-user txs take the DB-cache path against the row the ops parser
+/// created in the first tx. The recorded cross-tx fact-dependence shape.
+const AAVE_CONFIG_CASSETTE: &str = "aave_config_chunk_19091050-19091059.json";
 
 /// The dense-pool capture (Perf B's measurement corpus): the USDC/WETH 0.05%
 /// V3 pool `0x88e6A0c2…` over blocks 26131653..=26133246 — 27 `Mint`/`Burn`
@@ -133,6 +141,9 @@ const EXPECTED_DENSE_TOUCHED_TICKS: usize = 26;
 /// ticks (the ledger's positions upsert writes 2 rows).
 const EXPECTED_SEED_TOUCHED_TICKS: usize = 2;
 const EXPECTED_AAVE_EVENTS: usize = 20;
+/// The config-era span's applied-event count (the replay suite's measured
+/// literal — GHO debt burns + position/user creation + the USDT/WETH ops).
+const EXPECTED_AAVE_CONFIG_EVENTS: usize = 32;
 
 /// A temp DB with one ACTIVE `uniswap_v3` exchange stamped at `from - 1`
 /// (mirrors `cassette_replay_run.rs`).
@@ -383,6 +394,132 @@ fn seed_aave_db(dir: &Path) -> (std::path::PathBuf, i64) {
                 SEED_TOKEN_REVISION,
                 None,
                 None,
+            )
+            .unwrap();
+        }
+        market_id
+    };
+    (path, market_id)
+}
+
+/// The config-era span's reserve assets as `(underlying, a_token, v_token)`,
+/// in the recorder's candidate order (address-ascending by underlying: GHO,
+/// WETH, USDT — mirrors `aave_config_cassette_replay.rs`). The GHO reserve
+/// seeds the GHO-vToken FK link (the recorder's `gho_link`), which is what
+/// makes the per-tx `build_discount_snapshot` resolve the GHO vToken at all.
+const CONFIG_RESERVES: [(&str, &str, &str); 3] = [
+    (
+        "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f",
+        "0x00907f9921424583e7ffBfEdf84F92B7B2Be4977",
+        "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B",
+    ),
+    (
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8",
+        "0xeA51d7853EEFb32b6ee06b1C12E6dcCA88Be0fFE",
+    ),
+    (
+        "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a",
+        "0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8",
+    ),
+];
+
+/// The config-era span's `--from` (the harness cursor stamp).
+const AAVE_CONFIG_SPAN_FROM: u64 = 19_091_050;
+
+/// Seed the config-era harness DB (mirrors `seed_aave_db` row for row except
+/// the span stamp, the reserve set, and the GHO-vToken FK link — the
+/// `aave_config_cassette_replay.rs` seed).
+fn seed_aave_config_db(dir: &Path) -> (std::path::PathBuf, i64) {
+    let path = dir.join("bench-config.db");
+    let (db, _state) = DegenbotDb::open_for_writes(&path).unwrap();
+    let market_id = {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO aave_v3_markets (chain_id, name, active, last_update_block)              VALUES (?1, ?2, 1, ?3)",
+            rusqlite::params![1i64, "Aave Ethereum Market", AAVE_BOOTSTRAP_BLOCK],
+        )
+        .unwrap();
+        let market_id = conn.last_insert_rowid();
+
+        DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &conn,
+            market_id,
+            "POOL_ADDRESS_PROVIDER",
+            POOL_ADDRESS_PROVIDER,
+            None,
+        )
+        .unwrap();
+        DegenbotDb::get_or_create_erc20_token_on_conn(
+            &conn,
+            1,
+            GHO,
+            Some(GHO_NAME),
+            Some(GHO_SYMBOL),
+            Some(GHO_DECIMALS),
+        )
+        .unwrap();
+        let gho_token_id = DegenbotDb::get_or_create_gho_token_on_conn(&conn, 1, GHO).unwrap();
+
+        DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &conn,
+            market_id,
+            "POOL",
+            POOL,
+            Some(POOL_REVISION),
+        )
+        .unwrap();
+        DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &conn,
+            market_id,
+            "POOL_CONFIGURATOR",
+            POOL_CONFIGURATOR,
+            Some(CONFIGURATOR_REVISION),
+        )
+        .unwrap();
+        DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &conn,
+            market_id,
+            "PRICE_ORACLE",
+            PRICE_ORACLE,
+            None,
+        )
+        .unwrap();
+
+        DegenbotDb::set_market_last_update_block_on_conn(
+            &conn,
+            market_id,
+            i64::try_from(AAVE_CONFIG_SPAN_FROM - 1).unwrap(),
+        )
+        .unwrap();
+
+        for (underlying, a_token, v_token) in CONFIG_RESERVES {
+            let underlying_id = DegenbotDb::get_or_create_erc20_token_on_conn(
+                &conn, 1, underlying, None, None, None,
+            )
+            .unwrap();
+            let a_token_id =
+                DegenbotDb::get_or_create_erc20_token_on_conn(&conn, 1, a_token, None, None, None)
+                    .unwrap();
+            let v_token_id =
+                DegenbotDb::get_or_create_erc20_token_on_conn(&conn, 1, v_token, None, None, None)
+                    .unwrap();
+            let gho_link = if underlying == GHO {
+                Some(gho_token_id)
+            } else {
+                None
+            };
+            DegenbotDb::apply_reserve_initialized_on_conn(
+                &conn,
+                market_id,
+                underlying_id,
+                a_token_id,
+                SEED_TOKEN_REVISION,
+                v_token_id,
+                SEED_TOKEN_REVISION,
+                None,
+                gho_link,
             )
             .unwrap();
         }
@@ -701,7 +838,78 @@ fn aave_iteration(
     )
 }
 
-fn measure_aave(label: &'static str, cassette_file: &str) -> Measurement {
+/// One measured iteration of the config-era Aave workload (the
+/// `aave_config_iteration` twin of [`aave_iteration`]: the config-era seed +
+/// its applied-events literal; the RPC-surface gate rides the served
+/// snapshot — the config-era corpus's 7 round trips ARE the cross-tx
+/// fact-dependence gate, since a re-issued `getDiscountPercent` for the
+/// later same-user txs would push the count to 9).
+fn aave_config_iteration(
+    cassette: &Cassette,
+    chain_id: i64,
+    from_block: u64,
+    to_block: u64,
+) -> (u64, u64, usize, StageTimes) {
+    let transport = CassetteReplayTransport::new(cassette.clone());
+    let provider = transport.as_alloy_provider();
+    let dir = TempDir::new().unwrap();
+    let (path, market_id) = seed_aave_config_db(dir.path());
+
+    let collector = Arc::new(AaveCollector::default());
+    let started = Instant::now();
+    let (report, statements, sql_us) = {
+        let (ledger, _state) = LedgerDb::open_for_writes(&path).unwrap();
+        let report = run_aave_update_on_db(
+            ledger.db(),
+            chain_id,
+            market_id,
+            Some(to_block),
+            to_block - from_block + 1,
+            provider,
+            Arc::new(AtomicBool::new(false)),
+            collector.clone(),
+            false,
+            None,
+            false,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("the replayed aave run must commit cleanly: {e}"));
+        let records = ledger.records().expect("the capture session is armed");
+        let sql_us = records.iter().map(|r| r.profile_us).sum::<u64>();
+        (report, records.len(), sql_us)
+    };
+    let total = started.elapsed();
+    assert_eq!(
+        report.chunks_committed, 1,
+        "the whole recorded span is one chunk"
+    );
+    assert_eq!(
+        report.total_events_applied, EXPECTED_AAVE_CONFIG_EVENTS,
+        "the corpus outcome drifted — this is a fixture problem, not a timing one"
+    );
+    let served = transport.served_snapshot();
+    assert_eq!(
+        served.requests, served.served,
+        "every request must be a served ledger entry — a fixture gap is loud"
+    );
+    assert_eq!(
+        served.served, 7,
+        "the config-era RPC surface drifted — a re-issued getDiscountPercent          for the later same-user txs (a broken cross-tx fact phase) would show here"
+    );
+    let chunks = collector.0.lock().unwrap().clone();
+    (
+        served.served,
+        served.response_bytes,
+        statements,
+        aave_stage_sums(&chunks, total, sql_us),
+    )
+}
+
+fn measure_aave(
+    label: &'static str,
+    cassette_file: &str,
+    iteration_fn: fn(&Cassette, i64, u64, u64) -> (u64, u64, usize, StageTimes),
+) -> Measurement {
     let cassette = load_cassette(cassette_file);
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
     let span_from = cassette.provenance.span.from_block;
@@ -714,7 +922,7 @@ fn measure_aave(label: &'static str, cassette_file: &str) -> Measurement {
     let mut samples: Vec<StageTimes> = Vec::new();
 
     for iteration in 0..(WARMUP_RUNS + MEASURED_RUNS) {
-        let (rt, bytes, stmts, stages) = aave_iteration(&cassette, chain_id, span_from, span_to);
+        let (rt, bytes, stmts, stages) = iteration_fn(&cassette, chain_id, span_from, span_to);
         match (round_trips, response_bytes, statements, bind_args) {
             (Some(p), Some(b), Some(s), Some(a)) => {
                 assert_eq!(p, rt, "round trips must be iteration-stable");
@@ -786,7 +994,16 @@ fn main() {
             EXPECTED_DENSE_LIQUIDITY_APPLIES,
             EXPECTED_DENSE_TOUCHED_TICKS,
         ),
-        measure_aave("aave_update_chunk_26130440-26130445", AAVE_UPDATE_CASSETTE),
+        measure_aave(
+            "aave_update_chunk_26130440-26130445",
+            AAVE_UPDATE_CASSETTE,
+            aave_iteration,
+        ),
+        measure_aave(
+            "aave_config_chunk_19091050-19091059 (discount-path RPC)",
+            AAVE_CONFIG_CASSETTE,
+            aave_config_iteration,
+        ),
     ];
 
     println!(

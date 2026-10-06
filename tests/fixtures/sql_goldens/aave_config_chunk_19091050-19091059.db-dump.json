@@ -1,0 +1,353 @@
+{
+  "schema": "degenbot.db-dump/v1",
+  "tables": [
+    {
+      "columns": [
+        "id",
+        "token_id",
+        "v_token_id",
+        "v_gho_discount_rate_strategy",
+        "v_gho_discount_token"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          3,
+          null,
+          null
+        ]
+      ],
+      "table": "aave_gho_tokens"
+    },
+    {
+      "columns": [
+        "id",
+        "asset_id",
+        "ltv",
+        "liquidation_threshold",
+        "liquidation_bonus",
+        "e_mode_category_id",
+        "borrowing_enabled",
+        "stable_borrowing_enabled",
+        "flash_loan_enabled",
+        "isolation_mode",
+        "borrowable_in_isolation",
+        "debt_ceiling"
+      ],
+      "rows": [],
+      "table": "aave_v3_asset_configs"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "underlying_asset_id",
+        "a_token_id",
+        "a_token_revision",
+        "v_token_id",
+        "v_token_revision",
+        "e_mode_category_id",
+        "price_source",
+        "last_update_block",
+        "liquidity_index",
+        "liquidity_rate",
+        "borrow_index",
+        "borrow_rate"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          1,
+          2,
+          1,
+          3,
+          1,
+          null,
+          null,
+          19091057,
+          "1000000000000000000000000000",
+          "0",
+          "1018239987895689161153357951",
+          "62200000000000000000000000"
+        ],
+        [
+          2,
+          1,
+          4,
+          5,
+          1,
+          6,
+          1,
+          null,
+          null,
+          19091057,
+          "1019105147392159211775821545",
+          "15367178683108576166376268",
+          "1034599658834845894463834904",
+          "25154844087554521467287229"
+        ],
+        [
+          3,
+          1,
+          7,
+          8,
+          1,
+          9,
+          1,
+          null,
+          null,
+          19091056,
+          "1041055453138317101477888683",
+          "44076143434508001667078049",
+          "1055481697950004898776169016",
+          "57139299205251540980738599"
+        ]
+      ],
+      "table": "aave_v3_assets"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "balance",
+        "last_index"
+      ],
+      "rows": [],
+      "table": "aave_v3_collateral_positions"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "name",
+        "address",
+        "revision"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "POOL_ADDRESS_PROVIDER",
+          "0x2f39d218133afab8f2b819b1066c7e434ad94e9e",
+          null
+        ],
+        [
+          2,
+          1,
+          "POOL",
+          "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
+          11
+        ],
+        [
+          3,
+          1,
+          "POOL_CONFIGURATOR",
+          "0x64b761d848206f447fe2dd461b0c635ec39ebb27",
+          8
+        ],
+        [
+          4,
+          1,
+          "PRICE_ORACLE",
+          "0x54586be62e3c3580375ae3723c145253060ca0c2",
+          null
+        ]
+      ],
+      "table": "aave_v3_contracts"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "balance",
+        "last_index"
+      ],
+      "rows": [],
+      "table": "aave_v3_debt_positions"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "category_id",
+        "label",
+        "ltv",
+        "liquidation_threshold",
+        "liquidation_bonus",
+        "price_source"
+      ],
+      "rows": [],
+      "table": "aave_v3_emode_categories"
+    },
+    {
+      "columns": [
+        "id",
+        "chain_id",
+        "name",
+        "active",
+        "last_update_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "Aave Ethereum Market",
+          1,
+          19091059
+        ]
+      ],
+      "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "enabled"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          2,
+          0
+        ]
+      ],
+      "table": "aave_v3_user_collateral_configs"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "address",
+        "e_mode",
+        "gho_discount",
+        "stk_aave_balance",
+        "isolation_mode_collateral_asset_id",
+        "isolation_mode_debt"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "0x02e7b8511831b1b02d9018215a0f8f500ea5c6b3",
+          0,
+          0,
+          null,
+          null,
+          "0"
+        ],
+        [
+          2,
+          1,
+          "0x0c008e6479a83be6a6c49d95c2029a6064136688",
+          0,
+          0,
+          null,
+          null,
+          "0"
+        ],
+        [
+          3,
+          1,
+          "0xa44247b333faf99c03c863bd713f034bd73f92a2",
+          0,
+          0,
+          null,
+          null,
+          "0"
+        ]
+      ],
+      "table": "aave_v3_users"
+    },
+    {
+      "columns": [
+        "id",
+        "chain",
+        "address",
+        "name",
+        "symbol",
+        "decimals"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f",
+          "Gho Token",
+          "GHO",
+          18
+        ],
+        [
+          2,
+          1,
+          "0x00907f9921424583e7ffbfedf84f92b7b2be4977",
+          null,
+          null,
+          null
+        ],
+        [
+          3,
+          1,
+          "0x786dbff3f1292ae8f92ea68cf93c30b34b1ed04b",
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          1,
+          "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          1,
+          "0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8",
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          1,
+          "0xea51d7853eefb32b6ee06b1c12e6dcca88be0ffe",
+          null,
+          null,
+          null
+        ],
+        [
+          7,
+          1,
+          "0xdac17f958d2ee523a2206206994597c13d831ec7",
+          null,
+          null,
+          null
+        ],
+        [
+          8,
+          1,
+          "0x23878914efe38d27c4d67ab83ed1b93a74d4086a",
+          null,
+          null,
+          null
+        ],
+        [
+          9,
+          1,
+          "0x6df1c1e379bc5a00a7b4c6e67a203333772f45a8",
+          null,
+          null,
+          null
+        ]
+      ],
+      "table": "erc20_tokens"
+    }
+  ]
+}
