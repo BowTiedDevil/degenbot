@@ -322,6 +322,15 @@ The rule applied: the config-heavy corpus DOES show in-lock RPC inside the hold,
 
 The structural `.await`s inside the lock remain the audited `await_holding_lock` shape; on config-free chunks the two RPC-bearing stages early-return to ZERO recorded RPC (the current-era corpus is the proof), and on config-event chunks the burst is the measured 1-14 calls at event cadence. The acceptance criterion's measurable content — byte-identical goldens, green probes, lock-hold measured on the config-heavy corpus — is met by the corpus itself. A targeted fact phase for config-event chunks only stays available as a future lever if upgrade cadence changes; this corpus pins the exact RPC surface any such phase must reproduce (6 getLogs + 1 `getDiscountPercent` pinned at the first-seen tx's block, and NOT re-issued for the later same-user txs).
 
+## Gate battery (post-epic correction)
+
+The named end-of-window ladder is `just dev` + `just test-python` + `just test-rust`
++ `just lint-rust-check` + `just lint-python-check`. Both lint lanes sit on the
+PRE-PUSH tier in `prek.toml`, so a commit-but-never-push loop never reaches
+them — and a green test ladder does NOT imply a green tree (both parallel lanes
+independently shipped test-green / lint-red before this was named). Name every
+lane explicitly; never infer coverage from the tier a hook claims to sit in.
+
 ## Glossary terms
 
 `golden capture`, `cassette`, `statement ledger`, `replay bench` are defined in

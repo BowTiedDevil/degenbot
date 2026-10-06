@@ -70,6 +70,13 @@ counter drift gates.
 
 ## Consequences
 
+- Wave-2 catalog notes (from the generator's own findings): a zero-amount `Mint`
+  cannot originate from a real pool (`require(amount > 0)`) — the skipped-write
+  branch's capture is manufactured through a real `LOG4`; and negative tick
+  spacing is unsound in the real pool (the pool constructor accepts it, only
+  the factory validates, and compressed-tick invariants invert on a plain
+  down-swap). Both are recorded in wave-3 task `HGOV5W` with their capture plans.
+
 - The coherence gate becomes testable in CI: a mutated recorded slot must roll the
   chunk back (and leave `last_update_block` unadvanced) in a test, not first in prod.
 - Fixture maintenance is bounded: cassettes re-record only when the pinned span
