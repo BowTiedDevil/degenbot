@@ -300,6 +300,13 @@ pub struct ChunkWriteReport {
     /// Wall time of the remaining SQL apply (the fn's total span minus the
     /// compute + verify spans).
     pub apply_time: Duration,
+    /// The `last_update_block` value the chunk's stamps wrote (`chunk_end`
+    /// through the same i64 clamp the stamp used) — the caller advances its
+    /// in-memory markers from this instead of re-reading the DB post-commit
+    /// (Perf E's dead-query removal). Meaningful only on the `Ok` path: a
+    /// stamp whose optimistic WHERE fires zero rows errors out before a
+    /// caller could read this.
+    pub stamped_last_update_block: i64,
 }
 
 /// An error from [`map_pool_creation`] — the pure decode→row-input mapping.
@@ -616,6 +623,11 @@ pub fn apply_chunk_writes_on_conn(
             });
         }
     }
+    // Every stamp above fired (a zero-row stamp returned early), so the
+    // committed marker value is exactly `chunk_end_i64` for each chunk spec
+    // — carried out on the report so the caller never re-reads the DB for it
+    // (Perf E).
+    report.stamped_last_update_block = chunk_end_i64;
 
     // The remaining in-transaction wall time is the SQL apply (upserts, the
     // planned persists, the fused-path computes, the stamp) - the fn's span
@@ -1310,52 +1322,80 @@ pub fn run_pool_update_on_db(
 
         // RPC fetches (GIL-free, async) — pool creations per in-scope exchange +
         // the V3 whole-chain + V4 per-PoolManager liquidity scans for the range.
+        // Perf E: the three phases run concurrently over the ONE shared
+        // `LogFetcher` (tokio::join!) instead of three sequential `block_on`
+        // spans. The request set is exactly the sequential shape's (same
+        // filters, same per-phase chunking) — only the concurrency changes,
+        // so the replay round-trip/byte counters must not move. Results are
+        // consumed in the sequential order (creations, V3, V4) so the first
+        // surfaced error keeps its precedence, loudly (no result is dropped
+        // or defaulted when a sibling phase fails).
         let fetch_started = Instant::now();
-        let pool_creations = rt.block_on(fetch_pool_creations(
-            &fetcher,
-            working_end_block,
-            &chunk_specs_with_start,
-        ))?;
-        chunk_fetch_time += fetch_started.elapsed();
-        // V3 `Mint`/`Burn` events can't be efficiently RPC-filtered by pool
-        // address, so this is a whole-chain scan over the chunk's range. The
-        // apply step (in `apply_chunk_writes_on_conn`) drops pools whose
-        // `exchange_id` is NOT in `chunk_specs`. (Limitation: if a V3 fork
-        // ever diverges AHEAD of the grid, this whole-chain range would re-fetch
-        // its committed events — currently all V3 forks advance in lockstep at
-        // the laggard marker, so the case does not arise.)
-        let fetch_started = Instant::now();
-        let v3_liquidity = rt.block_on(fetch_v3_liquidity_logs_grouped(
-            &fetcher,
-            working_start_block,
-            working_end_block,
-            None, // whole-chain (V3 events can't be efficiently RPC-filtered)
-        ))?;
-        chunk_fetch_time += fetch_started.elapsed();
-        // V4 liquidity: fetch per PoolManager (the V4 exchange's `factory` is
-        // the PoolManager address), scoped to each spec's per-exchange fetch
-        // start. Merge across all V4 chunk-specs into one grouped map (the
-        // apply is per-pool_hash, manager-chain-scoped).
-        let mut v4_liquidity: HashMap<String, Vec<LiquidityUpdateEvent>> = HashMap::new();
-        let mut v4_manager_addresses: HashMap<String, Address> = HashMap::new();
-        for (spec, fetch_start) in &chunk_specs_with_start {
-            if matches!(spec.family, crate::fetch::PoolFamily::V4) {
-                let fetch_started = Instant::now();
-                let per_manager = rt.block_on(fetch_v4_liquidity_logs_grouped(
+        let (pool_creations, v3_liquidity, v4_fetched) = rt.block_on(async {
+            tokio::join!(
+                fetch_pool_creations(&fetcher, working_end_block, &chunk_specs_with_start),
+                // V3 `Mint`/`Burn` events can't be efficiently RPC-filtered by
+                // pool address, so this is a whole-chain scan over the chunk's
+                // range. The apply step (in `apply_chunk_writes_on_conn`)
+                // drops pools whose `exchange_id` is NOT in `chunk_specs`.
+                // (Limitation: if a V3 fork ever diverges AHEAD of the grid,
+                // this whole-chain range would re-fetch its committed events —
+                // currently all V3 forks advance in lockstep at the laggard
+                // marker, so the case does not arise.)
+                fetch_v3_liquidity_logs_grouped(
                     &fetcher,
-                    *fetch_start,
+                    working_start_block,
                     working_end_block,
-                    Some(spec.factory),
-                ))?;
-                chunk_fetch_time += fetch_started.elapsed();
-                for (hash, events) in per_manager {
-                    v4_manager_addresses
-                        .entry(hash.clone())
-                        .or_insert(spec.factory);
-                    v4_liquidity.entry(hash).or_default().extend(events);
-                }
-            }
-        }
+                    None, // whole-chain (V3 events can't be efficiently RPC-filtered)
+                ),
+                // V4 liquidity: fetch per PoolManager (the V4 exchange's
+                // `factory` is the PoolManager address), scoped to each spec's
+                // per-exchange fetch start. Merge across all V4 chunk-specs
+                // into one grouped map (the apply is per-pool_hash,
+                // manager-chain-scoped). The merge loop stays sequential —
+                // the map order the apply sees must not depend on fetch
+                // timing.
+                async {
+                    let mut v4_liquidity: HashMap<String, Vec<LiquidityUpdateEvent>> =
+                        HashMap::new();
+                    let mut v4_manager_addresses: HashMap<String, Address> = HashMap::new();
+                    for (spec, fetch_start) in &chunk_specs_with_start {
+                        if matches!(spec.family, crate::fetch::PoolFamily::V4) {
+                            let per_manager = fetch_v4_liquidity_logs_grouped(
+                                &fetcher,
+                                *fetch_start,
+                                working_end_block,
+                                Some(spec.factory),
+                            )
+                            .await?;
+                            for (hash, events) in per_manager {
+                                v4_manager_addresses
+                                    .entry(hash.clone())
+                                    .or_insert(spec.factory);
+                                v4_liquidity.entry(hash).or_default().extend(events);
+                            }
+                        }
+                    }
+                    // The error type is pinned explicitly: `RunError` carries
+                    // several `From` impls, so inference cannot pick one.
+                    Ok::<
+                        (
+                            HashMap<String, Vec<LiquidityUpdateEvent>>,
+                            HashMap<String, Address>,
+                        ),
+                        ProviderError,
+                    >((v4_liquidity, v4_manager_addresses))
+                },
+            )
+        });
+        // Consume the joined results in the sequential error precedence
+        // (creations, V3, V4) — every failure surfaces, none is swallowed.
+        let pool_creations = pool_creations?;
+        let v3_liquidity = v3_liquidity?;
+        let (v4_liquidity, v4_manager_addresses) = v4_fetched?;
+        // One span for the overlapped phases: summing per-phase spans would
+        // double-count wall time that now runs concurrently.
+        chunk_fetch_time += fetch_started.elapsed();
         let inputs = ChunkInputs {
             pool_creations,
             v3_liquidity,
@@ -1490,24 +1530,22 @@ pub fn run_pool_update_on_db(
             }
         };
 
-        // Refresh the in-memory `last_update_block` for the next-iteration
-        // laggard computation (the DB row is now `working_end_block`).
-        for spec in &specs_to_update {
-            if chunk_specs.iter().any(|c| c.id == spec.id) {
-                // Re-read from the DB to stay canonical (the stamp just committed).
-                if let Ok(Some(exchange)) = db.fetch_exchange(spec.id) {
-                    // Mirror the field via a fresh spec fetch (one cheap query
-                    // per exchange per chunk — acceptable for the chunk pace).
-                    let _ = exchange;
-                }
-            }
-        }
-        // Re-load specs to refresh `last_update_block` for the next iteration's
-        // laggard filter (the DB now has the advanced stamp).
-        let refreshed = load_active_exchange_specs(db, chain_id)?;
+        // Perf E: advance the in-memory markers straight from the write
+        // report — the stamps the just-committed transaction wrote are
+        // exactly `chunk_report.stamped_last_update_block` for every chunk
+        // spec (each stamp's optimistic WHERE fired, or the chunk errored
+        // before this line). The post-commit tail this replaces ran a
+        // per-spec `fetch_exchange` whose result was thrown away (a dead
+        // query — and a silent error swallow) plus a full
+        // `load_active_exchange_specs` reload whose only live output was
+        // the marker advance carried here; both cost real statements and
+        // wall time on every chunk (survey finding 6). No other writer can
+        // move a marker under the bot's single-writer discipline — a moved
+        // marker surfaces loudly as `RunError::MarkerMoved` from the stamp
+        // itself (the structural check this re-plan loop already handles).
         for spec in &mut specs_to_update {
-            if let Some(r) = refreshed.iter().find(|r| r.id == spec.id) {
-                spec.last_update_block = r.last_update_block;
+            if chunk_specs.iter().any(|c| c.id == spec.id) {
+                spec.last_update_block = Some(chunk_report.stamped_last_update_block);
             }
         }
 

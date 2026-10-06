@@ -159,15 +159,15 @@ tick/bitmap reads ride the recorded `eth_call`s),
 
 | capture | rt | resp bytes | stmts | sql µs | fetch µs | dc+cmp µs | verify µs | apply µs | lock-hold µs | chunk µs | chunks/sec |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| pool_update_chunk_26102622-26102626 (gate OFF) | 2 | 4289 | 25 | 1000 | 130 | 34 | 0 | 207 | 1483 | 3997 | 250 |
-| pool_verify_chunk_26102622-26102626 (gate ON) | 7 | 5510 | 25 | 1000 | 132 | 31 | 48 | 209 | 1527 | 4192 | 238 |
+| pool_update_chunk_26102622-26102626 (gate OFF) | 2 | 4289 | 23 | 1000 | 130 | 34 | 0 | 207 | 1483 | 3997 | 250 |
+| pool_verify_chunk_26102622-26102626 (gate ON) | 7 | 5510 | 23 | 1000 | 132 | 31 | 48 | 209 | 1527 | 4192 | 238 |
 | aave_update_chunk_26130440-26130445 | 6 | 28274 | 150 | 2000 | 558 | 1327 | 0 | 169 | 2933 | 6138 | 162 |
 
 Column semantics: `rt` = ledger entries served per run (the RPC round-trip
 count; pool gate-ON adds the gate's five `eth_call`s to the two `eth_getLogs`
 passes); `resp bytes` = the served answers' serialized payload bytes; `stmts`
 = the statement ledger's record count per chunk apply (the drift-gate
-literals: 25 / 150); stages are the run entries' `Instant` spans — fetch
+literals: 23 / 150); stages are the run entries' `Instant` spans — fetch
 (the RPC log fetches), dc+cmp (in-transaction decode+compute: pool per-pool
 full-map read+compute; Aave per-tx discount pre-pass + config dispatch, both
 under the write lock), verify (pre-commit on-chain gate), apply (remaining
@@ -195,7 +195,7 @@ What the numbers say (first read, to be re-ranked per fix):
   ×2), pool+gate 7 (+5 `eth_call`s), aave 6 (`eth_getLogs` ×6; no
   config events in this span → no `eth_call`s) — asserted as literals in
   the replay suites (`EXPECTED_RPC_ROUND_TRIPS`), alongside the statement
-  counts (25/150) and the served-byte totals.
+  counts (23/150) and the served-byte totals.
 - **The dead-query tail is visible by subtraction**: pool chunk wall 4.0 ms
   vs fetch+hold 1.6 ms — the remainder is loop overhead + the post-commit
   `fetch_exchange` refresh loop (finding 6, Perf F).
@@ -326,3 +326,121 @@ unchanged — the §3.4 observable outcome). The RPC counters are untouched:
   handlers now ride the same substrate cache. The remaining measured lever
   for THIS corpus is the chunk commit (the measurement gate's next finding),
   then Perf F's dead-query tail.
+
+### Post-Perf-E rows (ergo ZUVFTX — fetch-stage pipelining + dead-query removal)
+
+Same workload, same command (`just bench-updaters`), same devcontainer, median
+of 9 after 2 warmups. Perf E deleted the pool chunk loop's post-commit
+dead-query tail (the per-spec `fetch_exchange` whose result was discarded +
+the full `load_active_exchange_specs` reload) and overlapped the three
+sequential fetch phases (pool creations / the whole-chain V3 Mint-Burn scan /
+the per-manager V4 scans) under one `tokio::join!` over the single shared
+`LogFetcher`. The marker refresh folds into the write report: the chunk's
+stamps return their committed value on `ChunkWriteReport` and the caller
+advances its in-memory markers from that — no statement, no read-back, and
+the deleted tail's silent error swallow (`if let Ok(Some(exchange))`)
+goes with it.
+
+Rows measured in this task, immediately before and after the edit on the
+same tree (the standing post-Perf-A/Perf-C rows above are the published
+reference; run-to-run spread is the documented ±10% on the timing columns):
+
+| capture (before → after this task) | rt | resp bytes | stmts | fetch µs | dc+cmp µs | verify µs | apply µs | lock-hold µs | chunk µs | chunks/sec |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| pool_update_chunk_26102622-26102626 (gate OFF, before) | 2 | 4289 | 25 | 112 | 63 | 0 | 154 | 1415 | 3950 | 253 |
+| pool_update_chunk_26102622-26102626 (gate OFF, after) | 2 | 4289 | 23 | 88 | 78 | 0 | 179 | 1462 | 3945 | 253 |
+| pool_verify_chunk_26102622-26102626 (gate ON, before) | 7 | 5510 | 25 | 136 | 73 | 44 | 160 | 1479 | 4075 | 245 |
+| pool_verify_chunk_26102622-26102626 (gate ON, after) | 7 | 5510 | 23 | 90 | 72 | 41 | 175 | 1494 | 4163 | 240 |
+| aave_update_chunk_26130440-26130445 (untouched by Perf E) | 6 | 28274 | 52 | 570 | 259 | 0 | 163 | 2021 | 5420 | 184 |
+
+**Findings from the post-Perf-E measurement (re-ranking input):**
+
+- **The request set did not move — the pipelining proof.** The RPC counter
+gates stayed exact on both pool postures (2 round trips / 4289 bytes gate
+OFF; 7 / 5510 gate ON; aave 6 / 28274 untouched), and the cassette drift
+gate stays 5/5 green: `join!` changes concurrency, not the request set
+(same filters, same per-phase chunking, one shared `LogFetcher`). The
+joined results are consumed in the sequential order (creations, V3, V4) so
+the first surfaced error keeps its precedence — no result dropped or
+defaulted when a sibling phase fails.
+- **fetch µs did not regress — it improved on both postures** (112 → 88
+gate OFF, 136 → 90 gate ON, medians on this tree). On the zero-network
+cassette the win is bounded by the transport's serving cost; on a live
+node the three passes are network-bound and the overlap is the point.
+- **The statement ledger moved exactly by the dead tail: 25 → 23 per pool
+chunk, both postures.** The two removed statements are the LAST two entries
+of the committed ledger golden — the post-commit `SELECT … FROM exchanges
+WHERE id = ?` (the discarded `fetch_exchange`) and the reload `SELECT …
+FROM exchanges WHERE chain_id = ? AND active = ? ORDER BY id`. Statements
+1-23 (the run-start specs load, the two pre-`BEGIN` scope fetches, the
+transaction, `COMMIT`) are unchanged in text and order — the deleted pair
+sat after `COMMIT` and only selected, so the DB dump golden is
+byte-identical (no SQL text, no statement order, no written value
+changed). The goldens now tell that truth: `EXPECTED_LEDGER_STATEMENTS`
+bumped 25 → 23 (the tripwire's own first-hand count) and both pool goldens
+regenerated through the same writer the gate compares with — the ledger
+diff is exactly the two tail SELECTs above, the DB dump is byte-identical
+(md5 `5834647572e27c47c03ca21ff9ab5299`), and the gate is green.
+- **Removed statement classes (the dead-tail measurement, made literal):**
+exactly 2 read-only post-commit SELECTs on `exchanges` — the per-spec
+`fetch_exchange` point read (`SELECT … FROM exchanges WHERE id = ?`) and
+the `load_active_exchange_specs` reload (`SELECT … FROM exchanges WHERE
+chain_id = ? AND active = ? ORDER BY id`) — golden positions 24-25,
+`rows_changed = 0` on both, nothing added; ledger count 25 → 23 (−2),
+per pool chunk, both postures.
+- **The chunk-us column barely moved (3950 → 3945 gate OFF; gate ON within
+noise)** — consistent with the standing finding that this corpus's pool
+chunk is commit-bound (~1.25 ms of `tx.commit()` inside the bench
+process): the tail was real statements and real wall time per chunk, but
+small against that floor. The durable facts are the statement count and
+the fetch stage. The aave row's movement is run-to-run noise (no aave code
+in this task).
+- **The optional chunk N+1 prefetch was evaluated and NOT taken.** A
+rolled-back chunk (verify RED or the optimistic stamp's marker check)
+would strand a prefetched N+1 fetch — a re-fetch on the retry path, i.e. a
+request-count movement — and the `in_scope_fetch_start` marker contract
+(divergent-ahead specs must not re-fetch their committed range) makes a
+marker-assuming prefetch correctness-adjacent. The single-chunk corpus
+cannot measure it; the measured levers here are the tail removal and the
+phase overlap only.
+
+### The V3 whole-chain vs address-listed request shape (Perf E measurement)
+
+The pool chunk's V3 `Mint`/`Burn` scan is a whole-chain `eth_getLogs` (no
+`address` field in the filter — the recorded request proves it: the
+committed pool cassette's scan entry carries only `fromBlock`/`toBlock` +
+the Mint/Burn topic group). The alternative shape filters node-side by
+emitter = the DB's known V3 pool set. Measured on the seed corpus, with
+the honest bound stated:
+
+- **On this corpus the address-listed shape cannot be exercised at all.**
+The corpus chunk is the DB's FIRST chunk: at fetch time the known V3 pool
+set is empty, so the address list either degenerates (an empty emitter
+list is a different wire request — `"address": []` — and a loud fixture
+gap against the committed ledger) or collapses into the whole-chain
+request. Both shapes are cheap here because there is nothing to filter.
+- **What the whole-chain shape costs on this corpus (measured, from the
+committed cassette + ledger golden):** the scan's recorded answer carries
+4 logs from 3 distinct emitters; exactly 1 emitter (1 log) is a pool the
+database ever knows (the pool this very chunk creates — and it is created
+only AFTER the fetch), while 3 logs from 2 emitters belong to pools the
+database never knows. Those 3 logs ride the response, get decoded, and
+cost the read pass's two scope SELECTs (statements 2-3 of the ledger
+golden) before the in-scope filter drops them. That is the whole-chain
+shape's waste on this corpus, and it is bounded and cheap.
+- **What the address-listed shape would cost (bounded by arithmetic, not
+by this corpus):** each carried address costs 45 wire bytes, so a
+mainnet-scale known pool set (thousands to tens of thousands of V3 pools)
+pays tens to hundreds of kilobytes per scan per chunk, per address-list
+request the fetcher chunks — against the whole-chain request's constant
+size. The win it buys back (the unknown-emitter share of the response,
+node-side) is unmeasurable in this harness (no node; the replay ledger
+cannot serve a request shape the recorder never issued).
+- **Verdict: keep the whole-chain shape.** It is the only shape that
+serves a backfill's opening chunk (empty known set), it is constant-size
+in the request, and its measured waste is two scope SELECTs plus three
+unusable logs on this corpus. Switching shapes would also change the
+recorded request set and move the pinned RPC counter gates (2 / 4289) —
+a re-record, not a perf fix. The corpus can only bound the per-request
+overhead of the two shapes; the node-side filtering gain needs a live
+node and stays unmeasured — stated plainly.

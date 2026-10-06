@@ -76,7 +76,7 @@ const DUMP_GOLDEN_PATH: &str = concat!(
 /// over this corpus. Any N+1-style regression (a query hoisted out of a loop
 /// going back in, a per-row re-read) changes this and fails the plain test
 /// run — before the byte-diff even consults the committed golden.
-const EXPECTED_LEDGER_STATEMENTS: usize = 25;
+const EXPECTED_LEDGER_STATEMENTS: usize = 23;
 
 /// The tables one pool-chunk apply touches, in the dump's fixed (alphabetical)
 /// order. `exchanges` is the chunk's commit stamp; `erc20_tokens` the token

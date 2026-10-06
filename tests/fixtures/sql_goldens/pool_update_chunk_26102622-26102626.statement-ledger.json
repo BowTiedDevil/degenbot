@@ -115,16 +115,6 @@
       "arg_count": 0,
       "rows_changed": 0,
       "sql": "COMMIT"
-    },
-    {
-      "arg_count": 1,
-      "rows_changed": 0,
-      "sql": "SELECT id, chain_id, name, active, last_update_block, factory, deployer FROM exchanges WHERE id = ?"
-    },
-    {
-      "arg_count": 1,
-      "rows_changed": 0,
-      "sql": "SELECT id, chain_id, name, active, last_update_block, factory, deployer FROM exchanges WHERE chain_id = ? AND active = ? ORDER BY id"
     }
   ]
 }
