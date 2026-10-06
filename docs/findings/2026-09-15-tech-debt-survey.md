@@ -301,18 +301,36 @@ Also duplicated:
 `erc20_factory`, `database`, `identity_env`, `verdict_probe`, …). These are the
 stragglers.
 
-### T4 — Test bodies that need a fixture, not a 250-line function (MEDIUM-HIGH)
-| lines | site |
-|---|---|
-| 252 | `tests/aave/writer_parity/test_verify_positions_on_chain_truth.py:236` |
-| 250 | `tests/balancer/test_stable_pools.py:685` `test_given_out_ankreth_for_weth` |
-| 211 | `tests/builders/test_pybot_io.py:63` `test_pybot_io_satisfies_pool_io_protocol` |
-| 191 | `tests/standalone_anvil/test_ipc_transport.py:138` |
-| 187 | `tests/arbitrage/test_arbitrage_session.py:1390` |
-| 169 | `tests/uniswap/v3/test_uniswap_v3_snapshot.py:177` |
+### T4 — Test bodies that need a fixture (CORRECTED: the original figures were measurement artifacts)
 
-`test_pybot_io_satisfies_pool_io_protocol` in particular is a 211-line
-parameterized-ish body that should be a `(pool, io) -> None` factory + one test.
+> **Correction, applied after the epic was scoped.** The table this section
+> originally carried was wrong. It was produced by a span heuristic that
+> measured from a `def test_` line to the *next* `def test_` line, which
+> silently attributed any module-level code in between — data tables, helper
+> classes, comment blocks — to the preceding test. Re-measured with `ast`
+> (`FunctionDef.end_lineno`), the real bodies are much smaller, and only one
+> of the six was genuinely oversized.
+
+| survey said | true (ast) | site |
+|---|---|---|
+| 252 | **65** | `tests/aave/writer_parity/test_verify_positions_on_chain_truth.py:236` |
+| 250 | **21** | `tests/balancer/test_stable_pools.py:685` `test_given_out_ankreth_for_weth` |
+| 211 | **10** | `tests/builders/test_pybot_io.py:63` `test_pybot_io_satisfies_pool_io_protocol` |
+| 191 | **60** | `tests/standalone_anvil/test_ipc_transport.py:138` |
+| 187 | **76** | `tests/arbitrage/test_arbitrage_session.py` (largest body) |
+| 169 | **167** | `tests/uniswap/v3/test_uniswap_v3_snapshot.py:177` |
+
+Only `test_uniswap_v3_snapshot.py` needed work, and it was done: the inline
+six-pool expected-state table moved to module level and the test body fell to
+about 30 lines. The other two cases were already fed by per-pool fixtures
+(`ankreth_weth_data` wrapping `_build_pool_data`; a parametrised `method`
+probe). Three files were nevertheless refactored on the strength of the bad
+figures; the change was behaviour-neutral (assertions verbatim, re-indented),
+but it was churn that should not have happened.
+
+**Takeaway for anyone reusing this survey:** measure function bodies with
+`ast`, not by scanning for `def`. The same caveat applies to any line-count
+claim in this document.
 
 ### T5 — Monkeypatching a production module attribute where a seam exists (MEDIUM)
 - `tests/telemetry/test_shutdown.py:39-40,65-66,114-115` —
