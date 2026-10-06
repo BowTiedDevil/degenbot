@@ -244,6 +244,7 @@ pub mod arb_engine;
 pub use arb_engine::fleet_intake;
 pub use degenbot_substrate::connector_index;
 pub mod failure_policy;
+pub mod hosted_sources;
 #[cfg(feature = "otel")]
 pub mod instruments;
 #[cfg(feature = "otel")]

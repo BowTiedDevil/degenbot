@@ -447,6 +447,30 @@ impl Hub {
         }
     }
 
+    /// A second sender for the registered head source — the handle a
+    /// fallback publisher (the stale-fallback head poller) pushes polled
+    /// heads through beside the transport's own.
+    ///
+    /// # Errors
+    ///
+    /// [`HubError::NotRegistered`] if [`Self::register_head_source`] has not
+    /// run on this hub; [`HubError::PolicyMismatch`] if the `NewHead` source
+    /// did not declare the `LatestOnly` policy.
+    pub fn head_sender(&self) -> Result<HeadSender, HubError> {
+        let sources = self.sources.lock();
+        let entry = sources
+            .get(&HubClass::NewHead)
+            .ok_or(HubError::NotRegistered(HubClass::NewHead))?;
+        match &entry.channel {
+            Channel::LatestOnly(channel) => Ok(HeadSender::new(LatestSender {
+                inner: Arc::clone(channel),
+            })),
+            _ => Err(HubError::PolicyMismatch {
+                expected: "LatestOnly",
+            }),
+        }
+    }
+
     /// Subscribe to the hub head source.
     ///
     /// # Errors
@@ -618,7 +642,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::event::PendingTx;
+    use crate::event::{PendingTx, PendingTxSource};
 
     const NAMED_TEST_CHANNEL: &str = "test_named_channel";
 
@@ -651,7 +675,7 @@ mod tests {
     fn drop_oldest_sender(hub: &Hub, capacity: usize) -> DropOldestSender {
         match hub
             .register_source(
-                HubClass::PendingTx,
+                HubClass::PendingTx(PendingTxSource::Mevblocker),
                 OverflowPolicy::DropOldestCounted {
                     name: "dropped_ring",
                 },
@@ -668,35 +692,112 @@ mod tests {
     fn policy_is_fixed_at_registration() {
         let hub = Hub::new();
         assert!(matches!(
-            hub.subscribe(HubClass::PendingTx),
-            Err(HubError::NotRegistered(HubClass::PendingTx))
+            hub.subscribe(HubClass::PendingTx(PendingTxSource::Mevblocker)),
+            Err(HubError::NotRegistered(HubClass::PendingTx(
+                PendingTxSource::Mevblocker
+            )))
         ));
         let handle = drop_oldest_sender(&hub, 4);
         assert_eq!(handle.name(), "dropped_ring");
         assert!(matches!(
-            hub.register_source(HubClass::PendingTx, OverflowPolicy::LatestOnly, 4),
-            Err(HubError::AlreadyRegistered(HubClass::PendingTx))
+            hub.register_source(
+                HubClass::PendingTx(PendingTxSource::Mevblocker),
+                OverflowPolicy::LatestOnly,
+                4,
+            ),
+            Err(HubError::AlreadyRegistered(HubClass::PendingTx(_)))
         ));
         assert!(matches!(
-            hub.subscribe(HubClass::PendingTx),
+            hub.subscribe(HubClass::PendingTx(PendingTxSource::Mevblocker)),
             Ok(Subscription::DropOldestCounted(_))
         ));
         assert_eq!(
-            hub.policy_of(HubClass::PendingTx),
+            hub.policy_of(HubClass::PendingTx(PendingTxSource::Mevblocker)),
             Some(OverflowPolicy::DropOldestCounted {
                 name: "dropped_ring"
             })
         );
-        assert_eq!(hub.registered_classes(), vec![HubClass::PendingTx]);
+        assert_eq!(
+            hub.registered_classes(),
+            vec![HubClass::PendingTx(PendingTxSource::Mevblocker)]
+        );
         assert_eq!(hub.unbounded_flagged_count(), 0);
+    }
+
+    /// The two pending-tx source kinds register independently on one hub:
+    /// neither collides with the other, and each class's ring carries exactly
+    /// its own feed's frames (the per-kind corpus split).
+    #[test]
+    fn both_pending_tx_source_kinds_register_and_drain_independently() {
+        let hub = Hub::new();
+        let mevblocker = drop_oldest_sender(&hub, 4);
+        let SourceHandle::DropOldestCounted(txpool) = hub
+            .register_source(
+                HubClass::PendingTx(PendingTxSource::Txpool),
+                OverflowPolicy::DropOldestCounted {
+                    name: "txpool_dropped_ring",
+                },
+                8,
+            )
+            .expect("the second kind registers without a tombstone")
+        else {
+            panic!("declared drop-oldest, got another handle");
+        };
+        let mut classes = hub.registered_classes();
+        classes.sort();
+        assert_eq!(
+            classes,
+            vec![
+                HubClass::PendingTx(PendingTxSource::Mevblocker),
+                HubClass::PendingTx(PendingTxSource::Txpool),
+            ],
+            "one registration per class VALUE, not per class variant"
+        );
+
+        mevblocker.push(HubEvent::PendingTx(tx(1)));
+        txpool.push(HubEvent::PendingTx(tx(2)));
+
+        let Subscription::DropOldestCounted(mevblocker_ring) = hub
+            .subscribe(HubClass::PendingTx(PendingTxSource::Mevblocker))
+            .expect("subscribed")
+        else {
+            panic!("policy changed under test");
+        };
+        let Subscription::DropOldestCounted(txpool_ring) = hub
+            .subscribe(HubClass::PendingTx(PendingTxSource::Txpool))
+            .expect("subscribed")
+        else {
+            panic!("policy changed under test");
+        };
+        let mevblocker_nonces: Vec<u64> = mevblocker_ring
+            .drain()
+            .into_iter()
+            .filter_map(nonce_of)
+            .collect();
+        let txpool_nonces: Vec<u64> = txpool_ring
+            .drain()
+            .into_iter()
+            .filter_map(nonce_of)
+            .collect();
+        assert_eq!(
+            mevblocker_nonces,
+            vec![1],
+            "the mevblocker ring is its feed's corpus"
+        );
+        assert_eq!(
+            txpool_nonces,
+            vec![2],
+            "the txpool ring is its feed's corpus"
+        );
     }
 
     #[test]
     fn drop_oldest_counted_evicts_oldest_and_counts() {
         let hub = Hub::new();
         let sender = drop_oldest_sender(&hub, 4);
-        let Subscription::DropOldestCounted(receiver) =
-            hub.subscribe(HubClass::PendingTx).expect("subscribed")
+        let Subscription::DropOldestCounted(receiver) = hub
+            .subscribe(HubClass::PendingTx(PendingTxSource::Mevblocker))
+            .expect("subscribed")
         else {
             panic!("policy changed under test");
         };

@@ -40,15 +40,32 @@ pub struct PendingTx {
     pub raw_signed_tx: Option<Bytes>,
 }
 
-/// The classes an intake can emit. One hub registration exists per class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Which pending-transaction feed a hub channel belongs to.
+///
+/// The two watched feeds publish the same frame vocabulary but never the same
+/// events, and each arm's frame corpus must be exactly its own feed's — so
+/// the hub keys them as distinct [`HubClass`] values (one registration per
+/// class value) instead of merging both feeds into one ring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PendingTxSource {
+    /// The `MEVBlocker` searcher feed (the mevblocker arm).
+    Mevblocker,
+    /// The chain-node txpool feed (the txpool arm).
+    Txpool,
+}
+
+/// The classes an intake can emit. One hub registration exists per class
+/// value, so the two [`PendingTxSource`] kinds register — and are drained —
+/// independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HubClass {
     /// A new block header (the head clock).
     NewHead,
     /// A pool-relevant log (the settled-block intake).
     PoolEvent,
-    /// An observed pending transaction (watched feeds).
-    PendingTx,
+    /// An observed pending transaction, keyed by the watched feed that
+    /// publishes it.
+    PendingTx(PendingTxSource),
 }
 
 /// A hub event, carrying exactly the fields its source carries today.

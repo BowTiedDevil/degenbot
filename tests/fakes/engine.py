@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 from degenbot.exceptions import VerificationMismatchError
 
 if TYPE_CHECKING:
-    from degenbot._ffi import AsyncAlloyProvider
     from degenbot.arbitrage import RetryPolicy
 
 
@@ -36,7 +35,6 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "path_count",
     "pool_id_for_pool",
     "pool_id_for_v4_pool",
-    "reconcile_hosted_head",
     "session_end_future",
     "register_and_solve_path",
     "release_all_v3_v4_quarantined",
@@ -68,6 +66,10 @@ RETIRED_ENGINE_MEMBERS: tuple[str, ...] = (
     "pump_finished_future",
     "load_v3_snapshot_from_py",
     "load_v4_snapshot_from_py",
+    # The hosted reconciliation trigger moved to the core-owned source head
+    # edge (degenbot-bot hosted_sources); the engine surface no longer
+    # carries it.
+    "reconcile_hosted_head",
 )
 
 
@@ -129,9 +131,6 @@ class EngineSeam(Protocol):
     def session_end_future(self) -> Any: ...
     def resume(self, facets: list[str]) -> None: ...
     def stop(self) -> None: ...
-    def reconcile_hosted_head(
-        self, provider: AsyncAlloyProvider, operator_address: str
-    ) -> Any: ...
     def enable_strategy(self, name: str) -> str: ...
     def disable_strategy(self, name: str) -> None: ...
     def strategies(self) -> list[tuple[str, str, str | None]]: ...
@@ -151,7 +150,6 @@ class FakeEngine:
         backfill_target: int = 12_000,
         last_processed_block: int | None = 12_345,
         stop_raises: Exception | None = None,
-        hosted_activity: bool = False,
     ) -> None:
         self._events = events
         self.calls: list[str] = []
@@ -167,11 +165,6 @@ class FakeEngine:
         self._started = False
         self.run_calls: list[dict[str, Any]] = []
         self.register_calls: list[list[tuple[int, bool]]] = []
-        self.reconcile_calls: list[dict[str, Any]] = []
-        #: Counts chain reads the reconcile path would perform. Stays 0 while
-        #: the guard is closed (no lease / no non-terminal record).
-        self.reconcile_chain_reads = 0
-        self.hosted_activity = hosted_activity
         self.fail_next: str | None = None
         self.released_quarantines = 0
         self.inline_sim_installs: list[dict[str, Any]] = []
@@ -407,20 +400,6 @@ class FakeEngine:
                 "policy": policy,
             }
         )
-
-    # ── per-head hosted reconciliation ─────────────────────────────
-
-    async def reconcile_hosted_head(
-        self, provider: AsyncAlloyProvider, operator_address: str
-    ) -> int:
-        if not self.hosted_activity:
-            # Mirrors the Rust guard: a boot with no lease and no non-terminal
-            # record short-circuits before the chain read.
-            self.reconcile_calls.append({"operator_address": operator_address, "folded": 0})
-            return 0
-        self.reconcile_chain_reads += 1
-        self.reconcile_calls.append({"operator_address": operator_address, "folded": 0})
-        return 0
 
     # ── strategy-host operator verbs ───────────────────────────────
 

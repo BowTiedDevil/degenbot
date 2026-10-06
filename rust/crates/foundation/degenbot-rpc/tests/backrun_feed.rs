@@ -80,10 +80,9 @@ fn cfg_with(port: u16, watchdog: Duration, ring: usize) -> BackrunFeedConfig {
     }
 }
 
-/// Spawn a feed on a fresh per-test hub (one source per hub).
+/// Spawn a feed on its own detached ring (one feed per test, no shared hub).
 fn spawn_feed(cfg: BackrunFeedConfig) -> BackrunFeed {
-    let hub = degenbot_eventhub::Hub::new();
-    BackrunFeed::spawn_on_hub(&hub, cfg).expect("fresh hub registers the pending feed")
+    BackrunFeed::spawn(cfg)
 }
 
 struct MockServer {

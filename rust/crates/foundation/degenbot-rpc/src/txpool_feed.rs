@@ -43,10 +43,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use degenbot_core::{op_info, op_warn};
-use degenbot_eventhub::{
-    DropOldestReceiver, DropOldestSender, Hub, HubClass, HubError, HubEvent, OverflowPolicy,
-    SourceHandle, Subscription,
-};
+use degenbot_eventhub::{DropOldestReceiver, DropOldestSender, Hub, HubEvent};
 
 /// The hub `DropOldestCounted` counter label this feed registers under; the
 /// same string is exposed as `TxpoolFeedStatus::dropped_ring`.
@@ -167,34 +164,15 @@ impl TxpoolFeed {
         Self::build(cfg, source, ring)
     }
 
-    /// Spawn the pump registering its `PendingTx` drop-oldest ring on `hub`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates `HubError` when the hub already holds a `PendingTx` source
-    /// or the policy handle mismatches.
-    pub fn spawn_on_hub(hub: &Hub, cfg: TxpoolFeedConfig) -> Result<Self, HubError> {
-        let SourceHandle::DropOldestCounted(source) = hub.register_source(
-            HubClass::PendingTx,
-            OverflowPolicy::DropOldestCounted {
-                name: TXPOOL_DROPPED_RING_METRIC,
-            },
-            cfg.ring_capacity,
-        )?
-        else {
-            return Err(HubError::PolicyMismatch {
-                expected: "DropOldestCounted",
-            });
-        };
-        let Subscription::DropOldestCounted(ring) = hub.subscribe(HubClass::PendingTx)? else {
-            return Err(HubError::PolicyMismatch {
-                expected: "DropOldestCounted",
-            });
-        };
-        Ok(Self::build(cfg, source, ring))
-    }
-
-    fn build(cfg: TxpoolFeedConfig, source: DropOldestSender, ring: DropOldestReceiver) -> Self {
+    /// Shared pump construction over a hub-registered ring's two ends. The
+    /// host registers the class and subscribes the consumer views
+    /// (`degenbot_rpc::pending_tx_stream` owns that provisioning); the feed
+    /// only owns the pump over the source end.
+    pub(crate) fn build(
+        cfg: TxpoolFeedConfig,
+        source: DropOldestSender,
+        ring: DropOldestReceiver,
+    ) -> Self {
         let (stop_tx, stop_rx) = watch::channel(false);
         let shared = Arc::new(Shared {
             cfg_backoff: (cfg.reconnect_backoff, cfg.max_backoff),

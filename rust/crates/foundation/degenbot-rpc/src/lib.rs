@@ -27,6 +27,7 @@ pub mod head_watch;
 pub mod liquidity_verifier;
 pub mod multicall3;
 pub mod offline;
+pub mod pending_tx_stream;
 pub mod provider;
 pub mod subscription;
 pub mod tick_bootstrap;

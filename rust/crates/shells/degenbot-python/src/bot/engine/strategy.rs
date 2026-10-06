@@ -104,24 +104,15 @@ pub(crate) fn session_phase_next(current: &str, operation: &str) -> PyResult<Opt
 #[cfg(feature = "submission")]
 pub(crate) use degenbot_submission::head_reconciliation::HeadLanes;
 
-/// The host boot's product: the shared host handle, the hub/attachment pair,
-/// and (when the submission feature is on) the per-strategy nonce lanes.
+/// The host boot's product: the shared host handle and the hub/attachment
+/// pair.
 ///
 /// The host is already shared: the boot builds the backrun lanes' head
-/// reconciliation over the same `Arc`, so the driver loops and the shell's
-/// hosted head feed see one host.
+/// reconciliation over the same `Arc`, so the drivers' hosted head edge and
+/// the shell fold through one host.
 pub(crate) struct BootedHost {
     pub(crate) host: Arc<parking_lot::Mutex<StrategyHost>>,
     pub(crate) attached: HostHub<EngineChannelHandles>,
-    #[cfg(feature = "submission")]
-    pub(crate) head_lanes: HeadLanes,
-    /// The boot-built once-per-head reconciliation, shared with the spawn
-    /// factories above. `None` when the boot could not build one (no resolved
-    /// node join, no configured signing key) — the shell's head feed then
-    /// lazily construct-or-caches on its first call instead.
-    #[cfg(feature = "submission")]
-    pub(crate) head_reconciliation:
-        Option<Arc<degenbot_submission::head_reconciliation::HeadReconciliation>>,
 }
 
 /// Resolve the strategy-owned boot product once for the hosted process.
@@ -245,7 +236,13 @@ pub(crate) fn boot_host() -> BootedHost {
     }
 
     #[cfg(feature = "submission")]
-    let (head_lanes, head_reconciliation) = {
+    let _head_lanes = {
+        use degenbot_bot::hosted_sources::HostedHeadClock;
+        use degenbot_eventhub::PendingTxSource;
+        use degenbot_rpc::backrun_feed::BackrunFeedConfig;
+        use degenbot_rpc::pending_tx_stream::PendingTxFeedConfig;
+        use degenbot_rpc::txpool_feed::TxpoolFeedConfig;
+        use degenbot_strategy::backrun_driver::BackrunEcosystem;
         // A hosted driver scopes its run-artifacts under the host state root; a
         // boot with no resolvable root leaves `namespace_root` unset, so the
         // driver keeps its process-global path.
@@ -306,7 +303,10 @@ pub(crate) fn boot_host() -> BootedHost {
         // process, built over the resolved node join's provider (a joinless
         // boot drives no head-feed reconciliation) and the operator address
         // the signing key names. No configured key is the old loop's
-        // `signer` gate: a boot with no signer reconciles nothing.
+        // `signer` gate: a boot with no signer reconciles nothing. The
+        // hosted sources' head edge fires it once per observed head through
+        // the trigger closure below — the trigger is the only thing this
+        // shell wires; the drivers never see the reconciliation.
         let operator = cfg
             .strategy
             .mevblocker_backrun
@@ -329,12 +329,92 @@ pub(crate) fn boot_host() -> BootedHost {
             )),
             _ => None,
         };
+        let head_trigger: Option<degenbot_bot::hosted_sources::HeadTrigger> =
+            head_reconciliation.as_ref().map(|reconciliation| {
+                let reconciliation = Arc::clone(reconciliation);
+                Arc::new(move |head: u64| {
+                    let reconciliation = Arc::clone(&reconciliation);
+                    Box::pin(async move {
+                        reconciliation.reconcile_head(head).await;
+                    })
+                        as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                }) as _
+            });
 
+        // Host the sources once per process: one pending-tx pump per ACTIVE
+        // arm's source kind (both arms can run simultaneously — each kind
+        // registers its own hub class), the one head watch + fallback
+        // poller, and the one feed sampler. Each arm's spawn factory
+        // receives its own kind's typed stream.
+        let mut arm_boots = Vec::new();
+        for (id, ecosystem, lane) in backruns {
+            let boot = backrun_resources.strategy_boot(ecosystem);
+            arm_boots.push((id, ecosystem, lane, boot));
+        }
+        let head_ws_url = arm_boots
+            .iter()
+            .filter_map(|(_, _, _, boot)| boot.head_ws_url().map(str::to_string))
+            .next();
+        let provider = backrun_resources.node_provider().cloned();
+        let clock = match (head_ws_url, provider) {
+            (Some(ws_url), Some(provider)) => Some(HostedHeadClock::Watch { ws_url, provider }),
+            (None, Some(provider)) => Some(HostedHeadClock::Poll { provider }),
+            _ => None,
+        };
+        let mut arms = Vec::new();
+        for (id, ecosystem, _lane, boot) in &arm_boots {
+            let name = match ecosystem {
+                BackrunEcosystem::Mevblocker => degenbot_strategy::StrategyName::MevblockerBackrun,
+                BackrunEcosystem::Txpool => degenbot_strategy::StrategyName::TxpoolBackrun,
+            };
+            let _ = id;
+            if !name.is_active(cfg) {
+                continue;
+            }
+            let arm = match ecosystem {
+                BackrunEcosystem::Mevblocker => (
+                    PendingTxSource::Mevblocker,
+                    PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
+                        url: boot.feed_url().to_string(),
+                        ..BackrunFeedConfig::for_mainnet()
+                    }),
+                ),
+                BackrunEcosystem::Txpool => {
+                    let Some(ws_url) = boot.head_ws_url().map(str::to_string) else {
+                        // No subscription endpoint: the arm cannot host a
+                        // pump; its live gate reports the same refusal a
+                        // feed-less boot always did.
+                        continue;
+                    };
+                    (
+                        PendingTxSource::Txpool,
+                        PendingTxFeedConfig::Txpool(TxpoolFeedConfig {
+                            ws_url,
+                            ..TxpoolFeedConfig::defaults()
+                        }),
+                    )
+                }
+            };
+            arms.push(arm);
+        }
         // The hub is cloned OUTSIDE the guarded statement: the receiver's
         // lock guard is alive while the factory argument evaluates, so a
         // nested `host.lock()` there would deadlock the non-reentrant mutex.
         let hub = Arc::clone(host.lock().hub());
-        for (id, ecosystem, lane) in backruns {
+        let mut hosted = degenbot_core::runtime::get_runtime()
+            .block_on(degenbot_bot::hosted_sources::HostedSources::mint(
+                Arc::clone(&hub),
+                arms,
+                clock,
+                head_trigger,
+            ))
+            .expect("a fresh hub hosts the process sources");
+        for (id, ecosystem, lane, _boot) in arm_boots {
+            let kind = match ecosystem {
+                BackrunEcosystem::Mevblocker => PendingTxSource::Mevblocker,
+                BackrunEcosystem::Txpool => PendingTxSource::Txpool,
+            };
+            let stream = hosted.take_stream(kind);
             host.lock()
                 .attach_spawn(
                     &id,
@@ -342,22 +422,15 @@ pub(crate) fn boot_host() -> BootedHost {
                         backrun_resources.strategy_boot(ecosystem),
                         Arc::clone(&hub),
                         lane,
-                        head_reconciliation.clone(),
+                        stream,
                     ),
                 )
                 .expect("fresh host registers the backrun spawn");
         }
-        (lanes, head_reconciliation)
+        lanes
     };
 
-    BootedHost {
-        host,
-        attached,
-        #[cfg(feature = "submission")]
-        head_lanes,
-        #[cfg(feature = "submission")]
-        head_reconciliation,
-    }
+    BootedHost { host, attached }
 }
 
 impl PyArbEngine {
@@ -368,30 +441,6 @@ impl PyArbEngine {
         T: Send,
     {
         py.detach(|| f(&mut self.host.lock()))
-    }
-
-    /// The one head reconciliation this process folds head notices through.
-    ///
-    /// The boot seeds the slot and shares that instance with the spawn
-    /// factories' driver loops; a boot that could not build one (no resolved
-    /// node join, no configured signing key) leaves the slot empty and this
-    /// lazily builds from the caller's provider and operator address on the
-    /// first head-feed call. Either way the returned `Arc` is the same one
-    /// for the process's lifetime, so drivers and the head feed never run
-    /// two reconciliations over the same host.
-    #[cfg(feature = "submission")]
-    fn head_reconciliation_or_build(
-        &self,
-        build: impl FnOnce() -> Arc<degenbot_submission::head_reconciliation::HeadReconciliation>,
-    ) -> Arc<degenbot_submission::head_reconciliation::HeadReconciliation> {
-        let mut cached = self.head_reconciliation.lock();
-        if cached.is_none() {
-            *cached = Some(build());
-        }
-        cached
-            .as_ref()
-            .map(Arc::clone)
-            .expect("seeded or just built")
     }
 
     /// Boot every enabled strategy that registered a spawn factory. The
@@ -450,83 +499,6 @@ impl PyArbEngine {
         let id = StrategyId::new(name);
         self.with_host(py, |host| host.disable(&id))
             .map_err(map_host_error)
-    }
-
-    /// Drive the host's per-head reconciliation from the engine's head feed.
-    ///
-    /// The head feed calls this once per accepted header. When any strategy
-    /// holds a nonce reservation or any submission record is still
-    /// non-terminal, the host refreshes the confirmed chain nonce, reconciles
-    /// outstanding submission records, and folds each typed notice into the
-    /// owning strategy's default policy. A boot with no hosted activity
-    /// short-circuits before the chain read, so the settlement-only default
-    /// boot pays no new RPC.
-    ///
-    /// # Errors
-    ///
-    /// `ValueError` for an unparseable operator address. A chain-read failure
-    /// is logged and tolerated: the next head retries.
-    #[cfg(feature = "submission")]
-    #[pyo3(signature = (provider, operator_address))]
-    fn reconcile_hosted_head<'py>(
-        &self,
-        py: Python<'py>,
-        provider: &crate::rpc::async_provider::PyAsyncAlloyProvider,
-        operator_address: &str,
-    ) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
-        let provider_arc = provider.provider_arc();
-        let address = crate::address_utils::parse_address(operator_address).map_err(|error| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid operator address: {error}"))
-        })?;
-        // Reuse the boot-seeded instance; only a boot that could not build
-        // one pays the lazy construct here, seeded from this call's provider
-        // and operator address. The per-call block-number fetch stays either
-        // way — the module dedupes the reconciliation on the head.
-        let reconciliation = self.head_reconciliation_or_build(|| {
-            Arc::new(
-                degenbot_submission::head_reconciliation::HeadReconciliation::new(
-                    Arc::clone(&self.host),
-                    self.head_lanes.lock().clone(),
-                    Arc::new(
-                        degenbot_submission::head_reconciliation::AlloyChainNonceRead(Arc::clone(
-                            &provider_arc,
-                        )),
-                    ),
-                    address,
-                ),
-            )
-        });
-        let host = Arc::clone(&self.host);
-        crate::ambient_runtime::future_into_py(py, async move {
-            // The gate is checked here so a settlement-only boot with no
-            // hosted activity still pays no RPC at all; the module re-checks
-            // it before its claim.
-            if !host.lock().has_hosted_activity() {
-                return Ok(0u64);
-            }
-            // The head feed calls once per accepted header; the module's
-            // strictly-greater claim keys the dedupe on that block.
-            let head = match provider_arc.get_block_number().await {
-                Ok(head) => head,
-                Err(error) => {
-                    tracing::warn!(
-                        target: "degenbot.submission.head",
-                        %error,
-                        "per-head block fetch failed; reconciliation deferred"
-                    );
-                    return Ok(0u64);
-                }
-            };
-            let folded = match reconciliation.reconcile_head(head).await {
-                degenbot_submission::head_reconciliation::ReconcileOutcome::Reconciled {
-                    folded,
-                } => folded,
-                degenbot_submission::head_reconciliation::ReconcileOutcome::Idle
-                | degenbot_submission::head_reconciliation::ReconcileOutcome::Deduped
-                | degenbot_submission::head_reconciliation::ReconcileOutcome::ReadFailed => 0,
-            };
-            Ok(folded)
-        })
     }
 
     /// Every registered strategy as `(name, state, halt_reason)`, in
@@ -668,20 +640,10 @@ mod tests {
                 !engine.host.lock().has_hosted_activity(),
                 "a fresh boot has no lease and no record, so the head feed short-circuits"
             );
-            let lanes = engine.head_lanes.lock();
-            let settlement_lane = lanes
-                .get(&StrategyId::new("settlement"))
-                .cloned()
+            // The boot installs the process-global settlement seam lane, the
+            // one the hosted head reconciliation folds notices through.
+            let settlement_lane = crate::submission::submit::settlement_lane()
                 .expect("the boot installs the settlement head lane");
-            assert!(
-                lanes.contains_key(&StrategyId::new("mevblocker_backrun")),
-                "the boot installs the mevblocker backrun head lane"
-            );
-            assert!(
-                lanes.contains_key(&StrategyId::new("txpool_backrun")),
-                "the boot installs the peer backrun head lane"
-            );
-            drop(lanes);
 
             settlement_lane.stamp().expect("settlement lane stamps");
             assert!(
@@ -752,85 +714,5 @@ mod tests {
                 "the activated facet registers configured"
             );
         }
-    }
-
-    /// A refusing chain read, so the pin test never needs a transport.
-    struct RefusingRead;
-
-    impl degenbot_submission::head_reconciliation::ChainNonceRead for RefusingRead {
-        fn next_nonce<'a>(
-            &'a self,
-            _operator: alloy::primitives::Address,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>>
-        {
-            Box::pin(async move { Err(String::from("refusing read")) })
-        }
-    }
-
-    fn test_reconciliation(
-        host: &Arc<parking_lot::Mutex<StrategyHost>>,
-        lanes: &HeadLanes,
-    ) -> Arc<degenbot_submission::head_reconciliation::HeadReconciliation> {
-        Arc::new(
-            degenbot_submission::head_reconciliation::HeadReconciliation::new(
-                Arc::clone(host),
-                lanes.clone(),
-                Arc::new(RefusingRead),
-                alloy::primitives::Address::repeat_byte(0x5c),
-            ),
-        )
-    }
-
-    /// The head feed folds notices through ONE reconciliation per process:
-    /// the boot's seed (when it could build one) is reused as-is, and a
-    /// boot that could not build one is construct-or-cached exactly once —
-    /// never a second instance over the same host.
-    #[test]
-    fn the_head_feed_reuses_one_reconciliation_per_process() {
-        hermetic_db_layer();
-        Python::attach(|py| {
-            let engine = PyArbEngine::new(py, None);
-            // This boot resolves no node join, so it cannot build a
-            // reconciliation and leaves the slot to the first head-feed call.
-            assert!(
-                engine.head_reconciliation.lock().is_none(),
-                "a joinless boot seeds no reconciliation"
-            );
-
-            let first = engine.head_reconciliation_or_build(|| {
-                test_reconciliation(&engine.host, &engine.head_lanes.lock())
-            });
-            let second = engine.head_reconciliation_or_build(|| {
-                panic!("a cached reconciliation is never rebuilt")
-            });
-            assert!(
-                Arc::ptr_eq(&first, &second),
-                "every later head-feed call reuses the first instance"
-            );
-            assert!(
-                Arc::ptr_eq(
-                    &first,
-                    engine
-                        .head_reconciliation
-                        .lock()
-                        .as_ref()
-                        .expect("the slot holds the cached instance"),
-                ),
-                "the cache and the handed-out Arc are the same instance"
-            );
-
-            // A boot that DID build one seeds the slot with the instance it
-            // already handed to the spawn factories; the head feed reuses
-            // that instance and never constructs its own.
-            let seeded = test_reconciliation(&engine.host, &engine.head_lanes.lock());
-            *engine.head_reconciliation.lock() = Some(Arc::clone(&seeded));
-            let got = engine.head_reconciliation_or_build(|| {
-                panic!("a seeded slot never builds a second instance")
-            });
-            assert!(
-                Arc::ptr_eq(&got, &seeded),
-                "the head feed folds through the boot-seeded instance"
-            );
-        });
     }
 }

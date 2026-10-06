@@ -34,10 +34,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use degenbot_core::{op_info, op_warn};
-use degenbot_eventhub::{
-    DropOldestReceiver, DropOldestSender, Hub, HubClass, HubError, HubEvent, OverflowPolicy,
-    SourceHandle, Subscription,
-};
+use degenbot_eventhub::{DropOldestReceiver, DropOldestSender, Hub, HubEvent};
 
 /// The default searcher WS; re-exported so the readiness resolution and
 /// this crate share one constant.
@@ -157,9 +154,10 @@ impl BackrunFeed {
     ///
     /// This is the Python-exposed single-feed path
     /// (`degenbot._ffi.backrun`): the feed is its own host, so there is no
-    /// shared hub registry to join. A process host that owns a [`Hub`] uses
-    /// [`BackrunFeed::spawn_on_hub`] so the ring is reachable by subscribers.
-    /// Must be called within a tokio runtime context, or the crate-global
+    /// shared hub registry to join. A process host that owns a [`Hub`]
+    /// registers the ring itself and mints through
+    /// `degenbot_rpc::pending_tx_stream` instead. Must be called within a
+    /// tokio runtime context, or the crate-global
     /// `degenbot_core::runtime::get_runtime()` is used.
     #[must_use]
     pub fn spawn(cfg: BackrunFeedConfig) -> Self {
@@ -168,40 +166,15 @@ impl BackrunFeed {
         Self::build(cfg, source, ring)
     }
 
-    /// Spawn the pump registering its `PendingTx` drop-oldest ring on `hub`.
-    ///
-    /// Registers the `PendingTx` class with `DropOldestCounted` (capacity
-    /// `cfg.ring_capacity`, counter [`DROPPED_RING_METRIC`]) and subscribes its
-    /// own consumer end. Must be called within a tokio runtime context, or the
-    /// crate-global `degenbot_core::runtime::get_runtime()` is used.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`HubError`] if the hub already holds a `PendingTx` source
-    /// or the declared policy somehow does not yield a drop-oldest handle.
-    pub fn spawn_on_hub(hub: &Hub, cfg: BackrunFeedConfig) -> Result<Self, HubError> {
-        let SourceHandle::DropOldestCounted(source) = hub.register_source(
-            HubClass::PendingTx,
-            OverflowPolicy::DropOldestCounted {
-                name: DROPPED_RING_METRIC,
-            },
-            cfg.ring_capacity,
-        )?
-        else {
-            return Err(HubError::PolicyMismatch {
-                expected: "DropOldestCounted",
-            });
-        };
-        let Subscription::DropOldestCounted(ring) = hub.subscribe(HubClass::PendingTx)? else {
-            return Err(HubError::PolicyMismatch {
-                expected: "DropOldestCounted",
-            });
-        };
-        Ok(Self::build(cfg, source, ring))
-    }
-
-    /// Shared pump construction over a ring's two ends.
-    fn build(cfg: BackrunFeedConfig, source: DropOldestSender, ring: DropOldestReceiver) -> Self {
+    /// Shared pump construction over a hub-registered ring's two ends. The
+    /// host registers the class and subscribes the consumer views
+    /// (`degenbot_rpc::pending_tx_stream` owns that provisioning); the feed
+    /// only owns the pump over the source end.
+    pub(crate) fn build(
+        cfg: BackrunFeedConfig,
+        source: DropOldestSender,
+        ring: DropOldestReceiver,
+    ) -> Self {
         let (stop_tx, stop_rx) = watch::channel(false);
         let shared = Arc::new(Shared {
             cfg_backoff: (cfg.reconnect_backoff, cfg.max_backoff),

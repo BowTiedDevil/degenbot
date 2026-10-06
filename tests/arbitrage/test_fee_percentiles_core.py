@@ -41,13 +41,11 @@ class _AlloyW3:
 
 def _session(recorder) -> _SessionState:
     return _SessionState(
-        engine_registry=FakeEngineRegistry(FakeEngine(hosted_activity=True)),  # type: ignore[arg-type]
-        async_w3=_AlloyW3(),  # type: ignore[arg-type]
+        engine_registry=FakeEngineRegistry(FakeEngine()),
+        async_w3=_AlloyW3(),
         sim_ctx=None,
         dispatcher=Dispatcher.for_block(0),
-        cfg=FakeRunnerConfig(  # type: ignore[arg-type]
-            operator_address="0x9C56a29c7231974c269E24F9FB3c29203039089E"
-        ),
+        cfg=FakeRunnerConfig(operator_address="0x9C56a29c7231974c269E24F9FB3c29203039089E"),
         current_block=0,
         pipeline_factory=StubPipeline,
         fee_history_fetcher=recorder,

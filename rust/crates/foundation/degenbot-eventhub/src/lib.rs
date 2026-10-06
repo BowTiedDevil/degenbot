@@ -11,8 +11,9 @@
 //!
 //! - **Vocabulary, never raw substrate.** [`HubEvent`] names the classes a
 //!   source can emit ([`HubClass::NewHead`], [`HubClass::PoolEvent`],
-//!   [`HubClass::PendingTx`]) and carries exactly the fields today's sources
-//!   carry; it is not a raw WS/log passthrough and no field is invented.
+//!   [`HubClass::PendingTx`] keyed by [`PendingTxSource`]) and carries
+//!   exactly the fields today's sources carry; it is not a raw WS/log
+//!   passthrough and no field is invented.
 //! - **The head clock lives here.** The hub owns the latest head and its
 //!   staleness ([`head::HeadSender`] / [`head::HeadSubscription`]); the
 //!   transport only subscribes and publishes ([`HeadSubscription::stale`]).
@@ -41,7 +42,7 @@ pub mod hub;
 pub mod named;
 pub mod policy;
 
-pub use event::{HubClass, HubEvent, PendingTx};
+pub use event::{HubClass, HubEvent, PendingTx, PendingTxSource};
 pub use head::{HeadSender, HeadSubscription};
 pub use hub::{
     DropOldestReceiver, DropOldestSender, Hub, LatestReceiver, LatestSender, SourceHandle,

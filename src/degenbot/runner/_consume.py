@@ -220,19 +220,6 @@ async def _apply_block_if_ready(
             last_block=block_number,
             reward_percentiles=[float(p) for p in reward_percentiles],
         )
-        # The same head tick drives the hosted per-head reconciliation: refresh
-        # the confirmed chain nonce, close outstanding submission records out,
-        # and fold the typed notices into the owning strategy's policy. The
-        # guard (any lease or non-terminal record) and the single chain-nonce
-        # read live in Rust, so a settlement-only boot with no hosted activity
-        # pays no new RPC. `reconcile_hosted_head` is part of the documented
-        # ArbitrageEngine surface (see the `.pyi`), so this is a direct typed
-        # call rather than a duck-typed lookup: a double that lacks it is out
-        # of contract.
-        await session.engine_registry.engine.reconcile_hosted_head(
-            provider=async_alloy,
-            operator_address=session.cfg.operator_address,
-        )
 
     dispatcher.record_block_time(block_number, block_timestamp)
     if dispatcher.block_time_count() >= 2:

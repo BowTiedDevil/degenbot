@@ -24,7 +24,7 @@ use degenbot_substrate::driver_spawn::{DriverExit, DriverFuture, DriverSpawnFact
 use degenbot_substrate::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerifier, DbArm};
 use degenbot_substrate::RouteRegistry;
 
-use degenbot_submission::head_reconciliation::HeadReconciliation;
+use degenbot_rpc::pending_tx_stream::PendingTxStream;
 use degenbot_submission::submission_ledger::NonceLane;
 
 use super::driver_loop::BackrunDriver;
@@ -74,6 +74,24 @@ pub struct BackrunStrategyBoot {
     /// through. The boot is a host of size N around its
     /// own authority; a hosted driver receives the host's shared nonce lane.
     pub(crate) boot_error: Option<BackrunBootError>,
+}
+
+impl BackrunStrategyBoot {
+    /// The chain node's `newHeads` endpoint the boot resolved, if any. The
+    /// hosted sources watch it for the whole process, so the composition
+    /// root reads it off the boot rather than re-resolving a second one.
+    #[must_use]
+    pub fn head_ws_url(&self) -> Option<&str> {
+        self.head_ws_url.as_deref()
+    }
+
+    /// The pending-transaction source URL the facet configured (the
+    /// `MEVBlocker` searcher feed; the txpool arm leaves it unused). The
+    /// hosted sources mint the arm's pump from it.
+    #[must_use]
+    pub fn feed_url(&self) -> &str {
+        &self.cfg.feed_url
+    }
 }
 
 /// Why a backrun driver could not be booted.
@@ -380,7 +398,7 @@ pub struct BackrunBoot {
     hub: Arc<Hub>,
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
-    head_reconciliation: Option<Arc<HeadReconciliation>>,
+    stream: Option<PendingTxStream>,
 }
 
 impl BackrunBoot {
@@ -393,26 +411,20 @@ impl BackrunBoot {
             hub,
             namespace_root,
             nonce_lane,
-            head_reconciliation,
+            stream,
         } = self;
         Box::pin(async move {
             if let Some(error) = strategy.boot_error.clone() {
                 return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
             }
-            let handle = match BackrunDriver::start(
-                strategy,
-                hub,
-                namespace_root,
-                nonce_lane,
-                head_reconciliation,
-            )
-            .await
-            {
-                Ok(handle) => handle,
-                Err(error) => {
-                    return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
-                }
-            };
+            let handle =
+                match BackrunDriver::start(strategy, hub, namespace_root, nonce_lane, stream).await
+                {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
+                    }
+                };
             handle.wait().await;
             DriverExit::Stopped
         })
@@ -734,7 +746,7 @@ pub fn backrun_boot(
     hub: Arc<Hub>,
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane>,
-    head_reconciliation: Option<Arc<HeadReconciliation>>,
+    stream: Option<PendingTxStream>,
 ) -> BackrunBoot {
     install_frame_trace_sink(&strategy.ecosystem);
     BackrunBoot {
@@ -742,7 +754,7 @@ pub fn backrun_boot(
         hub,
         namespace_root,
         nonce_lane,
-        head_reconciliation,
+        stream,
     }
 }
 
@@ -754,20 +766,14 @@ pub fn backrun_spawn_factory(
     strategy: BackrunStrategyBoot,
     hub: Arc<Hub>,
     nonce_lane: Arc<NonceLane>,
-    head_reconciliation: Option<Arc<HeadReconciliation>>,
+    stream: Option<PendingTxStream>,
 ) -> DriverSpawnFactory {
     Box::new(move |namespace| {
         let namespace_root = namespace.map(|ns| ns.root().to_path_buf());
         Box::pin(async move {
-            backrun_boot(
-                strategy,
-                hub,
-                namespace_root,
-                nonce_lane,
-                head_reconciliation,
-            )
-            .into_driver_future()
-            .await
+            backrun_boot(strategy, hub, namespace_root, nonce_lane, stream)
+                .into_driver_future()
+                .await
         })
     })
 }

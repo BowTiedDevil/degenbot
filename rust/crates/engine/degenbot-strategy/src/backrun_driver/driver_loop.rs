@@ -19,16 +19,12 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::backrun::SubmissionSlot;
 use crate::backrun::{BackrunConfig, Decision};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_eventhub::{HeadSubscription, Hub};
-use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
-use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
-use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
-use degenbot_rpc::txpool_feed::{TxpoolFeed, TxpoolFeedConfig};
+use degenbot_rpc::pending_tx_stream::PendingTxStream;
+use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
 use degenbot_simulation::BlockSimHandle;
 use parking_lot::Mutex as ParkingMutex;
@@ -43,7 +39,6 @@ use crate::gap_quarantine_journal::{
     self, ArchivedResolution, ParkRecord, QuarantineJournal, Resolution, ResolutionArchiveRecord,
 };
 use degenbot_submission::dispatcher::Dispatcher;
-use degenbot_submission::head_reconciliation::HeadReconciliation;
 use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submission_ledger::NonceLane;
 
@@ -56,17 +51,6 @@ use super::node_capability::NodeCapability;
 /// healthy watch leaves this to time out most iterations; the bound is loop
 /// latency, not head latency.
 const HEAD_WATCH_WAIT: Duration = Duration::from_secs(2);
-
-/// A watch silent this long is treated as dead: the loop polls for that
-/// iteration while the driver task's watchdog reconnects in the background.
-/// Must exceed the chain's block interval - mainnet blocks arrive ~12s apart,
-/// so a threshold at or below that would poll on every block and defeat the
-/// point of the subscription. Kept below the driver's 48s watchdog so the
-/// fallback poll covers the reconnect window.
-const HEAD_WATCH_STALE: Duration = Duration::from_secs(30);
-
-/// The fallback head-poll cadence (the pre-subscription loop's tick).
-const HEAD_POLL_TICK: Duration = Duration::from_millis(200);
 
 /// The terminal class of one funnel pass, as the rescue router consumes it.
 ///
@@ -982,12 +966,11 @@ struct LoopBoot {
     gap_probe: crate::gap_probe::GapProbe,
     sim_provider: Arc<AlloyProvider>,
     fixture_frames: Option<Vec<degenbot_rpc::backrun_feed::BackrunFeedEvent>>,
-    head_ws_url: Option<String>,
     namespace_root: Option<PathBuf>,
-    /// The once-per-head reconciliation the loop triggers. `None` keeps the
-    /// loop's head feed reconcile-free (a boot with no hosted reconciliation
-    /// to drive).
-    head_reconciliation: Option<Arc<HeadReconciliation>>,
+    /// The hosted pending-tx stream this arm drains: the typed view over the
+    /// arm's own source kind's hub ring, minted by the process's hosted
+    /// sources at boot. `None` keeps a dry-run-only boot feed-free.
+    stream: Option<PendingTxStream>,
 }
 
 /// The backrun driver entry point.
@@ -998,9 +981,9 @@ impl BackrunDriver {
     ///
     /// The strategy-owned boot product and host-minted hub are consumed for the
     /// driver's lifetime; boot failures panic exactly as the single-driver bin
-    /// did, so the caller's panic behavior is unchanged. Only one driver may
-    /// attach to a given hub: the feed registration panics on a second `start`
-    /// sharing the same hub.
+    /// did, so the caller's panic behavior is unchanged. Multiple drivers may
+    /// attach to one hub: each drains its own source kind's ring, hosted once
+    /// per process by the hosted sources.
     ///
     /// # Panics
     ///
@@ -1020,14 +1003,13 @@ impl BackrunDriver {
         hub: Arc<Hub>,
         namespace_root: Option<PathBuf>,
         nonce_lane: Arc<NonceLane>,
-        head_reconciliation: Option<Arc<HeadReconciliation>>,
+        stream: Option<PendingTxStream>,
     ) -> Result<DriverHandle, BackrunBootError> {
         let BackrunStrategyBoot {
             cfg,
             execution,
             connector_db,
             kit,
-            head_ws_url,
             provider,
             chain_id,
             capability,
@@ -1141,9 +1123,8 @@ impl BackrunDriver {
             gap_probe,
             sim_provider,
             fixture_frames,
-            head_ws_url,
             namespace_root,
-            head_reconciliation,
+            stream,
         };
         let shared = Arc::new(LoopShared::new());
         let run = Box::pin(drive(cfg, hub, boot, Arc::clone(&shared)));
@@ -1180,54 +1161,6 @@ async fn bundle_sim_provider(
         .map_err(|reason| BackrunBootError::SimEndpoint { endpoint, reason })
 }
 
-/// The loop's pending-tx pump: whichever feed the submission slot named.
-///
-/// Both pumps publish the hub's `PendingTx` vocabulary, so the drain surface
-/// is one typed vector regardless of the arm.
-enum PendingTxPump {
-    /// The `MEVBlocker` searcher feed (the mevblocker arm).
-    Mevblocker(BackrunFeed),
-    /// The chain-node txpool feed (the builder-relay arm).
-    Txpool(TxpoolFeed),
-}
-
-impl PendingTxPump {
-    fn drain(&self) -> Vec<degenbot_eventhub::PendingTx> {
-        match self {
-            Self::Mevblocker(feed) => feed.drain(),
-            Self::Txpool(feed) => feed.drain(),
-        }
-    }
-
-    /// The sampler snapshot (the `BackrunFeedStatus` field set both pumps
-    /// share; the txpool feed's extra `mine_misses` counter is pump-scoped
-    /// forensics, not an engine instrument).
-    fn status(&self) -> degenbot_rpc::backrun_feed::BackrunFeedStatus {
-        match self {
-            Self::Mevblocker(feed) => feed.status(),
-            Self::Txpool(feed) => {
-                let st = feed.status();
-                degenbot_rpc::backrun_feed::BackrunFeedStatus {
-                    connected: st.connected,
-                    accepted: st.accepted,
-                    dropped_ring: st.dropped_ring,
-                    rejected_chain_id: st.rejected_chain_id,
-                    rejected_parse: st.rejected_parse,
-                    reconnects: st.reconnects,
-                    last_event_unix_ms: st.last_event_unix_ms,
-                }
-            }
-        }
-    }
-
-    fn stop(&self) {
-        match self {
-            Self::Mevblocker(feed) => feed.stop(),
-            Self::Txpool(feed) => feed.stop(),
-        }
-    }
-}
-
 /// The driver loop. Everything here is loop-local: the replay handle borrows
 /// only the loop's own runtime, never a host handle.
 #[expect(
@@ -1247,9 +1180,8 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         gap_probe,
         sim_provider,
         fixture_frames,
-        head_ws_url,
         namespace_root,
-        head_reconciliation,
+        stream,
     } = boot;
     shared.begin_running();
     // The per-block replay handle: rebuilt whenever the observed head
@@ -1328,157 +1260,46 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
     // resumes the parked set.
     let mut quarantine_journal = reload_quarantine(&mut quarantine, namespace_root.as_deref());
 
-    // Live mode: the submission slot names the pending-tx source. The
-    // `MEVBlocker` slot rebinds the MEVBlocker searcher feed; every other
-    // slot (the txpool arm's builder-relay composition among them) scans the
-    // CHAIN NODE's txpool and fetches each delivered hash in full. The hub
-    // owns the process-lifetime event channels; either feed registers its
-    // PendingTx drop-oldest ring on it and the loop drains the same typed
-    // events, so the frame pipeline stays feed-agnostic.
-    let event_hub = Arc::clone(&hub);
-    let feed: PendingTxPump = if matches!(cfg.submission, SubmissionSlot::Mevblocker { .. }) {
-        PendingTxPump::Mevblocker(
-            BackrunFeed::spawn_on_hub(
-                &event_hub,
-                BackrunFeedConfig {
-                    url: cfg.feed_url.clone(),
-                    ..BackrunFeedConfig::for_mainnet()
-                },
-            )
-            .expect("fresh hub registers the pending-tx feed"),
-        )
-    } else {
-        let Some(ref ws_url) = head_ws_url else {
-            tracing::error!(
-                "txpool feed requires the chain node WS endpoint                  (DEGENBOT_RPC_WS_CHAINID_1) - halting"
-            );
-            shared.mark_stopped();
-            return;
-        };
-        PendingTxPump::Txpool(
-            TxpoolFeed::spawn_on_hub(
-                &event_hub,
-                TxpoolFeedConfig {
-                    ws_url: ws_url.clone(),
-                    ..TxpoolFeedConfig::defaults()
-                },
-            )
-            .expect("fresh hub registers the pending-tx feed"),
-        )
+    // Live mode: the arm drains the typed stream the process's hosted
+    // sources minted for its source kind at boot — the MEVBlocker searcher
+    // feed's ring or the txpool feed's, never a merged corpus. The frame
+    // pipeline stays feed-agnostic over the same typed events.
+    let Some(feed) = stream else {
+        tracing::error!("live backrun arm booted without its hosted pending-tx stream - halting");
+        shared.mark_stopped();
+        return;
     };
 
-    // Head source for the live loop: a `newHeads` subscription over a dedicated
-    // WS endpoint (the MEVBlocker frame feed and the chain node are different
-    // hosts, so the head WS is its own URL). The hub owns the latest head and
-    // its staleness; `HeadWatch` only performs the subscribe + reconnect and
-    // publishes into the hub. The 200ms `eth_blockNumber` poll is the FALLBACK,
-    // not the primary source: it costs a round-trip per tick and cannot fire the
-    // instant a head lands. Without a WS URL, or when the subscribe fails, no
-    // head source is registered and the loop polls.
-    let mut head_source: Option<HeadSubscription> = if let Some(url) = head_ws_url {
-        match AlloyProvider::new(&url, DEFAULT_MAX_RETRIES).await {
-            Ok(ws_provider) => {
-                match HeadWatch::subscribe(
-                    &event_hub,
-                    ws_provider.provider_arc(),
-                    HeadWatchConfig::default(),
-                )
-                .await
-                {
-                    Ok(_transport) => match event_hub.subscribe_head() {
-                        Ok(head) => Some(head),
-                        Err(e) => {
-                            tracing::error!(
-                                error = %e,
-                                "head source subscribe failed - falling back to 200ms head poll"
-                            );
-                            None
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!(
-                            error = %e,
-                            "head watch subscribe failed - falling back to 200ms head poll"
-                        );
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    "head watch WS connect failed - falling back to 200ms head poll"
-                );
-                None
-            }
-        }
-    } else {
-        tracing::warn!("no DEGENBOT_RPC_WS_CHAINID_1 set - using 200ms head poll");
-        None
-    };
+    // The head clock is hosted too: the hub's head source is advanced by the
+    // process's one watch (with its fallback poller), and this loop is one of
+    // its subscribers. No feed spawn, no watch, and no poll live here.
+    let mut head_source: Option<HeadSubscription> = hub.subscribe_head().ok();
 
-    // Feed-telemetry sampler state: the last status scraped into the engine
-    // instruments. Counters are pushed as DELTAS against this snapshot; the
-    // OTel counters accumulate the pushes.
-    let mut feed_last = feed.status();
     loop {
         if cfg.stop_file.exists() || shared.stop_requested() {
             tracing::info!("kill switch present - halting");
-            feed.stop();
             break;
         }
-        // Scrape the feed's status into the engine instruments on the loop's
-        // own <=2s tick. The instruments ride the substrate telemetry port,
-        // which the feed crate deliberately does not depend on, so the
-        // sampler rides here rather than inside the feed pump.
-        if let Some(pipeline) = degenbot_substrate::telemetry_port::pipeline() {
-            let st = feed.status();
-            #[expect(clippy::cast_precision_loss)]
-            let seconds_since_event = (st.last_event_unix_ms != 0).then(|| {
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-                    .unwrap_or_default();
-                (now_ms.saturating_sub(st.last_event_unix_ms)) as f64 / 1_000.0
-            });
-            pipeline.record_backrun_feed(
-                st.connected,
-                seconds_since_event,
-                st.accepted.saturating_sub(feed_last.accepted),
-                st.dropped_ring.saturating_sub(feed_last.dropped_ring),
-                st.rejected_parse.saturating_sub(feed_last.rejected_parse),
-                st.rejected_chain_id
-                    .saturating_sub(feed_last.rejected_chain_id),
-                st.reconnects.saturating_sub(feed_last.reconnects),
-            );
-            feed_last = st;
-        }
-        // The head source resolves on a header's arrival; the 2s bound keeps
-        // the frame feed serviced while the head is quiet. On timeout a stale
-        // source falls back to the poll for this iteration; a receiver with no
-        // sender left is treated the same way (and paced) rather than
-        // busy-spinning on a closed channel.
+        // The hosted head clock resolves on a header's arrival; the 2s bound
+        // keeps the frame feed serviced while the head is quiet. The stale
+        // fallback poller lives in the hosted sources: a stale or closed
+        // source just paces this loop until the clock recovers, and the loop
+        // never polls the chain itself.
         let next_head: Option<u64> = if let Some(head) = head_source.as_mut() {
             match tokio::time::timeout(HEAD_WATCH_WAIT, head.changed()).await {
                 Ok(Ok(())) => head.borrow_and_update(),
                 Ok(Err(_)) => {
-                    tracing::warn!("head source closed - polling");
-                    tokio::time::sleep(HEAD_POLL_TICK).await;
-                    provider.get_block_number().await.ok()
+                    tracing::warn!("head source closed - pacing until it recovers");
+                    tokio::time::sleep(HEAD_WATCH_WAIT).await;
+                    None
                 }
-                Err(_) => {
-                    if head.stale(HEAD_WATCH_STALE) {
-                        tracing::warn!("head source stale - polling");
-                        tokio::time::sleep(HEAD_POLL_TICK).await;
-                        provider.get_block_number().await.ok()
-                    } else {
-                        None
-                    }
-                }
+                Err(_) => None,
             }
         } else {
-            tokio::time::sleep(HEAD_POLL_TICK).await;
-            provider.get_block_number().await.ok()
+            // No head source (a joinless boot): pace; the stop file is still
+            // serviced each iteration.
+            tokio::time::sleep(HEAD_WATCH_WAIT).await;
+            None
         };
 
         if let Some(head) = next_head {
@@ -1488,13 +1309,6 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                     .expect("dispatcher mutex poisoned")
                     .advance_block(head);
                 current_block = head;
-                // The once-per-head reconciliation: the module gates on
-                // hosted activity, claims the head, reads the chain nonce,
-                // and folds every typed notice through the owning lane's
-                // policy. Redundant triggers dedupe inside it.
-                if let Some(reconciliation) = head_reconciliation.as_ref() {
-                    reconciliation.reconcile_head(current_block).await;
-                }
                 pl.wallet_gas_cost_wei.store(
                     u64::try_from(wallet_gas_cost_at(&provider, head, &cfg).await)
                         .unwrap_or(u64::MAX),

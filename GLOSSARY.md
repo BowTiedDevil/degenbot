@@ -65,10 +65,21 @@ A strategy whose source is *observed mempool transactions*, implementing
 `ComposedIntent` and `Decided`. Backrun is the reference implementation.
 _Avoid_: "lane", "frame pipeline" as the strategy unit.
 
+**Hosted sources**:
+The process-lifetime owner of the strategies' source-slot provisioning and the head
+clock (`degenbot-bot/src/hosted_sources.rs`): one typed pending-tx stream per source
+kind, the single head watch + stale-fallback head poller, the feed-telemetry sampler,
+and the head-edge reconciliation trigger. Constructed once at the boot; drivers drain
+their arm's stream and read the hub's latest head.
+_Avoid_: per-driver feed spawning, a per-driver head watch or head poller, a per-driver
+telemetry scrape, driver-owned reconciliation triggers.
+
 **Pending-transaction driver**:
 The `degenbot-strategy` driver owning the strategy-neutral loop around a strategy's
 stages: pending-tx replay (ADR-054 seam 1), journal extraction (seam 2), the bundle-sim
-gate, timings/tracing, liveness, and submission.
+gate, timings/tracing, liveness, and submission. It drains the **Hosted sources** stream
+for its arm and reads the hosted head clock; it owns no feed, head watch, poller, or
+sampler.
 
 **MarketContext**:
 The process-lifetime shared caches for pending-transaction strategies — the connector

@@ -86,8 +86,10 @@ impl MockThirdFamily {
         // tick without a mempool (`PendingTx`) stream ever being registered.
         assert!(
             matches!(
-                services.hub.subscribe(HubClass::PendingTx),
-                Err(HubError::NotRegistered(HubClass::PendingTx))
+                services.hub.subscribe(HubClass::PendingTx(
+                    degenbot_eventhub::PendingTxSource::Mevblocker
+                )),
+                Err(HubError::NotRegistered(HubClass::PendingTx(_)))
             ),
             "the hub tick must not require a mempool source"
         );

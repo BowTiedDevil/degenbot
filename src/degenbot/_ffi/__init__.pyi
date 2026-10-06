@@ -8,7 +8,6 @@ from _typeshed import Incomplete
 
 from .db import ExchangeRow, LiquidityPoolRow
 from .dex_identity import DexIdentity
-from .provider import AsyncAlloyProvider
 from .simulation import SimulateContext
 
 class BootRefused(RuntimeError):
@@ -313,23 +312,6 @@ class ArbitrageEngine:
         or `None` when this session holds no pool with that pair. One
         `PoolManager` hosts many pools, so the pair — never the manager address
         alone — is the identity.
-        """
-    def reconcile_hosted_head(self, /, provider: AsyncAlloyProvider, operator_address: str) -> Any:
-        """
-        Drive the host's per-head reconciliation from the engine's head feed.
-
-        The head feed calls this once per accepted header. When any strategy
-        holds a nonce reservation or any submission record is still
-        non-terminal, the host refreshes the confirmed chain nonce, reconciles
-        outstanding submission records, and folds each typed notice into the
-        owning strategy's default policy. A boot with no hosted activity
-        short-circuits before the chain read, so the settlement-only default
-        boot pays no new RPC.
-
-        # Errors
-
-        `ValueError` for an unparseable operator address. A chain-read failure
-        is logged and tolerated: the next head retries.
         """
     def register_and_solve_path(self, /, pool_refs: list) -> tuple[int, bool]:
         """

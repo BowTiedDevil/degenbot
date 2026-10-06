@@ -68,10 +68,6 @@ impl PyArbEngine {
         let booted = super::strategy::boot_host();
         let host = booted.host;
         let attached = booted.attached;
-        #[cfg(feature = "submission")]
-        let head_lanes = booted.head_lanes;
-        #[cfg(feature = "submission")]
-        let head_reconciliation = booted.head_reconciliation;
         let driver = Arc::new(
             degenbot_bot::arb_engine::EngineDriver::from_stages_with_hub(
                 Arc::clone(&bot),
@@ -95,10 +91,6 @@ impl PyArbEngine {
             driver,
             host,
             supervisor,
-            #[cfg(feature = "submission")]
-            head_lanes: Arc::new(parking_lot::Mutex::new(head_lanes)),
-            #[cfg(feature = "submission")]
-            head_reconciliation: parking_lot::Mutex::new(head_reconciliation),
             result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),
             warm_code_cache,
         }
