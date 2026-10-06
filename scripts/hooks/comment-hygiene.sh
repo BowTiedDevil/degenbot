@@ -2,10 +2,21 @@
 # Comment-hygiene instant gate — enforces the AGENTS.md "Comment Hygiene"
 # rule (docs/comments.md): code comments never restate work-tracker state.
 #
-# Detector 1 — anchored citations (the ERE in "pat" below):
+# Detector 1 — anchored citations (the regex in "pat" below):
 #   - "ergo <6-char ID>" / "ergo epic|task|slice <ID>" citations
 #   - "epic|task|slice <ID>" citations
 #   - RED/GREEN gate narration co-occurring with a 6-char ID token
+#   Scope: the working tree, not the index. The search runs rg (same tool
+#   and ignore rules as Detector 2) over the whole repo for *.py and *.rs,
+#   excluding executor/** (a self-contained sub-workspace with its own
+#   conventions), so a brand-new untracked source file is examined. An
+#   index-bound search can certify a tree it never looked at — a green
+#   that examined nothing — which is the failure this gate exists to
+#   prevent. One rg pass; no per-token subprocesses.
+#   Deliberately out of scope here: shell and markdown. *.sh is covered
+#   by Detector 2's bare-token ratchet below, and markdown is where
+#   tracker discussion legitimately lives (docs/, this gate's own
+#   census/waiver files).
 #   Waivers: one repo-relative path per line in
 #   scripts/hooks/comment-hygiene-waivers.txt. A waiver means "this file
 #   still carries pre-rule citations" — it NEVER licenses new ones; remove
@@ -43,7 +54,17 @@ census="${CHF:-scripts/hooks/comment-hygiene-census.txt}"
 pat='([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))'
 
 fail=0
-hits="$(git grep -nE "$pat" -- '*.py' '*.rs' ':(exclude)executor/**' 2>/dev/null || true)"
+# rg, not git grep: git grep only sees files the index knows about, so a
+# brand-new untracked source file gets no scan at all. rg walks the
+# working tree (gitignore-aware), matching Detector 2's view.
+command -v rg >/dev/null 2>&1 || {
+  echo "comment-hygiene: rg not found; refusing to run both detectors blind" >&2
+  exit 1
+}
+hits="$(rg -n --no-heading -e "$pat" \
+  -g '*.py' -g '*.rs' \
+  -g '!executor/**' \
+  2>/dev/null || true)"
 if [ -n "$hits" ]; then
   while IFS= read -r line; do
     path="${line%%:*}"
