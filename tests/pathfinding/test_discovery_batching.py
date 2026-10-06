@@ -247,17 +247,19 @@ class _BoomError(RuntimeError):
     pass
 
 
-class _FakeStepBuilder:
-    """Pass-through standing in for the Rust `PathStepBuilder`."""
+class _FakeGraph:
+    """Pass-through standing in for the Rust `PathGraph` value."""
 
-    def build(self, raw_path: list[object]) -> list[object]:
+    def __init__(self) -> None:
+        self.edges: list[object] = []
+
+    def build_steps(self, raw_path: list[object]) -> list[object]:
         return raw_path
 
 
 def _fake_traversal() -> object:
-    prepared = _pathfinding._PreparedGraph(edges=[], step_builder=_FakeStepBuilder())
     return _pathfinding._Traversal(
-        prepared=prepared,
+        graph=_FakeGraph(),
         start_token_id=1,
         end_token_id=1,
         include_reverse=False,

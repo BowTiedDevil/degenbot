@@ -1,8 +1,9 @@
 """Pathfinding driver: DB/token I/O + Rust seam calls only.
 
 Plan assembly (`prepare_traversal_plan`), the pool-kind table
-(`classify_pool_kinds` / `convert_pool_type_filter`), and `PathStep`
-construction (`PathStepBuilder`) all live in the Rust core.
+(`classify_pool_kinds` / `convert_pool_type_filter`), the typed graph value
+(`PathGraph`, which carries the edge list and the step builder derived from
+the same build call), and `PathStep` instantiation all live in the Rust core.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from degenbot.db import db_resolve_token_ids
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.pathfinding import (
-    PathStepBuilder,
+    PathGraph,
     PoolKind,
     build_path_graph,
     call_blocking_on_ambient_runtime,
@@ -44,19 +45,29 @@ _DISCOVERY_HEARTBEAT_INTERVAL_S: float = 15.0
 
 @dataclass(slots=True, frozen=True)
 class PathStep:
-    """PathStep class."""
+    """One pool hop in a yielded arbitrage path.
+
+    The Rust step builder instantiates this class per hop of a raw DFS path,
+    resolving the hop's pool id against the address lookups carried by the
+    graph the path came from. That pairing is why a path and its steps must
+    originate from the same ``build_path_graph`` call: the builder looks up
+    pool ids it did not produce, so a mismatched pair raises ``KeyError``
+    (pool absent from the lookups) or — after a database update reassigns a
+    pool id to a different pool — silently reports a stale address. The
+    graph value makes the pairing structural: its edges and its builder are
+    one object, built in one call.
+
+    Fields:
+        address: Checksummed pool contract address (V2/V3) or the checksummed
+            pool-manager address (V4).
+        type: The pool family the graph edge carried (``PoolKind``).
+        hash: The V4 pool hash; ``None`` for every non-V4 family — the
+            discriminator that keys V4 manager state.
+    """
 
     address: ChecksummedAddress
     type: PoolKind
     hash: str | None = None
-
-
-@dataclass(slots=True)
-class _PreparedGraph:
-    """The flat edge list + the Rust path-step builder from `_prepare_graph`."""
-
-    edges: list[tuple[TokenId, TokenId, PoolId, PoolKind]]
-    step_builder: PathStepBuilder
 
 
 def _prepare_graph(
@@ -64,43 +75,43 @@ def _prepare_graph(
     pool_types: Sequence[PoolKind],
     database_path: pathlib.Path,
     allowed_intermediate_tokens: set[TokenId] | None = None,
-) -> _PreparedGraph:
-    """Build the flat edge list + step builder for the Rust DFS.
+) -> PathGraph:
+    """Build the typed graph value for the Rust DFS.
 
-    The Rust `build_path_graph` seam opens the explicit file path.
+    The Rust `build_path_graph` seam opens the explicit file path and returns
+    one `PathGraph` carrying the filtered edge list, the address lookups,
+    and — because `step_cls` is passed here — the step builder resolved from
+    those same lookups. Edges and builder therefore always come from the same
+    build call: a path yielded from these edges is only ever stepped through
+    the builder of the graph that produced it.
 
     Returns:
-        A ``_PreparedGraph`` with flat edges + the Rust step builder.
+        The typed `PathGraph` for `find_paths` / `find_paths_async`.
 
     """
     start = time.perf_counter()
-    raw = build_path_graph(
+    graph = build_path_graph(
         database_path=str(database_path),
         chain_id=chain_id,
         pool_kinds=classify_pool_kinds(pool_types),
         allowed_intermediate_token_ids=allowed_intermediate_tokens,
+        step_cls=PathStep,
     )
-    candidate_tokens: set[TokenId] = set(raw["candidate_tokens"])
+    candidate_tokens = graph.candidate_tokens
     logger.debug(f"Found {len(candidate_tokens)} candidate tokens held by 2 or more pools")
     if allowed_intermediate_tokens is not None:
         logger.debug(f"Token whitelist applied: {len(candidate_tokens)} candidate tokens")
-
-    step_builder = PathStepBuilder(
-        v2v3_addresses=raw["v2v3_addresses"],
-        v4_lookups=raw["v4_lookups"],
-        step_cls=PathStep,
-    )
     logger.debug(
-        f"Built graph at +{time.perf_counter() - start:.1f}s: {len(raw['edges'])} edges",
+        f"Built graph at +{time.perf_counter() - start:.1f}s: {len(graph.edges)} edges",
     )
-    return _PreparedGraph(edges=list(raw["edges"]), step_builder=step_builder)
+    return graph
 
 
 @dataclass(slots=True, frozen=True)
 class _Traversal:
-    """One `(start, end, direction)` DFS traversal over a prepared graph."""
+    """One `(start, end, direction)` DFS traversal over a built graph."""
 
-    prepared: _PreparedGraph
+    graph: PathGraph
     start_token_id: TokenId
     end_token_id: TokenId
     include_reverse: bool
@@ -182,7 +193,7 @@ def _prepare_traversals(request: PathfindingRequest) -> list[_Traversal]:
             ).values(),
         )
 
-    prepared = _prepare_graph(
+    graph = _prepare_graph(
         chain_id=request.chain_id,
         pool_types=request.pool_types,
         database_path=request.database_path,
@@ -213,7 +224,7 @@ def _prepare_traversals(request: PathfindingRequest) -> list[_Traversal]:
         logger.debug(f"Performing generic {request.max_depth}-pool path search")
         traversals.append(
             _Traversal(
-                prepared=prepared,
+                graph=graph,
                 start_token_id=start_id,
                 end_token_id=end_id,
                 include_reverse=include_reverse,
@@ -242,7 +253,7 @@ def find_paths(
     for traversal in traversals:
         # One lazy Rust iterator per plan entry; `PathStep` construction in Rust.
         path_iter = find_paths_rust(
-            traversal.prepared.edges,
+            traversal.graph.edges,
             traversal.start_token_id,
             traversal.end_token_id,
             traversal.min_depth,
@@ -254,7 +265,7 @@ def find_paths(
             # The generated PathIterator.__next__ stub types the item as
             # `list | None` (the Rust Option return), but PyO3 maps exhaustion
             # to StopIteration, so a None item never reaches this loop.
-            yield traversal.prepared.step_builder.build(raw_path)
+            yield traversal.graph.build_steps(raw_path)
         logger.debug(
             f"Completed structured generic search (max depth {request.max_depth}) "
             f"at +{time.perf_counter() - start:.1f}s",
@@ -299,7 +310,7 @@ async def find_paths_async(
 
     for traversal in traversals:
         path_batches = find_paths_async_rust(
-            traversal.prepared.edges,
+            traversal.graph.edges,
             traversal.start_token_id,
             traversal.end_token_id,
             traversal.min_depth,
@@ -310,7 +321,7 @@ async def find_paths_async(
         )
         async for batch in path_batches:
             for raw_path in batch:
-                yield traversal.prepared.step_builder.build(raw_path)
+                yield traversal.graph.build_steps(raw_path)
                 discovery_yielded += 1
                 now = time.perf_counter()
                 if now - discovery_last_log >= _DISCOVERY_HEARTBEAT_INTERVAL_S:

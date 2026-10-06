@@ -364,6 +364,11 @@ class V2PoolRowInput:
     the tokens + inserts the polymorphic base `pools` row + the subclass detail
     row. `stable` is `None` for all V2 families except `Aerodrome` (the sole
     V2 subclass with a `stable` column).
+
+    The address fields are stored parsed ([`Address`], mirroring the core
+    struct); the constructor takes the Python-side hex strings and validates
+    them via [`parse_address_field`], so [`From`] conversion to the core row
+    is infallible field copying.
     """
     def __new__(
         cls,
@@ -379,7 +384,8 @@ class V2PoolRowInput:
 @final
 class V3PoolRowInput:
     """
-    One V3 pool-row to upsert. Mirrors [`degenbot_db::V3PoolRowInput`].
+    One V3 pool-row to upsert. Mirrors [`degenbot_db::V3PoolRowInput`] (the
+    address fields stored parsed, like [`PyV2PoolRowInput`]).
     """
     def __new__(
         cls, /, address: str, token0_address: str, token1_address: str, fee: int, tick_spacing: int
@@ -388,9 +394,12 @@ class V3PoolRowInput:
 @final
 class V4PoolRowInput:
     """
-    One V4 pool-row to upsert. Mirrors [`degenbot_db::V4PoolRowInput`].
-    The `pool_id` / `manager_id` is resolved inside the `Rust` core from the
-    passed `pool_manager_address` (one `SELECT` per batch).
+    One V4 pool-row to upsert. Mirrors [`degenbot_db::V4PoolRowInput`] (the
+    address fields stored parsed, like [`PyV2PoolRowInput`]; `pool_hash` stays
+    the core's `0x`-prefixed hex `String` — the `uniswap_v4_pools.pool_hash`
+    column is a hex `VARCHAR`, not a blob). The `pool_id` / `manager_id` is
+    resolved inside the `Rust` core from the passed `pool_manager_address`
+    (one `SELECT` per batch).
     """
     def __new__(
         cls,

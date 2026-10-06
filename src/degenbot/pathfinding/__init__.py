@@ -10,6 +10,7 @@ rather than reaching into ``degenbot._ffi`` directly.
 """
 
 from degenbot._ffi import (
+    PathGraph,
     PathStepBuilder,
     PoolKind,
     build_path_graph,
@@ -26,6 +27,7 @@ from degenbot._ffi import (
 from ._pathfinding import PathfindingRequest, PathStep, find_paths, find_paths_async
 
 __all__ = [
+    "PathGraph",
     "PathStep",
     "PathStepBuilder",
     "PathfindingRequest",

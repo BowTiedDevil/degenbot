@@ -354,10 +354,11 @@ mod _ffi {
         PathIterator, PathStepBuilder, PoolKind,
     };
     // The build_path_graph seam choreographs a degenbot-db read + a
-    // degenbot-pathfinding graph build, so it needs BOTH features.
+    // degenbot-pathfinding graph build, so it needs BOTH features; the
+    // PathGraph value is its (only) constructor's return type.
     #[cfg(all(feature = "pathfinding", feature = "db"))]
     #[pymodule_export]
-    use crate::pathfinding::build_path_graph;
+    use crate::pathfinding::{build_path_graph, PathGraph};
 
     // S12: the core registration outcome ledger + its bounded tag vocabulary
     // (`degenbot_bot::bot_core::registration_ledger`), projected for the

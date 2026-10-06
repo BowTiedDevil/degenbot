@@ -105,7 +105,7 @@ def _build_db() -> None:
 
 
 def _dump_oracle() -> dict:
-    raw = build_path_graph(str(DB_PATH), CHAIN, {PoolKind.V2, PoolKind.V3, PoolKind.V4})
+    graph = build_path_graph(str(DB_PATH), CHAIN, {PoolKind.V2, PoolKind.V3, PoolKind.V4})
     edges: list[list[int]] = []
     token_by_address: dict[str, int] = {}
     with closing(sqlite3.connect(DB_PATH)) as connection:
@@ -137,18 +137,18 @@ def _dump_oracle() -> dict:
         "chain_id": CHAIN,
         "edges": edges,
         "filtered_edges": sorted(
-            [int(t0), int(t1), int(pool_id), int(kind)] for t0, t1, pool_id, kind in raw["edges"]
+            [int(t0), int(t1), int(pool_id), int(kind)] for t0, t1, pool_id, kind in graph.edges
         ),
-        "candidate_tokens": sorted(int(token) for token in raw["candidate_tokens"]),
+        "candidate_tokens": sorted(int(token) for token in graph.candidate_tokens),
         "v2v3_addresses": {
-            str(int(pool_id)): address for pool_id, address in raw["v2v3_addresses"].items()
+            str(int(pool_id)): address for pool_id, address in graph.v2v3_addresses.items()
         },
         "v4_lookups": {
             str(int(pool_id)): [manager, pool_hash]
-            for pool_id, (manager, pool_hash) in raw["v4_lookups"].items()
+            for pool_id, (manager, pool_hash) in graph.v4_lookups.items()
         },
         "pool_id_to_kind": {
-            str(int(pool_id)): int(kind) for pool_id, kind in raw["pool_id_to_kind"].items()
+            str(int(pool_id)): int(kind) for pool_id, kind in graph.pool_id_to_kind.items()
         },
         "token_by_address": {
             address: int(token_id) for address, token_id in token_by_address.items()

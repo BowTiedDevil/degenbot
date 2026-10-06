@@ -75,8 +75,9 @@ pub const fn demangle_v4_pool_id(graph_id: u64) -> u64 {
 }
 
 /// The flat edge list + address lookup maps produced by
-/// [`DegenbotDb::fetch_path_graph_edges`] — the Rust analogue of the Python
-/// `_PreparedGraph`.
+/// [`DegenbotDb::fetch_path_graph_edges`] — the standalone-Rust substrate the
+/// PyO3 seam projects into its typed `PathGraph` value (checksummed address
+/// strings there, `Address` values here).
 ///
 /// # Fields
 ///

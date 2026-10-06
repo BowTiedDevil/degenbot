@@ -2773,6 +2773,64 @@ class PathBatchIterator:
         """
 
 @final
+class PathGraph:
+    """
+    One typed `build_path_graph` result: the filtered flat edge list, the
+    address lookups, the candidate-token set, and the path-step builder,
+    carried as ONE value so they cannot drift apart.
+
+    The invariant this shape makes structural: the edge list and the step
+    builder always come from the same `build_path_graph` call. The builder
+    resolves each hop's pool id against the graph's address lookups, and
+    those mappings are only valid for the database read that produced the
+    edges — a builder from an earlier build paired with re-built edges (the
+    updater may have reassigned a pool id) resolves hops to stale addresses
+    or misses pools entirely. `build_path_graph` constructs the builder from
+    its own lookups, so Python cannot pair them across calls.
+
+    The containers are materialized once inside the build call, so every
+    getter is an O(1) handout: re-reading `edges` never re-converts the
+    ~100k-tuple list under the GIL.
+    """
+    def build_steps(self, /, raw_path: Sequence[tuple[int, PoolKind]]) -> list[Any]:
+        """
+        Build the `PathStep` objects for one raw DFS path.
+
+        # Errors
+
+        Returns `PyValueError` when the graph was built without a `step_cls`
+        (probe-style `build_path_graph` calls read the maps only), and the
+        builder's `PyKeyError` when a hop's pool id is missing from the
+        graph's lookups — which, for edges and steps of one build call,
+        means the path does not belong to this graph.
+        """
+    @property
+    def candidate_tokens(self, /) -> set:
+        """
+        Candidate token ids (after the whitelist intersection).
+        """
+    @property
+    def edges(self, /) -> list:
+        """
+        The filtered flat edge list, ready for `find_paths_rust`.
+        """
+    @property
+    def pool_id_to_kind(self, /) -> dict:
+        """
+        `pool_id` → family discriminant.
+        """
+    @property
+    def v2v3_addresses(self, /) -> dict:
+        """
+        V2/V3 pool id → checksummed pool address.
+        """
+    @property
+    def v4_lookups(self, /) -> dict:
+        """
+        V4 namespaced pool id → `(checksummed manager address, pool hash)`.
+        """
+
+@final
 class PathIterator:
     """
     A lazy Python iterator over arbitrage paths.
@@ -2800,6 +2858,11 @@ class PathStepBuilder:
     The graph edge already carries the authoritative family discriminant, so
     the builder only resolves byte-stable pool identities and instantiates the
     Python-owned step class.
+
+    Two construction paths: `build_path_graph` builds one from its own address
+    lookups (the graph value's step builder, so a path and its steps always
+    share one build call), and synthetic-map callers (probe/tests) build one
+    directly from hand-written `v2v3_addresses` / `v4_lookups`.
     """
     def __new__(
         cls,
@@ -4015,7 +4078,8 @@ def build_path_graph(
     chain_id: int,
     pool_kinds: set[PoolKind],
     allowed_intermediate_token_ids: set[int] | None = None,
-) -> dict:
+    step_cls: Any | None = None,
+) -> PathGraph:
     """
     Build the pathfinding edge list + address lookups via the Rust DB core
 
@@ -4042,15 +4106,19 @@ def build_path_graph(
             filtering (mirrors Python's `allowed_token_ids` whitelist).
 
     Returns:
-        A dict ``{``edges``, ``v2v3_addresses``, ``v4_lookups``,
-        ``pool_id_to_kind``, ``candidate_tokens``}``:
+        A `PathGraph` — one value carrying the filtered edge list, the address
+        lookups, the candidate-token set, and (when `step_cls` is given) the
+        step builder resolved from those same lookups:
         - ``edges``: ``list[(token0_id, token1_id, pool_id, pool_kind)]``
-          for `find_paths_rust`, with typed [`PoolKind`] values.
+          for `find_paths_rust`, with typed `PoolKind` values.
         - ``v2v3_addresses``: ``{pool_id: checksum_address_str}``.
         - ``v4_lookups``: ``{pool_id: (manager_address_str, pool_hash_hex)}``.
-        - ``pool_id_to_kind``: ``{pool_id: pool_kind}`` for the DFS.
+        - ``pool_id_to_kind``: ``{pool_id: pool_kind}``.
         - ``candidate_tokens``: ``set[int]`` of candidate token IDs (after the
           whitelist intersection) for caller diagnostics.
+        The step builder is only present when the call carried `step_cls`;
+        `PathGraph.build_steps` raises a loud `ValueError` otherwise, so a
+        probe-style call cannot be mistaken for a step-producing one.
 
     # Errors
 
@@ -4633,6 +4701,7 @@ __all__ = [
     "HypotheticalConfig",
     "IntakeReceipt",
     "PathBatchIterator",
+    "PathGraph",
     "PathIterator",
     "PathRegistryFullError",
     "PathStepBuilder",

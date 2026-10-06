@@ -35,10 +35,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
+import socket
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import time
+import urllib.request
 from pathlib import Path
+
+from degenbot._ffi import Bot, PoolKind, build_path_graph
 
 _HERE = Path(__file__).resolve().parent
 _FIXTURE_DIR = _HERE / "fixtures"
@@ -101,7 +105,6 @@ def diff_decisions(
 
 def python_offline_decisions() -> list[dict]:
     """The Python consumer probe's decisions against the parity.db fixture."""
-    from degenbot._ffi import Bot, PoolKind, build_path_graph
 
     bot = Bot(1)
     bot.load_snapshot_from_db(str(_DB_PATH), 1)
@@ -113,9 +116,9 @@ def python_offline_decisions() -> list[dict]:
     )
     return [
         {"key": "snapshot_seed_block", "value": bot.snapshot_seed_block},
-        {"key": "discovery_count", "value": len(graph["pool_id_to_kind"])},
-        {"key": "graph.nodes", "value": len(graph["pool_id_to_kind"])},
-        {"key": "graph.candidate_tokens", "value": sorted(graph["candidate_tokens"])},
+        {"key": "discovery_count", "value": len(graph.pool_id_to_kind)},
+        {"key": "graph.nodes", "value": len(graph.pool_id_to_kind)},
+        {"key": "graph.candidate_tokens", "value": sorted(graph.candidate_tokens)},
     ]
 
 
@@ -171,7 +174,6 @@ def run_recorded() -> int:
 
 def _wait_for_rpc(port: int, timeout: float = 30.0) -> None:
     """Poll anvil's HTTP endpoint until it answers."""
-    import urllib.request
 
     payload = json.dumps({
         "jsonrpc": "2.0",
@@ -235,12 +237,10 @@ def run_live(fork_rpc: str, fork_block: int) -> int:
         msg = f"anvil not found at {_ANVIL}"
         raise RuntimeError(msg)
 
-    import socket
-
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    anvil = subprocess.Popen(  # noqa: S603
+    anvil = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]
         [
             str(_ANVIL),
             "--fork-url",

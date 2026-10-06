@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot._ffi import Bot, PoolKind, build_path_graph
+from degenbot._ffi import Bot, PathGraph, PoolKind, build_path_graph
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _ORACLE_PATH = _FIXTURE_DIR / "settlement_bot_boot.json"
@@ -59,7 +59,7 @@ def _python_seed_block() -> int | None:
     return bot.snapshot_seed_block
 
 
-def _python_graph() -> dict:
+def _python_graph() -> PathGraph:
     """The Python driver's candidate-pool graph against the fixture DB."""
     return build_path_graph(
         database_path=str(_DB_PATH),
@@ -81,10 +81,10 @@ def test_python_consumer_boot_decisions_match_shared_oracle() -> None:
     graph = _python_graph()
     # The Python discovery enumeration count and the Rust discovery count
     # agree on the fixture: one V3 + one V4 pool (ledger row 11).
-    assert len(graph["pool_id_to_kind"]) == expected["discovery_count"]
-    assert len(graph["pool_id_to_kind"]) == python_reachable["graph_nodes"]
-    assert sorted(graph["candidate_tokens"]) == python_reachable["graph_candidate_tokens"]
-    assert len(graph["edges"]) == python_reachable["graph_edges"]
+    assert len(graph.pool_id_to_kind) == expected["discovery_count"]
+    assert len(graph.pool_id_to_kind) == python_reachable["graph_nodes"]
+    assert sorted(graph.candidate_tokens) == python_reachable["graph_candidate_tokens"]
+    assert len(graph.edges) == python_reachable["graph_edges"]
 
 
 def test_oracle_ledger_is_complete_and_typed() -> None:
@@ -110,6 +110,6 @@ def test_seeded_divergence_in_oracle_fails_the_python_comparator() -> None:
 
     graph = _python_graph()
     mutated_nodes = oracle["python_reachable"]["graph_nodes"] + 1
-    assert len(graph["pool_id_to_kind"]) != mutated_nodes, (
+    assert len(graph.pool_id_to_kind) != mutated_nodes, (
         "a mutated expected graph-node count must fail the Python comparator"
     )

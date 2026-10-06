@@ -28,6 +28,16 @@ use crate::db::pool_read::{PyExchangeRow, PyPoolManagerRow};
 // Python row-input pyclasses (the arg-extraction boundary)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Parse one Python-supplied address argument for a row-input constructor.
+///
+/// The single `AddressError` → `PyValueError` mapping site for the discovery
+/// row inputs: every address field of every `Py*PoolRowInput` constructor
+/// parses through here, so a malformed address is rejected AT CONSTRUCTION
+/// with one uniform message instead of per-field at upsert time.
+fn parse_address_field(raw: &str) -> PyResult<Address> {
+    Ok(parse_address(raw)?)
+}
+
 /// One V2 pool-row to upsert. Mirrors [`degenbot_db::V2PoolRowInput`]:
 /// the `(address, token0_address, token1_address, fee_token0, fee_token1,
 /// stable)` tuple. The Python `update_v2_pools` shell decodes the
@@ -35,11 +45,16 @@ use crate::db::pool_read::{PyExchangeRow, PyPoolManagerRow};
 /// the tokens + inserts the polymorphic base `pools` row + the subclass detail
 /// row. `stable` is `None` for all V2 families except `Aerodrome` (the sole
 /// V2 subclass with a `stable` column).
+///
+/// The address fields are stored parsed ([`Address`], mirroring the core
+/// struct); the constructor takes the Python-side hex strings and validates
+/// them via [`parse_address_field`], so [`From`] conversion to the core row
+/// is infallible field copying.
 #[pyclass(name = "V2PoolRowInput", module = "degenbot._ffi.db")]
 pub struct PyV2PoolRowInput {
-    address: String,
-    token0_address: String,
-    token1_address: String,
+    address: Address,
+    token0_address: Address,
+    token1_address: Address,
     fee_token0: i64,
     fee_token1: i64,
     stable: Option<bool>,
@@ -56,40 +71,38 @@ impl PyV2PoolRowInput {
         fee_token0: i64,
         fee_token1: i64,
         stable: Option<bool>,
-    ) -> Self {
-        Self {
-            address,
-            token0_address,
-            token1_address,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            address: parse_address_field(&address)?,
+            token0_address: parse_address_field(&token0_address)?,
+            token1_address: parse_address_field(&token1_address)?,
             fee_token0,
             fee_token1,
             stable,
-        }
-    }
-}
-
-impl PyV2PoolRowInput {
-    fn to_input(&self) -> PyResult<degenbot_db::V2PoolRowInput> {
-        Ok(degenbot_db::V2PoolRowInput {
-            address: parse_address(&self.address)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            token0_address: parse_address(&self.token0_address)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            token1_address: parse_address(&self.token1_address)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            fee_token0: self.fee_token0,
-            fee_token1: self.fee_token1,
-            stable: self.stable,
         })
     }
 }
 
-/// One V3 pool-row to upsert. Mirrors [`degenbot_db::V3PoolRowInput`].
+impl From<&PyV2PoolRowInput> for degenbot_db::V2PoolRowInput {
+    fn from(row: &PyV2PoolRowInput) -> Self {
+        Self {
+            address: row.address,
+            token0_address: row.token0_address,
+            token1_address: row.token1_address,
+            fee_token0: row.fee_token0,
+            fee_token1: row.fee_token1,
+            stable: row.stable,
+        }
+    }
+}
+
+/// One V3 pool-row to upsert. Mirrors [`degenbot_db::V3PoolRowInput`] (the
+/// address fields stored parsed, like [`PyV2PoolRowInput`]).
 #[pyclass(name = "V3PoolRowInput", module = "degenbot._ffi.db")]
 pub struct PyV3PoolRowInput {
-    address: String,
-    token0_address: String,
-    token1_address: String,
+    address: Address,
+    token0_address: Address,
+    token1_address: Address,
     fee: i64,
     tick_spacing: i64,
 }
@@ -103,41 +116,41 @@ impl PyV3PoolRowInput {
         token1_address: String,
         fee: i64,
         tick_spacing: i64,
-    ) -> Self {
-        Self {
-            address,
-            token0_address,
-            token1_address,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            address: parse_address_field(&address)?,
+            token0_address: parse_address_field(&token0_address)?,
+            token1_address: parse_address_field(&token1_address)?,
             fee,
             tick_spacing,
-        }
-    }
-}
-
-impl PyV3PoolRowInput {
-    fn to_input(&self) -> PyResult<degenbot_db::V3PoolRowInput> {
-        Ok(degenbot_db::V3PoolRowInput {
-            address: parse_address(&self.address)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            token0_address: parse_address(&self.token0_address)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            token1_address: parse_address(&self.token1_address)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            fee: self.fee,
-            tick_spacing: self.tick_spacing,
         })
     }
 }
 
-/// One V4 pool-row to upsert. Mirrors [`degenbot_db::V4PoolRowInput`].
-/// The `pool_id` / `manager_id` is resolved inside the `Rust` core from the
-/// passed `pool_manager_address` (one `SELECT` per batch).
+impl From<&PyV3PoolRowInput> for degenbot_db::V3PoolRowInput {
+    fn from(row: &PyV3PoolRowInput) -> Self {
+        Self {
+            address: row.address,
+            token0_address: row.token0_address,
+            token1_address: row.token1_address,
+            fee: row.fee,
+            tick_spacing: row.tick_spacing,
+        }
+    }
+}
+
+/// One V4 pool-row to upsert. Mirrors [`degenbot_db::V4PoolRowInput`] (the
+/// address fields stored parsed, like [`PyV2PoolRowInput`]; `pool_hash` stays
+/// the core's `0x`-prefixed hex `String` — the `uniswap_v4_pools.pool_hash`
+/// column is a hex `VARCHAR`, not a blob). The `pool_id` / `manager_id` is
+/// resolved inside the `Rust` core from the passed `pool_manager_address`
+/// (one `SELECT` per batch).
 #[pyclass(name = "V4PoolRowInput", module = "degenbot._ffi.db")]
 pub struct PyV4PoolRowInput {
     pool_hash: String,
-    hooks: String,
-    currency0_address: String,
-    currency1_address: String,
+    hooks: Address,
+    currency0_address: Address,
+    currency1_address: Address,
     fee: i64,
     tick_spacing: i64,
 }
@@ -152,31 +165,28 @@ impl PyV4PoolRowInput {
         currency1_address: String,
         fee: i64,
         tick_spacing: i64,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        Ok(Self {
             pool_hash,
-            hooks,
-            currency0_address,
-            currency1_address,
+            hooks: parse_address_field(&hooks)?,
+            currency0_address: parse_address_field(&currency0_address)?,
+            currency1_address: parse_address_field(&currency1_address)?,
             fee,
             tick_spacing,
-        }
+        })
     }
 }
 
-impl PyV4PoolRowInput {
-    fn to_input(&self) -> PyResult<degenbot_db::V4PoolRowInput> {
-        Ok(degenbot_db::V4PoolRowInput {
-            pool_hash: self.pool_hash.clone(),
-            hooks: parse_address(&self.hooks)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            currency0_address: parse_address(&self.currency0_address)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            currency1_address: parse_address(&self.currency1_address)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            fee: self.fee,
-            tick_spacing: self.tick_spacing,
-        })
+impl From<&PyV4PoolRowInput> for degenbot_db::V4PoolRowInput {
+    fn from(row: &PyV4PoolRowInput) -> Self {
+        Self {
+            pool_hash: row.pool_hash.clone(),
+            hooks: row.hooks,
+            currency0_address: row.currency0_address,
+            currency1_address: row.currency1_address,
+            fee: row.fee,
+            tick_spacing: row.tick_spacing,
+        }
     }
 }
 
@@ -208,8 +218,8 @@ pub(crate) fn db_upsert_v2_pools(
     let path = PathBuf::from(database_path);
     let rust_rows: Vec<degenbot_db::V2PoolRowInput> = rows
         .into_iter()
-        .map(|r| r.borrow(py).to_input())
-        .collect::<PyResult<_>>()?;
+        .map(|r| degenbot_db::V2PoolRowInput::from(&*r.borrow(py)))
+        .collect();
     py.detach(|| {
         let (db, _state) =
             degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
@@ -238,8 +248,8 @@ pub(crate) fn db_upsert_v3_pools(
     let path = PathBuf::from(database_path);
     let rust_rows: Vec<degenbot_db::V3PoolRowInput> = rows
         .into_iter()
-        .map(|r| r.borrow(py).to_input())
-        .collect::<PyResult<_>>()?;
+        .map(|r| degenbot_db::V3PoolRowInput::from(&*r.borrow(py)))
+        .collect();
     py.detach(|| {
         let (db, _state) =
             degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
@@ -270,8 +280,8 @@ pub(crate) fn db_upsert_v4_pools(
     let path = PathBuf::from(database_path);
     let rust_rows: Vec<degenbot_db::V4PoolRowInput> = rows
         .into_iter()
-        .map(|r| r.borrow(py).to_input())
-        .collect::<PyResult<_>>()?;
+        .map(|r| degenbot_db::V4PoolRowInput::from(&*r.borrow(py)))
+        .collect();
     py.detach(|| {
         let (db, _state) =
             degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;

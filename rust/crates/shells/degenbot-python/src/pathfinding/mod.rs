@@ -6,9 +6,10 @@
 //!
 //! `build_path_graph` choreographs the DB read
 //! (`degenbot_db::fetch_path_graph_edges` and `fetch_tokens_with_min_degree`),
-//! the candidate-token edge filter, and `PathGraph::from_edges`/
-//! `prune_dead_ends`; the Python `_prepare_graph` becomes a delegating shell.
-//! The DFS half (`find_paths_rust`) is unchanged.
+//! the candidate-token edge filter, and the core
+//! `degenbot_pathfinding::graph::PathGraph` build + `prune_dead_ends`; the
+//! Python `_prepare_graph` becomes a delegating shell. The DFS half
+//! (`find_paths_rust`) is unchanged.
 
 #![expect(clippy::doc_markdown)]
 
@@ -17,7 +18,7 @@ use crate::prelude::*;
 // Note: `alloy::primitives::Address` is no longer named in this module
 // after the GIL fix — the address maps are pre-computed to
 // checksum STRINGS inside the `py.detach` span in `build_path_graph`, so
-// `build_graph_dict` holds no `Address` values. Re-add the import if a
+// `PathGraph` holds no `Address` values. Re-add the import if a
 // downstream helper here regains an `Address`-typed surface.
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use degenbot_db::DegenbotDb;
@@ -25,7 +26,7 @@ use degenbot_pathfinding::directions::resolve_directions as core_resolve_directi
 use degenbot_pathfinding::directions::DirectionHop as CoreDirectionHop;
 use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind as CorePoolKind, SearchSpec};
 use pyo3::exceptions::{PyKeyError, PyStopAsyncIteration, PyValueError};
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyDict, PyList, PySet, PyTuple};
 use std::collections::{HashMap, HashSet};
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use std::path::Path;
@@ -260,6 +261,11 @@ pub fn prepare_traversal_plan(
 /// The graph edge already carries the authoritative family discriminant, so
 /// the builder only resolves byte-stable pool identities and instantiates the
 /// Python-owned step class.
+///
+/// Two construction paths: `build_path_graph` builds one from its own address
+/// lookups (the graph value's step builder, so a path and its steps always
+/// share one build call), and synthetic-map callers (probe/tests) build one
+/// directly from hand-written `v2v3_addresses` / `v4_lookups`.
 #[pyclass(module = "degenbot._ffi")]
 pub struct PathStepBuilder {
     /// V2/V3 pool id → checksummed address.
@@ -315,6 +321,102 @@ impl PathStepBuilder {
             }
         }
         Ok(steps)
+    }
+}
+
+/// One typed `build_path_graph` result: the filtered flat edge list, the
+/// address lookups, the candidate-token set, and the path-step builder,
+/// carried as ONE value so they cannot drift apart.
+///
+/// The invariant this shape makes structural: the edge list and the step
+/// builder always come from the same `build_path_graph` call. The builder
+/// resolves each hop's pool id against the graph's address lookups, and
+/// those mappings are only valid for the database read that produced the
+/// edges — a builder from an earlier build paired with re-built edges (the
+/// updater may have reassigned a pool id) resolves hops to stale addresses
+/// or misses pools entirely. `build_path_graph` constructs the builder from
+/// its own lookups, so Python cannot pair them across calls.
+///
+/// The containers are materialized once inside the build call, so every
+/// getter is an O(1) handout: re-reading `edges` never re-converts the
+/// ~100k-tuple list under the GIL.
+#[cfg(all(feature = "pathfinding", feature = "db"))]
+#[pyclass(module = "degenbot._ffi")]
+pub struct PathGraph {
+    /// The filtered edge list as flat
+    /// `(token0_id, token1_id, pool_id, pool_kind)` tuples.
+    edges: Py<PyList>,
+    /// V2/V3 pool id → checksummed pool address.
+    v2v3_addresses: Py<PyDict>,
+    /// V4 namespaced pool id → `(checksummed manager address, pool hash)`.
+    v4_lookups: Py<PyDict>,
+    /// `pool_id` → family discriminant.
+    pool_id_to_kind: Py<PyDict>,
+    /// Candidate token ids (after the whitelist intersection).
+    candidate_tokens: Py<PySet>,
+    /// The step builder `build_path_graph` derived from the maps above;
+    /// `None` only for probe-style calls that passed no `step_cls`.
+    step_builder: Option<PathStepBuilder>,
+}
+
+#[pymethods]
+impl PathGraph {
+    // The getters hand out `Bound` clones (one refcount bump each): the crate
+    // does not enable pyo3's `py-clone` feature, so `Py<T>::clone` is
+    // unavailable, and a bound clone is equally O(1) on the attached thread
+    // every getter runs on.
+
+    /// The filtered flat edge list, ready for `find_paths_rust`.
+    #[getter]
+    fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyList> {
+        self.edges.bind(py).clone()
+    }
+
+    /// V2/V3 pool id → checksummed pool address.
+    #[getter]
+    fn v2v3_addresses<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
+        self.v2v3_addresses.bind(py).clone()
+    }
+
+    /// V4 namespaced pool id → `(checksummed manager address, pool hash)`.
+    #[getter]
+    fn v4_lookups<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
+        self.v4_lookups.bind(py).clone()
+    }
+
+    /// `pool_id` → family discriminant.
+    #[getter]
+    fn pool_id_to_kind<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
+        self.pool_id_to_kind.bind(py).clone()
+    }
+
+    /// Candidate token ids (after the whitelist intersection).
+    #[getter]
+    fn candidate_tokens<'py>(&self, py: Python<'py>) -> Bound<'py, PySet> {
+        self.candidate_tokens.bind(py).clone()
+    }
+
+    /// Build the `PathStep` objects for one raw DFS path.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PyValueError` when the graph was built without a `step_cls`
+    /// (probe-style `build_path_graph` calls read the maps only), and the
+    /// builder's `PyKeyError` when a hop's pool id is missing from the
+    /// graph's lookups — which, for edges and steps of one build call,
+    /// means the path does not belong to this graph.
+    fn build_steps(
+        &self,
+        py: Python<'_>,
+        raw_path: Vec<(u64, PoolKind)>,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        let builder = self.step_builder.as_ref().ok_or_else(|| {
+            PyValueError::new_err(
+                "this graph was built without step_cls; pass step_cls to \
+                 build_path_graph to build steps",
+            )
+        })?;
+        builder.build(py, raw_path)
     }
 }
 
@@ -506,15 +608,19 @@ fn build_owned_finder(
 ///         filtering (mirrors Python's `allowed_token_ids` whitelist).
 ///
 /// Returns:
-///     A dict ``{``edges``, ``v2v3_addresses``, ``v4_lookups``,
-///     ``pool_id_to_kind``, ``candidate_tokens``}``:
+///     A `PathGraph` — one value carrying the filtered edge list, the address
+///     lookups, the candidate-token set, and (when `step_cls` is given) the
+///     step builder resolved from those same lookups:
 ///     - ``edges``: ``list[(token0_id, token1_id, pool_id, pool_kind)]``
-///       for `find_paths_rust`, with typed [`PoolKind`] values.
+///       for `find_paths_rust`, with typed `PoolKind` values.
 ///     - ``v2v3_addresses``: ``{pool_id: checksum_address_str}``.
 ///     - ``v4_lookups``: ``{pool_id: (manager_address_str, pool_hash_hex)}``.
-///     - ``pool_id_to_kind``: ``{pool_id: pool_kind}`` for the DFS.
+///     - ``pool_id_to_kind``: ``{pool_id: pool_kind}``.
 ///     - ``candidate_tokens``: ``set[int]`` of candidate token IDs (after the
 ///       whitelist intersection) for caller diagnostics.
+///     The step builder is only present when the call carried `step_cls`;
+///     `PathGraph.build_steps` raises a loud `ValueError` otherwise, so a
+///     probe-style call cannot be mistaken for a step-producing one.
 ///
 /// # Errors
 ///
@@ -523,14 +629,15 @@ fn build_owned_finder(
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 #[pyfunction]
 #[expect(clippy::implicit_hasher, clippy::needless_pass_by_value)]
-#[pyo3(signature = (database_path, chain_id, pool_kinds, allowed_intermediate_token_ids=None))]
-pub fn build_path_graph<'py>(
-    py: Python<'py>,
+#[pyo3(signature = (database_path, chain_id, pool_kinds, allowed_intermediate_token_ids=None, step_cls=None))]
+pub fn build_path_graph(
+    py: Python<'_>,
     database_path: &str,
     chain_id: i64,
     pool_kinds: HashSet<PoolKind>,
     allowed_intermediate_token_ids: Option<HashSet<u64>>,
-) -> PyResult<Bound<'py, PyDict>> {
+    step_cls: Option<Py<PyAny>>,
+) -> PyResult<PathGraph> {
     let kinds: Vec<CorePoolKind> = pool_kinds.into_iter().map(PoolKind::to_core).collect();
 
     let (edges, v2v3_addresses, v4_lookups, pool_id_to_kind, candidate_tokens) = py
@@ -545,34 +652,47 @@ pub fn build_path_graph<'py>(
         })
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-    build_graph_dict(
+    // The step builder is constructed from the SAME checksummed lookups the
+    // edge list indexes into — the same-build-call invariant is structural:
+    // Python cannot obtain a builder whose maps did not come from this graph
+    // (`PathStepBuilder`'s own constructor is the synthetic-map probe path).
+    let step_builder =
+        step_cls.map(|cls| PathStepBuilder::new(v2v3_addresses.clone(), v4_lookups.clone(), cls));
+
+    build_graph_value(
         py,
         &edges,
         &v2v3_addresses,
         &v4_lookups,
         &pool_id_to_kind,
         &candidate_tokens,
+        step_builder,
     )
 }
 
 /// The Rust-side result of `fetch_graph_data`: the filtered edge list + the
 /// three address/kind maps + the candidate-token set, ready for
-/// `build_graph_dict` to wrap into Python types.
+/// `build_graph_value` to materialize into the `PathGraph` value.
 ///
 /// The address maps hold PRE-COMPUTED checksum strings (not `Address`) so
-/// `build_graph_dict` does no keccak/EIP-55 work under the GIL — the
+/// `build_graph_value` does no keccak/EIP-55 work under the GIL — the
 /// `to_checksum(None)` calls run inside the `py.detach` span in
 /// `build_path_graph`: the keccak loop over tens of thousands
 /// of V2/V3 addresses previously held the GIL for ~24 s, starving every
 /// tokio worker that needs `PyGILState_Ensure` and triggering the dispatch
 /// circular deadlock during the rolling-start `build_paths` overlap).
+//
+// The maps are STD collections, not the core's `hashbrown` maps: PyO3 (without
+// its `hashbrown` feature) extracts dict arguments into `std::collections`
+// only, so `PathStepBuilder`'s Python-facing constructor is std-shaped, and
+// this projection converts once so the whole seam tail is uniform.
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 type GraphBuildResult = (
     Vec<(u64, u64, u64, PoolKind)>,
-    hashbrown::HashMap<u64, String>,
-    hashbrown::HashMap<u64, (String, String)>,
-    hashbrown::HashMap<u64, CorePoolKind>,
-    hashbrown::HashSet<u64>,
+    HashMap<u64, String>,
+    HashMap<u64, (String, String)>,
+    HashMap<u64, CorePoolKind>,
+    HashSet<u64>,
 );
 
 /// Run the candidate-token fetch + bulk edge read + candidate-token edge
@@ -588,7 +708,10 @@ fn fetch_graph_data(
     // Candidate tokens: those appearing in ≥ `degree` pools across the
     // requested kinds (mirrors Python `_get_tokens_with_min_degree`).
     // `degree=2` matches the Python callers (a cycle needs ≥ 2 pools).
-    let mut candidate_tokens = db.fetch_tokens_with_min_degree(chain_id, 2, kinds)?;
+    let mut candidate_tokens: HashSet<u64> = db
+        .fetch_tokens_with_min_degree(chain_id, 2, kinds)?
+        .into_iter()
+        .collect();
     if let Some(allowed) = allowed_intermediate_token_ids {
         candidate_tokens.retain(|t| allowed.contains(t));
     }
@@ -620,15 +743,15 @@ fn fetch_graph_data(
     // every V4 manager address inside this GIL-released span .
     // `Address::to_checksum(None)` is pure Rust (a keccak256 over the
     // lowercase-hex address) and does NOT need the GIL; doing it here keeps
-    // `build_graph_dict`'s dict-build loop GIL-light (only `set_item` calls).
-    // Previously `build_graph_dict` called `to_checksum` PER pool while
-    // holding the GIL, a ~24 s keccak loop that starved tokio workers.
-    let v2v3_checksums: hashbrown::HashMap<u64, String> = data
+    // `build_graph_value`'s materialization loop GIL-light (only `set_item`
+    // calls). Previously the materialization called `to_checksum` PER pool
+    // while holding the GIL, a ~24 s keccak loop that starved tokio workers.
+    let v2v3_checksums: HashMap<u64, String> = data
         .v2v3_addresses
         .iter()
         .map(|(pid, addr)| (*pid, addr.to_checksum(None)))
         .collect();
-    let v4_checksums: hashbrown::HashMap<u64, (String, String)> = data
+    let v4_checksums: HashMap<u64, (String, String)> = data
         .v4_lookups
         .iter()
         .map(|(pid, (mgr, hash))| (*pid, (mgr.to_checksum(None), hash.clone())))
@@ -638,37 +761,37 @@ fn fetch_graph_data(
         edges,
         v2v3_checksums,
         v4_checksums,
-        data.pool_id_to_kind,
+        data.pool_id_to_kind.into_iter().collect(),
         candidate_tokens,
     ))
 }
 
-/// Build the Python return dict — the address maps use checksum strings
-/// (the `Address` ↔ Python str boundary the snapshot seam already uses).
+/// Materialize the Python containers of one `PathGraph` value — the address
+/// maps use checksum strings (the `Address` ↔ Python str boundary the
+/// snapshot seam already uses). Runs under the GIL once per build; the
+/// keccak/EIP-55 work already happened inside the `py.detach` span.
 #[cfg(all(feature = "pathfinding", feature = "db"))]
-fn build_graph_dict<'py>(
-    py: Python<'py>,
+fn build_graph_value(
+    py: Python<'_>,
     edges: &[(u64, u64, u64, PoolKind)],
-    v2v3_addresses: &hashbrown::HashMap<u64, String>,
-    v4_lookups: &hashbrown::HashMap<u64, (String, String)>,
-    pool_id_to_kind: &hashbrown::HashMap<u64, CorePoolKind>,
-    candidate_tokens: &hashbrown::HashSet<u64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let out = PyDict::new(py);
+    v2v3_addresses: &HashMap<u64, String>,
+    v4_lookups: &HashMap<u64, (String, String)>,
+    pool_id_to_kind: &HashMap<u64, CorePoolKind>,
+    candidate_tokens: &HashSet<u64>,
+    step_builder: Option<PathStepBuilder>,
+) -> PyResult<PathGraph> {
     let edges_vec: Vec<(u64, u64, u64, PoolKind)> = edges.to_vec();
-    out.set_item("edges", PyList::new(py, edges_vec)?)?;
+    let edges_list = PyList::new(py, edges_vec)?;
 
     let v2v3 = PyDict::new(py);
     for (pid, addr) in v2v3_addresses {
         v2v3.set_item(pid, addr.as_str())?;
     }
-    out.set_item("v2v3_addresses", v2v3)?;
 
     let v4 = PyDict::new(py);
     for (pid, (mgr, hash)) in v4_lookups {
         v4.set_item(pid, (mgr.as_str(), hash.as_str()))?;
     }
-    out.set_item("v4_lookups", v4)?;
 
     let kind_map = PyDict::new(py);
     for (pid, kind) in pool_id_to_kind {
@@ -680,15 +803,20 @@ fn build_graph_dict<'py>(
         })?;
         kind_map.set_item(pid, pool_kind)?;
     }
-    out.set_item("pool_id_to_kind", kind_map)?;
 
-    let cand = pyo3::types::PySet::empty(py)?;
+    let cand = PySet::empty(py)?;
     for t in candidate_tokens {
         cand.add(t)?;
     }
-    out.set_item("candidate_tokens", cand)?;
 
-    Ok(out)
+    Ok(PathGraph {
+        edges: edges_list.unbind(),
+        v2v3_addresses: v2v3.unbind(),
+        v4_lookups: v4.unbind(),
+        pool_id_to_kind: kind_map.unbind(),
+        candidate_tokens: cand.unbind(),
+        step_builder,
+    })
 }
 
 /// A lazy Python iterator over arbitrage paths.
