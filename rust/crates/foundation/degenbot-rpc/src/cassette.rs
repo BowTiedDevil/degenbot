@@ -246,7 +246,7 @@ fn canonical_hex_quantity(s: &str) -> Option<String> {
 
 /// The ledger key for a request: a compact JSON pair
 /// `[method, canonical params]`. Deterministic by construction.
-fn entry_key(method: &str, params: &Value) -> String {
+pub(crate) fn entry_key(method: &str, params: &Value) -> String {
     let key = Value::Array(vec![
         Value::String(method.to_string()),
         canonicalize_value(params),
