@@ -206,6 +206,6 @@ mechanism in the tree today, not a preference:
 | `6P6OKR` | P2-1: Decide the fate of the `Arc<tokio::sync::Mutex<Receiver>>` | `5e9c68e1a` |
 | `B5WCTK` | P2-2: Guard the blocking HTTP path in `bot_state_db` | `0bf6354e6` |
 | `RT2XUW` | P2-3: Resume-don't-restart the settle timer in the pump select loop | `56748250f` |
-| `3MKSEA` | P3-1: CI guard against timeout-wrapped sends/writes | `085505453` |
+| `3MKSEA` | P3-1: CI guard against timeout-wrapped sends/writes | `085505453` (allowlist re-anchored on source text by `68e2d0c4e` after a line-number drift) |
 | `CWIP3F` | P3-2: Adopt the `# Cancel safety` doc convention | `35bd2d9b3` |
 | `NZJZAO` | P3-3: Epic close-out record | this file |
