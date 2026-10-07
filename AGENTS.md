@@ -10,6 +10,15 @@
 ## Concurrent Work Coordination
 Check for other agents working concurrently before you begin work and any time you notice any edits, files, or changes in the working tree that are unrelated to your work. Use `/skill:pi-intercom` for both proactive checks and responding to messages.
 
+## Build and test through `just`
+
+Every build and test command goes through the justfile. **Never hand-type `cargo test`, `cargo build`, `maturin develop`, or `uv run pytest`.** The recipes are the only commands that carry the full contract — `--locked`, the Python libdir export for the libpython-linking harnesses, the canonical feature aliases, `RUSTFLAGS`, the nextest profile, the pytest marker filters — and they are what CI and the hooks run. A hand-typed equivalent silently drops part of that contract, so its result does not mean what a green recipe means.
+
+- **Run everything, not a slice.** `just test` is the default gate: the standalone smoke plus the whole cargo workspace suite under nextest plus the full pytest suite, in one command. Run the full suites rather than picking files: they surface cross-module breakage (signature changes rippling into dependent crates, PyO3 seam drift, registry/vendor fallout) immediately. The nextest track is fast (~20s warm wall) and the full pytest suite is fast too, so there is no cost argument for a scoped run before you are done.
+- **Build through the recipes.** `just dev` (or `just rebuild-if-stale` after Rust edits) is the sole editable-extension build path; `just build-rust-extension` builds the release-equivalent extension set. A bare `cargo build` or `maturin develop` can serve a stale `.so` or the wrong feature set — verify with `just verify-build-fresh`.
+- **Tight red-green loops only.** Inside a tight loop you may narrow with the recipe's argument forwarding — `just test-rust-nextest -p <crate>` or `just test-rust-nextest -E 'test(name)'` — and then re-run `just test` whole before declaring work done. Narrow Rust runs still go through the recipe, not `cargo test`.
+- **Before pushing**, check the gates with `just pre-push`, which mirrors the prek pre-push hook in order and fail-fast.
+
 ## Backwards Compatibility
 Design standalone features without a backwards compatibility layer. Add a feature flag to allow parallel implementations if necessary, followed by a hard cutover and flag removal.
 
@@ -29,7 +38,7 @@ Comments carry the *why* only if it outlives its lookup: no task/epic IDs (commi
 Use `agent-browser`.
 
 ## Dispatched-agent lane rules
-Workers arriving here by dispatch (one-shot agents, actors) follow `/skill:dispatched-agent` before touching anything: never commit or push; run only scoped gates (`cargo test -p <crate>`, the pytest files you touched); run commands foreground and mark detached gates PENDING in the sign-off; and leave unfamiliar tree modifications untouched.
+Workers arriving here by dispatch (one-shot agents, actors) follow `/skill:dispatched-agent` before touching anything: never commit or push; run only scoped gates (`just test-rust-nextest -p <crate>`, the pytest files you touched); run commands foreground and mark detached gates PENDING in the sign-off; and leave unfamiliar tree modifications untouched.
 
 ## Formatting and commit staging
 
@@ -131,13 +140,13 @@ explicitly — use `just test-hotpath` instead of hand-typing it.
 
 ## Rust test scope
 
-For whole-workspace runs, use `just test-rust-nextest` — never a hand-typed `cargo test`. It runs the identical workspace artifacts under nextest's process-per-test scheduler (measured ~20s warm wall vs ~90s for `cargo test --workspace`) and records per-test durations as JUnit XML at `rust/target/nextest/ci/nextest-ci.junit.xml`; rank slowest tests with `just test-timing [top]`. The recipe pins `--locked`, exports the Python libdir the libpython-linking harnesses need, and sets `--no-fail-fast` because a tree-wide rebuild advances `.build-number` after degenbot-cli embeds it — the receipt gate fails once on the next compile, and one such failure must not abort the run. `just test-rust` (cargo) remains the canonical gate before declaring work done: nextest skips doc-tests, and CI runs cargo. Per-crate `cargo test -p <crate>` is fine inside a tight red-green loop, but re-run the workspace suite through the recipe before declaring work done.
+For whole-workspace runs, use `just test-rust-nextest` — never a hand-typed `cargo test`. It runs the identical workspace artifacts under nextest's process-per-test scheduler (measured ~20s warm wall vs ~90s for `cargo test --workspace`) and records per-test durations as JUnit XML at `rust/target/nextest/ci/nextest-ci.junit.xml`; rank slowest tests with `just test-timing [top]`. The recipe pins `--locked`, exports the Python libdir the libpython-linking harnesses need, and sets `--no-fail-fast` because a tree-wide rebuild advances `.build-number` after degenbot-cli embeds it — the receipt gate fails once on the next compile, and one such failure must not abort the run. `just test-rust` (cargo) remains the canonical gate before declaring work done: nextest skips doc-tests, and CI runs cargo. Per-crate narrowing inside a tight red-green loop goes through the recipe too — `just test-rust-nextest -p <crate>` (or `-E 'test(name)'`) — but re-run the whole workspace suite through the recipe before declaring work done.
 
 Why: resolver v3 unifies features for `--workspace`, so its artifacts are the one warm, canonical set in `rust/target`. A `-p <crate>` selection unifies features differently (core crates lose the `pyo3` feature the binding layer enables; dep features like tokio's shrink), so cargo stores a second rlib set under different metadata hashes — alternating between the two rebuilds shared dependencies on every shared edit (measured: `-p degenbot-simulation` recompiled 6 just-built crates in ~1m; a leaf crate pays nothing). The workspace run also executes every crate's suite, catching cross-crate fallout (signature changes rippling into dependents, e.g. examples/settlement_bot) that a scoped run never sees.
 
 ## Python test scope
 
-The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly). The suite carries pytest-timeout so a hung test fails with a timeout report instead of parking its xdist worker (timeouts and marker filters are configured in `tests/conftest.py`). The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.
+The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly) — never a hand-typed `uv run pytest`. Prefer the whole suite over selecting individual test files: the full run is fast and it is the run that surfaces seam and cross-module regressions. The suite carries pytest-timeout so a hung test fails with a timeout report instead of parking its xdist worker (timeouts and marker filters are configured in `tests/conftest.py`). The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.
 
 ## Build-Artifact Housekeeping
 
