@@ -4,6 +4,25 @@
 # hooks (pre-commit, commit-msg, pre-push). Hooks can also be run on demand
 # with `uv run prek run` / `uv run prek run --all-files`.
 #
+# THE TWO-TIER CONTRACT — what a green hook means:
+#   - pre-commit green means "the files THIS COMMIT contains are clean".
+#     Every pre-commit check operates on the staged file list prek passes.
+#     In a shared workspace two supervisors can be mid-chunk in one tree:
+#     prek's stash parks tracked-unstaged changes during hooks, but leaves
+#     UNTRACKED files in place — so any pre-commit check that sweeps the tree
+#     instead of the staged list both blocks clean commits on another lane's
+#     dirt and can go vacuous green over a tree it only partly examined.
+#   - pre-push green means "the whole tree is clean". Whole-tree sweeps live
+#     here, where a complete tree is a fair assumption, alongside the slow
+#     build + test battery and the code linters moved off the per-commit path.
+#   - Hooks that cannot operate on a file list at all live at pre-push with a
+#     note saying why; hooks that take a list fail closed on an empty list
+#     rather than certify a list they never saw.
+#   The one documented exception to staged scoping is comment-hygiene below:
+#   it deliberately scans the working tree so it can never be blinded to
+#   untracked files (an index-bound enumeration once certified a commit
+#   containing exactly the citations that gate exists to catch).
+#
 # WHY commit-message lint stays at commit time but code lint moves to push
 # (the code-vs-message asymmetry):
 #   - A broken commit MESSAGE is immutable: found late (at push/CI) it forces a
@@ -24,24 +43,21 @@ default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
 repo = "local"
 hooks = [
   # --- pre-commit -----------------------------------------------------------
-  # Fast, non-mutating checks that catch a bad commit the instant it is made.
-  # ALL are check-only (`*-check` just recipes, no `--fix`), so they can never
-  # dirty staged files. pre-commit stashes unstaged changes first, so a failure
-  # is always a real defect introduced by the commit being made, never by
-  # unrelated uncommitted work.
-  #
-  # This is the "instant" tier: only near-zero-cost checks live here. The
-  # compiling whole-crate linters (rust-clippy, python-lint incl. ty) used to
-  # gate every matching commit but now run at pre-push + CI — a code-lint
-  # failure is fixable with a follow-up commit, so per-commit clippy/ty was
-  # latency for no safety gain.
+  # Fast, non-mutating checks over the STAGED FILES ONLY — the list prek
+  # passes (and the list `prek run --files <paths>` emulates). A green result
+  # certifies this commit's own content, nothing more. All are check-only
+  # (no `--fix`), so they can never dirty staged files. A hook whose types
+  # filter matches nothing in the commit simply does not fire — that is a
+  # skip, not a pass; the scripts below additionally fail closed if invoked
+  # with an empty list.
 
-  # File-scoped (run on staged files only). Fix with
+  # File-scoped (runs on the staged markdown list). Fix with
   # `npx markdownlint-cli2 --fix <file>` if it fails. The vendored
   # executor/ tree (SRMMM7/T1) keeps its own docs conventions — same
   # scoping principle as the src/-only Python lint gates.
   { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], stages = ["pre-commit"], exclude = "^executor/|^logs/" },
 
+  # File-scoped pygrep over the staged python list.
   # Forbid `# noqa: ...PLC0415`. This lint is suppressed project-wide by a
   # shared ruff config; the suppression must never be re-enabled per-line.
   { id = "forbid-noqa-PLC0415", name = "forbid noqa for PLC0415", language = "pygrep", entry = "noqa:.*PLC0415", types = ["python"], stages = ["pre-commit"] },
@@ -56,14 +72,25 @@ hooks = [
   # shell: `types` ANDs its tags (no file is both python and rust), which
   # had silently disabled this hook. One git grep plus one rg pass are
   # ~instant, so it rides the per-commit tier.
+  #
+  # THE documented exception to staged scoping, on purpose: pass_filenames =
+  # false and the script scans the WORKING TREE (rg, not git grep) so a
+  # brand-new untracked source file is examined the moment it is written.
+  # An index-bound enumeration once went green on a commit containing
+  # exactly the citations this gate exists to catch — do not "fix" the
+  # cross-lane visibility by narrowing it back to the index. Latency budget
+  # stays near-instant (one rg pass + one awk pass).
   { id = "comment-hygiene", name = "Comment hygiene gate", language = "system", entry = "just lint-comment-hygiene", types_or = ["python", "rust", "shell"], stages = ["pre-commit"], pass_filenames = false },
 
-  # Whole-crate instant checks (pass_filenames = false, always_run), ordered
-  # fastest first so formatting drift fails before the slower checks.
-  { id = "rust-fmt-check",   name = "Rust fmt check",      language = "system", entry = "just fmt-check",                stages = ["pre-commit"], always_run = true, pass_filenames = false },
-  { id = "python-fmt-check", name = "Python fmt check",   language = "system", entry = "just fmt-check-python",         stages = ["pre-commit"], always_run = true, pass_filenames = false },
-  { id = "rust-no-pyo3",     name = "Rust no-pyo3 cores", language = "system", entry = "just check-no-pyo3-in-cores",   stages = ["pre-commit"], always_run = true, pass_filenames = false },
-  { id = "rust-engine-impl-blocks", name = "Rust engine impl-block gate", language = "system", entry = "just check-engine-impl-blocks", stages = ["pre-commit"], always_run = true, pass_filenames = false },
+  # Staged-files format gates: the same detectors as the whole-tree sweeps
+  # (ruff format / rustfmt), sliced to the commit's own files, so an
+  # untracked unformatted file from another lane can neither block this
+  # commit nor hide inside it. Whole-tree versions of both sweeps run at
+  # pre-push. rust-fmt-staged passes skip_children=true because plain
+  # rustfmt recurses into a passed file's child modules, which would let an
+  # unstaged sibling module fail a commit that does not contain it.
+  { id = "python-fmt-staged", name = "Python fmt (staged)", language = "system", entry = "scripts/hooks/python-fmt-staged.sh", types = ["python"], stages = ["pre-commit"], exclude = "^executor/" },
+  { id = "rust-fmt-staged", name = "Rust fmt (staged)", language = "system", entry = "scripts/hooks/rust-fmt-staged.sh", types = ["rust"], stages = ["pre-commit"] },
 
   # --- commit-msg -----------------------------------------------------------
   # Validate the commit message against the relaxed .commitlintrc.yml. Runs at
@@ -75,10 +102,12 @@ hooks = [
   { id = "commitlint", name = "commitlint", language = "system", entry = "npx --yes @commitlint/cli --edit", stages = ["commit-msg"] },
 
   # --- pre-push -------------------------------------------------------------
-  # Gate the push on the slower build + test suite, the code linters moved off
-  # the per-commit path, and a commit-message range re-lint (safety net for
-  # `git commit --no-verify`). The fast format/invariant checks (fmt, no-pyo3)
-  # already ran at commit time and are not re-run here.
+  # Whole-tree tier: everything here assumes a COMPLETE tree. Gate the push on
+  # the whole-tree format sweeps (moved off pre-commit, where tree sweeps saw
+  # other lanes' untracked mid-flight files), the compiled architecture gates
+  # (cargo tests that cannot operate on a file list at all), the code linters
+  # moved off the per-commit path, the build + test suite, and a commit-message
+  # range re-lint (safety net for `git commit --no-verify`).
   #
   # 1. object-gc — keep the loose object database below the size where the
   #    push's own detached `git maintenance` fires an unbounded repack
@@ -92,25 +121,45 @@ hooks = [
   #    and does not forward it to hooks, so the range is computed from the
   #    upstream tracking ref instead (mirrors `just lint-commits`).
   #
-  # 3. Code linters (whole crate): rust-clippy + python-lint (incl. ty). These
-  #    moved off the per-commit gate; at pre-push they run unconditionally over
-  #    the whole tree, so a config/Cargo change can't slip a regression.
+  # 3. Whole-tree format sweeps — `just fmt-check` (cargo fmt --all) and
+  #    `just fmt-check-python` (ruff format --check src/). Moved here from
+  #    pre-commit: a tree sweep at commit time examined untracked files other
+  #    lanes left mid-flight (prek's stash parks tracked-unstaged changes but
+  #    leaves untracked files alone) and blocked clean commits. The commit's
+  #    own files are covered at pre-commit by the staged-slice gates above;
+  #    these catch everything else before it reaches CI.
   #
-  # 4. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
+  # 4. Code linters (whole crate): rust-clippy + python-lint (incl. ty). These
+  #    run unconditionally over the whole tree, so a config/Cargo change can't
+  #    slip a regression.
+  #
+  # 5. Compiled architecture gates — no-pyo3-in-cores and the engine
+  #    impl-block gate are cargo tests on the umbrella crate's
+  #    architecture_gates binary: workspace-wide invariants with no meaningful
+  #    per-file slice (a per-file grep would be a different, weaker detector),
+  #    so they cannot live on the staged-files tier. They were also never the
+  #    "instant" checks the old pre-commit section claimed — every commit,
+  #    docs-only ones included, paid a cargo test build.
+  #
+  # 6. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
   #    build/test jobs (always_run = true, pass_filenames = false). python-build
   #    (maturin develop) produces the .so that python-test imports, so it must
   #    precede python-test.
   #
-  # 5. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
+  # 7. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
   #    aborts the push and the remaining gates are skipped. Without it, prek
   #    runs the whole stage to completion and reports every failure.
   #
   # Bypass with `git push --no-verify` (CI still runs), or re-run a subset
-  # manually with `prek run --hook-stage pre-push --skip rust-test` etc.
+  # manually with `prek run --stage pre-push --skip rust-test` etc.
   # (add `--fail-fast` there to mirror the installed push behavior).
   { id = "object-gc", name = "Object DB GC", language = "system", entry = "scripts/hooks/object-gc.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+
+  # Whole-tree format sweeps, moved here from pre-commit (see note 3 above).
+  { id = "rust-fmt-check", name = "Rust fmt check", language = "system", entry = "just fmt-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "python-fmt-check", name = "Python fmt check", language = "system", entry = "just fmt-check-python", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   { id = "rust-clippy", name = "Rust clippy", language = "system", entry = "just lint-rust-check",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "python-lint", name = "Python lint", language = "system", entry = "just lint-python-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
@@ -118,6 +167,11 @@ hooks = [
   # for the degenbot._ffi seam; the slimmed bespoke gate (R0 + driver-module
   # tombstones) runs in the pytest suites below.
   { id = "stubtest", name = "Stubtest drift gate", language = "system", entry = "just lint-stubtest", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+
+  # Compiled architecture gates, moved here from pre-commit (see note 5
+  # above): cargo-test invariants with no per-file slice.
+  { id = "rust-no-pyo3", name = "Rust no-pyo3 cores", language = "system", entry = "just check-no-pyo3-in-cores",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "rust-engine-impl-blocks", name = "Rust engine impl-block gate", language = "system", entry = "just check-engine-impl-blocks", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # Rust track (mirrors ci.yml: rust-build, rust-test).
   { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
