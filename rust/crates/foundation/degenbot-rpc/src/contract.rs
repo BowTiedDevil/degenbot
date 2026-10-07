@@ -614,6 +614,22 @@ mod tests {
     }
 
     #[test]
+    fn test_function_selector_tuple_signature() {
+        // A tuple input hashes the canonical signature text: the parsed
+        // tuple renders back as a paren-group, so the hashed string is
+        // identical to what a flat type list produces.
+        let sig =
+            FunctionSignature::parse("quoteExactInputSingle((address,address),bool,uint128,bytes)")
+                .expect("tuple signature should parse");
+        let canonical = b"quoteExactInputSingle((address,address),bool,uint128,bytes)";
+        let expected = alloy::primitives::keccak256(canonical);
+        assert_eq!(
+            alloy::hex::encode(sig.selector),
+            alloy::hex::encode(&expected.as_slice()[..4])
+        );
+    }
+
+    #[test]
     fn test_abi_type_is_dynamic() {
         assert!(!AbiType::Address.is_dynamic());
         assert!(!AbiType::Bool.is_dynamic());

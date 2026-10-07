@@ -23,6 +23,7 @@ __all__ = (
     "AbiDecodeError",
     "AbiEncodeError",
     "BytesLike",
+    "canonical_type",
     "decode",
     "decode_single",
     "encode",
@@ -144,3 +145,27 @@ def decode_single(abi_type: str, data: BytesLike) -> Any:  # ruff:ignore[any-typ
         return rs_decode_single(abi_type=abi_type, data=data_bytes, checksum=True)
     except (ValueError, NotImplementedError) as e:
         raise AbiDecodeError(message=f"ABI decoding failed: {e}") from e
+
+
+def canonical_type(abi_input: dict[str, Any]) -> str:
+    """Return the canonical Solidity type text of one ABI parameter.
+
+    ABI JSON spells tuple types bare (``tuple``, ``tuple[2]``) with the members
+    under ``components``; selectors and the encoder need the expanded canonical
+    form (``((address,uint256),bytes)[2]``). Mirrors the eth-abi
+    ``collapse_if_tuple`` idiom: components collapse to their parenthesized
+    canonical text and the array suffix is appended unchanged.
+
+    Args:
+        abi_input: One ABI parameter dict (``type``, plus ``components`` for
+            tuple types).
+
+    Returns:
+        The canonical type string, e.g. ``"((address,uint256),bytes)[2]"``.
+
+    """
+    typ = abi_input["type"]
+    if not typ.startswith("tuple"):
+        return typ
+    members = ",".join(canonical_type(component) for component in abi_input.get("components") or [])
+    return f"({members}){typ[len('tuple') :]}"

@@ -15,9 +15,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from degenbot.abi import canonical_type
 from degenbot.abi import decode as abi_decode
 from degenbot.abi import encode as abi_encode
-from degenbot.crypto import function_selector, keccak256
+from degenbot.crypto import function_selector
 from degenbot.exceptions import ContractLogicError
 from degenbot.provider import AlloyProvider
 from degenbot.utils.bytes import to_bytes
@@ -44,17 +45,11 @@ class _FunctionsResult:
 
     def call(self, block_identifier: int | None = None) -> Any:
         func_entry = _find_abi_entry(self._abi, self._method_name)
-        input_types = [_canonical_type(i) for i in func_entry["inputs"]]
-        output_types = [_canonical_type(o) for o in func_entry.get("outputs", [])]
+        input_types = [canonical_type(i) for i in func_entry["inputs"]]
+        output_types = [canonical_type(o) for o in func_entry.get("outputs", [])]
 
-        # Build the function selector. The selector parser rejects tuple
-        # types, so a tuple-bearing signature hashes the canonical text
-        # directly — the selector is the first four keccak bytes either way.
         sig = f"{self._method_name}({','.join(input_types)})"
-        if "(" in ",".join(input_types):
-            selector = keccak256(sig.encode())[:4]
-        else:
-            selector = function_selector(sig)
+        selector = function_selector(sig)
 
         # Encode args — merge positional and keyword (in ABI order)
         all_args = [*self._args, *self._kwargs.values()]
@@ -130,22 +125,6 @@ class ContractCompat:
     @property
     def functions(self) -> _FunctionsAccessor:
         return _FunctionsAccessor(self._provider, self._address, self._abi)
-
-
-def _canonical_type(abi_param: dict[str, Any]) -> str:
-    """The canonical form of one ABI parameter's type.
-
-    ABI JSON spells tuple types bare (``tuple``, ``tuple[2]``) with the members
-    under ``components``; selectors and the encoder need the expanded canonical
-    form (``((address,uint256),bytes)[2]``).
-    """
-    typ = abi_param["type"]
-    if not typ.startswith("tuple"):
-        return typ
-    members = ",".join(
-        _canonical_type(component) for component in abi_param.get("components") or []
-    )
-    return f"({members}){typ[len('tuple') :]}"
 
 
 def _find_abi_entry(abi: list[dict[str, Any]], method_name: str) -> dict[str, Any]:

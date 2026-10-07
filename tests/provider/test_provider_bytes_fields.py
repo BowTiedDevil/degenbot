@@ -10,7 +10,7 @@ from collections.abc import Iterator
 import pytest
 
 from degenbot.abi import encode as abi_encode
-from degenbot.crypto import keccak256
+from degenbot.crypto import function_selector
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.standalone_anvil import seed as seed_catalog
@@ -18,7 +18,7 @@ from tests.standalone_anvil.emit import EmittedTx, emit_tx
 
 
 def _ping_calldata() -> bytes:
-    selector = keccak256(b"ping(uint256,bytes32)")[:4]
+    selector = function_selector("ping(uint256,bytes32)")
     return selector + abi_encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 

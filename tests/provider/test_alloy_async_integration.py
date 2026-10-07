@@ -8,7 +8,7 @@ import pytest
 
 from degenbot._ffi.provider import AsyncAlloyProvider
 from degenbot.abi import encode as abi_encode
-from degenbot.crypto import function_selector, keccak256
+from degenbot.crypto import function_selector
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.standalone_anvil import seed as seed_catalog
@@ -18,7 +18,7 @@ WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 def _ping_calldata() -> bytes:
-    selector = keccak256(b"ping(uint256,bytes32)")[:4]
+    selector = function_selector("ping(uint256,bytes32)")
     return selector + abi_encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 

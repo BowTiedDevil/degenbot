@@ -29,8 +29,8 @@ pub enum ParseError {
     /// Empty function name.
     #[error("function name cannot be empty")]
     EmptyFunctionName,
-    /// Unmatched bracket in type string.
-    #[error("at position {pos}: unmatched '[' in type string")]
+    /// Unmatched `(` or `[` in type string.
+    #[error("at position {pos}: unmatched '(' or '[' in type string")]
     UnmatchedBracket { pos: usize },
 }
 
@@ -166,35 +166,55 @@ impl<'a> SignatureParser<'a> {
         Ok(types)
     }
 
-    /// Collect a type string (handles nested brackets for arrays).
+    /// Collect a type string (handles nested brackets for arrays and
+    /// parentheses for tuple types, so a tuple's own commas and closing
+    /// paren stay inside the token).
     fn collect_type_string(&mut self) -> Result<String, ParseError> {
-        let mut depth = 0;
+        let mut bracket_depth = 0;
+        let mut paren_depth = 0;
         let mut result = String::new();
 
         loop {
             match self.chars.peek() {
-                Some(')' | ',') if depth == 0 => break,
+                // A comma or closing paren terminates the token only at the
+                // parameter-list level; inside a tuple or array it is data.
+                Some(')' | ',') if paren_depth == 0 && bracket_depth == 0 => break,
                 Some('[') => {
-                    depth += 1;
+                    bracket_depth += 1;
                     result.push('[');
                     self.advance();
                 }
+                Some('(') => {
+                    paren_depth += 1;
+                    result.push('(');
+                    self.advance();
+                }
                 Some(']') => {
-                    if depth == 0 {
+                    if bracket_depth > 0 {
+                        bracket_depth -= 1;
+                    } else if paren_depth == 0 {
                         break;
                     }
-                    depth -= 1;
                     result.push(']');
                     self.advance();
                 }
+                Some(')') => {
+                    if paren_depth > 0 {
+                        paren_depth -= 1;
+                    } else if bracket_depth == 0 {
+                        break;
+                    }
+                    result.push(')');
+                    self.advance();
+                }
                 Some(&c) => {
-                    if c.is_whitespace() && depth == 0 {
+                    if c.is_whitespace() && paren_depth == 0 && bracket_depth == 0 {
                         break;
                     }
                     result.push(c);
                     self.advance();
                 }
-                None if depth > 0 => {
+                None if paren_depth > 0 || bracket_depth > 0 => {
                     return Err(ParseError::UnmatchedBracket { pos: self.pos });
                 }
                 None => break,
@@ -435,6 +455,69 @@ mod tests {
     fn test_nested_arrays() {
         let sig = parse_signature("foo(address[][3])").unwrap();
         assert_eq!(sig.inputs.len(), 1);
+    }
+
+    #[test]
+    fn test_tuple_signature() {
+        let sig =
+            parse_signature("quoteExactInputSingle((address,address),bool,uint128,bytes)").unwrap();
+        assert_eq!(sig.name, "quoteExactInputSingle");
+        assert_eq!(
+            sig.inputs,
+            vec![
+                AbiType::Tuple(vec![AbiType::Address, AbiType::Address]),
+                AbiType::Bool,
+                AbiType::Uint(128),
+                AbiType::Bytes,
+            ]
+        );
+        // The canonical signature text the selector hashes round-trips.
+        assert_eq!(
+            sig.to_signature_string(),
+            "quoteExactInputSingle((address,address),bool,uint128,bytes)"
+        );
+    }
+
+    #[test]
+    fn test_nested_tuple_signature() {
+        let sig = parse_signature("f(((uint256,address),bool))").unwrap();
+        assert_eq!(
+            sig.inputs,
+            vec![AbiType::Tuple(vec![
+                AbiType::Tuple(vec![AbiType::Uint(256), AbiType::Address]),
+                AbiType::Bool,
+            ])]
+        );
+    }
+
+    #[test]
+    fn test_tuple_array_signature() {
+        // Array suffixes attach to the collapsed tuple form.
+        let sig = parse_signature("f((bool,bytes)[],(uint256,bool)[2])").unwrap();
+        assert_eq!(
+            sig.inputs[0],
+            AbiType::Array(Box::new(AbiType::Tuple(vec![
+                AbiType::Bool,
+                AbiType::Bytes,
+            ])))
+        );
+        assert_eq!(
+            sig.inputs[1],
+            AbiType::FixedArray(
+                Box::new(AbiType::Tuple(vec![AbiType::Uint(256), AbiType::Bool])),
+                2
+            )
+        );
+    }
+
+    #[test]
+    fn test_unmatched_tuple_paren() {
+        // EOF inside the tuple's own paren group.
+        let err = parse_signature("f((uint256,bool").unwrap_err();
+        assert!(
+            matches!(err, ParseError::UnmatchedBracket { .. }),
+            "Got unexpected error type: {err:?}",
+        );
     }
 
     #[test]

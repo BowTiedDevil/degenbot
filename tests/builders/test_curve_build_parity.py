@@ -28,7 +28,7 @@ import pathlib
 from degenbot._ffi import Bot
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
-from degenbot.crypto import keccak256
+from degenbot.crypto import function_selector
 
 # 20-byte (40 hex) addresses matching the Rust plain-pool test.
 POOL = "0x" + "a1" + "00" * 19
@@ -42,7 +42,7 @@ _TIMESTAMP = 1_700_000_000
 
 def _selector(signature: str) -> str:
     """4-byte function selector (lowercase hex, no ``0x``)."""
-    return "0x" + keccak256(signature.encode())[:4].hex()
+    return "0x" + function_selector(signature).hex()
 
 
 def _call_key(to: str, signature: str, arg: int | None = None) -> str:
