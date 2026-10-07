@@ -639,9 +639,38 @@ fn block_on_operator<F: Future>(future: F) -> Result<F::Output, CliError> {
 
 /// One request line out, one response line in (the server closes after the
 /// reply). Unix-only: the wire rides a Unix domain socket.
+///
+/// The production budget is the single [`REQUEST_TIMEOUT`]; the body takes it
+/// as a parameter so tests can pin the deadline arithmetic with a short one.
 #[cfg(unix)]
 async fn exchange(socket: &Path, line: String) -> Result<WireResponse, CliError> {
-    let connect = tokio::time::timeout(REQUEST_TIMEOUT, UnixStream::connect(socket))
+    exchange_within(socket, line, REQUEST_TIMEOUT).await
+}
+
+/// The exchange body under ONE deadline shared by connect + write + flush +
+/// read.
+///
+/// Every phase spends the *remaining* budget, never a fresh copy of it, so a
+/// peer that stalls any single phase cannot stretch the whole exchange past
+/// `request_timeout` (the old three-phase shape let a stalling peer spend the
+/// bound three times over).
+///
+/// The read side is additionally **resumable**. `read_until` appends into the
+/// CALLER-OWNED `buffer`, and a `timeout` that fires drops only the in-flight
+/// future - never the bytes it already pushed into that buffer. So a timeout
+/// need not abandon a partial line: the loop re-arms against the SAME buffer
+/// under the SAME deadline, and the terminal timeout reports how many partial
+/// bytes it gave up.
+#[cfg(unix)]
+async fn exchange_within(
+    socket: &Path,
+    line: String,
+    request_timeout: Duration,
+) -> Result<WireResponse, CliError> {
+    let deadline = tokio::time::Instant::now() + request_timeout;
+
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    let connect = tokio::time::timeout(remaining, UnixStream::connect(socket))
         .await
         .map_err(|_| {
             CliError::OperatorProtocol(format!(
@@ -655,39 +684,75 @@ async fn exchange(socket: &Path, line: String) -> Result<WireResponse, CliError>
             socket.display()
         ))
     })?;
-    stream.write_all(line.as_bytes()).await.map_err(|err| {
-        CliError::OperatorProtocol(format!(
-            "failed writing to operator socket {}: {err}",
-            socket.display()
-        ))
-    })?;
-    stream.flush().await.map_err(|err| {
-        CliError::OperatorProtocol(format!(
-            "failed flushing operator socket {}: {err}",
-            socket.display()
-        ))
-    })?;
-    let mut reader = BufReader::new(stream);
-    let mut buffer = Vec::new();
-    let read = tokio::time::timeout(REQUEST_TIMEOUT, reader.read_until(b'\n', &mut buffer))
+
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    tokio::time::timeout(remaining, stream.write_all(line.as_bytes()))
         .await
         .map_err(|_| {
             CliError::OperatorProtocol(format!(
-                "timed out waiting for a response from operator socket {}",
+                "timed out writing to operator socket {}",
+                socket.display()
+            ))
+        })?
+        .map_err(|err| {
+            CliError::OperatorProtocol(format!(
+                "failed writing to operator socket {}: {err}",
                 socket.display()
             ))
         })?;
-    let read = read.map_err(|err| {
-        CliError::OperatorProtocol(format!(
-            "failed reading from operator socket {}: {err}",
-            socket.display()
-        ))
-    })?;
-    if read == 0 {
-        return Err(CliError::OperatorProtocol(format!(
-            "no response from operator server at {}",
-            socket.display()
-        )));
+
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    tokio::time::timeout(remaining, stream.flush())
+        .await
+        .map_err(|_| {
+            CliError::OperatorProtocol(format!(
+                "timed out flushing operator socket {}",
+                socket.display()
+            ))
+        })?
+        .map_err(|err| {
+            CliError::OperatorProtocol(format!(
+                "failed flushing operator socket {}: {err}",
+                socket.display()
+            ))
+        })?;
+
+    let mut reader = BufReader::new(stream);
+    let mut buffer = Vec::new();
+    // Resume against the one deadline: a dropped `read_until` future leaves the
+    // bytes it already appended in `buffer` (the buffer is caller-owned), so a
+    // slow-dribbling server keeps its accumulated prefix across laps rather
+    // than losing everything to a single per-read timeout.
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(CliError::OperatorProtocol(format!(
+                "timed out waiting for a response from operator socket {} (discarded {} partial bytes)",
+                socket.display(),
+                buffer.len()
+            )));
+        }
+        match tokio::time::timeout(remaining, reader.read_until(b'\n', &mut buffer)).await {
+            // A full line (or EOF-after-bytes, which the decode below rejects).
+            Ok(Ok(read)) if read > 0 => break,
+            Ok(Ok(_)) => {
+                return Err(CliError::OperatorProtocol(format!(
+                    "no response from operator server at {}",
+                    socket.display()
+                )));
+            }
+            Ok(Err(err)) => {
+                return Err(CliError::OperatorProtocol(format!(
+                    "failed reading from operator socket {}: {err}",
+                    socket.display()
+                )));
+            }
+            // Timed out mid-line: the partial prefix stays in `buffer`
+            // (caller-owned), so the (empty) arm falls through to loop back
+            // and resume the SAME buffer under the SAME deadline - the bytes
+            // already received are never abandoned.
+            Err(_) => {}
+        }
     }
     let text = String::from_utf8(buffer).map_err(|err| {
         CliError::OperatorProtocol(format!("operator response is not valid UTF-8: {err}"))
@@ -736,5 +801,128 @@ mod tests {
             message.contains("zof") && message.contains("zfo") && message.contains("ozf"),
             "raw value and known set missing from: {message}"
         );
+    }
+
+    // -- the transport deadline -------------------------------------------------
+
+    /// Bind `socket`, accept one connection, drain the request line, then write
+    /// `partial` (no newline) and stall well past the client's budget. The line
+    /// is never terminated, so a per-read timeout can only make progress by
+    /// RETAINING the prefix it already buffered.
+    #[cfg(unix)]
+    fn dribble_once(socket: &Path, partial: &'static [u8]) {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixListener;
+
+        let listener = UnixListener::bind(socket).unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            stream.write_all(partial).unwrap();
+            stream.flush().unwrap();
+            // Stall far longer than the client's short budget; the newline
+            // never arrives.
+            std::thread::sleep(Duration::from_secs(5));
+        });
+    }
+
+    /// The whole exchange is bounded by ONE deadline, not a fresh full budget
+    /// per phase. A server that dribbles a few bytes and then stalls must make
+    /// the client return at roughly its small TOTAL budget - and the terminal
+    /// timeout must report the partial bytes it gave up (the observability
+    /// win that proves the prefix survived the dropped read future).
+    #[cfg(unix)]
+    #[test]
+    fn a_dribbling_server_is_bounded_by_the_total_deadline() {
+        use std::time::Instant as StdInstant;
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("operator.sock");
+        let partial = b"{\"ok\": true, \"det";
+        dribble_once(&socket, partial);
+
+        let request_timeout = Duration::from_millis(250);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let started = StdInstant::now();
+        let err = runtime
+            .block_on(exchange_within(
+                &socket,
+                "{\"op\": \"get_fleet_posture\", \"payload\": {}}\n".to_string(),
+                request_timeout,
+            ))
+            .unwrap_err();
+        let elapsed = started.elapsed();
+
+        assert!(matches!(err, CliError::OperatorProtocol(_)), "got {err:?}");
+        let message = err.message();
+        assert!(
+            message.contains("timed out waiting for a response from operator socket"),
+            "kept prefix missing: {message}"
+        );
+        // The partial-byte suffix is additive; the retained prefix is nonempty
+        // (and no larger than what the server actually sent).
+        let count = message
+            .split("discarded ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|n| n.parse::<usize>().ok());
+        assert!(
+            matches!(count, Some(retained) if retained > 0 && retained <= partial.len()),
+            "prefix was not retained across the timeout (count {count:?}): {message}"
+        );
+        // ONE deadline: roughly the small budget, never a fresh per-phase
+        // timeout (which here would be the full 60s read budget).
+        assert!(
+            elapsed >= request_timeout,
+            "returned before the budget: {elapsed:?}"
+        );
+        assert!(
+            elapsed < request_timeout * 4,
+            "the exchange outran its single deadline: {elapsed:?}"
+        );
+    }
+
+    /// The happy path under the same short-budget seam: a complete line is
+    /// decoded, proving `exchange_within` did not regress the one-line read.
+    #[cfg(unix)]
+    #[test]
+    fn exchange_within_reads_a_full_line_under_a_short_budget() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("operator.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            stream
+                .write_all(b"{\"ok\": true, \"detail\": \"short budget ok\"}\n")
+                .unwrap();
+            stream.flush().unwrap();
+            line
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let response = runtime
+            .block_on(exchange_within(
+                &socket,
+                "{\"op\": \"get_fleet_posture\", \"payload\": {}}\n".to_string(),
+                Duration::from_secs(5),
+            ))
+            .unwrap();
+        assert_eq!(response.detail(), "short budget ok");
+        let line = handle.join().unwrap();
+        assert!(line.contains("get_fleet_posture"), "got {line:?}");
     }
 }
