@@ -40,7 +40,7 @@ degenbot-submission.workspace = true
 # `WarmCodeCacheInner::shared_default()` returns a parking_lot RwLock; the
 # config holds that arc type.
 parking_lot = "^0.12"
-tokio = { version = "^1.45", default-features = false, features = ["sync"] }
+tokio = { version = "^1.53", default-features = false, features = ["sync"] }
 tracing = { version = "^0.1" }
 # `op_info!` — the closed-domain telemetry macro (the exec target the
 # submit-arm forensic line emits under) + the address-parse helper the test
@@ -53,4 +53,4 @@ tracing-subscriber = { version = "^0.3", default-features = false, features = [
     "std",
     "registry",
 ] }
-tokio = { version = "^1.45", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "macros", "time"] }

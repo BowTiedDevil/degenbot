@@ -31,7 +31,7 @@ degenbot-pools.workspace = true
 degenbot-rpc.workspace = true
 degenbot-solvers.workspace = true
 degenbot-uniswap.workspace = true
-hotpath = { version = "^0.28.4", default-features = false }
+hotpath = { version = "^0.28.5", default-features = false }
 parking_lot = { version = "^0.12" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }

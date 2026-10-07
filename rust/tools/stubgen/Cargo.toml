@@ -21,7 +21,7 @@ anyhow = "1.0.104"
 degenbot-config = { workspace = true }
 # Tracks the workspace `pyo3` pin in lockstep (ADR-066): a pyo3 bump implies a
 # generator bump and a fresh stub diff.
-pyo3-introspection = "0.29.2"
+pyo3-introspection = "0.29.3"
 # The manifest-vs-runtime gate reads the cdylib's symbol table from the same
 # object-file parse pyo3-introspection performs for its chunks; the version
 # range matches so both parses share one binary parser.
