@@ -15,7 +15,9 @@ mod fetch;
 mod process;
 pub mod substrate;
 
-pub use activate::{activate_aave_market, deactivate_aave_market, ActivatedMarket};
+pub use activate::{
+    activate_aave_market, deactivate_aave_market, ActivatedMarket, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+};
 pub use apply::{
     apply_aave_chunk_writes_on_conn, apply_chunk_events_on_conn, AaveChunkEvent,
     AaveChunkWriteReport,

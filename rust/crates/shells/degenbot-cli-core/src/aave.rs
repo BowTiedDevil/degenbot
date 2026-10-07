@@ -10,6 +10,8 @@
 //!   opt-in completion backup.
 //! - `aave position show` — the market/user scalar row reads ported onto the
 //!   `degenbot-db::aave` read surface.
+//! - `aave reset` — the market-scoped purge followed by the same cold-boot
+//!   update a fresh empty database takes.
 
 use std::sync::Arc;
 
@@ -17,6 +19,7 @@ use alloy::primitives::{address, Address};
 use degenbot_aave::updater::verify::cleanup_zero_balance_positions_on_conn;
 use degenbot_aave::{
     activate_aave_market, deactivate_aave_market, run_aave_update, NoProgress, RunError,
+    ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 use degenbot_db::{ops, DbError, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
@@ -29,6 +32,7 @@ use crate::prompt::{PromptPlan, Prompter};
 use crate::report::{
     AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome, DeactivateOutcome,
 };
+use degenbot_db::AaveMarketPurgeCount;
 
 /// The RPC retry budget the update arm's per-run transport build uses
 /// (mirrors `crate::pool`'s budget).
@@ -97,6 +101,17 @@ pub enum AaveCommand {
         dry_run: bool,
         /// Back up the DB once per market at the end of the run.
         enable_backup: bool,
+    },
+    /// Purge one market's populated state, then take the cold-boot path a
+    /// fresh empty database takes for it.
+    Reset {
+        /// The chain id.
+        chain_id: u64,
+        /// The `aave_v3_markets.name` to reset; `None` resolves the chain's
+        /// only registered market.
+        market_name: Option<String>,
+        /// Preview the purge's per-relation counts and re-init without writing.
+        dry_run: bool,
     },
     /// Display a user's collateral + debt positions.
     PositionShow {
@@ -176,6 +191,11 @@ pub(crate) fn execute(
                 enable_backup: *enable_backup,
             },
         ),
+        AaveCommand::Reset {
+            chain_id,
+            market_name,
+            dry_run,
+        } => reset(ctx, cancel, *chain_id, market_name.as_deref(), *dry_run),
         AaveCommand::PositionShow {
             address,
             market,
@@ -400,6 +420,195 @@ fn update(
         }
     }
     Ok(AaveReport::Updated { entries })
+}
+
+/// The re-init's chunk size — the same cold-boot default `aave update` uses,
+/// so a reset's re-population commits under the chunk-atomicity contract.
+const RESET_CHUNK_SIZE: u64 = crate::block::DEFAULT_CHUNK_SIZE;
+
+/// An exclusive, reset-scoped advisory lock over one database path.
+///
+/// The lock is a file created with `create_new` beside the database, holding
+/// the owner's pid. It guards reset-against-reset on a shared database: a
+/// second reset (or a crashed first one, whose file survives) sees the file and
+/// is refused with the path, rather than racing a purge against an in-flight
+/// re-init. The updater arms do not take this lock, so it does not by itself
+/// exclude a concurrent `aave update`; the purge's own transaction is what keeps
+/// a racing writer from observing a partially-purged market.
+struct ResetLock {
+    path: std::path::PathBuf,
+}
+
+impl ResetLock {
+    /// Take the lock, or report the holder's file path.
+    fn acquire(database_path: &std::path::Path, market_id: i64) -> Result<Self, CliError> {
+        let mut path = database_path.to_path_buf();
+        let stem = database_path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        path.set_file_name(format!("{stem}.aave-reset.lock"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write as _;
+                let _ = writeln!(file, "{}", std::process::id());
+                Ok(Self { path })
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(CliError::AaveMarketMidUpdate {
+                    market_id,
+                    lock_path: path.display().to_string(),
+                })
+            }
+            Err(err) => Err(CliError::Io(err)),
+        }
+    }
+}
+
+impl Drop for ResetLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// `aave reset`.
+///
+/// Resolves the market the way `deactivate` does, reads and prints the purge's
+/// per-relation counts, purges under ONE transaction, then re-runs the
+/// cold-boot update path for that market.
+#[expect(clippy::too_many_lines)]
+fn reset(
+    ctx: &CliContext<'_>,
+    cancel: &CancelHandle,
+    chain_id: u64,
+    market_name: Option<&str>,
+    dry_run: bool,
+) -> Result<AaveReport, CliError> {
+    let database_path = ctx.database_path()?.value;
+    let chain = i64::try_from(chain_id)
+        .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;
+    let market = {
+        let db = (DegenbotDb::open(&database_path)?).0;
+        if let Some(name) = market_name {
+            db.fetch_aave_market_by_name(chain, name)?
+        } else {
+            // No name given: the chain's shipped deployment names the market.
+            let name = resolve_aave_deployment(chain_id)?.market_name;
+            db.fetch_aave_market_by_name(chain, name)?
+        }
+    };
+    let Some(market) = market else {
+        let requested = match market_name {
+            Some(name) => name.to_string(),
+            None => resolve_aave_deployment(chain_id)
+                .map_or_else(|_| "<unknown>".to_string(), |d| d.market_name.to_string()),
+        };
+        return Err(CliError::UnknownAaveMarket {
+            chain_id,
+            market_name: requested,
+        });
+    };
+
+    // The plan is read first and reported, so the operator sees the blast radius
+    // before the purge. The counts come off a read-only handle.
+    let counts: Vec<AaveMarketPurgeCount> = {
+        let db = (DegenbotDb::open(&database_path)?).0;
+        db.count_aave_market_rows(market.id)?
+    };
+    for count in &counts {
+        tracing::info!(
+            chain_id,
+            market_id = market.id,
+            table = count.table,
+            rows = count.rows,
+            dry_run,
+            "aave reset plan"
+        );
+    }
+    if dry_run {
+        return Ok(AaveReport::Reset {
+            chain_id,
+            market_id: market.id,
+            market_name: market.name,
+            counts,
+            dry_run: true,
+            reinit: None,
+        });
+    }
+
+    // Taken BEFORE the purge and held across the re-init, so two resets of this
+    // database cannot interleave a purge with this run's chunk loop.
+    let _lock = ResetLock::acquire(&database_path, market.id)?;
+
+    // The rewind block is the shipped deployment's bootstrap block. Every
+    // market `resolve_aave_deployment` can name is that deployment, so the
+    // rewind lands where `aave activate` would stamp a fresh market.
+    let removed = {
+        let (db, _state) = DegenbotDb::open_for_writes(&database_path)?;
+        let mut guard = db.lock();
+        let tx = guard.transaction().map_err(DbError::from)?;
+        let removed = DegenbotDb::reset_aave_market_on_conn(
+            &tx,
+            market.id,
+            ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+        )?;
+        tx.commit().map_err(DbError::from)?;
+        removed
+    };
+
+    // Re-init: the SAME cold-boot path an empty database takes for this market —
+    // the chunk loop's bootstrap pass resolves the pool/configurator contracts
+    // from the address provider over the bootstrap window, then the loop's first
+    // chunk writes the market's initial state. The purge rewound
+    // `last_update_block`, so the loop starts where a fresh activation does.
+    let rpc_url = ctx.node_request_uri_for(chain_id)?.value;
+    let provider = match crate::pool::shared_runtime_block_on(async {
+        AlloyProvider::new(&rpc_url, RPC_MAX_RETRIES).await
+    }) {
+        Ok(Ok(provider)) => provider,
+        Ok(Err(err)) => return Err(CliError::AaveUpdate(RunError::from(err))),
+        Err(cli_err) => return Err(cli_err),
+    };
+    let reinit = match run_aave_update(
+        &database_path,
+        chain,
+        market.id,
+        None,
+        RESET_CHUNK_SIZE,
+        provider,
+        cancel.flag(),
+        Arc::new(NoProgress),
+        false,
+        None,
+        false,
+        None,
+    ) {
+        Ok(report) => AaveUpdateOutcome::Advanced {
+            from_block: report.from_block,
+            to_block: report.to_block,
+            chunks_committed: report.chunks_committed,
+            total_events_applied: report.total_events_applied,
+        },
+        Err(RunError::Cancelled) => AaveUpdateOutcome::Cancelled,
+        Err(err) => return Err(CliError::AaveUpdate(err)),
+    };
+    tracing::info!(
+        chain_id,
+        market_id = market.id,
+        "reset Aave V3 market and re-ran the cold-boot update"
+    );
+    Ok(AaveReport::Reset {
+        chain_id,
+        market_id: market.id,
+        market_name: market.name,
+        counts: removed,
+        dry_run: false,
+        reinit: Some(reinit),
+    })
 }
 
 /// Delete the market's zero-balance collateral + debt rows under one transaction.

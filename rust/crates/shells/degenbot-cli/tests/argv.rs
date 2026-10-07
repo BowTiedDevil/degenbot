@@ -249,6 +249,30 @@ fn aave_arms_round_trip() {
         })
     );
     assert_eq!(
+        resolve(&["degenbot", "aave", "reset", "--dry-run"]),
+        Command::Aave(AaveCommand::Reset {
+            chain_id: 1,
+            market_name: Some("Aave Ethereum Market".to_string()),
+            dry_run: true,
+        })
+    );
+    assert_eq!(
+        resolve(&[
+            "degenbot",
+            "aave",
+            "reset",
+            "--name",
+            "Other Market",
+            "--chain-id",
+            "8453"
+        ]),
+        Command::Aave(AaveCommand::Reset {
+            chain_id: 8453,
+            market_name: Some("Other Market".to_string()),
+            dry_run: false,
+        })
+    );
+    assert_eq!(
         resolve(&[
             "degenbot",
             "aave",

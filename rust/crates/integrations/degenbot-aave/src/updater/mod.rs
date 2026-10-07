@@ -28,5 +28,6 @@ pub use run::{
     activate_aave_market, apply_aave_chunk_writes_on_conn, deactivate_aave_market, run_aave_update,
     run_aave_update_on_db, AaveChunkEvent, AaveChunkProgress, AaveChunkWriteReport,
     AaveUpdateReport, ActivatedMarket, NoProgress, ProgressSink, RunError,
+    ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 pub use transaction_processor::{process_transaction, ProcessTxError};

@@ -262,6 +262,23 @@ pub enum CliError {
     /// `aave update` found no active Aave markets (the Python
     /// `DegenbotValueError`).
     NoActiveAaveMarkets,
+    /// An `aave reset` target that no `aave_v3_markets` row matches. The reset
+    /// refuses rather than registering one: a mistyped market name must not
+    /// silently create a market to then wipe.
+    UnknownAaveMarket {
+        /// The resolved chain id.
+        chain_id: u64,
+        /// The requested market name.
+        market_name: String,
+    },
+    /// An `aave reset` target that another process may be mid-update. The reset
+    /// refuses rather than racing a concurrent writer's chunk.
+    AaveMarketMidUpdate {
+        /// The market id.
+        market_id: i64,
+        /// The distributor lock path another process holds.
+        lock_path: String,
+    },
     /// A `pool update` / `pool verify` core failure (DB/RPC/cancelled/
     /// verification), wrapped with the run context the arm held when the core
     /// returned it (endpoint, chain, requested range, per-exchange resume
@@ -326,6 +343,17 @@ impl CliError {
             Self::InvalidBlockTag(tag) => format!("Invalid block tag: {tag}"),
             Self::InvalidAddress(address) => format!("Invalid address: {address}"),
             Self::NoActiveAaveMarkets => "No active Aave markets found.".to_string(),
+            Self::UnknownAaveMarket {
+                chain_id,
+                market_name,
+            } => format!("No Aave V3 market named {market_name:?} on chain {chain_id}."),
+            Self::AaveMarketMidUpdate {
+                market_id,
+                lock_path,
+            } => format!(
+                "Aave market {market_id} is mid-update (another process holds {lock_path}); \
+                 refusing to reset it."
+            ),
             Self::PoolUpdate(failure) => failure.message(),
             Self::AaveUpdate(err) => err.to_string(),
             Self::RuntimeNested => "the command arms own their tokio runtime; do not run them \
@@ -394,6 +422,8 @@ impl From<&CliError> for ExitCode {
             | CliError::InvalidAddress(_)
             | CliError::InvalidArgument(_)
             | CliError::NoActiveAaveMarkets
+            | CliError::UnknownAaveMarket { .. }
+            | CliError::AaveMarketMidUpdate { .. }
             | CliError::PoolUpdate(_)
             | CliError::AaveUpdate(_)
             | CliError::RuntimeNested

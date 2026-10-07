@@ -35,7 +35,10 @@ use rusqlite::params;
 /// PARENT block (`16_291_070`) so the updater's chunk loop starts AT the
 /// deployment block (the `ProxyCreated` events the bootstrap pass resolves
 /// fire in `16_291_071`).
-const ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK: i64 = 16_291_070;
+///
+/// A market reset rewinds `last_update_block` to this same block, which is what
+/// makes the following update run take the cold-boot path.
+pub const ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK: i64 = 16_291_070;
 
 /// Seed (or re-activate) an Aave V3 market in ONE transaction.
 ///

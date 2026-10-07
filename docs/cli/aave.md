@@ -161,6 +161,38 @@ Deactivate an Aave market (positions not updated).
 degenbot aave deactivate [--name MARKET]
 ```
 
+### `degenbot aave reset`
+
+Purge one market's populated data, then re-run the cold-boot update a fresh
+empty database takes for that market.
+
+```bash
+degenbot aave reset [--name MARKET] [--dry-run]
+```
+
+The purge removes every row the updater populated for the named market — its
+reserves, users, collateral/debt positions, per-asset and per-user configs, eMode
+categories and contract rows — and rewinds the market's cursor to the activation
+block. It keeps the `aave_v3_markets` row itself, the `POOL_ADDRESS_PROVIDER`
+contract row (the cold-boot bootstrap's fetch anchor), and the chain's GHO token
+rows, so the market stays registered and active. Rows belonging to another market
+and every table no market keys (`erc20_tokens`, `pools`, `exchanges`, price data)
+are untouched, so a reset of one market never disturbs unrelated data.
+
+The whole purge runs inside one transaction: a failure part-way through leaves
+the database unchanged. `--dry-run` prints the per-table row counts the purge
+would remove and writes nothing. An unknown market name is refused rather than
+registered. Two resets of the same database cannot interleave — the second is
+refused with the lock path the first holds.
+
+```bash
+# Preview the blast radius
+degenbot aave reset --dry-run
+
+# Reset the market and re-sync it
+degenbot aave reset --name "Aave Ethereum Market"
+```
+
 ## Event Processing Details
 
 ### Reserve Initialization (`ReserveInitialized`)

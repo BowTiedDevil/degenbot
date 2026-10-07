@@ -280,7 +280,13 @@ fn canonical_hex_quantity(s: &str) -> Option<String> {
 
 /// The ledger key for a request: a compact JSON pair
 /// `[method, canonical params]`. Deterministic by construction.
-pub(crate) fn entry_key(method: &str, params: &Value) -> String {
+///
+/// Public because a test that must serve exactly ONE recorded answer builds a
+/// single-entry cassette, and the entry's key has to come from this same
+/// canonicalization — a hand-rolled key silently becomes a fixture gap (and a
+/// retried, unbounded request stream) the moment the canonical form moves.
+#[must_use]
+pub fn entry_key(method: &str, params: &Value) -> String {
     let canonical = canonicalize_value(params);
     // The getLogs filter's OR-set option lists (`address`, each topic
     // position) are serialized by alloy through a `HashSet` (`FilterSet`),

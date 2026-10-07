@@ -91,6 +91,7 @@ one data-driven pair.
 |---|---|---|
 | `aave activate` | — | Activate the Aave V3 market for the session chain (Ethereum default 1 when no chain layer supplied a value). |
 | `aave deactivate` | `--name <MARKET>` (default `Aave Ethereum Market`) | Deactivate a market. |
+| `aave reset` | `--name <MARKET>` (default `Aave Ethereum Market`), `--dry-run` | Purge one market's populated state, then re-run the cold-boot update a fresh empty database takes for it. |
 | `aave update` | `--chunk`, `--to-block`, the verify group, `--verify-all-interval`, `--one-chunk`, `--dry-run`, `--backup` / `--no-backup` | Advance Aave V3 position state for active markets. |
 | `aave position show` | `<ADDRESS>` (positional), `--market <MARKET>` (default `Aave Ethereum Market`) | Print a user's collateral and debt positions. |
 

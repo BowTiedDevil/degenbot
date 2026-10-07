@@ -365,6 +365,82 @@ fn update_skips_a_market_needing_bootstrap() {
     assert_eq!(entries[0].outcome, AaveUpdateOutcome::NeedsBootstrap);
 }
 
+// ── reset ─────────────────────────────────────────────────────────────────
+
+const UNKNOWN_MARKET: &str = "No Such Aave Market";
+
+#[test]
+fn reset_refuses_an_unknown_market_without_touching_data() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    seed_market(&db, 1, "Aave Ethereum Market", true, Some(100));
+    let e = MapEnv::new(BTreeMap::new());
+    let outcome = run_aave(
+        AaveCommand::Reset {
+            chain_id: 1,
+            market_name: Some(UNKNOWN_MARKET.to_string()),
+            dry_run: true,
+        },
+        &db,
+        &e,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Failure);
+    assert!(matches!(
+        outcome.error(),
+        Some(CliError::UnknownAaveMarket { .. })
+    ));
+}
+
+#[test]
+fn reset_dry_run_prints_the_plan_without_deleting() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    seed_market(&db, 1, "Aave Ethereum Market", true, Some(100));
+    seed_user(&db, 1, 1);
+    seed_positions(&db);
+    let e = MapEnv::new(BTreeMap::new());
+    let outcome = run_aave(
+        AaveCommand::Reset {
+            chain_id: 1,
+            market_name: None,
+            dry_run: true,
+        },
+        &db,
+        &e,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    let Some(degenbot_cli_core::CommandReport::Aave(AaveReport::Reset {
+        market_id,
+        counts,
+        dry_run,
+        reinit,
+        ..
+    })) = outcome.report()
+    else {
+        panic!("expected Reset, got {:?}", outcome.report());
+    };
+    assert_eq!(*market_id, 1);
+    assert!(*dry_run);
+    assert!(reinit.is_none(), "a preview never re-initializes");
+    let by_table = |t: &str| counts.iter().find(|c| c.table == t).unwrap().rows;
+    assert_eq!(by_table("aave_v3_collateral_positions"), 1);
+    assert_eq!(by_table("aave_v3_debt_positions"), 1);
+    assert_eq!(by_table("aave_v3_users"), 1);
+    // Nothing was deleted.
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let users: i64 = conn
+        .query_row("SELECT COUNT(*) FROM aave_v3_users", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(users, 1);
+    // The plan renders the counts on stdout.
+    let lines = outcome.report().unwrap().render_lines();
+    assert!(
+        lines.iter().any(|l| l.contains("aave_v3_users: 1 row(s)")),
+        "{lines:?}"
+    );
+    assert!(lines.iter().any(|l| l.contains("Dry run")), "{lines:?}");
+}
+
 fn update_command(to_block: &str, dry_run: bool) -> AaveCommand {
     AaveCommand::Update {
         chunk_size: 10_000,

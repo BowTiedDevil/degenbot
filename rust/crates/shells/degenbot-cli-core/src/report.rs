@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use alloy::primitives::U256;
 use degenbot_db::ops::HealReport;
-use degenbot_db::SchemaState;
+use degenbot_db::{AaveMarketPurgeCount, SchemaState};
 
 use crate::error::{CliError, ExitCode};
 use crate::pool::PoolFamily;
@@ -880,6 +880,22 @@ pub enum AaveReport {
         /// Per-market outcomes.
         entries: Vec<AaveUpdateEntry>,
     },
+    /// `aave reset`.
+    Reset {
+        /// The chain id.
+        chain_id: u64,
+        /// The market id.
+        market_id: i64,
+        /// The market name.
+        market_name: String,
+        /// The per-relation row counts the purge removed, or would remove on a
+        /// preview.
+        counts: Vec<AaveMarketPurgeCount>,
+        /// `true` when the arm previewed the purge and touched nothing.
+        dry_run: bool,
+        /// The re-init run's outcome; `None` on a preview.
+        reinit: Option<AaveUpdateOutcome>,
+    },
     /// `aave position show`.
     Position {
         /// The user address (checksummed).
@@ -942,6 +958,21 @@ impl AaveReport {
                 }
             },
             Self::Updated { entries } => entries.iter().flat_map(entry_lines).collect(),
+            Self::Reset {
+                chain_id,
+                market_id,
+                market_name,
+                counts,
+                dry_run,
+                reinit,
+            } => reset_lines(
+                *chain_id,
+                *market_id,
+                market_name,
+                counts,
+                *dry_run,
+                reinit.as_ref(),
+            ),
             Self::Position {
                 user_address,
                 market,
@@ -1009,6 +1040,46 @@ fn entry_lines(entry: &AaveUpdateEntry) -> Vec<String> {
             render_opt_block(*to_block)
         )],
     }
+}
+
+/// The lines for an `aave reset`: the purge plan the operator sees BEFORE
+/// anything is written, then the re-init outcome.
+fn reset_lines(
+    chain_id: u64,
+    market_id: i64,
+    market_name: &str,
+    counts: &[AaveMarketPurgeCount],
+    dry_run: bool,
+    reinit: Option<&AaveUpdateOutcome>,
+) -> Vec<String> {
+    let mut lines = Vec::with_capacity(counts.len() + 3);
+    if dry_run {
+        lines.push(format!(
+            "Dry run: would reset chain {chain_id} market {market_id} ({market_name}); \
+             nothing deleted."
+        ));
+    } else {
+        lines.push(format!(
+            "Reset chain {chain_id} market {market_id} ({market_name})."
+        ));
+    }
+    for count in counts {
+        lines.push(format!("  {}: {} row(s)", count.table, count.rows));
+    }
+    match reinit {
+        Some(outcome) => lines.extend(entry_lines(&AaveUpdateEntry {
+            chain_id: i64::try_from(chain_id).unwrap_or(i64::MAX),
+            market_id,
+            market_name: market_name.to_string(),
+            outcome: outcome.clone(),
+        })),
+        None if dry_run => lines.push(
+            "  re-init skipped: the purge was previewed, so the market's state is unchanged."
+                .to_string(),
+        ),
+        None => {}
+    }
+    lines
 }
 
 /// Render an optional resolved block the way Python's `{value!r}` does.

@@ -382,6 +382,20 @@ pub enum AaveSub {
         #[arg(long = "no-backup", action = ArgAction::SetTrue, overrides_with = "backup")]
         no_backup: bool,
     },
+    /// Reset one market: purge its populated state, then re-run the cold-boot
+    /// update a fresh empty database takes for it.
+    Reset {
+        /// Market name to reset (default: Aave Ethereum Market).
+        #[arg(
+            long = "name",
+            value_name = "MARKET",
+            default_value = "Aave Ethereum Market"
+        )]
+        market_name: String,
+        /// Preview the purge's per-relation counts without deleting anything.
+        #[arg(long = "dry-run", action = ArgAction::SetTrue)]
+        dry_run: bool,
+    },
     /// Position commands.
     Position {
         /// The position command.
@@ -823,6 +837,14 @@ fn aave(command: &AaveSub, cli: &Cli, ctx: &CliContext<'_>) -> Result<AaveComman
             stop_after_one_chunk: *stop_after_one_chunk,
             dry_run: *dry_run,
             enable_backup: *backup && !*no_backup,
+        }),
+        AaveSub::Reset {
+            market_name,
+            dry_run,
+        } => Ok(AaveCommand::Reset {
+            chain_id: chain_or_default(cli, ctx, 1)?,
+            market_name: Some(market_name.clone()),
+            dry_run: *dry_run,
         }),
         AaveSub::Position { command } => match command {
             AavePositionSub::Show { address, market } => Ok(AaveCommand::PositionShow {
