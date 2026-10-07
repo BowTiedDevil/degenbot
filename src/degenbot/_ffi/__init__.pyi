@@ -2926,11 +2926,11 @@ class Pool:
         Apply a V3 Mint/Burn event (liquidity update) via the handle.
         Initializes (or removes) tick entries at `tick_lower`/`tick_upper`,
         journals the priors for reorg rollback, invalidates the tick-range
-        cache. Does NOT change the V3 scalars (`sqrt_price_x96`/`liquidity`/
-        `tick`) — Mint/Burn is a tick-only event per ADR-004. The active
-        `liquidity` scalar adjustments (when `current_tick` is in range) are
-        applied by the engine's own path; this handle method is the raw
-        `tick_data` mutation.
+        cache. Mutates `tick_data` only for OUT-OF-RANGE events (per ADR-004);
+        for IN-RANGE events (the range straddles the current tick) the core
+        also adjusts the active `liquidity` scalar under the same write guard
+        (7347dcdc3), journaled as a scalar event for reorg rollback.
+        `sqrt_price_x96`/`tick` are never changed — no scalar write back out.
         Returns `True` when the update applied to a registered V3/V4 pool;
         raises `ValueError` for a registered non-CL family (no CL tick state to
         mutate) or an unregistered id.

@@ -242,11 +242,13 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     ) -> None:
         """Apply an update to the liquidity map (Mint/Burn/ModifyLiquidity).
 
-        Delegates the tick mutation to ``Pool.apply_liquidity_update``
-        (Rust does the tick bitmap + tick_data mutation under one write
-        guard). The active ``liquidity`` scalar adjustment (when
-        ``current_tick`` is in range) is then landed via a separate
-        ``apply_swap`` carrying the new scalar.
+        Delegates the whole Mint/Burn application to
+        ``Pool.apply_liquidity_update`` (Rust does the tick bitmap +
+        tick_data mutation AND — for in-range events, since the 2026-08-02
+        core fix (7347dcdc3) — the active ``liquidity`` scalar adjustment
+        under one write guard). The companion performs no scalar write of
+        its own: a separate ``apply_swap`` here would double-apply the
+        in-range delta (the golden tracker test caught exactly that).
 
         Raises:
             LiquidityMapWordMissing: A Sparse boundary word could not be
@@ -275,34 +277,20 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
                 ):
                     raise LiquidityMapWordMissing(word)
 
-        applied = self._py_pool.apply_liquidity_update(
+        # The active-liquidity scalar adjust for IN-RANGE events lives in the
+        # Rust core now (7347dcdc3: "adjust in-range active liquidity on
+        # liquidity events") — it is applied inside
+        # ``apply_liquidity_update`` under the same write guard, journaled as
+        # a scalar event for reorg rollback. The companion must NOT re-apply
+        # it: the retired scalar block here double-counted every in-range
+        # Mint/Burn since the companion collapse (caught by the golden
+        # tracker test against chain truth).
+        self._py_pool.apply_liquidity_update(
             tick_lower=update.tick_lower,
             tick_upper=update.tick_upper,
             liquidity_delta=update.liquidity,
             block_number=state_block,
         )
-
-        # Active-liquidity scalar adjust when the modified region crosses the
-        # active tick. Skipped for historical replay (state_block <= the
-        # registration block) to mirror the pre-companion invariant rule.
-        if (
-            applied
-            and update.tick_lower <= self.tick < update.tick_upper
-            and state_block > self._initial_state_block
-        ):
-            new_active = self.liquidity + update.liquidity
-            assert new_active >= 0, (
-                f"In-range liquidity adjustment violated invariant: pool {self.address} "
-                f"{self.tick=} {self.liquidity=} {self.update_block=} {update=}"
-            )
-            # Land the adjusted active scalar via a scalar write (separate
-            # from the tick-only ``apply_liquidity_update`` write above).
-            self._py_pool.apply_swap(
-                sqrt_price_x96=self.sqrt_price_x96,
-                liquidity=new_active,
-                tick=self.tick,
-                block_number=state_block,
-            )
 
     # --- reorg journal delegation ------------------------------------------
 
