@@ -75,14 +75,19 @@ mod erc20;
 mod gho;
 mod pools;
 mod positions;
+mod purge;
 mod util;
 
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod purge_tests;
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests;
 
 pub use aave::*;
 pub use positions::*;
+pub use purge::*;
 
 pub(crate) use alloy::primitives::U256;
 pub(crate) use rusqlite::{params, OptionalExtension};

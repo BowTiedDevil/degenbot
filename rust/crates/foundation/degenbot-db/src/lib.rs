@@ -103,7 +103,7 @@ pub use rows::{
 };
 pub use snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap, PoolKey};
 pub use species::{ChainIdentifiers, Family, Manifest, ManifestError, SlotLayout, Species};
-pub use write::DebtPositionRefreshContext;
 pub use write::{
     decode_reserve_configuration_bitmap, AssetRow, ReserveConfiguration, ScaledTokenPosition,
 };
+pub use write::{AaveMarketPurgeCount, DebtPositionRefreshContext};
