@@ -34,7 +34,7 @@
 //! re-asserts per iteration (one chunk, the recorded pool/event counts) are
 //! the same literals the replay suites gate on.
 
-#![expect(clippy::print_stdout, clippy::print_stderr)]
+#![expect(clippy::print_stdout)]
 // reason: the printed table IS the bench's interface (the recorder example's
 // precedent); the harness fails loudly on a broken corpus.
 #![expect(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
@@ -77,7 +77,7 @@ const AAVE_UPDATE_CASSETTE: &str = "aave_update_chunk_26130440-26130445.json";
 /// era span 19,091,050..=19,091,059 — THREE variable-debt GHO `Burn`s by the
 /// SAME user in three different txs. The first burn's user is absent from the
 /// harness DB (the discount pre-pass takes the RPC path — the cassette's
-/// single `getDiscountPercent` eth_call at block 19,091,050); the two later
+/// single `getDiscountPercent` `eth_call` at block 19,091,050); the two later
 /// same-user txs take the DB-cache path against the row the ops parser
 /// created in the first tx. The recorded cross-tx fact-dependence shape.
 const AAVE_CONFIG_CASSETTE: &str = "aave_config_chunk_19091050-19091059.json";
@@ -111,7 +111,7 @@ fn corpus_path(file: &str) -> String {
 
 fn load_cassette(file: &str) -> Cassette {
     let path = corpus_path(file);
-    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("corpus {}: {e}", path));
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("corpus {path}: {e}"));
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     Cassette::from_json_bytes(&bytes).unwrap()
 }
@@ -144,6 +144,66 @@ const EXPECTED_AAVE_EVENTS: usize = 20;
 /// The config-era span's applied-event count (the replay suite's measured
 /// literal — GHO debt burns + position/user creation + the USDT/WETH ops).
 const EXPECTED_AAVE_CONFIG_EVENTS: usize = 32;
+
+// ── the workloads (what the bench measures, in table order) ────────────────
+
+/// One pool workload's fixed configuration: which seed builds the harness
+/// database, whether the verify gate runs, and the corpus outcome literals
+/// each iteration re-asserts. The iteration loop varies nothing else; the
+/// spec pins the measurement's shape.
+struct PoolWorkload {
+    /// The report table's row label (printed verbatim).
+    label: &'static str,
+    /// The committed cassette the transport replays.
+    cassette_file: &'static str,
+    /// Whether the chunk's pre-commit verify gate runs.
+    verify_chunk: bool,
+    /// The harness database seeder (`seed_pool_db` or the dense deep-map
+    /// variant).
+    seed_db: fn(&Path, i64, u64) -> std::path::PathBuf,
+    /// Expected `total_pools_written` for the recorded span.
+    expected_pools: usize,
+    /// Expected in-scope liquidity applies (0 = the workload does not gate
+    /// on applies).
+    expected_applies: usize,
+    /// Event-touched ticks on the capture's in-scope pool (the per-tick
+    /// columns' denominator).
+    touched_ticks: usize,
+}
+
+/// The seed-corpus pool update (verify gate OFF).
+const POOL_UPDATE_WORKLOAD: PoolWorkload = PoolWorkload {
+    label: "pool_update_chunk_26102622-26102626 (verify gate OFF)",
+    cassette_file: POOL_UPDATE_CASSETTE,
+    verify_chunk: false,
+    seed_db: seed_pool_db,
+    expected_pools: EXPECTED_POOL_POOLS,
+    expected_applies: 0,
+    touched_ticks: EXPECTED_SEED_TOUCHED_TICKS,
+};
+
+/// The seed-corpus pool verify pass (verify gate ON).
+const POOL_VERIFY_WORKLOAD: PoolWorkload = PoolWorkload {
+    label: "pool_verify_chunk_26102622-26102626 (verify gate ON)",
+    cassette_file: POOL_VERIFY_CASSETTE,
+    verify_chunk: true,
+    seed_db: seed_pool_db,
+    expected_pools: EXPECTED_POOL_POOLS,
+    expected_applies: 0,
+    touched_ticks: EXPECTED_SEED_TOUCHED_TICKS,
+};
+
+/// The dense-capture pool update (verify gate OFF, the deep synthetic map:
+/// Perf B's measurement corpus).
+const POOL_DENSE_WORKLOAD: PoolWorkload = PoolWorkload {
+    label: "pool_dense_update_26131653-26133246 (gate OFF, deep map)",
+    cassette_file: POOL_DENSE_CASSETTE,
+    verify_chunk: false,
+    seed_db: seed_dense_pool_db,
+    expected_pools: EXPECTED_DENSE_POOLS,
+    expected_applies: EXPECTED_DENSE_LIQUIDITY_APPLIES,
+    touched_ticks: EXPECTED_DENSE_TOUCHED_TICKS,
+};
 
 /// A temp DB with one ACTIVE `uniswap_v3` exchange stamped at `from - 1`
 /// (mirrors `cassette_replay_run.rs`).
@@ -587,18 +647,18 @@ fn median_duration(samples: &mut [StageTimes], pick: fn(&StageTimes) -> Duration
     pick(&samples[samples.len() / 2])
 }
 
-fn median(samples: &mut Vec<StageTimes>) -> StageTimes {
-    let mut out = StageTimes::default();
-    out.fetch = median_duration(samples, |s| s.fetch);
-    out.decode_compute = median_duration(samples, |s| s.decode_compute);
-    out.verify = median_duration(samples, |s| s.verify);
-    out.apply = median_duration(samples, |s| s.apply);
-    out.write_lock_hold = median_duration(samples, |s| s.write_lock_hold);
-    out.total = median_duration(samples, |s| s.total);
+fn median(samples: &mut [StageTimes]) -> StageTimes {
     let mut sql: Vec<u64> = samples.iter().map(|s| s.sql_us).collect();
     sql.sort_unstable();
-    out.sql_us = sql[sql.len() / 2];
-    out
+    StageTimes {
+        fetch: median_duration(samples, |s| s.fetch),
+        decode_compute: median_duration(samples, |s| s.decode_compute),
+        verify: median_duration(samples, |s| s.verify),
+        apply: median_duration(samples, |s| s.apply),
+        write_lock_hold: median_duration(samples, |s| s.write_lock_hold),
+        total: median_duration(samples, |s| s.total),
+        sql_us: sql[sql.len() / 2],
+    }
 }
 
 fn pool_stage_sums(chunks: &[ChunkProgress], total: Duration, sql_us: u64) -> StageTimes {
@@ -634,24 +694,21 @@ fn aave_stage_sums(chunks: &[AaveChunkProgress], total: Duration, sql_us: u64) -
 }
 
 /// One measured iteration of the pool workload: fresh transport + temp DB +
-/// ledger, the real chunk loop, the counters off the transport/ledger.
-/// `seed_db` selects the harness DB (the seed corpus's exchange-only seed or
-/// the dense capture's deep-map seed); `expected_pools`/`expected_applies`
-/// are the corpus outcome literals the iteration re-asserts.
+/// ledger, the real chunk loop, the counters off the transport/ledger. The
+/// workload spec selects the harness seed (the seed corpus's exchange-only
+/// seed or the dense capture's deep-map seed) and carries the corpus outcome
+/// literals the iteration re-asserts.
 fn pool_iteration(
     cassette: &Cassette,
     chain_id: i64,
     from_block: u64,
     to_block: u64,
-    verify_chunk: bool,
-    seed_db: fn(&Path, i64, u64) -> std::path::PathBuf,
-    expected_pools: usize,
-    expected_applies: usize,
+    workload: &PoolWorkload,
 ) -> (u64, u64, usize, u64, StageTimes) {
     let transport = CassetteReplayTransport::new(cassette.clone());
     let provider = transport.as_alloy_provider();
     let dir = TempDir::new().unwrap();
-    let path = seed_db(dir.path(), chain_id, from_block);
+    let path = (workload.seed_db)(dir.path(), chain_id, from_block);
 
     let collector = Arc::new(PoolCollector::default());
     let started = Instant::now();
@@ -668,7 +725,7 @@ fn pool_iteration(
             provider,
             Arc::new(AtomicBool::new(false)),
             collector.clone(),
-            verify_chunk,
+            workload.verify_chunk,
             None,
             false,
         )
@@ -692,12 +749,12 @@ fn pool_iteration(
         "the whole recorded span is one chunk"
     );
     assert_eq!(
-        report.total_pools_written, expected_pools,
+        report.total_pools_written, workload.expected_pools,
         "the corpus outcome drifted — this is a fixture problem, not a timing one"
     );
-    if expected_applies > 0 {
+    if workload.expected_applies > 0 {
         assert_eq!(
-            report.total_liquidity_applies, expected_applies,
+            report.total_liquidity_applies, workload.expected_applies,
             "the corpus outcome drifted — this is a fixture problem, not a timing one"
         );
     }
@@ -716,17 +773,8 @@ fn pool_iteration(
     )
 }
 
-#[expect(clippy::too_many_arguments)]
-fn measure_pool(
-    label: &'static str,
-    cassette_file: &str,
-    verify_chunk: bool,
-    seed_db: fn(&Path, i64, u64) -> std::path::PathBuf,
-    expected_pools: usize,
-    expected_applies: usize,
-    touched_ticks: usize,
-) -> Measurement {
-    let cassette = load_cassette(cassette_file);
+fn measure_pool(workload: &PoolWorkload) -> Measurement {
+    let cassette = load_cassette(workload.cassette_file);
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
     let span_from = cassette.provenance.span.from_block;
     let span_to = cassette.provenance.span.to_block;
@@ -738,31 +786,22 @@ fn measure_pool(
     let mut samples: Vec<StageTimes> = Vec::new();
 
     for iteration in 0..(WARMUP_RUNS + MEASURED_RUNS) {
-        let (rt, bytes, stmts, args, stages) = pool_iteration(
-            &cassette,
-            chain_id,
-            span_from,
-            span_to,
-            verify_chunk,
-            seed_db,
-            expected_pools,
-            expected_applies,
-        );
+        let (rt, bytes, stmts, args, stages) =
+            pool_iteration(&cassette, chain_id, span_from, span_to, workload);
         // The counters are workload facts, not timings: every iteration must
         // agree, or the harness is measuring noise.
-        match (round_trips, response_bytes, statements, bind_args) {
-            (Some(p), Some(b), Some(s), Some(a)) => {
-                assert_eq!(p, rt, "round trips must be iteration-stable");
-                assert_eq!(b, bytes, "response bytes must be iteration-stable");
-                assert_eq!(s, stmts, "statement count must be iteration-stable");
-                assert_eq!(a, args, "bind-arg count must be iteration-stable");
-            }
-            _ => {
-                round_trips = Some(rt);
-                response_bytes = Some(bytes);
-                statements = Some(stmts);
-                bind_args = Some(args);
-            }
+        if let (Some(p), Some(b), Some(s), Some(a)) =
+            (round_trips, response_bytes, statements, bind_args)
+        {
+            assert_eq!(p, rt, "round trips must be iteration-stable");
+            assert_eq!(b, bytes, "response bytes must be iteration-stable");
+            assert_eq!(s, stmts, "statement count must be iteration-stable");
+            assert_eq!(a, args, "bind-arg count must be iteration-stable");
+        } else {
+            round_trips = Some(rt);
+            response_bytes = Some(bytes);
+            statements = Some(stmts);
+            bind_args = Some(args);
         }
         if iteration >= WARMUP_RUNS {
             samples.push(stages);
@@ -770,12 +809,12 @@ fn measure_pool(
     }
 
     Measurement {
-        label,
+        label: workload.label,
         round_trips: round_trips.unwrap(),
         response_bytes: response_bytes.unwrap(),
         statements: statements.unwrap(),
         bind_args: bind_args.unwrap(),
-        touched_ticks,
+        touched_ticks: workload.touched_ticks,
         median: median(&mut samples),
     }
 }
@@ -905,10 +944,15 @@ fn aave_config_iteration(
     )
 }
 
+/// One Aave measured-iteration entry point (the [`pool_iteration`] shape for
+/// the pool workloads: fresh transport, harness seed, ledger, the real
+/// chunk loop).
+type AaveIteration = fn(&Cassette, i64, u64, u64) -> (u64, u64, usize, StageTimes);
+
 fn measure_aave(
     label: &'static str,
     cassette_file: &str,
-    iteration_fn: fn(&Cassette, i64, u64, u64) -> (u64, u64, usize, StageTimes),
+    iteration_fn: AaveIteration,
 ) -> Measurement {
     let cassette = load_cassette(cassette_file);
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
@@ -923,19 +967,18 @@ fn measure_aave(
 
     for iteration in 0..(WARMUP_RUNS + MEASURED_RUNS) {
         let (rt, bytes, stmts, stages) = iteration_fn(&cassette, chain_id, span_from, span_to);
-        match (round_trips, response_bytes, statements, bind_args) {
-            (Some(p), Some(b), Some(s), Some(a)) => {
-                assert_eq!(p, rt, "round trips must be iteration-stable");
-                assert_eq!(b, bytes, "response bytes must be iteration-stable");
-                assert_eq!(s, stmts, "statement count must be iteration-stable");
-                assert_eq!(a, 0, "aave workload tracks no bind-arg counter");
-            }
-            _ => {
-                round_trips = Some(rt);
-                response_bytes = Some(bytes);
-                statements = Some(stmts);
-                bind_args = Some(0);
-            }
+        if let (Some(p), Some(b), Some(s), Some(a)) =
+            (round_trips, response_bytes, statements, bind_args)
+        {
+            assert_eq!(p, rt, "round trips must be iteration-stable");
+            assert_eq!(b, bytes, "response bytes must be iteration-stable");
+            assert_eq!(s, stmts, "statement count must be iteration-stable");
+            assert_eq!(a, 0, "aave workload tracks no bind-arg counter");
+        } else {
+            round_trips = Some(rt);
+            response_bytes = Some(bytes);
+            statements = Some(stmts);
+            bind_args = Some(0);
         }
         if iteration >= WARMUP_RUNS {
             samples.push(stages);
@@ -967,33 +1010,9 @@ fn main() {
     println!();
 
     let measurements = vec![
-        measure_pool(
-            "pool_update_chunk_26102622-26102626 (verify gate OFF)",
-            POOL_UPDATE_CASSETTE,
-            false,
-            seed_pool_db,
-            EXPECTED_POOL_POOLS,
-            0,
-            EXPECTED_SEED_TOUCHED_TICKS,
-        ),
-        measure_pool(
-            "pool_verify_chunk_26102622-26102626 (verify gate ON)",
-            POOL_VERIFY_CASSETTE,
-            true,
-            seed_pool_db,
-            EXPECTED_POOL_POOLS,
-            0,
-            EXPECTED_SEED_TOUCHED_TICKS,
-        ),
-        measure_pool(
-            "pool_dense_update_26131653-26133246 (gate OFF, deep map)",
-            POOL_DENSE_CASSETTE,
-            false,
-            seed_dense_pool_db,
-            EXPECTED_DENSE_POOLS,
-            EXPECTED_DENSE_LIQUIDITY_APPLIES,
-            EXPECTED_DENSE_TOUCHED_TICKS,
-        ),
+        measure_pool(&POOL_UPDATE_WORKLOAD),
+        measure_pool(&POOL_VERIFY_WORKLOAD),
+        measure_pool(&POOL_DENSE_WORKLOAD),
         measure_aave(
             "aave_update_chunk_26130440-26130445",
             AAVE_UPDATE_CASSETTE,
@@ -1005,7 +1024,13 @@ fn main() {
             aave_config_iteration,
         ),
     ];
+    print_table(&measurements);
+    print_legend();
+}
 
+/// The report table: one header row plus one row per measurement, the stdout
+/// interface the survey's Baseline section quotes verbatim.
+fn print_table(measurements: &[Measurement]) {
     println!(
         "{:<46} {:>4} {:>11} {:>5} {:>8} {:>7} {:>9} {:>9} {:>9} {:>9} {:>9} {:>12} {:>10} {:>10} {:>8}",
         "capture",
@@ -1024,7 +1049,7 @@ fn main() {
         "chunk µs",
         "chunks/sec",
     );
-    for m in &measurements {
+    for m in measurements {
         let chunk_us = us(m.median.total);
         // The per-touched-tick shape columns (Perf B's headline): statements
         // per touched tick, and ledger bind args per touched tick. `-` when
@@ -1038,11 +1063,7 @@ fn main() {
         } else {
             ("-".to_string(), "-".to_string())
         };
-        let chunks_per_sec = if chunk_us > 0 {
-            1_000_000_u128 / chunk_us
-        } else {
-            0
-        };
+        let chunks_per_sec = 1_000_000_u128.checked_div(chunk_us).unwrap_or(0);
         println!(
             "{:<46} {:>4} {:>11} {:>5} {:>8} {:>7} {:>9} {:>9} {:>9} {:>9} {:>9} {:>12} {:>10} {:>10} {:>8}",
             m.label,
@@ -1063,6 +1084,11 @@ fn main() {
         );
     }
     println!();
+}
+
+/// The footnotes under the table: what each stage column carries, the ledger
+/// timing caveat, the per-tick columns' meaning, and the reproduce command.
+fn print_legend() {
     println!(
         "stages: fetch = RPC log fetches; dc+cmp = in-transaction decode+compute (pool: map read+compute; aave: per-tx discount pre-pass + config-dispatch reads — both under the write lock); verify = pre-commit on-chain gate (0 when off); apply = remaining in-transaction SQL; lock-hold = transaction() open → commit/drop."
     );
