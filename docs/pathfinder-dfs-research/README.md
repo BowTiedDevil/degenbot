@@ -25,6 +25,6 @@ path makes the first sweep ~3x slower than sync find_paths (106.9s vs
 ## Files
 
 - `autoresearch.md` — objective, correctness contract, metrics, method
-- `EXPERIMENTS.md` / `INVESTIGATIONS.md` — the experiment ledgers
+- `EXPERIMENTS.md` — the experiment ledger
 - `autoresearch.ideas.md` — the idea backlog
 - `autoresearch.jsonl` — raw harness ledger

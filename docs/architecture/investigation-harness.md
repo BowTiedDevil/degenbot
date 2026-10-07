@@ -1,4 +1,4 @@
-# README — Revm Investigation-Harness Architecture
+# Revm investigation-harness architecture
 
 How to assemble an in-process EVM investigation harness (deploy a contract,
 drive a call, read the result) against a **real contract**, without re-deriving
@@ -118,11 +118,11 @@ fn probe() -> Result<(), String> {
 ### It is the tier-3 oracle landing zone
 
 The driver is not speculative surface — the tier-3 V3 on-chain oracle
-(`rust/crates/degenbot-pools/tests/tier3_v3_common/mod.rs::run_onchain_swap`) now
+(`rust/crates/foundation/degenbot-pools/tests/tier3_v3_common/mod.rs::run_onchain_swap`) now
 drives the real `UniswapV3Pool`/PancakeSwap bytecode through it, and all 9
 byte-exact tests still pass. When you add a new concentrated liquidity math 
 capability, extend the tier-3 oracle slice per 
-[ADR-020](docs/adr/ADR-020-tier3-onchain-accuracy-oracle.md).
+[ADR-020](../adr/ADR-020-tier3-onchain-accuracy-oracle.md).
 
 ---
 
@@ -199,7 +199,7 @@ instead.
   in the 2026-08-19 sweep (HAVRUW/SEG2PS) together with that fixture's last
   consumer (a run-once example).
 - **Deleted one-shot path-debug examples (2026-08-19, HAVRUW/SEG2PS):** the 19
-  `rust/crates/degenbot/examples/` run-once `path*`/`fee1`/`desync`/probe
+  `rust/crates/facade/degenbot/examples/` run-once `path*`/`fee1`/`desync`/probe
   harnesses plus their fixtures and one-off capture/verify/watch scripts — no
   live test, example, or doc consumed them (verified by whole-tree `rg`; per
   GLOSSARY.md, ad-hoc path fixtures are weak cross-checks to DELETE once the revm

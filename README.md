@@ -44,7 +44,7 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 - [Donation](#donation)
 
 > **Debugging a failing settlement-arbitrage path, or building your own
-> simulation harness?** See [`INVESTIGATIONS.md`](INVESTIGATIONS.md) — the
+> simulation harness?** See [`docs/architecture/investigation-harness.md`](docs/architecture/investigation-harness.md) — the
 > simulation oracle driver, the per-contract scaffolder, and the
 > path-fixture toolkit.
 
