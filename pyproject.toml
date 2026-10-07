@@ -215,6 +215,7 @@ markers = [
     "slow: tests that are too slow for routine local runs (e.g. pathfinding)",
     "onchain_oracle: on-chain parity test whose oracle truth is read from a golden file (tests/golden); offline in CI — see docs/architecture/golden-onchain-parity.md",
     "online_rpc: test requiring a live external RPC (mainnet/arbitrum/base archive node) — skipped in CI by default; run on-demand with `-m online_rpc`. See docs/architecture/golden-onchain-parity.md.",
+    "live_drift: explicit-only live drift gate — re-runs the record_py_oracle_corpus --check against live archive endpoints per chain (paced, minutes of RPC); never in default, CI, or pre-push runs; run with `-m live_drift` or `just live-drift`",
 ]
 
 [dependency-groups]

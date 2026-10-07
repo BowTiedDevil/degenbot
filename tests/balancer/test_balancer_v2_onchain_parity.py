@@ -30,7 +30,6 @@ from __future__ import annotations
 import itertools
 import json
 import pathlib
-import socket
 from contextlib import AbstractContextManager
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Self
@@ -48,15 +47,16 @@ from degenbot.exceptions.pool import EVMRevertError
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.utils.bytes import to_bytes
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
-from tests.golden.oracle import GOLDEN_ROOT, _nodeid_to_path
+from tests.golden.oracle import (
+    assert_golden_keys_exact,
+    replay_makes_no_network_calls,  # ruff: ignore[unused-import]
+)
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.balancer_queries_abi import BALANCERQUERIES_ABI
 from tests.helpers.contract_compat import ContractCompat
 from tests.helpers.erc20_factory import make_erc20
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from degenbot.balancer.pools import BalancerV2Pool
 
 BALANCER_PARITY_BLOCK = 24_407_242  # tip minus ~1M
@@ -410,34 +410,6 @@ def test_balancer_v2_expanded_multi_token_given_out(
     )
 
 
-_REPLAY_DIAL_MSG = "golden replay is offline by contract; a network dial is a defect"
-
-
-def _refuse_connection(*_args: object, **_kwargs: object) -> None:
-    raise AssertionError(_REPLAY_DIAL_MSG)
-
-
-@pytest.fixture(autouse=True)
-def _replay_makes_no_network_calls(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[None]:
-    """Arm a hard dial-block in replay; only --golden-mode=record may touch a node.
-
-    Replay asserts recorded ints against pools built I/O-free, so any connection
-    attempt means the offline contract broke — failing at the dial beats hanging
-    on an unreachable endpoint. Record mode is the one sanctioned dialer (a fork
-    pinned to the recorded block), so the block is armed only for replay."""
-    if request.config.getoption("--golden-mode") == "record":
-        yield
-        return
-    monkeypatch.setattr(socket, "create_connection", _refuse_connection)
-    monkeypatch.setattr(socket, "getaddrinfo", _refuse_connection)
-    monkeypatch.setattr(socket.socket, "connect", _refuse_connection)
-    monkeypatch.setattr(socket.socket, "connect_ex", _refuse_connection)
-    yield
-
-
 def _weighted_golden_keys(cassette: dict[str, Any]) -> set[str]:
     """The oracle keys one base weighted parity run drives: both swap
     directions over the multiplier grid, keyed by token symbols."""
@@ -471,14 +443,6 @@ def _expanded_golden_keys(cassette: dict[str, Any], *, given_out: bool) -> set[s
                 continue
             keys.add(f"{address}|querySwap|{label}|i={token_in_idx}|j={token_out_idx}|{amount}")
     return keys
-
-
-def _v2_golden_file(request: pytest.FixtureRequest, test_name: str) -> pathlib.Path:
-    """One of this module's golden files, resolved like golden_factory."""
-    file_part = pathlib.Path(request.path).relative_to(request.config.rootpath).as_posix()
-    nodeid = f"{file_part}::{test_name}"
-    rel = _nodeid_to_path(nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
-    return pathlib.Path(request.config.getoption("--golden-root")) / rel
 
 
 @pytest.mark.parametrize(
@@ -523,8 +487,6 @@ def test_golden_keys_exactly_match_the_oracle_surface(
     on a missing key but stays silent on a stale extra one — nothing looks it
     up. Set-equality against the recorded file closes that drift: a shrunken
     case list cannot leave orphaned oracle entries behind."""
-    if request.config.getoption("--golden-mode") == "record":
-        pytest.skip("the record run rewrites the golden file this test diffs")
     expected: set[str] = set()
     for cassette_path in cassette_paths:
         cassette = _load_cassette(cassette_path)
@@ -532,7 +494,4 @@ def test_golden_keys_exactly_match_the_oracle_surface(
             expected |= _weighted_golden_keys(cassette)
         else:
             expected |= _expanded_golden_keys(cassette, given_out=given_out)
-    recorded = set(json.loads(_v2_golden_file(request, test_name).read_text())["entries"])
-    assert recorded == expected, (
-        f"stale={sorted(recorded - expected)} missing={sorted(expected - recorded)}"
-    )
+    assert_golden_keys_exact(request, test_name, expected)

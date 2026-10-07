@@ -422,6 +422,15 @@ test-flake-probe:
 record-golden *args:
     DEGENBOT_GOLDEN_MODE=record uv run --no-sync pytest -m onchain_oracle -q --no-header -n0 {{ args }}
 
+# Live chain-data drift gate (explicit only — never in test/pre-push/CI lanes):
+# re-records every py_oracle corpus twice and requires byte-identity with disk,
+# per chain, against live archive endpoints. Minutes of paced live RPC and the
+# endpoints rate-limit, so this runs on demand, not in any gate battery:
+#   just live-drift                # all three chains
+#   just live-drift -- -k ethereum # one chain
+live-drift *args:
+    uv run --no-sync pytest -m live_drift -q --no-header tests/golden/test_live_drift.py {{ args }}
+
 # Verify every shipped deployment address is actually deployed on-chain (cast).
 # Tier 1 (bytecode presence) by default; escalate via the env var:
 #   DEGENBOT_VERIFY_DEPLOYMENTS=2 just verify-deployments   # +selector fingerprint

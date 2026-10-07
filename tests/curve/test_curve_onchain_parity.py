@@ -37,7 +37,6 @@ from __future__ import annotations
 import itertools
 import json
 import pathlib
-import socket
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Self
 
@@ -60,12 +59,15 @@ from degenbot.curve.strategies import (
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
-from tests.golden.oracle import GOLDEN_ROOT, _nodeid_to_path
+from tests.golden.oracle import (
+    assert_golden_keys_exact,
+    replay_makes_no_network_calls,  # ruff: ignore[unused-import]
+)
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 
@@ -781,34 +783,6 @@ def test_curve_metapool_multiblock_get_dy(golden_factory) -> None:
     )
 
 
-_REPLAY_DIAL_MSG = "golden replay is offline by contract; a network dial is a defect"
-
-
-def _refuse_connection(*_args: object, **_kwargs: object) -> None:
-    raise AssertionError(_REPLAY_DIAL_MSG)
-
-
-@pytest.fixture(autouse=True)
-def _replay_makes_no_network_calls(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[None]:
-    """Arm a hard dial-block in replay; only --golden-mode=record may touch a node.
-
-    Replay asserts recorded ints against pools built I/O-free, so any connection
-    attempt means the offline contract broke — failing at the dial beats hanging
-    on an unreachable endpoint. Record mode is the one sanctioned dialer (a fork
-    pinned to the recorded block), so the block is armed only for replay."""
-    if request.config.getoption("--golden-mode") == "record":
-        yield
-        return
-    monkeypatch.setattr(socket, "create_connection", _refuse_connection)
-    monkeypatch.setattr(socket, "getaddrinfo", _refuse_connection)
-    monkeypatch.setattr(socket.socket, "connect", _refuse_connection)
-    monkeypatch.setattr(socket.socket, "connect_ex", _refuse_connection)
-    yield
-
-
 def _get_dy_golden_keys(cassette: dict[str, Any]) -> set[str]:
     """The oracle keys one ``get_dy`` parity run drives: all token directions
     over the multiplier grid, amounts scaled from the cassette balances."""
@@ -874,14 +848,6 @@ def _metapool_golden_keys(cassette: dict[str, Any], blocks: list[int]) -> set[st
     return keys
 
 
-def _curve_golden_file(request: pytest.FixtureRequest, test_name: str) -> pathlib.Path:
-    """One of this module's golden files, resolved like golden_factory."""
-    file_part = pathlib.Path(request.path).relative_to(request.config.rootpath).as_posix()
-    nodeid = f"{file_part}::{test_name}"
-    rel = _nodeid_to_path(nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
-    return pathlib.Path(request.config.getoption("--golden-root")) / rel
-
-
 _MULTIBLOCK_BLOCKS = list(
     range(
         METAPOOL_MULTIBLOCK_START + METAPOOL_MULTIBLOCK_SPAN,
@@ -931,10 +897,5 @@ def test_golden_keys_exactly_match_the_oracle_surface(
     Replay fails loud on a missing key but stays silent on a stale extra one —
     nothing looks it up. Set-equality against the recorded file closes that
     drift: a shrunken case list cannot leave orphaned oracle entries behind."""
-    if request.config.getoption("--golden-mode") == "record":
-        pytest.skip("the record run rewrites the golden file this test diffs")
     expected = expected_keys()
-    recorded = set(json.loads(_curve_golden_file(request, test_name).read_text())["entries"])
-    assert recorded == expected, (
-        f"stale={sorted(recorded - expected)} missing={sorted(expected - recorded)}"
-    )
+    assert_golden_keys_exact(request, test_name, expected)

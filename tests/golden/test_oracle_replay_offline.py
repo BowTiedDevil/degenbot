@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import re
-import socket
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -32,10 +31,14 @@ import pytest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.provider import OfflineProvider
-from tests.golden.oracle import GOLDEN_ROOT
+from degenbot.provider.offline_provider import CHAIN_DATA_FORMAT_V1
+from tests.golden.oracle import (
+    GOLDEN_ROOT,
+    replay_makes_no_network_calls,  # ruff: ignore[unused-import]
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CORPUS_ROOT = REPO_ROOT / "tests" / "fixtures" / "chain_data"
@@ -91,8 +94,6 @@ _CAMELOT_PAIR = "USDC->WETH"
 _CALL_KEY_RE = re.compile(r"0x[0-9a-f]{40}:0x[0-9a-f]+")
 _CODE_KEY_RE = re.compile(r"0x[0-9a-f]{40}")
 _HEX_RE = re.compile(r"[0-9a-f]+")
-
-_OFFLINE_DIAL_MSG = "offline replay must not dial; a network attempt is a defect"
 
 _PENDING_CORPUS_REASON = (
     "py_oracle corpus not recorded: no configured endpoint serves the pinned "
@@ -185,9 +186,7 @@ def _balancer_golden_key_factory(key_style: str) -> Callable[[str], str]:
         asset_out = words[8][24:]
         amount = int(words[9], 16)
         cassette = _balancer_cassettes()[pool_addr]
-        addresses = [
-            token["address"].lower().removeprefix("0x") for token in cassette["tokens"]
-        ]
+        addresses = [token["address"].lower().removeprefix("0x") for token in cassette["tokens"]]
         symbols = [token["symbol"] for token in cassette["tokens"]]
         token_in = addresses.index(asset_in)
         token_out = addresses.index(asset_out)
@@ -576,20 +575,6 @@ _REVERT_PROBE_SCENARIOS = tuple(
 )
 
 
-def _refuse_connection(*_args: object, **_kwargs: object) -> None:
-    raise AssertionError(_OFFLINE_DIAL_MSG)
-
-
-@pytest.fixture(autouse=True)
-def _replay_makes_no_network_calls(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Arm a hard dial-block: this module is replay-only, so any connection
-    attempt means the offline contract broke."""
-    monkeypatch.setattr(socket, "create_connection", _refuse_connection)
-    monkeypatch.setattr(socket, "getaddrinfo", _refuse_connection)
-    monkeypatch.setattr(socket.socket, "connect", _refuse_connection)
-    monkeypatch.setattr(socket.socket, "connect_ex", _refuse_connection)
-
-
 def _decoded_amount(result_hex: str, scenario: Scenario) -> int:
     """The oracle int in a recorded answer: a bare uint256, or the word the
     scenario's answer shape names (the V4 quoter's leading tuple member, the
@@ -663,13 +648,21 @@ def test_offline_provider_replays_the_recorded_calls(scenario: Scenario) -> None
 def test_corpus_shape_matches_the_offline_provider_wire(scenario: Scenario) -> None:
     """The corpus file keeps the per-block OfflineProvider wire shape.
 
-    Exactly the five established keys; call keys are ``0x<to>:0x<data>`` with
-    lowercase hex and no ``0x`` on the recorded results; the code map holds
-    the called contract(s)."""
+    Exactly the established keys, led by the v1 format marker; call keys are
+    ``0x<to>:0x<data>`` with lowercase hex and no ``0x`` on the recorded
+    results; the code map holds the called contract(s)."""
     if not scenario.corpus_path.exists():
         pytest.skip(_PENDING_CORPUS_REASON)
     recorded = json.loads(scenario.corpus_path.read_text())
-    assert set(recorded) == {"chain_id", "block_number", "timestamp", "calls", "code"}
+    assert set(recorded) == {
+        "format",
+        "chain_id",
+        "block_number",
+        "timestamp",
+        "calls",
+        "code",
+    }
+    assert recorded["format"] == CHAIN_DATA_FORMAT_V1
     assert isinstance(recorded["timestamp"], int)
     assert recorded["timestamp"] > 0
     call_targets = {key.split(":")[0] for key in recorded["calls"]}
@@ -696,6 +689,46 @@ def test_same_block_corpus_files_agree_on_the_block_timestamp() -> None:
     assert ethereum_pin, "no ethereum corpus recorded at the parity pin"
     for (chain_id, block), seen in stamps.items():
         assert len(seen) == 1, f"chain {chain_id} block {block}: corpus files disagree: {seen}"
+
+
+def _corpus_files_on_disk() -> set[str]:
+    """Committed ``py_oracle_*.json`` corpus paths, relative to the corpus root."""
+    return {
+        path.relative_to(CORPUS_ROOT).as_posix() for path in CORPUS_ROOT.glob("*/py_oracle_*.json")
+    }
+
+
+@pytest.mark.onchain_oracle
+def test_every_corpus_file_has_a_scenario_proof() -> None:
+    """Every committed corpus file carries exactly one scenario proof.
+
+    A recorded scenario whose proof never landed would leave an unproven
+    corpus file on disk; the corpus is this suite's oracle truth, so that
+    drift must fail loudly. Reported as corpus paths relative to the corpus
+    root.
+    """
+    on_disk = _corpus_files_on_disk()
+    proven = [s.corpus_path.relative_to(CORPUS_ROOT).as_posix() for s in SCENARIOS]
+    double_proven = sorted({p for p in proven if proven.count(p) > 1})
+    assert sorted(on_disk) == sorted(proven), (
+        f"stale={sorted(on_disk - set(proven))} missing={sorted(set(proven) - on_disk)}"
+        + (f" double-proven={double_proven}" if double_proven else "")
+    )
+
+
+@pytest.mark.onchain_oracle
+def test_every_scenario_has_its_corpus_on_disk() -> None:
+    """Every parametrized scenario's corpus file is committed.
+
+    A deleted (or never-recorded) corpus must strand its scenario loudly:
+    the suite would otherwise parametrize a proof it cannot replay. Reported
+    as corpus paths relative to the corpus root.
+    """
+    parametrized = {s.corpus_path.relative_to(CORPUS_ROOT).as_posix() for s in SCENARIOS}
+    assert parametrized == _corpus_files_on_disk(), (
+        f"stale={sorted(parametrized - _corpus_files_on_disk())}"
+        f" missing={sorted(_corpus_files_on_disk() - parametrized)}"
+    )
 
 
 def _mutated_copy(

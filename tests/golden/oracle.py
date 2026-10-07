@@ -17,13 +17,23 @@ path reproduces exactly.
 from __future__ import annotations
 
 import json
+import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
+from tests.golden.record_errors import (
+    CANONICAL_REVERT_EXCEPTION,
+    call_with_transport_retry,
+    canonical_revert_reason,
+    classify_record_failure,
+)
+
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 # Root for L2 golden files: tests/golden/data/<module path>/<TestName>.json
 GOLDEN_ROOT = Path(__file__).resolve().parent / "data"
@@ -179,10 +189,13 @@ class GoldenOracle:
     ) -> GoldenResult:
         """Return the on-chain oracle result for ``key``.
 
-        - **Record mode:** invoke ``contract()``, capture its return value or
-          the exception it raised, persist the entry, and return it. The test's
-          own ``assert local == result.value`` therefore validates against live
-          chain state at record time.
+        - **Record mode:** invoke ``contract()``, classify the outcome, persist
+          the entry, and return it. A revert persists its canonical entry (see
+          :mod:`tests.golden.record_errors`); a transport failure is retried a
+          bounded number of times and then fails the run loudly; any other
+          error fails immediately. The test's own ``assert local ==
+          result.value`` therefore validates against live chain state at record
+          time.
         - **Replay mode:** return the recorded entry **without** calling
           ``contract()``. A missing key raises :class:`GoldenError` telling you
           to re-record.
@@ -195,13 +208,18 @@ class GoldenOracle:
 
         if self._recording:
             try:
-                value = contract()
-            except Exception as exc:  # ruff: ignore[blind-except] — capture any revert
+                value = call_with_transport_retry(contract)
+            except Exception as exc:
+                # Transport weather (retries exhausted above) and programming
+                # errors fail the record run loudly — neither may become an
+                # entry. Only the on-chain revert is golden-worthy.
+                if classify_record_failure(exc) != "contract-revert":
+                    raise
                 result = GoldenResult(
                     value=None,
                     reverted=True,
-                    exception_type=type(exc).__name__,
-                    message=str(exc) or None,
+                    exception_type=CANONICAL_REVERT_EXCEPTION,
+                    message=canonical_revert_reason(getattr(exc, "message", None) or str(exc)),
                 )
             else:
                 result = GoldenResult(
@@ -251,3 +269,72 @@ def _nodeid_to_path(nodeid: str, root: Path = GOLDEN_ROOT) -> Path:
     rel = file_part.replace("\\", "/")
     # the nodeid's file part is relative to the rootdir (e.g. "tests/...")
     return root / rel / f"{test_name}.json"
+
+
+# -- shared offline-contract test API -----------------------------------------
+#
+# The on-chain parity suites replay with no RPC at all: any socket dial during
+# a replay run is a defect, the golden file a module diffs is resolved the same
+# way ``golden_factory`` resolves its oracle file, and each module's replay
+# surface must equal its golden file's key set exactly. Every parity module
+# imports these names into its own namespace (fixture discovery is by module
+# namespace; no non-root ``pytest_plugins`` registration).
+
+REPLAY_DIAL_MSG = "golden replay is offline by contract; a network dial is a defect"
+
+RECORD_MODE_KEY_SET_SKIP_REASON = "the record run rewrites the golden file this test diffs"
+
+
+def refuse_connection(*_args: object, **_kwargs: object) -> None:
+    """Dial-block target: any connection attempt fails the replay run."""
+    raise AssertionError(REPLAY_DIAL_MSG)
+
+
+def parity_golden_file(request: pytest.FixtureRequest, test_name: str) -> Path:
+    """The parity test's golden file, resolved like golden_factory (--golden-root aware)."""
+    file_part = Path(request.path).relative_to(request.config.rootpath).as_posix()
+    nodeid = f"{file_part}::{test_name}"
+    rel = _nodeid_to_path(nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
+    return Path(request.config.getoption("--golden-root")) / rel
+
+
+@pytest.fixture(autouse=True)
+def replay_makes_no_network_calls(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Arm a hard dial-block in replay; only --golden-mode=record may touch a node.
+
+    Replay asserts recorded ints against pools built I/O-free, so any connection
+    attempt means the offline contract broke — failing at the dial beats hanging
+    on an unreachable endpoint. Record mode is the one sanctioned dialer (a fork
+    pinned to the recorded block), so the block is armed only for replay.
+    """
+    if request.config.getoption("--golden-mode") == "record":
+        yield
+        return
+    monkeypatch.setattr(socket, "create_connection", refuse_connection)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse_connection)
+    monkeypatch.setattr(socket.socket, "connect", refuse_connection)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse_connection)
+    yield
+
+
+def assert_golden_keys_exact(
+    request: pytest.FixtureRequest,
+    test_name: str,
+    expected: set[str],
+) -> None:
+    """The golden file holds exactly the keys the module's replay drives.
+
+    Replay fails loud on a missing key but stays silent on a stale extra one —
+    nothing looks it up. Set-equality against the recorded file closes that
+    drift: a shrunken case list cannot leave orphaned oracle entries behind.
+    Skips in record mode, where the run rewrites the very file being diffed.
+    """
+    if request.config.getoption("--golden-mode") == "record":
+        pytest.skip(RECORD_MODE_KEY_SET_SKIP_REASON)
+    recorded = set(json.loads(parity_golden_file(request, test_name).read_text())["entries"])
+    assert recorded == expected, (
+        f"stale={sorted(recorded - expected)} missing={sorted(expected - recorded)}"
+    )

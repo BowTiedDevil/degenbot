@@ -24,6 +24,9 @@ from typing import TYPE_CHECKING, Any
 
 from degenbot._ffi import Bot
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
+from tests.helpers.v4_pool_factory import make_v4_pool
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -179,8 +182,6 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
     token1 = _make_token(state["tokens"][1])
 
     if family == "v2":
-        from tests.helpers.v2_pool_factory import make_v2_pool
-
         return make_v2_pool(
             state["address"],
             token0=token0,
@@ -196,8 +197,6 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
         )
 
     if family == "v3":
-        from tests.helpers.v3_pool_factory import make_v3_pool
-
         pool = make_v3_pool(
             state["address"],
             token0=token0,
@@ -228,8 +227,6 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
         return pool
 
     if family == "v4":
-        from tests.helpers.v4_pool_factory import make_v4_pool
-
         # make_v4_pool expects ``{tick: (gross, net, block)}`` tuples, not the
         # plain-dict form we persist.
         tick_data = state.get("tick_data")

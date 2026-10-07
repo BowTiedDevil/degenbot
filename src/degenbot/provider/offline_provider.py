@@ -38,6 +38,11 @@ from degenbot.utils.bytes import to_bytes
 if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockData, TxParams
 
+# The format marker the corpus recorder stamps into per-block chain-data JSON
+# (the wire-cassette `degenbot.cassette/v1` convention). Legacy recorded-pool
+# docs sharing the fixture homes predate it and stay unmarked.
+CHAIN_DATA_FORMAT_V1 = "degenbot.chain-data/v1"
+
 
 class _OfflineBacked:
     """Structural base for the offline provider mixins: recorded-data peers."""
@@ -405,7 +410,9 @@ class OfflineProvider(
         """Load recorded data from a JSON file.
 
         Supports both old multi-block format (with "blocks" key) and new single-block
-        format (with "block_number" key).
+        format (with "block_number" key). Single-block corpora carry the
+        ``format`` marker (``CHAIN_DATA_FORMAT_V1``); files without a marker
+        (the legacy recorded-pool docs sharing the home) load unchanged.
 
         Args:
             path: Path to the JSON file containing recorded data
@@ -413,11 +420,24 @@ class OfflineProvider(
         Returns:
             An OfflineProvider instance loaded from the file.
 
+        Raises:
+            ValueError: If the file's format marker names any other format.
+
         """
         # Build the Rust transport from the raw file (it handles both formats
         # natively), then parse the JSON again for the Python-side metadata.
         raw = Path(path).read_text(encoding="utf-8")
         data = json.loads(raw)
+
+        # The marker is verified when present; unmarked files (the legacy
+        # multi-block docs) keep loading exactly as before.
+        marker = data.get("format")
+        if marker is not None and marker != CHAIN_DATA_FORMAT_V1:
+            msg = (
+                f"{path}: unsupported chain-data format marker {marker!r} "
+                f"(expected {CHAIN_DATA_FORMAT_V1!r})"
+            )
+            raise ValueError(msg)
 
         if "block_number" in data:
             # Single block format - wrap in blocks dict

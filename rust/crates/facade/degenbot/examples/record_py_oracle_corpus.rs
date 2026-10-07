@@ -6,9 +6,10 @@
 //! golden file - the canonical record of which on-chain calls the test's
 //! replay asserts against - then drives the real `eth_call`s at the pinned
 //! block through [`RecordingTransport`] and projects the recording ledger onto
-//! the existing `OfflineProvider` wire shape (`chain_id`, `block_number`,
-//! `timestamp`, `calls`, `code`). One capture format per corpus: no third
-//! serialization, and nothing lands in the wire-cassette home.
+//! the existing `OfflineProvider` wire shape (the v1 `format` marker,
+//! `chain_id`, `block_number`, `timestamp`, `calls`, `code`). One capture
+//! format per corpus: no third serialization, and nothing lands in the
+//! wire-cassette home.
 //!
 //! The recorded answers ARE the oracle: every value comes off the wire, never
 //! re-derived. A revert recorded at the pin is stored as `null` (the offline
@@ -404,10 +405,16 @@ fn all_scenarios() -> Vec<Scenario> {
     scenarios
 }
 
+/// The format marker written into every v1 corpus - the wire-cassette
+/// `degenbot.cassette/v1` convention for the per-block JSON.
+const CHAIN_DATA_FORMAT_V1: &str = "degenbot.chain-data/v1";
+
 /// The per-block `OfflineProvider` wire shape (single-block format), field
 /// order matching the recorded fixtures the offline transport consumes.
 #[derive(Serialize)]
 struct CorpusJson {
+    /// The format marker - [`CHAIN_DATA_FORMAT_V1`] on any current corpus.
+    format: &'static str,
     chain_id: u64,
     block_number: u64,
     timestamp: u64,
@@ -1192,6 +1199,7 @@ fn project_corpus(
     }
 
     Ok(CorpusJson {
+        format: CHAIN_DATA_FORMAT_V1,
         chain_id: scenario.chain_id,
         block_number: scenario.block,
         timestamp: timestamp.ok_or("no block timestamp recorded")?,

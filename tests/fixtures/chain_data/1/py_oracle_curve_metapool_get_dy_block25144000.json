@@ -1,4 +1,5 @@
 {
+  "format": "degenbot.chain-data/v1",
   "chain_id": 1,
   "block_number": 25144000,
   "timestamp": 1779371039,
