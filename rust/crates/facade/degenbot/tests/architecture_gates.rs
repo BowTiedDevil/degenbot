@@ -1209,3 +1209,371 @@ fn core_public_docs_do_not_define_contracts_through_python_symbols() {
         "a core public item must not define its contract through a Python-side symbol: {violations:?}"
     );
 }
+
+/// Whether `byte` can be part of a Rust identifier.
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// `text` with every comment body, string literal, and char literal blanked to
+/// spaces, byte-for-byte, so brace/paren/comma shapes can be counted without
+/// tripping on a `)` inside a comment or a `,` inside a string. Byte length and
+/// line structure are preserved, so an index or a line number taken from the
+/// result still names the ORIGINAL text.
+fn mask_strings_and_comments(text: &str) -> String {
+    let bytes = text.as_bytes().to_vec();
+    let mut out = bytes.clone();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'/') {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                out[i] = b' ';
+                i += 1;
+            }
+            continue;
+        }
+        if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+            let mut depth = 1_u32;
+            out[i] = b' ';
+            out[i + 1] = b' ';
+            i += 2;
+            while i < bytes.len() && depth > 0 {
+                if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                    depth += 1;
+                    out[i] = b' ';
+                    out[i + 1] = b' ';
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                    depth -= 1;
+                    out[i] = b' ';
+                    out[i + 1] = b' ';
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] != b'\n' {
+                    out[i] = b' ';
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // A raw string \`r"..."\` / \`r#"..."#\` (also under a \`b\` prefix).
+        if let Some(next) = mask_raw_string(&bytes, &mut out, i) {
+            i = next;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            out[i] = b' ';
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'"' {
+                if bytes[i] == b'\\' {
+                    out[i] = b' ';
+                    i += 1;
+                    if i < bytes.len() {
+                        if bytes[i] != b'\n' {
+                            out[i] = b' ';
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+                if bytes[i] != b'\n' {
+                    out[i] = b' ';
+                }
+                i += 1;
+            }
+            if i < bytes.len() {
+                out[i] = b' ';
+                i += 1;
+            }
+            continue;
+        }
+        if bytes[i] == b'\'' {
+            if bytes.get(i + 1) == Some(&b'\\') {
+                out[i] = b' ';
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\'' {
+                    if bytes[i] != b'\n' {
+                        out[i] = b' ';
+                    }
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    out[i] = b' ';
+                    i += 1;
+                }
+                continue;
+            }
+            if bytes.get(i + 1) != Some(&b'\'') && bytes.get(i + 2) == Some(&b'\'') {
+                out[i] = b' ';
+                out[i + 1] = b' ';
+                out[i + 2] = b' ';
+                i += 3;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    // Every masked byte is an ASCII space and multibyte sequences are blanked
+    // whole, so the result is valid UTF-8 whenever the input was.
+    String::from_utf8(out).expect("masked source stays utf8")
+}
+
+/// Blank a raw string opening at \`start\` (a \`r"\` or \`r#".."#\` opener, optionally
+/// after a \`b\` prefix) and return the index just past it; \`None\` when no raw
+/// string starts there, so the caller keeps scanning.
+fn mask_raw_string(bytes: &[u8], out: &mut [u8], start: usize) -> Option<usize> {
+    if bytes[start] != b'r' {
+        return None;
+    }
+    let prefixed =
+        start > 0 && bytes[start - 1] == b'b' && (start == 1 || !is_ident_byte(bytes[start - 2]));
+    if start != 0 && is_ident_byte(bytes[start - 1]) && !prefixed {
+        return None;
+    }
+    let mut j = start + 1;
+    let mut hashes = 0_usize;
+    while bytes.get(j) == Some(&b'#') {
+        hashes += 1;
+        j += 1;
+    }
+    if bytes.get(j) != Some(&b'"') {
+        return None;
+    }
+    let mut i = start;
+    while i <= j {
+        out[i] = b' ';
+        i += 1;
+    }
+    i = j + 1;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            let mut closing = 0_usize;
+            while closing < hashes && bytes.get(i + 1 + closing) == Some(&b'#') {
+                closing += 1;
+            }
+            if closing == hashes {
+                for _ in 0..=hashes {
+                    if i < bytes.len() {
+                        out[i] = b' ';
+                        i += 1;
+                    }
+                }
+                return Some(i);
+            }
+        }
+        if bytes[i] != b'\n' {
+            out[i] = b' ';
+        }
+        i += 1;
+    }
+    Some(i)
+}
+
+/// The 1-based, half-open `[start, end)` line ranges of every item carrying a
+/// `#[cfg(test)]` attribute. Test bodies are excluded by ATTRIBUTE rather than
+/// by path: an inline `#[cfg(test)] mod tests { .. }` in a shipped `src/` file
+/// is a test all the same, and a scan that cannot see the attribute reports its
+/// fixtures as production code.
+fn cfg_test_regions(text: &str) -> Vec<(usize, usize)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut regions = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        if !lines[index].trim().starts_with("#[cfg(test)]") {
+            index += 1;
+            continue;
+        }
+        let start = index + 1;
+        let mut cursor = index + 1;
+        while cursor < lines.len() {
+            let trimmed = lines[cursor].trim();
+            if trimmed.is_empty() || trimmed.starts_with("#[") || trimmed.starts_with("//") {
+                cursor += 1;
+                continue;
+            }
+            break;
+        }
+        let mut depth = 0_i64;
+        let mut opened = false;
+        while cursor < lines.len() {
+            let code = lines[cursor].split("//").next().unwrap_or_default();
+            for ch in code.chars() {
+                match ch {
+                    '{' => {
+                        depth += 1;
+                        opened = true;
+                    }
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            if opened && depth <= 0 {
+                break;
+            }
+            if !opened && code.contains(';') {
+                break;
+            }
+            cursor += 1;
+        }
+        regions.push((start, cursor + 2));
+        index = cursor + 1;
+    }
+    regions
+}
+
+/// The `(open, close)` byte indices of every `timeout(` call's parentheses in
+/// `masked` (already comment/string-blanked, so no string can forge a paren).
+/// `open` is the index of the `(` itself.
+fn timeout_call_spans(masked: &str) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let needle = b"timeout";
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i + needle.len() <= bytes.len() {
+        if &bytes[i..i + needle.len()] != needle {
+            i += 1;
+            continue;
+        }
+        let before_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
+        let mut j = i + needle.len();
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if before_ok && j < bytes.len() && bytes[j] == b'(' {
+            if let Some(close) = matching_paren(bytes, j) {
+                spans.push((j, close));
+                i = close + 1;
+                continue;
+            }
+        }
+        i += needle.len();
+    }
+    spans
+}
+
+/// The index of the `)` matching the `(` at `open`, by depth.
+fn matching_paren(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0_i64;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Split `inner` at its TOP-LEVEL commas, so a comma nested in a call or a
+/// closure stays with its argument. `inner` is masked, so no string or comment
+/// comma is split on.
+fn split_top_level(inner: &str) -> Vec<String> {
+    let bytes = inner.as_bytes();
+    let mut parts = Vec::new();
+    let mut depth = 0_i64;
+    let mut last = 0;
+    for (i, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                parts.push(inner[last..i].to_owned());
+                last = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(inner[last..].to_owned());
+    parts
+}
+
+/// A production `timeout(..)` may not wrap a data-carrying send or a
+/// non-resumable write.
+///
+/// The cancelling-async-rust material's select-loops case study (RFD 400) is
+/// the canonical failure: `timeout(Duration, tx.send(value))` reads as a
+/// deadline on a send, but it is a deadline on a FUTURE, and when the timeout
+/// fires the future is dropped mid-await — the value moved into `send` is lost
+/// and the caller cannot tell a cancelled delivery from a delivered one. The
+/// same shape over `AsyncWriteExt::write_all` is worse: bytes already accepted
+/// by the peer vanish from the caller's view while the error says only "timed
+/// out", so a retry can silently duplicate a partial frame.
+///
+/// A deadline belongs on the OPERATION boundary — a resumable write that keeps
+/// its own progress, a send whose cancellation the caller observes — never on
+/// the future that carries the value. The decidable subset this gate polices is
+/// the lexical shape: a `timeout(` call whose SECOND argument (everything after
+/// the first top-level comma) mentions `.send(` or `.write_all(`.
+///
+/// KNOWN LIMIT, stated rather than papered over: this is a TEXT approximation.
+/// A send hidden behind a helper (`timeout(d, deliver(value))` where `deliver`
+/// owns the channel) is not caught, and a `.send(` in the FIRST argument is
+/// missed by construction; neither shape exists in the tree today. It is a
+/// tripwire for the reintroduction of the direct form, not a proof of absence
+/// for the whole class.
+#[test]
+fn no_timeout_wrapped_value_sends_or_write_all() {
+    // The one production site that legitimately matches, named file+line with
+    // its reason, rather than loosening the pattern.
+    const ALLOWED: [(&str, usize, &str); 1] = [(
+        "shells/degenbot-cli-core/src/operator.rs",
+        689,
+        "exchange_within spends one shared deadline across connect/write/flush/read on a request line; the request is a single logical message, so a timeout abandons no partial frame the caller could resume, and the error it raises is the exchange's terminal failure",
+    )];
+
+    let crates_root = workspace_root().join("crates");
+    let mut violations: Vec<String> = Vec::new();
+    for_each_rust_source(&crates_root, &mut |path, text| {
+        let clean = path.display().to_string().replace('\\', "/");
+        // Production source only: a test, bench, or example may legitimately
+        // drive a cancelled send to prove cancellation behavior.
+        if clean.contains("/tests/") || clean.contains("/benches/") || clean.contains("/examples/")
+        {
+            return;
+        }
+        let masked = mask_strings_and_comments(text);
+        let test_regions = cfg_test_regions(text);
+        for (open, close) in timeout_call_spans(&masked) {
+            let line = masked[..open].matches('\n').count() + 1;
+            if test_regions
+                .iter()
+                .any(|(start, end)| line >= *start && line < *end)
+            {
+                continue;
+            }
+            let args = split_top_level(&masked[open + 1..close]);
+            if args.len() < 2 {
+                continue;
+            }
+            let tail = args[1..].join(",");
+            let pattern = if tail.contains(".send(") {
+                "a data-carrying send"
+            } else if tail.contains(".write_all(") {
+                "a non-resumable write_all"
+            } else {
+                continue;
+            };
+            if ALLOWED
+                .iter()
+                .any(|(file, allowed_line, _)| clean.ends_with(file) && *allowed_line == line)
+            {
+                continue;
+            }
+            violations.push(format!("{clean}:{line}: timeout(..) wraps {pattern}"));
+        }
+    });
+    assert!(
+        violations.is_empty(),
+        "a timeout may not wrap a data-carrying send or a non-resumable write (RFD 400 select-loops case study; see the note on this gate): {violations:?}"
+    );
+}

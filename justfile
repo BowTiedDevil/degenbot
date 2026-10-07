@@ -981,6 +981,23 @@ check-no-alembic:
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_alembic_references --exact --nocapture
 
+# Cancelling-async-rust: a `timeout(..)` deadline belongs on the OPERATION
+# boundary, never on the future that carries the value. RFD 400's select-loops
+# case study is the canonical trap —
+# `timeout(Duration, tx.send(value)).await` reads as a deadline on a send but
+# is a deadline on a FUTURE, so a fired timeout drops it mid-await and the moved
+# value is lost with no way to tell cancellation from delivery. The same shape
+# over `AsyncWriteExt::write_all` silently swallows partial progress: bytes the
+# peer accepted vanish from the caller's view, so a retry can duplicate a
+# partial frame. This gate flags a production `timeout(` whose second argument
+# mentions `.send(` or `.write_all(`. Mirrors check-no-pyo3-in-cores: a
+# permanent, mechanical sweep gate (the one legitimate production site is named
+# in the gate's allowlist with its reason, not excused by a looser pattern).
+check-cancel-safety:
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_timeout_wrapped_value_sends_or_write_all --exact --nocapture
+
 # ADR-052 D7: SQLAlchemy and the Python ORM are retired from the runtime and
 # test-owned Python surfaces. The gate also checks the root dependency and lock
 # declarations and proves its AST detector rejects a synthetic import.
