@@ -200,6 +200,56 @@ mod table_tests {
     }
 
     #[test]
+    fn declared_unsupported_is_exactly_the_lfj_binned_pair() {
+        // The whole taxonomy = the supported roster + the declared-unsupported
+        // set, and nothing else: a kind is either admitted with a graph tag or
+        // explicitly declared absent (ADR-059 D8) — never silently dropped.
+        assert_eq!(PoolKind::DECLARED_UNSUPPORTED_KINDS, &["lfj_binned"]);
+        for kind in PoolKind::DECLARED_UNSUPPORTED_KINDS {
+            assert!(
+                !PoolKind::KNOWN_KINDS.iter().any(|(k, _)| k == kind),
+                "{kind} is declared unsupported but carries a graph tag"
+            );
+            assert!(PoolKind::try_from(*kind).is_err(), "{kind} parses");
+        }
+    }
+
+    #[test]
+    fn every_graph_family_carries_a_persisted_kind() {
+        // The golden tripwire for adding a family: a new `PoolKind` variant
+        // (reached through the canonical `ALL`) fails here until the taxonomy
+        // gives it at least one persisted `kind` string. Adding a family
+        // without touching this vocabulary is therefore a test failure, not a
+        // silent gap in the roster every schema helper projects through.
+        for family in PoolKind::ALL {
+            assert!(
+                PoolKind::KNOWN_KINDS
+                    .iter()
+                    .any(|(_, kind)| *kind == family),
+                "family {family:?} has no persisted kind string"
+            );
+        }
+    }
+
+    #[test]
+    fn u8_discriminants_are_dense_and_round_trip() {
+        // The FFI (PyO3) route converts through these discriminants; the
+        // pyclass binding matches on the raw u8, so the numbering must stay
+        // dense from zero and round-trip exactly — a renumbered discriminant
+        // would mistranslate a stale binding instead of failing loudly.
+        for (family, index) in PoolKind::ALL.iter().zip(u8::MIN..) {
+            assert_eq!(family.as_u8(), index, "discriminant drift on {family:?}");
+            assert_eq!(PoolKind::from_u8(index), Some(*family));
+            assert_eq!(PoolKind::from_u8(family.as_u8()), Some(*family));
+        }
+        assert_eq!(
+            u8::try_from(PoolKind::ALL.len()).map(PoolKind::from_u8),
+            Ok(None),
+            "a discriminant past the taxonomy must refuse, never guess"
+        );
+    }
+
+    #[test]
     fn every_subclass_species_has_a_graph_tag() {
         for (kind, _) in GOLDEN {
             if *kind == "uniswap_v4" {

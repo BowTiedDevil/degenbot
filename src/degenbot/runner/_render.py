@@ -21,7 +21,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from degenbot.logging import logger as bot_logger
-from degenbot.pathfinding import PoolKind
+from degenbot.pathfinding import FAMILY_TAG_TO_POOL_KIND, POOL_KIND_TAG, PoolKind
 
 if TYPE_CHECKING:
     from degenbot.diagnostics import FailureAction
@@ -37,19 +37,14 @@ _SIM_FAIL_RENDER_CAP = 25
 _UNSET: Any = object()
 
 # The hop ``family`` wire string → the FFI PoolKind taxonomy (the V2/V3/V4
-# axis — NOT the PoolFamily invariant axis). The ONE conversion for the render
-# seam; consumers compare members.
-_FAMILY_TO_POOL_KIND: dict[str, PoolKind] = {
-    "V2": PoolKind.V2,
-    "V3": PoolKind.V3,
-    "V4": PoolKind.V4,
-}
+# axis — NOT the PoolFamily invariant axis). minted from the core's exported
+# tag list (degenbot.pathfinding) rather than re-declared: the ONE conversion
+# for the render seam; consumers compare members.
+_FAMILY_TO_POOL_KIND = FAMILY_TAG_TO_POOL_KIND
 
 # Render labels for PoolKind members (the pyclass str() spells "PoolKind.V2";
-# the operator-facing lines keep the bare version spelling).
-_POOL_KIND_LABEL: dict[PoolKind, str] = {
-    kind: family for family, kind in _FAMILY_TO_POOL_KIND.items()
-}
+# the operator-facing lines keep the bare version spelling). Also minted.
+_POOL_KIND_LABEL = POOL_KIND_TAG
 
 
 def _family_label(family: Any) -> str:

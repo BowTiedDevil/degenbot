@@ -92,6 +92,23 @@ impl PoolKind {
         }
     }
 
+    /// The family tag: the one spelling of this discriminant on the operator
+    /// wire and the render seam (`V2` / `V3` / `V4`).
+    ///
+    /// The tag list every wire-spelling vocabulary projects through (the
+    /// operator channel's `family` strings, the render labels, and the FFI
+    /// list Python derives its family sets from). The exhaustive match is the
+    /// compile tripwire: a family added to this enum does not compile until
+    /// it carries a tag, so no downstream spelling can precede the taxonomy.
+    #[must_use]
+    pub const fn tag(self) -> &'static str {
+        match self {
+            PoolKind::V2 => "V2",
+            PoolKind::V3 => "V3",
+            PoolKind::V4 => "V4",
+        }
+    }
+
     /// Convert from the `u8` discriminant used at the `PyO3` boundary.
     ///
     /// Returns `None` for unknown discriminants.

@@ -90,6 +90,23 @@ pub fn classify_pool_kind<'py>(py: Python<'py>, kind: &Bound<'py, PyAny>) -> PyR
     extract_pool_kind(py, kind)
 }
 
+/// The canonical pool-family tags, in discriminant order — the list Python
+/// derives its family sets from.
+///
+/// The S12 pattern: the taxonomy has one owner (the `degenbot-pathfinding`
+/// graph enum, whose exhaustive `tag` match forces every family to carry a
+/// spelling), and this seam exports that list instead of Python re-declaring
+/// the set. A family added to the core surfaces here on the next build; a
+/// pyclass binding that does not know a discriminant fails loudly at the
+/// per-value conversion (`from_core` returns `None`) rather than
+/// mistranslating it.
+#[must_use]
+#[pyfunction]
+#[pyo3(name = "pool_family_tags")]
+pub fn pool_family_tags() -> Vec<&'static str> {
+    CorePoolKind::ALL.iter().map(|kind| kind.tag()).collect()
+}
+
 /// Resolve per-hop directions so the cycle closes — the typed-FFI seam over
 /// `degenbot_pathfinding::directions::resolve_directions`.
 ///

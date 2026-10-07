@@ -12,6 +12,7 @@ use rusqlite::Row;
 use crate::error::DbError;
 use crate::rows::decode::{decode_address, decode_opt_address};
 use crate::schema::table;
+use crate::PoolKind;
 
 /// The `pools` base row (`SQLAlchemy` `LiquidityPoolTable`).
 ///
@@ -58,8 +59,32 @@ pub enum PoolKindRow {
     /// `tick_spacing` + the liquidity-update marker.
     V4(V4PoolRow),
     /// A declared-but-unsupported LFJ binned pair: `(pool_id, bin_step)`
-    /// (ADR-059 D8). The row type lands with the schema; no tier admits it.
+    /// (ADR-059 D8). The row type lands with the schema so the persisted
+    /// identity is reachable and classifiable (`lfj_binned` is a
+    /// [`PoolKind::DECLARED_UNSUPPORTED_KINDS`] entry, not an unknown kind);
+    /// no tier admits it into the graph vocabulary, which is why it projects
+    /// to `None` in [`Self::graph_kind`] instead of a family.
     Lfj(LfjPoolRow),
+}
+
+impl PoolKindRow {
+    /// The canonical graph family this row belongs to, or `None` for the
+    /// declared-but-unsupported LFJ binned pair.
+    ///
+    /// The row type carries per-family payloads, so it cannot be the
+    /// canonical enum itself; this conversion is the one projection of its
+    /// family membership onto [`PoolKind`], keeping the row vocabulary a
+    /// consumer of the taxonomy rather than a second declaration of it.
+    #[must_use]
+    pub fn graph_kind(&self) -> Option<PoolKind> {
+        match self {
+            Self::V2(..) => Some(PoolKind::V2),
+            Self::V3(..) => Some(PoolKind::V3),
+            Self::V4(..) => Some(PoolKind::V4),
+            // ADR-059 D8: declared in the taxonomy, admitted by no tier.
+            Self::Lfj(..) => None,
+        }
+    }
 }
 
 /// The V2 subclass columns shared by every V2 variant (`UniswapFeeMixin`).

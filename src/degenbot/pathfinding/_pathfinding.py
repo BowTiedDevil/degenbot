@@ -18,6 +18,7 @@ from degenbot.db import db_resolve_token_ids
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.pathfinding import (
+    ALL_POOL_KINDS,
     PathGraph,
     PoolKind,
     build_path_graph,
@@ -143,7 +144,10 @@ class PathfindingRequest:
     database_path: pathlib.Path
     min_depth: int = 2
     max_depth: int | None = None
-    pool_types: Sequence[PoolKind] = (PoolKind.V2, PoolKind.V3, PoolKind.V4)
+    # The full taxonomy, minted from the core's exported tag list — a family
+    # added in the core traverses by default instead of being silently absent
+    # from a hand-written tuple.
+    pool_types: Sequence[PoolKind] = ALL_POOL_KINDS
     pool_type_per_depth: Sequence[set[PoolKind] | None] | None = None
     allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None
 

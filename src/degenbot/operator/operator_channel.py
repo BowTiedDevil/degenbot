@@ -70,15 +70,13 @@ from pathlib import Path
 from typing import Any
 
 from degenbot.logging import logger
-from degenbot.pathfinding import PoolKind
+from degenbot.pathfinding import FAMILY_TAG_TO_POOL_KIND, POOL_FAMILY_TAGS, PoolKind
 from degenbot.utils.tasks import cancel_and_reap
 
 #: Map the public wire labels to the typed pool families used by pathfinding.
-_FAMILY_TO_POOL_KIND: dict[str, PoolKind] = {
-    "V2": PoolKind.V2,
-    "V3": PoolKind.V3,
-    "V4": PoolKind.V4,
-}
+#: minted from the core's exported tag list (degenbot.pathfinding) — never
+#: re-declared here.
+_FAMILY_TO_POOL_KIND = FAMILY_TAG_TO_POOL_KIND
 
 #: Handler signature: ``async def (op: str, payload: dict) -> dict`` returning a
 #: response with ``detail`` (ok) or ``error`` (failure).
@@ -117,7 +115,10 @@ def step_from_wire(step: dict[str, Any]) -> StepSpec:
     family = step.get("family")
     pool_kind = _FAMILY_TO_POOL_KIND.get(family)  # type: ignore[arg-type]
     if pool_kind is None:
-        msg = f"unknown pool family {family!r} (expected V2|V3|V4)"
+        # The expected set is the core's minted tag list, so the refusal names
+        # the taxonomy the core actually declares.
+        expected = "|".join(POOL_FAMILY_TAGS)
+        msg = f"unknown pool family {family!r} (expected {expected})"
         raise ValueError(msg)
     address = step.get("address")
     if not address:

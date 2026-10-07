@@ -4558,6 +4558,20 @@ def keccak256(data: bytes) -> bytes:
         The 32-byte digest as `bytes`.
     """
 
+def pool_family_tags() -> list[str]:
+    """
+    The canonical pool-family tags, in discriminant order — the list Python
+    derives its family sets from.
+
+    The S12 pattern: the taxonomy has one owner (the `degenbot-pathfinding`
+    graph enum, whose exhaustive `tag` match forces every family to carry a
+    spelling), and this seam exports that list instead of Python re-declaring
+    the set. A family added to the core surfaces here on the next build; a
+    pyclass binding that does not know a discriminant fails loudly at the
+    per-value conversion (`from_core` returns `None`) rather than
+    mistranslating it.
+    """
+
 def prepare_traversal_plan(
     start_token_ids: Sequence[int],
     end_token_ids: Sequence[int],
@@ -4862,6 +4876,7 @@ __all__ = [
     "generate_v2_pool_address",
     "generate_v3_pool_address",
     "keccak256",
+    "pool_family_tags",
     "prepare_traversal_plan",
     "registration_outcome_tags",
     "registration_pool_memo_key",

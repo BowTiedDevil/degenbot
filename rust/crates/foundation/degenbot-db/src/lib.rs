@@ -72,6 +72,11 @@ pub use connection::DegenbotDb;
 pub use degenbot_math::cl::liquidity_mapping::{
     BitmapAtWord as ApplyBitmapAtWord, LiquidityAtTick as ApplyLiquidityAtTick,
 };
+/// The canonical pool-family taxonomy (`degenbot-pathfinding`'s graph
+/// discriminant), re-exported because this crate's schema gate, species
+/// manifest, and row types all project through it: a DB consumer resolves the
+/// same vocabulary without a direct dependency on the zero-dependency leaf.
+pub use degenbot_pathfinding::PoolKind;
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use discovery_read::{
     fetch_discovery_rows_on_conn, fetch_v4_discovery_rows_on_conn, DiscoveryPoolRow,

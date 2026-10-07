@@ -149,6 +149,19 @@ pub use ::degenbot_pools::v2_state::{
 pub use ::degenbot_pools::TickInfo;
 
 // ---------------------------------------------------------------------------
+// The canonical pool-family taxonomy (ADR-059 D1). DEFINED in
+// `degenbot-pathfinding` — the zero-dependency leaf that owns the graph
+// discriminant, the persisted-`kind` roster, and the u8 FFI route — and
+// re-exported here at the core door so both drivers read one contract. A
+// canonical *defined* in `bot_core` would force the foundation consumers
+// (`degenbot-pathfinding`, `degenbot-db`) to depend on this engine crate: a
+// crate cycle. Same contract-door shape as the registration ledger (S12);
+// Python derives its family sets from the FFI tag list the shell projects
+// from this enum.
+// ---------------------------------------------------------------------------
+pub use ::degenbot_pathfinding::PoolKind;
+
+// ---------------------------------------------------------------------------
 // Bot — thin orchestrator facade (ADR-006 D4). Extracted to `bot.rs` (the
 // lone ADR-006 D4 helper row not previously file-extracted; siblings
 // `log_dispatcher`/`block_pump`/`solve_coordinator`/`reorg_coordinator`/...).
