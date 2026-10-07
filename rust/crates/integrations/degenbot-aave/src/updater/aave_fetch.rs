@@ -27,7 +27,7 @@
 //! synchronous; the orchestrator calls it after grouping, per tx, on the
 //! in-memory tx-bundle (no extra RPC).
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{Address, Bytes, B256};
 use alloy::rpc::types::Log;
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderResult;
@@ -45,7 +45,7 @@ use degenbot_decoders::aave_event_decoder::{
     AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC, AAVE_STAKED_TOPIC, AAVE_SUPPLY_TOPIC,
     AAVE_UPGRADED_TOPIC, AAVE_USER_E_MODE_SET_TOPIC, AAVE_WITHDRAW_TOPIC, ERC20_TRANSFER_TOPIC,
 };
-use degenbot_rpc::provider::LogFetcher;
+use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
 /// The per-market addresses the 7 Aave V3 fetch passes need. Built by the
 /// orchestrator (`-3`) from the `degenbot-db` substrate (`fetch_aave_*`); the
@@ -295,6 +295,206 @@ pub fn sort_logs_by_block_and_index(logs: &mut [Log]) {
     logs.sort_by_key(|log| (log.block_number.unwrap_or(0), log.log_index.unwrap_or(0)));
 }
 
+// ── warm-boot substrate resolution (the chain-current reserve set) ──────
+//
+// The chunk loop's warm boot needs the Pool/Configurator/Oracle addresses,
+// the two contract revisions, and the reserve assets seeded before it runs.
+// The reserve set comes from the Pool's own `getReservesList()` rather than
+// from a span's Pool logs: an upgrade window's Pool pass carries almost no
+// logs (an `Upgraded` event emits from the proxy, not the Pool), so a
+// span-log-derived candidate set is empty and the resolver has nothing to
+// seed. `getReservesList()` is the chain's authoritative reserve set,
+// independent of any window's log density.
+
+/// One reserve's `(underlying, a_token, v_token)` triple.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AaveReserve {
+    /// The reserve underlying ERC-20.
+    pub underlying: Address,
+    /// The reserve's aToken.
+    pub a_token: Address,
+    /// The reserve's variable-debt token.
+    pub v_token: Address,
+}
+
+/// The warm-boot substrate the chunk loop's seeded DB carries: the Pool-side
+/// contract addresses, their revisions, and the chain-current reserve set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AaveSubstrate {
+    /// The Pool contract.
+    pub pool: Address,
+    /// The Pool configurator contract.
+    pub configurator: Address,
+    /// The price oracle contract.
+    pub price_oracle: Address,
+    /// The Pool data provider contract (`getPoolDataProvider()`). The
+    /// `PoolDataProviderUpdated` apply's UPDATE-by-old-address path needs the
+    /// warm-boot row present, so the seed carries it at the cursor's address.
+    pub data_provider: Address,
+    /// `POOL_REVISION()` — the ops parser's scaled-amount tolerance gate
+    /// reads it (a NULL revision hard-errors the parse).
+    pub pool_revision: u64,
+    /// `CONFIGURATOR_REVISION()` — seeded for row fidelity with the loop's
+    /// own cold-boot substrate.
+    pub configurator_revision: u64,
+    /// The reserve set, sorted by underlying (a deterministic seed order).
+    pub reserves: Vec<AaveReserve>,
+}
+
+/// Resolve the warm-boot substrate over a provider (a side channel — these
+/// are harness inputs, not the chunk loop's recorded RPC surface).
+///
+/// `at_block` pins the resolution to one block: a warm boot that spans a
+/// contract-migration event (`PoolDataProviderUpdated`/`PoolUpdated`) must
+/// seed the address the event's UPDATE-by-old-address path expects (the
+/// pre-window address), so the caller passes the window cursor. `None`
+/// resolves at the node's latest head.
+///
+/// # Errors
+///
+/// Returns the underlying [`degenbot_core::errors::ProviderError`] when an
+/// `eth_call` fails or a short/malformed return comes back.
+pub async fn resolve_aave_substrate(
+    provider: &AlloyProvider,
+    address_provider: Address,
+    at_block: Option<u64>,
+) -> ProviderResult<AaveSubstrate> {
+    let pool = call_address(provider, address_provider, "getPool()", at_block).await?;
+    let configurator = call_address(
+        provider,
+        address_provider,
+        "getPoolConfigurator()",
+        at_block,
+    )
+    .await?;
+    let price_oracle =
+        call_address(provider, address_provider, "getPriceOracle()", at_block).await?;
+    let data_provider = call_address(
+        provider,
+        address_provider,
+        "getPoolDataProvider()",
+        at_block,
+    )
+    .await?;
+    let pool_revision = call_uint(provider, pool, "POOL_REVISION()", at_block).await?;
+    let configurator_revision =
+        call_uint(provider, configurator, "CONFIGURATOR_REVISION()", at_block).await?;
+
+    let list_ret = provider
+        .eth_call(&pool, no_arg_calldata("getReservesList()"), at_block)
+        .await?;
+    let underlyings = decode_address_array(&list_ret);
+
+    let mut reserves = Vec::with_capacity(underlyings.len());
+    for underlying in underlyings {
+        if let Some((a_token, v_token)) =
+            reserve_tokens(provider, pool, underlying, at_block).await?
+        {
+            reserves.push(AaveReserve {
+                underlying,
+                a_token,
+                v_token,
+            });
+        }
+    }
+    reserves.sort_by_key(|r| r.underlying);
+
+    Ok(AaveSubstrate {
+        pool,
+        configurator,
+        price_oracle,
+        data_provider,
+        pool_revision,
+        configurator_revision,
+        reserves,
+    })
+}
+
+/// Build the 4-byte selector for a no-arg signature.
+fn no_arg_calldata(signature: &str) -> Bytes {
+    Bytes::from(alloy::primitives::keccak256(signature.as_bytes())[..4].to_vec())
+}
+
+/// `eth_call` a no-arg view returning an `address` (word 0's low 20 bytes).
+async fn call_address(
+    provider: &AlloyProvider,
+    target: Address,
+    signature: &str,
+    at_block: Option<u64>,
+) -> ProviderResult<Address> {
+    let ret = provider
+        .eth_call(&target, no_arg_calldata(signature), at_block)
+        .await?;
+    Ok(Address::from_slice(&ret[12..32]))
+}
+
+/// `eth_call` a no-arg view returning a `uint256` (word 0).
+async fn call_uint(
+    provider: &AlloyProvider,
+    target: Address,
+    signature: &str,
+    at_block: Option<u64>,
+) -> ProviderResult<u64> {
+    let ret = provider
+        .eth_call(&target, no_arg_calldata(signature), at_block)
+        .await?;
+    let word: [u8; 8] = ret[24..32].try_into().unwrap_or([0u8; 8]);
+    Ok(u64::from_be_bytes(word))
+}
+
+/// Decode an ABI-encoded `address[]` return (offset word, length word, then
+/// the address words). A malformed return yields an empty set.
+fn decode_address_array(ret: &[u8]) -> Vec<Address> {
+    let word = |i: usize| -> Option<&[u8]> { ret.get(i * 32..i * 32 + 32) };
+    let read_u64 = |w: &[u8]| -> u64 {
+        let b: [u8; 8] = w[24..32].try_into().unwrap_or([0u8; 8]);
+        u64::from_be_bytes(b)
+    };
+    let Some(offset_word) = word(0) else {
+        return Vec::new();
+    };
+    let Ok(offset) = usize::try_from(read_u64(offset_word)) else {
+        return Vec::new();
+    };
+    let Some(len_word) = word(offset / 32) else {
+        return Vec::new();
+    };
+    let Ok(len) = usize::try_from(read_u64(len_word)) else {
+        return Vec::new();
+    };
+    (0..len)
+        .filter_map(|i| word(offset / 32 + 1 + i).map(|w| Address::from_slice(&w[12..32])))
+        .collect()
+}
+
+/// `getReserveData(address)` -> the `(a_token, v_token)` pair (the address
+/// words of the Aave 3.2+ return shape), or `None` for a non-reserve (the
+/// Pool returns a zeroed struct).
+async fn reserve_tokens(
+    provider: &AlloyProvider,
+    pool: Address,
+    candidate: Address,
+    at_block: Option<u64>,
+) -> ProviderResult<Option<(Address, Address)>> {
+    let selector = &alloy::primitives::keccak256("getReserveData(address)".as_bytes())[..4];
+    let mut calldata = Vec::with_capacity(36);
+    calldata.extend_from_slice(selector);
+    calldata.extend_from_slice(&[0u8; 12]);
+    calldata.extend_from_slice(candidate.as_slice());
+    let ret = provider
+        .eth_call(&pool, Bytes::from(calldata), at_block)
+        .await?;
+    if ret.len() < 11 * 32 {
+        return Ok(None);
+    }
+    let a_token = Address::from_slice(&ret[8 * 32 + 12..9 * 32]);
+    let v_token = Address::from_slice(&ret[10 * 32 + 12..11 * 32]);
+    if a_token.is_zero() || v_token.is_zero() {
+        return Ok(None);
+    }
+    Ok(Some((a_token, v_token)))
+}
+
 // ── private helpers ───────────────────────────────────────────────────────
 
 /// Fetch logs for one address + a topic0 OR-group (the common shape across the
@@ -526,5 +726,115 @@ mod tests {
         let s = address_to_checksum_string(&addr);
         assert!(s.starts_with("0x"));
         assert_eq!(s.len(), 42, "EIP-55 checksummed address is 42 chars");
+    }
+
+    /// The resolver seeds from the Pool's `getReservesList()`, not from a
+    /// span's Pool logs — the sparse-logs upgrade-window case. The offline
+    /// provider serves the resolver's exact call set; a `getReservesList()`
+    /// reserve set comes back even though no Pool logs exist at that block.
+    #[test]
+    fn resolve_aave_substrate_seeds_reserves_without_pool_logs() {
+        use degenbot_rpc::offline::OfflineProvider;
+
+        let ap = Address::from([0xa0; 20]);
+        let pool = Address::from([0xb0; 20]);
+        let configurator = Address::from([0xc0; 20]);
+        let oracle = Address::from([0xd0; 20]);
+        let data_provider = Address::from([0xe0; 20]);
+        let underlying_1 = Address::from([0x11; 20]);
+        let a_token_1 = Address::from([0x12; 20]);
+        let v_token_1 = Address::from([0x13; 20]);
+        let underlying_2 = Address::from([0x21; 20]);
+        let a_token_2 = Address::from([0x22; 20]);
+        let v_token_2 = Address::from([0x23; 20]);
+
+        let word =
+            |a: Address| -> String { format!("000000000000000000000000{}", alloy::hex::encode(a)) };
+        let uint = |n: u64| -> String { format!("{n:064x}") };
+        // getReservesList(): offset 0x20, length 2, then the two addresses.
+        let reserves_list = format!(
+            "{}{}{}{}",
+            uint(0x20),
+            uint(2),
+            word(underlying_1),
+            word(underlying_2)
+        );
+        // getReserveData(): the aToken lands at word 8, the vToken at word 10.
+        let reserve_data = |a_token: Address, v_token: Address| -> String {
+            let mut words = vec![uint(0); 11];
+            words[8] = word(a_token);
+            words[10] = word(v_token);
+            words.concat()
+        };
+
+        let key = |to: Address, selector: &str| {
+            format!("{}:0x{}", to.to_checksum(None).to_lowercase(), selector)
+        };
+        // The selectors the resolver computes (keccak256 of each signature).
+        let sel =
+            |sig: &str| alloy::hex::encode(&alloy::primitives::keccak256(sig.as_bytes())[..4]);
+        let get_reserve_data = |underlying: Address| {
+            format!(
+                "{}000000000000000000000000{}",
+                sel("getReserveData(address)"),
+                alloy::hex::encode(underlying)
+            )
+        };
+
+        let calls = [
+            (key(ap, &sel("getPool()")), word(pool)),
+            (key(ap, &sel("getPoolConfigurator()")), word(configurator)),
+            (key(ap, &sel("getPriceOracle()")), word(oracle)),
+            (key(ap, &sel("getPoolDataProvider()")), word(data_provider)),
+            (key(pool, &sel("POOL_REVISION()")), uint(11)),
+            (key(configurator, &sel("CONFIGURATOR_REVISION()")), uint(8)),
+            (key(pool, &sel("getReservesList()")), reserves_list),
+            (
+                key(pool, &get_reserve_data(underlying_1)),
+                reserve_data(a_token_1, v_token_1),
+            ),
+            (
+                key(pool, &get_reserve_data(underlying_2)),
+                reserve_data(a_token_2, v_token_2),
+            ),
+        ];
+        let calls_json: Vec<String> = calls
+            .iter()
+            .map(|(k, v)| format!("\"{k}\":\"{v}\""))
+            .collect();
+        let recorded = format!(
+            "{{\"chain_id\":1,\"block_number\":22839357,\"calls\":{{{}}}}}",
+            calls_json.join(",")
+        );
+
+        let provider = OfflineProvider::from_json_str(&recorded)
+            .unwrap()
+            .as_alloy_provider();
+        let substrate = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_aave_substrate(&provider, ap, None))
+            .unwrap();
+
+        assert_eq!(substrate.pool, pool);
+        assert_eq!(substrate.configurator, configurator);
+        assert_eq!(substrate.price_oracle, oracle);
+        assert_eq!(substrate.data_provider, data_provider);
+        assert_eq!(substrate.pool_revision, 11);
+        assert_eq!(substrate.configurator_revision, 8);
+        assert_eq!(
+            substrate.reserves,
+            vec![
+                AaveReserve {
+                    underlying: underlying_1,
+                    a_token: a_token_1,
+                    v_token: v_token_1,
+                },
+                AaveReserve {
+                    underlying: underlying_2,
+                    a_token: a_token_2,
+                    v_token: v_token_2,
+                },
+            ],
+            "the resolver seeds the getReservesList set with no Pool logs present"
+        );
     }
 }
