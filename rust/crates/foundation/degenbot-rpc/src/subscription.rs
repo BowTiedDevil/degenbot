@@ -348,7 +348,9 @@ async fn pump_header_stream<S, F, Fut>(
         next_stream,
         move |header| {
             buffer_item(&header_handle, RawSubItem::Header(header));
-            !header_handle.unsubscribed.load(Ordering::Relaxed)
+            // Acquire: pairs with unsubscribe()'s SeqCst store, so a pump callback that
+            // observes true has the closed notify_rx visible too.
+            !header_handle.unsubscribed.load(Ordering::Acquire)
         },
         move || {
             buffer_item(
@@ -404,7 +406,8 @@ pub async fn pump_full_blocks(
             }
         }
 
-        if handle.unsubscribed.load(Ordering::Relaxed) {
+        // Acquire: pairs with unsubscribe()'s SeqCst store (see the header callback above).
+        if handle.unsubscribed.load(Ordering::Acquire) {
             return;
         }
     }
@@ -438,7 +441,8 @@ pub async fn pump_pending_transactions(
 
         buffer_item(&handle, RawSubItem::PendingTxHash(hash));
 
-        if handle.unsubscribed.load(Ordering::Relaxed) {
+        // Acquire: pairs with unsubscribe()'s SeqCst store (see the header callback above).
+        if handle.unsubscribed.load(Ordering::Acquire) {
             return;
         }
     }
@@ -489,7 +493,8 @@ pub async fn pump_full_pending_transactions(
             RawSubItem::FullPendingTx(parking_lot::Mutex::new(Some(json_val))),
         );
 
-        if handle.unsubscribed.load(Ordering::Relaxed) {
+        // Acquire: pairs with unsubscribe()'s SeqCst store (see the header callback above).
+        if handle.unsubscribed.load(Ordering::Acquire) {
             return;
         }
     }
@@ -521,7 +526,8 @@ pub async fn pump_logs(
 
         buffer_item(&handle, RawSubItem::Log(log));
 
-        if handle.unsubscribed.load(Ordering::Relaxed) {
+        // Acquire: pairs with unsubscribe()'s SeqCst store (see the header callback above).
+        if handle.unsubscribed.load(Ordering::Acquire) {
             return;
         }
     }
