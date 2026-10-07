@@ -59,6 +59,11 @@ panic_in_result_fn = "deny"
 # (882 expects, only 19 reasoned) - too costly. keep allow_attributes (outer) + a CI rg guard for inner #![allow].
 allow_attributes = "deny"
 
+# Async hygiene - a future bound to `let _ =` is dropped on the spot and never runs,
+# so the async body never executes (the cancelling-async talk's opening example).
+# Rust cannot backstop this with unused_must_use: most futures are not #[must_use].
+let_underscore_future = "warn"
+
 # Code hygiene - no debug leftovers
 dbg_macro = "deny"
 todo = "deny"
