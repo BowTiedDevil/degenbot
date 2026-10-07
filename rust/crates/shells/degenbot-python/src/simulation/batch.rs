@@ -569,6 +569,10 @@ impl PyBatchExecutor {
 
     /// Await the next batch's outcome set (`None` once the executor is shut
     /// down and drained — the drain loop's terminator).
+    ///
+    /// Cancelling this future loses no message: the Rust-side
+    /// `BatchDrain::next` cancel-safety contract pins that the shared
+    /// receiver leaves a message queued when the drain future is dropped.
     fn next_outcome<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let drain = self.executor.drain_handle();
         crate::ambient_runtime::future_into_py(py, async move {

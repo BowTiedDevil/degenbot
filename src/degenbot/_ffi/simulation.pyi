@@ -64,6 +64,10 @@ class BatchExecutor:
         """
         Await the next batch's outcome set (`None` once the executor is shut
         down and drained — the drain loop's terminator).
+
+        Cancelling this future loses no message: the Rust-side
+        `BatchDrain::next` cancel-safety contract pins that the shared
+        receiver leaves a message queued when the drain future is dropped.
         """
     def raise_if_failed(self, /) -> None:
         """

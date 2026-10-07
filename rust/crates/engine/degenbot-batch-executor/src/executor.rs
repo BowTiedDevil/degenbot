@@ -501,6 +501,28 @@ pub struct BatchDrain {
 impl BatchDrain {
     /// Await the next batch's outcome set (`None` when the lane is closed
     /// and drained).
+    ///
+    /// # Cancel safety
+    ///
+    /// **Cancel-safe**: no message can be lost. `UnboundedReceiver::recv` is
+    /// documented cancel-safe by Tokio — dropping this future leaves any
+    /// un-consumed message queued on the receiver, so a retry observes it.
+    ///
+    /// **Fairness caveat**: cancelling the `lock()` future (before it
+    /// resolves) forfeits the place in the mutex's wait queue — a cancelled
+    /// waiter re-queues on the next call. This seam has two consumers (the
+    /// executor's own [`BatchExecutor::next_outcome`] and this `PyO3`-owned
+    /// drain handle), so interleaved drains may interleave outcome sets. That
+    /// interleaving is the sharing intent documented on [`BatchDrain`], not a
+    /// defect: the stream is a single ordered lane and either consumer may
+    /// take the next set.
+    ///
+    /// **The fence**: this lock guards ONLY a channel receiver. It must NOT be
+    /// extended to invariant-bearing state — a `tokio::sync::Mutex` held
+    /// across an `.await` while the guarded state is temporarily invalid is
+    /// the Oxide RFD 397 bug class (see the workspace `await_holding_lock`
+    /// deny, which covers the `std`/`parking_lot` guards and for which this
+    /// seam is not the exception).
     pub async fn next(&mut self) -> Option<BatchOutcomeSet> {
         self.rx.lock().await.recv().await
     }
@@ -576,11 +598,52 @@ impl BatchExecutor {
 
     /// Await the next batch's outcome set (`None` when the lane is closed
     /// and drained).
+    ///
+    /// # Cancel safety
+    ///
+    /// **Cancel-safe**: no message can be lost. `UnboundedReceiver::recv` is
+    /// documented cancel-safe by Tokio — dropping this future leaves any
+    /// un-consumed message queued on the receiver, so a retry observes it.
+    ///
+    /// **Fairness caveat**: cancelling the `lock()` future (before it
+    /// resolves) forfeits the place in the mutex's wait queue — a cancelled
+    /// waiter re-queues on the next call. This receiver is shared with the
+    /// `PyO3` seam's drain handle (see [`BatchDrain`], the sharing intent
+    /// documented on the struct), so interleaved drains may interleave outcome
+    /// sets. That interleaving is the seam's intent, not a defect: the stream
+    /// is a single ordered lane and either consumer may take the next set.
+    ///
+    /// **The fence**: this lock guards ONLY a channel receiver. It must NOT be
+    /// extended to invariant-bearing state — a `tokio::sync::Mutex` held
+    /// across an `.await` while the guarded state is temporarily invalid is
+    /// the Oxide RFD 397 bug class (see the workspace `await_holding_lock`
+    /// deny, which covers the `std`/`parking_lot` guards and for which this
+    /// seam is not the exception).
     pub async fn next_outcome(&self) -> Option<BatchOutcomeSet> {
         self.outcome_rx.lock().await.recv().await
     }
 
     /// Poll for the next batch's outcome set without awaiting.
+    ///
+    /// # Cancel safety
+    ///
+    /// **Cancel-safe**: no message can be lost — `try_recv` never suspends
+    /// and consumes only on `Ok`, so a dropped future leaves the queue
+    /// untouched.
+    ///
+    /// **Fairness caveat**: cancelling the `lock()` future (before it
+    /// resolves) forfeits the place in the mutex's wait queue — a cancelled
+    /// waiter re-queues on the next call. The receiver is shared with the
+    /// `PyO3` seam's drain handle (see [`BatchDrain`]), so a poll may observe
+    /// a set the other consumer interleaved; that is the seam's sharing
+    /// intent, not a defect.
+    ///
+    /// **The fence**: this lock guards ONLY a channel receiver. It must NOT be
+    /// extended to invariant-bearing state — a `tokio::sync::Mutex` held
+    /// across an `.await` while the guarded state is temporarily invalid is
+    /// the Oxide RFD 397 bug class (see the workspace `await_holding_lock`
+    /// deny, which covers the `std`/`parking_lot` guards and for which this
+    /// seam is not the exception).
     #[must_use]
     pub async fn try_next_outcome(&self) -> Option<BatchOutcomeSet> {
         self.outcome_rx.lock().await.try_recv().ok()
