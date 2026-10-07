@@ -190,6 +190,56 @@ pub trait ReceiptProbe: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = SubmissionResult<bool>> + Send + '_>>;
 }
 
+/// Structural owner of the pending-tx pool release.
+///
+/// `monitor_pending_transaction` releases the tx's pool reservations on its
+/// enumerated terminal paths (confirmed, expired, dispatcher-gone). Every
+/// *other* way out of the loop used to strand them: `Dispatcher::abort_all_tasks`
+/// (reachable from the pyo3 boundary) drops the monitor future mid-
+/// `changed().await`, and a receipt-probe error returns before any release.
+/// Carrying the release in a value whose `Drop` runs on every exit makes those
+/// paths release too, without enumerating them.
+///
+/// Single-owner discipline: the guard is the ONLY caller of
+/// [`Dispatcher::release_tx`] in this module. The terminal paths call
+/// [`ReservationGuard::release`] eagerly (preserving the established
+/// release-then-telemetry ordering) and `Drop` calls the same method; `committed`
+/// is an `Option` so the second call — `Drop` after an eager release — is a
+/// no-op. One owner, exactly one release per tx.
+struct ReservationGuard<'a> {
+    /// The dispatcher whose pool mutual-exclusion set the tx holds.
+    dispatcher: &'a Mutex<Dispatcher>,
+    /// The tx to release; `None` once released, so `Drop` cannot release twice.
+    committed: Option<CommittedTx>,
+}
+
+impl ReservationGuard<'_> {
+    /// Release the tx's pools now and disarm (idempotent). Called explicitly on
+    /// the terminal paths and again by `Drop`; the take-guarded `Option` makes
+    /// the second call a no-op.
+    fn release(&mut self) {
+        if let Some(committed) = self.committed.take() {
+            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+            {
+                self.dispatcher
+                    .lock()
+                    .expect("dispatcher mutex poisoned")
+                    .release_tx(&committed);
+            }
+        }
+    }
+}
+
+impl Drop for ReservationGuard<'_> {
+    fn drop(&mut self) {
+        // The cancellation backstop: a dropped monitor future (task abort) or an
+        // early `return Err` reaches here armed, so the reservation is freed even
+        // though no terminal path ran. Synchronous — no `.await`, and no lock
+        // guard is held across a suspension point.
+        self.release();
+    }
+}
+
 /// Monitor a submitted transaction until it confirms or expires.
 ///
 /// Port of `examples/eth_backrun_v2_v3_v4_rust.py` `monitor_pending_transaction`
@@ -210,7 +260,10 @@ pub trait ReceiptProbe: Send + Sync {
 /// does NOT acquire the outer dispatcher mutex (matches the Python
 /// `current_block_ref[0]` read-by-reference pattern). The outer
 /// `Mutex<Dispatcher>` is locked only for the rare `release_tx` on
-/// confirm/expire; no guard is held across an `.await`.
+/// confirm/expire; no guard is held across an `.await`. The release itself is
+/// carried by a [`ReservationGuard`] whose `Drop` runs on every exit, so a task
+/// abort ([`Dispatcher::abort_all_tasks`]) or an early `return Err` cannot
+/// strand the tx's pool reservations.
 ///
 /// # Errors
 /// Propagates [`crate::SubmissionError`] if the receipt probe itself fails
@@ -259,7 +312,16 @@ pub async fn monitor_pending_transaction(
         let dispatcher = dispatcher.lock().expect("dispatcher mutex poisoned");
         (dispatcher.current_block_handle(), dispatcher.block_events())
     };
-    let committed = tx.to_committed();
+    // Structural release owner: the guard carries the tx's pool reservations
+    // and releases them on Drop, so a task abort (`Dispatcher::abort_all_tasks`,
+    // reachable from the pyo3 boundary) or a probe error cannot strand them. The
+    // terminal paths below still release eagerly — through the guard — to keep
+    // the established release-then-telemetry ordering; their `Drop` is then a
+    // no-op.
+    let mut reservation = ReservationGuard {
+        dispatcher,
+        committed: Some(tx.to_committed()),
+    };
 
     loop {
         // Receipt check: once immediately, then once per head event. The
@@ -269,20 +331,16 @@ pub async fn monitor_pending_transaction(
             Ok(found) => found,
             Err(e) => {
                 span.record("monitor.result", "error");
+                // No eager release: the guard's Drop frees the pools on this
+                // early return (the structural-release policy).
                 return Err(e);
             }
         };
         if found {
-            // receipt found → confirmed: release nonce + pools, return.
+            // receipt found → confirmed: release the pools, return.
             #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
             let confirmed_at = *block_ref.lock().expect("current_block mutex poisoned");
-            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
-            {
-                dispatcher
-                    .lock()
-                    .expect("dispatcher mutex poisoned")
-                    .release_tx(&committed);
-            }
+            reservation.release();
             span.record("monitor.result", "confirmed");
             span.record("monitor.confirmed_at_block", confirmed_at);
             return Ok(MonitorOutcome::Confirmed {
@@ -296,13 +354,7 @@ pub async fn monitor_pending_transaction(
         if blocks_waited > blocks_before_nonce_expires {
             span.record("monitor.result", "expired");
             span.record("monitor.blocks_waited", blocks_waited);
-            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
-            {
-                dispatcher
-                    .lock()
-                    .expect("dispatcher mutex poisoned")
-                    .release_tx(&committed);
-            }
+            reservation.release();
             return Ok(MonitorOutcome::Expired { blocks_waited });
         }
         // Neither included nor expired → park until the next head event. The
@@ -312,13 +364,7 @@ pub async fn monitor_pending_transaction(
             // The head source is gone: no further event can arrive, so the tx
             // can never confirm or expire. Release the nonce + pools and
             // surface the broken coordination state rather than park forever.
-            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
-            {
-                dispatcher
-                    .lock()
-                    .expect("dispatcher mutex poisoned")
-                    .release_tx(&committed);
-            }
+            reservation.release();
             span.record("monitor.result", "dispatcher_gone");
             return Err(SubmissionError::MonitorProbe(
                 "dispatcher dropped while monitoring pending tx".to_string(),
@@ -350,6 +396,8 @@ pub async fn monitor_pending_transaction_default(
 mod tests {
     use super::*;
     use crate::dispatcher::Dispatcher;
+    use crate::submission_ledger::{NonceLane, SubmissionLedger};
+    use degenbot_substrate::nonce::NonceAuthority;
     use proptest::prelude::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
@@ -569,6 +617,90 @@ mod tests {
                 "pool leaked"
             );
         }
+    }
+
+    /// Cancellation safety: a monitor task aborted mid-await (the
+    /// `Dispatcher::abort_all_tasks` shape, reachable from the pyo3 boundary)
+    /// must not strand the tx's pool reservations.
+    ///
+    /// On cancellation NO terminal path runs — the future is simply dropped —
+    /// so a path-enumerated release would leak here. The [`ReservationGuard`]'s
+    /// `Drop` frees the reservation instead, which is the whole point of making
+    /// the release structural rather than enumerated.
+    ///
+    /// The monitor owns the dispatcher's pool reservation (`Drop` calls
+    /// [`Dispatcher::release_tx`]); the account nonce lane's release stays the
+    /// owning strategy lane's per this module's docs, so the assertion here is
+    /// on the reservation set the monitor is responsible for, plus a stamp on
+    /// the tx's nonce lane to show the abort wedges nothing the monitor held.
+    #[tokio::test]
+    async fn abort_releases_reservations() {
+        let mut dispatcher = Dispatcher::for_block(100);
+        let tx = sample_tx_variant(0xAB, "abortPool", 100);
+        let tx_nonce = tx.nonce;
+        reserve_tx_state(&mut dispatcher, &tx);
+        let dispatcher = Arc::new(Mutex::new(dispatcher));
+        assert!(dispatcher
+            .lock()
+            .unwrap()
+            .is_pool_pending(&PoolKey::new("abortPool")));
+
+        // The nonce lane the tx was signed against (the reservation the monitor
+        // does NOT own — asserted only to show the abort leaves it stampable).
+        let authority = Arc::new(NonceAuthority::new(tx_nonce));
+        let lane = NonceLane::new(authority, Arc::new(SubmissionLedger::new()), "abort-probe");
+
+        // A never-confirming, never-advancing probe: with the clock parked at
+        // the submission block, `blocks_waited` stays 0 and no receipt is ever
+        // found, so the monitor parks on `block_events.changed()` and only the
+        // abort ends it.
+        let probe = Arc::new(ClockProbe::new(Arc::clone(&dispatcher), u64::MAX));
+        let task_probe = Arc::clone(&probe);
+        let task_dispatcher = Arc::clone(&dispatcher);
+        let handle = tokio::spawn(async move {
+            monitor_pending_transaction(
+                tx,
+                task_probe.as_ref(),
+                task_dispatcher.as_ref(),
+                BLOCKS_BEFORE_NONCE_EXPIRES,
+            )
+            .await
+        });
+
+        // Wait until the monitor has taken its first probe — by then the guard
+        // is constructed and the task is parked. Aborting before the first poll
+        // would drop the future before the guard exists, which is not the
+        // cancellation window this test pins.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while probe.calls() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        handle.abort();
+        assert!(
+            handle.await.unwrap_err().is_cancelled(),
+            "the monitor must end by cancellation, not completion"
+        );
+
+        // The Drop guard released the reservation on cancellation.
+        assert!(
+            !dispatcher
+                .lock()
+                .unwrap()
+                .is_pool_pending(&PoolKey::new("abortPool")),
+            "an aborted monitor stranded its pool reservation"
+        );
+        assert_eq!(
+            dispatcher.lock().unwrap().pending_pool_count(),
+            0,
+            "no reservation may survive the abort"
+        );
+
+        // The nonce lane is free: nothing the aborted monitor held wedges it.
+        assert_eq!(lane.stamp().unwrap().nonce(), tx_nonce);
     }
 
     // ── head-event behaviour (replaces the old poll-sleep cadence test) ──
