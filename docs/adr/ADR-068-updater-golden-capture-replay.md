@@ -84,3 +84,41 @@ counter drift gates.
 - The performance program becomes evidence-driven: every fix lands with a measured
   before/after from the same workload, and the ledger counter gates keep the N+1
   shapes from returning.
+
+## Close-out: capture-credibility sweep (wave 3 + KLGWR7 follow-up)
+
+Two capture formats, deliberately: `degenbot.cassette/v1` wire ledgers for
+the Rust updater replay transports, and the per-block chain-data JSON
+(`degenbot.chain-data/v1`, marker key `format`) for the Python
+`OfflineProvider` consumed by the offline parity suites. One format per
+corpus; the readers verify the marker when present and tolerate legacy
+unmarked files.
+
+House idioms this program added to the glossary vocabulary:
+
+- **Key-set gate**: exact set equality between a golden file's keys and
+  the keys its module's replay drives. Replay fails loud on a missing key
+  but stays silent on a stale extra one; the gate closes that class (it
+  caught a fossil synthetic-revert entry in the aerodrome v3 golden).
+- **Dial-block contract**: replay arms a refusal at the socket layer;
+  record mode is the only sanctioned dialer. A network dial during replay
+  is a defect, not a flake. Shared fixture API in `tests/golden/oracle.py`.
+- **Record-mode error taxonomy**: goldens carry protocol truth — canonical
+  `ContractLogicError` revert data only. Transport failures retry bounded
+  then fail the run; decode errors fail fast; neither is ever persisted.
+  Wire corpora record what the wire said, by definition; the two layers
+  are judged by different standards.
+
+Corpus provenance: the camelot pin records through the first public
+endpoint serving archive state there (BlastAPI's Arbitrum endpoint); the
+official public RPC rejects historical state and publicnode's archive
+requires a personal token. The live drift lane (`just live-drift`,
+marker `live_drift`) re-records and byte-compares per chain — opt-in by
+design, never part of pre-push. Coverage gates assert set-equality
+between corpus files, recorder scenarios, and replay proofs.
+
+Endpoint tiers after the sweep: an authenticated dRPC key serves Base
+at its pins through the state window; its Arbitrum host is full-tier
+and the camelot pin still records through BlastAPI's archive. The
+URIs live in the gitignored tests.env (archive and full-node variables
+are distinct on purpose) and the recorder takes per-tier overrides.

@@ -512,3 +512,12 @@ recorded request set and move the pinned RPC counter gates (2 / 4289) —
 a re-record, not a perf fix. The corpus can only bound the per-request
 overhead of the two shapes; the node-side filtering gain needs a live
 node and stays unmeasured — stated plainly.
+
+## Addendum: named lanes after the capture-credibility sweep
+
+The gate battery gains one OPT-IN lane alongside the seven always-on
+lanes: `just live-drift` (marker `live_drift`) re-records the oracle
+corpora and byte-compares against the committed home. Live network,
+paced, explicitly not pre-push. See ADR-068's close-out section for the
+record-mode error taxonomy and the key-set/dial-block idioms it rests
+on.
