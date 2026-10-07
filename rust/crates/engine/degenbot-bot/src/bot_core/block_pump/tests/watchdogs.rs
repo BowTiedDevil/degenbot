@@ -215,6 +215,105 @@ async fn logs_silence_watchdog_does_not_fire_when_logs_flowing() {
     );
 }
 
+/// NO-RESTART pin: a header-staleness (watchdog) tick firing MID-WINDOW
+/// must NOT restart the settle window.
+///
+/// Contract: the settle/inactivity window is a pinned, resettable `Sleep`
+/// owned across loop iterations (`run_loop.rs`), re-armed only when the
+/// `(publish_pending, window)` tuple changes or a stream EVENT is consumed.
+/// The retired per-iteration `timeout(wait_timeout, combined.next())` was
+/// DROPPED whenever the watchdog arm won the select, so a tick cadence
+/// shorter than the window restarted the countdown and pushed the settle
+/// point (the quiesce publish) past its true deadline. This test pins the
+/// fix on the paused clock.
+///
+/// Timeline (virtual ms; the fixed 50ms debounce is the `for_test` default):
+///   t=0    loop parks on the 60s inactivity window (nothing published yet)
+///   t=30   header 101 arrives  -> window re-arms at (false, 60s)
+///   t=80   V2 Sync@101 arrives -> window re-arms at (true, 50ms); the
+///          quiesce publish is now due at t=130
+///   t=120  the 120ms staleness interval fires INSIDE the 50ms window. The
+///          FSM emits nothing here (header 30ms old < 120ms staleness; log
+///          40ms old < 60s silence) -- it is a pure arm switch, and the arm
+///          `continue`s WITHOUT touching the pinned deadline.
+///   t=130  the ORIGINAL deadline elapses -> the quiesce publish lands
+///   t=210  stream ends; the pump returns
+///
+/// The oracle is the elapsed virtual time of the first quiesce publish
+/// (`sink.sends_at()`): the pinned timer lands it at t=130. The retired
+/// dropped-timeout restarted its window at the t=120 tick and could only
+/// land the publish at t=170 (the restarted deadline) -- strictly after the
+/// tick and well after the original deadline.
+#[tokio::test(start_paused = true)]
+async fn watchdog_tick_mid_window_does_not_restart_settle_window() {
+    let (mut pump, sink) = pump_for_test(Some(100));
+    // One tick at t=120, strictly inside the 50ms window armed at t=80.
+    // The 120ms window stays inert at that tick (header/log still fresh),
+    // so this isolates the ARM SWITCH, not the watchdog's recover path.
+    pump.set_header_staleness_for_test(Duration::from_millis(120));
+
+    let pool = Address::from([0xccu8; 20]);
+    let sync = make_v2_sync_log(pool, U256::from(1_000), U256::from(2_000), 101, false);
+    let combined = stream::unfold(0u8, move |phase| {
+        let sync = sync.clone();
+        async move {
+            match phase {
+                0 => {
+                    // Header at t=30: a NONZERO `now_ms` so the t=120 tick
+                    // stays under the 120ms staleness window.
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                    Some((
+                        WsEvent::BlockHeader {
+                            number: 101,
+                            timestamp: 101_000,
+                            base_fee_per_gas: Some(1_000_000_001),
+                            gas_used: 10_000_001,
+                            gas_limit: 30_000_001,
+                        },
+                        1,
+                    ))
+                }
+                1 => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    Some((WsEvent::Pool(PoolEvent::from_log(sync)), 2))
+                }
+                // End at t=210: past the restarted deadline the retired
+                // dropped-timeout needed (t=170), before the second tick
+                // (t=240) that would enter the FSM recover path.
+                _ => {
+                    tokio::time::sleep(Duration::from_millis(130)).await;
+                    None
+                }
+            }
+        }
+    })
+    .boxed();
+
+    let t0 = tokio::time::Instant::now();
+    pump.run_test_loop(combined, 100).await;
+
+    let sends_at = sink.sends_at();
+    assert_eq!(
+        sends_at.len(),
+        1,
+        "the burst quiesces into exactly ONE publish; got {} sends",
+        sends_at.len()
+    );
+    let first = sends_at[0] - t0;
+    assert!(
+        first >= Duration::from_millis(120),
+        "the publish must still wait its window (armed at t~80, due t=130); \
+         got {first:?}"
+    );
+    assert!(
+        first < Duration::from_millis(160),
+        "a watchdog tick mid-window must NOT restart the settle window: the \
+         quiesce publish must land at the ORIGINAL deadline (~130ms), not at \
+         the restarted deadline (~170ms, the retired dropped-timeout \
+         behaviour). Got {first:?}"
+    );
+}
+
 #[tokio::test]
 async fn finalize_carries_just_finished_blocks_metadata() {
     // Contract: block N is finalized when the FIRST

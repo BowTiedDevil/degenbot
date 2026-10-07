@@ -74,7 +74,6 @@ use degenbot_ingestion::{
 };
 use degenbot_workers::posture::ThrottleSample;
 use futures_util::{stream, StreamExt};
-use tokio::time::timeout;
 use tracing::Instrument;
 
 use crate::bot_core::LogDecision;

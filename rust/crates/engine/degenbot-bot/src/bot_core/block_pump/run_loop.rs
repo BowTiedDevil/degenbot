@@ -1,6 +1,6 @@
 use super::{
-    feed_executor_throttle_sample, op_error, op_info, op_warn, stream, timeout, us_to_secs,
-    wall_ms, BlockMetadata, BlockPump, CompletenessDecision, Duration, Epoch, GateOutcome, HashSet,
+    feed_executor_throttle_sample, op_error, op_info, op_warn, stream, us_to_secs, wall_ms,
+    BlockMetadata, BlockPump, CompletenessDecision, Duration, Epoch, GateOutcome, HashSet,
     Instrument, LogDecision, Ordering, PreSolveGapTrack, StageDecision, StageMachine, StreamExt,
     WsEvent, B256, BACKFILL_TIMEOUT_SECS, RELEVANT_TOPICS,
 };
@@ -11,6 +11,21 @@ use super::{
 // default build keeps no unused import while the extension feature set resolves.
 #[cfg(feature = "hotpath")]
 use super::Arc;
+
+/// The pump's ONE point of truth for the current settle/inactivity window:
+/// `(publish_pending, window)`. While a publish is pending the window is the
+/// FSM's settle window (fixed mode = the debounce history; adaptive = the
+/// estimator's current W); otherwise the long inactivity backfill window. The
+/// tuple doubles as the pinned settle timer's re-arm key, because the window
+/// is DYNAMIC: it must be recomputed whenever the FSM's publish arm or its W
+/// changes, not merely when a select arm switches.
+fn settle_window_state(fsm: &StageMachine) -> (bool, Duration) {
+    if fsm.publish_pending() {
+        (true, Duration::from_millis(fsm.settle_window_ms()))
+    } else {
+        (false, Duration::from_secs(BACKFILL_TIMEOUT_SECS))
+    }
+}
 
 impl BlockPump {
     // phasing-trigger POLICY: phase
@@ -289,10 +304,12 @@ impl BlockPump {
         // selected against `combined.next()` (below) whose internal `Sleep`
         // elapses independently of stream activity. This catches a silent
         // `newHeads` (dead/stalled WS subscription) even under dense-log
-        // pressure, where the in-loop `timeout(.. combined.next())` `Err(_)`
-        // no-activity path never elapses because `combined.next()` keeps
-        // yielding logs. When the tick wins the select AND headers are
-        // genuinely stale (>= `header_staleness`), it runs the SAME
+        // pressure, where the pinned settle/inactivity `Sleep` arm (the
+        // successor of the retired `timeout(.. combined.next())`) never
+        // elapses because `combined.next()` keeps yielding logs — each
+        // consumed event restarts that window by design. When the tick wins
+        // the select AND headers are genuinely stale (>= `header_staleness`),
+        // it runs the SAME
         // `handle_timeout_eager` catch-up the no-activity path uses.
         //
         // Limitation:: this fires only when the
@@ -308,6 +325,18 @@ impl BlockPump {
                                      // (time enters as data; the FSM owns no timer or `Instant`).
         let tick_epoch = tokio::time::Instant::now();
         let now_ms = || tick_epoch.elapsed().as_millis() as u64;
+
+        // Pinned, resettable settle/inactivity timer (see the reset policy at
+        // the top of the loop body). Owned ACROSS loop iterations — like
+        // `staleness_tick` — so a watchdog or cooperative-exit arm winning the
+        // select no longer DROPS the window and restarts it. One `Box::pin`
+        // outside the loop (no per-iteration allocation); `Sleep::reset`
+        // requires the future pinned and takes a NEW deadline (resetting an
+        // already-elapsed sleep is legal). `armed_window` is the last
+        // `(publish_pending, window)` the timer was armed for; `None` forces a
+        // re-arm (initial state, and after every select resolution).
+        let mut armed_window: Option<(bool, Duration)> = None;
+        let mut settle_sleep = Box::pin(tokio::time::sleep_until(tokio::time::Instant::now()));
 
         // the current block's span, replaced by each accepted header.
         let mut block_span: Option<tracing::Span> = None;
@@ -396,19 +425,29 @@ impl BlockPump {
                 return;
             }
 
-            // Wait for the next event. Use a shorter settle window when a publish is
-            // pending so the quiesce-gated flush fires promptly if no new log
-            // arrives (coalescing a same-block burst); otherwise the long
-            // inactivity backfill window. A new event arriving before the
-            // window elapses cancels the flush (the burst is still in flight).
-            let wait_timeout = if fsm.publish_pending() {
-                // the settle timers arm the FSM's window (fixed mode
-                // = the debounce history; adaptive = the estimator's current
-                // W) instead of the raw debounce field.
-                Duration::from_millis(fsm.settle_window_ms())
-            } else {
-                Duration::from_secs(BACKFILL_TIMEOUT_SECS)
-            };
+            // Wait for the next event on a PINNED, resettable settle timer
+            // owned across loop iterations. The window is DYNAMIC:
+            // `settle_window_state` is its ONE point of truth — the FSM's
+            // settle window while a publish is pending (fixed mode = the
+            // debounce history; adaptive = the estimator's current W), else the
+            // long inactivity backfill window. The timer is re-armed ONLY when
+            // the window changes semantically: the `(publish_pending, window)`
+            // tuple differs from the last armed one, or a stream event is
+            // consumed below (the burst is still in flight, so the window
+            // restarts by design — the retired per-iteration `timeout(..)`
+            // semantics). A watchdog / cooperative-exit arm winning the select
+            // does NOT touch the deadline: that is the fix for the
+            // dropped-timeout restart. A fired-but-unconsumed sleep is either
+            // re-armed here before the next select, or — tuple unchanged —
+            // lands the settle at the ORIGINAL deadline, which is right: the
+            // window genuinely elapsed.
+            let window_state = settle_window_state(&fsm);
+            if armed_window != Some(window_state) {
+                settle_sleep
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + window_state.1);
+                armed_window = Some(window_state);
+            }
             let event = tokio::select! {
                 biased;
                 // Cooperative timed exit: the hotpath timer raises the
@@ -440,11 +479,13 @@ impl BlockPump {
                 // Header-staleness watchdog — see the interval setup
                 // above. Firing here does NOT consume the stream event; it runs
                 // `handle_timeout_eager` then re-loops (the top-of-loop drain
-                // picks up any dirty paths the backfill created). The
-                // `timeout(wait_timeout, combined.next())` future is dropped on
-                // this arm winning, so the inactivity/debounce countdown
-                // restarts — acceptable since `DEBOUNCE_MS << header_staleness`
-                // and the no-activity path is now superseded by this watchdog.
+                // picks up any dirty paths the backfill created). This arm
+                // `continue`s WITHOUT touching `armed_window`, so the pinned
+                // settle/inactivity deadline survives the arm switch and keeps
+                // counting down from where it was. The retired per-iteration
+                // `timeout(wait_timeout, combined.next())` was DROPPED here, so
+                // under ticks faster than the window neither `DEBOUNCE_MS` nor
+                // the 60s inactivity park could ever elapse.
                 _ = staleness_tick.tick() => {
                     // A4: the watchdog window decision lives in the FSM
                     // (`on_tick`), fed a synthetic `now_ms`; the interval only
@@ -481,14 +522,30 @@ impl BlockPump {
                     }
                     continue;
                 }
-                event = timeout(wait_timeout, combined.next()) => event,
+                // A buffered stream event is preferred over an already-elapsed
+                // settle deadline — the retired `timeout(..)` polled its inner
+                // future first, and `biased` preserves that order.
+                event = combined.next() => Ok(event),
+                // Settle point — the pinned window elapsed with no new event,
+                // mapped to the SAME `Err(..)` handling the retired
+                // `timeout(wait_timeout, combined.next())` produced (the error
+                // payload is the unit: the deadline elapsed is the whole fact).
+                () = &mut settle_sleep => Err(()),
             };
+            // The select resolved: a consumed stream event (header or log)
+            // means the burst is still in flight — the window restarts by
+            // design; the elapsed settle arm means the timer is spent and must
+            // not immediately re-fire. Either way, invalidate the armed tuple
+            // so the next iteration re-arms the pinned timer at the current FSM
+            // window from the new `now`. Only the watchdog / cooperative-exit
+            // arms (which `continue` above) leave the deadline untouched.
+            armed_window = None;
 
             match event {
                 // Settle point — no new event in the window. Flush the
                 // quiesce-gated publish, OR (if nothing pending) the 60s
                 // inactivity backfill path.
-                Err(_) => {
+                Err(()) => {
                     // A2: settle-point rules live in the FSM (`on_settle`)
                     // the quiesce-before-publish gate + solver-release gate
                     // (ADR-008 D2) vs the inactivity backfill. The driver only

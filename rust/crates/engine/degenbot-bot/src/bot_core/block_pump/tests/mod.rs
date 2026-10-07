@@ -129,6 +129,11 @@ impl BlockPump {
 struct FakeStageEngine {
     finalized: Mutex<Vec<(u64, BlockMetadata)>>,
     sent: Mutex<Vec<BlockMetadata>>,
+    /// virtual-time stamps paired with `sends()`, read via `sends_at`. The
+    /// settle-window pins assert WHEN the quiesce publish landed (the pinned
+    /// timer must land it at the original deadline, not at a later arm switch
+    /// or at stream end).
+    sent_at: Mutex<Vec<tokio::time::Instant>>,
     drained: Mutex<Vec<(u64, BlockMetadata)>>,
     notified: Mutex<Vec<(u64, BlockMetadata)>>,
     /// Records every `set_last_solved_block` call (proves the
@@ -162,6 +167,7 @@ impl FakeStageEngine {
         Self {
             finalized: Mutex::new(Vec::new()),
             sent: Mutex::new(Vec::new()),
+            sent_at: Mutex::new(Vec::new()),
             drained: Mutex::new(Vec::new()),
             notified: Mutex::new(Vec::new()),
             solved: Mutex::new(Vec::new()),
@@ -215,6 +221,11 @@ impl FakeStageEngine {
     /// Quiesce publishes the sink received (`on_send` call log).
     fn sends(&self) -> Vec<BlockMetadata> {
         self.sent.lock().unwrap().clone()
+    }
+
+    /// virtual-time stamps paired with `sends()`.
+    fn sends_at(&self) -> Vec<tokio::time::Instant> {
+        self.sent_at.lock().unwrap().clone()
     }
 
     fn drained_blocks(&self) -> Vec<u64> {
@@ -282,6 +293,10 @@ impl StageHandlers for FakeStageEngine {
         work: &Publish,
     ) -> Result<crate::bot_core::PublishOutcome, crate::bot_core::StageError> {
         self.sent.lock().unwrap().push(*work.ctx.metadata());
+        self.sent_at
+            .lock()
+            .unwrap()
+            .push(tokio::time::Instant::now());
         Ok(crate::bot_core::PublishOutcome { published: None })
     }
     fn on_finalize(
