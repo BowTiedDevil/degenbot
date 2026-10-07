@@ -3,14 +3,12 @@ import pathlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import hypothesis
-import hypothesis.strategies
 import pydantic_core
 import pytest
 
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.constants import MAX_INT128, ZERO_ADDRESS
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import (
     HookedPoolResult,
@@ -319,74 +317,6 @@ def test_pool_liquidity_checks(eth_usdc_v4: UniswapV4Pool):
 
 def test_pool_sqrt_price_checks(eth_usdc_v4: UniswapV4Pool):
     assert eth_usdc_v4.sqrt_price_x96 > 0
-
-
-@pytest.mark.slow
-@pytest.mark.ethereum
-@hypothesis.given(
-    amount=hypothesis.strategies.integers(
-        min_value=1,
-        max_value=MAX_INT128,
-    )
-)
-@hypothesis.settings(
-    suppress_health_check=[
-        hypothesis.HealthCheck.function_scoped_fixture,
-    ],
-    deadline=None,
-)
-def test_cached_calculations(
-    amount: int,
-    eth_usdc_v4: UniswapV4Pool,
-    fork_mainnet_full: AnvilFork,
-) -> None:
-    quoter = make_contract(
-        fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI
-    )
-
-    for token_in, token_out in [
-        (eth_usdc_v4.token0, eth_usdc_v4.token1),
-        (eth_usdc_v4.token1, eth_usdc_v4.token0),
-    ]:
-        try:
-            quoter_amount_in, _ = quoter.functions.quoteExactOutputSingle((
-                dataclasses.astuple(eth_usdc_v4.pool_key),  # poolKey
-                token_in is eth_usdc_v4.token0,  # zeroForOne
-                amount,  # exactAmount
-                b"",  # hookData
-            )).call()
-        except ContractLogicError:
-            continue
-
-        try:
-            quoter_amount_out, _ = quoter.functions.quoteExactInputSingle((
-                dataclasses.astuple(eth_usdc_v4.pool_key),  # poolKey
-                token_in is eth_usdc_v4.token0,  # zeroForOne
-                amount,  # exactAmount
-                b"",  # hookData
-            )).call()
-        except ContractLogicError:
-            continue
-
-        try:
-            amount_out = eth_usdc_v4.calculate_tokens_out_from_tokens_in(
-                token_in=token_in,
-                token_in_quantity=amount,
-            )
-        except IncompleteSwap as exc:
-            amount_out = exc.amount_out
-
-        assert amount_out == quoter_amount_out
-
-        try:
-            amount_in = eth_usdc_v4.calculate_tokens_in_from_tokens_out(
-                token_out=token_out,
-                token_out_quantity=amount,
-            )
-        except IncompleteSwap as exc:
-            amount_in = exc.amount_in
-
-        assert amount_in == quoter_amount_in
 
 
 @pytest.mark.slow

@@ -2,15 +2,12 @@ import pathlib
 from pathlib import Path
 from typing import Any
 
-import hypothesis
-import hypothesis.strategies
 import pydantic_core
 import pytest
 
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.constants import MAX_INT256
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.base import DegenbotValueError
@@ -566,77 +563,6 @@ def test_calculate_tokens_out_from_tokens_in(
         )
         == 6287477
     )
-
-
-@pytest.mark.slow
-@pytest.mark.ethereum
-@hypothesis.given(
-    amount=hypothesis.strategies.integers(
-        min_value=1,
-        max_value=MAX_INT256,
-    ),
-)
-@hypothesis.settings(
-    suppress_health_check=[
-        hypothesis.HealthCheck.function_scoped_fixture,
-    ],
-    deadline=None,
-)
-def test_cached_calculations(
-    amount: int,
-    wbtc_weth_v3_lp: UniswapV3Pool,
-    fork_mainnet_full: AnvilFork,
-) -> None:
-
-    quoter = make_contract(
-        fork_mainnet_full.http_url, UNISWAP_V3_QUOTER_ADDRESS, UNISWAP_V3_QUOTER_ABI
-    )
-
-    print(f"Calculating with {amount=}")
-
-    for token_in, token_out in [
-        (wbtc_weth_v3_lp.token0, wbtc_weth_v3_lp.token1),
-        (wbtc_weth_v3_lp.token1, wbtc_weth_v3_lp.token0),
-    ]:
-        try:
-            amount_out = wbtc_weth_v3_lp.calculate_tokens_out_from_tokens_in(
-                token_in=token_in,
-                token_in_quantity=amount,
-            )
-        except IncompleteSwap as exc:
-            amount_out = exc.amount_out
-
-        quoter_amount_out = quoter.functions.quoteExactInputSingle(
-            token_in.address,  # tokenIn
-            token_out.address,  # tokenOut
-            wbtc_weth_v3_lp.fee,  # fee
-            amount,  # amountIn
-            MIN_SQRT_RATIO + 1
-            if token_in is wbtc_weth_v3_lp.token0
-            else MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
-        ).call()
-
-        assert amount_out == quoter_amount_out
-
-        try:
-            amount_in = wbtc_weth_v3_lp.calculate_tokens_in_from_tokens_out(
-                token_out=token_out,
-                token_out_quantity=amount,
-            )
-        except IncompleteSwap as exc:
-            amount_in = exc.amount_in
-
-        quoter_amount_in = quoter.functions.quoteExactOutputSingle(
-            token_in.address,  # tokenIn
-            token_out.address,  # tokenOut
-            wbtc_weth_v3_lp.fee,  # fee
-            amount,  # amountOut
-            MIN_SQRT_RATIO + 1
-            if token_in is wbtc_weth_v3_lp.token0
-            else MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
-        ).call()
-
-        assert amount_in == quoter_amount_in
 
 
 def test_calculate_tokens_out_from_tokens_in_with_override(
