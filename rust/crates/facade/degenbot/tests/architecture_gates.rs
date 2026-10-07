@@ -1525,15 +1525,22 @@ fn split_top_level(inner: &str) -> Vec<String> {
 fn no_timeout_wrapped_value_sends_or_write_all() {
     // The one production site that legitimately matches, named file+line with
     // its reason, rather than loosening the pattern.
-    const ALLOWED: [(&str, usize, &str); 1] = [(
+    // Anchored on the enclosing call's source text, NOT a line number: doc
+    // comments (like the # Cancel safety sections) shift lines without changing
+    // the code, and a line-anchored entry silently goes stale - exactly the
+    // drift that broke the first full-workspace run of this gate.
+    const ALLOWED: [(&str, &str, &str); 1] = [(
         "shells/degenbot-cli-core/src/operator.rs",
-        689,
+        "timeout(remaining, stream.write_all(line.as_bytes()))",
         "exchange_within spends one shared deadline across connect/write/flush/read on a request line; the request is a single logical message, so a timeout abandons no partial frame the caller could resume, and the error it raises is the exchange's terminal failure",
     )];
 
     let crates_root = workspace_root().join("crates");
     let mut violations: Vec<String> = Vec::new();
     for_each_rust_source(&crates_root, &mut |path, text| {
+        // The allowlist anchors on source text, so the actual (unmasked)
+        // lines are needed alongside the masked scan text.
+        let source_lines: Vec<&str> = text.lines().collect();
         let clean = path.display().to_string().replace('\\', "/");
         // Production source only: a test, bench, or example may legitimately
         // drive a cancelled send to prove cancellation behavior.
@@ -1563,10 +1570,12 @@ fn no_timeout_wrapped_value_sends_or_write_all() {
             } else {
                 continue;
             };
-            if ALLOWED
-                .iter()
-                .any(|(file, allowed_line, _)| clean.ends_with(file) && *allowed_line == line)
-            {
+            if ALLOWED.iter().any(|(file, anchor, _)| {
+                clean.ends_with(file)
+                    && source_lines
+                        .get(line.saturating_sub(1))
+                        .is_some_and(|src| src.contains(anchor))
+            }) {
                 continue;
             }
             violations.push(format!("{clean}:{line}: timeout(..) wraps {pattern}"));
