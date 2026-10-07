@@ -1,0 +1,925 @@
+{
+  "schema": "degenbot.statement-ledger/v1",
+  "statements": [
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT id, chain_id, name, active, last_update_block FROM aave_v3_markets WHERE id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT id, market_id, name, address, revision FROM aave_v3_contracts WHERE market_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT id, market_id, name, address, revision FROM aave_v3_contracts WHERE market_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.a_token_id WHERE m.chain_id = ? UNION SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.v_token_id WHERE m.chain_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.a_token_id WHERE m.chain_id = ? UNION SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.v_token_id WHERE m.chain_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "BEGIN DEFERRED"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT a.id, a.a_token_revision, a.v_token_revision, t_underlying.address AS underlying, t_a.address AS a_token, t_v.address AS v_token FROM aave_v3_assets a JOIN erc20_tokens t_underlying ON t_underlying.id = a.underlying_asset_id JOIN erc20_tokens t_a ON t_a.id = a.a_token_id JOIN erc20_tokens t_v ON t_v.id = a.v_token_id WHERE a.market_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT name, revision FROM aave_v3_contracts WHERE market_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+    },
+    {
+      "arg_count": 15,
+      "rows_changed": 0,
+      "sql": "SELECT id, address FROM aave_v3_users WHERE market_id = ? AND address IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 15,
+      "rows_changed": 0,
+      "sql": "SELECT p.id, p.user_id, p.asset_id, p.balance, p.last_index FROM aave_v3_collateral_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 15,
+      "rows_changed": 0,
+      "sql": "SELECT p.id, p.user_id, p.asset_id, p.balance, p.last_index FROM aave_v3_debt_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 15,
+      "rows_changed": 0,
+      "sql": "SELECT cc.user_id, cc.asset_id, cc.id FROM aave_v3_user_collateral_configs cc JOIN aave_v3_users u ON u.id = cc.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_debt_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_debt_positions SET balance = ?, last_index = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_contracts SET revision = ? WHERE market_id = ? AND name = ?"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_contracts SET revision = ? WHERE market_id = ? AND name = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_gho_tokens SET v_gho_discount_token = NULL, v_gho_discount_rate_strategy = NULL WHERE id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "UPDATE aave_v3_users SET gho_discount = ? WHERE market_id = (SELECT market_id FROM aave_v3_assets WHERE id = ?) AND gho_discount != ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_debt_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_collateral_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_collateral_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_debt_positions SET balance = ?, last_index = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_collateral_positions SET balance = ?, last_index = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_debt_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_debt_positions SET balance = ?, last_index = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 18,
+      "rows_changed": 3,
+      "sql": "UPDATE aave_v3_assets AS a SET liquidity_rate = v.column2, borrow_rate = v.column3, liquidity_index = v.column4, borrow_index = v.column5, last_update_block = v.column6 FROM (VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)) AS v WHERE a.id = v.column1"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 1,
+      "sql": "DELETE FROM aave_v3_collateral_positions WHERE id IN ( SELECT p.id FROM aave_v3_collateral_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND (p.balance = ? OR p.balance = ?) )"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 2,
+      "sql": "DELETE FROM aave_v3_debt_positions WHERE id IN ( SELECT p.id FROM aave_v3_debt_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND (p.balance = ? OR p.balance = ?) )"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_markets SET last_update_block = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "COMMIT"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.a_token_id WHERE m.chain_id = ? UNION SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.v_token_id WHERE m.chain_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "BEGIN DEFERRED"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT a.id, a.a_token_revision, a.v_token_revision, t_underlying.address AS underlying, t_a.address AS a_token, t_v.address AS v_token FROM aave_v3_assets a JOIN erc20_tokens t_underlying ON t_underlying.id = a.underlying_asset_id JOIN erc20_tokens t_a ON t_a.id = a.a_token_id JOIN erc20_tokens t_v ON t_v.id = a.v_token_id WHERE a.market_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT name, revision FROM aave_v3_contracts WHERE market_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+    },
+    {
+      "arg_count": 6,
+      "rows_changed": 0,
+      "sql": "SELECT id, address FROM aave_v3_users WHERE market_id = ? AND address IN (?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 6,
+      "rows_changed": 0,
+      "sql": "SELECT p.id, p.user_id, p.asset_id, p.balance, p.last_index FROM aave_v3_collateral_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 6,
+      "rows_changed": 0,
+      "sql": "SELECT p.id, p.user_id, p.asset_id, p.balance, p.last_index FROM aave_v3_debt_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 6,
+      "rows_changed": 0,
+      "sql": "SELECT cc.user_id, cc.asset_id, cc.id FROM aave_v3_user_collateral_configs cc JOIN aave_v3_users u ON u.id = cc.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_collateral_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_collateral_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_collateral_positions SET balance = ?, last_index = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_user_collateral_configs WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_user_collateral_configs (user_id, asset_id, enabled) VALUES (?, ?, ?)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_collateral_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_collateral_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_collateral_positions SET balance = ?, last_index = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 12,
+      "rows_changed": 2,
+      "sql": "UPDATE aave_v3_assets AS a SET liquidity_rate = v.column2, borrow_rate = v.column3, liquidity_index = v.column4, borrow_index = v.column5, last_update_block = v.column6 FROM (VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)) AS v WHERE a.id = v.column1"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 2,
+      "sql": "DELETE FROM aave_v3_collateral_positions WHERE id IN ( SELECT p.id FROM aave_v3_collateral_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND (p.balance = ? OR p.balance = ?) )"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "DELETE FROM aave_v3_debt_positions WHERE id IN ( SELECT p.id FROM aave_v3_debt_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND (p.balance = ? OR p.balance = ?) )"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_markets SET last_update_block = ? WHERE id = ?"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "COMMIT"
+    }
+  ]
+}
