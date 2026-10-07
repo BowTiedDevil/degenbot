@@ -34,9 +34,10 @@ from __future__ import annotations
 
 import json
 import pathlib
+import socket
 from contextlib import AbstractContextManager
 from fractions import Fraction
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
@@ -45,9 +46,13 @@ from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork, ForkLaunchConfig
+from tests.golden.oracle import GOLDEN_ROOT, _nodeid_to_path
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # Pinned well inside mainnet.base.org's keyless archive window (tip ~47.8M).
 AERODROME_V2_PARITY_BLOCK = 46_875_151
@@ -231,3 +236,66 @@ def test_aerodrome_v2_volatile_get_amount_out(golden_factory) -> None:
 def test_aerodrome_v2_stable_get_amount_out(golden_factory) -> None:
     """Aerodrome V2 stable (DOLA/USDbC): local calc == golden(getAmountOut)."""
     _run_parity(golden_factory, _STABLE_CASSETTE)
+
+
+_REPLAY_DIAL_MSG = "golden replay is offline by contract; a network dial is a defect"
+
+
+def _refuse_connection(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError(_REPLAY_DIAL_MSG)
+
+
+@pytest.fixture(autouse=True)
+def _replay_makes_no_network_calls(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Arm a hard dial-block in replay; only --golden-mode=record may touch a node.
+
+    Replay asserts recorded ints against pools built I/O-free, so any connection
+    attempt means the offline contract broke — failing at the dial beats hanging
+    on an unreachable endpoint. Record mode is the one sanctioned dialer (a fork
+    pinned to the recorded block), so the block is armed only for replay."""
+    if request.config.getoption("--golden-mode") == "record":
+        yield
+        return
+    monkeypatch.setattr(socket, "create_connection", _refuse_connection)
+    monkeypatch.setattr(socket, "getaddrinfo", _refuse_connection)
+    monkeypatch.setattr(socket.socket, "connect", _refuse_connection)
+    monkeypatch.setattr(socket.socket, "connect_ex", _refuse_connection)
+    yield
+
+
+def _golden_file(request: pytest.FixtureRequest, test_name: str) -> pathlib.Path:
+    """One of this module's golden files, resolved like golden_factory."""
+    file_part = pathlib.Path(request.path).relative_to(request.config.rootpath).as_posix()
+    nodeid = f"{file_part}::{test_name}"
+    rel = _nodeid_to_path(nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
+    return pathlib.Path(request.config.getoption("--golden-root")) / rel
+
+
+@pytest.mark.parametrize(
+    ("test_name", "cassette_path"),
+    [
+        ("test_aerodrome_v2_volatile_get_amount_out", _VOLATILE_CASSETTE),
+        ("test_aerodrome_v2_stable_get_amount_out", _STABLE_CASSETTE),
+    ],
+)
+def test_golden_keys_exactly_match_the_oracle_surface(
+    request: pytest.FixtureRequest,
+    test_name: str,
+    cassette_path: pathlib.Path,
+) -> None:
+    """The golden file holds exactly the keys this module's replay drives.
+
+    Replay fails loud on a missing key but stays silent on a stale extra one —
+    nothing looks it up. Set-equality against the recorded file closes that
+    drift: a shrunken case list cannot leave orphaned oracle entries behind."""
+    if request.config.getoption("--golden-mode") == "record":
+        pytest.skip("the record run rewrites the golden file this test diffs")
+    lp = _build_aerodrome_v2_io_free(_load_cassette(cassette_path))
+    expected = {key for key, *_rest in _parity_cases(lp)}
+    recorded = set(json.loads(_golden_file(request, test_name).read_text())["entries"])
+    assert recorded == expected, (
+        f"stale={sorted(recorded - expected)} missing={sorted(expected - recorded)}"
+    )

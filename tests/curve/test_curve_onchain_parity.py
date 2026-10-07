@@ -37,6 +37,7 @@ from __future__ import annotations
 import itertools
 import json
 import pathlib
+import socket
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Self
 
@@ -59,10 +60,13 @@ from degenbot.curve.strategies import (
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
+from tests.golden.oracle import GOLDEN_ROOT, _nodeid_to_path
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 
 CURVE_PARITY_BLOCK = 24_407_242  # tip minus ~1M
@@ -774,4 +778,163 @@ def test_curve_metapool_multiblock_get_dy(golden_factory) -> None:
         cassette_path=_METAPOOL_MULTIBLOCK_CASSETTE,
         block=METAPOOL_MULTIBLOCK_START,
         blocks=blocks,
+    )
+
+
+_REPLAY_DIAL_MSG = "golden replay is offline by contract; a network dial is a defect"
+
+
+def _refuse_connection(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError(_REPLAY_DIAL_MSG)
+
+
+@pytest.fixture(autouse=True)
+def _replay_makes_no_network_calls(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Arm a hard dial-block in replay; only --golden-mode=record may touch a node.
+
+    Replay asserts recorded ints against pools built I/O-free, so any connection
+    attempt means the offline contract broke — failing at the dial beats hanging
+    on an unreachable endpoint. Record mode is the one sanctioned dialer (a fork
+    pinned to the recorded block), so the block is armed only for replay."""
+    if request.config.getoption("--golden-mode") == "record":
+        yield
+        return
+    monkeypatch.setattr(socket, "create_connection", _refuse_connection)
+    monkeypatch.setattr(socket, "getaddrinfo", _refuse_connection)
+    monkeypatch.setattr(socket.socket, "connect", _refuse_connection)
+    monkeypatch.setattr(socket.socket, "connect_ex", _refuse_connection)
+    yield
+
+
+def _get_dy_golden_keys(cassette: dict[str, Any]) -> set[str]:
+    """The oracle keys one ``get_dy`` parity run drives: all token directions
+    over the multiplier grid, amounts scaled from the cassette balances."""
+    address = cassette["address"]
+    symbols = [token["symbol"] for token in cassette["tokens"]]
+    keys: set[str] = set()
+    for i, j in itertools.permutations(range(len(symbols)), 2):
+        for mult in _AMOUNT_MULTIPLIERS:
+            amount = int(mult * cassette["balances"][i])
+            keys.add(f"{address}|get_dy|{symbols[i]}->{symbols[j]}|{amount}")
+    return keys
+
+
+def _calc_golden_keys(cassette: dict[str, Any]) -> set[str]:
+    """The oracle keys the LP-math parity run drives: withdraw-one-coin and
+    single-slot deposit amounts over the base-pool multiplier grid."""
+    address = cassette["address"]
+    balances = cassette["balances"]
+    keys: set[str] = set()
+    for i in range(len(balances)):
+        for mult in _BASE_POOL_AMOUNT_MULTIPLIERS:
+            amount = int(mult * balances[i])
+            keys.add(f"{address}|calc_withdraw_one_coin|i={i}|{amount}")
+            keys.add(f"{address}|calc_token_amount|deposit|i={i}|{amount}")
+    return keys
+
+
+def _metapool_golden_keys(cassette: dict[str, Any], blocks: list[int]) -> set[str]:
+    """The oracle keys the metapool parity loops drive: get_dy over the pool
+    tokens plus get_dy_underlying over the underlying tokens (amounts scale
+    from the pool's balance for in-pool tokens, the base pool's otherwise),
+    tagged per block for the multiblock golden."""
+    if "immutable" in cassette:
+        immutable, states = cassette["immutable"], cassette["states"]
+        balances = {int(block): states[str(block)]["balances"] for block in blocks}
+        base_balances = {int(block): states[str(block)]["base_balances"] for block in blocks}
+    else:
+        immutable = cassette
+        balances = {METAPOOL_PARITY_BLOCK: cassette["balances"]}
+        base_balances = {METAPOOL_PARITY_BLOCK: cassette["base_pool"]["balances"]}
+    address = immutable["address"]
+    pool_symbols = [token["symbol"] for token in immutable["tokens"]]
+    underlying_symbols = [token["symbol"] for token in immutable["tokens_underlying"]]
+    base_symbols = [token["symbol"] for token in immutable["base_pool"]["tokens"]]
+    keys: set[str] = set()
+    for block, pool_balances in balances.items():
+        tag = f"blk{block}|" if blocks != [METAPOOL_PARITY_BLOCK] else ""
+        for i, j in itertools.permutations(range(len(pool_symbols)), 2):
+            for mult in _METAPOOL_INPOOL_MULTIPLIERS:
+                amount = int(mult * pool_balances[i])
+                keys.add(f"{address}|get_dy|{pool_symbols[i]}->{pool_symbols[j]}|{tag}{amount}")
+        for i, j in itertools.permutations(range(len(underlying_symbols)), 2):
+            for mult in _METAPOOL_UNDERLYING_MULTIPLIERS:
+                symbol = underlying_symbols[i]
+                if symbol in pool_symbols:
+                    amount = int(mult * pool_balances[pool_symbols.index(symbol)])
+                else:
+                    amount = int(mult * base_balances[block][base_symbols.index(symbol)])
+                keys.add(
+                    f"{address}|get_dy_underlying|"
+                    f"{underlying_symbols[i]}->{underlying_symbols[j]}|{tag}{amount}"
+                )
+    return keys
+
+
+def _curve_golden_file(request: pytest.FixtureRequest, test_name: str) -> pathlib.Path:
+    """One of this module's golden files, resolved like golden_factory."""
+    file_part = pathlib.Path(request.path).relative_to(request.config.rootpath).as_posix()
+    nodeid = f"{file_part}::{test_name}"
+    rel = _nodeid_to_path(nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
+    return pathlib.Path(request.config.getoption("--golden-root")) / rel
+
+
+_MULTIBLOCK_BLOCKS = list(
+    range(
+        METAPOOL_MULTIBLOCK_START + METAPOOL_MULTIBLOCK_SPAN,
+        METAPOOL_MULTIBLOCK_END,
+        METAPOOL_MULTIBLOCK_SPAN,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("test_name", "expected_keys"),
+    [
+        (
+            "test_curve_tripool_get_dy",
+            lambda: _get_dy_golden_keys(_load_cassette(_TRIPOOL_CASSETTE)),
+        ),
+        (
+            "test_curve_tricrypto_get_dy",
+            lambda: _get_dy_golden_keys(_load_cassette(_TRICRYPTO_CASSETTE)),
+        ),
+        (
+            "test_curve_tripool_calc_withdraw_and_token_amount",
+            lambda: _calc_golden_keys(_load_cassette(_TRIPOOL_CASSETTE)),
+        ),
+        (
+            "test_curve_metapool_get_dy",
+            lambda: _metapool_golden_keys(
+                _load_cassette(_METAPOOL_CASSETTE), [METAPOOL_PARITY_BLOCK]
+            ),
+        ),
+        (
+            "test_curve_metapool_multiblock_get_dy",
+            lambda: _metapool_golden_keys(
+                _load_cassette(_METAPOOL_MULTIBLOCK_CASSETTE), _MULTIBLOCK_BLOCKS
+            ),
+        ),
+    ],
+    ids=lambda name: name,
+)
+def test_golden_keys_exactly_match_the_oracle_surface(
+    request: pytest.FixtureRequest,
+    test_name: str,
+    expected_keys: Callable[[], set[str]],
+) -> None:
+    """The golden file holds exactly the keys this module's replay drives.
+
+    Replay fails loud on a missing key but stays silent on a stale extra one —
+    nothing looks it up. Set-equality against the recorded file closes that
+    drift: a shrunken case list cannot leave orphaned oracle entries behind."""
+    if request.config.getoption("--golden-mode") == "record":
+        pytest.skip("the record run rewrites the golden file this test diffs")
+    expected = expected_keys()
+    recorded = set(json.loads(_curve_golden_file(request, test_name).read_text())["entries"])
+    assert recorded == expected, (
+        f"stale={sorted(recorded - expected)} missing={sorted(expected - recorded)}"
     )
