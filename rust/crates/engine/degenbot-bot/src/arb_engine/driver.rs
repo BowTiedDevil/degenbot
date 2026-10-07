@@ -30,7 +30,9 @@
 //!    `S+1..W` auto-backfill** (awaiting `BlockPump::backfill_with_drain`
 //!    synchronously), then spawns the live pump loop and advances to
 //!    `PumpPhase::Resumed`. Consumers never call `backfill_from_snapshot`.
-//! 3. `stop()` sets the shutdown flag, aborts and joins the pump task, clears
+//! 3. `stop()` sets the shutdown flag, waits up to `PUMP_STOP_GRACE` for the
+//!    pump to exit **cooperatively** (its own 500 ms tick polls the flag), and
+//!    only escalates to `abort()` + join if the grace expires; it then clears
 //!    the subscribe state, closes the delivery channels, and latches the driver
 //!    terminally stopped. It is any-phase + idempotent (the `BotRunner.shutdown`
 //!    contract).
@@ -87,6 +89,7 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::watch;
 use tracing::Instrument as _;
 
@@ -100,6 +103,25 @@ pub const RESULT_CHANNEL_NAME: &str = "engine_result_batch";
 /// Hub registration name for the engine's block-clock source channel. Named
 /// for the same reason as [`RESULT_CHANNEL_NAME`].
 pub const BLOCK_CHANNEL_NAME: &str = "engine_block_notification";
+
+/// How long [`EngineDriver::stop`] waits for the pump task to exit
+/// **cooperatively** before escalating to `abort()`.
+///
+/// The pump arms a 500 ms `timed_exit_tick` whose select arm polls the shared
+/// shutdown flag, so a halted session unwinds the loop normally within one
+/// tick. Four ticks with margin is the window: long enough that a healthy
+/// pump always returns through its own machinery, short enough that teardown
+/// stays prompt. The escalation only exists for a pump parked somewhere that
+/// tick cannot reach (the `run_loop.rs` limitation note: a GIL re-entry park
+/// through `PySubscriberAdapter`, or engine-lock contention inside
+/// `on_drain`/`apply_buffer_v3`).
+pub const PUMP_STOP_GRACE: Duration = Duration::from_secs(2);
+
+/// [`PUMP_STOP_GRACE`] in milliseconds, for the `stop()` log fields — the
+/// `Duration::as_millis` widening kept non-truncating.
+fn pump_stop_grace_ms() -> u64 {
+    u64::try_from(PUMP_STOP_GRACE.as_millis()).unwrap_or(u64::MAX)
+}
 
 /// The engine's two named source-channel producers, minted together.
 ///
@@ -729,10 +751,13 @@ impl EngineDriver {
 
     /// Stop the pump and latch the driver terminally stopped (ADR-050 D6).
     ///
-    /// Any-phase + idempotent. Sets the shutdown flag, aborts and joins the
-    /// pump task (so the WS subscription futures drop before return), clears
-    /// the subscribe state, and closes the delivery channels so a pending
-    /// receiver observes end-of-stream exactly once.
+    /// Any-phase + idempotent. Sets the shutdown flag, waits up to
+    /// [`PUMP_STOP_GRACE`] for the pump to exit **cooperatively** (it polls
+    /// the flag on its own 500 ms tick arm), and only then escalates to
+    /// `abort()` + join if the grace expires. Either way the WS subscription
+    /// futures have dropped before return. Clears the subscribe state and
+    /// closes the delivery channels so a pending receiver observes
+    /// end-of-stream exactly once.
     ///
     /// # Errors
     ///
@@ -747,18 +772,58 @@ impl EngineDriver {
         // pre-finish waiter would hang after a stop-before-resume.
         drop(self.pump_finished_tx.lock().take());
         let handle = self.pump_handle.lock().take();
-        if let Some(handle) = handle {
-            handle.abort();
-            // Drive the cancelled task to completion so its held resources
-            // drop before return. `block_on` on the shared runtime matches
-            // `subscribe`/`resume`'s sync discipline; the aborted task
-            // completes promptly.
-            let _ = degenbot_core::runtime::get_runtime().block_on(handle);
-            op_info!(domain = pump, "EngineDriver: BlockPump task aborted");
+        if let Some(mut handle) = handle {
+            // Cooperative first: the pump's own 500 ms `timed_exit_tick`
+            // select arm polls the shutdown flag, so an ordinary stop lets
+            // the loop unwind through its span guards and return normally.
+            // Abort is the ESCALATION, not the primary mechanism.
+            // The timeout future is built INSIDE the async block: `Sleep`
+            // captures the timer handle at construction, so it must not be
+            // constructed outside the runtime context.
+            let cooperative = degenbot_core::runtime::get_runtime()
+                .block_on(async { tokio::time::timeout(PUMP_STOP_GRACE, &mut handle).await });
+            match cooperative {
+                Ok(Ok(())) => {
+                    op_info!(
+                        domain = pump,
+                        grace_ms = pump_stop_grace_ms(),
+                        "EngineDriver: BlockPump task exited cooperatively on the shutdown flag"
+                    );
+                }
+                Ok(Err(join_err)) => {
+                    // The task ended on its own but with a join error (a
+                    // panic inside the pump). It is already gone, so there is
+                    // nothing to abort; name it so the abnormal end is not
+                    // mistaken for the cooperative path.
+                    op_error!(
+                        domain = pump,
+                        grace_ms = pump_stop_grace_ms(),
+                        error = %join_err,
+                        "EngineDriver: BlockPump task ended with a join error before the grace expired"
+                    );
+                }
+                Err(_) => {
+                    // The pump is parked somewhere its tick cannot reach (a
+                    // GIL re-entry park via `PySubscriberAdapter`, or
+                    // engine-lock contention inside `on_drain`), so the
+                    // cooperative path cannot fire. Cancel it and drive the
+                    // cancelled task to completion so its held resources
+                    // drop before return. `block_on` on the shared runtime
+                    // matches `subscribe`/`resume`'s sync discipline; the
+                    // aborted task completes promptly. This should be rare.
+                    handle.abort();
+                    let _ = degenbot_core::runtime::get_runtime().block_on(handle);
+                    op_info!(
+                        domain = pump,
+                        grace_ms = pump_stop_grace_ms(),
+                        "EngineDriver: BlockPump did not exit cooperatively within grace — aborted (fallback)"
+                    );
+                }
+            }
         } else {
             op_info!(
                 domain = pump,
-                "EngineDriver: BlockPump not running (no pump handle to abort)"
+                "EngineDriver: BlockPump not running (no pump handle to stop)"
             );
         }
         *self.subscribe_state.lock() = None;
@@ -1478,6 +1543,190 @@ mod tests {
             "stop must abort the pending pump task promptly"
         );
         assert!(!driver.pump_handle_armed());
+    }
+
+    /// Minimal `tracing_subscriber::Layer` that records every event's level +
+    /// message body. Same pattern as `LoudCloseCapture` in
+    /// `engine_stages.rs` / `ReorgSpanCapture` in the block-pump tests: a real
+    /// subscriber through `tracing::subscriber::with_default`, so the test
+    /// observes the actual `op_info!`/`op_error!` dispatch rather than a mocked
+    /// logger. Used to tell the pump's COOPERATIVE exit apart from the abort
+    /// ESCALATION.
+    #[derive(Clone, Default)]
+    struct StopLogCapture {
+        events: Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>,
+    }
+
+    impl StopLogCapture {
+        fn messages(&self, level: tracing::Level) -> Vec<String> {
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .filter(|(recorded, _)| *recorded == level)
+                .map(|(_, message)| message.clone())
+                .collect()
+        }
+
+        fn describes(&self, needle: &str) -> bool {
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .any(|(_, message)| message.contains(needle))
+        }
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for StopLogCapture {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            struct Message(String);
+            impl tracing::field::Visit for Message {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = format!("{value:?}");
+                    }
+                }
+            }
+            let mut message = Message(String::new());
+            event.record(&mut message);
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((*event.metadata().level(), message.0));
+        }
+    }
+
+    /// Build a driver whose pump is resumed on a stream that NEVER yields, so
+    /// the live loop parks in its select and only the 500 ms `timed_exit_tick`
+    /// arm can end it — the exact shape `stop()`'s cooperative path serves.
+    fn driver_with_parked_pump() -> EngineDriver {
+        let driver = driver_for_test();
+        let _result_rx = driver.take_result_receiver();
+        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
+        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
+        let control: Arc<dyn PumpControl> = driver.stages().clone();
+        let pump = BlockPump::for_test(
+            Arc::clone(driver.bot()),
+            stages_handlers,
+            control,
+            reorg,
+            mock_provider(),
+            Arc::clone(&driver.shutdown),
+        );
+        driver.install_subscribe_state_for_test(DriverSubscribeState {
+            pump,
+            first_block: 100,
+            combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
+        });
+        driver.set_phase(PumpPhase::SnapshotLoaded);
+        degenbot_core::runtime::get_runtime()
+            .block_on(driver.resume())
+            .expect("resume with a pending subscribe state");
+        assert!(driver.pump_handle_armed());
+        driver
+    }
+
+    /// **Cooperative test.** A pump parked in its select (a stream that never
+    /// yields) observes the shutdown flag on its OWN 500 ms tick arm and
+    /// returns normally. Asserted three ways: the driver's cooperative-exit
+    /// line is emitted, the abort escalation line is NOT, and the stop
+    /// completes inside roughly one tick — far inside the 2 s grace.
+    ///
+    /// `stop()` drives its join on the test thread, so the thread-local capture
+    /// sees the stop-path lines the driver emits.
+    #[test]
+    fn stop_exits_cooperatively_without_aborting_a_parked_pump() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let capture = StopLogCapture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        tracing::subscriber::with_default(subscriber, || {
+            let driver = driver_with_parked_pump();
+            // Let the resume task actually reach its parked select before the
+            // stop, so this exercises the tick arm and not a pre-select race.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
+            let started = std::time::Instant::now();
+            driver.stop().expect("cooperative stop");
+            let elapsed = started.elapsed();
+
+            assert!(
+                elapsed >= std::time::Duration::from_millis(400),
+                "the cooperative exit is reached via the 500ms tick, not instantly; took {elapsed:?}"
+            );
+            assert!(
+                elapsed < std::time::Duration::from_millis(1500),
+                "stop must return inside one tick window, well inside the grace; took {elapsed:?}"
+            );
+            assert!(!driver.pump_handle_armed());
+            assert!(
+                capture.describes("exited cooperatively"),
+                "the cooperative exit must be logged; INFO lines were {:?}",
+                capture.messages(tracing::Level::INFO)
+            );
+            assert!(
+                !capture.describes("did not exit cooperatively"),
+                "the abort escalation must NOT fire for a pump parked at its select; INFO lines were {:?}",
+                capture.messages(tracing::Level::INFO)
+            );
+        });
+    }
+
+    /// **Escalation test.** A task that never polls the shutdown flag — an
+    /// unconditional park — is the pump handle `stop()` must join. The grace
+    /// expires and the `abort()` fallback fires, and the stop still resolves.
+    ///
+    /// This is the decomposition the chunk brief sanctions: the REAL
+    /// non-cooperative parks named in `run_loop.rs` (a GIL re-entry park via
+    /// `PySubscriberAdapter`, or engine-lock contention inside `on_drain`) are
+    /// Python-embedding / lock-ordering shapes that cannot be constructed from
+    /// the offline test driver without disproportionate scaffolding (a hostile
+    /// `StageHandlers`/`PumpControl` impl holding the engine lock through the
+    /// whole park). An unconditional park is their minimal honest equivalent:
+    /// both are "parked somewhere the 500 ms tick cannot reach".
+    #[test]
+    fn stop_escalates_to_abort_when_the_grace_expires() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let capture = StopLogCapture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        tracing::subscriber::with_default(subscriber, || {
+            let driver = driver_for_test();
+            let runtime = degenbot_core::runtime::get_runtime();
+            let handle = runtime.spawn(std::future::pending::<()>());
+            *driver.pump_handle.lock() = Some(handle);
+            assert!(driver.pump_handle_armed());
+
+            let started = std::time::Instant::now();
+            driver.stop().expect("stop must complete after escalation");
+            let elapsed = started.elapsed();
+
+            assert!(
+                elapsed >= PUMP_STOP_GRACE,
+                "the abort fallback must wait out the full grace; took {elapsed:?}"
+            );
+            assert!(
+                elapsed < std::time::Duration::from_secs(10),
+                "the escalation must still resolve promptly; took {elapsed:?}"
+            );
+            assert!(!driver.pump_handle_armed());
+            assert!(
+                capture.describes("did not exit cooperatively"),
+                "the abort fallback must be logged; INFO lines were {:?}",
+                capture.messages(tracing::Level::INFO)
+            );
+            assert!(
+                !capture.describes("exited cooperatively"),
+                "the cooperative arm must not be logged for a non-cooperative park; INFO lines were {:?}",
+                capture.messages(tracing::Level::INFO)
+            );
+        });
     }
 
     #[test]
