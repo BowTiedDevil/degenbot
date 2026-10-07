@@ -341,7 +341,8 @@ async fn session(
     loop {
         let frame = tokio::select! {
             () = tokio::time::sleep(cfg.watchdog) => return SessionEnd::Stall,
-            Ok(()) = stop_rx.changed() => {
+            // Wildcard `_` is deliberate: `changed()` also yields `Err` on a dropped stop sender, and this arm must fire then too so a closed watch ends the session promptly instead of waiting out the watchdog.
+            _ = stop_rx.changed() => {
                 let _ = ws.send(Message::Close(None)).await;
                 return SessionEnd::Stopped;
             }
@@ -541,4 +542,80 @@ fn hex_u128(v: Option<&Json>) -> Option<u128> {
 
 fn hex_u256(s: &str) -> Option<U256> {
     U256::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok()
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use tokio_tungstenite::accept_async;
+
+    /// A `Shared` over a throwaway detached ring, mirroring `TxpoolFeed::build`
+    /// (the session never touches the ring on the stop path).
+    fn test_shared() -> Arc<Shared> {
+        let hub = Hub::new();
+        let (source, _ring) = hub.detached_drop_oldest(TXPOOL_DROPPED_RING_METRIC, 4);
+        Arc::new(Shared {
+            cfg_backoff: (Duration::from_millis(20), Duration::from_millis(50)),
+            source,
+            connected: AtomicBool::new(false),
+            accepted: AtomicU64::new(0),
+            rejected_chain_id: AtomicU64::new(0),
+            rejected_parse: AtomicU64::new(0),
+            mine_misses: AtomicU64::new(0),
+            reconnects: AtomicU64::new(0),
+            last_event_unix_ms: AtomicU64::new(0),
+        })
+    }
+
+    /// Acceptance pin for the stop arm of `session`'s frame `select!` (the
+    /// `_ = stop_rx.changed()` arm just above). `watch::Receiver::changed()`
+    /// resolves to `Err` when the stop sender is dropped WITHOUT a send; the
+    /// wildcard binding makes the arm fire on that `Err` too, so a closed stop
+    /// watch ends the session promptly as `SessionEnd::Stopped`. The pre-fix
+    /// `Ok(()) = stop_rx.changed()` pattern left the arm disabled in that case
+    /// and the session waited out `cfg.watchdog` (returning `Stall` here).
+    ///
+    /// Shape: this drives the real `session` directly against a silent mock WS,
+    /// because the public `TxpoolFeed` API cannot drop the sender without a
+    /// send — both `stop()` and `Drop` call `stop_tx.send(true)`, an `Ok`
+    /// change, never the sender-drop this arm exists to catch. `backrun_feed`'s
+    /// `session` carries the identical arm.
+    #[tokio::test]
+    async fn dropped_stop_sender_ends_the_session_as_stopped() {
+        // Mock server: accept one connection and hold it open, relaying
+        // nothing — so the ws.next() arm stays pending.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await {
+                if let Ok(mut ws) = accept_async(stream).await {
+                    while let Some(Ok(_)) = ws.next().await {}
+                }
+            }
+        });
+        let ws_url = format!("ws://127.0.0.1:{}", addr.port());
+        let request = ws_url.as_str().into_client_request().unwrap();
+        let (ws, _resp) = connect_async(request).await.unwrap();
+
+        let cfg = TxpoolFeedConfig {
+            ws_url,
+            // Small so that if the stop arm does NOT fire on the dropped
+            // sender, this test fails fast with `Stall` instead of hanging.
+            watchdog: Duration::from_secs(2),
+            ..TxpoolFeedConfig::defaults()
+        };
+        let shared = test_shared();
+        let (stop_tx, mut stop_rx) = watch::channel(false);
+        // Sender dropped with no send: the receiver can only observe the
+        // closed channel, so `changed()` resolves to `Err`.
+        drop(stop_tx);
+
+        let end = session(ws, &cfg, &shared, &mut stop_rx).await;
+        assert_eq!(
+            end,
+            SessionEnd::Stopped,
+            "a dropped stop sender must end the session as Stopped, not wait out the watchdog"
+        );
+    }
 }

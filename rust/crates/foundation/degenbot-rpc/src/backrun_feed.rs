@@ -342,7 +342,8 @@ async fn session(
     loop {
         let frame = tokio::select! {
             () = tokio::time::sleep(cfg.watchdog) => return SessionEnd::Stall,
-            Ok(()) = stop_rx.changed() => {
+            // Wildcard `_` is deliberate: `changed()` also yields `Err` on a dropped stop sender, and this arm must fire then too so a closed watch ends the session promptly instead of waiting out the watchdog.
+            _ = stop_rx.changed() => {
                 let _ = ws.send(Message::Close(None)).await;
                 return SessionEnd::Stopped;
             }
