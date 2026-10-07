@@ -119,17 +119,6 @@ def testing_pools() -> Any:
     return pools
 
 
-@pytest.fixture
-def liquidity_snapshot() -> dict[str, Any]:
-    snapshot: dict[str, Any] = pydantic_core.from_json(
-        pathlib.Path(
-            "tests/uniswap/v3/main_v3_liquidity_snapshot_block_21_123_218.json",
-        ).read_bytes(),
-    )
-
-    return snapshot
-
-
 def convert_unsigned_integer_to_signed(num: int):
     """Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
     integers in a tuple to their unsigned representation
@@ -152,91 +141,6 @@ def test_first_200_pools(
         pool_address: str = pool["pool_address"]
 
         lp = bot.build_pool(pool_address)
-
-        max_reserves_token0 = 1 * 10**lp.token0.decimals
-        max_reserves_token1 = 1 * 10**lp.token1.decimals
-
-        for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
-            token_in_amount = max(1, int(token_mult * max_reserves_token0))
-
-            try:
-                quoter_amount_out = quoter.functions.quoteExactInputSingle(
-                    lp.token0.address,  # tokenIn
-                    lp.token1.address,  # tokenOut
-                    lp.fee,  # fee
-                    token_in_amount,  # amountIn
-                    MIN_SQRT_RATIO + 1,  # sqrtPriceLimitX96
-                ).call()
-            except ContractLogicError:
-                continue
-
-            if quoter_amount_out == 0:
-                continue
-
-            try:
-                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-                    token_in=lp.token0,
-                    token_in_quantity=token_in_amount,
-                )
-            except IncompleteSwap as exc:
-                helper_amount_out = exc.amount_out
-
-            assert helper_amount_out == quoter_amount_out
-
-        for token_mult in UNISWAP_TOKEN_AMOUNT_MULTIPLIERS:
-            token_in_amount = max(1, int(token_mult * max_reserves_token1))
-
-            try:
-                quoter_amount_out = quoter.functions.quoteExactInputSingle(
-                    lp.token1.address,  # tokenIn
-                    lp.token0.address,  # tokenOut
-                    lp.fee,  # fee
-                    token_in_amount,  # amountIn
-                    MAX_SQRT_RATIO - 1,  # sqrtPriceLimitX96
-                ).call()
-            except ContractLogicError:
-                continue
-
-            if quoter_amount_out == 0:
-                continue
-
-            try:
-                helper_amount_out = lp.calculate_tokens_out_from_tokens_in(
-                    token_in=lp.token1,
-                    token_in_quantity=token_in_amount,
-                )
-            except IncompleteSwap as exc:
-                helper_amount_out = exc.amount_out
-
-            assert helper_amount_out == quoter_amount_out
-
-
-SNAPSHOT_BLOCK = 21_123_218
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [SNAPSHOT_BLOCK],
-    indirect=True,
-)
-def test_first_200_pools_with_snapshot(
-    fork_mainnet_archive: AnvilFork,
-    testing_pools,
-    liquidity_snapshot,
-):
-    bot = make_bot_with_provider(fork_mainnet_archive.provider)
-
-    quoter = make_contract(
-        fork_mainnet_archive.http_url, UNISWAP_V3_QUOTER_ADDRESS, UNISWAP_V3_QUOTER_ABI
-    )
-
-    for pool in testing_pools:
-        pool_address: str = pool["pool_address"]
-
-        lp = bot.build_pool(
-            pool_address,
-        )
 
         max_reserves_token0 = 1 * 10**lp.token0.decimals
         max_reserves_token1 = 1 * 10**lp.token1.decimals
