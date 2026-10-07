@@ -161,6 +161,24 @@ pub struct SessionEndDetection {
 
 impl SessionEndDetection {
     /// Arm detection over an arbitrary cause-producing future.
+    ///
+    /// # Cancel safety
+    ///
+    /// **Cancel-safe**: this function is NOT async (it takes a future, it
+    /// does not await one) — it performs no suspension itself, so it can never
+    /// be "cancelled mid-flight". It spawns a watchdog task that awaits
+    /// `future` and publishes the resulting [`SessionEndCause`] into this
+    /// detection's [`SessionEndFacts`] channel; that task's handle is stored
+    /// in the returned `SessionEndDetection`.
+    ///
+    /// **Teardown is Drop-driven**: the detection's `Drop` impl aborts the
+    /// stored watchdog (`self.watchdog.abort()`), so dropping the detection is
+    /// the abort path — the watchdog cannot outlive its detection and publish
+    /// a stale fact after teardown. This is the fence: the watchdog is owned
+    /// by the detection and nothing else may abort or detach it, and dropping
+    /// the `SessionEndFacts` handle is harmless because the source's
+    /// `_keepalive` sender keeps the channel open (a waiter observes the
+    /// retained fact, never a spurious close).
     pub fn from_future<F>(future: F) -> Self
     where
         F: Future<Output = SessionEndCause> + Send + 'static,

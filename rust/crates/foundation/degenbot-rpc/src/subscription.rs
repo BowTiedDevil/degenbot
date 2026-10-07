@@ -271,6 +271,37 @@ pub(crate) enum HeaderDriveExit {
 /// The watchdog bounds `stream.next()` so a silently-stalled socket (no close
 /// frame, never resolves) is torn down within a bounded window instead of
 /// hanging the driver forever.
+///
+/// # Cancel safety
+///
+/// **Mostly cancel-safe, with an honest remainder.**
+///
+/// *Dropping the inner `timeout(.., stream.next())` future*: `StreamExt::next`
+/// is the documented-cancel-safe read — dropping it without producing an item
+/// consumes nothing from the stream, so the next `next()` observes the same
+/// pending/next item. The watchdog firing (`Err(_)`) drops only that `next()`
+/// future; the following `next_stream()` rebuilds a fresh subscription and
+/// assigns it to the same `stream` binding.
+///
+/// *The unsafe remainder — the buffered-items question*: the loop OWNS `stream`
+/// by value, and a stream is not a resumable cursor. So when the WHOLE
+/// `drive_new_heads` future is cancelled (its owning task is dropped/aborted —
+/// `pump_header_stream` runs as a spawned task), `stream` is dropped with it,
+/// and **any headers the underlying subscription had already buffered but this
+/// loop had not yet consumed are lost** — not replayed, not re-buffered. The
+/// reconnect path re-subscribes (`eth_subscribe`) and anchors on the CURRENT
+/// head, so it does not backfill the delivered-but-unconsumed window either.
+/// The two cancellation scopes therefore differ: cancelling the inner
+/// `next()` (watchdog) is lossless, but cancelling the outer future discards
+/// everything buffered past the last header handed to `on_header`.
+///
+/// **Caller's obligation / the fence**: `on_header` is the ONLY durable sink
+/// for a header — once it returns the item is the caller's. A caller that
+/// needs the delivered-but-unconsumed window must not rely on it surviving a
+/// cancellation of this loop; it must persist each header at `on_header` time.
+/// A clean stop is signalled by returning `false` from a callback (which yields
+/// [`HeaderDriveExit`]) — not by dropping the task, which would silently
+/// discard the buffered tail.
 pub(crate) async fn drive_new_heads<S, F, Fut, H, D, E>(
     mut stream: S,
     watchdog: Duration,

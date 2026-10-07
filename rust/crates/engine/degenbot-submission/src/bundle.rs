@@ -215,6 +215,26 @@ pub enum BundleRelayError {
 /// closed stream before the response, or a JSON-RPC error object.
 /// The driver owns retry/session policy (bids are single-shot per block; a
 /// dropped bid is a no-cost miss under the revert shield).
+///
+/// # Cancel safety
+///
+/// **Mostly cancel-safe**: the connect, the response await, and the close are
+/// each a single `await` on a Tokio primitive that loses nothing when
+/// dropped — a retry re-runs the whole one-shot exchange against a fresh
+/// socket. Bids are **single-shot per block** by contract (see the driver's
+/// retry/session policy above): there is no partial-progress state to resume,
+/// so cancelling before the send simply means no bid was placed.
+///
+/// **The unsafe remainder — the send is fire-and-forget once issued**: the
+/// `ws.send(Message::Text(..))` is an await that, once its bytes are handed
+/// to the transport, has already delivered the request to the relay. Dropping
+/// this future AFTER the send but before the response leaves the relay having
+/// received the bid while the caller never observes the reply. That is a
+/// no-cost miss under the revert shield (the documented single-shot contract),
+/// not a correctness hazard — but the caller MUST treat a cancelled
+/// `send_request` as a **possible submit**, never as a guaranteed non-submit,
+/// and MUST NOT re-send the same bid as if the first attempt had not left the
+/// process. Cancel before the send `await` to be certain nothing was sent.
 pub async fn send_request(
     url: &str,
     request: Json,

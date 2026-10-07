@@ -683,6 +683,27 @@ impl EngineDriver {
     /// - [`DriverError::NoResultReceiver`] when the result receiver has not
     ///   been taken.
     /// - [`DriverError::Resume`] when the pending state carries no WS stream.
+    ///
+    /// # Cancel safety
+    ///
+    /// **Cancel-safe**: `resume` does not own the pump it starts. Once the
+    /// synchronous `backfill_with_drain` returns and the live loop is handed
+    /// to `tokio::spawn`, the spawned task OWNS the pump (`pump` is moved into
+    /// the async block); only its `JoinHandle` is stored back into
+    /// `self.pump_handle`. A dropped `resume` future therefore drops the
+    /// handle's future, not the pump task — the pump keeps running to
+    /// completion, and its completion sender (moved into the same task) still
+    /// drops on whatever terminal path, so every `wait_pump_finished` waiter
+    /// resolves exactly as if `resume` had returned normally.
+    ///
+    /// **The unsafe remainder is temporal, not structural**: if the future is
+    /// cancelled BEFORE the spawn (during the awaited `backfill_with_drain`),
+    /// the pump is never started and the pending `subscribe_state` was already
+    /// `take()`n — the driver is left in `SnapshotLoaded` with no subscribe
+    /// state, so a retry fails with [`DriverError::SessionState`] and the
+    /// caller must `subscribe()` again. Cancelling after the spawn leaves a
+    /// running pump whose handle is stored; the caller must not assume a
+    /// cancelled `resume` means "not resumed".
     pub async fn resume(&self) -> Result<(), DriverError> {
         if self.is_stopped() {
             return Err(DriverError::SessionState(

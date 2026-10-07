@@ -265,6 +265,27 @@ impl Drop for ReservationGuard<'_> {
 /// abort ([`Dispatcher::abort_all_tasks`]) or an early `return Err` cannot
 /// strand the tx's pool reservations.
 ///
+/// # Cancel safety
+///
+/// **Cancel-safe**: the reservations this monitor holds are owned by a
+/// `ReservationGuard` whose `Drop` releases them on **any** exit from the
+/// future — cooperative return, an early `return Err` from the probe, or a
+/// task abort that drops the future mid-`.await`. Tokio's cancellation
+/// contract runs `Drop` for every local live across the suspension point, and
+/// the guard is such a local, so a cancelled monitor cannot leak the tx's
+/// pool reservations. This release-exactly-once property is pinned by the
+/// module's guard/reservation tests.
+///
+/// **The fence**: this guard is the fix for the audit's leak — the original
+/// port released pools only on its terminal branches, so a task abort
+/// (reachable from the `pyo3` boundary via
+/// [`Dispatcher::abort_all_tasks`]) stranded them with no terminal path and no
+/// observer. The `Drop` backstop is the fence: any future edit that releases
+/// reservations OUTSIDE the guard reopens the leak. Do not add an eager
+/// release that bypasses the guard, and do not hold an `.await` across the
+/// guard's `Drop` (its `release` is deliberately synchronous — no lock guard
+/// held across a suspension point).
+///
 /// # Errors
 /// Propagates [`crate::SubmissionError`] if the receipt probe itself fails
 /// with a non-"not-found" RPC error (the Python oracle's

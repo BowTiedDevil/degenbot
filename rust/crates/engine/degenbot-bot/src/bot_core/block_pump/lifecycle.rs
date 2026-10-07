@@ -128,6 +128,34 @@ impl BlockPump {
     /// returning so Python's `build_paths` cannot race the per-pool buffer —
     /// MUST go through this helper so the drain discipline has a
     /// single owner.
+    ///
+    /// # Cancel safety
+    ///
+    /// **Cancel-safe**: the concurrent drain is the whole point, and the
+    /// re-injection is its safety mechanism. `drain_stream_during_backfill`
+    /// runs `tokio::select!` over `(&mut backfill, combined.next())`, so each
+    /// loop iteration drops the NOT-taken arm's future — the backfill future
+    /// on a select that took a stream event, and the `combined.next()` future
+    /// on a select that completed the backfill. Dropping either is harmless:
+    /// the backfill future is `&mut`-pinned and re-polled on the next lap, and
+    /// `StreamExt::next` is the documented-cancel-safe read that consumes
+    /// nothing when dropped without producing an item.
+    ///
+    /// The drained events are not lost across that churn: this method
+    /// re-injects every drained event via
+    /// `stream::iter(drained).chain(combined)`, ahead of the still-owned live
+    /// tail, preserving arrival order. **That re-injection IS the
+    /// cancel-safety mechanism** — the hazard this helper exists to defeat is
+    /// the alloy `logs` broadcast channel dropping the OLDEST buffered
+    /// messages for a lagging receiver (see the module and `resume_*` docs),
+    /// and the drain-then-reinject shape means a backfill that outlives the
+    /// broadcast buffer still hands every rescued event to the live loop.
+    ///
+    /// **Caller's obligation**: the returned stream MUST be the one the live
+    /// loop drives. A caller that drops the returned stream (or drives the
+    /// original `combined` instead) discards the re-injected prefix — the
+    /// drained events would then be lost exactly as if the drain had never
+    /// run.
     pub async fn backfill_with_drain(
         &self,
         first_block: u64,

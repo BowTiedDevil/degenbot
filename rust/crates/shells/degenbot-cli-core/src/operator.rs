@@ -661,6 +661,30 @@ async fn exchange(socket: &Path, line: String) -> Result<WireResponse, CliError>
 /// need not abandon a partial line: the loop re-arms against the SAME buffer
 /// under the SAME deadline, and the terminal timeout reports how many partial
 /// bytes it gave up.
+///
+/// # Cancel safety
+///
+/// **Cancel-safe on the READ side only**: the `read_until` loop appends into
+/// the CALLER-OWNED `buffer`, and a cancelled `timeout(.., read_until(..))`
+/// future drops only the in-flight read — never the bytes it already pushed
+/// into that buffer. So cancellation mid-read leaves the accumulated prefix
+/// intact and a resumed loop re-arms against the same buffer under the same
+/// deadline (this is exactly the resumability the phased-body doc documents).
+/// The `connect`/`write_all`/`flush` arms are single `await`s that lose
+/// nothing on drop; each surfaces a terminal `CliError::OperatorProtocol` on
+/// timeout or I/O failure rather than a partial success.
+///
+/// **The unsafe remainder — the accumulated prefix is discarded with no
+/// observer**: if the CALLER drops this future mid-exchange, the local
+/// `buffer` is dropped with it. Any partial response bytes read so far vanish,
+/// and because the drop is silent there is no telemetry, no error, and no
+/// partial-line report — the caller just never sees a `WireResponse`. The
+/// resumability above is resumability WITHIN one `exchange_within` call, not
+/// across a cancellation: a dropped future does not hand its `buffer` back.
+/// The caller's obligation is therefore to treat a cancelled exchange as a
+/// total loss of the in-flight line (re-issue the request fresh), not as a
+/// resumable partial — "resumable" describes the deadline lap, never the
+/// cancelled future.
 #[cfg(unix)]
 async fn exchange_within(
     socket: &Path,
