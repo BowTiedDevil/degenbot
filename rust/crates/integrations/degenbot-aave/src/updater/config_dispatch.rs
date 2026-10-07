@@ -26,10 +26,13 @@
 //!   revisions + `getSourceOfAsset`) + [`resolve_collateral_configuration`]
 //!   (`getConfiguration(address)`).
 //! - The discount pre-pass: [`build_discount_snapshot`] (the 3-way hybrid).
-//! - The revision memo: [`RevisionMemo`] — a per-run, block-pinned
+//! - The per-chunk dispatch context: [`ChunkContext`] — the chunk-scoped
+//!   dispatch constants (provider, market/chain ids, Pool + oracle
+//!   addresses) plus the block-pinned [`RevisionMemo`], a
 //!   `(implementation, selector, block) → revision` cache over the 4
 //!   revision reads, so repeated same-implementation probes inside one
-//!   chunk issue one RPC.
+//!   chunk issue one RPC. The context borrows its [`ChunkSpan`], so it
+//!   cannot outlive the chunk that built it.
 //! - The multicall batching: a dispatch's same-block, mutually-independent
 //!   `eth_call`s (the discount pre-pass's per-user fan, the
 //!   `ReserveInitialized` metadata + revision/`getSourceOfAsset` bursts)
@@ -68,7 +71,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::run::substrate::ChunkSubstrate;
+use super::run::substrate::{ChunkSubstrate, ASSET_KIND_V_TOKEN};
 use crate::ray_mul;
 use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_db::aave::AaveGhoAsset;
@@ -80,7 +83,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
 
 use crate::gho_processor::calculate_gho_discount_rate;
-use crate::run::{apply_chunk_events_on_conn, AaveChunkEvent};
+use crate::run::{apply_chunk_events_on_conn, AaveChunkEvent, AaveChunkWriteReport};
 
 /// The GHO-discount deprecation revision (V4+). Mirrors the Python
 /// `GHO_DISCOUNT_DEPRECATION_REVISION = 4`. At vToken revision ≥ this value,
@@ -187,6 +190,289 @@ impl RevisionMemo {
         self.insert(target, selector, block_number, v);
         Ok(v)
     }
+}
+
+// ── the per-chunk dispatch context ─────────────────────────────────────────
+
+/// The block span one chunk apply covers (`[chunk_start, chunk_end]`).
+///
+/// A [`ChunkContext`] borrows one of these, which is what makes the
+/// block-pinned revision rule structural rather than a comment-enforced
+/// convention: a context can only be built inside a chunk's span and cannot
+/// be carried across a chunk boundary.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ChunkSpan {
+    chunk_start: u64,
+    chunk_end: u64,
+}
+
+impl ChunkSpan {
+    /// The `[chunk_start, chunk_end]` span one chunk apply covers.
+    pub(crate) fn new(chunk_start: u64, chunk_end: u64) -> Self {
+        Self {
+            chunk_start,
+            chunk_end,
+        }
+    }
+
+    /// Whether `block_number` lies in this span. The block lane of the memo
+    /// key is meaningful only for reads the chunk actually covers; a read
+    /// outside the span is a caller error, not a cache miss.
+    fn contains(self, block_number: u64) -> bool {
+        self.chunk_start <= block_number && block_number <= self.chunk_end
+    }
+}
+
+/// The per-chunk config-dispatch context: the chunk-scoped dispatch constants
+/// + the block-pinned [`RevisionMemo`], in ONE owner with a single lifetime.
+///
+/// Built by [`ChunkContext::for_chunk`] at the top of a chunk apply and
+/// threaded by `&mut` through the dispatch. The constructor borrows a
+/// [`ChunkSpan`] for the whole context lifetime, so the context cannot outlive
+/// or cross a chunk boundary — the memo's block-pinned staleness rule (an
+/// `Upgraded` in one chunk must never serve a pre-upgrade revision to a later
+/// chunk) is enforced by construction, not by convention.
+pub(crate) struct ChunkContext<'span> {
+    span: &'span ChunkSpan,
+    provider: AlloyProvider,
+    market_id: i64,
+    chain_id: i64,
+    pool_address: Address,
+    oracle_address: Option<Address>,
+    memo: RevisionMemo,
+}
+
+impl<'span> ChunkContext<'span> {
+    /// Build the context owning a fresh memo for one chunk.
+    pub(crate) fn for_chunk(
+        span: &'span ChunkSpan,
+        provider: AlloyProvider,
+        market_id: i64,
+        chain_id: i64,
+        pool_address: Address,
+        oracle_address: Option<Address>,
+    ) -> Self {
+        Self {
+            span,
+            provider,
+            market_id,
+            chain_id,
+            pool_address,
+            oracle_address,
+            memo: RevisionMemo::new(),
+        }
+    }
+
+    /// The provider every dispatch RPC rides.
+    fn provider(&self) -> &AlloyProvider {
+        &self.provider
+    }
+
+    /// The market the dispatch resolves ids against.
+    fn market_id(&self) -> i64 {
+        self.market_id
+    }
+
+    /// The chain the dispatch's erc20 + GHO rows belong to.
+    fn chain_id(&self) -> i64 {
+        self.chain_id
+    }
+
+    /// The `POOL` proxy address (`getConfiguration` + the ops parser's scope).
+    fn pool_address(&self) -> Address {
+        self.pool_address
+    }
+
+    /// The `PRICE_ORACLE` address as captured at chunk start (the per-event
+    /// `resolve_reserve_oracle_address` re-reads `conn` when this is `None`).
+    fn oracle_address(&self) -> Option<Address> {
+        self.oracle_address
+    }
+
+    /// The block-pinned revision memo. Every revision read the dispatch issues
+    /// resolves through here, so the memo's block lane is applied at exactly
+    /// the reads that need it.
+    fn memo(&mut self) -> &mut RevisionMemo {
+        &mut self.memo
+    }
+
+    /// The chunk overlay's ONE apply seam: commit `events` to `conn` and let
+    /// the apply arms record every cache-visible write into `substrate` (the
+    /// `Upgraded` revision bump, the scaled-token balances, the GHO dirty
+    /// mark) before any later read consults the overlay.
+    ///
+    /// The read-your-own-writes order is apply-then-read by construction,
+    /// because this is the only place the chunk loop writes an event's effect
+    /// to the overlay: the per-tx GHO revision re-resolve, the discount
+    /// pre-pass, and the next log-transaction's dispatch all read the overlay
+    /// the previous apply left behind. A refactor that dispatched a read ahead
+    /// of the write it depends on would have to bypass this method.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`degenbot_db::DbError`] from any apply failure — the caller
+    /// drops the chunk `Transaction` (rollback).
+    pub(crate) fn apply_events(
+        &mut self,
+        conn: &Connection,
+        events: &[AaveChunkEvent],
+        substrate: &mut ChunkSubstrate,
+    ) -> Result<AaveChunkWriteReport, DbError> {
+        apply_chunk_events_on_conn(conn, self.market_id, events, substrate)
+    }
+
+    /// Read `sig` on `target` at `block_number` through the memo — the one
+    /// seam every revision read in the dispatch goes through.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the underlying `eth_call` failure on a memo miss.
+    async fn read_revision(
+        &mut self,
+        target: &Address,
+        sig: &str,
+        block_number: u64,
+    ) -> Result<U256, ConfigDispatchError> {
+        debug_assert!(
+            self.span.contains(block_number),
+            "chunk-dispatch revision read at a block outside the chunk span"
+        );
+        self.memo
+            .read(&self.provider, target, sig, block_number)
+            .await
+    }
+
+    /// Run one log-transaction's overlay-mediated read + dispatch stages in
+    /// the ONE order the read-your-own-writes contract requires.
+    ///
+    /// The sequence is fixed here and nowhere else:
+    ///
+    /// 1. **re-read the overlay's GHO vToken revision** — a prior log-
+    ///    transaction's `Upgraded` apply bumped the cached row, and this read
+    ///    must see the bump (a chunk-start snapshot would not).
+    /// 2. **build the discount snapshot** — the GHO-discount pre-pass, gated
+    ///    on the revision just read.
+    /// 3. **dispatch the config events** — each event applies intra-dispatch via
+    ///    [`ChunkContext::apply_events`], so a later event in the same
+    ///    transaction sees an earlier event's write.
+    ///
+    /// Returning the resolved GHO addresses lets the caller parse the
+    /// transaction's operations against the same overlay state.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a substrate lookup failure or the dispatch's own error.
+    pub(crate) async fn dispatch_transaction(
+        &mut self,
+        conn: &Connection,
+        substrate: &mut ChunkSubstrate,
+        tx_logs: &[&alloy::rpc::types::Log],
+        block_number: u64,
+    ) -> Result<TransactionDispatch, ConfigDispatchError> {
+        // (0) Re-resolve the GHO row for THIS transaction — sees a prior
+        //     transaction's write through the overlay's dirty-mark contract.
+        let gho_asset = substrate.gho_asset(conn)?;
+        let underlying = gho_asset
+            .as_ref()
+            .and_then(|g| g.gho_token_address.as_deref())
+            .and_then(|s| s.parse().ok());
+        let gho_vtoken = gho_asset
+            .as_ref()
+            .and_then(|g| g.v_token_address.as_deref())
+            .and_then(|s| s.parse().ok());
+        let stk_aave = gho_asset
+            .as_ref()
+            .and_then(|g| g.v_gho_discount_token.as_deref())
+            .and_then(|s| s.parse().ok());
+
+        // (1) Re-resolve the GHO vToken revision — the overlay's cached row
+        //     carries the prior transaction's `Upgraded` bump.
+        let vtoken_revision: Option<u32> = match gho_asset
+            .as_ref()
+            .and_then(|g| g.v_token_address.as_deref())
+        {
+            Some(addr_str) => substrate
+                .lookup_asset_row(conn, self.market_id, ASSET_KIND_V_TOKEN, addr_str)?
+                .map(|row| row.v_token_revision),
+            None => None,
+        };
+
+        // (2) The discount pre-pass (RPC + the DB-cache path) reads `conn`
+        //     (sees prior transactions' writes).
+        let discounts = build_discount_snapshot(
+            self.provider(),
+            tx_logs,
+            block_number,
+            gho_vtoken,
+            vtoken_revision,
+            self.market_id,
+            conn,
+        )
+        .await?;
+
+        // (3) The config-event dispatch (RPC + substrate lookups). The
+        //     revision reads ride the per-chunk memo; the same-block
+        //     independent `eth_call`s ride the multicall batch.
+        let config_events = dispatch_config_events(
+            self,
+            tx_logs,
+            conn,
+            gho_asset.as_ref(),
+            block_number,
+            substrate,
+        )
+        .await?;
+
+        Ok(TransactionDispatch {
+            discounts,
+            config_events,
+            gho_underlying_address: underlying,
+            gho_vtoken_address: gho_vtoken,
+            stk_aave_address: stk_aave,
+        })
+    }
+
+    /// The `ProxyCreated` resolution through this chunk's memo + provider —
+    /// the chunk-dispatch sibling of the `match_proxy_id` free fn the cold-boot
+    /// bootstrap pass calls with its own memo.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the revision `eth_call` failure on a memo miss.
+    async fn resolve_proxy_created(
+        &mut self,
+        id: &alloy::primitives::B256,
+        proxy_address: &Address,
+        implementation_address: &Address,
+        block_number: u64,
+    ) -> Result<Option<ProxyCreationResolution>, ConfigDispatchError> {
+        match_proxy_id(
+            &mut self.memo,
+            &self.provider,
+            id,
+            proxy_address,
+            implementation_address,
+            block_number,
+        )
+        .await
+    }
+}
+
+/// The products of one log-transaction's dispatch stages — the GHO-discount
+/// snapshot, the emitted config events, and the overlay-resolved GHO addresses
+/// the caller's operation parser consumes.
+#[derive(Debug)]
+pub(crate) struct TransactionDispatch {
+    /// The per-user GHO discount snapshot for this transaction.
+    pub(crate) discounts: HashMap<Address, U256>,
+    /// The config events dispatched (already applied intra-dispatch).
+    pub(crate) config_events: Vec<AaveChunkEvent>,
+    /// The GHO underlying (`GHO`) address, resolved from the overlay.
+    pub(crate) gho_underlying_address: Option<Address>,
+    /// The GHO vToken (`v_token`) address, resolved from the overlay.
+    pub(crate) gho_vtoken_address: Option<Address>,
+    /// The GHO discount token (stkAAVE) address, resolved from the overlay.
+    pub(crate) stk_aave_address: Option<Address>,
 }
 
 /// The 4-byte selector of a revision signature (the memo key's middle lane).
@@ -788,17 +1074,13 @@ pub async fn resolve_collateral_configuration(
 /// substrate `get_or_create_erc20_token_on_conn` takes metadata as a caller
 /// param, so this is consistent with the existing contract — the gap is
 /// isolated to this fn's token resolution).
-#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub(crate) async fn resolve_reserve_initialized(
-    provider: &AlloyProvider,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
-    market_id: i64,
-    chain_id: i64,
     oracle_address: Address,
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     conn: &Connection,
-    memo: &mut RevisionMemo,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken),
     //    RPC-fetching the name/symbol/decimals from the chain (the
@@ -812,7 +1094,7 @@ pub(crate) async fn resolve_reserve_initialized(
     let a_token_str = checksum(&decoded.a_token);
     let v_token_str = checksum(&decoded.variable_debt_token);
     let metadata = fetch_erc20_metadata_batched(
-        provider,
+        ctx.provider(),
         [
             &decoded.asset,
             &decoded.a_token,
@@ -825,7 +1107,7 @@ pub(crate) async fn resolve_reserve_initialized(
         metadata;
     let underlying_asset_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
-        chain_id,
+        ctx.chain_id(),
         &underlying_str,
         underlying_name.as_deref(),
         underlying_symbol.as_deref(),
@@ -833,7 +1115,7 @@ pub(crate) async fn resolve_reserve_initialized(
     )?;
     let a_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
-        chain_id,
+        ctx.chain_id(),
         &a_token_str,
         a_name.as_deref(),
         a_symbol.as_deref(),
@@ -841,7 +1123,7 @@ pub(crate) async fn resolve_reserve_initialized(
     )?;
     let v_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
-        chain_id,
+        ctx.chain_id(),
         &v_token_str,
         v_name.as_deref(),
         v_symbol.as_deref(),
@@ -850,9 +1132,11 @@ pub(crate) async fn resolve_reserve_initialized(
 
     // 2. EIP-1967: resolve the aToken + vToken implementation addresses.
     //    `get_storage_at` has no Multicall3 shape — these two stay sequential.
-    let atoken_impl = read_implementation_slot(provider, &decoded.a_token, block_number).await?;
+    let atoken_impl =
+        read_implementation_slot(ctx.provider(), &decoded.a_token, block_number).await?;
     let vtoken_impl =
-        read_implementation_slot(provider, &decoded.variable_debt_token, block_number).await?;
+        read_implementation_slot(ctx.provider(), &decoded.variable_debt_token, block_number)
+            .await?;
 
     // 3. + 4. ATOKEN_REVISION() / DEBT_TOKEN_REVISION() on the implementations
     //    + getSourceOfAsset(address) on the PRICE_ORACLE — three
@@ -861,8 +1145,7 @@ pub(crate) async fn resolve_reserve_initialized(
     //    sequential shape; see `eth_calls_batched_or_direct`).
     let (a_token_revision, v_token_revision, price_source) =
         read_reserve_init_revisions_and_source(
-            provider,
-            memo,
+            ctx,
             atoken_impl,
             vtoken_impl,
             &decoded.asset,
@@ -872,7 +1155,7 @@ pub(crate) async fn resolve_reserve_initialized(
         .await?;
 
     Ok(AaveChunkEvent::ReserveInitialized {
-        market_id,
+        market_id: ctx.market_id(),
         underlying_asset_id,
         a_token_id,
         a_token_revision: discount_to_i64(a_token_revision),
@@ -1011,19 +1294,13 @@ pub async fn build_discount_snapshot(
 /// `process_transaction` handles) + the 6 missing-variant events (-2b's
 /// scope: `Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
 /// `PoolDataProviderUpdated`/`AddressSet`/`ProxyCreated`).
-#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub(crate) async fn dispatch_config_events(
-    provider: &AlloyProvider,
+    ctx: &mut ChunkContext<'_>,
     tx_logs: &[&alloy::rpc::types::Log],
-    market_id: i64,
-    chain_id: i64,
     conn: &Connection,
-    pool_address: Address,
-    oracle_address: Option<Address>,
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     substrate: &mut ChunkSubstrate,
-    memo: &mut RevisionMemo,
 ) -> Result<Vec<AaveChunkEvent>, ConfigDispatchError> {
     let mut events = Vec::new();
     for log in tx_logs {
@@ -1032,16 +1309,11 @@ pub(crate) async fn dispatch_config_events(
         };
         if let Some(ev) = dispatch_single_config_event(
             &decoded,
-            provider,
-            market_id,
-            chain_id,
+            ctx,
             conn,
-            pool_address,
-            oracle_address,
             gho_asset,
             block_number,
             &mut *substrate,
-            memo,
         )
         .await?
         {
@@ -1052,12 +1324,7 @@ pub(crate) async fn dispatch_config_events(
             // `ReserveInitialized` (logIdx 413) just created. Matches the
             // Python's per-event apply (intra-tx read-your-own-writes). The
             // chunk loop's batch apply (the former step (d)) is removed.
-            apply_chunk_events_on_conn(
-                conn,
-                market_id,
-                std::slice::from_ref(&ev),
-                &mut *substrate,
-            )?;
+            ctx.apply_events(conn, std::slice::from_ref(&ev), &mut *substrate)?;
             events.push(ev);
         }
     }
@@ -1094,150 +1361,123 @@ fn resolve_reserve_oracle_address(
 /// [`AaveChunkEvent`] (`None` for skipped/non-config events). Extracted from
 /// [`dispatch_config_events`] to keep the loop fn under the 100-line
 /// `clippy::too_many_lines` limit (the 14-arm match is naturally one unit).
-#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
-#[expect(clippy::too_many_lines)] // the 14-arm match + the substrate args, one unit
 async fn dispatch_single_config_event(
     decoded: &DecodedAaveEvent,
-    provider: &AlloyProvider,
-    market_id: i64,
-    chain_id: i64,
+    ctx: &mut ChunkContext<'_>,
     conn: &Connection,
-    pool_address: Address,
-    oracle_address: Option<Address>,
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     substrate: &mut ChunkSubstrate,
-    memo: &mut RevisionMemo,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    let ev =
-        match decoded {
-            // ── the 8 sync handlers (no RPC) ──
-            DecodedAaveEvent::ReserveDataUpdated(ev) => Some(dispatch_reserve_data_updated(
+    let market_id = ctx.market_id();
+    let ev = match decoded {
+        // ── the 8 sync handlers (no RPC) ──
+        DecodedAaveEvent::ReserveDataUpdated(ev) => Some(dispatch_reserve_data_updated(
+            market_id,
+            block_number,
+            ev,
+            conn,
+            substrate,
+        )?),
+        DecodedAaveEvent::UserEModeSet(ev) => Some(dispatch_user_e_mode_set(
+            market_id,
+            block_number,
+            ev,
+            conn,
+            substrate,
+        )?),
+        DecodedAaveEvent::ReserveUsedAsCollateralEnabled(ev) => {
+            Some(dispatch_reserve_used_as_collateral(
+                market_id, ev.reserve, ev.user, true, conn, substrate,
+            )?)
+        }
+        DecodedAaveEvent::ReserveUsedAsCollateralDisabled(ev) => {
+            Some(dispatch_reserve_used_as_collateral(
+                market_id, ev.reserve, ev.user, false, conn, substrate,
+            )?)
+        }
+        DecodedAaveEvent::PriceOracleUpdated(ev) => {
+            Some(dispatch_price_oracle_updated(market_id, ev)?)
+        }
+        DecodedAaveEvent::AssetSourceUpdated(ev) => {
+            dispatch_asset_source_updated(market_id, ev, conn, substrate)?
+        }
+        DecodedAaveEvent::EModeCategoryAdded(ev) => {
+            Some(dispatch_e_mode_category_added(market_id, ev)?)
+        }
+        DecodedAaveEvent::EModeAssetCategoryChanged(ev) => Some(
+            dispatch_e_mode_asset_category_changed(market_id, ev, conn, substrate)?,
+        ),
+        DecodedAaveEvent::AssetCollateralInEModeChanged(ev) => Some(
+            dispatch_asset_collateral_in_emode_changed(market_id, ev, conn, substrate)?,
+        ),
+        DecodedAaveEvent::DiscountPercentUpdated(ev) => Some(dispatch_discount_percent_updated(
+            market_id,
+            block_number,
+            ev,
+            conn,
+            substrate,
+        )?),
+        DecodedAaveEvent::DiscountTokenUpdated(ev) => {
+            dispatch_discount_token_updated_with_fresh_resolution(gho_asset, ev, conn, substrate)?
+        }
+        DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => {
+            dispatch_discount_rate_strategy_updated_with_fresh_resolution(
+                gho_asset, ev, conn, substrate,
+            )?
+        }
+        // ── the 2 async RPC handlers ──
+        DecodedAaveEvent::CollateralConfigurationChanged(ev) => Some(
+            resolve_collateral_configuration(
+                ctx.provider(),
+                ctx.pool_address(),
+                ev,
+                market_id,
+                block_number,
+                conn,
+                substrate,
+            )
+            .await?,
+        ),
+        DecodedAaveEvent::ReserveInitialized(ev) => {
+            let oracle = resolve_reserve_oracle_address(conn, market_id, ctx.oracle_address())?;
+            Some(resolve_reserve_initialized(ctx, ev, oracle, gho_asset, block_number, conn).await?)
+        }
+        // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
+        // dispatch. Crash #3: the prior design processed
+        // these as proxies for the zero-leg Transfers; the Python never
+        // did (Staked/Redeem are fetched only for classification in
+        // `fetch_stk_aave_events`). The decoders stay (harmless, available
+        // for future classification) — what goes is the balance-mutation
+        // proxy. Balance mutation flows through the Transfer arm below. ──
+        DecodedAaveEvent::Staked(_) | DecodedAaveEvent::Redeem(_) => None,
+        // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
+        // neither-zero case via Option<i64>; scoped to the discount token). ──
+        DecodedAaveEvent::Erc20Transfer(ev) => {
+            dispatch_stk_aave_transfer_with_backfill(
+                ctx.provider(),
+                conn,
                 market_id,
                 block_number,
                 ev,
-                conn,
+                gho_asset,
                 substrate,
-            )?),
-            DecodedAaveEvent::UserEModeSet(ev) => Some(dispatch_user_e_mode_set(
-                market_id,
-                block_number,
-                ev,
-                conn,
-                substrate,
-            )?),
-            DecodedAaveEvent::ReserveUsedAsCollateralEnabled(ev) => {
-                Some(dispatch_reserve_used_as_collateral(
-                    market_id, ev.reserve, ev.user, true, conn, substrate,
-                )?)
-            }
-            DecodedAaveEvent::ReserveUsedAsCollateralDisabled(ev) => {
-                Some(dispatch_reserve_used_as_collateral(
-                    market_id, ev.reserve, ev.user, false, conn, substrate,
-                )?)
-            }
-            DecodedAaveEvent::PriceOracleUpdated(ev) => {
-                Some(dispatch_price_oracle_updated(market_id, ev)?)
-            }
-            DecodedAaveEvent::AssetSourceUpdated(ev) => {
-                dispatch_asset_source_updated(market_id, ev, conn, substrate)?
-            }
-            DecodedAaveEvent::EModeCategoryAdded(ev) => {
-                Some(dispatch_e_mode_category_added(market_id, ev)?)
-            }
-            DecodedAaveEvent::EModeAssetCategoryChanged(ev) => Some(
-                dispatch_e_mode_asset_category_changed(market_id, ev, conn, substrate)?,
-            ),
-            DecodedAaveEvent::AssetCollateralInEModeChanged(ev) => Some(
-                dispatch_asset_collateral_in_emode_changed(market_id, ev, conn, substrate)?,
-            ),
-            DecodedAaveEvent::DiscountPercentUpdated(ev) => Some(
-                dispatch_discount_percent_updated(market_id, block_number, ev, conn, substrate)?,
-            ),
-            DecodedAaveEvent::DiscountTokenUpdated(ev) => {
-                dispatch_discount_token_updated_with_fresh_resolution(
-                    gho_asset, ev, conn, substrate,
-                )?
-            }
-            DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => {
-                dispatch_discount_rate_strategy_updated_with_fresh_resolution(
-                    gho_asset, ev, conn, substrate,
-                )?
-            }
-            // ── the 2 async RPC handlers ──
-            DecodedAaveEvent::CollateralConfigurationChanged(ev) => Some(
-                resolve_collateral_configuration(
-                    provider,
-                    pool_address,
-                    ev,
-                    market_id,
-                    block_number,
-                    conn,
-                    substrate,
-                )
-                .await?,
-            ),
-            DecodedAaveEvent::ReserveInitialized(ev) => {
-                let oracle = resolve_reserve_oracle_address(conn, market_id, oracle_address)?;
-                Some(
-                    resolve_reserve_initialized(
-                        provider,
-                        ev,
-                        market_id,
-                        chain_id,
-                        oracle,
-                        gho_asset,
-                        block_number,
-                        conn,
-                        memo,
-                    )
-                    .await?,
-                )
-            }
-            // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
-            // dispatch. Crash #3: the prior design processed
-            // these as proxies for the zero-leg Transfers; the Python never
-            // did (Staked/Redeem are fetched only for classification in
-            // `fetch_stk_aave_events`). The decoders stay (harmless, available
-            // for future classification) — what goes is the balance-mutation
-            // proxy. Balance mutation flows through the Transfer arm below. ──
-            DecodedAaveEvent::Staked(_) | DecodedAaveEvent::Redeem(_) => None,
-            // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
-            // neither-zero case via Option<i64>; scoped to the discount token). ──
-            DecodedAaveEvent::Erc20Transfer(ev) => {
-                dispatch_stk_aave_transfer_with_backfill(
-                    provider,
-                    conn,
-                    market_id,
-                    block_number,
-                    ev,
-                    gho_asset,
-                    substrate,
-                )
+            )
+            .await?
+        }
+        // ── the 6 missing-variant config events ──────────────────
+        // Delegated to `resolve_missing_variant_event` to keep this fn under
+        // the 100-line `clippy::too_many_lines` limit.
+        //
+        // Operation events (Supply/Borrow/Mint/Burn/Transfer/...) + the
+        // 6 missing-variant events both fall through to the `_` arm. The
+        // `resolve_missing_variant_event` fn matches on the 6 missing-variant
+        // variants; for operation events it returns `Ok(None)`.
+        _ => {
+            resolve_missing_variant_event(decoded, ctx, gho_asset, block_number, conn, substrate)
                 .await?
-            }
-            // ── the 6 missing-variant config events ──────────────────
-            // Delegated to `resolve_missing_variant_event` to keep this fn under
-            // the 100-line `clippy::too_many_lines` limit.
-            //
-            // Operation events (Supply/Borrow/Mint/Burn/Transfer/...) + the
-            // 6 missing-variant events both fall through to the `_` arm. The
-            // `resolve_missing_variant_event` fn matches on the 6 missing-variant
-            // variants; for operation events it returns `Ok(None)`.
-            _ => {
-                resolve_missing_variant_event(
-                    decoded,
-                    provider,
-                    market_id,
-                    gho_asset,
-                    block_number,
-                    conn,
-                    substrate,
-                    memo,
-                )
-                .await?
-            }
-        };
+        }
+    };
     Ok(ev)
 }
 
@@ -1246,7 +1486,6 @@ async fn dispatch_single_config_event(
 /// `clippy::too_many_lines` limit. Returns `Ok(None)` for non-missing-variant
 /// events (operation events) + for `ProxyCreated` when the `id` doesn't match
 /// `POOL`/`POOL_CONFIGURATOR`.
-#[expect(clippy::too_many_arguments)] // the dispatch's substrate + memo threading
 ///
 /// # Events
 ///
@@ -1261,49 +1500,34 @@ async fn dispatch_single_config_event(
 ///   `b"POOL_CONFIGURATOR"`; RPC the revision on the impl address.
 async fn resolve_missing_variant_event(
     decoded: &DecodedAaveEvent,
-    provider: &AlloyProvider,
-    market_id: i64,
+    ctx: &mut ChunkContext<'_>,
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     conn: &Connection,
     substrate: &mut ChunkSubstrate,
-    memo: &mut RevisionMemo,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    let market_id = ctx.market_id();
     let ev = match decoded {
-        DecodedAaveEvent::Upgraded(ev) => Some(
-            resolve_upgraded(
-                provider,
-                ev,
-                market_id,
-                gho_asset,
-                block_number,
-                conn,
-                substrate,
-                memo,
-            )
-            .await?,
-        ),
+        DecodedAaveEvent::Upgraded(ev) => {
+            Some(resolve_upgraded(ctx, ev, gho_asset, block_number, conn, substrate).await?)
+        }
         DecodedAaveEvent::PoolUpdated(ev) => Some(
             resolve_contract_revision_updated(
-                provider,
+                ctx,
                 ev.new_address,
                 "POOL",
                 "POOL_REVISION()",
-                market_id,
                 block_number,
-                memo,
             )
             .await?,
         ),
         DecodedAaveEvent::PoolConfiguratorUpdated(ev) => Some(
             resolve_contract_revision_updated(
-                provider,
+                ctx,
                 ev.new_address,
                 "POOL_CONFIGURATOR",
                 "CONFIGURATOR_REVISION()",
-                market_id,
                 block_number,
-                memo,
             )
             .await?,
         ),
@@ -1330,15 +1554,14 @@ async fn resolve_missing_variant_event(
             })
         }
         DecodedAaveEvent::ProxyCreated(ev) => {
-            if let Some(resolved) = match_proxy_id(
-                &ev.id,
-                &ev.proxy_address,
-                &ev.implementation_address,
-                provider,
-                block_number,
-                memo,
-            )
-            .await?
+            if let Some(resolved) = ctx
+                .resolve_proxy_created(
+                    &ev.id,
+                    &ev.proxy_address,
+                    &ev.implementation_address,
+                    block_number,
+                )
+                .await?
             {
                 Some(AaveChunkEvent::ContractInserted {
                     market_id,
@@ -1504,8 +1727,7 @@ enum PendingRead {
 /// Propagates the batch's error contract (see
 /// [`eth_calls_batched_or_direct`]).
 async fn read_reserve_init_revisions_and_source(
-    provider: &AlloyProvider,
-    memo: &mut RevisionMemo,
+    ctx: &mut ChunkContext<'_>,
     atoken_impl: Address,
     vtoken_impl: Address,
     underlying: &Address,
@@ -1514,8 +1736,8 @@ async fn read_reserve_init_revisions_and_source(
 ) -> Result<(U256, U256, Option<String>), ConfigDispatchError> {
     let a_selector = revision_selector("ATOKEN_REVISION()");
     let v_selector = revision_selector("DEBT_TOKEN_REVISION()");
-    let mut a_revision = memo.get(&atoken_impl, a_selector, block_number);
-    let mut v_revision = memo.get(&vtoken_impl, v_selector, block_number);
+    let mut a_revision = ctx.memo().get(&atoken_impl, a_selector, block_number);
+    let mut v_revision = ctx.memo().get(&vtoken_impl, v_selector, block_number);
 
     let mut pending: Vec<(Address, Bytes, PendingRead)> = Vec::new();
     if a_revision.is_none() {
@@ -1536,18 +1758,18 @@ async fn read_reserve_init_revisions_and_source(
     pending.push((*oracle_address, source_calldata, PendingRead::SourceOfAsset));
 
     let pairs: Vec<(Address, Bytes)> = pending.iter().map(|(t, d, _)| (*t, d.clone())).collect();
-    let rets = eth_calls_batched_or_direct(provider, &pairs, block_number).await?;
+    let rets = eth_calls_batched_or_direct(ctx.provider(), &pairs, block_number).await?;
     let mut source = None;
     for ((_, _, slot), ret) in pending.iter().zip(rets) {
         match slot {
             PendingRead::ATokenRevision((t, s, b)) => {
                 let v = word0_to_u256(&ret).unwrap_or(U256::ZERO);
-                memo.insert(t, *s, *b, v);
+                ctx.memo().insert(t, *s, *b, v);
                 a_revision = Some(v);
             }
             PendingRead::VTokenRevision((t, s, b)) => {
                 let v = word0_to_u256(&ret).unwrap_or(U256::ZERO);
-                memo.insert(t, *s, *b, v);
+                ctx.memo().insert(t, *s, *b, v);
                 v_revision = Some(v);
             }
             PendingRead::SourceOfAsset => source = decode_address_return(&ret),
@@ -1742,17 +1964,15 @@ pub(crate) struct ProxyCreationResolution {
 ///    and the new revision ≥ `GHO_DISCOUNT_DEPRECATION_REVISION` (4). It clears
 ///    `v_gho_discount_token`/`v_gho_discount_rate_strategy` and bulk-resets
 ///    all users' `gho_discount` to 0 (the apply fn does the writes).
-#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 async fn resolve_upgraded(
-    provider: &AlloyProvider,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UpgradedEvent,
-    market_id: i64,
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     conn: &Connection,
     substrate: &mut ChunkSubstrate,
-    memo: &mut RevisionMemo,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
     let proxy_str = checksum(&decoded.proxy_address);
     // 1. asset lookup: a_token first, then v_token.
     let a_asset = substrate.lookup_asset_row(conn, market_id, "a_token", &proxy_str)?;
@@ -1778,8 +1998,8 @@ async fn resolve_upgraded(
     } else {
         "DEBT_TOKEN_REVISION()"
     };
-    let new_revision = memo
-        .read(provider, &decoded.implementation, rev_fn, block_number)
+    let new_revision = ctx
+        .read_revision(&decoded.implementation, rev_fn, block_number)
         .await?;
     let new_revision_i64 = discount_to_i64(new_revision);
     // 3. GHO-discount-deprecation (vToken only).
@@ -1799,7 +2019,7 @@ async fn resolve_upgraded(
     };
     Ok(AaveChunkEvent::Upgraded {
         asset_id,
-        market_id,
+        market_id: ctx.market_id(),
         is_a_token,
         new_revision: new_revision_i64,
         deprecated_gho_token_id,
@@ -1812,19 +2032,17 @@ async fn resolve_upgraded(
 /// is "POOL"/"POOL_CONFIGURATOR"; the `revision_fn` is
 /// "POOL_REVISION()"/"CONFIGURATOR_REVISION()".
 async fn resolve_contract_revision_updated(
-    provider: &AlloyProvider,
+    ctx: &mut ChunkContext<'_>,
     new_address: Address,
     contract_name: &str,
     revision_fn: &str,
-    market_id: i64,
     block_number: u64,
-    memo: &mut RevisionMemo,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    let revision = memo
-        .read(provider, &new_address, revision_fn, block_number)
+    let revision = ctx
+        .read_revision(&new_address, revision_fn, block_number)
         .await?;
     Ok(AaveChunkEvent::ContractRevisionUpdated {
-        market_id,
+        market_id: ctx.market_id(),
         contract_name: contract_name.to_string(),
         new_revision: discount_to_i64(revision),
     })
@@ -1836,13 +2054,17 @@ async fn resolve_contract_revision_updated(
 /// `ProxyCreationResolution` (the contract name + the proxy address + the
 /// revision). On no match → `Ok(None)` (the Python returns early when the id
 /// doesn't match the expected proxy_id).
+///
+/// Takes the [`RevisionMemo`] directly (not a [`ChunkContext`]) because the
+/// cold-boot bootstrap pass is a pre-chunk phase that owns its own memo
+/// instance — the block lane keeps the keying correct across both owners.
 pub(crate) async fn match_proxy_id(
+    memo: &mut RevisionMemo,
+    provider: &AlloyProvider,
     id: &alloy::primitives::B256,
     proxy_address: &Address,
     implementation_address: &Address,
-    provider: &AlloyProvider,
     block_number: u64,
-    memo: &mut RevisionMemo,
 ) -> Result<Option<ProxyCreationResolution>, ConfigDispatchError> {
     let (name, rev_fn) = if id.as_slice() == POOL_PROXY_ID {
         ("POOL", "POOL_REVISION()")
