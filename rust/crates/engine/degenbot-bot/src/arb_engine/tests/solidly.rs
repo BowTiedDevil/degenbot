@@ -51,6 +51,25 @@ fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
 // 2-hop, (2) V2+Solidly mixed, (3) unprofitable → None (precheck),
 // (4) Solidly+CL → None (scope rejection).
 // -----------------------------------------------------------------
+/// Brute-force grid scan over `[1, max_reserve]` in `grid_step` increments,
+/// returning the best profit `simulate_solidly_path(x) - x` finds. Shared by
+/// the solver-vs-grid parity tests (golden-section must not miss the grid
+/// optimum by more than one step).
+fn grid_scan_best(
+    resolved: &::degenbot_solvers::mixed::ResolvedMixedPath,
+    max_reserve: U256,
+    grid_step: U256,
+) -> U256 {
+    let mut best = U256::ZERO;
+    let mut x = U256::from(1u64);
+    while x <= max_reserve {
+        let out = ::degenbot_solvers::mixed::simulate_solidly_path(x, &resolved.hops);
+        best = best.max(out.saturating_sub(x));
+        x += grid_step;
+    }
+    best
+}
+
 fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
     // Two Aerodrome-stable pools with the same token pair but divergent
     // reserves — a profitable arb cycle. Reserves use "wei magnitude"
@@ -98,7 +117,8 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
             reserve0: tokens(1000),
             reserve1: tokens(100),
             update_block: 0,
-        });
+        })
+        .expect("test setup: Aerodrome registration");
     let aero_b = core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
@@ -118,7 +138,8 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
             reserve0: tokens(2000),
             reserve1: tokens(100),
             update_block: 0,
-        });
+        })
+        .expect("test setup: Aerodrome registration");
     let engine = ArbitrageEngine::with_core(Arc::clone(&core));
     (engine, aero_a, aero_b)
 }
@@ -162,16 +183,7 @@ fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
     // step of the grid max (±3 verification radius tolerance).
     let max_reserve = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64));
     let grid_step = U256::from(10u64).pow(U256::from(18u64)); // 1 token
-    let mut grid_best_profit = U256::ZERO;
-    let mut x = U256::from(1u64);
-    while x <= max_reserve {
-        let out = ::degenbot_solvers::mixed::simulate_solidly_path(x, &resolved.hops);
-        let profit = out.saturating_sub(x);
-        if profit > grid_best_profit {
-            grid_best_profit = profit;
-        }
-        x += grid_step;
-    }
+    let grid_best_profit = grid_scan_best(resolved, max_reserve, grid_step);
     assert!(
         result.profit + grid_step >= grid_best_profit,
         "solver profit {} should be within one grid step of grid max {}",
@@ -231,7 +243,8 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
             reserve0: tokens(1000),
             reserve1: tokens(100),
             update_block: 0,
-        });
+        })
+        .expect("test setup: Aerodrome registration");
     let v2_id = core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v2_pool(&RegisterV2PoolParams {
@@ -264,7 +277,7 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
             },
         ],
     )
-    .expect("mixed V2+Solidly path registers");
+    .expect("mixed path registers");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
     let result = ::degenbot_solvers::mixed::solve_path(
         resolved,
@@ -277,16 +290,7 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
     // uses IntHopState::swap).
     let max_reserve = tokens(1000).to::<U256>();
     let grid_step = tokens(1).to::<U256>();
-    let mut grid_best = U256::ZERO;
-    let mut x = U256::from(1u64);
-    while x <= max_reserve {
-        let profit =
-            ::degenbot_solvers::mixed::simulate_solidly_path(x, &resolved.hops).saturating_sub(x);
-        if profit > grid_best {
-            grid_best = profit;
-        }
-        x += grid_step;
-    }
+    let grid_best = grid_scan_best(resolved, max_reserve, grid_step);
     assert!(
         result.profit + grid_step >= grid_best,
         "mixed-path profit {} within one grid step of grid max {}",
@@ -363,7 +367,8 @@ fn solve_solidly_plus_cl_path_rejected_by_scope() {
             reserve0: (U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>(),
             reserve1: (U256::from(100u64) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>(),
             update_block: 0,
-        });
+        })
+        .expect("test setup: Aerodrome registration");
     // Register a minimal V3 pool for the second hop using the same
     // ..Default::default() pattern as the existing V3 tests.
     let v3_id = core

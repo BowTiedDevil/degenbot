@@ -138,6 +138,7 @@ mod tests {
             reserve1: U112::from(r1),
             update_block: 0,
         })
+        .expect("test setup: Aerodrome registration")
     }
 
     fn tokens_usdc_weth(core: &mut BotState) {

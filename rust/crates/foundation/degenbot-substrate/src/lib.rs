@@ -43,7 +43,8 @@ pub mod tick_assembly;
 // share (the same set `degenbot-bot::bot_core` re-exports at its historical
 // paths — ADR-003: family states live in `degenbot-pools`).
 pub use ::degenbot_pools::aerodrome_v2_state::{
-    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromeV2PoolParams,
+    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
+    RegisterAerodromeV2PoolParams,
 };
 pub use ::degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;
 pub use ::degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;

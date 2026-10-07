@@ -67,7 +67,9 @@ fn address_keyed_identities_resolve_to_the_registered_pool_id() {
         .register_v3_pool(&v3_params(v3_address))
         .expect("test setup: V3 registration");
     let aero_address = Address::from([0x22; 20]);
-    let aero_id = state.register_aerodrome_pool(&aerodrome_params(aero_address));
+    let aero_id = state
+        .register_aerodrome_pool(&aerodrome_params(aero_address))
+        .expect("test setup: Aerodrome registration");
 
     assert_eq!(
         state.pool_id_for_identity(&PoolIdentity::v2(make_pool_addr())),

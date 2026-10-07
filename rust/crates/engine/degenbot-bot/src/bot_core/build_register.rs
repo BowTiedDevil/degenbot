@@ -31,7 +31,10 @@ use super::bot::Bot;
 use super::construction_io::ConstructionIo;
 use super::pool_builder::builder::{self, PoolBuilderError};
 use super::pool_builder::route::{self, ConstructedPool};
-use super::{ClSlotLayout, PoolTickCoverage, RegisterV2PoolError, RegisterV4PoolError};
+use super::{
+    ClSlotLayout, PoolTickCoverage, RegisterAerodromePoolError, RegisterV2PoolError,
+    RegisterV4PoolError,
+};
 
 /// The build refused before any registration: either no `ConstructionIo` is
 /// attached (the shell maps this to the pymethod-prefixed `RuntimeError`) or
@@ -56,6 +59,20 @@ pub enum V2BuildError {
     Builder(PoolBuilderError),
     /// `BotState::register_v2_pool` refused.
     Register(RegisterV2PoolError),
+}
+
+/// The Aerodrome build-and-register refusal: the V2 [`V2BuildError`] twin —
+/// [`BuildError`] plus the registration insert (already registered / spec
+/// violation), distinguishable so the shell maps the builder failure and the
+/// admission refusal through their separate historical surfaces.
+#[derive(Debug)]
+pub enum AerodromeBuildError {
+    /// No `ConstructionIo` attached to the bot.
+    NoConstructionIo,
+    /// The core builder failed.
+    Builder(PoolBuilderError),
+    /// `BotState::register_aerodrome_pool` refused.
+    Register(RegisterAerodromePoolError),
 }
 
 /// The V4 twin of [`V2BuildError`] (the V4 registration carries its own
@@ -181,13 +198,19 @@ impl Bot {
     /// + CREATE2 choreography, registered into `PoolEntry::AerodromeV2`).
     ///
     /// # Errors
-    /// [`BuildError::NoConstructionIo`] / [`BuildError::Builder`].
+    /// [`AerodromeBuildError::NoConstructionIo`] /
+    /// [`AerodromeBuildError::Builder`] / [`AerodromeBuildError::Register`]
+    /// (the duplicate-address / spec refusal — previously an `assert!` panic
+    /// that killed the process).
     pub fn build_and_register_aerodrome_v2(
         &self,
         address: Address,
         block: Option<u64>,
-    ) -> Result<u64, BuildError> {
-        let io = self.construction_io_required()?;
+    ) -> Result<u64, AerodromeBuildError> {
+        let io = self.construction_io_required().map_err(|e| match e {
+            BuildError::NoConstructionIo => AerodromeBuildError::NoConstructionIo,
+            BuildError::Builder(b) => AerodromeBuildError::Builder(b),
+        })?;
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_aerodrome_v2(
                 self.chain_id(),
@@ -195,11 +218,11 @@ impl Bot {
                 &io,
                 block,
             ))
-            .map_err(BuildError::Builder)?;
-        Ok(self
-            .state_arc()
+            .map_err(AerodromeBuildError::Builder)?;
+        self.state_arc()
             .write_at(LockSite::Orchestrator)
-            .register_aerodrome_pool(&params))
+            .register_aerodrome_pool(&params)
+            .map_err(AerodromeBuildError::Register)
     }
 
     /// Build + register a Balancer V2 **weighted** pool (the `getPoolId` +
@@ -694,7 +717,7 @@ mod tests {
         ));
         assert!(matches!(
             bot.build_and_register_aerodrome_v2(addr, None),
-            Err(BuildError::NoConstructionIo)
+            Err(AerodromeBuildError::NoConstructionIo)
         ));
         assert!(matches!(
             bot.build_and_register_balancer_weighted(addr, addr, None),

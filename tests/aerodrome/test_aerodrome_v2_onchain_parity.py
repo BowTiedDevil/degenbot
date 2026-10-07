@@ -81,8 +81,6 @@ _TOKEN_AMOUNT_MULTIPLIERS = (
     0.75,
 )
 
-_PYBOT = Bot()
-
 
 def _load_cassette(path: pathlib.Path) -> dict[str, Any]:
     return json.loads(path.read_bytes())
@@ -96,11 +94,16 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
     ``register_v2_pool``). The generic ``make_v2_pool``/Rust path is avoided
     because its V2 calc rounds differently than Aerodrome's on-chain
     ``getAmountOut``.
+
+    Each call uses a fresh short-lived ``Bot`` (pool registration asserts on a
+    duplicate address) so the keys-diff test and both parity tests can build
+    the same pool address without order-dependent collisions.
     """
+    bot = Bot()
     t0 = cassette["token0"]
     t1 = cassette["token1"]
     tok0 = make_erc20(
-        _PYBOT,
+        bot,
         t0["address"],
         name=t0["name"],
         symbol=t0["symbol"],
@@ -108,7 +111,7 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
         chain_id=cassette["chain_id"],
     )
     tok1 = make_erc20(
-        _PYBOT,
+        bot,
         t1["address"],
         name=t1["name"],
         symbol=t1["symbol"],
@@ -128,7 +131,7 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
         reserves_token1=cassette["reserves_token1"],
         deployer_address=factory,
         state_block=cassette["block"],
-        py_bot=_PYBOT,
+        py_bot=bot,
     )
 
 

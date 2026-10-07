@@ -34,10 +34,10 @@ use alloy::primitives::Address;
 
 use crate::bot::engine::{hex_string_to_pool_id, SpecViolationError};
 use crate::bot::errmap::{
-    journal_err_to_py, map_aerodrome_registration_err, map_build_err, map_calc_tokens_in_err,
-    map_calc_tokens_out_err, map_driver_err, map_no_construction_io, map_register_v2_err,
-    map_register_v4_err, map_resolve_v4_identity_err, map_v2_build_err, map_v2_registration_err,
-    map_v3_build_err, map_v3_registration_err, map_v4_build_err,
+    journal_err_to_py, map_aerodrome_build_err, map_aerodrome_registration_err, map_build_err,
+    map_calc_tokens_in_err, map_calc_tokens_out_err, map_driver_err, map_no_construction_io,
+    map_register_v2_err, map_register_v4_err, map_resolve_v4_identity_err, map_v2_build_err,
+    map_v2_registration_err, map_v3_build_err, map_v3_registration_err, map_v4_build_err,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -829,7 +829,7 @@ impl PyBot {
                 // for the GIL note).
                 let pool_id = py
                     .detach(|| self.bot.build_and_register_aerodrome_v2(addr, block))
-                    .map_err(|e| map_build_err("build_aerodrome_v2_pool", e))?;
+                    .map_err(map_aerodrome_build_err)?;
                 Ok((pool_id, pool_id))
             },
         )
@@ -2418,8 +2418,11 @@ impl PyBot {
     /// `PyLiquidityPool` handle.
     ///
     /// Raises:
-    ///     `ValueError`: If an address is malformed, the pool is already
-    ///         registered, or `variant` is not a recognized Aerodrome variant.
+    ///     `PoolAlreadyRegisteredError`: If a pool at this address is
+    ///         already registered (a `PoolRegistrationError`/`ValueError`
+    ///         subclass — the typed twin of the V2/V3 duplicate rejection).
+    ///     `ValueError`: If an address is malformed or `variant` is not a
+    ///         recognized Aerodrome variant.
     #[expect(clippy::too_many_arguments)]
     #[pyo3(signature = (address, token0, token1, factory, variant, stable, fee_numer, fee_denom, token0_decimals, token1_decimals, reserve0, reserve1, update_block=0))]
     fn register_aerodrome_pool(
@@ -2460,23 +2463,24 @@ impl PyBot {
         // this py.detach — never hold the GIL while parked on the BotState
         // write.
         py.detach(|| {
-            self.bot.register_aerodrome_pool(
-                addr,
-                t0,
-                t1,
-                fac,
-                variant_enum,
-                stable,
-                fee_numer,
-                fee_denom,
-                token0_decimals,
-                token1_decimals,
-                r0,
-                r1,
-                update_block,
-            )
+            self.bot
+                .register_aerodrome_pool(
+                    addr,
+                    t0,
+                    t1,
+                    fac,
+                    variant_enum,
+                    stable,
+                    fee_numer,
+                    fee_denom,
+                    token0_decimals,
+                    token1_decimals,
+                    r0,
+                    r1,
+                    update_block,
+                )
+                .map_err(map_aerodrome_registration_err)
         })
-        .map_err(|e| map_aerodrome_registration_err(&e))
     }
 
     /// Update a V3 pool's state from a Swap event.

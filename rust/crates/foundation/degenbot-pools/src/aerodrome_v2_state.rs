@@ -111,6 +111,38 @@ pub struct RegisterAerodromeV2PoolParams {
     pub update_block: u64,
 }
 
+/// Typed rejection from `BotState::register_aerodrome_pool` (the
+/// duplicate-address admission contract — see `spec_bounds`).
+///
+/// Mirrors `RegisterV2PoolError`: `#[derive(Clone, Debug, PartialEq, Eq)]`,
+/// no `Display`/`Error` impl (the `PyO3` mapper pattern-matches the variants
+/// directly and constructs Python exceptions via `format!`).
+///
+/// Variants:
+/// - `AlreadyRegistered` — replaces the prior `assert!` duplicate-check
+///   panic (`assert!(!pool_addresses.contains_key(..))`).
+/// - `SpecViolation` — wraps a `spec_bounds::SpecViolation`. Aerodrome
+///   reserves are typed `U112` (the on-chain `uint112` storage width —
+///   Solidly mirrors v2-core's `Sync(uint112,uint112)` shape), so the
+///   validator is belt-and-braces parity with V2 and fires only if the
+///   params are ever re-widened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RegisterAerodromePoolError {
+    /// A pool at this contract address is already registered.
+    AlreadyRegistered {
+        /// The refused (duplicate) pool address.
+        address: Address,
+    },
+    /// An out-of-spec field (e.g. `reserve0 > uint112::MAX`).
+    SpecViolation(crate::spec_bounds::SpecViolation),
+}
+
+impl From<crate::spec_bounds::SpecViolation> for RegisterAerodromePoolError {
+    fn from(v: crate::spec_bounds::SpecViolation) -> Self {
+        Self::SpecViolation(v)
+    }
+}
+
 impl AerodromeV2PoolState {
     /// Construct `(identity, state)` from registration params + journal depth.
     ///

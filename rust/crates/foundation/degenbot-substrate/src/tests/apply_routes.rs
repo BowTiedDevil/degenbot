@@ -121,20 +121,22 @@ fn aerodrome_reserve_mutation_and_reorg_rollback() {
     use crate::RegisterAerodromeV2PoolParams;
 
     let mut core = BotState::new();
-    let pool_id = core.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-        address: Address::from([0xaeu8; 20]),
-        token0: Address::ZERO,
-        token1: Address::from([0x01u8; 20]),
-        factory: Address::from([0xafu8; 20]),
-        variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
-        stable: false,
-        fee: (3, 1000),
-        token0_decimals: 18,
-        token1_decimals: 18,
-        reserve0: U112::from(1_000u64),
-        reserve1: U112::from(2_000u64),
-        update_block: 10,
-    });
+    let pool_id = core
+        .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: Address::from([0xaeu8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([0x01u8; 20]),
+            factory: Address::from([0xafu8; 20]),
+            variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+            stable: false,
+            fee: (3, 1000),
+            token0_decimals: 18,
+            token1_decimals: 18,
+            reserve0: U112::from(1_000u64),
+            reserve1: U112::from(2_000u64),
+            update_block: 10,
+        })
+        .expect("test setup: Aerodrome registration");
 
     // Identity survives.
     let identity = core

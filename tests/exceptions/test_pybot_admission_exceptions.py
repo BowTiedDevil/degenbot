@@ -174,6 +174,58 @@ class TestV2SeamAdmission:
         assert "uint112" in msg
 
 
+class TestAerodromeSeamAdmission:
+    """The Aerodrome V2 port joins the typed admission contract (the V2/V3
+    twin): a duplicate address surfaces as ``PoolAlreadyRegisteredError``,
+    not the ``PanicException`` a process-killing ``assert!`` used to raise.
+
+    Vectors use the real Base Aerodrome volatile factory so the EIP-1167
+    verify upstream of ``register_aerodrome_pool`` passes and the Rust
+    core's duplicate guard is what gets to fire (mirrors the V2/V3
+    cross-checked vectors above).
+    """
+
+    # Real Base Aerodrome V2 volatile pair (tBTC v2/WETH) — passes the
+    # EIP-1167 deployer/implementation verify for the (8453, factory) row.
+    AERO_V2_FACTORY = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
+    POOL = "0x2722C8f9B5E2aC72D1f225f8e8c990E449ba0078"
+    TOKEN0 = "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b"
+    TOKEN1 = "0x4200000000000000000000000000000000000006"
+
+    def _kwargs(self) -> dict:
+        return {
+            "address": self.POOL,
+            "token0": self.TOKEN0,
+            "token1": self.TOKEN1,
+            "factory": self.AERO_V2_FACTORY,
+            "variant": "aerodrome-v2-volatile",
+            "stable": False,
+            "fee_numer": 3,
+            "fee_denom": 1000,
+            "token0_decimals": 18,
+            "token1_decimals": 18,
+            "reserve0": 1000,
+            "reserve1": 2000,
+            "update_block": 0,
+        }
+
+    def test_duplicate_address_raises_pool_already_registered(self) -> None:
+        bot = Bot(chain_id=8453)
+        bot.register_aerodrome_pool(**self._kwargs())
+        with pytest.raises(PoolAlreadyRegisteredError) as exc_info:
+            bot.register_aerodrome_pool(**self._kwargs())
+        assert "already registered" in str(exc_info.value).lower()
+        assert str(self.POOL).lower() in str(exc_info.value).lower()
+
+    def test_duplicate_is_catchable_as_value_error(self) -> None:
+        """The broad ``except ValueError:`` net in ``build_paths`` still
+        catches the Aerodrome refusal."""
+        bot = Bot(chain_id=8453)
+        bot.register_aerodrome_pool(**self._kwargs())
+        with pytest.raises(ValueError, match="already registered"):
+            bot.register_aerodrome_pool(**self._kwargs())
+
+
 class TestV3SeamAdmission:
     def _in_spec_kwargs(self) -> dict:
         return {

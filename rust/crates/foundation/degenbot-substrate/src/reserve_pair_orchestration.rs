@@ -13,7 +13,8 @@
 use alloy::primitives::{aliases::U112, Address, U256};
 
 use degenbot_pools::aerodrome_v2_state::{
-    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromeV2PoolParams,
+    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
+    RegisterAerodromeV2PoolParams,
 };
 use degenbot_pools::v2_state::{
     RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
@@ -204,19 +205,35 @@ impl BotState {
     /// state port).
     ///
     /// Stores immutable identity (`address`, `token0`, `token1`, `factory`,
-    /// `variant`, `stable`, unidirectional `fee`) + the registration reserves
-    /// + a genesis reorg-journal anchor (mirror of V2's discipline). Returns
-    ///   the auto-assigned pool ID.
+    /// `variant`, `stable`, unidirectional `fee`), the registration
+    /// reserves, and a genesis reorg-journal anchor (mirror of V2's
+    /// discipline). Returns the auto-assigned pool ID.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the pool address is already registered.
-    pub fn register_aerodrome_pool(&mut self, params: &RegisterAerodromeV2PoolParams) -> u64 {
-        assert!(
-            !self.registry.pool_addresses.contains_key(&params.address),
-            "pool already registered: {}",
-            params.address
-        );
+    /// Returns [`RegisterAerodromePoolError::AlreadyRegistered`] if a pool at
+    /// this address is already registered (replaces the prior `assert!`
+    /// panic, mirroring the V2 conversion). Returns
+    /// [`RegisterAerodromePoolError::SpecViolation`] when `reserve0` or
+    /// `reserve1` exceed `uint112::MAX` — the on-chain `uint112` storage
+    /// width the Solidly pair asserts at `_update`. Both reserves are typed
+    /// `U112` at the params layer, so this fires only if the params are ever
+    /// re-widened; the check is belt-and-braces parity with V2.
+    pub fn register_aerodrome_pool(
+        &mut self,
+        params: &RegisterAerodromeV2PoolParams,
+    ) -> Result<u64, RegisterAerodromePoolError> {
+        // Spec-bound admission (parity with `register_v2_pool`): the reserves
+        // are already `U112`-typed, so this only rejects a re-widened params
+        // layer — kept so the admission contract matches its V2 sibling.
+        ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
+        ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
+        if self.registry.pool_addresses.contains_key(&params.address) {
+            return Err(RegisterAerodromePoolError::AlreadyRegistered {
+                address: params.address,
+            });
+        }
+
         let pool_id = self.registry.next_pool_id;
         self.registry.next_pool_id += 1;
         let (identity, state) =
@@ -225,7 +242,8 @@ impl BotState {
             .pools
             .insert(pool_id, PoolEntry::AerodromeV2(Box::new((identity, state))));
         self.registry.pool_addresses.insert(params.address, pool_id);
-        pool_id
+
+        Ok(pool_id)
     }
 
     /// Look up an Aerodrome V2 pool's immutable registration identity. Returns

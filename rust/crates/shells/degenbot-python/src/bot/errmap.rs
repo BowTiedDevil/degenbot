@@ -291,6 +291,20 @@ pub(crate) fn map_v4_build_err(
     }
 }
 
+/// Map a core `AerodromeBuildError` to the shell's historical surfaces: the
+/// method-prefixed no-io `RuntimeError`, the builder error map, and the
+/// Aerodrome registration hierarchy map. The [`map_v2_build_err`] twin.
+pub(crate) fn map_aerodrome_build_err(
+    err: degenbot_bot::bot_core::build_register::AerodromeBuildError,
+) -> pyo3::PyErr {
+    use degenbot_bot::bot_core::build_register::AerodromeBuildError;
+    match err {
+        AerodromeBuildError::NoConstructionIo => map_no_construction_io("build_aerodrome_v2_pool"),
+        AerodromeBuildError::Builder(e) => map_builder_err(e),
+        AerodromeBuildError::Register(e) => map_register_aerodrome_err(e),
+    }
+}
+
 /// Map a core `V3BuildError` to the shell's historical surfaces: the
 /// construction-route refusal map (the LOUD `UnsupportedPoolFamilyError`
 /// among them) and the method-prefixed race-answer `RuntimeError`.
@@ -381,14 +395,39 @@ pub(crate) fn map_v3_registration_err(
     }
 }
 
-/// Map an Aerodrome registration refusal (only the EIP-1167 verify can
-/// refuse) to the bare-mismatch `ValueError` the shell has always raised.
+/// Map a core
+/// [`AerodromeRegistrationError`](degenbot_bot::bot_core::registration::AerodromeRegistrationError)
+/// to the shell's two historical surfaces: the bare CREATE2-mismatch
+/// `ValueError` and the `PoolRegistrationError` hierarchy map
+/// ([`map_register_aerodrome_err`]).
 pub(crate) fn map_aerodrome_registration_err(
-    err: &degenbot_bot::bot_core::registration::AerodromeRegistrationError,
+    err: degenbot_bot::bot_core::registration::AerodromeRegistrationError,
+) -> pyo3::PyErr {
+    use degenbot_bot::bot_core::registration::AerodromeRegistrationError;
+    match err {
+        AerodromeRegistrationError::Create2(m) => PyValueError::new_err(m.to_string()),
+        AerodromeRegistrationError::Register(e) => map_register_aerodrome_err(e),
+    }
+}
+
+/// Map a core
+/// [`RegisterAerodromePoolError`](degenbot_pools::aerodrome_v2_state::RegisterAerodromePoolError)
+/// to a typed Python exception under the `PoolRegistrationError` hierarchy.
+/// The V2 twin of [`map_register_v2_err`]: `AlreadyRegistered` →
+/// [`PoolAlreadyRegisteredError`], `SpecViolation` →
+/// [`SpecViolationError`] (belt-and-braces — the params layer is
+/// `U112`-typed, so this arm is unreachable through the current seam).
+pub(crate) fn map_register_aerodrome_err(
+    err: degenbot_bot::bot_core::RegisterAerodromePoolError,
 ) -> pyo3::PyErr {
     match err {
-        degenbot_bot::bot_core::registration::AerodromeRegistrationError::Create2(m) => {
-            PyValueError::new_err(m.to_string())
+        degenbot_bot::bot_core::RegisterAerodromePoolError::AlreadyRegistered { address } => {
+            PoolAlreadyRegisteredError::new_err(format!(
+                "Aerodrome pool already registered: address={address}"
+            ))
+        }
+        degenbot_bot::bot_core::RegisterAerodromePoolError::SpecViolation(v) => {
+            SpecViolationError::new_err(format!("Aerodrome pool registration failed: {v}"))
         }
     }
 }
@@ -512,7 +551,9 @@ mod tests {
     use degenbot_bot::bot_core::registration::{
         AerodromeRegistrationError, ResolveV4IdentityError, V2RegistrationError,
     };
-    use degenbot_bot::bot_core::{RegisterV2PoolError, RegisterV3PoolError, RegisterV4PoolError};
+    use degenbot_bot::bot_core::{
+        RegisterAerodromePoolError, RegisterV2PoolError, RegisterV3PoolError, RegisterV4PoolError,
+    };
     use degenbot_pools::spec_bounds::{SpecValue, SpecViolation};
 
     fn addr(s: &str) -> Address {
@@ -943,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn aerodrome_registration_err_pins_the_bare_mismatch() {
+    fn aerodrome_registration_err_pins_the_create2_and_admission_vocabulary() {
         let mismatch = degenbot_uniswap::deployments::AddressMismatch {
             chain_id: 8453,
             factory: addr("0x0101010101010101010101010101010101010101"),
@@ -955,9 +996,28 @@ mod tests {
         let expected = mismatch.to_string();
         assert_eq!(
             value_error(&map_aerodrome_registration_err(
-                &AerodromeRegistrationError::Create2(mismatch),
+                AerodromeRegistrationError::Create2(mismatch),
             )),
             expected
+        );
+
+        // The typed admission twin of the V2 arm: duplicate-address
+        // refusals surface as PoolAlreadyRegisteredError (a
+        // PoolRegistrationError subclass), not a bare ValueError.
+        let err = map_aerodrome_registration_err(AerodromeRegistrationError::Register(
+            RegisterAerodromePoolError::AlreadyRegistered {
+                address: addr("0x0505050505050505050505050505050505050505"),
+            },
+        ));
+        Python::attach(|py| {
+            assert!(
+                err.is_instance_of::<PoolAlreadyRegisteredError>(py),
+                "Aerodrome duplicate-address refusal must surface as PoolAlreadyRegisteredError"
+            );
+        });
+        assert_eq!(
+            message(&err),
+            "Aerodrome pool already registered: address=0x0505050505050505050505050505050505050505"
         );
     }
 

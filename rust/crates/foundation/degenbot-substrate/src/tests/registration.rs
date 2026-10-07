@@ -1,4 +1,5 @@
 use super::*;
+use crate::RegisterAerodromePoolError;
 
 #[test]
 fn conservative_bot_flag_default_on() {
@@ -253,20 +254,22 @@ fn pool_family_dispatches_every_registered_family() {
     };
 
     // Aerodrome V2 (volatile mode; stable=false)
-    let aero_id = core.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-        address: Address::from([0xaeu8; 20]),
-        token0: Address::ZERO,
-        token1: Address::from([0x01u8; 20]),
-        factory: Address::from([0xafu8; 20]),
-        variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
-        stable: false,
-        fee: (3, 1000),
-        token0_decimals: 18,
-        token1_decimals: 18,
-        reserve0: U112::from(1_000_000u64),
-        reserve1: U112::from(2_000_000u64),
-        update_block: 0,
-    });
+    let aero_id = core
+        .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: Address::from([0xaeu8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([0x01u8; 20]),
+            factory: Address::from([0xafu8; 20]),
+            variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+            stable: false,
+            fee: (3, 1000),
+            token0_decimals: 18,
+            token1_decimals: 18,
+            reserve0: U112::from(1_000_000u64),
+            reserve1: U112::from(2_000_000u64),
+            update_block: 0,
+        })
+        .expect("test setup: Aerodrome registration");
     assert_eq!(core.pool_family(aero_id), Some("aerodrome-v2"));
 }
 
@@ -892,20 +895,22 @@ fn registered_family_readers_tag_every_registered_family() {
 
     // Aerodrome V2.
     let aero_addr = Address::from([0xaeu8; 20]);
-    let aero_id = core.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-        address: aero_addr,
-        token0: Address::ZERO,
-        token1: Address::from([0x01u8; 20]),
-        factory: Address::from([0xafu8; 20]),
-        variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
-        stable: false,
-        fee: (3, 1000),
-        token0_decimals: 18,
-        token1_decimals: 18,
-        reserve0: U112::from(1_000_000u64),
-        reserve1: U112::from(2_000_000u64),
-        update_block: 0,
-    });
+    let aero_id = core
+        .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: aero_addr,
+            token0: Address::ZERO,
+            token1: Address::from([0x01u8; 20]),
+            factory: Address::from([0xafu8; 20]),
+            variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+            stable: false,
+            fee: (3, 1000),
+            token0_decimals: 18,
+            token1_decimals: 18,
+            reserve0: U112::from(1_000_000u64),
+            reserve1: U112::from(2_000_000u64),
+            update_block: 0,
+        })
+        .expect("test setup: Aerodrome registration");
     assert_eq!(
         core.registered_pool_by_address(&aero_addr),
         Some((aero_id, RegisteredPoolFamily::AerodromeV2)),
@@ -982,6 +987,50 @@ fn register_v2_pool_rejects_duplicate_address_as_already_registered() {
         matches! {
             core.register_v2_pool(&params),
             Err(RegisterV2PoolError::AlreadyRegistered { address }) if address == params.address,
+        },
+        "duplicate-address registration surfaces a typed Err, not a panic"
+    );
+}
+
+// -----------------------------------------------------------------------
+// Spec-bound admission (Aerodrome).
+// `register_aerodrome_pool` is a typed `Result` that rejects a duplicate
+// address (and an out-of-spec `uint112` reserve), rather than
+// `assert!`-panicking on (a). Mirrors the V2/V3 tests above — this is the
+// admission contract the Python seam's `PoolAlreadyRegisteredError` rides.
+// -----------------------------------------------------------------------
+/// Baseline in-spec Aerodrome V2 params (volatile, 0.3% unidirectional fee).
+fn make_aerodrome_params_in_spec(address: Address) -> RegisterAerodromeV2PoolParams {
+    RegisterAerodromeV2PoolParams {
+        address,
+        token0: make_token0(),
+        token1: make_token1(),
+        reserve0: U112::from(1000),
+        reserve1: U112::from(2000),
+        factory: make_factory(),
+        variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+        fee: (3, 1000),
+        token0_decimals: 18,
+        token1_decimals: 18,
+        update_block: 0,
+        stable: false,
+    }
+}
+
+#[test]
+fn register_aerodrome_pool_rejects_duplicate_address_as_already_registered() {
+    let mut core = BotState::new();
+    let params = make_aerodrome_params_in_spec(make_pool_addr());
+    let _ok = core
+        .register_aerodrome_pool(&params)
+        .expect("first registration");
+    // Second registration at the same address: prior impl `assert!`-panicked;
+    // now returns `Err(AlreadyRegistered { address })` (the typed twin of
+    // the V2/V3 duplicate refusal).
+    assert!(
+        matches! {
+            core.register_aerodrome_pool(&params),
+            Err(RegisterAerodromePoolError::AlreadyRegistered { address }) if address == params.address,
         },
         "duplicate-address registration surfaces a typed Err, not a panic"
     );

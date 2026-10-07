@@ -1121,8 +1121,11 @@ class Bot:
         `PyLiquidityPool` handle.
 
         Raises:
-            `ValueError`: If an address is malformed, the pool is already
-                registered, or `variant` is not a recognized Aerodrome variant.
+            `PoolAlreadyRegisteredError`: If a pool at this address is
+                already registered (a `PoolRegistrationError`/`ValueError`
+                subclass — the typed twin of the V2/V3 duplicate rejection).
+            `ValueError`: If an address is malformed or `variant` is not a
+                recognized Aerodrome variant.
         """
     def register_balancer_stable_pool(
         self,

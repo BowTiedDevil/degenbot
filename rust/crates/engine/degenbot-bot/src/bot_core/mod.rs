@@ -67,7 +67,8 @@ pub mod stage_telemetry;
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
 pub use ::degenbot_pools::aerodrome_v2_state::{
-    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromeV2PoolParams,
+    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
+    RegisterAerodromeV2PoolParams,
 };
 pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 pub use ::degenbot_pools::curve_dy_io::{resolve_dy_inputs, CurveInputsError};

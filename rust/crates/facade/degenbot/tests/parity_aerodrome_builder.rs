@@ -89,20 +89,22 @@ fn standalone_rust_consumer_aerodrome_builder_identity_state_matches_fixture() {
         .unwrap_or_else(|err| panic!("unknown variant {}: {err}", fx.fixture.variant));
 
     let mut bot = BotState::new();
-    let pid = bot.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-        address: pool,
-        token0,
-        token1,
-        factory,
-        variant,
-        stable: fx.fixture.stable,
-        fee: (fx.fixture.fee_numer, fx.fixture.fee_denom),
-        token0_decimals: fx.fixture.token0_decimals,
-        token1_decimals: fx.fixture.token1_decimals,
-        reserve0,
-        reserve1,
-        update_block: fx.fixture.update_block,
-    });
+    let pid = bot
+        .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: pool,
+            token0,
+            token1,
+            factory,
+            variant,
+            stable: fx.fixture.stable,
+            fee: (fx.fixture.fee_numer, fx.fixture.fee_denom),
+            token0_decimals: fx.fixture.token0_decimals,
+            token1_decimals: fx.fixture.token1_decimals,
+            reserve0,
+            reserve1,
+            update_block: fx.fixture.update_block,
+        })
+        .expect("fixture registration must succeed");
     assert_eq!(
         pid, fx.expected.pool_id,
         "pool id must match the shared fixture"

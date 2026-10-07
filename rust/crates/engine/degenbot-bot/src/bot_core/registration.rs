@@ -32,7 +32,7 @@ use degenbot_uniswap::dex_identity::DexVariant;
 use super::bot::Bot;
 use crate::bot_core::pool_builder::builder::{self, PoolBuilderError};
 use crate::bot_core::{
-    ClSlotLayout, PoolTickCoverage, RegisterAerodromeV2PoolParams,
+    ClSlotLayout, PoolTickCoverage, RegisterAerodromePoolError, RegisterAerodromeV2PoolParams,
     RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams,
     RegisterV2PoolError, RegisterV2PoolParams, RegisterV3PoolError, RegisterV3PoolParams,
     RegisterV4PoolError, RegisterV4PoolParams, RegisteredPoolFamily, TickInfo,
@@ -62,13 +62,17 @@ pub enum V3RegistrationError {
     Register(RegisterV3PoolError),
 }
 
-/// Error from [`Bot::register_aerodrome_pool`]: only the EIP-1167
-/// deployer/implementation verification can refuse — the registration insert
-/// itself is infallible.
+/// Error from [`Bot::register_aerodrome_pool`]: the EIP-1167
+/// deployer/implementation verification is distinguishable from the
+/// registration refusal so the `PyO3` shell preserves its historical bare
+/// `ValueError` surface for the former and maps the latter through the
+/// `PoolRegistrationError` hierarchy (the V2/`V3RegistrationError` shape).
 #[derive(Debug)]
 pub enum AerodromeRegistrationError {
     /// The recomputed EIP-1167 address differs from the declared address.
     Create2(AddressMismatch),
+    /// `BotState::register_aerodrome_pool` refused (already registered / spec).
+    Register(RegisterAerodromePoolError),
 }
 
 /// Error from [`Bot::resolve_v4_identity`].
@@ -461,10 +465,10 @@ impl Bot {
             reserve1,
             update_block,
         };
-        Ok(self
-            .state_arc()
+        self.state_arc()
             .write_at(LockSite::Orchestrator)
-            .register_aerodrome_pool(&params))
+            .register_aerodrome_pool(&params)
+            .map_err(AerodromeRegistrationError::Register)
     }
 
     /// Register a token (the pure-Rust insertion the shell released the GIL
