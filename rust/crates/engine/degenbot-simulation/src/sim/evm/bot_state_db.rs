@@ -186,7 +186,7 @@ where
         let (Some(rpc), Some(block)) = (&self.code_probe_rpc, self.code_probe_block) else {
             return format!("{acct};; no-probe (code probe unconfigured)");
         };
-        let fresh = raw_uncached_eth_get_code(rpc, address, block);
+        let fresh = blocking_raw_uncached_eth_get_code(rpc, address, block);
         match fresh {
             Some(code) if code.len() > 2 && code != "0x" => format!(
                 "{acct}{absent_hint};; FRESH UNCACHED GET eth_getCode({address},\
@@ -327,10 +327,37 @@ where
 /// `with_default_caching()` response cache entirely). Returns `Some(hex)` on
 /// success, `None` on any transport/parse failure. Only `http://` (plaintext)
 /// is supported — the probe is a diagnostic and the bot's RPC is plain HTTP.
-fn raw_uncached_eth_get_code(rpc_url: &str, address: Address, block: u64) -> Option<String> {
+///
+/// BLOCKING: it owns one `TcpStream` connect + read on the calling thread and
+/// can park that thread for up to 5s (the connect + read timeout). Run it from
+/// a spawned thread, never from an async context — it would park a
+/// shared-runtime worker for the full timeout. The `debug_assert` below makes
+/// a debug-build misinvocation loud; THIS CONTRACT is the fence release builds
+/// rely on (release has no guard).
+///
+/// The guard firing on the async sim-worker path is NOT a regression: the only
+/// caller (`code_probe_provenance`) runs on the false-empty tripwire, which
+/// ends in an unconditional `panic!` regardless (refusing to simulate a
+/// code-less pool) — so in debug builds the assert merely pre-empts a panic
+/// that was already inevitable, with a message naming the runtime misuse.
+fn blocking_raw_uncached_eth_get_code(
+    rpc_url: &str,
+    address: Address,
+    block: u64,
+) -> Option<String> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Duration;
+
+    // Debug-only: a blocking probe invoked from inside an async worker parks
+    // the shared runtime for up to 5s. debug_assert so release builds never
+    // panic on it; the doc contract above is the real fence. (After the
+    // fn-local `use` items only to satisfy clippy::items_after_statements — it
+    // is still the first statement the probe executes.)
+    debug_assert!(
+        tokio::runtime::Handle::try_current().is_err(),
+        "blocking_raw_uncached_eth_get_code invoked from an async context — run it from a spawned thread"
+    );
 
     // Strip a leading scheme; only plaintext http is supported (a TLS/https
     // URL needs a real client, not a raw TCP socket).
@@ -587,7 +614,7 @@ mod tests {
     // ── The false-empty provenance probe (alloy LRU vs node) ────────────
 
     #[test]
-    fn raw_uncached_eth_get_code_reads_fresh_code_past_the_cache() {
+    fn blocking_raw_uncached_eth_get_code_reads_fresh_code_past_the_cache() {
         // A local HTTP server that answers `eth_getCode` with a real (non-empty)
         // contract-body string. The probe must bypass the alloy provider's
         // `with_default_caching()` LRU and see the real code — the `CACHE`
@@ -612,7 +639,7 @@ mod tests {
             sock.write_all(resp.as_bytes()).unwrap();
         });
 
-        let got = raw_uncached_eth_get_code(
+        let got = blocking_raw_uncached_eth_get_code(
             &format!("http://127.0.0.1:{port}"),
             parse_addr(),
             1_234_567u64,
@@ -629,6 +656,18 @@ mod tests {
         "0x36D2b521d708537B98F01Ab8d5207BD8E42b2806"
             .parse()
             .unwrap()
+    }
+
+    /// The debug-only guard fires: invoked from inside an async context the
+    /// probe trips the assertion BEFORE it opens a socket, so a shared-runtime
+    /// worker is never parked. Release builds compile the guard out — the doc
+    /// contract is their fence (see the fn's doc comment).
+    #[tokio::test]
+    #[should_panic(expected = "invoked from an async context")]
+    async fn blocking_raw_uncached_eth_get_code_panics_inside_async_context() {
+        // Nothing listens on port 1 and it never matters: the guard panics
+        // before any connect, so no timeout is waited on.
+        let _ = blocking_raw_uncached_eth_get_code("http://127.0.0.1:1", parse_addr(), 1);
     }
 
     #[test]
