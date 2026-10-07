@@ -1,10 +1,11 @@
 """Tests for the `degenbot.abi` home — the stable mirror for ``_ffi.abi``.
 
-Exercises the public functions (``encode``, ``encode_packed``, ``decode``,
-``decode_single``). The Rust ``degenbot-abi`` core is the only backend.
-``encode``/``decode`` behavior is cross-checked live against the
-independent ``eth_abi`` implementation; ``encode_packed`` has no eth_abi
-equivalent, so its fixtures stay hand-pinned.
+Exercises the public functions (``canonical_type``, ``encode``,
+``encode_packed``, ``decode``, ``decode_single``). The Rust
+``degenbot-abi`` core is the only backend. ``encode``/``decode`` behavior
+is cross-checked live against the independent ``eth_abi``
+implementation; ``encode_packed`` has no eth_abi equivalent, so its
+fixtures stay hand-pinned.
 """
 
 import eth_abi
@@ -13,12 +14,14 @@ import pytest
 from degenbot.abi import (
     AbiDecodeError,
     AbiEncodeError,
+    canonical_type,
     decode,
     decode_single,
     encode,
     encode_packed,
 )
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import function_selector
 from degenbot.utils.bytes import to_bytes
 
 
@@ -350,3 +353,92 @@ class TestTuples:
     def test_tuple_mismatched_component_count(self) -> None:
         with pytest.raises(AbiEncodeError):
             encode(["(uint256,bool)"], [(1,)])
+
+
+# The Uniswap V4 quoter's ``QuoteExactSingleParams`` struct, as the ABI JSON
+# spells it: a tuple member that is itself a tuple.
+_V4_QUOTE_PARAMS = {
+    "name": "params",
+    "type": "tuple",
+    "components": [
+        {
+            "name": "poolKey",
+            "type": "tuple",
+            "components": [
+                {"name": "currency0", "type": "address"},
+                {"name": "currency1", "type": "address"},
+                {"name": "fee", "type": "uint24"},
+                {"name": "tickSpacing", "type": "int24"},
+                {"name": "hooks", "type": "address"},
+            ],
+        },
+        {"name": "zeroForOne", "type": "bool"},
+        {"name": "amountSpecified", "type": "uint128"},
+        {"name": "hookData", "type": "bytes"},
+    ],
+}
+
+
+class TestCanonicalType:
+    """ABI-dict parameter -> canonical type text (eth-abi collapse_if_tuple)."""
+
+    def test_non_tuple_types_pass_through(self) -> None:
+        """A non-tuple type passes through unchanged, array suffix included."""
+        assert canonical_type({"name": "to", "type": "address"}) == "address"
+        assert canonical_type({"name": "xs", "type": "uint256[3]"}) == "uint256[3]"
+
+    def test_tuple_collapses_components(self) -> None:
+        """A bare ``tuple`` collapses its components to one paren-group."""
+        param = {
+            "type": "tuple",
+            "components": [{"type": "address"}, {"type": "uint256"}],
+        }
+        assert canonical_type(param) == "(address,uint256)"
+
+    def test_nested_tuple(self) -> None:
+        """Tuple members that are themselves tuples nest paren-groups."""
+        param = {
+            "type": "tuple",
+            "components": [
+                {
+                    "type": "tuple",
+                    "components": [{"type": "uint256"}, {"type": "address"}],
+                },
+                {"type": "bool"},
+            ],
+        }
+        assert canonical_type(param) == "((uint256,address),bool)"
+
+    def test_dynamic_array_of_tuples(self) -> None:
+        """``tuple[]`` collapses to the paren-group with the ``[]`` suffix."""
+        param = {
+            "type": "tuple[]",
+            "components": [{"type": "address"}, {"type": "bytes"}],
+        }
+        assert canonical_type(param) == "(address,bytes)[]"
+
+    def test_fixed_array_of_tuples(self) -> None:
+        """``tuple[2]`` collapses to the paren-group with the ``[2]`` suffix."""
+        param = {
+            "type": "tuple[2]",
+            "components": [{"type": "uint256"}, {"type": "bool"}],
+        }
+        assert canonical_type(param) == "(uint256,bool)[2]"
+
+    def test_v4_quote_params_shape(self) -> None:
+        """The V4 quoter's nested struct param expands to its canonical text."""
+        assert (
+            canonical_type(_V4_QUOTE_PARAMS)
+            == "((address,address,uint24,int24,address),bool,uint128,bytes)"
+        )
+
+    def test_expanded_type_feeds_the_selector(self) -> None:
+        """The expansion composes with ``function_selector`` into the real
+        entrypoint selector.
+
+        The pinned value is the corpus-recorded V4 quoter selector (the
+        tests/golden replay decoders branch on it), an independent from-chain
+        constant rather than anything derived from this library.
+        """
+        signature = f"quoteExactInputSingle({canonical_type(_V4_QUOTE_PARAMS)})"
+        assert function_selector(signature) == bytes.fromhex("aa9d21cb")
