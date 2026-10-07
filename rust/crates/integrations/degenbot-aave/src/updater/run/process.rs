@@ -13,8 +13,8 @@ use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
 use super::substrate::{candidate_addresses, ChunkSubstrate};
-use super::{apply_chunk_events_on_conn, AaveChunkEvent, RunError};
-use crate::config_dispatch::{build_discount_snapshot, dispatch_config_events, RevisionMemo};
+use super::{AaveChunkEvent, RunError};
+use crate::config_dispatch::{ChunkContext, ChunkSpan};
 use crate::transaction_processor::process_transaction;
 
 /// One transaction's grouped logs. Sorted by `(block_number, first log_index)`
@@ -88,6 +88,7 @@ pub(super) async fn process_chunk_on_conn(
     pool_address: Address,
     oracle_address: Option<Address>,
     tx_groups: &[TxGroup<'_>],
+    chunk_start: u64,
     chunk_end: u64,
 ) -> Result<ChunkCoreReport, RunError> {
     // Per-tx apply within `conn`. Two staleness surfaces fixed —
@@ -138,16 +139,25 @@ pub(super) async fn process_chunk_on_conn(
     // lock across their RPC reads) and the per-tx + end-of-chunk SQL apply.
     let mut decode_compute_time = Duration::ZERO;
     let mut apply_time = Duration::ZERO;
-    // Perf D: the per-chunk revision memo — one `RevisionMemo` per chunk
-    // apply, threaded through the config dispatch so the 4 revision reads
-    // (`ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` / `POOL_REVISION()` /
+    // Perf D: the per-chunk dispatch context — ONE owner holding the
+    // chunk-scoped dispatch constants + the `RevisionMemo`, so the 4 revision
+    // reads (`ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` / `POOL_REVISION()` /
     // `CONFIGURATOR_REVISION()`) dedupe per `(implementation, selector,
     // block)`. Chunks partition the block range, so chunk scope is the full
     // read span the dispatch can observe; the block-pinned key keeps the
     // memo safe across an in-chunk `Upgraded` (the upgrade's own read sits
     // at the upgrade block; every later read sits at a later block — a
     // distinct key — so no pre-upgrade value can leak across the boundary).
-    let mut revision_memo = RevisionMemo::new();
+    // The context borrows the chunk span, so it cannot outlive the chunk.
+    let chunk_span = ChunkSpan::new(chunk_start, chunk_end);
+    let mut ctx = ChunkContext::for_chunk(
+        &chunk_span,
+        provider.clone(),
+        market_id,
+        chain_id,
+        pool_address,
+        oracle_address,
+    );
 
     for group in tx_groups {
         let block_number = group.block_number;
@@ -180,100 +190,36 @@ pub(super) async fn process_chunk_on_conn(
         let compute_rt_start = degenbot_rpc::provider::rpc_round_trips();
         let compute_guard = compute_span.enter();
         let compute_started = Instant::now();
-        // (0) Re-resolve the GHO asset for THIS tx — sees the prior tx's
-        //     `ReserveInitialized` write that set `aave_gho_tokens.v_token_id`
-        //     (surface #3: the drive-startup snapshot had `v_token_address=None`
-        //     when the GHO reserve wasn't yet initialized at coldboot, masking a
-        //     mid-drive init + causing the GHO vToken's `Mint` to classify as
-        //     plain `DebtMint` instead of `GhoDebtMint` → the borrow matcher
-        //     found no DebtMint → NoMatch crash). Mirrors Python's lazy
-        //     `tx_context.gho_vtoken_address` reload (re-reads the `v_token`
-        //     relationship from the session on each tx's `_process_transaction`
-        //     entry — line 81). The drive-startup `gho_asset`/addresses params
-        //     are now only the coldboot seed; this per-tx fetch is
-        //     authoritative. Perf C: served from the chunk substrate's cached
-        //     GHO row — which every `aave_gho_tokens` write marks dirty, so
-        //     the read-your-own-writes freshness contract is unchanged (a
-        //     dirty mark forces one re-query here).
-        let gho_asset_tx = substrate.gho_asset(conn)?;
-        let gho_token_address_tx: Option<&str> = gho_asset_tx
-            .as_ref()
-            .and_then(|g| g.gho_token_address.as_deref());
-        let gho_vtoken_address_tx: Option<&str> = gho_asset_tx
-            .as_ref()
-            .and_then(|g| g.v_token_address.as_deref());
-        // C3.3 (C refresh): the chain's GHO discount-token (stkAAVE) address,
-        //     re-resolved per-tx from `conn` (read-your-own-writes: a mid-run
-        //     `DiscountTokenUpdated` bumps `v_gho_discount_token` here — the
-        //     balanceOf must hit the NEW contract). `None` → the refresh is a
-        //     no-op (no discount token configured).
-        let discount_token_tx: Option<Address> = gho_asset_tx
-            .as_ref()
-            .and_then(|g| g.v_gho_discount_token.as_deref())
-            .and_then(|s| s.parse().ok());
-
-        // (a) Re-resolve the GHO vToken's revision for THIS tx —
-        //     sees the prior tx's in-chunk `Upgraded` write via
-        //     read-your-own-writes (surface #1). Perf C: the asset row comes
-        //     from the chunk substrate (the `Upgraded` apply bumps the cached
-        //     revision in place).
-        let vtoken_revision: Option<u32> = match (gho_vtoken_address_tx, gho_asset_tx.as_ref()) {
-            (Some(addr_str), Some(_)) => substrate
-                .lookup_asset_row(conn, market_id, "v_token", addr_str)?
-                .map(|row| row.v_token_revision),
-            _ => None,
-        };
-
-        // (b) The discount pre-pass (RPC + the DB-cache path) — reads `conn`
-        //     (sees prior txs' writes).
-        let discounts = build_discount_snapshot(
-            provider,
-            &tx_hashes_refs,
-            block_number,
-            gho_vtoken_address_tx.and_then(|s| s.parse().ok()),
-            vtoken_revision,
-            market_id,
-            conn,
-        )
-        .await?;
-
-        // (c) The config-event dispatch (RPC + substrate lookups). The
-        //     revision reads ride the per-chunk memo (Perf D); the
-        //     same-block independent `eth_call`s ride the multicall batch.
-        let config_events = dispatch_config_events(
-            provider,
-            &tx_hashes_refs,
-            market_id,
-            chain_id,
-            conn,
-            pool_address,
-            oracle_address,
-            gho_asset_tx.as_ref(),
-            block_number,
-            &mut substrate,
-            &mut revision_memo,
-        )
-        .await?;
-
-        // (d) The config events were applied INTRA-dispatch:
-        //     `dispatch_config_events` applies each event to `conn` as it's
-        //     dispatched, so a later config event's dispatch sees an earlier
-        //     event's apply — e.g. `CollateralConfigurationChanged` sees the
-        //     asset `ReserveInitialized` just created). By here the tx's config
-        //     writes are already on `conn` (read-your-own-writes for the ops
-        //     parser below). Matches Python's per-event apply order.
+        // (0..3) The overlay-mediated read + dispatch stages, in the ONE order
+        //     the read-your-own-writes contract requires: re-resolve the GHO
+        //     row (a prior tx's `ReserveInitialized` sets `v_token_id`; the
+        //     drive-startup snapshot is only the coldboot seed), re-resolve the
+        //     GHO vToken revision (a prior tx's `Upgraded` overwrote the cached
+        //     revision in place), build the discount snapshot, then dispatch the
+        //     config events (each applied intra-dispatch). The seam owns the
+        //     order; `ChunkContext::dispatch_transaction` carries the rationale
+        //     + the Python-mirror notes for each stage.
+        let dispatch = ctx
+            .dispatch_transaction(conn, &mut substrate, &tx_hashes_refs, block_number)
+            .await?;
+        let discounts = dispatch.discounts;
+        let config_events = dispatch.config_events;
+        let discount_token_tx = dispatch.stk_aave_address;
+        // (d) The config events were applied INTRA-dispatch: by here the tx's
+        //     config writes are already on `conn` (read-your-own-writes for
+        //     the ops parser below). Matches Python's per-event apply order.
         events_applied_total += config_events.len();
 
         // (e) C3's operations parser (sync, substrate lookups) — reads `conn`
         //     (sees this tx's config writes + prior txs' writes) + uses the
-        //     per-tx re-resolved GHO addresses (surface #3).
+        //     overlay-resolved GHO addresses (surface #3).
         let op_events = process_transaction(
             market_id,
             chain_id,
             pool_address,
             /* treasury_address */ None,
-            gho_token_address_tx.and_then(|s| s.parse().ok()),
-            gho_vtoken_address_tx.and_then(|s| s.parse().ok()),
+            dispatch.gho_underlying_address,
+            dispatch.gho_vtoken_address,
             conn,
             &tx_hashes_refs,
             group.tx_hash,
@@ -310,7 +256,7 @@ pub(super) async fn process_chunk_on_conn(
         );
         let apply_guard = apply_span.enter();
         let apply_started = Instant::now();
-        apply_chunk_events_on_conn(conn, market_id, &op_events, &mut substrate)?;
+        ctx.apply_events(conn, &op_events, &mut substrate)?;
         apply_time += apply_started.elapsed();
         drop(apply_guard);
         apply_span.record(
@@ -596,6 +542,7 @@ mod tests {
                     Address::ZERO,
                     None,
                     &[],
+                    3_000,
                     3_000,
                 ))
                 .unwrap();

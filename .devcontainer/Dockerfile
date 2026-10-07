@@ -137,7 +137,7 @@ RUN uv tool install prek
 # `cargo-edit` provides `cargo upgrade` (rewrites Cargo.toml version requirements
 # to latest published, across semver majors — `cargo update` alone can't cross
 # a major boundary), used by `just update-deps`.
-RUN cargo install --locked cargo-edit
+RUN cargo install --locked cargo-edit cargo-nextest
 
 # User-level cargo config: use `mold` as the linker for all cargo builds
 # inside the container (dev-only perf; see rust/PERF_RESULTS.md (dropped in `f082db7a7`) lever #1).

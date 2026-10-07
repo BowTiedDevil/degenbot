@@ -87,12 +87,12 @@ pub(super) async fn bootstrap_pool_contracts(
             continue;
         };
         if let Some(resolved) = match_proxy_id(
+            &mut revision_memo,
+            provider,
             &ev.id,
             &ev.proxy_address,
             &ev.implementation_address,
-            provider,
             from_block,
-            &mut revision_memo,
         )
         .await?
         {

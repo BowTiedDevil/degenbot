@@ -675,6 +675,7 @@ async fn run_aave_update_driver(
                 pool_address,
                 oracle_address,
                 &tx_groups,
+                working_start,
                 chunk_end,
             )
             .await;
