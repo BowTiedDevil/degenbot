@@ -103,12 +103,6 @@ def _test_pool_exact_input(
                     fee=pool["fee"],
                     tick_spacing=pool["tick_spacing"],
                     hook_address=pool["hooks"],
-                    tick_bitmap=snapshot[pool_id]["tick_bitmap"]
-                    if snapshot is not None and pool_id in snapshot
-                    else None,
-                    tick_data=snapshot[pool_id]["tick_data"]
-                    if snapshot is not None and pool_id in snapshot
-                    else None,
                 ),
             )
         except Exception as exc:
@@ -223,12 +217,6 @@ def _test_pool_exact_output(
                     fee=pool["fee"],
                     tick_spacing=pool["tick_spacing"],
                     hook_address=pool["hooks"],
-                    tick_bitmap=snapshot[pool_id]["tick_bitmap"]
-                    if snapshot is not None and pool_id in snapshot
-                    else None,
-                    tick_data=snapshot[pool_id]["tick_data"]
-                    if snapshot is not None and pool_id in snapshot
-                    else None,
                 ),
             )
         except Exception as exc:

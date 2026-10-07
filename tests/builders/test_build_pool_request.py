@@ -43,8 +43,6 @@ class TestBuildManagedPoolRequest:
         assert req.fee is None
         assert req.tick_spacing is None
         assert req.hook_address is None
-        assert req.tick_bitmap is None
-        assert req.tick_data is None
 
     def test_frozen(self):
         """BuildManagedPoolRequest is frozen — cannot reassign fields."""
@@ -52,11 +50,11 @@ class TestBuildManagedPoolRequest:
         with pytest.raises(AttributeError):
             req.pool_id = "0x02"  # type: ignore[misc]
 
-    def test_has_own_tick_bitmap_and_tick_data(self):
-        """BuildManagedPoolRequest has tick_bitmap and tick_data fields."""
+    def test_no_tick_map_fields(self):
+        """BuildManagedPoolRequest no longer carries tick_bitmap/tick_data (dead since builder retirement)."""
         field_names = {f.name for f in fields(BuildManagedPoolRequest)}
-        assert "tick_bitmap" in field_names
-        assert "tick_data" in field_names
+        assert "tick_bitmap" not in field_names
+        assert "tick_data" not in field_names
 
     def test_does_not_have_deployer_or_init_hash(self):
         """BuildPoolRequest no longer carries deployer_address/init_hash."""
@@ -104,8 +102,8 @@ class TestBuildPoolRequest:
         assert "tick_spacing" not in field_names
         assert "hook_address" not in field_names
 
-    def test_still_has_tick_bitmap_and_tick_data(self):
-        """BuildPoolRequest still has tick_bitmap and tick_data for V3."""
-        req = BuildPoolRequest(tick_bitmap={1: 2}, tick_data={3: 4})
-        assert req.tick_bitmap == {1: 2}
-        assert req.tick_data == {3: 4}
+    def test_no_tick_map_fields(self):
+        """BuildPoolRequest no longer carries tick_bitmap/tick_data (retired with the V3 builder)."""
+        field_names = {f.name for f in fields(BuildPoolRequest)}
+        assert "tick_bitmap" not in field_names
+        assert "tick_data" not in field_names

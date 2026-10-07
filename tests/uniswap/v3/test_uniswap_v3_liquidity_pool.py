@@ -237,12 +237,8 @@ def test_first_200_pools_with_snapshot(
     for pool in testing_pools:
         pool_address: str = pool["pool_address"]
 
-        pool_tick_data = liquidity_snapshot[pool_address]["tick_data"]
-        pool_tick_bitmap = liquidity_snapshot[pool_address]["tick_bitmap"]
         lp = bot.build_pool(
             pool_address,
-            tick_bitmap=pool_tick_bitmap,
-            tick_data=pool_tick_data,
         )
 
         max_reserves_token0 = 1 * 10**lp.token0.decimals

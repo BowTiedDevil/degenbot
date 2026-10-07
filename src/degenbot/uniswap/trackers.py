@@ -288,11 +288,16 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
             raise PoolNotAssociated(pool_address)
 
         try:
+            # The tick-map kwargs were retired with the Python V3 builder:
+            # build_pool's delegated core path takes tick data from the DB
+            # (``db=True``) or the lazily-created fetcher. Snapshot tick maps
+            # passed here were silently discarded since the builder
+            # retirement, so they are no longer forwarded; pending
+            # Mint/Burn deltas are still applied via
+            # ``_apply_pending_liquidity_updates`` below.
             new_pool = self._bot.build_pool(
                 pool_address,
                 silent=silent,
-                tick_bitmap=self._snapshot.tick_bitmap(pool_address) if self._snapshot else None,
-                tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,
             )
         except LiquidityPoolError as exc:  # pragma: no cover
             raise PoolCreationFailed(

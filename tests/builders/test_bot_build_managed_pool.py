@@ -75,3 +75,10 @@ class TestBuildManagedPoolSignature:
         param_names = set(sig.parameters.keys())
         assert "deployer_address" not in param_names
         assert "init_hash" not in param_names
+
+    def test_build_pool_no_longer_accepts_tick_map_kwargs(self):
+        """build_pool() no longer accepts tick_bitmap/tick_data kwargs (retired with the V3 builder)."""
+        sig = inspect.signature(Bot.build_pool)
+        param_names = set(sig.parameters.keys())
+        assert "tick_bitmap" not in param_names
+        assert "tick_data" not in param_names

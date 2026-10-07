@@ -582,15 +582,13 @@ class Bot(AccountQueryMixin):
         """
         return self.build_erc20token(address)
 
-    # ruff: ignore[too-many-arguments, too-many-locals, too-many-branches, too-many-statements] - one knob per resolved construction input, mirroring the retired keyword surface
+    # ruff: ignore[too-many-locals, too-many-branches, too-many-statements] - one knob per resolved construction input, mirroring the retired keyword surface
     def build_pool(
         self,
         address: str,
         *,
         state_block: int | None = None,
         silent: bool = False,
-        tick_bitmap: dict[int, Any] | None = None,
-        tick_data: dict[int, Any] | None = None,
         construction_route: ConstructionRoute | None = None,
     ) -> AbstractLiquidityPool:
         """Build a pool from an address, automatically resolving its type.
@@ -620,8 +618,6 @@ class Bot(AccountQueryMixin):
             state_block=state_block,
             # state_cache_depth stays a request field; this facade entry point
             # carries only the knobs in-tree callers actually set.
-            tick_bitmap=tick_bitmap,
-            tick_data=tick_data,
             construction_route=construction_route,
         )
 

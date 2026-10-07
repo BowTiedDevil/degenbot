@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -17,17 +17,17 @@ class BuildPoolRequest:
     builders. Required parameters (address, chain_id, io) remain on
     builder.build() as positional/keyword arguments.
 
-    Builders read the fields they recognize and ignore the rest.
+    Builders read the fields they recognize and ignore the rest. Note that
+    the retired tick-map fields (``tick_bitmap``/``tick_data``) are NOT
+    carried anymore: the delegated core build owns tick-map assembly
+    (DB-first, else the lazily-created fetcher), so pre-fetched maps
+    have no path into the build.
     """
 
     # Common options
     silent: bool = False
     state_block: int | None = None
     state_cache_depth: int = 8
-
-    # V3 tick options
-    tick_bitmap: dict[int, Any] | None = None
-    tick_data: dict[int, Any] | None = None
 
     # The resolved construction route (GLOSSARY.md, Construction route) — the
     # cockpit's policy ordering the core route entry walks. `None` = the
@@ -62,7 +62,9 @@ class BuildManagedPoolRequest:
     ``pool_id`` is required — V4 pools cannot be discovered without it.
     Immutable data (``state_view_address``, ``tokens``, ``fee``,
     ``tick_spacing``, ``hook_address``) is required when the pool is not
-    in the database; otherwise it is fetched from DB.
+    in the database; otherwise it is fetched from DB. Pre-fetched tick
+    data is not carried: the delegated core build assembles the tick map
+    from the DB or the lazily-created fetcher.
     """
 
     # Required — V4 pools cannot be discovered without a pool ID
@@ -79,10 +81,6 @@ class BuildManagedPoolRequest:
     fee: int | None = None
     tick_spacing: int | None = None
     hook_address: str | None = None
-
-    # Pre-fetched tick data (DB snapshot or test fixtures)
-    tick_bitmap: dict[int, Any] | None = None
-    tick_data: dict[int, Any] | None = None
 
 
 # Union type for dispatch methods that accept either request shape.
