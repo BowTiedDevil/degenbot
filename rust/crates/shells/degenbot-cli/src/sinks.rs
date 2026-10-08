@@ -31,7 +31,7 @@ use degenbot_bot::telemetry as bot_telemetry;
 use tracing_subscriber::layer::{Layer as _, SubscriberExt as _};
 use tracing_subscriber::EnvFilter;
 
-use crate::progress::{self, Layer as ProgressLayer, Painter};
+use crate::progress::{Layer as ProgressLayer, Painter};
 
 /// The process-lifetime telemetry handles. Dropping it clears the progress bar.
 #[derive(Debug)]
@@ -72,16 +72,20 @@ pub fn boot() -> Result<TelemetryBoot, String> {
     // silent at `info`, loud through an explicit RUST_LOG. The Python driver
     // resolves ITS console filter in driver_boot() with its own default.
     let plan = bot_telemetry::resolve_filters(bot_telemetry::CONSOLE_WIRING_DEFAULT_RUST);
-    let painter = Arc::new(Painter::from_draw_target(progress::stderr_opt()));
+    let painter = Arc::new(Painter::console());
     let console_filter = EnvFilter::new(&plan.console);
     let subscriber = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .compact()
                 .with_writer(std::io::stderr)
-                .with_filter(console_filter.clone()),
+                .with_filter(console_filter),
         )
-        .with(ProgressLayer::new(Arc::clone(&painter)).with_filter(console_filter));
+        // No console filter on the progress layer: it self-filters by target
+        // and level (the two chunk-committed targets at INFO), so the bar and
+        // the redirected-stdout record observe chunks regardless of how quiet
+        // the log sink's default is.
+        .with(ProgressLayer::new(Arc::clone(&painter)));
     let installed = tracing::subscriber::set_global_default(subscriber).is_ok();
 
     // Step 3: the shared ADR-043 section 2/5 contracts. The census boot
