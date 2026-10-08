@@ -118,6 +118,13 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/foundation/degenbot-executor/src/grammar_walker/shapes/two_hop_seed_v4.rs",
             &["T1_CAPTURE"][..], // executor shape dev-capture gate
         );
+        m.insert(
+            // (3) stance: the reset-lock flock test spawns a child test
+            // binary that takes the real lock before the parent kills it —
+            // cross-process coordination, not operator config.
+            "crates/shells/degenbot-cli-core/src/aave.rs",
+            &["RESET_LOCK_TEST_DB", "RESET_LOCK_TEST_READY"][..],
+        );
         // (3) Test-only stances inside src: the parent test sets these to
         // drive the CHILD test binary (no config loader in the harness).
         m.insert(
