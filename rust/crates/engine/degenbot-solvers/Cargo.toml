@@ -29,6 +29,11 @@ degenbot-uniswap.workspace = true
 degenbot-core.workspace = true
 # Hot solver maps: foldhash cl-cache tables + visited walk guard.
 hashbrown.workspace = true
+
+# cl/memo.rs WalkMemo interior lock: parking_lot has no poisoning and the
+# fast uncontended lock path the other engine crates already standardize on.
+# (The crate already carried it as a dev-dependency for the cl tests.)
+parking_lot = { version = "^0.12" }
 # hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
 # default-features = false -> no-op stubs in default builds; the
 # `hotpath` feature enables real instrumentation.
@@ -60,4 +65,8 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
 
 [[bench]]
 name = "digest"
+harness = false
+
+[[bench]]
+name = "walkmemo_contention"
 harness = false

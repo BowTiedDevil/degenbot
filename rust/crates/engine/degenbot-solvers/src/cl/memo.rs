@@ -113,14 +113,14 @@ impl WalkMemoState {
 /// fields; the owner builds them from its config, `build` at the
 /// engine-construction boundary). Internal mutex is shared under rayon.
 pub struct WalkMemo {
-    inner: std::sync::Mutex<WalkMemoState>,
+    inner: parking_lot::Mutex<WalkMemoState>,
 }
 
 impl WalkMemo {
     #[must_use]
     pub fn new(memo_on: bool, stats_on: bool) -> Self {
         Self {
-            inner: std::sync::Mutex::new(WalkMemoState {
+            inner: parking_lot::Mutex::new(WalkMemoState {
                 stats_on,
                 memo_on,
                 ..WalkMemoState::default()
@@ -136,10 +136,13 @@ impl WalkMemo {
         st.memo_on || st.stats_on
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, WalkMemoState> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// Acquire the interior state lock. The backing mutex is a
+    /// `parking_lot::Mutex`, which never poisons: the std poison-recovery
+    /// arm (`unwrap_or_else(PoisonError::into_inner)`) is gone with the type
+    /// swap, `lock()` is infallible, and the guard releases on drop exactly
+    /// as before.
+    fn lock(&self) -> parking_lot::MutexGuard<'_, WalkMemoState> {
+        self.inner.lock()
     }
 
     /// Advance the cross-block epoch and swap the composition census (call
