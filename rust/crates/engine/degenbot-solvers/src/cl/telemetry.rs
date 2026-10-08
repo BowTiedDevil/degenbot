@@ -302,9 +302,10 @@ pub static WALK_ANCHOR_ARGMAX_NS: std::sync::atomic::AtomicU64 =
 // Thread-local because `cargo test` runs tests (and their solves) on
 // separate threads concurrently — a shared static would mix counts.
 thread_local! {
-    // Production-scoped walk-combinator counters (see `WALK_STATS_SCOPE`).
-    // Always-on: the rayon solve resets + reads them once per path to name the
-    // cost driver of slow solves (pieces × simulations × word-boundary walk).
+    // Production-scoped walk-combinator counters. Writers ride the `telemetry`
+    // feature gate: the rayon solve resets + reads them once per path to name
+    // the cost driver of slow solves (pieces × simulations × word-boundary
+    // walk) — telemetry builds only (see `WalkStats`'s counter policy).
     pub(crate) static WALK_PIECES_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // See `WALK_PIECES_VISITED`.
     pub(crate) static WALK_PATH_SIMULATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

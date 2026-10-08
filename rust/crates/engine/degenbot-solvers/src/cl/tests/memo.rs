@@ -118,9 +118,10 @@ fn memo_probe_distinguishes_hit_negative_miss() {
 /// the inner walk, while the census still records the fingerprint.
 ///
 /// `stats.sims` is the direct walk-ran proof but flushes to zero without
-/// the crate's default-off `telemetry` feature (see the bounded-counts
-/// test's cfg split); `negatives_played` is the feature-independent
-/// instrument.
+/// the crate's default-off `telemetry` feature — every `WalkStats` field is
+/// feature-gated (counter policy documented at `WalkStats` in
+/// `cl/active_set.rs`; the bounded-counts test enforces the zero flush);
+/// `negatives_played` is the feature-independent instrument.
 #[test]
 fn memo_cached_negative_skips_the_walk_on_replay() {
     // Two same-price 1:1 pools (zfo + ofz): fees dominate, always None.

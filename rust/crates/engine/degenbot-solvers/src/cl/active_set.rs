@@ -545,6 +545,34 @@ pub(super) fn walk_refine_window(
 /// One path's walk-combinator counters: the FULL set, so
 /// solve telemetry can name the real cost driver — `sims × per-sim word_steps`
 /// vs `refine_sims` (input-partition refinement probes).
+///
+/// # Counter policy: every field is feature-gated — no field is always real
+///
+/// All twelve `usize` counters (`pieces`, `sims`, `word_steps`, `refine_sims`,
+/// `ternary_sims`, `grid_sims`, `left_edge_sims`, `right_edge_sims`,
+/// `anchor_sims`, `event_solver_ok`, `event_solver_fallbacks`,
+/// `max_dense_words`) and `census` are produced behind the crate's
+/// `telemetry` feature (default OFF; see `Cargo.toml`). Without it every
+/// writer is compiled to a no-op (the `gated_cell_bump!` /
+/// `gated_atomic_add!` gate in `cl/telemetry.rs`) and `peek_walk_stats`
+/// returns `WalkStats::default()`, so every field reads 0 in default builds.
+/// With the feature on, the `usize` counters are live; `census` additionally
+/// needs the runtime census gate (`SolveRuntimeConfig::walk_event_census`) —
+/// feature on + gate off leaves `census` dark while the `usize` counters
+/// still count.
+///
+/// The cheap counters share the heavy census/timing machinery's gate
+/// deliberately — one counter policy, not an accident of colocated code: the
+/// bumps ride the walk's innermost loops (one per path simulation, per
+/// word-boundary step, per refinement probe, per piece), and the crate's
+/// zero-overhead default (module doc of `cl/telemetry.rs`: the release build
+/// "pays nothing" for telemetry) keeps every write out of production builds.
+/// Default-build consumers must therefore read zeros as "unmeasured", never
+/// as "the walk did nothing" — use `WalkOutcome::result` for that — and take
+/// cost/progress facts from feature-independent instruments (`WalkMemo`
+/// probe stats: `cache_plays`, `negatives_played`; the walk `result` itself).
+/// The bounded-counts test (`cl/tests/mod.rs`) enforces the zero flush; the
+/// memo tests cfg-split their `stats.sims` assertions the same way.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WalkStats {
     /// Tick-range pieces visited by the monotone walk.
@@ -574,7 +602,9 @@ pub struct WalkStats {
     /// the one-shot alert is the CONSUMER's decision — the walk reports).
     pub max_dense_words: usize,
     /// Loop-15 census tally (predicted vs bisected first-above). All-zero
-    /// unless the census env gate is on.
+    /// unless the runtime census gate is on (`SolveRuntimeConfig::
+    /// walk_event_census`) — and, like every field here, needs the
+    /// `telemetry` feature first (see the struct-level counter policy).
     pub census: WalkEventCensus,
 }
 
