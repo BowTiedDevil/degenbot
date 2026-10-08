@@ -1008,6 +1008,7 @@ mod tests {
             &seqs,
             &cl_prepared,
             &hop_order,
+            None,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             None,
         )

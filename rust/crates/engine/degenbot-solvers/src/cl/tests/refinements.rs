@@ -638,6 +638,7 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
         &cl_wrapped,
         &prep_as_options(&prep, 1),
         &order,
+        None,
         &cfg,
         None,
     );
@@ -646,6 +647,7 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
         &cl_wrapped,
         &prep_as_options(&prep, 1),
         &order,
+        None,
         &cfg,
         Some(&env),
     );

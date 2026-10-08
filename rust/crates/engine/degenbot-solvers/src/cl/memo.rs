@@ -1,4 +1,5 @@
 use alloy::primitives::U256;
+use degenbot_math::v2::IntHopState;
 
 use super::IntV3TickRangeSequence;
 
@@ -296,6 +297,69 @@ fn mix_u256(acc: &mut u64, v: U256) {
         ^ 0xD6E8_FEB8_6659_FD93;
 }
 
+/// Fold one CL sequence's per-range state into the two lanes — the EXACT
+/// mixing body [`walk_path_fingerprint`] folds per position: the
+/// empty-sequence tag, the full per-range state (liquidity, prices, gamma,
+/// swap direction) into lane_a, and the derived gross/cross accumulators +
+/// every word-boundary price into lane_b. The `gross`/`cross` accumulators
+/// are threaded by the caller: path-wide running sums carried across every
+/// sequence position (function-scope in the original inline body), so this
+/// helper neither owns nor resets them and multi-sequence folds are
+/// bit-identical to the pre-refactor inline body — the verbatim-copy
+/// identity test in the `tests` module below pins that against the
+/// original source (commit ca5fbf08f). The mixed entry point
+/// ([`walk_mixed_path_fingerprint`]) shares this helper so the collision
+/// discipline stays uniform — no forked mixing logic.
+fn fold_sequence_ranges(
+    lane_a: &mut u64,
+    lane_b: &mut u64,
+    gross: &mut U256,
+    cross: &mut U256,
+    seq: &IntV3TickRangeSequence,
+) {
+    if seq.ranges.is_empty() {
+        mix_u256(lane_a, U256::from(0xDEADu64));
+        mix_u256(lane_b, U256::from(0xBEEFu64));
+        return;
+    }
+    for r in &seq.ranges {
+        mix_u256(lane_a, U256::from(r.gamma_numer));
+        mix_u256(lane_a, U256::from(r.fee_denom));
+        mix_u256(lane_a, r.sqrt_price_lower_x96);
+        mix_u256(lane_a, r.sqrt_price_upper_x96);
+        mix_u256(lane_a, U256::from(r.liquidity));
+        mix_u256(lane_a, r.sqrt_price_x96);
+        mix_u256(lane_a, U256::from(u64::from(r.zero_for_one)));
+        *gross = gross.wrapping_add(U256::from(r.liquidity));
+        *cross = cross.wrapping_add(r.sqrt_price_x96);
+        mix_u256(lane_b, *gross);
+        mix_u256(lane_b, *cross);
+    }
+    for r in &seq.ranges {
+        for price in &r.word_boundary_prices {
+            mix_u256(lane_b, *price);
+        }
+    }
+}
+
+/// Fold one V2 hop state into the two lanes: every field
+/// `PieceView::constant_product` consumes — the constant-product view reads
+/// exactly the four `IntHopState` fields (`reserve_in`, `reserve_out`,
+/// `gamma_numer`, `fee_denom`) through `swap` / `swap_exact_out` / the
+/// shifted-piece anchor, so all four go into lane_a, and the reserve pair
+/// (the hop's extractable-output capacity) again into lane_b. This is the
+/// key-completeness requirement against env: `PathBoundLines` folds the V2
+/// reserves and fee params via `hop_lines_and_cap` → `mobius_lines`, so the
+/// fingerprint must fold exactly what determines the solve outcome.
+fn fold_v2_hop(lane_a: &mut u64, lane_b: &mut u64, hop: &IntHopState) {
+    mix_u256(lane_a, hop.reserve_in);
+    mix_u256(lane_a, hop.reserve_out);
+    mix_u256(lane_a, hop.gamma_numer);
+    mix_u256(lane_a, hop.fee_denom);
+    mix_u256(lane_b, hop.reserve_in);
+    mix_u256(lane_b, hop.reserve_out);
+}
+
 /// 128-bit content fingerprint of the path composition: one lane folds hop
 /// order and the full per-range state (liquidity, prices, gamma, swap
 /// direction), the other folds the derived capacity fields (gross/output
@@ -312,29 +376,279 @@ pub fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
     for (i, seq) in sequences.iter().enumerate() {
         mix_u256(&mut lane_a, U256::from((i as u64).wrapping_add(3)));
         mix_u256(&mut lane_b, U256::from((i as u64).wrapping_add(5)));
-        if seq.ranges.is_empty() {
-            mix_u256(&mut lane_a, U256::from(0xDEADu64));
-            mix_u256(&mut lane_b, U256::from(0xBEEFu64));
-            continue;
-        }
-        for r in &seq.ranges {
-            mix_u256(&mut lane_a, U256::from(r.gamma_numer));
-            mix_u256(&mut lane_a, U256::from(r.fee_denom));
-            mix_u256(&mut lane_a, r.sqrt_price_lower_x96);
-            mix_u256(&mut lane_a, r.sqrt_price_upper_x96);
-            mix_u256(&mut lane_a, U256::from(r.liquidity));
-            mix_u256(&mut lane_a, r.sqrt_price_x96);
-            mix_u256(&mut lane_a, U256::from(u64::from(r.zero_for_one)));
-            gross = gross.wrapping_add(U256::from(r.liquidity));
-            cross = cross.wrapping_add(r.sqrt_price_x96);
-            mix_u256(&mut lane_b, gross);
-            mix_u256(&mut lane_b, cross);
-        }
-        for r in &seq.ranges {
-            for price in &r.word_boundary_prices {
-                mix_u256(&mut lane_b, *price);
+        fold_sequence_ranges(&mut lane_a, &mut lane_b, &mut gross, &mut cross, seq);
+    }
+    (u128::from(lane_a) << 64) | u128::from(lane_b)
+}
+
+/// 128-bit content fingerprint of a MIXED V2+CL path composition — the
+/// mixed entry's (`solve_mixed_piecewise`) exact correctness key for the
+/// cross-block memo, same contract as [`walk_path_fingerprint`]: the
+/// crossing tables + word profiles are pure derivations of the sequence,
+/// cfg is fixed per engine lifetime, and env (PathBoundLines) is a pure
+/// derivation of hop state + cfg (it folds the V2 reserves and fee params
+/// via `hop_lines_and_cap` → `mobius_lines`), so folding every position's
+/// determining state makes the key exact for mixed compositions.
+///
+/// Per position it folds the hop index (the same `(i + 3)` / `(i + 5)` lane
+/// mixing [`walk_path_fingerprint`] uses), a V2/CL discriminator tag, and
+/// the hop state: V2 via [`fold_v2_hop`] (every field
+/// `PieceView::constant_product` consumes), CL via [`fold_sequence_ranges`]
+/// (the same per-range folding the all-CL key performs — no forked mixing),
+/// with the `gross`/`cross` accumulators threaded path-wide across the CL
+/// positions exactly as [`walk_path_fingerprint`] threads them; V2
+/// positions contribute nothing to them (the original CL-only accumulation
+/// discipline). The mixed keys are transient in-memory memo keys — a value
+/// shift here is inert.
+///
+/// The all-CL and mixed fingerprints cover different composition spaces
+/// (both entries may share one `WalkMemo` handle — fingerprint identity is
+/// composition identity), so no cross-compatibility between the two keys is
+/// required or intended. The u128 two-lane output discipline is kept.
+#[must_use]
+pub fn walk_mixed_path_fingerprint(
+    v2_hops: &[Option<IntHopState>],
+    cl_sequences: &[Option<&IntV3TickRangeSequence>],
+    hop_order: &[bool], // true = V2, false = CL
+) -> u128 {
+    let mut lane_a: u64 = 0xCBF2_9CE4_8422_2325;
+    let mut lane_b: u64 = 0x6E99_B980_B247_C7F6;
+    let mut gross = U256::ZERO;
+    let mut cross = U256::ZERO;
+    for (i, &is_v2) in hop_order.iter().enumerate() {
+        mix_u256(&mut lane_a, U256::from((i as u64).wrapping_add(3)));
+        mix_u256(&mut lane_b, U256::from((i as u64).wrapping_add(5)));
+        mix_u256(&mut lane_a, U256::from(u64::from(is_v2)));
+        // A `None` state is a structurally invalid position (the entry
+        // refuses it before probing); fold a distinct absent tag so it
+        // cannot share a key with any present state or empty sequence.
+        if is_v2 {
+            if let Some(hop) = &v2_hops[i] {
+                fold_v2_hop(&mut lane_a, &mut lane_b, hop);
+            } else {
+                mix_u256(&mut lane_a, U256::from(0xFACEu64));
+                mix_u256(&mut lane_b, U256::from(0xFEEDu64));
             }
+        } else if let Some(seq) = cl_sequences[i] {
+            fold_sequence_ranges(&mut lane_a, &mut lane_b, &mut gross, &mut cross, seq);
+        } else {
+            mix_u256(&mut lane_a, U256::from(0xFACEu64));
+            mix_u256(&mut lane_b, U256::from(0xFEEDu64));
         }
     }
     (u128::from(lane_a) << 64) | u128::from(lane_b)
+}
+
+// ---------------------------------------------------------------------------
+// Fingerprint identity tests (bit-identity proof against the pre-refactor
+// inline body)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::degenbot_pools::int_v3_hop::IntV3TickRangeHop;
+
+    /// VERBATIM copy of the pre-refactor inline fingerprint body.
+    ///
+    /// Provenance: `git show ca5fbf08f:rust/crates/engine/degenbot-solvers/src/cl/memo.rs`
+    /// (the `walk_path_fingerprint` body at the commit before the
+    /// `fold_sequence_ranges` factoring landed). Deliberately NOT refactored
+    /// to share the helper: its whole value is being an independent original,
+    /// so the identity tests below prove the refactored
+    /// [`walk_path_fingerprint`] is bit-identical to the inline body it
+    /// replaced.
+    fn walk_path_fingerprint_original(sequences: &[&IntV3TickRangeSequence]) -> u128 {
+        let mut lane_a: u64 = 0xCBF2_9CE4_8422_2325;
+        let mut lane_b: u64 = 0x6E99_B980_B247_C7F6;
+        let mut gross = U256::ZERO;
+        let mut cross = U256::ZERO;
+        for (i, seq) in sequences.iter().enumerate() {
+            mix_u256(&mut lane_a, U256::from((i as u64).wrapping_add(3)));
+            mix_u256(&mut lane_b, U256::from((i as u64).wrapping_add(5)));
+            if seq.ranges.is_empty() {
+                mix_u256(&mut lane_a, U256::from(0xDEADu64));
+                mix_u256(&mut lane_b, U256::from(0xBEEFu64));
+                continue;
+            }
+            for r in &seq.ranges {
+                mix_u256(&mut lane_a, U256::from(r.gamma_numer));
+                mix_u256(&mut lane_a, U256::from(r.fee_denom));
+                mix_u256(&mut lane_a, r.sqrt_price_lower_x96);
+                mix_u256(&mut lane_a, r.sqrt_price_upper_x96);
+                mix_u256(&mut lane_a, U256::from(r.liquidity));
+                mix_u256(&mut lane_a, r.sqrt_price_x96);
+                mix_u256(&mut lane_a, U256::from(u64::from(r.zero_for_one)));
+                gross = gross.wrapping_add(U256::from(r.liquidity));
+                cross = cross.wrapping_add(r.sqrt_price_x96);
+                mix_u256(&mut lane_b, gross);
+                mix_u256(&mut lane_b, cross);
+            }
+            for r in &seq.ranges {
+                for price in &r.word_boundary_prices {
+                    mix_u256(&mut lane_b, *price);
+                }
+            }
+        }
+        (u128::from(lane_a) << 64) | u128::from(lane_b)
+    }
+
+    /// Fixture range with arbitrary (fingerprint-opaque) small Q128.96-style
+    /// prices; no semantic validity is required — only that every folded
+    /// field is deterministic.
+    fn make_hop(
+        liquidity: u128,
+        sp: u64,
+        lower: u64,
+        upper: u64,
+        wb: Vec<U256>,
+    ) -> IntV3TickRangeHop {
+        IntV3TickRangeHop {
+            liquidity,
+            sqrt_price_x96: U256::from(sp),
+            sqrt_price_lower_x96: U256::from(lower),
+            sqrt_price_upper_x96: U256::from(upper),
+            gamma_numer: 997_000,
+            fee_denom: 1_000_000,
+            zero_for_one: true,
+            word_boundary_prices: wb,
+        }
+    }
+
+    /// Direct struct construction (not `IntV3TickRangeSequence::new`, which
+    /// rejects the empty range vector the empty-sequence fixtures need).
+    fn make_seq(ranges: Vec<IntV3TickRangeHop>) -> IntV3TickRangeSequence {
+        IntV3TickRangeSequence { ranges }
+    }
+
+    /// Bit-identity assertion against the verbatim original body.
+    fn assert_matches_original(sequences: &[&IntV3TickRangeSequence]) {
+        assert_eq!(
+            walk_path_fingerprint(sequences),
+            walk_path_fingerprint_original(sequences),
+            "walk_path_fingerprint diverged from the original inline body (ca5fbf08f)"
+        );
+    }
+
+    #[test]
+    fn fingerprint_identity_one_sequence() {
+        let s1 = make_seq(vec![
+            make_hop(1_000, 1 << 62, 1 << 60, 1 << 63, vec![]),
+            make_hop(
+                2_000,
+                (1 << 62) + 7,
+                (1 << 60) + 3,
+                (1 << 63) + 5,
+                vec![U256::from(1u128) << 96],
+            ),
+        ]);
+        assert_matches_original(&[&s1]);
+    }
+
+    #[test]
+    fn fingerprint_identity_two_sequences() {
+        let s1 = make_seq(vec![make_hop(1_000, 1 << 62, 1 << 60, 1 << 63, vec![])]);
+        let s2 = make_seq(vec![make_hop(
+            3_000,
+            (1 << 62) + 7,
+            (1 << 60) + 3,
+            (1 << 63) + 5,
+            vec![U256::from(1u128) << 96],
+        )]);
+        assert_matches_original(&[&s1, &s2]);
+    }
+
+    #[test]
+    fn fingerprint_identity_three_sequences() {
+        let s1 = make_seq(vec![make_hop(1_000, 1 << 62, 1 << 60, 1 << 63, vec![])]);
+        let s2 = make_seq(vec![make_hop(
+            3_000,
+            (1 << 62) + 7,
+            (1 << 60) + 3,
+            (1 << 63) + 5,
+            vec![U256::from(1u128) << 96],
+        )]);
+        let s3 = make_seq(vec![make_hop(
+            5_000,
+            (1 << 62) + 11,
+            (1 << 60) + 9,
+            (1 << 63) + 13,
+            vec![],
+        )]);
+        assert_matches_original(&[&s1, &s2, &s3]);
+    }
+
+    #[test]
+    fn fingerprint_identity_empty_sequence_in_middle() {
+        let s1 = make_seq(vec![make_hop(1_000, 1 << 62, 1 << 60, 1 << 63, vec![])]);
+        let empty = make_seq(vec![]);
+        let s2 = make_seq(vec![make_hop(
+            3_000,
+            (1 << 62) + 7,
+            (1 << 60) + 3,
+            (1 << 63) + 5,
+            vec![U256::from(1u128) << 96],
+        )]);
+        assert_matches_original(&[&s1, &empty, &s2]);
+    }
+
+    #[test]
+    fn fingerprint_identity_equal_vs_different_liquidity() {
+        let s1 = make_seq(vec![make_hop(7_000, 1 << 62, 1 << 60, 1 << 63, vec![])]);
+        let equal = make_seq(vec![make_hop(
+            7_000,
+            (1 << 62) + 7,
+            (1 << 60) + 3,
+            (1 << 63) + 5,
+            vec![],
+        )]);
+        let different = make_seq(vec![make_hop(
+            9_000,
+            (1 << 62) + 7,
+            (1 << 60) + 3,
+            (1 << 63) + 5,
+            vec![],
+        )]);
+        let equal_path = [&s1, &equal];
+        let different_path = [&s1, &different];
+        assert_matches_original(&equal_path);
+        assert_matches_original(&different_path);
+        assert_ne!(
+            walk_path_fingerprint(&equal_path),
+            walk_path_fingerprint(&different_path)
+        );
+    }
+
+    /// Golden pin: the exact u128 [`walk_path_fingerprint`] returns for the
+    /// fixed two-sequence fixture below.
+    ///
+    /// STABILITY CONTRACT: this value must stay put across refactors —
+    /// `ClSolveTables::source_fingerprint` is built from this function's
+    /// output (and paired against it downstream), and the cross-block memo
+    /// (`WalkMemo` cache/census) keys on it. A changed value silently
+    /// invalidates every paired consumer and every memoized key.
+    #[test]
+    fn fingerprint_golden_two_sequence_fixture() {
+        let s1 = make_seq(vec![make_hop(
+            10_000,
+            1 << 62,
+            1 << 60,
+            1 << 63,
+            vec![U256::from(1u128) << 96],
+        )]);
+        let s2 = make_seq(vec![make_hop(
+            20_000,
+            (1 << 62) + 7,
+            (1 << 60) + 3,
+            (1 << 63) + 5,
+            vec![],
+        )]);
+        // Pinned from this exact fixture at the tree state that restored the
+        // original (ca5fbf08f) inline-body accumulation discipline. Hex split
+        // is lane_a << 64 | lane_b.
+        assert_eq!(
+            walk_path_fingerprint(&[&s1, &s2]),
+            0x831f_878b_e447_c38b_e028_fbcb_79ab_9c70u128
+        );
+    }
 }

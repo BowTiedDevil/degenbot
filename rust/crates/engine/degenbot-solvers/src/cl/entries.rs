@@ -4,7 +4,7 @@ use super::active_set::{solve_active_set_path, PieceView, WalkOutcome};
 use super::crossings::{
     build_cl_crossing_table, build_word_profiles, cl_walk_hop, cl_walk_hop_cached,
 };
-use super::memo::{walk_path_fingerprint, MemoProbe, WalkMemo};
+use super::memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, MemoProbe, WalkMemo};
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
 use crate::profit_envelope::PathBoundLines;
 use crate::runtime::SolveRuntimeConfig;
@@ -147,7 +147,15 @@ fn solve_cl_piecewise_inner(
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// THE mixed V2+CL solve entry — prepared tables ride [`ClSolveTables`] per CL
 /// hop position; `None` derives them at the caller's cost, the
-/// offline/replay shape.
+/// offline/replay shape. `memo` (mirroring [`solve_cl_piecewise`]
+/// position-for-position) is the caller's engine-owned cross-block
+/// composition memo: the branch below probes by
+/// [`walk_mixed_path_fingerprint`] before the walk — a cached `Hit` replays
+/// the solution, a cached `Negative` skips the walk, `note_cost`, and
+/// store; a `Miss` falls through to the solve + `note_cost` + `store`.
+/// Pure-V2 compositions (no CL hops at all) route through this entry from
+/// `mixed::solve` too, so they gain memo coverage here as well. The
+/// existing per-CL-hop table source gate above is untouched by the memo.
 #[must_use]
 #[hotpath::measure(label = "cl_solve.exact_solve_mixed_path_n")]
 pub fn solve_mixed_piecewise(
@@ -158,6 +166,7 @@ pub fn solve_mixed_piecewise(
     cl_sequences: &[Option<&IntV3TickRangeSequence>],
     cl_prepared: &[Option<ClSolveTables>],
     hop_order: &[bool], // true = V2, false = CL
+    memo: Option<&WalkMemo>,
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
@@ -186,6 +195,32 @@ pub fn solve_mixed_piecewise(
                 }
             }
             hops.push(cl_hop_view(seq, cl_prepared[i].as_ref()));
+        }
+    }
+
+    // Cross-block composition memo: the mixed fingerprint folds every
+    // position's family tag + hop state (V2: the full `IntHopState` the
+    // constant-product view consumes; CL: the same per-range folding the
+    // all-CL key uses), so the key is exact for mixed compositions — cfg is
+    // fixed per engine lifetime and env (PathBoundLines) is a pure
+    // derivation of hop state + cfg. `None` memo = disabled run never pays
+    // the fingerprint or the lock.
+    if let Some(memo) = memo {
+        if memo.active() {
+            let fp = walk_mixed_path_fingerprint(v2_hops, cl_sequences, hop_order);
+            match memo.probe(fp) {
+                MemoProbe::Hit(hit) => return WalkOutcome::from_result(Some(hit)),
+                // Cached negative: this composition already walked to None
+                // under identical inputs (exact-key soundness documented at
+                // the Negative arm in memo.rs). Skip the inner solve,
+                // note_cost, and store — the negative is already stored.
+                MemoProbe::Negative => return WalkOutcome::none(),
+                MemoProbe::Miss => {}
+            }
+            let outcome = solve_active_set_path(&hops, cfg, env);
+            memo.note_cost(fp, outcome.stats.sims as u64);
+            memo.store(fp, outcome.result.as_ref());
+            return outcome;
         }
     }
 

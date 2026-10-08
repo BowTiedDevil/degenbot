@@ -573,6 +573,7 @@ fn test_solve_mixed_piecewise_v3_then_v2_no_panic() {
         &cl_sequences,
         &cl_prepared,
         &[false, true],
+        None,
         &SolveRuntimeConfig::default(),
         None,
     )
@@ -1302,6 +1303,385 @@ fn memo_negative_entries_gauge_mirrors_the_cache() {
     );
 }
 
+// ── Cross-block composition memo: mixed V2+CL compositions ──────────
+
+/// Mixed memo fixture (V2 → CL) the mixed memo tests pin as profitable:
+/// the proven `mixed_path_cached_crossings_match_offline_solve`
+/// composition (V2 entry pool at tick +750, deep-late-liquidity CL tail).
+/// `late_liq` parameterizes the CL tail's late liquidity so the CL-only
+/// change in the key-completeness tests stays a one-field edit.
+fn mixed_memo_fixture_with_late_liq(late_liq: u128) -> (IntHopState, IntV3TickRangeSequence) {
+    let v2 = IntHopState::new(
+        U256::from(1_000_000_000_000_000u128),
+        U256::from(1_071_633_064_014_504u128),
+        997,
+        1000,
+    );
+    let mut liquidities = vec![1_000_000_000u128; 10];
+    liquidities.push(late_liq);
+    liquidities.push(1_000_000_000u128);
+    let cl_seq = multi_range_sequence(0, 60, false, &liquidities);
+    (v2, cl_seq)
+}
+
+fn mixed_memo_fixture() -> (IntHopState, IntV3TickRangeSequence) {
+    mixed_memo_fixture_with_late_liq(10_000_000_000_000u128)
+}
+
+/// The mixed twin of `memo_cached_hit_replays_the_solution_without_the_walk`:
+/// a recurring mixed composition (one V2 hop + one CL hop, pools unchanged)
+/// walks once and replays the identical result from the memo without the
+/// walk. Pure-V2 compositions route through the same entry, so the probe
+/// path here is theirs too.
+#[test]
+fn memo_mixed_cached_hit_replays_the_solution_without_the_walk() {
+    let (v2, cl_seq) = mixed_memo_fixture();
+    let v2_hops = [Some(v2), None];
+    let cl_sequences = [None, Some(&cl_seq)];
+    let cfg = SolveRuntimeConfig::default();
+    let memo = WalkMemo::new(true, true);
+
+    // First solve: Miss → the walk runs and stores the solution.
+    let first = solve_mixed_piecewise(
+        &v2_hops,
+        &cl_sequences,
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    );
+    let first_result = first.result.expect("mixed fixture must be profitable");
+    #[cfg(feature = "telemetry")]
+    assert!(first.stats.sims > 0, "first solve must run the walk");
+    let st1 = memo.take_stats();
+    assert_eq!(st1.cache_plays, 1, "first solve consulted the cache");
+    assert_eq!(st1.negatives_played, 0);
+    assert_eq!(
+        st1.negative_entries, 0,
+        "profitable compositions cache Some"
+    );
+
+    // Epoch swap so the replay's census hit is observable on its own.
+    memo.begin_block(2);
+
+    // Second solve: the cached hit replays byte-identically, no walk.
+    let second = solve_mixed_piecewise(
+        &v2_hops,
+        &cl_sequences,
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    );
+    assert_eq!(
+        second.result,
+        Some(first_result),
+        "cached mixed hit replays exactly"
+    );
+    assert_eq!(
+        second.stats.sims, 0,
+        "the walk must not run on a hit replay"
+    );
+    let st2 = memo.take_stats();
+    assert_eq!(st2.cache_plays, 1);
+    assert_eq!(st2.negatives_played, 0, "a hit is not a negative play");
+    assert_eq!(
+        st2.hits, 1,
+        "the composition recurred from the previous epoch"
+    );
+}
+
+/// The mixed twin of `memo_cached_negative_skips_the_walk_on_replay`: an
+/// unprofitable mixed composition walks once; the replay is answered from
+/// the cached `Negative` with the walk skipped.
+#[test]
+fn memo_mixed_cached_negative_skips_the_walk_on_replay() {
+    // Two same-price 1:1 pools (V2 then CL): fees dominate, always None.
+    let v2 = IntHopState::new(
+        U256::from(1_000_000_000_000_000u128),
+        U256::from(1_000_000_000_000_000u128),
+        997,
+        1000,
+    );
+    let cl_hop = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
+    let cl_seq = IntV3TickRangeSequence::new(vec![cl_hop]).unwrap();
+    let v2_hops = [Some(v2), None];
+    let cl_sequences = [None, Some(&cl_seq)];
+    let cfg = SolveRuntimeConfig::default();
+    let memo = WalkMemo::new(true, true);
+
+    let first = solve_mixed_piecewise(
+        &v2_hops,
+        &cl_sequences,
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    );
+    assert!(first.result.is_none(), "fixture must be unprofitable");
+    #[cfg(feature = "telemetry")]
+    assert!(first.stats.sims > 0, "first solve must run the walk");
+    let st1 = memo.take_stats();
+    assert_eq!(st1.cache_plays, 1);
+    assert_eq!(
+        st1.negatives_played, 0,
+        "first solve was a Miss, not a play"
+    );
+    assert_eq!(
+        st1.negative_entries, 1,
+        "the unprofitable composition is cached"
+    );
+
+    memo.begin_block(2);
+
+    let second = solve_mixed_piecewise(
+        &v2_hops,
+        &cl_sequences,
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    );
+    assert!(second.result.is_none());
+    assert_eq!(
+        second.stats.sims, 0,
+        "the walk must not run on a negative play"
+    );
+    let st2 = memo.take_stats();
+    assert_eq!(st2.cache_plays, 1);
+    assert_eq!(st2.negatives_played, 1, "the negative must be played");
+    assert_eq!(st2.negative_entries, 1, "no second store");
+    assert_eq!(st2.distinct, 1, "the negative play still lands fp in curr");
+    assert_eq!(
+        st2.hits, 1,
+        "the composition recurred from the previous epoch"
+    );
+}
+
+/// Key completeness, V2 side: changing ONLY the V2 reserve of a cached
+/// mixed composition must Miss (no stale replay). The stale-replay proof is
+/// feature-independent — under the SAME memo, the changed composition must
+/// solve to the memo-less result of the changed composition; a key
+/// collision would replay the cached base result instead.
+#[test]
+fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
+    let cfg = SolveRuntimeConfig::default();
+    let (v2, cl_seq) = mixed_memo_fixture();
+
+    // Only reserve_in changes (doubled); reserve_out, the fee params, and
+    // the CL sequence stay identical.
+    let v2_changed = IntHopState::new(v2.reserve_in * U256::from(2u64), v2.reserve_out, 997, 1000);
+    assert_ne!(
+        walk_mixed_path_fingerprint(
+            &[Some(v2.clone()), None],
+            &[None, Some(&cl_seq)],
+            &[true, false]
+        ),
+        walk_mixed_path_fingerprint(
+            &[Some(v2_changed.clone()), None],
+            &[None, Some(&cl_seq)],
+            &[true, false]
+        ),
+        "a V2 reserve change must change the mixed key"
+    );
+
+    let memo = WalkMemo::new(true, true);
+    let base = solve_mixed_piecewise(
+        &[Some(v2), None],
+        &[None, Some(&cl_seq)],
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    )
+    .result
+    .expect("mixed fixture must be profitable");
+    memo.begin_block(2);
+
+    let replayed = solve_mixed_piecewise(
+        &[Some(v2_changed.clone()), None],
+        &[None, Some(&cl_seq)],
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    );
+    let fresh = solve_mixed_piecewise(
+        &[Some(v2_changed), None],
+        &[None, Some(&cl_seq)],
+        &[None, None],
+        &[true, false],
+        None,
+        &cfg,
+        None,
+    )
+    .result;
+    assert_ne!(
+        replayed.result,
+        Some(base),
+        "the changed composition must not replay the cached base result"
+    );
+    assert_eq!(
+        replayed.result, fresh,
+        "the Miss re-solved the changed composition exactly"
+    );
+    #[cfg(feature = "telemetry")]
+    assert!(
+        replayed.stats.sims > 0,
+        "the changed composition must re-run the walk"
+    );
+}
+
+/// Key completeness, CL side: changing ONLY the CL sequence of a cached
+/// mixed composition must Miss too — mirrored argument to the V2 side.
+#[test]
+fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
+    let cfg = SolveRuntimeConfig::default();
+    let (v2, cl_seq) = mixed_memo_fixture();
+    let (_, cl_seq_changed) = mixed_memo_fixture_with_late_liq(20_000_000_000_000u128);
+
+    assert_ne!(
+        walk_mixed_path_fingerprint(
+            &[Some(v2.clone()), None],
+            &[None, Some(&cl_seq)],
+            &[true, false]
+        ),
+        walk_mixed_path_fingerprint(
+            &[Some(v2.clone()), None],
+            &[None, Some(&cl_seq_changed)],
+            &[true, false]
+        ),
+        "a CL sequence change must change the mixed key"
+    );
+
+    let memo = WalkMemo::new(true, true);
+    let base = solve_mixed_piecewise(
+        &[Some(v2.clone()), None],
+        &[None, Some(&cl_seq)],
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    )
+    .result
+    .expect("mixed fixture must be profitable");
+    memo.begin_block(2);
+
+    let replayed = solve_mixed_piecewise(
+        &[Some(v2.clone()), None],
+        &[None, Some(&cl_seq_changed)],
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    );
+    let fresh = solve_mixed_piecewise(
+        &[Some(v2), None],
+        &[None, Some(&cl_seq_changed)],
+        &[None, None],
+        &[true, false],
+        None,
+        &cfg,
+        None,
+    )
+    .result;
+    assert_ne!(
+        replayed.result,
+        Some(base),
+        "the changed composition must not replay the cached base result"
+    );
+    assert_eq!(
+        replayed.result, fresh,
+        "the Miss re-solved the changed composition exactly"
+    );
+    #[cfg(feature = "telemetry")]
+    assert!(
+        replayed.stats.sims > 0,
+        "the changed composition must re-run the walk"
+    );
+}
+
+/// Hop-order sensitivity: the same hops in a different order produce a
+/// different fingerprint — two orderings must not share a memo entry.
+#[test]
+fn walk_mixed_fingerprint_separates_hop_order() {
+    let (v2, cl_seq) = mixed_memo_fixture();
+    let fp_v2_cl = walk_mixed_path_fingerprint(
+        &[Some(v2.clone()), None],
+        &[None, Some(&cl_seq)],
+        &[true, false],
+    );
+    let fp_cl_v2 = walk_mixed_path_fingerprint(
+        &[None, Some(v2.clone())],
+        &[Some(&cl_seq), None],
+        &[false, true],
+    );
+    assert_ne!(fp_v2_cl, fp_cl_v2, "hop order must change the mixed key");
+
+    // Stable for the same composition.
+    let fp_again =
+        walk_mixed_path_fingerprint(&[Some(v2), None], &[None, Some(&cl_seq)], &[true, false]);
+    assert_eq!(
+        fp_v2_cl, fp_again,
+        "the key must be stable for one composition"
+    );
+
+    // Entry-level: with a shared memo, the reordered composition must not
+    // replay the cached base entry — it must solve to its own fresh-memo
+    // result.
+    let cfg = SolveRuntimeConfig::default();
+    let (v2, cl_seq) = mixed_memo_fixture();
+    let memo = WalkMemo::new(true, true);
+    let base = solve_mixed_piecewise(
+        &[Some(v2.clone()), None],
+        &[None, Some(&cl_seq)],
+        &[None, None],
+        &[true, false],
+        Some(&memo),
+        &cfg,
+        None,
+    )
+    .result
+    .expect("mixed fixture must be profitable");
+    memo.begin_block(2);
+    let replayed = solve_mixed_piecewise(
+        &[None, Some(v2.clone())],
+        &[Some(&cl_seq), None],
+        &[None, None],
+        &[false, true],
+        Some(&memo),
+        &cfg,
+        None,
+    );
+    let fresh = solve_mixed_piecewise(
+        &[None, Some(v2)],
+        &[Some(&cl_seq), None],
+        &[None, None],
+        &[false, true],
+        None,
+        &cfg,
+        None,
+    )
+    .result;
+    assert_ne!(
+        replayed.result,
+        Some(base),
+        "the reordered composition must not share the base entry"
+    );
+    assert_eq!(
+        replayed.result, fresh,
+        "the reordered composition must solve to its own result"
+    );
+}
+
 #[test]
 fn solve_cl_piecewise_refuses_prepared_tables_of_another_sequence() {
     // The late-liquidity 2-hop cycle below solves profitably — so an outcome
@@ -1517,6 +1897,7 @@ fn test_solve_mixed_piecewise_2hop_delegates() {
         &[None, Some(&v3_seq)],
         &[None, None], // offline shape: tables derive here
         &[true, false],
+        None,
         &SolveRuntimeConfig::default(),
         None,
     );
@@ -1600,6 +1981,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
         &cl_sequences,
         &cl_prepared,
         &[true, false],
+        None,
         &SolveRuntimeConfig::default(),
         None,
     );
@@ -1608,6 +1990,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
         &cl_sequences,
         &[None, None],
         &[true, false],
+        None,
         &SolveRuntimeConfig::default(),
         None,
     )
@@ -1643,6 +2026,7 @@ fn test_solve_mixed_piecewise_3hop_v2_cl_v2() {
         &[None, Some(&v3_seq), None],
         &[None, None, None],  // offline shape: tables derive here
         &[true, false, true], // V2 → CL → V2
+        None,
         &SolveRuntimeConfig::default(),
         None,
     );
@@ -1703,6 +2087,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
         &cl_sequences,
         &cl_prepared,
         &[true, false, true],
+        None,
         &SolveRuntimeConfig::default(),
         None,
     );
@@ -1711,6 +2096,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
         &cl_sequences,
         &[None, None, None],
         &[true, false, true],
+        None,
         &SolveRuntimeConfig::default(),
         None,
     )
@@ -2887,6 +3273,7 @@ fn solve_mixed_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
         &[None, Some(&cl_seq)],
         &[None, None],
         &[true, false],
+        None,
         &SolveRuntimeConfig::default(),
         None,
     );

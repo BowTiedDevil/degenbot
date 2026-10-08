@@ -70,6 +70,7 @@ fn walk(hops: &[IntHopState]) -> Solve {
         &seqs,
         &prepared,
         &order,
+        None,
         &SolveRuntimeConfig::default(),
         None,
     )

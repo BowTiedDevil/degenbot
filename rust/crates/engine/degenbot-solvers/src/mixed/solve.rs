@@ -481,6 +481,7 @@ fn solve_walkable_path_int(
             &int_v3_sequences,
             &cl_prepared,
             &hop_order,
+            gate.walk_memo(),
             &gate.runtime,
             walk_env,
         )

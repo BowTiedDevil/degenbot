@@ -261,6 +261,7 @@ fn main() {
                 &seq_refs,
                 &no_tables,
                 &hop_order,
+                None,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
                 None,
             );
