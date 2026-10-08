@@ -54,9 +54,10 @@ Machine-emitted only — never hand-edit the JSON:
 cargo run --locked --manifest-path rust/Cargo.toml -p degenbot \
     --example record_py_oracle_corpus \
     --scenario <name> ... \
-    --ethereum-node <archive-url> \
-    --base-node <archive-url> \
+    --ethereum-node <archive-url> [--ethereum-node <fallback-url> ...] \
+    --base-node <archive-url> [--base-node <fallback-url> ...] \
     --arbitrum-node https://arbitrum-one.public.blastapi.io \
+    [--arbitrum-node <fallback-url> ...] \
     --pace-ms <ms>
 ```
 
@@ -68,6 +69,11 @@ corpora on disk (exit 1 on drift). Endpoint notes:
   the parity pins (publicnode tiers answer archive requests with "Archive
   requests require a personal token").
 - Base (`mainnet.base.org`) rate-limits bursts: pace it (`--pace-ms 1000`).
+- Node flags are repeatable: each repetition extends that tier's ordered
+  endpoint pool. On a transport-class failure (rate limit, timeout,
+  connection) the recorder rotates to the next endpoint after a bounded
+  backoff and re-records the scenario from scratch - one log line per
+  rotation; fixture gaps and corpus drift stay terminal.
 - Arbitrum: the official `arb1.arbitrum.io/rpc` rejects historical state;
   `https://arbitrum-one.public.blastapi.io` serves the camelot pin keyless.
 - Omit `--scenario` to record every wired scenario.

@@ -44,10 +44,17 @@
 //! `ETHEREUM_ARCHIVE_NODE_HTTP_URI` (the `tests/conftest.py` name) and the
 //! base scenarios read `BASE_ARCHIVE_NODE_HTTP_URI` (falling back to the
 //! keyless endpoint the aerodrome/pancakeswap tests fork);
-//! `--ethereum-node` / `--base-node` / `--arbitrum-node` override. The camelot
-//! scenario additionally needs an endpoint that serves contract state at its
-//! pinned block - when none does, the scenario fails with the node's own
-//! error and writes nothing (an absent corpus is not substituted).
+//! `--ethereum-node` / `--base-node` / `--arbitrum-node` override. Every node
+//! flag is repeatable: its values form that tier's ordered endpoint pool
+//! (one value is the original single-endpoint behavior). A transport-class
+//! failure - rate limit, timeout, connection, the record-mode taxonomy's
+//! transport class (`tests/golden/record_errors.py`) - rotates to the next
+//! pool endpoint after the policy's bounded linear backoff and re-records
+//! the scenario from scratch, one log line per rotation; fixture gaps,
+//! drift, and chain mismatches stay terminal. The camelot scenario
+//! additionally needs an endpoint that serves contract state at its pinned
+//! block - when none does, the scenario fails with the node's own error and
+//! writes nothing (an absent corpus is not substituted).
 
 // Run-once diagnostic example: stdout/stderr reports ARE its interface (the
 // record_updater_cassette precedent), and scenario wiring reads clearest as
@@ -65,6 +72,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy::primitives::{hex, keccak256, Address, Bytes, U256};
+use degenbot::core::errors::ProviderError;
 use degenbot::rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteResponse, CassetteSpan, RecordingTransport,
 };
@@ -1227,51 +1235,55 @@ fn now_secs() -> Result<u64, String> {
 
 /// Record one scenario twice (byte-identity between passes is the
 /// determinism gate), then write it or check it against the corpus on disk.
+/// The returned failure carries its record-mode taxonomy class: the
+/// transport class is the rotation wrapper's cue to re-record on the next
+/// pool endpoint.
 async fn record_scenario(
     scenario: &Scenario,
     node: &str,
     repo_root: &Path,
     check: bool,
     pace_ms: u64,
-) -> Result<(), String> {
+) -> Result<(), ScenarioFailure> {
     // Side channel: the endpoint must serve the scenario's chain before
     // anything is recorded (and the probe stays out of the ledger).
     let side = AlloyProvider::new(node, 3)
         .await
-        .map_err(|e| format!("connect {node}: {e}"))?;
+        .map_err(|e| ScenarioFailure::from_provider(&format!("connect {node}"), &e))?;
     let served = side
         .get_chain_id()
         .await
-        .map_err(|e| format!("chain id probe {node}: {e}"))?;
+        .map_err(|e| ScenarioFailure::from_provider(&format!("chain id probe {node}"), &e))?;
     if served != scenario.chain_id {
-        return Err(format!(
+        return Err(ScenarioFailure::terminal(format!(
             "node {node} serves chain {served}; scenario pins chain {}",
             scenario.chain_id
-        ));
+        )));
     }
 
     let golden_path = repo_root.join(&scenario.golden);
-    let calls = derive_calls(scenario, &golden_path, repo_root)?;
+    let calls =
+        derive_calls(scenario, &golden_path, repo_root).map_err(ScenarioFailure::terminal)?;
 
     let mut pass_bytes: Option<Vec<u8>> = None;
     let mut report = (0usize, 0usize, 0u64);
     for _pass in 0..2 {
         let recorder = RecordingTransport::connect(node)
             .await
-            .map_err(|e| format!("recording connect {node}: {e}"))?;
+            // A seam that cannot establish is endpoint weather: rotate.
+            .map_err(|e| ScenarioFailure::transport(format!("recording connect {node}: {e}")))?;
         let provider = recorder.as_alloy_provider();
 
         // Block header first: the corpus timestamp and proof the endpoint
         // serves the pin at all.
-        let header = provider
-            .get_block(scenario.block)
-            .await
-            .map_err(|e| format!("block {}: {e}", scenario.block))?;
+        let header = provider.get_block(scenario.block).await.map_err(|e| {
+            ScenarioFailure::from_provider(&format!("block {}", scenario.block), &e)
+        })?;
         if header.is_none() {
-            return Err(format!(
+            return Err(ScenarioFailure::terminal(format!(
                 "node {node} does not serve block {} - the pin is unreachable",
                 scenario.block
-            ));
+            )));
         }
 
         for call in &calls {
@@ -1280,29 +1292,38 @@ async fn record_scenario(
                 // pause sits between awaits, so no in-flight future is held.
                 std::thread::sleep(std::time::Duration::from_millis(pace_ms));
             }
-            // A revert is oracle truth (the transport records the error; the
-            // projection stores null). Any other failure is caught by the
-            // projection's coverage check, so the provider-level result is
-            // intentionally dropped.
-            let _ = provider
+            // A transport-class failure aborts the pass before it can record
+            // a partial corpus: the ledger is first-write-wins (a
+            // rate-limited answer poisons its entry) and a connection loss
+            // leaves none, so the scenario must restart on a fresh ledger -
+            // the rotation wrapper's job. A revert is oracle truth (the
+            // transport records the error; the projection stores null); any
+            // other failure is caught by the projection's coverage check, so
+            // the result stays dropped.
+            if let Err(err) = provider
                 .eth_call(
                     &call.to,
                     Bytes::from(call.calldata.clone()),
                     Some(scenario.block),
                 )
-                .await;
+                .await
+            {
+                if transport_class(&err) {
+                    return Err(ScenarioFailure::from_provider("eth_call", &err));
+                }
+            }
         }
         for target in &scenario.code_targets {
             let addr: Address = target
                 .parse()
-                .map_err(|e| format!("code target {target:?}: {e}"))?;
+                .map_err(|e| ScenarioFailure::terminal(format!("code target {target:?}: {e}")))?;
             provider
                 .get_code(&addr, Some(scenario.block))
                 .await
-                .map_err(|e| format!("get_code {target}: {e}"))?;
+                .map_err(|e| ScenarioFailure::from_provider(&format!("get_code {target}"), &e))?;
         }
 
-        let recorded_at = rfc3339_utc(now_secs()?);
+        let recorded_at = rfc3339_utc(now_secs().map_err(ScenarioFailure::terminal)?);
         let cassette = recorder.cassette(
             scenario.chain_id,
             CassetteProvenance {
@@ -1314,18 +1335,19 @@ async fn record_scenario(
                 },
             },
         );
-        let corpus = project_corpus(scenario, &cassette, &calls)?;
+        let corpus =
+            project_corpus(scenario, &cassette, &calls).map_err(ScenarioFailure::terminal)?;
         report = (corpus.calls.len(), corpus.code.len(), corpus.timestamp);
-        let mut bytes =
-            serde_json::to_vec_pretty(&corpus).map_err(|e| format!("corpus serialization: {e}"))?;
+        let mut bytes = serde_json::to_vec_pretty(&corpus)
+            .map_err(|e| ScenarioFailure::terminal(format!("corpus serialization: {e}")))?;
         bytes.push(b'\n');
 
         if let Some(prev) = &pass_bytes {
             if prev != &bytes {
-                return Err(format!(
+                return Err(ScenarioFailure::terminal(format!(
                     "two recording passes diverged for {} - the corpus is not a pure function of the pinned state",
                     scenario.name
-                ));
+                )));
             }
         } else {
             pass_bytes = Some(bytes);
@@ -1337,18 +1359,18 @@ async fn record_scenario(
     let out_path = corpus_path(repo_root, scenario);
     if check {
         let disk = std::fs::read(&out_path).map_err(|e| {
-            format!(
+            ScenarioFailure::terminal(format!(
                 "corpus {} missing or unreadable: {e} - record it first",
                 out_path.display()
-            )
+            ))
         })?;
         if disk != bytes {
-            return Err(format!(
+            return Err(ScenarioFailure::terminal(format!(
                 "corpus drift: {} differs from a fresh recording ({} bytes on disk vs {} recorded) - regenerate",
                 out_path.display(),
                 disk.len(),
                 bytes.len()
-            ));
+            )));
         }
         println!(
             "[ok] {} ({} calls, {} code entries, timestamp {timestamp}, byte-identical)",
@@ -1358,11 +1380,12 @@ async fn record_scenario(
         );
     } else {
         if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                ScenarioFailure::terminal(format!("mkdir {}: {e}", parent.display()))
+            })?;
         }
         std::fs::write(&out_path, &bytes)
-            .map_err(|e| format!("write {}: {e}", out_path.display()))?;
+            .map_err(|e| ScenarioFailure::terminal(format!("write {}: {e}", out_path.display())))?;
         println!(
             "[ok] wrote {} ({} calls, {} code entries, timestamp {timestamp})",
             out_path.display(),
@@ -1373,13 +1396,131 @@ async fn record_scenario(
     Ok(())
 }
 
+/// One scenario attempt's failure, tagged with its record-mode taxonomy
+/// class: the transport class (rate limit, timeout, connection) is endpoint
+/// weather the rotation wrapper can serve by re-recording on the next pool
+/// endpoint; every other class (fixture gap, drift, chain mismatch, local
+/// I/O) is terminal for the scenario.
+struct ScenarioFailure {
+    message: String,
+    transport_class: bool,
+}
+
+impl ScenarioFailure {
+    /// A terminal failure: rotation cannot serve it.
+    fn terminal(message: String) -> Self {
+        Self {
+            message,
+            transport_class: false,
+        }
+    }
+
+    /// A transport-class failure without a `ProviderError` in hand (the
+    /// recording seam's own connect errors).
+    fn transport(message: String) -> Self {
+        Self {
+            message,
+            transport_class: true,
+        }
+    }
+
+    /// A provider-seam failure, classified by the provider taxonomy.
+    fn from_provider(context: &str, err: &ProviderError) -> Self {
+        Self {
+            transport_class: transport_class(err),
+            message: format!("{context}: {err}"),
+        }
+    }
+}
+
+/// The transport class of the record-mode taxonomy (the `record_errors`
+/// transport failures): the provider's retryable trio - rate limit, timeout,
+/// connection - plus the unclassified-wire shape. `RpcError` code -1 is only
+/// produced by the wire-failure arm of the provider error classifier
+/// (refused TCP, DNS, TLS - no dedicated variant exists), and without it a
+/// dead endpoint would read as a fixture gap.
+fn transport_class(err: &ProviderError) -> bool {
+    err.is_retryable() || matches!(err, ProviderError::RpcError { code: -1, .. })
+}
+
+/// The `record_errors` transport-retry policy at scenario granularity: a
+/// transport-class failure retries the whole scenario this many attempts,
+/// stepping through the tier's endpoint pool, with [`rotation_backoff_ms`]
+/// between attempts. Rotation is the only healing - the recording ledger is
+/// first-write-wins, so a rate-limited answer poisons its entry and a
+/// connection loss leaves none: no in-place retry can repair a failed pass,
+/// and a scenario must never record a partial corpus.
+const SCENARIO_RETRY_ATTEMPTS: usize = 3;
+/// Linear backoff base between rotation attempts - the `record_errors`
+/// policy's `RECORD_RETRY_BACKOFF_SECONDS` shape (base x failed attempts).
+const SCENARIO_RETRY_BACKOFF_MS: u64 = 500;
+
+/// `SCENARIO_RETRY_BACKOFF_MS` x failed attempts, saturating (the
+/// `record_errors` policy's linear backoff, cast-free and wrap-proof).
+fn rotation_backoff_ms(failed_attempts: usize) -> u64 {
+    let mut backoff = 0u64;
+    for _ in 0..failed_attempts {
+        backoff = backoff.saturating_add(SCENARIO_RETRY_BACKOFF_MS);
+    }
+    backoff
+}
+
+/// Flatten a provider message onto one line - rotation is logged one line
+/// per event, and transport messages can carry newlines.
+fn single_line(message: &str) -> String {
+    message.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Record one scenario against its tier's endpoint pool: on a
+/// transport-class failure, rotate to the next endpoint after the bounded
+/// backoff and re-record the scenario from scratch (a fresh recording ledger
+/// every attempt, so no partial corpus can survive). One log line per
+/// rotation: the failed endpoint, the chosen one, the attempt count. Any
+/// other failure, or an exhausted attempt budget, is terminal.
+async fn record_scenario_pool(
+    scenario: &Scenario,
+    pool: &[String],
+    repo_root: &Path,
+    check: bool,
+    pace_ms: u64,
+) -> Result<(), String> {
+    let mut attempt = 0usize;
+    loop {
+        // Attempts step round-robin through the pool, so a one-endpoint pool
+        // (the original semantics) retries its only endpoint, exactly the
+        // record_errors policy's same-endpoint shape.
+        let node = &pool[attempt % pool.len()];
+        match record_scenario(scenario, node, repo_root, check, pace_ms).await {
+            Ok(()) => return Ok(()),
+            Err(failure) => {
+                attempt += 1;
+                if attempt >= SCENARIO_RETRY_ATTEMPTS || !failure.transport_class {
+                    return Err(failure.message);
+                }
+                let next = &pool[attempt % pool.len()];
+                let backoff_ms = rotation_backoff_ms(attempt);
+                eprintln!(
+                    "[rotate] {}: attempt {attempt}/{} endpoint {node} failed ({}) - rotating to {next} after {backoff_ms}ms",
+                    scenario.name,
+                    SCENARIO_RETRY_ATTEMPTS,
+                    single_line(&failure.message),
+                );
+                std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
+            }
+        }
+    }
+}
+
 struct Args {
     check: bool,
     scenarios: Vec<String>,
     root: Option<PathBuf>,
-    ethereum_node: Option<String>,
-    base_node: Option<String>,
-    arbitrum_node: Option<String>,
+    /// Repeated node flags form their tier's ordered endpoint pool (see
+    /// [`pool_for`]); empty falls back to the conftest env var or the
+    /// historical keyless default as a one-endpoint pool.
+    ethereum_nodes: Vec<String>,
+    base_nodes: Vec<String>,
+    arbitrum_nodes: Vec<String>,
     pace_ms: u64,
 }
 
@@ -1388,9 +1529,9 @@ fn parse_args() -> Result<Args, String> {
         check: false,
         scenarios: Vec::new(),
         root: None,
-        ethereum_node: None,
-        base_node: None,
-        arbitrum_node: None,
+        ethereum_nodes: Vec::new(),
+        base_nodes: Vec::new(),
+        arbitrum_nodes: Vec::new(),
         pace_ms: 0,
     };
     let mut flags = std::env::args().skip(1);
@@ -1403,13 +1544,16 @@ fn parse_args() -> Result<Args, String> {
             }
             "--root" => args.root = Some(PathBuf::from(flags.next().ok_or("--root needs a path")?)),
             "--ethereum-node" => {
-                args.ethereum_node = Some(flags.next().ok_or("--ethereum-node needs a URL")?);
+                args.ethereum_nodes
+                    .push(flags.next().ok_or("--ethereum-node needs a URL")?);
             }
             "--base-node" => {
-                args.base_node = Some(flags.next().ok_or("--base-node needs a URL")?);
+                args.base_nodes
+                    .push(flags.next().ok_or("--base-node needs a URL")?);
             }
             "--arbitrum-node" => {
-                args.arbitrum_node = Some(flags.next().ok_or("--arbitrum-node needs a URL")?);
+                args.arbitrum_nodes
+                    .push(flags.next().ok_or("--arbitrum-node needs a URL")?);
             }
             "--pace-ms" => {
                 args.pace_ms = flags
@@ -1424,25 +1568,39 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-fn node_for(tier: NodeTier, args: &Args) -> Result<String, String> {
+/// The tier's endpoint pool, in try order: repeated node flags form the pool
+/// in flag order (a single flag is the original single-endpoint behavior);
+/// with no flags, the conftest env var - or the historical keyless default -
+/// stands in as a one-endpoint pool.
+fn pool_for(tier: NodeTier, args: &Args) -> Result<Vec<String>, String> {
     match tier {
-        NodeTier::Ethereum => args
-            .ethereum_node
-            .clone()
-            .or_else(|| std::env::var("ETHEREUM_ARCHIVE_NODE_HTTP_URI").ok())
-            .ok_or_else(|| {
-                "no ethereum node: set ETHEREUM_ARCHIVE_NODE_HTTP_URI (the conftest name) or --ethereum-node"
-                    .to_string()
-            }),
-        NodeTier::Base => Ok(args
-            .base_node
-            .clone()
-            .or_else(|| std::env::var("BASE_ARCHIVE_NODE_HTTP_URI").ok())
-            .unwrap_or_else(|| "https://mainnet.base.org".to_string())),
-        NodeTier::Arbitrum => Ok(args
-            .arbitrum_node
-            .clone()
-            .unwrap_or_else(|| "https://arb1.arbitrum.io/rpc".to_string())),
+        NodeTier::Ethereum => {
+            if !args.ethereum_nodes.is_empty() {
+                return Ok(args.ethereum_nodes.clone());
+            }
+            match std::env::var("ETHEREUM_ARCHIVE_NODE_HTTP_URI").ok() {
+                Some(uri) => Ok(vec![uri]),
+                None => Err(
+                    "no ethereum node: set ETHEREUM_ARCHIVE_NODE_HTTP_URI (the conftest name) or --ethereum-node"
+                        .to_string(),
+                ),
+            }
+        }
+        NodeTier::Base => {
+            if !args.base_nodes.is_empty() {
+                return Ok(args.base_nodes.clone());
+            }
+            Ok(vec![std::env::var("BASE_ARCHIVE_NODE_HTTP_URI")
+                .unwrap_or_else(|_| {
+                    "https://mainnet.base.org".to_string()
+                })])
+        }
+        NodeTier::Arbitrum => {
+            if !args.arbitrum_nodes.is_empty() {
+                return Ok(args.arbitrum_nodes.clone());
+            }
+            Ok(vec!["https://arb1.arbitrum.io/rpc".to_string()])
+        }
     }
 }
 
@@ -1481,8 +1639,8 @@ async fn run(args: Args) -> Result<(), String> {
 
     let mut failures = 0usize;
     for scenario in &selected {
-        let node = node_for(scenario.node, &args)?;
-        match record_scenario(scenario, &node, &repo_root, args.check, args.pace_ms).await {
+        let pool = pool_for(scenario.node, &args)?;
+        match record_scenario_pool(scenario, &pool, &repo_root, args.check, args.pace_ms).await {
             Ok(()) => {}
             Err(msg) => {
                 eprintln!("[fail] {}: {msg}", scenario.name);

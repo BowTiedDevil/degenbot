@@ -20,7 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import BASE_ARCHIVE_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.conftest import (
+    ARBITRUM_FULL_NODE_HTTP_URI,
+    BASE_ARCHIVE_NODE_HTTP_URI,
+    BASE_FULL_NODE_HTTP_URI,
+    ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -74,12 +79,16 @@ _NOT_SELECTED_MSG = (
 
 @dataclass(frozen=True)
 class LiveChain:
-    """One chain's live ``--check`` invocation: scenarios, endpoint, pace."""
+    """One chain's live ``--check`` invocation: scenarios, endpoint pool, pace."""
 
     name: str
     scenarios: tuple[str, ...]
     node_flag: str
-    node_url: str
+    # Ordered pool - the recorder rotates to the next entry on a
+    # transport-class failure (the record_errors transport class: rate limit,
+    # timeout, connection) and re-records the scenario, so one flaky member
+    # cannot wedge an unattended run.
+    node_urls: tuple[str, ...]
     pace_ms: int
     timeout_s: int
 
@@ -90,7 +99,9 @@ LIVE_CHAINS = (
             name="ethereum",
             scenarios=CHAIN_1_SCENARIOS,
             node_flag="--ethereum-node",
-            node_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+            # The tests.env tier is the local fork node; the env carries no
+            # second ethereum archive, so this tier stays a one-endpoint pool.
+            node_urls=(ETHEREUM_ARCHIVE_NODE_HTTP_URI,),
             pace_ms=ETHEREUM_PACE_MS,
             timeout_s=1800,
         ),
@@ -102,7 +113,10 @@ LIVE_CHAINS = (
             name="arbitrum",
             scenarios=CHAIN_42161_SCENARIOS,
             node_flag="--arbitrum-node",
-            node_url=ARBITRUM_ARCHIVE_NODE,
+            # blastapi is the proven keyless server of the camelot pin; the
+            # authenticated dRPC tier from tests.env (via conftest) is the
+            # failover, its pin coverage unproven.
+            node_urls=(ARBITRUM_ARCHIVE_NODE, ARBITRUM_FULL_NODE_HTTP_URI),
             pace_ms=ARBITRUM_PACE_MS,
             timeout_s=600,
         ),
@@ -114,7 +128,10 @@ LIVE_CHAINS = (
             name="base",
             scenarios=CHAIN_8453_SCENARIOS,
             node_flag="--base-node",
-            node_url=BASE_ARCHIVE_NODE_HTTP_URI,
+            # The authenticated archive tier from tests.env (via conftest)
+            # is the primary; the keyless parity fork endpoint is the
+            # failover (it rate-limits bursts - see BASE_PACE_MS).
+            node_urls=(BASE_ARCHIVE_NODE_HTTP_URI, BASE_FULL_NODE_HTTP_URI),
             pace_ms=BASE_PACE_MS,
             timeout_s=900,
         ),
@@ -151,7 +168,9 @@ def test_recorder_check_matches_the_committed_corpus(
     ]
     for scenario in chain.scenarios:
         command += ["--scenario", scenario]
-    command += [chain.node_flag, chain.node_url, "--pace-ms", str(chain.pace_ms)]
+    for url in chain.node_urls:
+        command += [chain.node_flag, url]
+    command += ["--pace-ms", str(chain.pace_ms)]
     proc = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted binary, args list, no shell
         command,
         cwd=REPO_ROOT,
