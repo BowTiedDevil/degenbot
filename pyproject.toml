@@ -198,8 +198,8 @@ asyncio_default_fixture_loop_scope = "function"
 # pytest-timeout: a hung test FAILS with a timeout report instead of parking
 # its xdist worker with no failure signal. Thread method — signal is unsafe
 # under asyncio/xdist. 300s gives ~200x headroom over the slowest default-run
-# test (~1.6s measured); slow-marked on-demand suites get their own headroom
-# via the collection hook in tests/conftest.py.
+# test (~1.6s measured). No per-test or per-suite headroom is granted: a test
+# that outruns this budget fails loudly so the slowness gets investigated.
 timeout = 300
 timeout_method = "thread"
 pythonpath = ["src", "."]

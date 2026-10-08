@@ -228,12 +228,9 @@ def _check_fork_tier_tags(config: Config, items: list[Item]) -> None:
 def pytest_collection_modifyitems(config: Config, items: list[Item]):
     _check_fork_tier_tags(config, items)
 
-    # pytest-timeout headroom for the on-demand `slow` suites (live-RPC parity
-    # gates, slower than the default run the 300s global default is sized to).
-    # An explicit @pytest.mark.timeout on a test keeps precedence.
-    for item in items:
-        if item.get_closest_marker("slow") and not item.get_closest_marker("timeout"):
-            item.add_marker(pytest.mark.timeout(900))
+    # Deliberately no per-suite timeout headroom: slow-marked suites run
+    # against the 300s global default (pyproject.toml) so a breach is a loud
+    # failure to investigate, not a budget to raise.
 
     skip_fixtures: str = config.getoption("--skip-fixture")
     if not skip_fixtures:

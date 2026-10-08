@@ -146,7 +146,7 @@ Why: resolver v3 unifies features for `--workspace`, so its artifacts are the on
 
 ## Python test scope
 
-The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly) — never a hand-typed `uv run pytest`. Prefer the whole suite over selecting individual test files: the full run is fast and it is the run that surfaces seam and cross-module regressions. The suite carries pytest-timeout so a hung test fails with a timeout report instead of parking its xdist worker (timeouts and marker filters are configured in `tests/conftest.py`). The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.
+The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly) — never a hand-typed `uv run pytest`. Prefer the whole suite over selecting individual test files: the full run is fast and it is the run that surfaces seam and cross-module regressions. The suite carries pytest-timeout so a hung test fails with a timeout report instead of parking its xdist worker (the 300s timeout budget is set in `pyproject.toml`; no per-test or per-suite headroom exists — a timeout failure is the signal to investigate a slow or hung test; marker-filter enforcement lives in `tests/conftest.py`). The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.
 
 ## Build-Artifact Housekeeping
 

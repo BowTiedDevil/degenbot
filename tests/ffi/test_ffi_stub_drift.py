@@ -41,8 +41,6 @@ import os
 import pathlib
 import subprocess
 
-import pytest
-
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _STUB_DIR = _REPO_ROOT / "src" / "degenbot" / "_ffi"
 # First line of every file the generator emits (`degenbot-stubgen`'s
@@ -101,10 +99,9 @@ def test_committed_stubs_carry_generator_header() -> None:
 
 
 # The regen-and-diff check rebuilds the cdylib with the `experimental-inspect`
-# feature before generating, so it carries the workspace's toggle cost; the
-# per-test timeout extends pytest-timeout's 300s default to cover a warm
-# rebuild without parking the run on a hang.
-@pytest.mark.timeout(900)
+# feature before generating, so it carries the workspace's toggle cost. There
+# is no per-test timeout: a warm rebuild that can't fit the 300s default is a
+# loud failure to investigate, not a hang to budget around.
 def test_committed_stubs_match_generator_output() -> None:
     """Committed stubs are byte-identical to `just gen-stubs --check` output.
 

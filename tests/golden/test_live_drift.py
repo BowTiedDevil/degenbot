@@ -40,8 +40,9 @@ BASE_PACE_MS = 1000
 ARBITRUM_PACE_MS = 100
 
 # Whole-recording subprocess budgets: a chain's --check re-records every
-# scenario twice (minutes), far past the 300s pytest-timeout default, so each
-# param carries its own @pytest.mark.timeout sized to the tier.
+# scenario twice (minutes), so the recorder child is bounded per tier via
+# subprocess timeout. The tests carry no per-test pytest-timeout mark: a
+# param that outruns the 300s global default fails loudly for investigation.
 
 # Scenario lists mirror the recorder's tier wiring exactly; a scenario added
 # to the recorder must be added to its chain here or its drift goes unchecked.
@@ -106,7 +107,6 @@ LIVE_CHAINS = (
             timeout_s=1800,
         ),
         id="ethereum",
-        marks=pytest.mark.timeout(1800),
     ),
     pytest.param(
         LiveChain(
@@ -121,7 +121,6 @@ LIVE_CHAINS = (
             timeout_s=600,
         ),
         id="arbitrum",
-        marks=pytest.mark.timeout(600),
     ),
     pytest.param(
         LiveChain(
@@ -136,7 +135,6 @@ LIVE_CHAINS = (
             timeout_s=900,
         ),
         id="base",
-        marks=pytest.mark.timeout(900),
     ),
 )
 
