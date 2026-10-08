@@ -4,7 +4,7 @@ use super::active_set::{solve_active_set_path, PieceView, WalkOutcome};
 use super::crossings::{
     build_cl_crossing_table, build_word_profiles, cl_walk_hop, cl_walk_hop_cached,
 };
-use super::memo::{walk_path_fingerprint, WalkMemo};
+use super::memo::{walk_path_fingerprint, MemoProbe, WalkMemo};
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
 use crate::profit_envelope::PathBoundLines;
 use crate::runtime::SolveRuntimeConfig;
@@ -96,8 +96,14 @@ pub fn solve_cl_piecewise(
     if let Some(memo) = memo {
         if memo.active() {
             let fp = walk_path_fingerprint(sequences);
-            if let Some(hit) = memo.probe(fp) {
-                return WalkOutcome::from_result(Some(hit));
+            match memo.probe(fp) {
+                MemoProbe::Hit(hit) => return WalkOutcome::from_result(Some(hit)),
+                // Cached negative: this composition already walked to None
+                // under identical inputs (exact-key soundness documented at
+                // the Negative arm in memo.rs). Skip the inner solve,
+                // note_cost, and store — the negative is already stored.
+                MemoProbe::Negative => return WalkOutcome::none(),
+                MemoProbe::Miss => {}
             }
             let outcome = solve_cl_piecewise_inner(sequences, prepared, cfg, env);
             memo.note_cost(fp, outcome.stats.sims as u64);

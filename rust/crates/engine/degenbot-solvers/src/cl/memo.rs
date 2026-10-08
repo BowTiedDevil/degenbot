@@ -9,7 +9,8 @@ use super::IntV3TickRangeSequence;
 /// One epoch's walk-composition memo accounting. `hits` = probes whose
 /// fingerprint appeared in the PREVIOUS epoch (= solves a same-state
 /// composition again, the usable cross-block reuse); `distinct` = unique
-/// compositions in the current epoch.
+/// compositions in the current epoch; `negatives_played` = probes answered
+/// from a cached unprofitable entry (the inner walk skipped).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WalkMemoStats {
     pub epoch: u64,
@@ -18,8 +19,19 @@ pub struct WalkMemoStats {
     pub distinct: u64,
     pub cache_plays: u64,
     pub negative_entries: u64,
+    pub negatives_played: u64,
     pub probes_sims: u64,
     pub hits_sims: u64,
+}
+
+/// Three-state composition-memo probe: `Hit` replays a cached profitable
+/// solution, `Negative` marks a cached unprofitable composition (the caller
+/// skips the walk), `Miss` is an absent key or a disabled memo.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum MemoProbe {
+    Hit((U256, U256, Vec<U256>)),
+    Negative,
+    Miss,
 }
 
 struct WalkMemoState {
@@ -34,6 +46,7 @@ struct WalkMemoState {
     probes: u64,
     hits: u64,
     cache_plays: u64,
+    negatives_played: u64,
     probes_sims: u64,
     hits_sims: u64,
 }
@@ -52,8 +65,33 @@ impl Default for WalkMemoState {
             probes: 0,
             hits: 0,
             cache_plays: 0,
+            negatives_played: 0,
             probes_sims: 0,
             hits_sims: 0,
+        }
+    }
+}
+
+impl WalkMemoState {
+    /// Consult the composition cache (call only under `memo_on`, after the
+    /// census bookkeeping). One consult = one `cache_plays`; a cached
+    /// negative additionally counts as `negatives_played`.
+    fn consult_cache(&mut self, fp: u128) -> MemoProbe {
+        let hit = self.cache.get(&fp).cloned();
+        self.cache_plays += 1;
+        match hit {
+            Some(Some(entry)) => MemoProbe::Hit(entry),
+            Some(None) => {
+                self.negatives_played += 1;
+                // Soundness: the cached-negative skip rides the same
+                // exact-key invariant positive hits rely on —
+                // `walk_path_fingerprint` folds the full per-range state,
+                // cfg is fixed per engine lifetime, and env is a pure
+                // derivation of hop state + cfg (path_bound_lines).
+                // Identical inputs -> identical unprofitable outcome.
+                MemoProbe::Negative
+            }
+            None => MemoProbe::Miss,
         }
     }
 }
@@ -120,18 +158,23 @@ impl WalkMemo {
             distinct: st.curr.len() as u64,
             cache_plays: st.cache_plays,
             negative_entries: st.cache.values().filter(|v| v.is_none()).count() as u64,
+            negatives_played: st.negatives_played,
             probes_sims: st.probes_sims,
             hits_sims: st.hits_sims,
         };
         st.probes = 0;
         st.hits = 0;
         st.cache_plays = 0;
+        st.negatives_played = 0;
         st.probes_sims = 0;
         st.hits_sims = 0;
         out
     }
 
-    pub(super) fn probe(&self, fp: u128) -> Option<(U256, U256, Vec<U256>)> {
+    /// Three-state composition-cache probe. Census bookkeeping (probes,
+    /// prev-hit accounting, `curr` insert) happens FIRST, so a played
+    /// negative still lands the fingerprint in the epoch's census.
+    pub(super) fn probe(&self, fp: u128) -> MemoProbe {
         let mut st = self.lock();
         if st.stats_on {
             st.probes += 1;
@@ -142,24 +185,14 @@ impl WalkMemo {
             }
             st.curr.insert(fp);
             if st.memo_on {
-                let hit = st.cache.get(&fp).cloned();
-                st.cache_plays += 1;
-                if let Some(entry) = hit.flatten() {
-                    return Some(entry);
-                }
-                return None;
+                return st.consult_cache(fp);
             }
-            return None;
+            return MemoProbe::Miss;
         }
         if st.memo_on {
-            let hit = st.cache.get(&fp).cloned();
-            st.cache_plays += 1;
-            if let Some(entry) = hit.flatten() {
-                return Some(entry);
-            }
-            return None;
+            return st.consult_cache(fp);
         }
-        None
+        MemoProbe::Miss
     }
 
     pub(super) fn note_cost(&self, fp: u128, sims: u64) {

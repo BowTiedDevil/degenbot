@@ -1019,6 +1019,136 @@ fn walk_fingerprint_separates_word_boundary_lists() {
     );
 }
 
+// ── Cross-block composition memo (WalkMemo) ───────────────────
+
+/// The probe's three states: a stored `None` must come back as `Negative`
+/// (no longer indistinguishable from a `Miss`), a stored solution as `Hit`,
+/// an absent key as `Miss`. Covers both the stats-on and stats-off arms.
+#[test]
+fn memo_probe_distinguishes_hit_negative_miss() {
+    let sol = (
+        U256::from(11u64),
+        U256::from(22u64),
+        vec![U256::from(33u64)],
+    );
+
+    // Stats-on arm.
+    let memo = WalkMemo::new(true, true);
+    memo.store(0xA11CEu128, None);
+    memo.store(0xB0Bu128, Some(&sol));
+    assert_eq!(memo.probe(0xA11CEu128), MemoProbe::Negative);
+    assert_eq!(memo.probe(0xB0Bu128), MemoProbe::Hit(sol.clone()));
+    assert_eq!(memo.probe(0xC1C1u128), MemoProbe::Miss);
+
+    // Stats-off arm: same cache semantics, no census bookkeeping.
+    let memo_off_stats = WalkMemo::new(true, false);
+    memo_off_stats.store(0xA11CEu128, None);
+    memo_off_stats.store(0xB0Bu128, Some(&sol));
+    assert_eq!(memo_off_stats.probe(0xA11CEu128), MemoProbe::Negative);
+    assert_eq!(memo_off_stats.probe(0xB0Bu128), MemoProbe::Hit(sol.clone()));
+    assert_eq!(memo_off_stats.probe(0xC1C1u128), MemoProbe::Miss);
+
+    // Memo disabled: store is a no-op and every probe is a Miss.
+    let memo_off = WalkMemo::new(false, true);
+    memo_off.store(0xA11CEu128, None);
+    assert_eq!(memo_off.probe(0xA11CEu128), MemoProbe::Miss);
+}
+
+/// The point of the three-state probe: an unprofitable composition is
+/// walked ONCE (first solve = Miss, the walk runs and stores the negative);
+/// the replay is answered from the cached `Negative` without re-entering
+/// the inner walk, while the census still records the fingerprint.
+///
+/// `stats.sims` is the direct walk-ran proof but flushes to zero without
+/// the crate's default-off `telemetry` feature (see the bounded-counts
+/// test's cfg split); `negatives_played` is the feature-independent
+/// instrument.
+#[test]
+fn memo_cached_negative_skips_the_walk_on_replay() {
+    // Two same-price 1:1 pools (zfo + ofz): fees dominate, always None.
+    let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
+    let hop2 = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
+    let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
+    let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
+    let prepared = [ClSolveTables::derive(&seq1), ClSolveTables::derive(&seq2)];
+    let cfg = SolveRuntimeConfig::default();
+    let memo = WalkMemo::new(true, true);
+
+    // First solve: Miss → the walk runs and stores the negative.
+    let first = solve_cl_piecewise(&[&seq1, &seq2], &prepared, Some(&memo), &cfg, None);
+    assert!(first.result.is_none(), "fixture must be unprofitable");
+    #[cfg(feature = "telemetry")]
+    assert!(first.stats.sims > 0, "first solve must run the walk");
+    let st1 = memo.take_stats();
+    assert_eq!(st1.cache_plays, 1, "first solve consulted the cache");
+    assert_eq!(
+        st1.negatives_played, 0,
+        "first solve was a Miss, not a play"
+    );
+    assert_eq!(
+        st1.negative_entries, 1,
+        "the unprofitable composition is cached"
+    );
+
+    // Epoch swap so the replay's census insert is observable on its own.
+    memo.begin_block(2);
+
+    // Second solve: the cached negative answers without the walk.
+    let second = solve_cl_piecewise(&[&seq1, &seq2], &prepared, Some(&memo), &cfg, None);
+    assert!(second.result.is_none());
+    assert_eq!(
+        second.stats.sims, 0,
+        "the walk must not run on a negative play"
+    );
+    let st2 = memo.take_stats();
+    assert_eq!(st2.cache_plays, 1);
+    assert_eq!(st2.negatives_played, 1, "the negative must be played");
+    assert_eq!(st2.negative_entries, 1, "no second store");
+    assert_eq!(st2.distinct, 1, "the negative play still lands fp in curr");
+    assert_eq!(
+        st2.hits, 1,
+        "the composition recurred from the previous epoch"
+    );
+}
+
+/// A cached profitable solution replays byte-identical through the entry,
+/// and the replay does not re-run the walk.
+#[test]
+fn memo_cached_hit_replays_the_solution_without_the_walk() {
+    // The late-liquidity fixture the corner tests pin as profitable.
+    let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+    let mut liquidities = vec![1_000_000_000u128; 10];
+    liquidities.push(10_000_000_000_000u128);
+    liquidities.push(1_000_000_000u128);
+    let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+    let prepared = [ClSolveTables::derive(&seq1), ClSolveTables::derive(&seq2)];
+    let cfg = SolveRuntimeConfig::default();
+    let memo = WalkMemo::new(true, true);
+
+    let first = solve_cl_piecewise(&[&seq1, &seq2], &prepared, Some(&memo), &cfg, None);
+    let first_result = first.result.expect("fixture must be profitable");
+    let st1 = memo.take_stats();
+    assert_eq!(st1.negatives_played, 0);
+    assert_eq!(
+        st1.negative_entries, 0,
+        "profitable compositions cache Some"
+    );
+
+    let second = solve_cl_piecewise(&[&seq1, &seq2], &prepared, Some(&memo), &cfg, None);
+    assert_eq!(
+        second.result,
+        Some(first_result),
+        "cached hit replays exactly"
+    );
+    assert_eq!(
+        second.stats.sims, 0,
+        "the walk must not run on a hit replay"
+    );
+    let st2 = memo.take_stats();
+    assert_eq!(st2.cache_plays, 1);
+    assert_eq!(st2.negatives_played, 0, "a hit is not a negative play");
+}
+
 #[test]
 fn solve_cl_piecewise_refuses_prepared_tables_of_another_sequence() {
     // The late-liquidity 2-hop cycle below solves profitably — so an outcome
