@@ -1,7 +1,8 @@
 //! WalkMemo behavioral tests: the three-state probe, negative/hit replay,
-//! census-scoped eviction across epochs, and the negative-entries gauge -
-//! plus the mixed V2+CL memo twins and the `walk_path_fingerprint`
-//! separation tests that pin the memo key's content stability.
+//! census-scoped eviction across epochs, the monotone-epoch reorg-rewind
+//! contract, and the negative-entries gauge - plus the mixed V2+CL memo
+//! twins and the `walk_path_fingerprint` separation tests that pin the
+//! memo key's content stability.
 
 //! Split out of `cl::tests` (the `refinements` precedent); shared helpers
 //! (`make_v3_hop_at_1to1`, `multi_range_sequence`, the mixed memo fixtures)
@@ -285,6 +286,65 @@ fn memo_stale_unprobed_entry_is_evicted_by_the_census() {
     assert_eq!(
         st.negative_entries, 1,
         "the gauge reflects survivors only, not evicted entries"
+    );
+}
+
+/// The monotone-epoch contract, exercised by the reorg scenario it guards:
+/// the block pump rewinds to a LOWER block number after a reorg, so
+/// `begin_block(4)` arrives after `begin_block(5)`. The regression must
+/// warn-and-hold (the same early-return shape as the equal-epoch path),
+/// NOT swap the census backwards: the higher epoch's state — epoch counter,
+/// census, costs, cache — survives untouched, so a probe of the epoch-5
+/// fingerprint still answers from the live cache. A backwards swap would
+/// evict the fingerprint (after the swap it sits in neither `prev` nor
+/// `curr`), downgrade the probe to a `Miss`, and drop the negative gauge —
+/// the memo would serve entries stamped from a future epoch. No panic on
+/// the regression path.
+#[test]
+fn memo_reorg_rewind_holds_the_higher_epoch_state() {
+    let fp = 0x4E1Du128;
+    let memo = WalkMemo::new(true, true);
+
+    // Epoch 1: probe + store a negative — the real solve flow.
+    memo.begin_block(1);
+    assert_eq!(memo.probe(fp), MemoProbe::Miss);
+    memo.store(fp, None);
+    assert_eq!(memo.take_stats().negative_entries, 1);
+
+    // Advance forward to epoch 5: the fingerprint joins the previous
+    // epoch's census and survives the retain — it is epoch-5 live state.
+    memo.begin_block(5);
+
+    // REGRESSION: reorg rewind to a lower block number.
+    memo.begin_block(4);
+
+    let st = memo.take_stats();
+    assert_eq!(
+        st.epoch, 5,
+        "the epoch must stay at the higher value; no backwards swap"
+    );
+    assert_eq!(
+        st.negative_entries, 1,
+        "the cached negative survived; a backwards swap would have evicted it"
+    );
+
+    // The memo still serves the epoch-5 state: the probe answers from the
+    // live cache (not a swapped-backwards census) and counts as a
+    // previous-epoch census recurrence.
+    assert_eq!(
+        memo.probe(fp),
+        MemoProbe::Negative,
+        "the epoch-5 cached entry must still answer after the rewind"
+    );
+    let st = memo.take_stats();
+    assert_eq!(st.epoch, 5, "still epoch 5 after the probe");
+    assert_eq!(
+        st.hits, 1,
+        "fp is still a previous-epoch census member at epoch 5"
+    );
+    assert_eq!(
+        st.negatives_played, 1,
+        "answered from the cached negative, not a Miss"
     );
 }
 

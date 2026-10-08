@@ -148,6 +148,21 @@ impl WalkMemo {
     /// Advance the cross-block epoch and swap the composition census (call
     /// at block-lifecycle start — replaces the global set-epoch accessor).
     ///
+    /// # Epoch contract (monotone, forward-only)
+    ///
+    /// `epoch` is the solved block number the engine passes, and it must
+    /// advance monotonically. The equal-epoch call is an idempotent no-op;
+    /// an advance swaps the census per the eviction rules below. A
+    /// REGRESSION (a reorg rewind to a lower block number — the block pump
+    /// carries a rewind generation) is warn-and-hold: a `tracing::warn!`
+    /// names both epochs and the reorg path, then the call returns WITHOUT
+    /// swapping — the census, costs, and cache keep the higher epoch's
+    /// state, exactly like the equal-epoch early return. The memo never
+    /// swaps its census backwards (a backwards swap would serve entries
+    /// stamped from a future epoch). Full reorg-rollback semantics
+    /// (restoring the rewound-to block's state) are a separate concern and
+    /// explicitly out of scope here.
+    ///
     /// The composition cache is bounded by the census, not a fixed entry
     /// cap: after the prev/curr swap the cache is pruned to fingerprints
     /// probed in the current or previous epoch, so it holds roughly two
@@ -159,6 +174,22 @@ impl WalkMemo {
     pub fn begin_block(&self, epoch: u64) {
         let mut st = self.lock();
         if epoch == st.epoch {
+            return;
+        }
+        if epoch < st.epoch {
+            // Reorg rewind: the block pump rewound to a lower block
+            // number. Forward-only contract — hold the higher epoch's
+            // state (the same early-return shape as the equal-epoch path)
+            // instead of swapping the census backwards, which would leave
+            // the memo serving entries stamped from a future epoch. Full
+            // rollback semantics are a separate, deepening epic.
+            tracing::warn!(
+                held_epoch = st.epoch,
+                regressed_epoch = epoch,
+                "WalkMemo::begin_block epoch regression (reorg rewind to a \
+                 lower block number): holding the higher epoch's census, \
+                 costs, and cache; not swapping backwards"
+            );
             return;
         }
         st.epoch = epoch;
