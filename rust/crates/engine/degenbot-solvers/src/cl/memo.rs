@@ -9,8 +9,13 @@ use super::IntV3TickRangeSequence;
 /// One epoch's walk-composition memo accounting. `hits` = probes whose
 /// fingerprint appeared in the PREVIOUS epoch (= solves a same-state
 /// composition again, the usable cross-block reuse); `distinct` = unique
-/// compositions in the current epoch; `negatives_played` = probes answered
-/// from a cached unprofitable entry (the inner walk skipped).
+/// compositions probed in the current epoch (the census is maintained
+/// whenever the memo is active — `memo_on` OR `stats_on` — so it is
+/// populated in memo-on/stats-off runs too); `negatives_played` = probes
+/// answered from a cached unprofitable entry (the inner walk skipped).
+/// Every field except `negative_entries` is reset by `take_stats`:
+/// `negative_entries` is a running gauge of the `None` values currently
+/// cached and mirrors live cache state across epochs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WalkMemoStats {
     pub epoch: u64,
@@ -43,6 +48,10 @@ struct WalkMemoState {
     prev_costs: hashbrown::HashMap<u128, u64>,
     curr_costs: hashbrown::HashMap<u128, u64>,
     cache: hashbrown::HashMap<u128, Option<(U256, U256, Vec<U256>)>>,
+    /// Running count of `None` values in `cache`, kept exactly equal to it
+    /// across every store and census eviction (replaces the O(cache) scan
+    /// the old `take_stats` performed).
+    negative_entries: u64,
     probes: u64,
     hits: u64,
     cache_plays: u64,
@@ -62,6 +71,7 @@ impl Default for WalkMemoState {
             prev_costs: hashbrown::HashMap::new(),
             curr_costs: hashbrown::HashMap::new(),
             cache: hashbrown::HashMap::new(),
+            negative_entries: 0,
             probes: 0,
             hits: 0,
             cache_plays: 0,
@@ -133,6 +143,15 @@ impl WalkMemo {
 
     /// Advance the cross-block epoch and swap the composition census (call
     /// at block-lifecycle start — replaces the global set-epoch accessor).
+    ///
+    /// The composition cache is bounded by the census, not a fixed entry
+    /// cap: after the prev/curr swap the cache is pruned to fingerprints
+    /// probed in the current or previous epoch, so it holds roughly two
+    /// epochs of distinct probed compositions. Anything not probed in the
+    /// current or previous epoch is dead by the `hits` definition (a hit
+    /// requires previous-epoch census membership) — the census IS the reuse
+    /// window. An entry stored without a probe never joins the census and
+    /// is evicted at the next epoch advance.
     pub fn begin_block(&self, epoch: u64) {
         let mut st = self.lock();
         if epoch == st.epoch {
@@ -145,9 +164,32 @@ impl WalkMemo {
         st.prev_costs = std::mem::take(&mut st.curr_costs);
         let reserve_n = st.prev.len();
         st.curr_costs.reserve(reserve_n);
+        // Census-scoped eviction replaces the old wholesale clear at 4096
+        // entries, which killed every hot entry mid-epoch (under rayon) the
+        // moment a 4097th distinct composition arrived. After the swap
+        // `curr` is empty, so this keeps the last epoch's probed
+        // compositions and drops everything older. Evicted `None`s
+        // decrement the negative gauge so it keeps mirroring the cache.
+        let WalkMemoState {
+            prev,
+            curr,
+            cache,
+            negative_entries,
+            ..
+        } = &mut *st;
+        cache.retain(|k, v| {
+            let keep = prev.contains(k) || curr.contains(k);
+            if !keep && v.is_none() {
+                *negative_entries -= 1;
+            }
+            keep
+        });
     }
 
-    /// Take (and reset) the per-epoch accounting counters.
+    /// Take (and reset) the per-epoch accounting counters. `negative_entries`
+    /// is NOT among the reset counters: it is a running gauge mirroring the
+    /// live cache (the number of `None` values currently stored), maintained
+    /// across stores and census evictions.
     #[must_use]
     pub fn take_stats(&self) -> WalkMemoStats {
         let mut st = self.lock();
@@ -157,7 +199,7 @@ impl WalkMemo {
             hits: st.hits,
             distinct: st.curr.len() as u64,
             cache_plays: st.cache_plays,
-            negative_entries: st.cache.values().filter(|v| v.is_none()).count() as u64,
+            negative_entries: st.negative_entries,
             negatives_played: st.negatives_played,
             probes_sims: st.probes_sims,
             hits_sims: st.hits_sims,
@@ -171,11 +213,17 @@ impl WalkMemo {
         out
     }
 
-    /// Three-state composition-cache probe. Census bookkeeping (probes,
-    /// prev-hit accounting, `curr` insert) happens FIRST, so a played
-    /// negative still lands the fingerprint in the epoch's census.
+    /// Three-state composition-cache probe. Census bookkeeping happens
+    /// FIRST, so a played negative still lands the fingerprint in the
+    /// epoch's census.
     pub(super) fn probe(&self, fp: u128) -> MemoProbe {
         let mut st = self.lock();
+        // The census insert runs whenever the memo is active (the caller
+        // probes only under `active()`, i.e. memo_on OR stats_on), NOT just
+        // under stats: a memo_on/stats_off engine must still maintain the
+        // census, or the begin_block retain would wipe the whole cache
+        // every epoch. One HashSet insert per probe is the accepted cost.
+        st.curr.insert(fp);
         if st.stats_on {
             st.probes += 1;
             let hit_now = st.prev.contains(&fp);
@@ -183,7 +231,6 @@ impl WalkMemo {
                 st.hits += 1;
                 st.hits_sims += st.prev_costs.get(&fp).copied().unwrap_or(0);
             }
-            st.curr.insert(fp);
             if st.memo_on {
                 return st.consult_cache(fp);
             }
@@ -209,10 +256,21 @@ impl WalkMemo {
         if !st.memo_on {
             return;
         }
-        if st.cache.len() >= 4096 {
-            st.cache.clear();
+        // No wholesale cap: the cache is bounded by the census working set
+        // (begin_block evicts everything not probed in the current or
+        // previous epoch), so a burst of new compositions can never clear
+        // hot entries mid-epoch.
+        let old = st.cache.insert(fp, result.cloned());
+        // Running negative gauge, kept exactly equal to the number of `None`
+        // values in the cache across every transition: fresh None +1,
+        // Some→None +1, None→Some −1, Some→Some 0.
+        if result.is_none() {
+            if !matches!(old, Some(None)) {
+                st.negative_entries += 1;
+            }
+        } else if matches!(old, Some(None)) {
+            st.negative_entries -= 1;
         }
-        st.cache.insert(fp, result.cloned());
     }
 }
 

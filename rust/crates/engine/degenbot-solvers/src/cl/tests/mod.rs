@@ -1040,7 +1040,9 @@ fn memo_probe_distinguishes_hit_negative_miss() {
     assert_eq!(memo.probe(0xB0Bu128), MemoProbe::Hit(sol.clone()));
     assert_eq!(memo.probe(0xC1C1u128), MemoProbe::Miss);
 
-    // Stats-off arm: same cache semantics, no census bookkeeping.
+    // Stats-off arm: same cache semantics; the census is still maintained
+    // (it runs whenever the memo is active, not just under stats), only
+    // the heavier counters stay dark.
     let memo_off_stats = WalkMemo::new(true, false);
     memo_off_stats.store(0xA11CEu128, None);
     memo_off_stats.store(0xB0Bu128, Some(&sol));
@@ -1147,6 +1149,157 @@ fn memo_cached_hit_replays_the_solution_without_the_walk() {
     let st2 = memo.take_stats();
     assert_eq!(st2.cache_plays, 1);
     assert_eq!(st2.negatives_played, 0, "a hit is not a negative play");
+}
+
+/// The 4096 wholesale clear is gone: a burst of new distinct compositions
+/// in one epoch must not wipe previously cached entries. The cache is
+/// bounded by the census working set, so every fingerprint probed in the
+/// epoch survives the epoch swap (driven through probe + store, the real
+/// flow, so each entry joins the census).
+#[test]
+fn memo_cache_survives_a_burst_beyond_the_old_4096_cap() {
+    let memo = WalkMemo::new(true, true);
+
+    // One epoch, 5000 distinct compositions: probe (Miss) then store the
+    // negative — exactly what a solve does on a fresh composition.
+    let first_fp = 1u128;
+    for i in 0u128..5000 {
+        let fp = first_fp + i;
+        assert_eq!(memo.probe(fp), MemoProbe::Miss);
+        memo.store(fp, None);
+    }
+
+    // Old behavior: the 4097th store cleared the cache, so the earliest
+    // fingerprint would be a Miss after the epoch swap. Census-scoped
+    // eviction keeps every probed fingerprint instead.
+    memo.begin_block(1);
+    assert_eq!(
+        memo.probe(first_fp),
+        MemoProbe::Negative,
+        "the earliest composition must survive; no mid-epoch clear"
+    );
+    let late_fp = first_fp + 4999;
+    assert_eq!(memo.probe(late_fp), MemoProbe::Negative);
+
+    let st = memo.take_stats();
+    assert_eq!(
+        st.negative_entries, 5000,
+        "all 5000 cached negatives are live; the wholesale clear is gone"
+    );
+}
+
+/// Stale eviction: an entry survives one epoch advance (it is still in the
+/// previous epoch's census) but is dropped once it goes unprobed across a
+/// full epoch — the census is the reuse window, and the negative gauge
+/// reflects the survivors, not the evicted.
+#[test]
+fn memo_stale_unprobed_entry_is_evicted_by_the_census() {
+    let memo = WalkMemo::new(true, true);
+
+    // Epoch 1: A is probed + stored negative (the real flow).
+    memo.begin_block(1);
+    assert_eq!(memo.probe(0xAAAAu128), MemoProbe::Miss);
+    memo.store(0xAAAAu128, None);
+    assert_eq!(memo.take_stats().negative_entries, 1);
+
+    // Epoch 2: A is never probed. It survives this advance (still in the
+    // previous epoch's census) while B joins the census.
+    memo.begin_block(2);
+    assert_eq!(memo.probe(0xBBBBu128), MemoProbe::Miss);
+    memo.store(0xBBBBu128, None);
+    assert_eq!(
+        memo.take_stats().negative_entries,
+        2,
+        "A survived the first advance"
+    );
+
+    // Epoch 3: A is two epochs stale — not in curr or prev — so the census
+    // retain drops it; B survives (probed last epoch).
+    memo.begin_block(3);
+    assert_eq!(
+        memo.probe(0xAAAAu128),
+        MemoProbe::Miss,
+        "stale A was evicted"
+    );
+    assert_eq!(
+        memo.probe(0xBBBBu128),
+        MemoProbe::Negative,
+        "probed B survived"
+    );
+    let st = memo.take_stats();
+    assert_eq!(
+        st.negative_entries, 1,
+        "the gauge reflects survivors only, not evicted entries"
+    );
+}
+
+/// Census without stats: a memo_on/stats_off engine maintains the census
+/// (the probe insert runs whenever the memo is active), so cross-epoch
+/// retention and `distinct` work with the counters dark.
+#[test]
+fn memo_retains_across_epochs_without_stats() {
+    let memo = WalkMemo::new(true, false);
+
+    assert_eq!(memo.probe(0x00C0_FFEE_u128), MemoProbe::Miss);
+    memo.store(0x00C0_FFEE_u128, None);
+
+    memo.begin_block(1);
+    assert_eq!(
+        memo.probe(0x00C0_FFEE_u128),
+        MemoProbe::Negative,
+        "retention works without stats_on: the census was maintained"
+    );
+
+    let st = memo.take_stats();
+    assert_eq!(
+        st.distinct, 1,
+        "distinct is maintained in memo-on/stats-off runs too"
+    );
+    assert_eq!(st.negative_entries, 1);
+    assert_eq!(st.probes, 0, "heavy counters stay gated on stats_on");
+    assert_eq!(st.hits, 0, "heavy counters stay gated on stats_on");
+}
+
+/// The negative gauge tracks every cache transition exactly: fresh None +1,
+/// Some→None +1, None→Some −1, and census eviction −1. `take_stats` reports
+/// the gauge without resetting it (it mirrors live cache state).
+#[test]
+fn memo_negative_entries_gauge_mirrors_the_cache() {
+    let sol = (
+        U256::from(44u64),
+        U256::from(55u64),
+        vec![U256::from(66u64)],
+    );
+    let memo = WalkMemo::new(true, true);
+
+    memo.probe(0xD1CEu128);
+    memo.store(0xD1CEu128, None);
+    assert_eq!(memo.take_stats().negative_entries, 1);
+
+    memo.store(0xD1CEu128, Some(&sol));
+    assert_eq!(
+        memo.take_stats().negative_entries,
+        0,
+        "None flipped to Some"
+    );
+
+    memo.store(0xD1CEu128, None);
+    assert_eq!(memo.take_stats().negative_entries, 1);
+    assert_eq!(
+        memo.take_stats().negative_entries,
+        1,
+        "take_stats must not reset the gauge"
+    );
+
+    // Two epoch advances with no probes: the entry survives the first
+    // (still in the previous epoch's census) and is evicted at the second.
+    memo.begin_block(2);
+    memo.begin_block(3);
+    assert_eq!(
+        memo.take_stats().negative_entries,
+        0,
+        "the evicted negative left the gauge"
+    );
 }
 
 #[test]
