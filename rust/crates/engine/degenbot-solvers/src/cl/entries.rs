@@ -34,6 +34,14 @@ impl ClSolveTables {
             source_fingerprint: walk_path_fingerprint(&[seq]),
         }
     }
+
+    /// The table gate: does this prepared pair actually belong to `seq`?
+    /// Wraps the `source_fingerprint` comparison so the solve entries refuse
+    /// a pair whose claimed source disagrees with the sequence at its
+    /// position instead of trusting positional pairing.
+    fn matches(&self, seq: &IntV3TickRangeSequence) -> bool {
+        self.source_fingerprint == walk_path_fingerprint(&[seq])
+    }
 }
 
 /// Build one CL hop's walk view from a sequence and its optional prepared
@@ -47,6 +55,31 @@ fn cl_hop_view<'a>(
         Some(p) => cl_walk_hop_cached(seq, Some(&p.crossings), Some(&p.profiles)),
         None => cl_walk_hop(seq, None),
     }
+}
+
+/// Shared memo replay arm for both solve entries: probe the cross-block
+/// composition memo at the caller's exact-key `fp` (each entry computes and
+/// documents its own fingerprint). `Some` means a `Hit` or `Negative`
+/// answered the probe and the caller returns the outcome as-is, skipping the
+/// walk; `None` (`Miss`) falls through to the solve + [`memo_commit`].
+fn memo_replay(memo: &WalkMemo, fp: u128) -> Option<WalkOutcome> {
+    match memo.probe(fp) {
+        MemoProbe::Hit(hit) => Some(WalkOutcome::from_result(Some(hit))),
+        // Cached negative: this composition already walked to None under
+        // identical inputs (exact-key soundness documented at the Negative
+        // arm in memo.rs). Skip the inner solve, note_cost, and store — the
+        // negative is already stored.
+        MemoProbe::Negative => Some(WalkOutcome::none()),
+        MemoProbe::Miss => None,
+    }
+}
+
+/// Shared memo commit arm for both solve entries: charge the walk's cost
+/// against the memo slot and store the outcome's result (`None` included —
+/// that is what turns a later identical probe into a cached negative).
+fn memo_commit(memo: &WalkMemo, fp: u128, outcome: &WalkOutcome) {
+    memo.note_cost(fp, outcome.stats.sims as u64);
+    memo.store(fp, outcome.result.as_ref());
 }
 
 /// Convenience for callers that only have sequences (tests, examples,
@@ -84,7 +117,7 @@ pub fn solve_cl_piecewise(
     if prepared
         .iter()
         .zip(sequences)
-        .any(|(tables, seq)| tables.source_fingerprint != walk_path_fingerprint(&[*seq]))
+        .any(|(tables, seq)| !tables.matches(seq))
     {
         return WalkOutcome::none();
     }
@@ -96,18 +129,11 @@ pub fn solve_cl_piecewise(
     if let Some(memo) = memo {
         if memo.active() {
             let fp = walk_path_fingerprint(sequences);
-            match memo.probe(fp) {
-                MemoProbe::Hit(hit) => return WalkOutcome::from_result(Some(hit)),
-                // Cached negative: this composition already walked to None
-                // under identical inputs (exact-key soundness documented at
-                // the Negative arm in memo.rs). Skip the inner solve,
-                // note_cost, and store — the negative is already stored.
-                MemoProbe::Negative => return WalkOutcome::none(),
-                MemoProbe::Miss => {}
+            if let Some(outcome) = memo_replay(memo, fp) {
+                return outcome;
             }
             let outcome = solve_cl_piecewise_inner(sequences, prepared, cfg, env);
-            memo.note_cost(fp, outcome.stats.sims as u64);
-            memo.store(fp, outcome.result.as_ref());
+            memo_commit(memo, fp, &outcome);
             return outcome;
         }
     }
@@ -190,7 +216,7 @@ pub fn solve_mixed_piecewise(
                 return WalkOutcome::none();
             };
             if let Some(tables) = cl_prepared[i].as_ref() {
-                if tables.source_fingerprint != walk_path_fingerprint(&[seq]) {
+                if !tables.matches(seq) {
                     return WalkOutcome::none();
                 }
             }
@@ -208,18 +234,11 @@ pub fn solve_mixed_piecewise(
     if let Some(memo) = memo {
         if memo.active() {
             let fp = walk_mixed_path_fingerprint(v2_hops, cl_sequences, hop_order);
-            match memo.probe(fp) {
-                MemoProbe::Hit(hit) => return WalkOutcome::from_result(Some(hit)),
-                // Cached negative: this composition already walked to None
-                // under identical inputs (exact-key soundness documented at
-                // the Negative arm in memo.rs). Skip the inner solve,
-                // note_cost, and store — the negative is already stored.
-                MemoProbe::Negative => return WalkOutcome::none(),
-                MemoProbe::Miss => {}
+            if let Some(outcome) = memo_replay(memo, fp) {
+                return outcome;
             }
             let outcome = solve_active_set_path(&hops, cfg, env);
-            memo.note_cost(fp, outcome.stats.sims as u64);
-            memo.store(fp, outcome.result.as_ref());
+            memo_commit(memo, fp, &outcome);
             return outcome;
         }
     }
