@@ -1,0 +1,58 @@
+{
+  "market": {
+    "active": true,
+    "chain_id": 1,
+    "db_bytes": 397262848,
+    "drive": {
+      "chunks": 986,
+      "events_applied": 12687043,
+      "from_block": 16291071,
+      "to_block": 26144562,
+      "verify": "per-chunk on-chain truth + market-wide at 1M boundaries + completion"
+    },
+    "last_update_block": 26144562,
+    "name": "Aave Ethereum Market"
+  },
+  "tables": {
+    "aave_gho_tokens": {
+      "digest": "3f22688b49d88ea5f7598e5a0b6d8f40e19db974e1dacfce7f93fd35cdd62a86",
+      "rows": 1
+    },
+    "aave_v3_asset_configs": {
+      "digest": "402a25dd8c46af0106979723b769e610f9387fcabfa229ce1e58030a1ec2f8e6",
+      "rows": 63
+    },
+    "aave_v3_assets": {
+      "digest": "4cff7042a183d9ddf614b70aaca81cac6cd3118d7006a2c2e1726011827f5c45",
+      "rows": 67
+    },
+    "aave_v3_collateral_positions": {
+      "digest": "2e3ad50876ac0dea6074ba8ab84e48c244b32dd12793e746c3f644e425da08bd",
+      "rows": 137808
+    },
+    "aave_v3_contracts": {
+      "digest": "b352b14bb8cdc52ec7e10b8ea82f52f82fdbb0d4bc1267765302f8f9dc668cb1",
+      "rows": 7
+    },
+    "aave_v3_debt_positions": {
+      "digest": "3239657ffecc6bd64cbd184ad009e71e302ace01aef4a317233b5eedb26dba2b",
+      "rows": 35016
+    },
+    "aave_v3_emode_categories": {
+      "digest": "7082a0bdefeb8f130ffd8eaf715623f893abc0eff48b17b4631dcff4c5248570",
+      "rows": 48
+    },
+    "aave_v3_markets": {
+      "digest": "33e1093e424d7810606a68df4cbd96272d397a429ad8b9de467706ae4e2db42f",
+      "rows": 1
+    },
+    "aave_v3_user_collateral_configs": {
+      "digest": "301d2d384285a56b54d396e04cb92029aaf03b4a809806decb64e0bf9d6a6518",
+      "rows": 321579
+    },
+    "aave_v3_users": {
+      "digest": "d2d7f63396ed870feba1412236cd4b9e31240f9797359ea07145398a6ee108e4",
+      "rows": 267486
+    }
+  }
+}
