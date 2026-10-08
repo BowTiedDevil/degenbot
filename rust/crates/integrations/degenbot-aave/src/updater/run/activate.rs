@@ -52,13 +52,15 @@ pub const ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK: i64 = 16_291_070;
 ///
 /// Returns the market `id`. Pure substrate — NO RPC. The orchestrator
 /// [`activate_aave_market`] fetches the market name + GHO metadata via RPC
-/// then calls this.
+/// then calls this; `aave reset`'s re-init calls it directly (the market
+/// name + GHO metadata ride the shipped deployment constants there, so the
+/// completion path never builds an RPC transport).
 ///
 /// # Errors
 ///
 /// Returns [`DbError`] on a `SQLite` query failure.
 #[expect(clippy::too_many_arguments)]
-pub(crate) fn activate_aave_market_on_conn(
+pub fn activate_aave_market_on_conn(
     conn: &Connection,
     chain_id: i64,
     market_name: &str,

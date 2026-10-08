@@ -87,10 +87,10 @@ pub use pool::{PoolCommand, PoolFamily};
 pub use prompt::{PromptPlan, Prompter};
 pub use registrations::{ensure_supported_registrations, RegistrationReport};
 pub use report::{
-    schema_state_label, AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome,
-    ActivateOutcome, CommandOutcome, CommandReport, ConfigReport, ConfigValue, CutoverOutcome,
-    DatabaseReport, DeactivateOutcome, DryRunKind, ExchangeActiveState, ExchangeListRow,
-    ExchangeReport, FleetReport, PathReport, PoolReport, StrategyReport,
+    schema_state_label, AavePositionLine, AaveReinit, AaveReport, AaveUpdateEntry,
+    AaveUpdateOutcome, ActivateOutcome, CommandOutcome, CommandReport, ConfigReport, ConfigValue,
+    CutoverOutcome, DatabaseReport, DeactivateOutcome, DryRunKind, ExchangeActiveState,
+    ExchangeListRow, ExchangeReport, FleetReport, PathReport, PoolReport, StrategyReport,
 };
 pub use strategy::{
     descriptor, descriptors, EndpointSummary, MutationOutcome, StrategyCommand, StrategyFacet,

@@ -828,6 +828,23 @@ pub enum AaveUpdateOutcome {
     },
 }
 
+/// The outcome of `aave reset`'s re-init half: the activate seam's
+/// completion of the purged market (the market row + the
+/// `POOL_ADDRESS_PROVIDER` contract row) and the cursor it left. The
+/// command does NOT run an update; the next `aave update` cold-boots from
+/// this cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AaveReinit {
+    /// The market row was re-activated (the activate seam ran).
+    pub market_activated: bool,
+    /// The `POOL_ADDRESS_PROVIDER` contract row is present after the
+    /// re-init (the bootstrap's fetch anchor).
+    pub contract_row_present: bool,
+    /// The `last_update_block` the re-init left — the bootstrap block on
+    /// the shipped mainnet deployment.
+    pub last_update_block: Option<i64>,
+}
+
 /// One `aave update` market row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AaveUpdateEntry {
@@ -893,8 +910,8 @@ pub enum AaveReport {
         counts: Vec<AaveMarketPurgeCount>,
         /// `true` when the arm previewed the purge and touched nothing.
         dry_run: bool,
-        /// The re-init run's outcome; `None` on a preview.
-        reinit: Option<AaveUpdateOutcome>,
+        /// The re-init's activate-seam outcome; `None` on a preview.
+        reinit: Option<AaveReinit>,
     },
     /// `aave position show`.
     Position {
@@ -1050,7 +1067,7 @@ fn reset_lines(
     market_name: &str,
     counts: &[AaveMarketPurgeCount],
     dry_run: bool,
-    reinit: Option<&AaveUpdateOutcome>,
+    reinit: Option<&AaveReinit>,
 ) -> Vec<String> {
     let mut lines = Vec::with_capacity(counts.len() + 3);
     if dry_run {
@@ -1067,12 +1084,17 @@ fn reset_lines(
         lines.push(format!("  {}: {} row(s)", count.table, count.rows));
     }
     match reinit {
-        Some(outcome) => lines.extend(entry_lines(&AaveUpdateEntry {
-            chain_id: i64::try_from(chain_id).unwrap_or(i64::MAX),
-            market_id,
-            market_name: market_name.to_string(),
-            outcome: outcome.clone(),
-        })),
+        Some(reinit) => lines.push(format!(
+            "  re-initialized via the activate seam: market row active = {}, \
+             POOL_ADDRESS_PROVIDER row = {}, last_update_block = {}",
+            reinit.market_activated,
+            reinit.contract_row_present,
+            render_opt_block(
+                reinit
+                    .last_update_block
+                    .map(|b| u64::try_from(b).unwrap_or(0))
+            )
+        )),
         None if dry_run => lines.push(
             "  re-init skipped: the purge was previewed, so the market's state is unchanged."
                 .to_string(),

@@ -10,16 +10,17 @@
 //!   opt-in completion backup.
 //! - `aave position show` — the market/user scalar row reads ported onto the
 //!   `degenbot-db::aave` read surface.
-//! - `aave reset` — the market-scoped purge followed by the same cold-boot
-//!   update a fresh empty database takes.
+//! - `aave reset` — the market-scoped purge followed by the cold-boot
+//!   substrate stamp the activate arm seeds, so the NEXT update run takes
+//!   the cold-boot path an empty database takes.
 
 use std::sync::Arc;
 
 use alloy::primitives::{address, Address};
 use degenbot_aave::updater::verify::cleanup_zero_balance_positions_on_conn;
 use degenbot_aave::{
-    activate_aave_market, deactivate_aave_market, run_aave_update, NoProgress, RunError,
-    ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+    activate_aave_market, activate_aave_market_on_conn, deactivate_aave_market, run_aave_update,
+    NoProgress, RunError, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 use degenbot_db::{ops, DbError, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
@@ -30,7 +31,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::prompt::{PromptPlan, Prompter};
 use crate::report::{
-    AavePositionLine, AaveReport, AaveUpdateEntry, AaveUpdateOutcome, DeactivateOutcome,
+    AavePositionLine, AaveReinit, AaveReport, AaveUpdateEntry, AaveUpdateOutcome, DeactivateOutcome,
 };
 use degenbot_db::AaveMarketPurgeCount;
 
@@ -422,10 +423,6 @@ fn update(
     Ok(AaveReport::Updated { entries })
 }
 
-/// The re-init's chunk size — the same cold-boot default `aave update` uses,
-/// so a reset's re-population commits under the chunk-atomicity contract.
-const RESET_CHUNK_SIZE: u64 = crate::block::DEFAULT_CHUNK_SIZE;
-
 /// An exclusive, reset-scoped advisory lock over one database path.
 ///
 /// The lock is a file created with `create_new` beside the database, holding
@@ -478,12 +475,15 @@ impl Drop for ResetLock {
 /// `aave reset`.
 ///
 /// Resolves the market the way `deactivate` does, reads and prints the purge's
-/// per-relation counts, purges under ONE transaction, then re-runs the
-/// cold-boot update path for that market.
-#[expect(clippy::too_many_lines)]
+/// per-relation counts, purges under ONE transaction, then re-stamps the
+/// cold-boot substrate through the activate seam
+/// ([`activate_aave_market_on_conn`]) — the same one-transaction setter
+/// `aave activate` completes a market with. No update run here: the command
+/// returns in seconds, and the next `aave update` takes the cold-boot path
+/// from the stamped cursor.
 fn reset(
     ctx: &CliContext<'_>,
-    cancel: &CancelHandle,
+    _cancel: &CancelHandle,
     chain_id: u64,
     market_name: Option<&str>,
     dry_run: bool,
@@ -491,22 +491,20 @@ fn reset(
     let database_path = ctx.database_path()?.value;
     let chain = i64::try_from(chain_id)
         .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;
+    // The re-init completes the purged row through the shipped deployment's
+    // substrate (the address provider + GHO constants), so the chain must be
+    // one the deployment table names — the same precondition `aave
+    // activate` has.
+    let deployment = resolve_aave_deployment(chain_id)?;
     let market = {
         let db = (DegenbotDb::open(&database_path)?).0;
-        if let Some(name) = market_name {
-            db.fetch_aave_market_by_name(chain, name)?
-        } else {
-            // No name given: the chain's shipped deployment names the market.
-            let name = resolve_aave_deployment(chain_id)?.market_name;
-            db.fetch_aave_market_by_name(chain, name)?
-        }
+        // No name given: the chain's shipped deployment names the market.
+        let name = market_name.unwrap_or(deployment.market_name);
+        db.fetch_aave_market_by_name(chain, name)?
     };
     let Some(market) = market else {
-        let requested = match market_name {
-            Some(name) => name.to_string(),
-            None => resolve_aave_deployment(chain_id)
-                .map_or_else(|_| "<unknown>".to_string(), |d| d.market_name.to_string()),
-        };
+        let requested =
+            market_name.map_or_else(|| deployment.market_name.to_string(), ToString::to_string);
         return Err(CliError::UnknownAaveMarket {
             chain_id,
             market_name: requested,
@@ -540,8 +538,8 @@ fn reset(
         });
     }
 
-    // Taken BEFORE the purge and held across the re-init, so two resets of this
-    // database cannot interleave a purge with this run's chunk loop.
+    // Taken BEFORE the purge and held through the activate stamp, so two
+    // resets of this database cannot interleave a purge with a re-init.
     let _lock = ResetLock::acquire(&database_path, market.id)?;
 
     // The rewind block is the shipped deployment's bootstrap block. Every
@@ -560,54 +558,57 @@ fn reset(
         removed
     };
 
-    // Re-init: the SAME cold-boot path an empty database takes for this market —
-    // the chunk loop's bootstrap pass resolves the pool/configurator contracts
-    // from the address provider over the bootstrap window, then the loop's first
-    // chunk writes the market's initial state. The purge rewound
-    // `last_update_block`, so the loop starts where a fresh activation does.
-    let rpc_url = ctx.node_request_uri_for(chain_id)?.value;
-    let provider = match crate::pool::shared_runtime_block_on(async {
-        AlloyProvider::new(&rpc_url, RPC_MAX_RETRIES).await
-    }) {
-        Ok(Ok(provider)) => provider,
-        Ok(Err(err)) => return Err(CliError::AaveUpdate(RunError::from(err))),
-        Err(cli_err) => return Err(cli_err),
+    // Re-init: the activate arm's ONE-transaction completion — the market
+    // row flips active, the POOL_ADDRESS_PROVIDER contract row (and the GHO
+    // substrate rows) are ensured, and the bootstrap stamp lands. The purge
+    // already rewound `last_update_block` to the same bootstrap block, so
+    // the guard never fires and the cursor is unchanged; a bare row (no
+    // stamp) gets the stamp a fresh activation writes. Pure SQL — the
+    // command returns in seconds, and the next `aave update` cold-boots
+    // from the stamped cursor (the bootstrap's ProxyCreated pass resolves
+    // the pool/configurator rows the purge removed).
+    let market_id = {
+        let (db, _state) = DegenbotDb::open_for_writes(&database_path)?;
+        let mut guard = db.lock();
+        let tx = guard.transaction().map_err(DbError::from)?;
+        let id = activate_aave_market_on_conn(
+            &tx,
+            chain,
+            &market.name,
+            &deployment.pool_address_provider.to_checksum(None),
+            &deployment.gho_token_address.to_checksum(None),
+            None,
+            None,
+            None,
+            ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+        )
+        .map_err(RunError::from)
+        .map_err(CliError::AaveUpdate)?;
+        tx.commit().map_err(DbError::from)?;
+        id
     };
-    let reinit = match run_aave_update(
-        &database_path,
-        chain,
-        market.id,
-        None,
-        RESET_CHUNK_SIZE,
-        provider,
-        cancel.flag(),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
-    ) {
-        Ok(report) => AaveUpdateOutcome::Advanced {
-            from_block: report.from_block,
-            to_block: report.to_block,
-            chunks_committed: report.chunks_committed,
-            total_events_applied: report.total_events_applied,
-        },
-        Err(RunError::Cancelled) => AaveUpdateOutcome::Cancelled,
-        Err(err) => return Err(CliError::AaveUpdate(err)),
+    let cursor = {
+        let db = (DegenbotDb::open(&database_path)?).0;
+        db.fetch_aave_market_row(market_id)?
+            .and_then(|row| row.last_update_block)
     };
     tracing::info!(
         chain_id,
-        market_id = market.id,
-        "reset Aave V3 market and re-ran the cold-boot update"
+        market_id,
+        cursor = cursor.unwrap_or_default(),
+        "reset Aave V3 market and re-stamped the cold-boot substrate"
     );
     Ok(AaveReport::Reset {
         chain_id,
-        market_id: market.id,
+        market_id,
         market_name: market.name,
         counts: removed,
         dry_run: false,
-        reinit: Some(reinit),
+        reinit: Some(AaveReinit {
+            market_activated: true,
+            contract_row_present: true,
+            last_update_block: cursor,
+        }),
     })
 }
 

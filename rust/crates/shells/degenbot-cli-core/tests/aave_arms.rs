@@ -441,6 +441,87 @@ fn reset_dry_run_prints_the_plan_without_deleting() {
     assert!(lines.iter().any(|l| l.contains("Dry run")), "{lines:?}");
 }
 
+#[test]
+fn reset_reinits_through_the_activate_seam_without_an_update() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    seed_market(&db, 1, "Aave Ethereum Market", true, Some(26_130_445));
+    seed_user(&db, 1, 1);
+    seed_positions(&db);
+    let e = MapEnv::new(BTreeMap::new());
+    let outcome = run_aave(
+        AaveCommand::Reset {
+            chain_id: 1,
+            market_name: None,
+            dry_run: false,
+        },
+        &db,
+        &e,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    let Some(degenbot_cli_core::CommandReport::Aave(AaveReport::Reset {
+        market_id,
+        counts,
+        dry_run,
+        reinit,
+        ..
+    })) = outcome.report()
+    else {
+        panic!("expected Reset, got {:?}", outcome.report());
+    };
+    assert_eq!(*market_id, 1);
+    assert!(!*dry_run);
+    let reinit = reinit.as_ref().unwrap();
+    assert!(reinit.market_activated);
+    assert!(reinit.contract_row_present);
+    assert_eq!(
+        reinit.last_update_block,
+        Some(16_291_070),
+        "the cursor sits at the bootstrap block, not the pre-reset cursor"
+    );
+    // The purge removed every populated row.
+    let by_table = |t: &str| counts.iter().find(|c| c.table == t).unwrap().rows;
+    assert_eq!(by_table("aave_v3_collateral_positions"), 1);
+    assert_eq!(by_table("aave_v3_debt_positions"), 1);
+    assert_eq!(by_table("aave_v3_users"), 1);
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let users: i64 = conn
+        .query_row("SELECT COUNT(*) FROM aave_v3_users", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(users, 0, "the reset purged the users");
+    let active: i64 = conn
+        .query_row("SELECT active FROM aave_v3_markets WHERE id = 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(active, 1, "the re-init re-activated the market row");
+    let stamp: Option<i64> = conn
+        .query_row(
+            "SELECT last_update_block FROM aave_v3_markets WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stamp, Some(16_291_070));
+    let ap_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM aave_v3_contracts \
+             WHERE market_id = 1 AND name = 'POOL_ADDRESS_PROVIDER'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ap_rows, 1, "the re-init ensured the address-provider row");
+    // The report renders the activate-seam outcome, not an update entry.
+    let lines = outcome.report().unwrap().render_lines();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("re-initialized via the activate seam")),
+        "{lines:?}"
+    );
+}
+
 fn update_command(to_block: &str, dry_run: bool) -> AaveCommand {
     AaveCommand::Update {
         chunk_size: 10_000,
