@@ -132,13 +132,13 @@ pub fn fold(files: &[ScannedFile]) -> u64 {
 /// a `[workspace]` table. This deliberately avoids assuming a fixed crate depth.
 #[must_use]
 pub fn workspace_root(crate_dir: &Path) -> Option<PathBuf> {
-    crate_dir.ancestors().find(|ancestor| {
-        fs::read_to_string(ancestor.join("Cargo.toml")).is_ok_and(|manifest| {
-            manifest
-                .lines()
-                .any(|line| line.trim() == "[workspace]")
+    crate_dir
+        .ancestors()
+        .find(|ancestor| {
+            fs::read_to_string(ancestor.join("Cargo.toml"))
+                .is_ok_and(|manifest| manifest.lines().any(|line| line.trim() == "[workspace]"))
         })
-    }).map(Path::to_path_buf)
+        .map(Path::to_path_buf)
 }
 
 /// Repository root that owns the workspace and build receipt.
@@ -165,10 +165,7 @@ fn append_crate_scan(
 ) -> Option<()> {
     let crate_tag = workspace_tag(crate_dir, workspace_root)?;
     for file in ["build.rs", "build_scan.rs", "Cargo.toml"] {
-        if let Some(scanned) = read_file(
-            &crate_dir.join(file),
-            &format!("{crate_tag}/{file}"),
-        ) {
+        if let Some(scanned) = read_file(&crate_dir.join(file), &format!("{crate_tag}/{file}")) {
             files.push(scanned);
         }
     }
@@ -192,12 +189,7 @@ pub fn scan_workspace(crate_dir: &Path) -> Option<WorkspaceScan> {
 
     // This crate first so its own build identity is always present, even if a
     // caller ever invokes this scanner from a nonstandard role directory.
-    append_crate_scan(
-        &mut files,
-        &mut dirs,
-        &workspace_root,
-        crate_dir,
-    )?;
+    append_crate_scan(&mut files, &mut dirs, &workspace_root, crate_dir)?;
 
     // Workspace-level manifests.
     for extra in ["Cargo.toml", "Cargo.lock"] {
@@ -226,12 +218,7 @@ pub fn scan_workspace(crate_dir: &Path) -> Option<WorkspaceScan> {
             if dir == *crate_dir {
                 continue;
             }
-            append_crate_scan(
-                &mut files,
-                &mut dirs,
-                &workspace_root,
-                &dir,
-            )?;
+            append_crate_scan(&mut files, &mut dirs, &workspace_root, &dir)?;
         }
     }
 
@@ -239,6 +226,16 @@ pub fn scan_workspace(crate_dir: &Path) -> Option<WorkspaceScan> {
     for (cfg_dir, prefix) in cargo_config_dirs(&workspace_root) {
         files.extend(read_tree(&cfg_dir, &prefix, &mut dirs));
     }
+
+    // Canonicalize before folding. The fold is a sequential hash, so its
+    // result depends on file order — and each build script scans from its own
+    // crate root, which places that crate's files first. Without a canonical
+    // order the receipt writer and the console's recomputation would hash one
+    // identical input set into two different fingerprints, and the freshness
+    // gate would warn on every invocation of an actually-fresh console.
+    // Sorting by the unique tree-relative tag makes the fingerprint a
+    // function of the file set alone.
+    files.sort_by(|a, b| a.tag.cmp(&b.tag));
 
     let fingerprint = fold(&files);
     Some(WorkspaceScan {

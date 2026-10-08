@@ -9,10 +9,11 @@
 //! silently lag the tree, which is exactly the order-flake the receipt test
 //! used to hit on warm targets. The fingerprint is therefore recomputed with
 //! the SAME shared scanner (`../degenbot-python/build_scan.rs`) over the same
-//! tree: identical inputs, identical output, independent of script ordering.
-//! The count stays a best-effort read — the counter state lives only in the
-//! receipt, and the file may sit one advance ahead inside that in-flight
-//! window.
+//! tree. The scanner folds in a canonical, calling-crate-independent order,
+//! so this recomputation equals the receipt writer's value byte-for-byte even
+//! though each build script scans from its own crate root. The count stays a
+//! best-effort read — the counter state lives only in the receipt, and the
+//! file may sit one advance ahead inside that in-flight window.
 //!
 //! Python's `degenbot._ffi.build_fingerprint()` and `degenbot --version` still
 //! report one identity: same scanner, same inputs, so the two surfaces can be

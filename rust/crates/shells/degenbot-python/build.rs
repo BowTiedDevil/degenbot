@@ -26,6 +26,7 @@
 //! fresh — only an actual source edit marks it stale.
 
 include!("build_scan.rs");
+include!("build_counter.rs");
 
 /// Repo-root default (`<repo>/.build-number`), derived from the discovered Cargo
 /// workspace rather than a fixed crate nesting depth. Lives OUTSIDE
@@ -87,18 +88,10 @@ fn main() {
         }
     }
 
-    // Advance ONLY on a content change (or unknown first-build state). No
-    // change -> re-emit the stored number unchanged, so no-change rebuilds
-    // (test/clippy/feature-variant) never mark an installed wheel stale.
-    let changed = stored.is_none()
-        || fingerprint.is_none()
-        || stored.as_ref().and_then(|(_, fp)| *fp) != fingerprint;
-    let prior_count = stored.map_or(0, |(count, _)| count);
-    let next = if changed {
-        prior_count.saturating_add(1)
-    } else {
-        prior_count
-    };
+    // Advance only on a content change (or unknown state); the decision and
+    // its rationale live in `advance_count`, where the tests pin the
+    // invariant.
+    let next = advance_count(stored, fingerprint);
 
     // Write-back is best-effort: a failed write degrades the cross-check
     // (the file then reads as older than the baked values) but never breaks

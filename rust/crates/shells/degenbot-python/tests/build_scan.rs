@@ -7,6 +7,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
 include!("../build_scan.rs");
+include!("../build_counter.rs");
 
 /// Build a throwaway workspace with the binding in `shells/` and a dependency
 /// in `engine/`, mirroring the role-grouped layout `scan_workspace` expects.
@@ -208,4 +209,73 @@ fn fold_chains_tag_and_content() {
     }]);
     assert_ne!(one, two, "different content must move the fingerprint");
     assert_ne!(fnv1a(b"a", 0), fnv1a(b"b", 0));
+}
+
+#[test]
+fn fingerprint_is_independent_of_the_scanning_crate() {
+    // The receipt writer and the console build script scan one shared tree
+    // from different crate roots; the fingerprint must be a function of the
+    // file set alone, or the freshness gate compares two unlike hashes
+    // forever and warns on every invocation of an actually-fresh console.
+    let root = workspace("caller-order");
+    let console = root.join("crates/shells/console");
+    fs::create_dir_all(console.join("src")).unwrap();
+    fs::write(
+        console.join("Cargo.toml"),
+        "[package]\nname = \"console\"\n",
+    )
+    .unwrap();
+    fs::write(console.join("build.rs"), "fn main() {}\n").unwrap();
+    fs::write(console.join("src/lib.rs"), "pub fn console() {}\n").unwrap();
+
+    let from_app = scan_workspace(&root.join("crates/shells/app")).expect("app scan");
+    let from_console = scan_workspace(&console).expect("console scan");
+    assert_eq!(
+        from_app.fingerprint, from_console.fingerprint,
+        "one tree must fingerprint identically from either crate root"
+    );
+    assert_eq!(
+        from_app.files.len(),
+        from_console.files.len(),
+        "the two scans must still see the same input set"
+    );
+}
+
+#[test]
+fn receipt_writer_and_console_scans_agree_in_this_repository() {
+    // Live-tree pin: the receipt writer (degenbot-python) and the console
+    // recomputation (degenbot-cli) must derive ONE fingerprint for the
+    // checkout both build scripts share.
+    let binding = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let shells = binding
+        .parent()
+        .expect("the binding crate sits under shells/");
+    let writer = scan_workspace(&binding).expect("degenbot-python scan");
+    let console = scan_workspace(&shells.join("degenbot-cli")).expect("degenbot-cli scan");
+    assert_eq!(
+        writer.fingerprint, console.fingerprint,
+        "the receipt writer and the console must compute one fingerprint for this tree"
+    );
+}
+
+#[test]
+fn counter_advances_only_on_a_fingerprint_change() {
+    // A fresh checkout starts the sequence at 1.
+    assert_eq!(advance_count(None, Some(0x11)), 1);
+    // No content change re-emits the stored count: no-change rebuilds
+    // (test/clippy/feature variants) must never mark an installed wheel
+    // stale.
+    assert_eq!(advance_count(Some((2120, Some(0x11))), Some(0x11)), 2120);
+    // A moved fingerprint advances exactly one step.
+    assert_eq!(advance_count(Some((2120, Some(0x11))), Some(0x22)), 2121);
+}
+
+#[test]
+fn counter_advances_when_freshness_cannot_be_proven() {
+    // A legacy receipt with no stored fingerprint cannot prove byte-identity.
+    assert_eq!(advance_count(Some((2120, None)), Some(0x11)), 2121);
+    // Neither can a failed scan.
+    assert_eq!(advance_count(Some((2120, Some(0x11))), None), 2121);
+    // The counter saturates rather than wrapping back over itself.
+    assert_eq!(advance_count(Some((u64::MAX, Some(0))), Some(1)), u64::MAX);
 }
