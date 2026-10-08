@@ -89,7 +89,7 @@ time):
 |-------------|-------------------------------------------|--------------------------------------------------|
 | Python 3.14 | `python3`, `python3-devel`, `python3-pip` | `python3-devel` ships `libpython3.14.so` in `/usr/lib64` — required by PyO3. |
 | Rust 1.96   | `rust`, `cargo`, `rustfmt`, `clippy`      | No rustup — Fedora's packaged rustc matches stable. Tradeoff: no toolchain switching / `rustup target add`. |
-| Node 24 LTS | `nodejs24`                                | Active LTS (EOL 2028-04). Provides node + npm in one package; satisfies pi's `>=22.19.0` floor. |
+| Node 24 LTS | `nodejs24`                                | Active LTS (EOL 2028-04). Provides node + npm in one package; npm installs the global `agent-browser` in the Dockerfile. |
 | `just`      | `just`                                    |                                                  |
 | `direnv`    | `direnv`                                  | Hooked into `/etc/bashrc` at build time. The repo `.envrc` is a deliberate no-op inside the container (guarded on `/run/.containerenv`; `containerEnv` owns those vars) — it exists for the host side of the bind mount. |
 | `uv`        | `uv`                                      | Fedora packages uv directly (unlike Ubuntu).     |
@@ -97,7 +97,7 @@ time):
 | `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |
 | git / curl  | `git`, `curl`, `ca-certificates`, ...     |                                                  |
 
-Two tools have no dnf package and are curl/npm-installed **in the Dockerfile**
+Two tools have no dnf package and are curl-installed **in the Dockerfile**
 (baked into the image, NOT post-create.sh — the entry point `attach.sh`
 does `podman start`+`exec`, which does not run `postCreateCommand`, so
 post-create-installed tools went missing after any container recreate):
@@ -105,7 +105,7 @@ post-create-installed tools went missing after any container recreate):
 | Tool    | Source               | Notes                                                                                                          |
 |---------|----------------------|----------------------------------------------------------------------------------------------------------------|
 | Foundry | `foundryup` (latest) | Blockchain toolchain; no dnf path. `forge`, `cast`, `anvil` in `~/.foundry/bin`. Rebuilds pick up newer Foundry — pin (`foundryup -v <tag>`) if reproducibility matters. |
-| `pi`    | `npm i -g @earendil-works/pi-coding-agent` | npm prefix is set to `~/.local` in the Dockerfile, so the binary lands in `~/.local/bin` with no sudo. Matches host version era. |
+| `pi`    | `curl -fsSL https://pi.dev/install.sh \| sh` | Standalone installer targets `~/.local/bin` (already on PATH; no sudo). Matches host version era. |
 | `cargo-edit` | `cargo install --locked cargo-edit` | Provides `cargo upgrade`, used by `just update-deps` to bump Cargo.toml version requirements across semver-major boundaries (e.g. revm 41 -> 42), which `cargo update` cannot do alone. Lands in `~/.cargo/bin`; dev-only. |
 
 ## Bind mounts (host → container)
@@ -195,9 +195,10 @@ tmux show -gv terminal-overrides         # expect *:Tc present
   `requires-python >= 3.12`, so this is in-spec. `tool.ty.environment
   python-version = "3.12"` is the type-checker's analysis target only — it
   does not constrain the runtime.
-- **Node follows `fedora:latest`** via `nodejs24` (Active LTS, EOL 2028-04). pi's
-  `engines.node` floor is `>=22.19.0`; `nodejs24` satisfies it with ~2 years of
-  runway. If pi ever pins a max node, re-check before bumping `fedora:latest`.
+- **Node follows `fedora:latest`** via `nodejs24` (Active LTS, EOL 2028-04). Still
+  needed for the npm-installed global `agent-browser` (Dockerfile) and the host-side
+  `devcontainer` CLI (`npm i -g @devcontainers/cli`). pi itself is a standalone
+  binary from pi.dev's install script and no longer depends on node.
 - **pi sessions are shared**: the bind-mounted `~/.pi` means in-container pi and
   host pi see the same sessions/auth. Don't run both against the same session
   simultaneously — they'd race on the VCC state. Typical workflow: host pi

@@ -3,7 +3,7 @@
 # Idempotent: safe to re-run (devcontainer rebuild / --force-rebuild).
 #
 # OS-level tools (python3, rustc/cargo/rustfmt/clippy, nodejs24/npm, just, uv,
-# tmux, git) AND the curl/npm-installed tools (foundry, pi) are all baked into
+# tmux, git) AND the curl-installed tools (foundry, pi) are all baked into
 # the Dockerfile image. This script handles only the workspace-dependent wiring
 # that CANNOT be baked into the image (it needs the bind-mounted repo):
 #   - venv + `just bootstrap` (installs dependencies and the dev extension)

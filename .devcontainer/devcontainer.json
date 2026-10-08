@@ -136,7 +136,7 @@
   "shutdownAction": "none", // keep the container running if VSCode disconnects
   // No devcontainer features — python, rust, node, just, uv, tmux, git are all
   // baked into the Dockerfile via dnf (fedora:latest). foundry (foundryup)
-  // and pi (npm i -g) are ALSO baked into the image — they used to live in
+  // and pi (pi.dev install script) are ALSO baked into the image — they used to live in
   // post-create.sh but were promoted into the Dockerfile because the 
   // entry point (attach.sh) does `podman start`+`exec`, which does NOT
   // run postCreateCommand, so post-create-installed tools went missing after
@@ -161,8 +161,8 @@
     // recreate re-downloads the server and all extensions.
     "source=vscode,target=/home/dev/.vscode-server,type=volume",
   ],
-  // PATH additions for the npm-global pi binary (~/.local/bin; npm prefix
-  // in the Dockerfile makes `npm i -g` land there) and foundry
+  // PATH additions for the pi binary (~/.local/bin, curl-installed in the
+  // Dockerfile via pi.dev's install script) and foundry
   // (~/.foundry/bin, curl-installed in the Dockerfile). Both are baked into the
   // image; these remoteEnv/containerEnv entries just ensure they're on PATH for
   // VSCode-launched shells too. cargo/just/node/python/uv are in /usr/bin from

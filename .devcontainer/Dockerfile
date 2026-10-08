@@ -90,15 +90,16 @@ RUN mkdir -p /home/dev/.config/direnv && \
 USER ${USERNAME}
 ENV HOME=/home/${USERNAME}
 
-# Put foundry (~/.foundry/bin, curl-installed below) and the npm-global pi
-# binary (~/.local/bin) on PATH for EVERY process spawned in the image — not
+# Put foundry (~/.foundry/bin) and pi (~/.local/bin) on PATH for EVERY
+# process spawned in the image — both curl-installed below — not
 # just interactive shells. devcontainer.json's remoteEnv only reaches
 # VSCode-launched shells; non-interactive subshells (e.g. `just`/`cargo`
 # invoked by the agent) inherit image ENV instead, so bake it here.
 ENV PATH="/home/${USERNAME}/go/bin:/home/${USERNAME}/.foundry/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
-# Configure npm's global prefix to a user-writable dir so `npm i -g` needs no
-# sudo, and the bins land in ~/.local/bin (already on PATH via ENV above).
+# Configure npm's global prefix to a user-writable dir so `npm i -g`
+# (agent-browser, below) needs no sudo, and the bins land in ~/.local/bin
+# (already on PATH via ENV above).
 # NOTE: ~/.config is pre-created dev-owned in the root step above (a chown
 # here as the dev user would fail with EPERM against the root-owned dir that
 # step created). This step only needs the user-local dirs + npm prefix.
@@ -115,10 +116,13 @@ RUN mkdir -p "${HOME}/.config" "${HOME}/.local/bin" \
 RUN curl -L https://foundry.paradigm.xyz | bash \
     && /home/${USERNAME}/.foundry/bin/foundryup
 
-# pi (npm global). Lands in ~/.local/bin via the prefix set above. Baked into
-# the image for the same attach reason as foundry. Matches host version era;
-# rebuild the image to bump.
-RUN npm install -g @earendil-works/pi-coding-agent
+# pi (curl-installed via pi.dev's install script). The installer targets
+# ~/.local/bin by default (already on PATH via ENV above, and pre-created in
+# the npm-prefix step). Baked into the image for the same attach reason as
+# foundry. Matches host version era; rebuild the image to bump. The trailing
+# `pi --version` fails the build loudly if the binary didn't land on PATH.
+RUN curl -fsSL https://pi.dev/install.sh | sh \
+    && pi --version
 RUN npm install -g agent-browser
 RUN agent-browser install --with-deps
 RUN npx skills add vercel-labs/agent-browser -g --agent pi --yes
