@@ -33,7 +33,7 @@ hashbrown.workspace = true
 # default-features = false -> no-op stubs in default builds; the
 # `hotpath` feature enables real instrumentation.
 # Version matched to degenbot-bot.
-hotpath = { version = "^0.28.4", default-features = false }
+hotpath = { version = "^0.28.6", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]

@@ -7,7 +7,7 @@ on:
 
 jobs:
   relay:
-    uses: pawurb/hotpath-rs/.github/workflows/hotpath-relay.yml@v0.28.4
+    uses: pawurb/hotpath-rs/.github/workflows/hotpath-relay.yml@v0.28.6
     permissions:
       actions: read # download the artifact of the benchmark run
       id-token: write # authenticate the upload
