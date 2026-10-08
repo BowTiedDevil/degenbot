@@ -425,49 +425,65 @@ fn update(
 
 /// An exclusive, reset-scoped advisory lock over one database path.
 ///
-/// The lock is a file created with `create_new` beside the database, holding
-/// the owner's pid. It guards reset-against-reset on a shared database: a
-/// second reset (or a crashed first one, whose file survives) sees the file and
-/// is refused with the path, rather than racing a purge against an in-flight
-/// re-init. The updater arms do not take this lock, so it does not by itself
-/// exclude a concurrent `aave update`; the purge's own transaction is what keeps
-/// a racing writer from observing a partially-purged market.
+/// The exclusion is an advisory `flock` (via [`std::fs::File::try_lock`]) on a
+/// file beside the database, which also carries the holder's pid for
+/// diagnostics. The kernel releases the lock when the holding process dies, so
+/// a killed or crashed reset cannot wedge every later reset the way the
+/// previous create-new pid file did: the surviving file carries no lock, and
+/// the next reset takes it over. A live holder still blocks, and the refusal
+/// still reports the path. It guards reset-against-reset on a shared database,
+/// rather than racing a purge against an in-flight re-init. The updater arms
+/// do not take this lock, so it does not by itself exclude a concurrent
+/// `aave update`; the purge's own transaction is what keeps a racing writer
+/// from observing a partially-purged market.
 struct ResetLock {
     path: std::path::PathBuf,
+    /// Holding the descriptor is what holds the `flock`: dropping it (after
+    /// [`Drop for ResetLock`] unlinks the name) releases the lock. Never read;
+    /// the lifetime IS the lock.
+    _file: std::fs::File,
 }
 
 impl ResetLock {
     /// Take the lock, or report the holder's file path.
     fn acquire(database_path: &std::path::Path, market_id: i64) -> Result<Self, CliError> {
+        use std::io::Write as _;
+
         let mut path = database_path.to_path_buf();
         let stem = database_path
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         path.set_file_name(format!("{stem}.aave-reset.lock"));
-        match std::fs::OpenOptions::new()
+        // Open-or-create, never `create_new`: a file surviving its holder is
+        // the expected crash case, and the flock — not the file's existence —
+        // is the exclusion.
+        let file = std::fs::OpenOptions::new()
+            .read(true)
             .write(true)
-            .create_new(true)
+            .create(true)
+            .truncate(false)
             .open(&path)
-        {
-            Ok(mut file) => {
-                use std::io::Write as _;
-                let _ = writeln!(file, "{}", std::process::id());
-                Ok(Self { path })
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                Err(CliError::AaveMarketMidUpdate {
-                    market_id,
-                    lock_path: path.display().to_string(),
-                })
-            }
-            Err(err) => Err(CliError::Io(err)),
-        }
+            .map_err(CliError::Io)?;
+        file.try_lock().map_err(|err| match err {
+            std::fs::TryLockError::WouldBlock => CliError::AaveMarketMidUpdate {
+                market_id,
+                lock_path: path.display().to_string(),
+            },
+            std::fs::TryLockError::Error(err) => CliError::Io(err),
+        })?;
+        let mut file = file;
+        file.set_len(0).map_err(CliError::Io)?;
+        writeln!(file, "{}", std::process::id()).map_err(CliError::Io)?;
+        Ok(Self { path, _file: file })
     }
 }
 
 impl Drop for ResetLock {
     fn drop(&mut self) {
+        // Unlink while the flock is still held (the descriptor drops after
+        // this body), so a waiter that opens the path cannot inherit a lock
+        // on a file whose name is already gone.
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -691,4 +707,108 @@ fn position_show(
         collateral,
         debt,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used)]
+
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    use super::ResetLock;
+    use crate::error::CliError;
+
+    /// Spawn the `#[ignore]` child test as a fake holder and wait until it
+    /// reports the lock armed.
+    fn spawn_holder(db: &PathBuf, dir: &std::path::Path) -> std::process::Child {
+        let ready = dir.join("holder-ready");
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "aave::tests::reset_lock_holder_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("RESET_LOCK_TEST_DB", db)
+            .env("RESET_LOCK_TEST_READY", &ready)
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !ready.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "holder child never armed the reset lock"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        child
+    }
+
+    #[test]
+    fn stale_lock_file_does_not_block_a_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("degenbot.db");
+        let lock_path = dir.path().join("degenbot.db.aave-reset.lock");
+        // A lock file outliving its holder: dead-or-garbage pid, no flock.
+        fs::write(&lock_path, "999999999 dead holder\n").unwrap();
+        let lock = ResetLock::acquire(&db, 7).unwrap();
+        // The takeover rewrites the pid file with the new holder's pid.
+        assert_eq!(
+            fs::read_to_string(&lock_path).unwrap().trim(),
+            std::process::id().to_string()
+        );
+        drop(lock);
+        assert!(!lock_path.exists());
+    }
+
+    #[test]
+    fn a_live_holder_blocks_until_it_releases() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("degenbot.db");
+        let holder = ResetLock::acquire(&db, 7).unwrap();
+        // A second open file description conflicts with the held flock even
+        // inside one process — the same refusal a concurrent reset sees.
+        assert!(matches!(
+            ResetLock::acquire(&db, 7),
+            Err(CliError::AaveMarketMidUpdate { .. })
+        ));
+        drop(holder);
+        ResetLock::acquire(&db, 7).unwrap();
+    }
+
+    #[test]
+    fn a_killed_holder_releases_the_reset_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("degenbot.db");
+        let mut child = spawn_holder(&db, dir.path());
+        // The live fake holder blocks.
+        assert!(matches!(
+            ResetLock::acquire(&db, 7),
+            Err(CliError::AaveMarketMidUpdate { .. })
+        ));
+        // SIGKILL: the kernel drops the flock with the process, the pid file
+        // survives, and the next reset proceeds.
+        child.kill().unwrap();
+        child.wait().unwrap();
+        ResetLock::acquire(&db, 7).unwrap();
+    }
+
+    /// The fake holder: spawned as a child test process by
+    /// `a_killed_holder_releases_the_reset_lock`, killed mid-hold.
+    #[test]
+    #[ignore = "spawned as the fake holder by a_killed_holder_releases_the_reset_lock"]
+    fn reset_lock_holder_child() {
+        let db = PathBuf::from(std::env::var("RESET_LOCK_TEST_DB").unwrap());
+        let ready = PathBuf::from(std::env::var("RESET_LOCK_TEST_READY").unwrap());
+        let _lock = ResetLock::acquire(&db, 7).unwrap();
+        fs::write(&ready, b"armed").unwrap();
+        // Hold until the parent kills us; the deadline only bounds a leak if
+        // the parent dies before it can.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
 }
