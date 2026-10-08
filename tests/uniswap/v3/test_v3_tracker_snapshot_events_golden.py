@@ -51,9 +51,11 @@ from typing import Any, Self
 import pytest
 
 from degenbot import abi_decode
+from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork, ForkLaunchConfig
+from degenbot.provider import OfflineProvider
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -131,12 +133,28 @@ class _RecordFork(AbstractContextManager):
             self.fork.close()
 
 
+def _offline_provider() -> OfflineProvider:
+    """A real offline provider (recorded JSON, no RPC) bound to mainnet.
+
+    ``Bot.__init__`` reads ``provider.chain_id`` (the recorded chain id) to
+    enforce session/chain alignment; no RPC is issued at construction — the
+    same stand-in ``tests/test_bot.py::_fake_provider`` uses.
+    """
+    return OfflineProvider(
+        chain_id=1,
+        blocks={"1": {"timestamp": 1, "calls": {}, "code": {}}},
+    )
+
+
 def _build_wbtc_weth_v3_io_free(cassette: dict[str, Any]) -> UniswapV3Pool:
     """Build the WBTC/WETH V3 pool I/O-free from a full tick-state cassette."""
     scalars = cassette["scalars"]
     # ``make_v3_pool`` normalizes dict-shaped tick entries itself.
     tick_data = cassette["tick_data"]
-    py_bot = Bot()
+    # The handle-less Rust engine the companion helpers expect (no provider,
+    # no I/O) — NOT the provider-bound facade ``Bot``, whose construction
+    # resolves and dials the config cascade's endpoint.
+    py_bot = _Engine(chain_id=1)
     wbtc = make_erc20(
         py_bot,
         _WBTC_ADDRESS,
@@ -234,7 +252,9 @@ def test_tracker_applies_pending_snapshot_events(golden_factory) -> None:
         # holds them (raw Mint/Burn records, as the runner streams them), then
         # the apply step consumes them through `update_liquidity_map` — the
         # surviving tracker contract under test.
-        bot = Bot(database=":memory:")
+        # The tracker only reads ``bot.chain_id`` on this replay path; bind
+        # the offline provider so the facade construction stays I/O-free.
+        bot = Bot(database=":memory:", provider=_offline_provider())
         snapshot = _snapshot_with_events(events)
         tracker = UniswapV3PoolTracker(
             factory_address=UNISWAP_V3_FACTORY_ADDRESS,
