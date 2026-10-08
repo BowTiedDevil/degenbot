@@ -892,6 +892,12 @@ pub enum AaveReport {
         /// The outcome.
         outcome: DeactivateOutcome,
     },
+    /// `aave digest`.
+    Digest {
+        /// The rendered completed-market manifest JSON (one JSON document;
+        /// the operator redirects stdout to pin it).
+        manifest: String,
+    },
     /// `aave update`.
     Updated {
         /// Per-market outcomes.
@@ -974,6 +980,10 @@ impl AaveReport {
                     )]
                 }
             },
+            // The digest arm's payload IS the operator-facing output: one
+            // JSON document printed verbatim (the drive pins it by
+            // redirecting stdout).
+            Self::Digest { manifest } => vec![manifest.clone()],
             Self::Updated { entries } => entries.iter().flat_map(entry_lines).collect(),
             Self::Reset {
                 chain_id,

@@ -343,6 +343,20 @@ pub enum AaveSub {
         )]
         market_name: String,
     },
+    /// Print one market's completed-market record: per-table row counts +
+    /// digests over the market tables, as the manifest JSON (redirect
+    /// stdout to pin it).
+    Digest {
+        /// Market name to digest (default: the chain's only registered
+        /// market).
+        #[arg(long = "market-name", value_name = "MARKET")]
+        market_name: Option<String>,
+        /// A previous completed-market record whose `market.drive` block is
+        /// carried into the output verbatim (the drive facts are the
+        /// drive's own bookkeeping, not DB state).
+        #[arg(long = "drive-manifest", value_name = "PATH")]
+        drive_manifest: Option<std::path::PathBuf>,
+    },
     /// Update positions for active Aave markets.
     Update {
         /// The maximum number of blocks to process before committing changes to
@@ -818,6 +832,14 @@ fn aave(command: &AaveSub, cli: &Cli, ctx: &CliContext<'_>) -> Result<AaveComman
         AaveSub::Deactivate { market_name } => Ok(AaveCommand::Deactivate {
             chain_id: chain_or_default(cli, ctx, 1)?,
             market_name: market_name.clone(),
+        }),
+        AaveSub::Digest {
+            market_name,
+            drive_manifest,
+        } => Ok(AaveCommand::Digest {
+            chain_id: chain_or_default(cli, ctx, 1)?,
+            market_name: market_name.clone(),
+            drive_manifest: drive_manifest.clone(),
         }),
         AaveSub::Update {
             chunk_size,

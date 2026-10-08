@@ -13,6 +13,9 @@
 //! - `aave reset` — the market-scoped purge followed by the cold-boot
 //!   substrate stamp the activate arm seeds, so the NEXT update run takes
 //!   the cold-boot path an empty database takes.
+//! - `aave digest` — one market's completed-market record: per-table row
+//!   counts + digests over the market tables, rendered as the manifest
+//!   JSON a drive pins.
 
 use std::sync::Arc;
 
@@ -22,7 +25,10 @@ use degenbot_aave::{
     activate_aave_market, activate_aave_market_on_conn, deactivate_aave_market, run_aave_update,
     NoProgress, RunError, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
-use degenbot_db::{ops, DbError, DegenbotDb};
+use degenbot_db::{
+    aave_market_digest_for, ops, render_completed_market_manifest, CompletedMarketDrive, DbError,
+    DegenbotDb,
+};
 use degenbot_rpc::provider::AlloyProvider;
 
 use crate::block::{parse_to_block, resolve_to_block};
@@ -83,6 +89,20 @@ pub enum AaveCommand {
         chain_id: u64,
         /// The `aave_v3_markets.name` to flip.
         market_name: String,
+    },
+    /// Emit one market's completed-market record: per-table row counts +
+    /// digests over the market tables, rendered as the manifest JSON a
+    /// drive pins.
+    Digest {
+        /// The chain id.
+        chain_id: u64,
+        /// The `aave_v3_markets.name` to digest; `None` resolves the
+        /// chain's only registered market.
+        market_name: Option<String>,
+        /// A previous completed-market record whose `market.drive` block is
+        /// carried into the output verbatim (the drive facts are the
+        /// drive's own bookkeeping, not DB state).
+        drive_manifest: Option<std::path::PathBuf>,
     },
     /// Update positions for every active market.
     Update {
@@ -169,6 +189,16 @@ pub(crate) fn execute(
             chain_id,
             market_name,
         } => deactivate(ctx, *chain_id, market_name),
+        AaveCommand::Digest {
+            chain_id,
+            market_name,
+            drive_manifest,
+        } => digest(
+            ctx,
+            *chain_id,
+            market_name.as_deref(),
+            drive_manifest.as_deref(),
+        ),
         AaveCommand::Update {
             chunk_size,
             to_block,
@@ -271,6 +301,68 @@ fn deactivate(
         chain_id,
         market_id: Some(market.id),
         outcome: DeactivateOutcome::Deactivated,
+    })
+}
+
+/// `aave digest`.
+fn digest(
+    ctx: &CliContext<'_>,
+    chain_id: u64,
+    market_name: Option<&str>,
+    drive_manifest: Option<&std::path::Path>,
+) -> Result<AaveReport, CliError> {
+    let database_path = ctx.database_path()?.value;
+    let chain = i64::try_from(chain_id)
+        .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;
+    let drive = drive_manifest.map(carried_drive).transpose()?;
+    let market_digest = {
+        // The read handle locks down at open (`query_only=on`): the digest
+        // arm observes the DB, it never writes it.
+        let db = (DegenbotDb::open(&database_path)?).0;
+        let conn = db.lock();
+        aave_market_digest_for(&conn, Some(chain), market_name)?
+    };
+    Ok(AaveReport::Digest {
+        manifest: render_completed_market_manifest(&market_digest, drive.as_ref()),
+    })
+}
+
+/// Parse the `market.drive` block out of a previous completed-market
+/// record — the one content the record carries that the DB cannot yield.
+fn carried_drive(path: &std::path::Path) -> Result<CompletedMarketDrive, CliError> {
+    let raw = std::fs::read_to_string(path).map_err(CliError::Io)?;
+    let record: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+        CliError::InvalidArgument(format!("{} is not valid JSON: {error}", path.display()))
+    })?;
+    let drive = record
+        .get("market")
+        .and_then(|market| market.get("drive"))
+        .ok_or_else(|| {
+            CliError::InvalidArgument(format!("{} carries no market.drive block", path.display()))
+        })?;
+    let unsigned = |key: &str| {
+        drive
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                CliError::InvalidArgument(format!(
+                    "market.drive.{key} is not a non-negative integer"
+                ))
+            })
+    };
+    let verify = drive
+        .get("verify")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            CliError::InvalidArgument("market.drive.verify is not a string".to_string())
+        })?
+        .to_string();
+    Ok(CompletedMarketDrive {
+        chunks: unsigned("chunks")?,
+        events_applied: unsigned("events_applied")?,
+        from_block: unsigned("from_block")?,
+        to_block: unsigned("to_block")?,
+        verify,
     })
 }
 
