@@ -30,11 +30,18 @@
 //! that WOULD decide the live questions (probes vs hits vs `cache_plays`
 //! divergence across blocks) are all in place and reported here.
 
-use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_solvers::cl::{solve_cl_piecewise, ClSolveTables, WalkMemo, WalkMemoStats};
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 use serde_json::Value;
+
+#[path = "common/cl_rows.rs"]
+mod cl_rows;
+#[path = "common/mod.rs"]
+mod common;
+
+use cl_rows::parse_cl_hops;
+use common::capture_arg;
 
 /// One parsed capture row: a path id plus its owned CL sequences.
 struct CapturedPath {
@@ -57,77 +64,20 @@ struct ArmBRow {
     wall_ms: f64,
 }
 
-fn u256(s: &str) -> Result<U256, String> {
-    s.trim().parse::<U256>().map_err(|e| e.to_string())
-}
-
-fn str_field(v: &Value, k: &str) -> Result<String, String> {
-    v.get(k)
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("missing {k}"))
-        .map(String::from)
-}
-
-fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
-    let wbp = v
-        .get("word_boundary_prices")
-        .and_then(Value::as_array)
-        .ok_or("word_boundary_prices")?
-        .iter()
-        .map(|w| {
-            w.as_str()
-                .ok_or_else(|| "wbp not a string".to_string())
-                .and_then(u256)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let liquidity = str_field(v, "liquidity")?
-        .parse::<u128>()
-        .map_err(|e| e.to_string())?;
-    Ok(IntV3TickRangeHop {
-        liquidity,
-        sqrt_price_x96: u256(&str_field(v, "sqrt_price_x96")?)?,
-        sqrt_price_lower_x96: u256(&str_field(v, "sqrt_price_lower_x96")?)?,
-        sqrt_price_upper_x96: u256(&str_field(v, "sqrt_price_upper_x96")?)?,
-        gamma_numer: v
-            .get("gamma_numer")
-            .and_then(Value::as_u64)
-            .ok_or("gamma_numer")?,
-        fee_denom: v
-            .get("fee_denom")
-            .and_then(Value::as_u64)
-            .ok_or("fee_denom")?,
-        zero_for_one: v
-            .get("zero_for_one")
-            .and_then(Value::as_bool)
-            .ok_or("zero_for_one")?,
-        word_boundary_prices: wbp,
-    })
-}
-
-/// Parse one capture row into its owned sequences (same shape as
-/// `cl_solve_replay`'s row parser; failures are reported, never swallowed).
+/// Parse one capture row into its owned sequences (shared CL row parser via
+/// `cl_rows::parse_cl_hops`; failures are reported, never swallowed).
 fn parse_path(doc: &Value) -> Result<CapturedPath, String> {
     let pid = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
     let hops_v = doc.get("hops").and_then(Value::as_array).ok_or("hops")?;
-    let mut seqs: Vec<IntV3TickRangeSequence> = Vec::with_capacity(hops_v.len());
-    for hop in hops_v {
-        let ra = hop.as_array().ok_or("hop not an array")?;
-        if ra.is_empty() {
-            return Err("empty hop".into());
-        }
-        let ranges = ra.iter().map(range).collect::<Result<Vec<_>, String>>()?;
-        seqs.push(IntV3TickRangeSequence { ranges });
-    }
-    Ok(CapturedPath { pid, seqs })
+    Ok(CapturedPath {
+        pid,
+        seqs: parse_cl_hops(hops_v)?,
+    })
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).cloned().unwrap_or_else(|| {
-        degenbot_solvers::capture_fixture::fixture_path("heavy_cl_solve_captures.jsonl")
-            .to_string_lossy()
-            .into_owned()
-    });
+    let path = capture_arg(&args, "heavy_cl_solve_captures.jsonl");
     let epochs: u64 = std::env::var("DR_READOUT_EPOCHS")
         .ok()
         .and_then(|s| s.parse().ok())

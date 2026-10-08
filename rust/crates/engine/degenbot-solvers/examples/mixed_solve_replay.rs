@@ -50,59 +50,17 @@
 
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_solvers::cl::{solve_mixed_piecewise, WalkStats};
 use serde_json::Value;
 
+#[path = "common/mod.rs"]
+mod common;
+
+use common::{capture_arg, range, str_field, u256};
+
 const PROFIT_EPS: u128 = 100_000;
 const OVER_SHOOT_TOLERANCE_WEI: u128 = 8;
-
-fn u256(s: &str) -> Result<U256, String> {
-    s.trim().parse::<U256>().map_err(|e| e.to_string())
-}
-
-fn str_field(v: &Value, k: &str) -> Result<String, String> {
-    v.get(k)
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("missing {k}"))
-        .map(String::from)
-}
-
-/// Parse one CL range (same shape as `cl_solve_replay::range`).
-fn cl_range(v: &Value) -> Result<IntV3TickRangeHop, String> {
-    let wbp = v
-        .get("word_boundary_prices")
-        .and_then(Value::as_array)
-        .ok_or("word_boundary_prices")?
-        .iter()
-        .map(|w| {
-            w.as_str()
-                .ok_or_else(|| "wbp not a string".to_string())
-                .and_then(u256)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(IntV3TickRangeHop {
-        liquidity: str_field(v, "liquidity")?
-            .parse::<u128>()
-            .map_err(|e| e.to_string())?,
-        sqrt_price_x96: u256(&str_field(v, "sqrt_price_x96")?)?,
-        sqrt_price_lower_x96: u256(&str_field(v, "sqrt_price_lower_x96")?)?,
-        sqrt_price_upper_x96: u256(&str_field(v, "sqrt_price_upper_x96")?)?,
-        gamma_numer: v
-            .get("gamma_numer")
-            .and_then(Value::as_u64)
-            .ok_or("gamma_numer")?,
-        fee_denom: v
-            .get("fee_denom")
-            .and_then(Value::as_u64)
-            .ok_or("fee_denom")?,
-        zero_for_one: v
-            .get("zero_for_one")
-            .and_then(Value::as_bool)
-            .ok_or("zero_for_one")?,
-        word_boundary_prices: wbp,
-    })
-}
 
 /// Parse the captured per-hop discriminant into the decomposed-solver inputs.
 /// Returns `(v2_hops, cl_sequences, hop_order)`.
@@ -159,7 +117,7 @@ fn parse_path(
                     .and_then(Value::as_array)
                     .ok_or("ranges")?
                     .iter()
-                    .map(cl_range)
+                    .map(range)
                     .collect::<Result<Vec<_>, _>>()?;
                 v2_hops.push(None);
                 cl_seqs.push(Some(IntV3TickRangeSequence { ranges }));
@@ -180,11 +138,7 @@ fn pct(sorted: &[u128], p: f64) -> u128 {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).cloned().unwrap_or_else(|| {
-        degenbot_solvers::capture_fixture::fixture_path("heavy_mixed_solve_captures.jsonl")
-            .to_string_lossy()
-            .into_owned()
-    });
+    let path = capture_arg(&args, "heavy_mixed_solve_captures.jsonl");
     let iters: usize = std::env::var("DR_REPLAY_ITERS")
         .ok()
         .and_then(|s| s.parse().ok())

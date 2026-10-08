@@ -2,7 +2,6 @@
 // Pedantic + restriction lints that production code denies are relaxed here.
 #![expect(
     clippy::collapsible_else_if,
-    clippy::manual_let_else,
     clippy::print_stderr,
     clippy::print_stdout,
     clippy::too_many_lines
@@ -30,10 +29,18 @@
 //! or (c) is nondeterministic across reps.
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_solvers::cl::WalkEventCensus;
 use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
+
+#[path = "common/cl_rows.rs"]
+mod cl_rows;
+#[path = "common/mod.rs"]
+mod common;
+
+use cl_rows::parse_cl_hops;
+use common::capture_arg;
 
 /// Max acceptable profit under-shoot (wei) of the exact-wei golden for the
 /// coarsened search to count as OK — mirrors the solver's "never under-shoot
@@ -46,60 +53,9 @@ const PROFIT_EPS: u128 = 100_000;
 // golden needing regeneration. Never silent.
 const OVER_SHOOT_TOLERANCE_WEI: u128 = 8;
 
-fn u256(s: &str) -> Result<U256, String> {
-    s.trim().parse::<U256>().map_err(|e| e.to_string())
-}
-
-fn str_field(v: &Value, k: &str) -> Result<String, String> {
-    v.get(k)
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("missing {k}"))
-        .map(String::from)
-}
-
-fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
-    let wbp = v
-        .get("word_boundary_prices")
-        .and_then(Value::as_array)
-        .ok_or("word_boundary_prices")?
-        .iter()
-        .map(|w| {
-            w.as_str()
-                .ok_or_else(|| "wbp not a string".to_string())
-                .and_then(u256)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let liquidity = str_field(v, "liquidity")?
-        .parse::<u128>()
-        .map_err(|e| e.to_string())?;
-    Ok(IntV3TickRangeHop {
-        liquidity,
-        sqrt_price_x96: u256(&str_field(v, "sqrt_price_x96")?)?,
-        sqrt_price_lower_x96: u256(&str_field(v, "sqrt_price_lower_x96")?)?,
-        sqrt_price_upper_x96: u256(&str_field(v, "sqrt_price_upper_x96")?)?,
-        gamma_numer: v
-            .get("gamma_numer")
-            .and_then(Value::as_u64)
-            .ok_or("gamma_numer")?,
-        fee_denom: v
-            .get("fee_denom")
-            .and_then(Value::as_u64)
-            .ok_or("fee_denom")?,
-        zero_for_one: v
-            .get("zero_for_one")
-            .and_then(Value::as_bool)
-            .ok_or("zero_for_one")?,
-        word_boundary_prices: wbp,
-    })
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).cloned().unwrap_or_else(|| {
-        degenbot_solvers::capture_fixture::fixture_path("heavy_cl_solve_captures.jsonl")
-            .to_string_lossy()
-            .into_owned()
-    });
+    let path = capture_arg(&args, "heavy_cl_solve_captures.jsonl");
     let iters: usize = std::env::var("DR_REPLAY_ITERS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -145,40 +101,19 @@ fn main() {
             }
         };
         let pid: u64 = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
-        let hops_v = match doc.get("hops").and_then(Value::as_array) {
-            Some(a) => a.clone(),
+        // Row policy unchanged by the extraction: a row without a usable
+        // `hops` array is skipped silently; a malformed hop prints
+        // `path {pid}: skip ({e})` with the shared parser's error text.
+        let seqs = match doc.get("hops").and_then(Value::as_array) {
+            Some(hops) => match parse_cl_hops(hops) {
+                Ok(seqs) => seqs,
+                Err(e) => {
+                    eprintln!("path {pid}: skip ({e})");
+                    continue;
+                }
+            },
             None => continue,
         };
-        let mut seqs: Vec<IntV3TickRangeSequence> = Vec::new();
-        let mut err = String::new();
-        for hop in &hops_v {
-            let ra = if let Some(a) = hop.as_array() {
-                a
-            } else {
-                err = "hop not an array".into();
-                break;
-            };
-            if ra.is_empty() {
-                err = "empty hop".into();
-                break;
-            }
-            let ranges = ra
-                .iter()
-                .map(range)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap_or_else(|e| {
-                    err = e;
-                    Vec::new()
-                });
-            if !err.is_empty() {
-                break;
-            }
-            seqs.push(IntV3TickRangeSequence { ranges });
-        }
-        if !err.is_empty() {
-            eprintln!("path {pid}: skip ({err})");
-            continue;
-        }
         let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
 
         // Gate A/B: derive the profit-envelope bound and time
