@@ -130,6 +130,7 @@ def test_committed_stubs_match_generator_output() -> None:
         f"`just gen-stubs --check` failed (rc={proc.returncode});\n{proc.stdout}\n{proc.stderr}"
     )
 
+
 # The typed seam projection's stub face: the generator emits
 # per-section `@type_check_only` face classes with one typed property per
 # declared key, and `ConfigValues` inherits a face base carrying one property
@@ -140,11 +141,7 @@ def test_committed_stubs_match_generator_output() -> None:
 # the machinery face (`__getattr__(name: str) -> Any`) a named failure instead
 # of a quiet de-typing.
 def _projection_class(tree: ast.Module, name: str) -> ast.ClassDef:
-    classes = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == name
-    ]
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == name]
     assert len(classes) == 1, f"expected exactly one {name} class in the stub"
     return classes[0]
 
