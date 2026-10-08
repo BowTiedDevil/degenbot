@@ -38,7 +38,10 @@ impl ClSolveTables {
     /// The table gate: does this prepared pair actually belong to `seq`?
     /// Wraps the `source_fingerprint` comparison so the solve entries refuse
     /// a pair whose claimed source disagrees with the sequence at its
-    /// position instead of trusting positional pairing.
+    /// position instead of trusting positional pairing. Both entries run it
+    /// before the walk uses any table — after the memo probe, so a `Hit` or
+    /// `Negative` replay returns without paying this per-hop
+    /// [`walk_path_fingerprint`] re-derivation.
     fn matches(&self, seq: &IntV3TickRangeSequence) -> bool {
         self.source_fingerprint == walk_path_fingerprint(&[seq])
     }
@@ -61,7 +64,9 @@ fn cl_hop_view<'a>(
 /// composition memo at the caller's exact-key `fp` (each entry computes and
 /// documents its own fingerprint). `Some` means a `Hit` or `Negative`
 /// answered the probe and the caller returns the outcome as-is, skipping the
-/// walk; `None` (`Miss`) falls through to the solve + [`memo_commit`].
+/// walk; `None` (`Miss`) falls through to the per-hop gate + solve +
+/// [`memo_commit`] (a gate refusal after a `Miss` returns without
+/// [`memo_commit`]).
 fn memo_replay(memo: &WalkMemo, fp: u128) -> Option<WalkOutcome> {
     match memo.probe(fp) {
         MemoProbe::Hit(hit) => Some(WalkOutcome::from_result(Some(hit))),
@@ -114,6 +119,31 @@ pub fn solve_cl_piecewise(
     if sequences.is_empty() || prepared.len() != sequences.len() {
         return WalkOutcome::none();
     }
+
+    // Cross-block composition memo: the fingerprint is the exact correctness
+    // key (the tables are pure derivations of the sequence), so an identical
+    // key cannot carry a stale result. The probe runs BEFORE the per-hop
+    // table gate and hop assembly — the key needs only the sequences, so a
+    // `Hit` or `Negative` returns without paying the gate's per-hop
+    // `walk_path_fingerprint` re-derivation or the `PieceView` builds.
+    // `None` memo = disabled run never pays the fingerprint or the lock.
+    let mut commit = None;
+    if let Some(memo) = memo {
+        if memo.active() {
+            let fp = walk_path_fingerprint(sequences);
+            if let Some(outcome) = memo_replay(memo, fp) {
+                return outcome;
+            }
+            commit = Some((memo, fp));
+        }
+    }
+
+    // Per-hop table gate: refuse a prepared pair whose claimed source
+    // disagrees with the sequence at its position BEFORE the walk uses any
+    // table. This sits after the memo probe (replays skip it entirely); a
+    // refusal returns `none()` WITHOUT `memo_commit` — the composition was
+    // refused for a pairing error and never walked, and caching it as a
+    // negative would be wrong.
     if prepared
         .iter()
         .zip(sequences)
@@ -122,23 +152,11 @@ pub fn solve_cl_piecewise(
         return WalkOutcome::none();
     }
 
-    // Cross-block composition memo: the fingerprint is the exact correctness
-    // key (the tables are pure derivations of the sequence), so an identical
-    // key cannot carry a stale result. `None` memo = disabled run never pays
-    // the fingerprint or the lock.
-    if let Some(memo) = memo {
-        if memo.active() {
-            let fp = walk_path_fingerprint(sequences);
-            if let Some(outcome) = memo_replay(memo, fp) {
-                return outcome;
-            }
-            let outcome = solve_cl_piecewise_inner(sequences, prepared, cfg, env);
-            memo_commit(memo, fp, &outcome);
-            return outcome;
-        }
+    let outcome = solve_cl_piecewise_inner(sequences, prepared, cfg, env);
+    if let Some((memo, fp)) = commit {
+        memo_commit(memo, fp, &outcome);
     }
-
-    solve_cl_piecewise_inner(sequences, prepared, cfg, env)
+    outcome
 }
 
 /// The memo-less solve body (the memo hook is the only difference).
@@ -175,13 +193,18 @@ fn solve_cl_piecewise_inner(
 /// hop position; `None` derives them at the caller's cost, the
 /// offline/replay shape. `memo` (mirroring [`solve_cl_piecewise`]
 /// position-for-position) is the caller's engine-owned cross-block
-/// composition memo: the branch below probes by
-/// [`walk_mixed_path_fingerprint`] before the walk — a cached `Hit` replays
-/// the solution, a cached `Negative` skips the walk, `note_cost`, and
-/// store; a `Miss` falls through to the solve + `note_cost` + `store`.
-/// Pure-V2 compositions (no CL hops at all) route through this entry from
+/// composition memo: the entry probes by [`walk_mixed_path_fingerprint`]
+/// BEFORE hop assembly and the per-CL-hop table gate — the key needs only
+/// the hop states, sequences, and order, so a cached `Hit` replays the
+/// solution and a cached `Negative` skips the walk, `note_cost`, and store
+/// without paying for assembly or the gate; a `Miss` falls through to the
+/// gate + hop assembly + solve + `note_cost` + `store`. Pure-V2
+/// compositions (no CL hops at all) route through this entry from
 /// `mixed::solve` too, so they gain memo coverage here as well. The
-/// existing per-CL-hop table source gate above is untouched by the memo.
+/// per-CL-hop table source gate still runs before the walk uses any table
+/// (after the probe, so replays skip it); its refusal is not memo-committed
+/// — a refused pairing never walked, so caching it as a negative would be
+/// wrong.
 #[must_use]
 #[hotpath::measure(label = "cl_solve.exact_solve_mixed_path_n")]
 pub fn solve_mixed_piecewise(
@@ -204,6 +227,47 @@ pub fn solve_mixed_piecewise(
         return WalkOutcome::none();
     }
 
+    // Cheap slot validation stays ahead of the memo probe: every position
+    // must carry its hop. (No assembly here — the `PieceView` builds stay
+    // below the probe, so replays never pay for them.)
+    for (i, &is_v2) in hop_order.iter().enumerate() {
+        if is_v2 {
+            if v2_hops[i].is_none() {
+                return WalkOutcome::none();
+            }
+        } else if cl_sequences[i].is_none() {
+            return WalkOutcome::none();
+        }
+    }
+
+    // Cross-block composition memo: the mixed fingerprint folds every
+    // position's family tag + hop state (V2: the full `IntHopState` the
+    // constant-product view consumes; CL: the same per-range folding the
+    // all-CL key uses), so the key is exact for mixed compositions — cfg is
+    // fixed per engine lifetime and env (PathBoundLines) is a pure
+    // derivation of hop state + cfg. The probe runs BEFORE hop assembly and
+    // the per-CL-hop table gate — the key needs only the hop states,
+    // sequences, and order, so a `Hit` or `Negative` returns without paying
+    // the `PieceView` builds or the gate's per-hop fingerprint
+    // re-derivation. `None` memo = disabled run never pays the fingerprint
+    // or the lock.
+    let mut commit = None;
+    if let Some(memo) = memo {
+        if memo.active() {
+            let fp = walk_mixed_path_fingerprint(v2_hops, cl_sequences, hop_order);
+            if let Some(outcome) = memo_replay(memo, fp) {
+                return outcome;
+            }
+            commit = Some((memo, fp));
+        }
+    }
+
+    // Hop assembly + per-CL-hop table gate, after the memo probe: the gate
+    // refuses a prepared pair whose claimed source disagrees with the
+    // sequence at its position BEFORE the walk uses any table. A refusal
+    // returns `none()` WITHOUT `memo_commit` — the composition was refused
+    // for a pairing error and never walked, and caching it as a negative
+    // would be wrong.
     let mut hops: Vec<PieceView> = Vec::with_capacity(n_hops);
     for (i, &is_v2) in hop_order.iter().enumerate() {
         if is_v2 {
@@ -224,24 +288,9 @@ pub fn solve_mixed_piecewise(
         }
     }
 
-    // Cross-block composition memo: the mixed fingerprint folds every
-    // position's family tag + hop state (V2: the full `IntHopState` the
-    // constant-product view consumes; CL: the same per-range folding the
-    // all-CL key uses), so the key is exact for mixed compositions — cfg is
-    // fixed per engine lifetime and env (PathBoundLines) is a pure
-    // derivation of hop state + cfg. `None` memo = disabled run never pays
-    // the fingerprint or the lock.
-    if let Some(memo) = memo {
-        if memo.active() {
-            let fp = walk_mixed_path_fingerprint(v2_hops, cl_sequences, hop_order);
-            if let Some(outcome) = memo_replay(memo, fp) {
-                return outcome;
-            }
-            let outcome = solve_active_set_path(&hops, cfg, env);
-            memo_commit(memo, fp, &outcome);
-            return outcome;
-        }
+    let outcome = solve_active_set_path(&hops, cfg, env);
+    if let Some((memo, fp)) = commit {
+        memo_commit(memo, fp, &outcome);
     }
-
-    solve_active_set_path(&hops, cfg, env)
+    outcome
 }
