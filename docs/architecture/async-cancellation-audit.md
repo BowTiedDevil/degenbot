@@ -179,8 +179,8 @@ mechanism in the tree today, not a preference:
   (`rust/crates/facade/degenbot/tests/architecture_gates.rs`, gate
   `no_timeout_wrapped_value_sends_or_write_all`).
 - `rust/Cargo.toml` `[workspace.lints.clippy]` — `await_holding_lock = "deny"`
-  and `let_underscore_future = "warn"` (escalated by the workspace's
-  `warnings = "deny"` at push/CI time).
+  and `let_underscore_future = "deny"` (hard deny since the post-epic
+  escalation; the epic landed it as warn, escalated only at push/CI time).
 - `degenbot-substrate` `StateLock` — the hold-forensics wrapper around the
   shared state lock.
 - `docs/adr/ADR-050-rust-native-engine-driver.md` D6 — the driver stop/ordering

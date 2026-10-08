@@ -8,10 +8,12 @@
 //! Run: `cargo run -p degenbot-order-index --example scale_demo --release`
 
 // Demo-only casts (f64 sqrt for point generation) — fine outside prod math.
+// The demo's stdout report is its output.
 #![expect(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    clippy::print_stdout
 )]
 
 use alloy_primitives::U256;

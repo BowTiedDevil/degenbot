@@ -31,18 +31,24 @@ use std::fmt::Debug;
 /// Realistic magnitudes (gross ~1e30 wei, gas ~1e7, X ~1e13) are orders of
 /// magnitude inside these caps, so the guard never rejects real data; it exists
 /// to turn a malformed/absurd input into a safe clamp instead of a wrap.
-pub const GROSS_CAP: U256 = match U256::from_str_radix("80000000000000000000000000000000", 16) {
-    Ok(v) => v,
-    Err(_) => panic!("GROSS_CAP hex is a valid U256"),
-}; // 2^127
-pub const GAS_CAP: U256 = match U256::from_str_radix("1000000000000000000000000000000", 16) {
-    Ok(v) => v,
-    Err(_) => panic!("GAS_CAP hex is a valid U256"),
-}; // 2^120
-pub const X_CAP: U256 = match U256::from_str_radix("1000000000000000000000000000000", 16) {
-    Ok(v) => v,
-    Err(_) => panic!("X_CAP hex is a valid U256"),
-}; // 2^120
+/// Const-time parse of a cap's self-documenting hex literal. The `Err` arm is
+/// unreachable: the literals are valid `U256` strings, and `panic!` is the
+/// only way to abort a failed const evaluation (const code cannot propagate
+/// errors).
+#[expect(
+    clippy::panic,
+    reason = "const-eval abort for an unreachable Err arm; the literals are valid U256 hex, and const evaluation cannot propagate errors"
+)]
+const fn cap_from_hex(literal: &str) -> U256 {
+    match U256::from_str_radix(literal, 16) {
+        Ok(v) => v,
+        Err(_) => panic!("cap hex literal is a valid U256"),
+    }
+}
+
+pub const GROSS_CAP: U256 = cap_from_hex("80000000000000000000000000000000"); // 2^127
+pub const GAS_CAP: U256 = cap_from_hex("1000000000000000000000000000000"); // 2^120
+pub const X_CAP: U256 = cap_from_hex("1000000000000000000000000000000"); // 2^120
 
 /// Clamp `gross` into the exact-`I256` range (see the seam guard).
 #[inline]

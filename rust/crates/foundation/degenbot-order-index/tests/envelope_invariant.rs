@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use degenbot_order_index::{EnvelopeIndex, OrderIndex};
 
 mod common;
-use common::{assert_invariant, brute_top_k, check_topk_and_best, point};
+use common::{brute_top_k, check_topk_and_best, point, Cand};
 
 proptest! {
     /// The headline invariant: `top_k` over the hot set == brute-force global
@@ -137,6 +137,17 @@ fn envelope_matches_scan_topk() {
     assert_eq!(env.best(x), Some(want[0]));
     // sanity: brute_top_k is our reference, cross-check directly
     assert_invariant::<EnvelopeIndex<u64>>(&points, x, 3);
+}
+
+/// The invariant, as a directly-asserting helper for plain `#[test]`s.
+///
+/// # Panics
+///
+/// Panics if the index violates the contract: `top_k` disagrees with the
+/// brute-force reference, `best` is not a stored maximizer, or duplicate ids
+/// leak into the ranking.
+pub fn assert_invariant<I: OrderIndex<u64> + Default>(points: &[Cand], x: U256, k: usize) {
+    assert!(check_topk_and_best::<I>(points, x, k));
 }
 
 // Differential across random insert/update/remove sequences: the same ops drive

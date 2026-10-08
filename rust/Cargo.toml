@@ -62,7 +62,7 @@ allow_attributes = "deny"
 # Async hygiene - a future bound to `let _ =` is dropped on the spot and never runs,
 # so the async body never executes (the cancelling-async talk's opening example).
 # Rust cannot backstop this with unused_must_use: most futures are not #[must_use].
-let_underscore_future = "warn"
+let_underscore_future = "deny"
 
 # Code hygiene - no debug leftovers
 dbg_macro = "deny"
