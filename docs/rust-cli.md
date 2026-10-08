@@ -21,7 +21,9 @@ exists — the clap v4 tree in `degenbot-cli`
 `degenbot-cli-core` (`rust/crates/shells/degenbot-cli-core/src/command.rs`). The
 Python console script is a five-line passthrough to the same binary
 (`degenbot._ffi.cli_main`), so Python and Rust operators run the same program
-with the same vocabulary. Rendering, prompting, progress, and SIGINT are the
+with the same vocabulary. Invoke it as `uv run degenbot <command>` (the
+console script) or `uv run python -m degenbot <command>` — both route through
+the same `cli_main`; `uv run degenbot` is the primary entry point. Rendering, prompting, progress, and SIGINT are the
 façade's job; execution returns typed reports and one `CliError → ExitCode`
 mapping (ADR-051 D1/D2/Q1).
 
