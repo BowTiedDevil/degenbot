@@ -26,9 +26,11 @@ pub struct ClSolveTables {
 impl ClSolveTables {
     #[must_use]
     pub fn derive(seq: &IntV3TickRangeSequence) -> Self {
+        let crossings = std::sync::Arc::new(build_cl_crossing_table(seq));
+        let profiles = std::sync::Arc::new(build_word_profiles(&crossings));
         Self {
-            crossings: std::sync::Arc::new(build_cl_crossing_table(seq)),
-            profiles: std::sync::Arc::new(build_word_profiles(&build_cl_crossing_table(seq))),
+            crossings,
+            profiles,
             source_fingerprint: walk_path_fingerprint(&[seq]),
         }
     }
