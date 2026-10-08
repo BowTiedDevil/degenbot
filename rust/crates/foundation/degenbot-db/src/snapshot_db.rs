@@ -32,6 +32,7 @@ use rusqlite::Connection;
 use crate::discovery_read::{fetch_discovery_rows_on_conn, DiscoveryPoolRow};
 use crate::error::DbError;
 use crate::migrate::{auto_heal_enabled, ensure_schema_at_open, SchemaState};
+use crate::pragma::apply_open_pragmas;
 use crate::read::{fetch_newest_update_block_on_conn, ExchangeFamily};
 use crate::snapshot::{
     fetch_liquidity_map_on_conn, fetch_liquidity_map_v4_on_conn,
@@ -39,14 +40,6 @@ use crate::snapshot::{
     TickMapDb,
 };
 use alloy::primitives::{Address, B256};
-
-/// The per-connection PRAGMAs the open path always sets (mirrors
-/// `DegenbotDb`): the three concurrency PRAGMAs that must run BEFORE
-/// [`ensure_schema`] (WAL is file-persistent; `busy_timeout`/`synchronous`
-/// are per-connection).
-const PRE_SCHEMA_PRAGMAS: &str = "PRAGMA journal_mode=WAL;\n\
-                                  PRAGMA busy_timeout=5000;\n\
-                                  PRAGMA synchronous=NORMAL;";
 
 /// A read-only DB handle with an open deferred read transaction held for the
 /// lifetime of the handle. Every `fetch_*` call runs inside that one
@@ -124,7 +117,9 @@ impl SnapshotDb {
         } else {
             Connection::open(path)?
         };
-        conn.execute_batch(PRE_SCHEMA_PRAGMAS)?;
+        // The shared helper (mirrors `DegenbotDb`) retries the fresh-file WAL
+        // switch, which SQLite's busy handler does NOT cover.
+        apply_open_pragmas(&conn)?;
         Ok(conn)
     }
 

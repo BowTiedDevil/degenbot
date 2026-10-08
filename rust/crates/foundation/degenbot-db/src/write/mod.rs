@@ -13,7 +13,8 @@
 //! degenbot-db MUST set `query_only=on`" — [`DegenbotDb::open`] /
 //! [`DegenbotDb::open_in_memory`] stay read-only. Writers use
 //! [`DegenbotDb::open_for_writes`] / [`DegenbotDb::open_in_memory_for_writes`]:
-//! the same `PRE_SCHEMA_PRAGMAS` + [`ensure_schema`][crate::migrate::ensure_schema]
+//! the same concurrency PRAGMAs ([`crate::pragma::apply_open_pragmas`]) +
+//! [`ensure_schema`][crate::migrate::ensure_schema]
 //! sequence, but `query_only` is NEVER set — the connection is write-capable.
 //! The writer methods on [`DegenbotDb`] (`get_or_create_*` / `process_*`)
 //! execute `INSERT` / `UPDATE` directly on the locked connection; called on a

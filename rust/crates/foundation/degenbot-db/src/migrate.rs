@@ -441,10 +441,27 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, DbError> {
 }
 
 /// Apply the embedded DDL and stamp the private Rust-owned schema-version
-/// table (fresh-standalone path only).
-fn apply_fresh_standalone(conn: &Connection) -> Result<(), DbError> {
-    conn.execute_batch(SCHEMA_HEAD)?;
-    stamp_rust_schema_version(conn)?;
+/// table (fresh-standalone path only) in ONE transaction.
+///
+/// The transaction is load-bearing against a concurrent fresh-open: the DDL
+/// creates the content tables first and the stamp table LAST, so applying it in
+/// autocommit opens a window where a second opener's [`classify_schema`] sees
+/// content tables without the stamp — and refuses the file as foreign
+/// ([`SchemaState::Unrecognized`]) even though its peer is mid-create. Wrapping
+/// both in a single transaction (WAL keeps uncommitted writes invisible to
+/// readers) means a peer observes either an empty file (still
+/// `FreshStandalone`) or the complete schema + stamp (`RustOwned`) — never the
+/// half-built middle.
+///
+/// The DDL (`CREATE ... IF NOT EXISTS`, including every `CREATE [UNIQUE] INDEX`)
+/// and the stamp (`DELETE` + `INSERT` of the same version) are both idempotent,
+/// so a lost race that re-runs the whole batch converges on the same file this
+/// function alone would have produced.
+pub(crate) fn apply_fresh_standalone(conn: &Connection) -> Result<(), DbError> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(SCHEMA_HEAD)?;
+    stamp_rust_schema_version(&tx)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -677,15 +694,11 @@ mod open_tests {
     use crate::ops::create_new_database;
     use crate::schema::SCHEMA_VERSION_TABLE;
 
-    /// The connection factory the open paths pass: a connection with the three
-    /// concurrency PRAGMAs (mirrors `connection::PRE_SCHEMA_PRAGMAS`).
+    /// The connection factory the open paths pass: a connection with the
+    /// concurrency PRAGMAs (mirrors `pragma::apply_open_pragmas`).
     fn primed(path: &Path) -> Result<Connection, DbError> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;\n\
-             PRAGMA busy_timeout=5000;\n\
-             PRAGMA synchronous=NORMAL;",
-        )?;
+        crate::pragma::apply_open_pragmas(&conn)?;
         Ok(conn)
     }
 

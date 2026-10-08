@@ -32,18 +32,11 @@ use rusqlite::{backup, Connection};
 
 pub use crate::error::DbError;
 use crate::migrate::{
-    classify_schema, convert_alembic_to_rust_owned as run_cutover_on_conn,
+    apply_fresh_standalone, classify_schema, convert_alembic_to_rust_owned as run_cutover_on_conn,
     stamp_rust_schema_version, SchemaState,
 };
+use crate::pragma::apply_open_pragmas;
 use crate::schema::SCHEMA_HEAD;
-
-/// The per-connection PRAGMAs the admin ops assert up front: WAL (file-persistent)
-/// + the concurrency trio (mirrors [`crate::connection`] / the Python open path).
-///
-/// These ops do **not** set `query_only=on`; they must write.
-const ADMIN_PRAGMAS: &str = "PRAGMA journal_mode=WAL;\n\
-                             PRAGMA busy_timeout=5000;\n\
-                             PRAGMA synchronous=NORMAL;";
 
 /// The outcome [`upgrade_database`] reports so the caller (CLI) can log
 /// whether the DB was already current, freshly created, or healed.
@@ -73,7 +66,7 @@ pub enum UpgradeOutcome {
 pub fn create_new_database(path: &Path) -> Result<(), DbError> {
     crate::migrate::ensure_parent_dir(path)?;
     let conn = open_raw(path)?;
-    conn.execute_batch(ADMIN_PRAGMAS)?;
+    apply_open_pragmas(&conn)?;
     // auto_vacuum must be set before any tables are created; FULL only takes
     // effect on a fresh DB (`SQLite` ignores it otherwise — same as Python).
     conn.execute_batch("PRAGMA auto_vacuum=FULL;")?;
@@ -145,13 +138,15 @@ pub fn compact_database(path: &Path) -> Result<(), DbError> {
 pub fn upgrade_database(path: &Path) -> Result<UpgradeOutcome, DbError> {
     crate::migrate::ensure_parent_dir(path)?;
     let conn = open_raw(path)?;
-    conn.execute_batch(ADMIN_PRAGMAS)?;
+    apply_open_pragmas(&conn)?;
 
     let state = classify_schema(&conn)?;
     match state {
         SchemaState::FreshStandalone { .. } => {
-            conn.execute_batch(SCHEMA_HEAD)?;
-            stamp_rust_schema_version(&conn)?;
+            // The atomic DDL + stamp (one transaction) — a peer racing this
+            // same fresh path either sees the empty file or the complete
+            // schema, never the half-built middle that reads as Unrecognized.
+            apply_fresh_standalone(&conn)?;
             Ok(UpgradeOutcome::CreatedFresh)
         }
         SchemaState::RustOwned { .. } => Ok(UpgradeOutcome::AlreadyCurrent),
@@ -180,7 +175,7 @@ pub fn upgrade_database(path: &Path) -> Result<UpgradeOutcome, DbError> {
 /// disposition.
 pub fn inspect_schema_state(path: &Path) -> Result<SchemaState, DbError> {
     let conn = open_raw(path)?;
-    conn.execute_batch(ADMIN_PRAGMAS)?;
+    apply_open_pragmas(&conn)?;
     classify_schema(&conn)
 }
 
@@ -203,7 +198,7 @@ pub use crate::heal::{heal_database, HealReport};
 /// See [`DbError::UnrecognizedSchema`] / [`DbError::Sqlite`].
 pub fn convert_alembic_to_rust_owned(path: &Path) -> Result<SchemaState, DbError> {
     let conn = open_raw(path)?;
-    conn.execute_batch(ADMIN_PRAGMAS)?;
+    apply_open_pragmas(&conn)?;
     run_cutover_on_conn(&conn)?;
     classify_schema(&conn)
 }

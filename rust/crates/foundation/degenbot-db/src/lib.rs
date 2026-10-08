@@ -47,6 +47,7 @@ pub mod migrate;
 pub mod migrations;
 pub mod ops;
 pub mod pathfinding;
+pub(crate) mod pragma;
 pub mod read;
 pub mod rows;
 pub mod schema;

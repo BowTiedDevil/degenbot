@@ -248,8 +248,16 @@ fn run_binary(discovery_chain_id: Option<&str>) -> String {
     // The committed chain-8453 fixture is Alembic-head-stamped. Pin the
     // ADR-052 D1 heal-at-open killswitch so the spawned drivers read it
     // read-only: the three #[test]s run on parallel threads and would
-    // otherwise race an in-place heal of the shared file (SQLITE_IOERR /
-    // "index ix_aave_asset_config_asset already exists") and fail the boot.
+    // otherwise race an in-place heal of the shared file (SQLITE_IOERR, and
+    // the rename/swap contention of the out-of-place heal) and fail the boot.
+    //
+    // Historical note: one symptom this workaround swallowed — "index
+    // ix_aave_asset_config_asset already exists" — was the head DDL's
+    // non-idempotent `CREATE INDEX` (the `CREATE TABLE`s already had
+    // `IF NOT EXISTS`). Every `CREATE [UNIQUE] INDEX` in `schema_head.sql` now
+    // carries `IF NOT EXISTS`, so replaying the head DDL on a racing fresh open
+    // is safe; the killswitch is retained because a heal's file-rename swap is
+    // a different hazard the DDL idempotence does not address.
     command.env("DEGENBOT_DB_AUTO_HEAL", "0");
     command.env("DEGENBOT_RPC_HTTP_CHAINID_1", "http://127.0.0.1:1");
     command.env("DEGENBOT_RPC_WS_CHAINID_1", "ws://127.0.0.1:1");

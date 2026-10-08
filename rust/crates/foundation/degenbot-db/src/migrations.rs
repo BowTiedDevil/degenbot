@@ -447,12 +447,10 @@ mod tests {
     // ── the D2 forward version-lock wired into the open entry ──────
 
     /// The connection factory the open paths pass — mirrors
-    /// `connection::PRE_SCHEMA_PRAGMAS`.
+    /// `pragma::apply_open_pragmas`.
     fn primed(path: &Path) -> Result<Connection, DbError> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;",
-        )?;
+        crate::pragma::apply_open_pragmas(&conn)?;
         Ok(conn)
     }
 

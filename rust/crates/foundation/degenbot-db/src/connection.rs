@@ -8,11 +8,13 @@
 //! # Open PRAGMA sequence (binding #2/#3)
 //!
 //! Every read connection runs, in order:
-//! 1. `PRAGMA journal_mode=WAL;`  — file-persistent, idempotent; matches the
-//!    Python open path (Phase 0) so production DBs are WAL-on by the
-//!    time any Rust read touches them.
-//! 2. `PRAGMA busy_timeout=5000;` — per-connection.
-//! 3. `PRAGMA synchronous=NORMAL;` — per-connection.
+//! 1. `PRAGMA busy_timeout=5000;` — per-connection.
+//! 2. `PRAGMA synchronous=NORMAL;` — per-connection.
+//! 3. `PRAGMA journal_mode=WAL;` — file-persistent, idempotent; matches the
+//!    Python open path (Phase 0) so production DBs are WAL-on by the time any
+//!    Rust read touches them. The switch is retried through fresh-open
+//!    contention, which SQLite's busy handler does NOT cover (see
+//!    [`crate::pragma`]).
 //! 4. the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
 //!    version-lock (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB
 //!    (head-stamped OR stale) is healed out-of-place to `RustOwned` unless
@@ -52,6 +54,7 @@ use rusqlite::Connection;
 
 use crate::error::DbError;
 use crate::migrate::{auto_heal_enabled, ensure_schema_at_open, SchemaState};
+use crate::pragma::apply_open_pragmas;
 
 /// The owned read handle wrapping a single pooled [`Connection`].
 ///
@@ -62,13 +65,6 @@ use crate::migrate::{auto_heal_enabled, ensure_schema_at_open, SchemaState};
 pub struct DegenbotDb {
     pub(crate) conn: Mutex<Connection>,
 }
-
-/// The per-connection PRAGMAs the open path always sets (binding #3): the
-/// three concurrency PRAGMAs that must run BEFORE [`ensure_schema`] (WAL is
-/// file-persistent; `busy_timeout`/`synchronous` are per-connection).
-const PRE_SCHEMA_PRAGMAS: &str = "PRAGMA journal_mode=WAL;\n\
-                                  PRAGMA busy_timeout=5000;\n\
-                                  PRAGMA synchronous=NORMAL;";
 
 impl DegenbotDb {
     /// Open a file-backed read handle, run the open PRAGMA sequence + the
@@ -107,7 +103,8 @@ impl DegenbotDb {
     }
 
     /// Open a file-backed **write-capable** handle (the writer substrate).
-    /// Same `PRE_SCHEMA_PRAGMAS` + ADR-052 D1 heal-at-open as [`Self::open`]
+    /// Same concurrency PRAGMAs ([`crate::pragma::apply_open_pragmas`]) +
+    /// ADR-052 D1 heal-at-open as [`Self::open`]
     /// (an Alembic-stamped DB heals to [`SchemaState::RustOwned`]; the
     /// `DEGENBOT_DB_AUTO_HEAL=0` killswitch restores the pre-D1 posture), but
     /// `query_only` is **NEVER** set — the connection can `INSERT`/`UPDATE`.
@@ -164,8 +161,11 @@ impl DegenbotDb {
         } else {
             Connection::open(path)?
         };
-        // Concurrency PRAGMAs first (binding #3: before ensure_schema).
-        conn.execute_batch(PRE_SCHEMA_PRAGMAS)?;
+        // Concurrency PRAGMAs first (binding #3: before ensure_schema). The
+        // shared helper retries the fresh-file WAL switch, which SQLite's busy
+        // handler does NOT cover — the one fresh-open step a `busy_timeout`
+        // cannot absorb (see `crate::pragma`).
+        apply_open_pragmas(&conn)?;
         Ok(conn)
     }
 
