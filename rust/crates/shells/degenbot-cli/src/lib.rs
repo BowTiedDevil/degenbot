@@ -24,6 +24,7 @@
 //! dependency (asserted by `just check-cli-shell-purity`).
 
 pub mod argv;
+pub mod build_info;
 pub mod progress;
 pub mod prompt;
 pub mod render;
@@ -97,6 +98,11 @@ where
         argv::write_missing_subcommand_error();
         return 2;
     }
+
+    // Startup freshness gate: warn (never refuse) when the console inside the
+    // loaded extension predates the source tree — the stale cached cdylib has
+    // repeatedly made committed console fixes invisible to a whole drive.
+    build_info::warn_if_extension_stale();
 
     // Sinks before anything that emits, exactly like the Python module init.
     let _telemetry = match sinks::boot() {
