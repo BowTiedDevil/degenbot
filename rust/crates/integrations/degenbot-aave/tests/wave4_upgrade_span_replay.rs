@@ -35,6 +35,16 @@
 //! deprecation: `aave_gho_tokens` clears `v_gho_discount_token` +
 //! `v_gho_discount_rate_strategy` and the bulk `aave_v3_users` reset runs.
 //! Flipping the recorded GHO answer to 3 must suppress the deprecation.
+//!
+//! `w4_aave_gho_deprecation_then_discount_read_in_chunk` — the SAME
+//! deprecation upgrade INTERIOR to a 5,880-block chunk 1, with the chain's
+//! first post-upgrade GHO vToken Mint (a borrow — the discount pre-pass's
+//! trigger log) 5,867 blocks later IN THE SAME CHUNK. The per-tx revision
+//! re-resolve reads the applied revision (4) and takes the deprecated-zero
+//! path, so the cassette records NO discount RPC after the upgrade; serving
+//! the pre-upgrade revision answer (3) instead sends the post-upgrade
+//! pre-pass down the `getDiscountPercent` branch — an unrecorded call, so
+//! the replay fails loud — while the unmutated cassette replays green.
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::Path;
@@ -59,6 +69,11 @@ const MARKET_NAME: &str = "Aave Ethereum Market";
 const POOL_ADDRESS_PROVIDER: &str = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e";
 /// The chain's GHO token (the reserve whose underlying carries the FK link).
 const GHO_TOKEN: &str = "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f";
+/// `getDiscountPercent(address)` — the discount pre-pass's rev-3-branch RPC.
+/// The W6 corpus must never carry one after the in-chunk deprecation: the
+/// per-tx revision re-resolve reads the applied revision (4) and takes the
+/// deprecated-zero path with no RPC.
+const GET_DISCOUNT_PERCENT_SELECTOR: &str = "6c53272b";
 
 /// The tables one Aave chunk apply touches, in the dump's fixed order.
 const DUMP_TABLES: &[&str] = &[
@@ -147,6 +162,13 @@ const WINDOWS: &[WindowExpectations] = &[
     },
     WindowExpectations {
         name: "w4_aave_gho_deprecation_at_chunk_boundary",
+        chunks: 2,
+        served: 19,
+        get_logs: 12,
+        eth_calls: 7,
+    },
+    WindowExpectations {
+        name: "w4_aave_gho_deprecation_then_discount_read_in_chunk",
         chunks: 2,
         served: 19,
         get_logs: 12,
@@ -376,12 +398,25 @@ fn replay_and_gate(name: &str, expect: &WindowExpectations) -> ReplayRun {
 /// mutates inputs on purpose), but the ledger trace IS captured so a probe
 /// can compare its SQL shape against the committed golden.
 fn replay_probe(name: &str, seed: &SeedManifest, cassette: Cassette) -> ProbeRun {
+    replay_probe_capture(name, seed, cassette)
+        .unwrap_or_else(|(e, _)| panic!("{name}: the probe replay must commit cleanly: {e}"))
+}
+
+/// The capture variant: a probe whose MUTATION is expected to make the run
+/// fail loud keeps the failure message AND the serving snapshot (the gap
+/// between requests answered and ledger entries served is the unrecorded
+/// call's fingerprint, independent of error-message formatting).
+fn replay_probe_capture(
+    name: &str,
+    seed: &SeedManifest,
+    cassette: Cassette,
+) -> Result<ProbeRun, (String, ServedSnapshot)> {
     let transport = CassetteReplayTransport::new(cassette);
     let provider = transport.as_alloy_provider();
     let dir = TempDir::new().unwrap();
     let (db_path, market_id) = seeded_db(dir.path(), "probe.db", seed);
     let (ledger, _state) = LedgerDb::open_for_writes(&db_path).unwrap();
-    run_aave_update_on_db(
+    let run = run_aave_update_on_db(
         ledger.db(),
         CHAIN_ID,
         market_id,
@@ -394,15 +429,19 @@ fn replay_probe(name: &str, seed: &SeedManifest, cassette: Cassette) -> ProbeRun
         None,
         false,
         None,
-    )
-    .unwrap_or_else(|e| panic!("{name}: the probe replay must commit cleanly: {e}"));
-    let records = ledger.records().expect("the capture session is armed");
-    let ledger_json = ledger_golden_json(&records);
-    let db_path = dir.keep().join("probe.db");
-    ProbeRun {
-        served: transport.served_snapshot(),
-        db_path,
-        ledger: ledger_json,
+    );
+    match run {
+        Ok(_) => {
+            let records = ledger.records().expect("the capture session is armed");
+            let ledger_json = ledger_golden_json(&records);
+            let db_path = dir.keep().join("probe.db");
+            Ok(ProbeRun {
+                served: transport.served_snapshot(),
+                db_path,
+                ledger: ledger_json,
+            })
+        }
+        Err(e) => Err((format!("{name}: {e}"), transport.served_snapshot())),
     }
 }
 
@@ -612,5 +651,80 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
         ),
         0,
         "W2 probe: the GHO asset's vToken revision moved off 4 — only that asset changed"
+    );
+
+    // ── W6: the deprecation upgrade INTERIOR to a chunk, a GHO borrow after
+    //    it in the same chunk (the per-tx revision re-resolve pin) ─────────
+    let w6 = WINDOWS[5].name;
+    let w6_bytes = std::fs::read(cassette_path(w6)).unwrap();
+    // The committed corpus records the deprecated-zero path for the
+    // post-upgrade borrow: NO getDiscountPercent call exists after the
+    // in-chunk upgrade. Pin the absence, the deprecation clear in the
+    // ledger, and the borrow's user row at gho_discount = 0.
+    let w6_committed = Cassette::from_json_bytes(&w6_bytes).unwrap();
+    assert_eq!(
+        w6_committed
+            .entries
+            .keys()
+            .filter(|k| k.contains(GET_DISCOUNT_PERCENT_SELECTOR))
+            .count(),
+        0,
+        "W6 committed: no getDiscountPercent call after the in-chunk deprecation"
+    );
+    assert!(
+        ledger_statement_count(
+            &std::fs::read_to_string(ledger_golden_path(w6)).unwrap(),
+            "v_gho_discount_token = NULL"
+        ) > 0,
+        "W6 committed: the interior GHO upgrade fires the deprecation clear"
+    );
+    let w6_green = replay_and_gate(w6, &WINDOWS[5]);
+    assert_eq!(
+        scalar(
+            &w6_green.db_path,
+            "SELECT COUNT(*) FROM aave_v3_users WHERE address = \
+             '0x16b89Fe79fd4fbc3b53EDc58B481EE538BcFFD93' AND gho_discount = 0"
+        ),
+        1,
+        "W6: the post-upgrade borrow's first-encounter user lands at the deprecated-zero discount"
+    );
+    // The stale-revision counterfactual: serving the PRE-upgrade revision
+    // answer (3) for the post-upgrade tx — what a chunk-start revision
+    // snapshot would serve — sends the discount pre-pass down the rev-3
+    // branch: a getDiscountPercent(user) eth_call the corpus does not carry.
+    // The replay must fail on the unrecorded call (the transport's
+    // method-not-found contract) with a served/request gap as the fingerprint.
+    let w6_seed = read_seed(w6);
+    let mut w6_cassette = Cassette::from_json_bytes(&w6_bytes).unwrap();
+    // The GHO vToken implementation at the W6 block (the recorded rev-4
+    // answer; an impl unique to the GHO vToken, so no other asset's memo
+    // entry shares the mutation).
+    let w6_mutated = mutate_one_eth_call(
+        &mut w6_cassette,
+        "0x9b2b73f9ddd830f82d61520388ccf4fc048f9953",
+        3,
+    );
+    assert_eq!(
+        w6_mutated, 1,
+        "W6: exactly the GHO vToken revision answer was mutated"
+    );
+    let (w6_err, w6_served) = replay_probe_capture(w6, &w6_seed, w6_cassette)
+        .err()
+        .unwrap_or_else(|| {
+            panic!("W6: the stale-revision mutation must fail the replay on the unrecorded call")
+        });
+    assert!(
+        w6_err.contains("cassette: method not found"),
+        "W6: the failure is the unrecorded-call contract, got {w6_err}"
+    );
+    assert!(
+        w6_served.requests > w6_served.served,
+        "W6: the unrecorded getDiscountPercent call shows as a served/request gap"
+    );
+    // The unmutated cassette replays to BOTH committed goldens byte-for-byte.
+    let w6_restored = replay_and_gate(w6, &WINDOWS[5]);
+    assert_eq!(
+        w6_restored.served.served, WINDOWS[5].served,
+        "W6: the restored cassette serves exactly the pinned surface"
     );
 }

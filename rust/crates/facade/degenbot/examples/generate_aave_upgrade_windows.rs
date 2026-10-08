@@ -94,7 +94,7 @@ struct Window {
     to_block: u64,
 }
 
-/// The five wave-4 windows, in the recording order (cheapest first).
+/// The six wave-4 windows, in the recording order (cheapest first).
 const WINDOWS: &[Window] = &[
     Window {
         name: "w4_aave_pre_upgrade_control",
@@ -125,6 +125,23 @@ const WINDOWS: &[Window] = &[
         cursor: 22_839_357,
         chunk_size: 5,
         to_block: 22_839_366,
+    },
+    // The per-tx GHO vToken revision re-resolve pin (UPGRADE-MAP.md surface
+    // #7). The deprecation upgrade tx (block 22,839,362) is INTERIOR to chunk
+    // 1, and the chain's FIRST post-upgrade GHO vToken Mint (a borrow — the
+    // discount pre-pass's trigger log) lands 5,867 blocks later at 22,845,229
+    // IN THE SAME CHUNK; the wide chunk span is forced by that on-chain gap
+    // and is why this window dwarfs the five-block siblings. A chunk-start
+    // revision snapshot would serve the pre-upgrade revision (3) to the
+    // post-upgrade tx's discount pre-pass and take the getDiscountPercent RPC
+    // branch; the per-tx re-resolve reads the applied revision (4) and takes
+    // the deprecated-zero path with no RPC — the recorded surface
+    // distinguishes the two, which no five-block window can.
+    Window {
+        name: "w4_aave_gho_deprecation_then_discount_read_in_chunk",
+        cursor: 22_839_357,
+        chunk_size: 5_880,
+        to_block: 22_845_245,
     },
 ];
 
