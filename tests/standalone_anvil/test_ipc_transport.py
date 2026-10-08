@@ -18,12 +18,19 @@ socket the test asserts both capabilities:
 It also asserts the scope filter refuses rather than degrading: an ``http``-only
 file cannot satisfy a subscription, and a chain with no entry at all refuses the
 request scope instead of inventing a ``localhost`` default.
+
+This module runs in the DEFAULT suite: only
+``test_ipc_request_and_subscription_resolve_from_the_operator_file`` spawns a real
+anvil, and it skips when the anvil binary is absent (the no-anvil CI job); the
+other two exercise a real Unix socket with no anvil and no network, so they run
+everywhere.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import shutil
 import socket
 import threading
 from collections.abc import Iterator
@@ -40,16 +47,13 @@ from tests.standalone_anvil import seed as seed_catalog
 if TYPE_CHECKING:
     from pathlib import Path
 
-# The node needs a live local anvil and a spawned subprocess, so it is a
-# non-default ("slow") run; the default addopts filter (`not slow`) deselects it.
-pytestmark = pytest.mark.slow
-
 _CHAIN_ID = seed_catalog.CHAIN_ID
 _OTHER_CHAIN_ID = 999
 
 # `decimals()` on the seeded SimpleToken; the selector is the ERC-20 ABI entry.
 _DECIMALS_SELECTOR = bytes.fromhex("313ce567")
 _TOKEN_DECIMALS = 8
+
 
 def _resolve_from_operator_file(tmp_path: Path, body: str, *ops: list[Any]) -> list[dict]:
     """Resolve ``ops`` over a hypothetical operator file.
@@ -143,7 +147,11 @@ def resolved_ipc_node(tmp_path: Path) -> Iterator[tuple[AnvilFork, dict, dict, d
     The fork's teardown rides here. The resolution results are yielded raw:
     the request/subscription claims are the test's, not setup validation.
 
+    Skips when the anvil binary is absent (the no-anvil CI job); this is the only
+    anvil-spawning path in the module, so the socket-only tests keep running.
     """
+    if shutil.which("anvil") is None:
+        pytest.skip("requires the anvil binary (not present in the no-anvil CI job)")
     fork = _spawn_anvil()
     try:
         socket_path = fork.ipc_path
