@@ -38,6 +38,7 @@
 
 pub mod aave;
 pub mod connection;
+pub mod digest;
 pub mod discovery;
 pub mod discovery_read;
 pub mod error;
@@ -78,6 +79,11 @@ pub use degenbot_math::cl::liquidity_mapping::{
 /// manifest, and row types all project through it: a DB consumer resolves the
 /// same vocabulary without a direct dependency on the zero-dependency leaf.
 pub use degenbot_pathfinding::PoolKind;
+pub use digest::{
+    aave_market_digest, aave_market_digest_for, render_completed_market_manifest,
+    CompletedMarketDrive, MarketDigest, MarketFacts, TableDigest, MARKET_DIGEST_SERIALIZATION,
+    MARKET_DIGEST_TABLES,
+};
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use discovery_read::{
     fetch_discovery_rows_on_conn, fetch_v4_discovery_rows_on_conn, DiscoveryPoolRow,

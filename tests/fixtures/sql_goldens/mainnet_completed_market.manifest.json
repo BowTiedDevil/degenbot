@@ -13,17 +13,18 @@
     "last_update_block": 26144562,
     "name": "Aave Ethereum Market"
   },
+  "serialization": "degenbot-market-digest/v1",
   "tables": {
     "aave_gho_tokens": {
-      "digest": "3f22688b49d88ea5f7598e5a0b6d8f40e19db974e1dacfce7f93fd35cdd62a86",
+      "digest": "f85a9b1ad7388394018cbe6980478451d66377b84a3328a2e3e079377ad08df9",
       "rows": 1
     },
     "aave_v3_asset_configs": {
-      "digest": "402a25dd8c46af0106979723b769e610f9387fcabfa229ce1e58030a1ec2f8e6",
+      "digest": "92bdaafaff05160bf1d938fea5d72f3f4120cc23dd3248ba14147a0a6788411e",
       "rows": 63
     },
     "aave_v3_assets": {
-      "digest": "4cff7042a183d9ddf614b70aaca81cac6cd3118d7006a2c2e1726011827f5c45",
+      "digest": "34ddfde2b3bdeff13eb791a6486e1b4409188050ee8319087b5976b517d51357",
       "rows": 67
     },
     "aave_v3_collateral_positions": {
@@ -31,7 +32,7 @@
       "rows": 137808
     },
     "aave_v3_contracts": {
-      "digest": "b352b14bb8cdc52ec7e10b8ea82f52f82fdbb0d4bc1267765302f8f9dc668cb1",
+      "digest": "11d0d291438ed089a510aeb420134c76bc90a0d12a7bb69f6298a35454d63b70",
       "rows": 7
     },
     "aave_v3_debt_positions": {
@@ -51,7 +52,7 @@
       "rows": 321579
     },
     "aave_v3_users": {
-      "digest": "d2d7f63396ed870feba1412236cd4b9e31240f9797359ea07145398a6ee108e4",
+      "digest": "9f0dac7a2449a50cdc481b0a6740b0b4df931dab3896690cc3ba4a0e01d0f6f3",
       "rows": 267486
     }
   }
