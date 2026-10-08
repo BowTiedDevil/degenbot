@@ -23,8 +23,13 @@ Python console script is a five-line passthrough to the same binary
 (`degenbot._ffi.cli_main`), so Python and Rust operators run the same program
 with the same vocabulary. Invoke it as `uv run degenbot <command>` (the
 console script) or `uv run python -m degenbot <command>` — both route through
-the same `cli_main`; `uv run degenbot` is the primary entry point. Rendering, prompting, progress, and SIGINT are the
-façade's job; execution returns typed reports and one `CliError → ExitCode`
+the same `cli_main`; `uv run degenbot` is the primary entry point.
+
+After a Rust change, rebuild the extension before driving the console (`just
+dev`); at startup the console warns on stderr when the loaded extension
+predates the source tree.
+
+Rendering, prompting, progress, and SIGINT are the façade's job; execution returns typed reports and one `CliError → ExitCode`
 mapping (ADR-051 D1/D2/Q1).
 
 This page is the authoritative command/flag/exit-code reference. Per-domain

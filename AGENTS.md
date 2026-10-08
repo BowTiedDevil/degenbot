@@ -177,6 +177,12 @@ The recipe checks the installed extension against current sources and runs
 `just dev` only when stale. Only trust a bot run (or a pytest suite) once the
 check exits 0. The receipt mechanics and failure modes: `/skill:rust-rebuild`.
 
+The console also self-reports at startup: a `console may be stale` warning on
+stderr means the loaded extension's build identity no longer matches the repo
+— stop, `just dev`, re-run the command. Never continue a drive past it: a
+stale console's observations are untrusted. A warning that survives a clean
+rebuild is a defect to file, not a signal to rebuild again.
+
 ## Python Environment
 Use `uv`.
 
