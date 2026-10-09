@@ -188,10 +188,6 @@ pub(crate) fn solve_one_path(
     let outcome =
         ::degenbot_solvers::mixed::solve_path_with_min_profit(resolved, ctx.min_profit, &gate_deps);
     let micros = t0.elapsed().as_micros();
-    ctx.solve_cpu_us.fetch_add(
-        u64::try_from(micros).unwrap_or(u64::MAX),
-        std::sync::atomic::Ordering::Relaxed,
-    );
     // Gate telemetry rides the solve outcome now — no TLS read-back.
     let gs = outcome.gate_stats;
     let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
@@ -202,7 +198,6 @@ pub(crate) fn solve_one_path(
             p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
         }
     }
-    ctx.gate_total.lock().merge(&gs);
     // Walk telemetry OUT the return path: the
     // outcome carries this path's counters — no TLS
     // read-back. The Q3 dense one-shot alert is the
@@ -219,14 +214,8 @@ pub(crate) fn solve_one_path(
         );
     }
     let ws = *outcome_stats;
-    let (pieces, sims, word_steps, refine_sims, ternary_sims, grid_sims) = (
-        ws.pieces,
-        ws.sims,
-        ws.word_steps,
-        ws.refine_sims,
-        ws.ternary_sims,
-        ws.grid_sims,
-    );
+    let (pieces, sims, word_steps, refine_sims) =
+        (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
     // Record this block's measured walk sims for the next
     // block's LPT cost (loop-12 lab).
     ctx.sims_recorder
@@ -239,30 +228,6 @@ pub(crate) fn solve_one_path(
         u64::try_from(gs.derive_ns / 1_000).unwrap_or(u64::MAX),
         u64::try_from(gs.compose_ns / 1_000).unwrap_or(u64::MAX),
         u64::try_from(gs.search_ns / 1_000).unwrap_or(u64::MAX),
-    );
-    ctx.walk_ternary_total.fetch_add(
-        u64::try_from(ternary_sims).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_grid_total.fetch_add(
-        u64::try_from(grid_sims).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_pieces_total.fetch_add(
-        u64::try_from(pieces).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_sims_total.fetch_add(
-        u64::try_from(sims).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_word_steps_total.fetch_add(
-        u64::try_from(word_steps).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    ctx.walk_refine_sims_total.fetch_add(
-        u64::try_from(refine_sims).unwrap_or(0),
-        std::sync::atomic::Ordering::Relaxed,
     );
     // seal the per-path span - walk counters become attributes
     // on the `degenbot.arb.path` node (guard drops at fn end, so the

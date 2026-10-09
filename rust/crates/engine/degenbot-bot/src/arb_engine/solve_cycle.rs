@@ -130,14 +130,6 @@ pub(crate) struct SolveCycleShared {
     pub(crate) capture: Option<std::sync::Arc<HeavyPathCapture>>,
     pub(crate) capture_mixed: Option<std::sync::Arc<HeavyPathCapture>>,
     pub(crate) path_times: parking_lot::Mutex<PathTimesHeap>,
-    pub(crate) gate_total: parking_lot::Mutex<::degenbot_solvers::profit_envelope::GateStats>,
-    pub(crate) solve_cpu_us: std::sync::atomic::AtomicU64,
-    pub(crate) walk_pieces_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_sims_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_word_steps_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_refine_sims_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_ternary_total: std::sync::atomic::AtomicU64,
-    pub(crate) walk_grid_total: std::sync::atomic::AtomicU64,
     /// Engine-owned per-path measured-sims recorder (Arc-d engine field).
     pub(crate) sims_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
     /// Engine-owned per-path gate-us recorder (Arc-d engine field).
@@ -1697,15 +1689,6 @@ impl SolveCycle {
         // -----------------------------------------------------------------
         let path_times: parking_lot::Mutex<PathTimesHeap> =
             parking_lot::Mutex::new(PathTimesHeap::new());
-        let solve_cpu_us: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let walk_pieces_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let walk_sims_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let walk_word_steps_total: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(0);
-        let walk_refine_sims_total: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(0);
-        let walk_ternary_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let walk_grid_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         // Degenerate-path capture config: env parsed ONCE per cycle
         // at the owner; the gate itself reads no environment. The prefix-
         // composition cache is generationed by the block epoch inside the
@@ -1747,16 +1730,6 @@ impl SolveCycle {
             capture: capture.map(std::sync::Arc::new),
             capture_mixed: capture_mixed.map(std::sync::Arc::new),
             path_times,
-            gate_total: parking_lot::Mutex::new(
-                ::degenbot_solvers::profit_envelope::GateStats::default(),
-            ),
-            solve_cpu_us,
-            walk_pieces_total,
-            walk_sims_total,
-            walk_word_steps_total,
-            walk_refine_sims_total,
-            walk_ternary_total,
-            walk_grid_total,
             sims_recorder: std::sync::Arc::clone(&self.last_walk_sims),
             gate_recorder: std::sync::Arc::clone(&self.last_gate_us),
             #[cfg(test)]
