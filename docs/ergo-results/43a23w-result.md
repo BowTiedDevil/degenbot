@@ -1,0 +1,1 @@
+GateDeps behind its constructors: fields pub(crate); single per_block(epoch,prefix_store,capture,walk_memo,runtime) sets prefix_cache internally; per_block_with deleted. Migrated lane_walk.rs, solve_cycle.rs, profit_envelope_tests.rs, refinements.rs. cargo test -p degenbot-solvers and -p degenbot-bot both exit 0; rustfmt --check clean; no foreign edits; no behavior change.
