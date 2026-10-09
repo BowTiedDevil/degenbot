@@ -402,6 +402,16 @@ follow-ups, not work:
    alongside the existing `otel` forward), so the settlement example can
    compile the feature through the umbrella at all.
 
+Resolution (landed, ergo LLTUSR): both steps collapsed into one — the umbrella
+`hotpath` forward. The guard never needed mirroring: the pump constructs the
+process's single guard itself under `DEGENBOT_HOTPATH=1`, and a second live guard
+panics (hotpath 0.28.5), so an example-side construction would abort the run it
+means to measure. The corpus examples were only missing the feature-forward to
+compile the pump's instrumentation at all. Verified by a driven settlement run
+(90-second window, clean cooperative expiry, exit 0): the pump-lifetime guard
+flushed the JSON report (`HOTPATH_OUTPUT_FORMAT=json`; `HOTPATH_SHUTDOWN_MS`
+forces a timed report for longer-running drivers).
+
 ### What the live capture did and did not do
 
 - Landed: the tap (code, already committed in this ergo) and this doc
