@@ -54,7 +54,7 @@
 //! ..., last_update_block = ...`) have no mid-chunk reader (the asset
 //! lookups read only id/revisions/addresses; the verification gate runs
 //! post-commit; the position math uses the EVENT's index), so the applies
-//! buffer into [`ChunkSubstrate::reserve_data_updates`] and flush as ONE
+//! buffer into `ChunkSubstrate::reserve_data_updates` and flush as ONE
 //! multi-row `UPDATE ... FROM (VALUES ...)` at end-of-chunk — the
 //! `liquidity_updater.rs` sorted multi-row idiom (deterministic asset-id
 //! order; the golden-captured ledger replays this statement). Same-asset

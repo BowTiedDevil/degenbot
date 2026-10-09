@@ -13,7 +13,7 @@
 //!
 //! Index arithmetic is integer-exact (`U256`); the final health-factor +
 //! max-LTV ratios are `f64` (mirrors the Python `int / int → float`
-//! division). [`u256_to_f64`] converts via a lossy limb sum — exact for
+//! division). `u256_to_f64` converts via a lossy limb sum — exact for
 //! values ≤ `2^53` and within `rel-1e-6` for all realistic magnitudes (the
 //! tolerance the Python `test_core.py` suite uses).
 

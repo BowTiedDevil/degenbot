@@ -23,16 +23,16 @@ use super::substrate::ChunkSubstrate;
 ///
 /// | Variant                              | `_on_conn` fn                                    |
 /// |--------------------------------------|---------------------------------------------------|
-/// | [`CollateralConfigurationChanged`]   | [`apply_collateral_configuration_changed_on_conn`] |
-/// | [`EModeCategoryAdded`]               | [`apply_e_mode_category_added_on_conn`]            |
-/// | [`EModeAssetCategoryChanged`]        | [`apply_emode_asset_category_changed_on_conn`]     |
-/// | [`AssetCollateralInEModeChanged`]    | [`apply_asset_collateral_in_emode_changed_on_conn`] |
-/// | [`ReserveUsedAsCollateral`]          | [`apply_reserve_used_as_collateral_on_conn`]       |
-/// | [`UserEModeSet`]                     | [`apply_user_e_mode_set_on_conn`]                  |
-/// | [`PriceOracleUpdated`]               | [`apply_price_oracle_updated_on_conn`]             |
-/// | [`AssetSourceUpdated`]               | [`apply_asset_source_updated_on_conn`]             |
-/// | [`ReserveDataUpdated`]               | [`apply_reserve_data_updated_on_conn`]             |
-/// | [`ReserveInitialized`]               | [`apply_reserve_initialized_on_conn`]              |
+/// | `CollateralConfigurationChanged`   | [`apply_collateral_configuration_changed_on_conn`] |
+/// | `EModeCategoryAdded`               | [`apply_e_mode_category_added_on_conn`]            |
+/// | `EModeAssetCategoryChanged`        | [`apply_emode_asset_category_changed_on_conn`]     |
+/// | `AssetCollateralInEModeChanged`    | [`apply_asset_collateral_in_emode_changed_on_conn`] |
+/// | `ReserveUsedAsCollateral`          | [`apply_reserve_used_as_collateral_on_conn`]       |
+/// | `UserEModeSet`                     | [`apply_user_e_mode_set_on_conn`]                  |
+/// | `PriceOracleUpdated`               | [`apply_price_oracle_updated_on_conn`]             |
+/// | `AssetSourceUpdated`               | [`apply_asset_source_updated_on_conn`]             |
+/// | `ReserveDataUpdated`               | [`apply_reserve_data_updated_on_conn`]             |
+/// | `ReserveInitialized`               | [`apply_reserve_initialized_on_conn`]              |
 ///
 /// [`apply_collateral_configuration_changed_on_conn`]: DegenbotDb::apply_collateral_configuration_changed_on_conn
 /// [`apply_e_mode_category_added_on_conn`]: DegenbotDb::apply_e_mode_category_added_on_conn
@@ -133,8 +133,8 @@ pub enum AaveChunkEvent {
     },
     /// `ScaledTokenMint(from, to, value)` — aToken/vToken Mint event. Carries
     /// the PRE-COMPUTED signed `balance_delta` (the
-    /// orchestrator/parser ran [`ScaledTokenProcessor::process_collateral_mint`]
-    /// / [`ScaledTokenProcessor::process_debt_mint`] BEFORE constructing this
+    /// orchestrator/parser ran `ScaledTokenProcessor::process_collateral_mint`
+    /// / `ScaledTokenProcessor::process_debt_mint` BEFORE constructing this
     /// variant — mirrors design decision #1: the apply core is pure
     /// substrate, no processor calls). The apply dispatch just forwards the
     /// delta to [`DegenbotDb::apply_scaled_token_mint_on_conn`].
@@ -169,7 +169,7 @@ pub enum AaveChunkEvent {
     /// loop's async POST-APPLY pass consumes it: `get_or_init_stk_aave_balance`
     /// (`balanceOf` `eth_call` at `block - 1` if `aave_v3_users.stk_aave_balance` is
     /// None) + `_refresh_discount_rate` (`debt_balance = ray_mul(scaled,
-    /// index)` + [`calculate_gho_discount_rate`] → write
+    /// index)` + `calculate_gho_discount_rate` → write
     /// `aave_v3_users.gho_discount`). `apply_chunk_events_on_conn` is a no-op for
     /// this variant (it carries no synchronously-applicable state). Mirrors
     /// Python's `token_processor._refresh_discount_rate` after a GHO
@@ -408,7 +408,7 @@ pub struct AaveChunkWriteReport {
 /// Dispatch each pre-decoded Aave V3 event to its `DegenbotDb::apply_*_on_conn`
 /// writer under the caller's `Transaction` (borrowed as a `&Connection`),
 /// accumulating a per-type count. Does NOT stamp `last_update_block` — the
-/// caller owns the stamp (per-tx apply in [`process_chunk_on_conn`], or the
+/// caller owns the stamp (per-tx apply in `process_chunk_on_conn`, or the
 /// batched [`apply_aave_chunk_writes_on_conn`]).
 ///
 /// `substrate` is the chunk-level cache (Perf C): the per-event substrate

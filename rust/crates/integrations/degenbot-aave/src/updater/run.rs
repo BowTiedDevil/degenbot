@@ -6,7 +6,7 @@
 //! The runtime-facing invariants — the shared-runtime `block_on` constraint,
 //! the `!Send` `Transaction`-across-`.await` soundness argument, and the
 //! atomicity-ownership duties of the loop — are documented on
-//! [`run_aave_update`] / [`run_aave_update_driver`]. The chunk-atomicity
+//! `run_aave_update` / `run_aave_update_driver`. The chunk-atomicity
 //! contract itself is owned by the `apply` stage.
 
 mod activate;
@@ -80,7 +80,7 @@ pub struct AaveChunkProgress {
     /// fire the completion-time backup. The Rust completion full-verify
     /// computes finality inline.
     pub is_final: bool,
-    /// The user addresses touched by ANY log in this chunk (topics[1]/[2]
+    /// The user addresses touched by ANY log in this chunk (topics\[1\]/\[2\]
     /// extracted as addresses). A programmatic [`ProgressSink`] consumer can
     /// drive the per-chunk value-correctness gate from this list via
     /// [`crate::verify::verify_touched_positions_on_conn`] against cand.db
@@ -310,7 +310,7 @@ pub fn run_aave_update(
 }
 
 /// Pre-opened-handle variant of [`run_aave_update`] — behaviorally identical.
-/// The statement-ledger golden machinery ([`degenbot_db::sql_ledger::LedgerDb`],
+/// The statement-ledger golden machinery (`degenbot_db::sql_ledger::LedgerDb`,
 /// ADR-068 D3) needs to hand the run ITS traced connection, so the chunk loop
 /// must accept a handle it did not open (the Aave golden captures are wired to
 /// this seam; the committed goldens land with the replay-suite chunk).

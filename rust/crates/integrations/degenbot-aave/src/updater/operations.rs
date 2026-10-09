@@ -32,7 +32,8 @@ use alloy::rpc::types::Log;
 /// Pool revisions at-or-above this use flooring ray division which can cause
 /// ±2 wei deviations when the Pool scales the underlying amount before
 /// handing it to the aToken/vToken contract. The matching gate
-/// [`amounts_match`] widens the equality by [`TOKEN_AMOUNT_MATCH_TOLERANCE`]
+/// `TransactionOperationsParser::amounts_match` widens the equality by
+/// [`TOKEN_AMOUNT_MATCH_TOLERANCE`]
 /// wei on those revisions.
 pub const SCALED_AMOUNT_POOL_REVISION: u32 = 9;
 /// The ±wei tolerance applied on pool revisions >=
@@ -399,7 +400,7 @@ pub enum LiquidationPattern {
 
 /// Mirrors `aave/pattern_types.py::LiquidationPatternContext`.
 ///
-/// Built per-tx by [`crate::transaction_processor::build_liquidation_patterns`]
+/// Built per-tx by `crate::transaction_processor::build_liquidation_patterns`
 /// (the port of `detect_liquidation_patterns`); consumed by the liquidation
 /// dispatch (`dispatch_liquidation`) to apply the `COMBINED_BURN`
 /// aggregated-burn + Mint-skip behavior (Issue 0056).

@@ -459,7 +459,8 @@ impl DegenbotDb {
     /// price_source)`; on existing, `UPDATE`s the same five fields (matching
     /// the Python create-vs-mutate trajectory). `price_source` is the
     /// checksummed oracle address — the canonical caller
-    /// ([`degenbot_aave::config_dispatch::dispatch_e_mode_category_added`])
+    /// (`degenbot_aave::config_dispatch::dispatch_e_mode_category_added`, a
+    /// crate-internal dispatch arm)
     /// always passes `Some(checksum(&oracle))`, so a zero-oracle event
     /// produces the literal `"0x0000000000000000000000000000000000000000"`
     /// string (matching Python's `get_checksum_address(Address::ZERO)`

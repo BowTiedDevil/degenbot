@@ -192,7 +192,7 @@ pub struct ActivatedMarket {
 }
 
 /// Activate (or re-activate) an Aave V3 market — the ONE-TIME seed the chunk
-/// loop's [`run_aave_update`] bootstraps from.
+/// loop's `run_aave_update` bootstraps from.
 ///
 /// RPC fetches (`getMarketId()` on the pool address provider + the GHO
 /// token's `name()`/`symbol()`/`decimals()`), then ONE transaction seeds the
@@ -224,7 +224,7 @@ pub struct ActivatedMarket {
 ///
 /// The RPC half runs as ONE future under
 /// `degenbot_core::runtime::get_runtime().block_on` at this entry fn
-/// (mirrors [`run_aave_update`]'s shape). That `block_on` is legal on the bare
+/// (mirrors `run_aave_update`'s shape). That `block_on` is legal on the bare
 /// `PyO3` fleet threads + the CLI main thread (no ambient tokio context); it
 /// MUST NOT be called from within ANY `tokio` runtime context — nested
 /// `block_on` panics, the shared runtime included.
