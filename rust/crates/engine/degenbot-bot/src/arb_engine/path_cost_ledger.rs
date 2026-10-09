@@ -22,11 +22,19 @@
 //! per-path maps and the `lock().clone()` snapshot idiom live behind
 //! [`PathCostHistory::record`] / [`PathCostHistory::snapshot`].
 //!
-//! NOT owned here: the Q3-DENSE alert — it lands on a later commit of PR C4.
+//! It also owns the Q3-DENSE one-shot alert (commit 4 of PR C4): the walk
+//! reports each path's dense-word counter on the outcome, and the alert
+//! policy plus its once-per-process latch live HERE beside the other sinks.
 
 use super::solver_capture::HeavyPathCapture;
 use super::HashMap;
+use degenbot_core::op_warn;
 use std::sync::Arc;
+
+/// The Q3 dense one-shot latch: one alert per process however many cycles
+/// cross the threshold. The decision lives in [`PathCostLedger::record`] and
+/// this latch rides with it.
+static DENSE_ALERTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// How many slowest-path entries the retention keeps (a min-heap keeps this
 /// O(K) memory).
@@ -194,6 +202,22 @@ impl PathCostLedger {
         }
 
         let ws = outcome.stats;
+
+        // The Q3 dense one-shot alert: the first path whose CL walk crossed the
+        // dense-word threshold logs once per process (harvest a real capture).
+        // Same latch + threshold as the retired walk-side check; the threshold
+        // constant stays in the solver crate.
+        if ws.max_dense_words >= ::degenbot_solvers::cl::DENSE_OBSERVE_THRESHOLD
+            && !DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            op_warn!(
+                domain = solver,
+                max_dense_words = ws.max_dense_words,
+                threshold = ::degenbot_solvers::cl::DENSE_OBSERVE_THRESHOLD,
+                "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
+            );
+        }
+
         let (pieces, sims) = (ws.pieces, ws.sims);
 
         // The next cycle's LPT cost: this block's measured sims and gate

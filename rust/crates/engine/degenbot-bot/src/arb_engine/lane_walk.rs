@@ -4,8 +4,7 @@
 //! body every Solver seat's bin executes — and of THE ONE
 //! LANE WALK (`drive_lane_walk` plus its policy/context/result
 //! types (`LaneArmPolicy`, `LaneWalkBinPlan`, `WalkSubmitCtx`,
-//! `LaneWalkReads`) and the walk-side telemetry flag
-//! (`WALK_DENSE_ALERTED`).
+//! `LaneWalkReads`).
 //!
 //! The per-path cost sinks (the pipeline instruments, the K-slowest
 //! retention, the capture hooks, and the LPT carry-over) live in the
@@ -23,12 +22,7 @@ use super::{BlockMetadata, HashMap};
 use crate::arb_engine::executor::{SolveLane, SolveOutcome};
 use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
 use ::degenbot_solvers::mixed::{ResolvedMixedPath, SolvePathResult};
-use degenbot_core::{diag, op_warn};
-/// Q3 dense one-shot alert flag — the CONSUMER side of the moved alert: the
-/// walk reports `WalkStats::max_dense_words`; this logs once per process.
-/// Walk-side only after the T4 move.
-static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+use degenbot_core::diag;
 // ===========================================================================
 // the walk-adjacent helpers, moved here with the walk they
 // serve (the retired grab file is deleted outright).
@@ -186,21 +180,10 @@ pub(crate) fn solve_one_path(
     // Gate telemetry rides the solve outcome now — no TLS read-back.
     let gs = outcome.gate_stats;
     let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
-    // Walk telemetry OUT the return path: the
-    // outcome carries this path's counters — no TLS
-    // read-back. The Q3 dense one-shot alert is the
-    // CONSUMER's decision.
+    // Walk telemetry OUT the return path: the outcome carries this path's
+    // counters — no TLS read-back. The Q3 dense one-shot alert rides
+    // `PathCostLedger::record` below, with the other per-path sinks.
     let outcome_stats = &outcome.stats;
-    if outcome_stats.max_dense_words >= ::degenbot_solvers::cl::DENSE_OBSERVE_THRESHOLD
-        && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
-        op_warn!(
-            domain = solver,
-            max_dense_words = outcome_stats.max_dense_words,
-            threshold = ::degenbot_solvers::cl::DENSE_OBSERVE_THRESHOLD,
-            "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
-        );
-    }
     let ws = *outcome_stats;
     let (pieces, sims) = (ws.pieces, ws.sims);
     // seal the per-path span - walk counters become attributes

@@ -125,29 +125,14 @@ fn worker_probe_ctx(
     core: Arc<degenbot_substrate::state_lock::StateLock<degenbot_substrate::BotState>>,
     pool_refs: Vec<std::sync::Arc<MixedPath>>,
 ) -> Arc<SolveCycleShared> {
-    Arc::new(SolveCycleShared {
+    Arc::new(SolveCycleShared::for_test(
+        0,
+        BlockMetadata::default(),
         core,
         pool_refs,
-        worker_clamp: true,
-        inline_sim: None,
-        solve_block: 0,
-        epoch: 0,
-        metadata: BlockMetadata::default(),
-        runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
-        gate_capture: None,
-        walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
-        prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
-        min_profit: ::alloy::primitives::U256::ZERO,
-        path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(
-            0,
-            None,
-            None,
-            Arc::new(crate::arb_engine::path_cost_ledger::PathCostHistory::new()),
-        ),
-        test_solve_delay: None,
-        #[cfg(test)]
-        test_solve_panic: None,
-    })
+        true,
+        None,
+    ))
 }
 /// The engine clamp and the WORKER clamp are the same computation from
 /// two call sites: byte-identical result + twin count on identical input.

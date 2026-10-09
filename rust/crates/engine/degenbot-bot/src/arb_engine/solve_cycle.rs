@@ -155,6 +155,50 @@ pub(crate) struct SolveCycleShared {
     pub(crate) inline_sim:
         Option<std::sync::Arc<dyn crate::arb_engine::inline_sim::InlineSimulator>>,
 }
+
+#[cfg(test)]
+impl SolveCycleShared {
+    /// The white-box test constructor: the fixture sites vary only these
+    /// fields; everything else takes the cold-cycle default (zero epoch, no
+    /// captures, empty walk/prefix memos, zero min-profit, default runtime
+    /// stance, a fresh ledger whose block mirrors `solve_block`, no test
+    /// hooks). Keeps the three fixtures from hand-assembling the full literal.
+    pub(crate) fn for_test(
+        solve_block: u64,
+        metadata: BlockMetadata,
+        core: std::sync::Arc<degenbot_substrate::state_lock::StateLock<BotState>>,
+        pool_refs: Vec<std::sync::Arc<MixedPath>>,
+        worker_clamp: bool,
+        inline_sim: Option<std::sync::Arc<dyn crate::arb_engine::inline_sim::InlineSimulator>>,
+    ) -> Self {
+        Self {
+            solve_block,
+            epoch: 0,
+            metadata,
+            gate_capture: None,
+            walk_memo: std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
+            prefix_cache: std::sync::Arc::new(
+                ::degenbot_solvers::profit_envelope::PrefixCache::new(),
+            ),
+            min_profit: U256::ZERO,
+            runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
+            path_cost_ledger: super::path_cost_ledger::PathCostLedger::new(
+                solve_block,
+                None,
+                None,
+                std::sync::Arc::new(super::path_cost_ledger::PathCostHistory::new()),
+            ),
+            #[cfg(test)]
+            test_solve_delay: None,
+            #[cfg(test)]
+            test_solve_panic: None,
+            core,
+            pool_refs,
+            worker_clamp,
+            inline_sim,
+        }
+    }
+}
 /// The solve cycle's owned state .
 ///
 /// The resolve companions, the cycle-transient stash, the solve output,

@@ -514,35 +514,19 @@ mod fleet_sim_stance_tests {
             .collect()
     }
     fn make_ctx(sim: Arc<CorpusSim>, pool_refs: Vec<Arc<MixedPath>>) -> Arc<SolveCycleShared> {
-        Arc::new(SolveCycleShared {
-            solve_block: 42,
-            epoch: 0,
-            metadata: BlockMetadata {
+        Arc::new(SolveCycleShared::for_test(
+            42,
+            BlockMetadata {
                 base_fee_per_gas: Some(30),
                 ..BlockMetadata::default()
             },
-            runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
-            gate_capture: None,
-            walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
-            prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
-            min_profit: ::alloy::primitives::U256::ZERO,
-            path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(
-                42,
-                None,
-                None,
-                Arc::new(crate::arb_engine::path_cost_ledger::PathCostHistory::new()),
-            ),
-            core: Arc::new(degenbot_substrate::state_lock::StateLock::new(
+            Arc::new(degenbot_substrate::state_lock::StateLock::new(
                 degenbot_substrate::BotState::new(),
             )),
             pool_refs,
-            worker_clamp: true,
-            inline_sim: Some(sim),
-            #[cfg(test)]
-            test_solve_delay: None,
-            #[cfg(test)]
-            test_solve_panic: None,
-        })
+            true,
+            Some(sim),
+        ))
     }
     fn admitted_for(idx: usize, hops: usize) -> SolvePathResult {
         SolvePathResult {

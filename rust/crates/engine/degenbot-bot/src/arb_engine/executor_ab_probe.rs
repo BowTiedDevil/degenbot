@@ -122,32 +122,16 @@ pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_solvers::mixed:
     items
 }
 pub(in crate::arb_engine) fn probe_ctx() -> Arc<SolveCycleShared> {
-    Arc::new(SolveCycleShared {
-        solve_block: 0,
-        epoch: 0,
-        metadata: BlockMetadata::default(),
-        runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
-        gate_capture: None,
-        walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
-        prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
-        min_profit: ::alloy::primitives::U256::ZERO,
-        path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(
-            0,
-            None,
-            None,
-            Arc::new(crate::arb_engine::path_cost_ledger::PathCostHistory::new()),
-        ),
-        core: Arc::new(degenbot_substrate::state_lock::StateLock::new(
+    Arc::new(SolveCycleShared::for_test(
+        0,
+        BlockMetadata::default(),
+        Arc::new(degenbot_substrate::state_lock::StateLock::new(
             BotState::new(),
         )),
-        pool_refs: Vec::new(),
-        worker_clamp: false,
-        inline_sim: None,
-        #[cfg(test)]
-        test_solve_delay: None,
-        #[cfg(test)]
-        test_solve_panic: None,
-    })
+        Vec::new(),
+        false,
+        None,
+    ))
 }
 /// LPT bins per the production cost fn (empty measured-history = first-cycle
 /// structural cost, exactly like an engine cold bucket).
