@@ -939,43 +939,25 @@ mod tests {
         .result
     }
 
-    /// The mixed intake: resolve -> cached tables -> `solve_mixed_piecewise_cached`.
-    // `Option::cloned` is ambiguous as a bare fn item (two impls); the
-    // equivalent forwarding closures are what the code needs.
-    #[expect(clippy::redundant_closure_for_method_calls)]
+    /// The mixed intake: resolve -> one borrowed hop view -> `solve_mixed_piecewise`.
     fn mixed_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
-        let hop_order: Vec<bool> = r
-            .hops
-            .iter()
-            .map(|h| matches!(h, ResolvedHop::V2 { .. }))
-            .collect();
-        let v2_hops: Vec<Option<degenbot_math::v2::IntHopState>> = r
-            .hops
-            .iter()
-            .map(ResolvedHop::as_v2_state)
-            .map(|opt| opt.cloned())
-            .collect();
-        // Borrow: the walk reads the sequences only.
-        let seqs: Vec<Option<&degenbot_solvers::cl::IntV3TickRangeSequence>> =
-            r.hops.iter().map(ResolvedHop::as_int_sequence).collect();
-        // The projection's derivation value rides each CL hop; translate it to
-        // the entries' intake shape (the fingerprint is already folded once).
-        let cl_prepared: Vec<Option<_>> = hop_order
-            .iter()
-            .enumerate()
-            .map(|(i, &is_v2)| {
-                if is_v2 {
-                    None
-                } else {
-                    Some(r.hops[i].as_prepared_cl_hop()?.to_solve_tables())
+        // One borrowed view per position: V2 borrows the resolved state; CL
+        // borrows the projection's prepared value (sequence + `Arc` tables).
+        let mut hops: Vec<degenbot_solvers::cl::MixedHopView<'_>> =
+            Vec::with_capacity(r.hops.len());
+        for h in &r.hops {
+            match h {
+                ResolvedHop::V2 { state } => {
+                    hops.push(degenbot_solvers::cl::MixedHopView::V2(state));
                 }
-            })
-            .collect();
+                ResolvedHop::V3 { prepared } | ResolvedHop::V4 { prepared } => {
+                    hops.push(degenbot_solvers::cl::MixedHopView::Cl(prepared));
+                }
+                _ => return None,
+            }
+        }
         degenbot_solvers::cl::solve_mixed_piecewise(
-            &v2_hops,
-            &seqs,
-            &cl_prepared,
-            &hop_order,
+            &hops,
             None,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             None,

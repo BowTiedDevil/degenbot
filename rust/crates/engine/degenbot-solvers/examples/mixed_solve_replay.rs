@@ -37,8 +37,9 @@
 //! The capture records `measured.time_us` for the FULL `solve_path_with_min`
 //! call (profit-envelope gate + resolve + the decomposed solver). This harness
 //! re-runs only the decomposed solver entry
-//! (`solve_mixed_piecewise`, no crossings/profiles → rebuilt per
-//! call). If the replay time ≪ `measured.time_us`, the bottleneck is NOT the
+//! (`solve_mixed_piecewise`; the prepared hops are derived once per path, so
+//! the rep loop measures the solve). If the replay time ≪ `measured.time_us`,
+//! the bottleneck is NOT the
 //! active-set walk — it lives in the profit-envelope gate or the resolve phase
 //! (which run before the decomposed solver). The walk-stats line
 //! (`pieces/sims/steps/refine`) then confirms: zeros mean the walk never ran
@@ -48,10 +49,12 @@
 //! under-shot past `PROFIT_EPS` or over-shot past `OVER_SHOOT_TOLERANCE_WEI`,
 //! or if reps disagree.
 
+use std::sync::Arc;
+
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solvers::cl::{solve_mixed_piecewise, WalkStats};
+use degenbot_solvers::cl::{solve_mixed_piecewise, MixedHopView, PreparedClHop, WalkStats};
 use serde_json::Value;
 
 #[path = "common/mod.rs"]
@@ -199,6 +202,31 @@ fn main() {
             }
         };
 
+        // One borrowed hop view per position (the projection's shape), built
+        // once per path so the rep loop measures the solve, not derivation.
+        let cl_prepared: Vec<Option<PreparedClHop>> = cl_seqs
+            .iter()
+            .map(|o| {
+                o.as_ref()
+                    .map(|s| PreparedClHop::derive(Arc::new(s.clone())))
+            })
+            .collect();
+        let views: Option<Vec<MixedHopView<'_>>> = hop_order
+            .iter()
+            .enumerate()
+            .map(|(i, &is_v2)| {
+                if is_v2 {
+                    v2_hops[i].as_ref().map(MixedHopView::V2)
+                } else {
+                    cl_prepared[i].as_ref().map(MixedHopView::Cl)
+                }
+            })
+            .collect();
+        let Some(views) = views else {
+            eprintln!("path {pid}: skip (empty hop slot)");
+            continue;
+        };
+
         // Warm + time N reps. Each rep's WalkOutcome carries its own
         // attributable stats (we report the final rep's walk breakdown).
         let mut times_us: Vec<u128> = Vec::with_capacity(iters);
@@ -207,14 +235,8 @@ fn main() {
         let mut divergent_reps = false;
         for _ in 0..iters {
             let t0 = std::time::Instant::now();
-            let no_tables = vec![None; hop_order.len()];
-            let seq_refs: Vec<Option<&IntV3TickRangeSequence>> =
-                cl_seqs.iter().map(|o| o.as_ref()).collect();
             let out = solve_mixed_piecewise(
-                &v2_hops,
-                &seq_refs,
-                &no_tables,
-                &hop_order,
+                &views,
                 None,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
                 None,

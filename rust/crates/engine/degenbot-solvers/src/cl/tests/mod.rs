@@ -564,16 +564,11 @@ fn test_solve_mixed_piecewise_v3_then_v2_no_panic() {
     };
 
     let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
+    let cl_prepared = PreparedClHop::derive(Arc::new(v3_seq));
 
-    let v2_hops: [Option<IntHopState>; 2] = [None, Some(v2_hop)];
-    let cl_sequences: [Option<&IntV3TickRangeSequence>; 2] = [Some(&v3_seq), None];
-    let cl_prepared: [Option<ClSolveTables>; 2] = [None, None];
     // v3_first: the CL hop leads, then the V2 hop.
     let result = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &cl_prepared,
-        &[false, true],
+        &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2_hop)],
         None,
         &SolveRuntimeConfig::default(),
         None,
@@ -1021,12 +1016,10 @@ fn walk_mixed_fingerprint_separates_hop_order() {
     // result.
     let cfg = SolveRuntimeConfig::default();
     let (v2, cl_seq) = mixed_memo_fixture();
+    let cl_prepared = PreparedClHop::derive(Arc::new(cl_seq));
     let memo = WalkMemo::new(true, true);
     let base = solve_mixed_piecewise(
-        &[Some(v2.clone()), None],
-        &[None, Some(&cl_seq)],
-        &[None, None],
-        &[true, false],
+        &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
         &cfg,
         None,
@@ -1035,19 +1028,13 @@ fn walk_mixed_fingerprint_separates_hop_order() {
     .expect("mixed fixture must be profitable");
     memo.begin_block(2);
     let replayed = solve_mixed_piecewise(
-        &[None, Some(v2.clone())],
-        &[Some(&cl_seq), None],
-        &[None, None],
-        &[false, true],
+        &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2)],
         Some(&memo),
         &cfg,
         None,
     );
     let fresh = solve_mixed_piecewise(
-        &[None, Some(v2)],
-        &[Some(&cl_seq), None],
-        &[None, None],
-        &[false, true],
+        &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2)],
         None,
         &cfg,
         None,
@@ -1234,13 +1221,11 @@ fn test_solve_mixed_piecewise_2hop_delegates() {
 
     let v3_hop = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
     let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
+    let cl_prepared = PreparedClHop::derive(Arc::new(v3_seq));
 
     // V2 first, then CL
     let result = solve_mixed_piecewise(
-        &[Some(v2_hop.clone()), None],
-        &[None, Some(&v3_seq)],
-        &[None, None], // offline shape: tables derive here
-        &[true, false],
+        &[MixedHopView::V2(&v2_hop), MixedHopView::Cl(&cl_prepared)],
         None,
         &SolveRuntimeConfig::default(),
         None,
@@ -1286,39 +1271,21 @@ fn mixed_path_cached_crossings_match_offline_solve() {
     liquidities.push(1_000_000_000u128);
     let cl_seq = multi_range_sequence(0, 60, false, &liquidities);
 
-    let v2_hops = [Some(v2_entry), None];
-    let cl_sequences = [None, Some(&cl_seq)];
-    let crossing = Arc::new(build_cl_crossing_table(
-        cl_sequences[1].as_ref().expect("CL hop present"),
-    ));
-    let profile = Arc::new(build_cl_word_profiles(
-        cl_sequences[1].as_ref().expect("CL hop present"),
-    ));
-    let cl_prepared = [
-        None,
-        Some(ClSolveTables {
-            crossings: crossing,
-            profiles: profile,
-            source_fingerprint: walk_path_fingerprint(&[&cl_seq]),
-        }),
-    ];
+    let crossing = Arc::new(build_cl_crossing_table(&cl_seq));
+    let profile = Arc::new(build_cl_word_profiles(&cl_seq));
+    let cached_hop = PreparedClHop::from_parts(Arc::new(cl_seq.clone()), crossing, profile);
+    let derived_hop = PreparedClHop::derive(Arc::new(cl_seq));
 
     // Projection-backed cached tables must equal the offline build
     // (byte-identical mixed-path math).
     let cached = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &cl_prepared,
-        &[true, false],
+        &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&cached_hop)],
         None,
         &SolveRuntimeConfig::default(),
         None,
     );
     let offline = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &[None, None],
-        &[true, false],
+        &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&derived_hop)],
         None,
         &SolveRuntimeConfig::default(),
         None,
@@ -1349,12 +1316,14 @@ fn test_solve_mixed_piecewise_3hop_v2_cl_v2() {
 
     let v3_hop = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
     let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
+    let cl_prepared = PreparedClHop::derive(Arc::new(v3_seq));
 
     let result = solve_mixed_piecewise(
-        &[Some(v2_hop1.clone()), None, Some(v2_hop2.clone())],
-        &[None, Some(&v3_seq), None],
-        &[None, None, None],  // offline shape: tables derive here
-        &[true, false, true], // V2 → CL → V2
+        &[
+            MixedHopView::V2(&v2_hop1),
+            MixedHopView::Cl(&cl_prepared),
+            MixedHopView::V2(&v2_hop2),
+        ],
         None,
         &SolveRuntimeConfig::default(),
         None,
@@ -1395,36 +1364,27 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
         IntV3TickRangeSequence::new(vec![make_v3_hop_at_1to1(10_000_000_000_000u128, false)])
             .unwrap();
 
-    let v2_hops = [Some(v2_hop1), None, Some(v2_hop2)];
-    let cl_sequences = [None, Some(&v3_seq), None];
-    let crossing = Arc::new(build_cl_crossing_table(
-        cl_sequences[1].as_ref().expect("CL hop present"),
-    ));
+    let crossing = Arc::new(build_cl_crossing_table(&v3_seq));
     let profile = Arc::new(build_cl_word_profiles_from_crossings(&crossing));
-    let cl_prepared = [
-        None,
-        Some(ClSolveTables {
-            crossings: crossing,
-            profiles: profile,
-            source_fingerprint: walk_path_fingerprint(&[&v3_seq]),
-        }),
-        None,
-    ];
+    let cached_hop = PreparedClHop::from_parts(Arc::new(v3_seq.clone()), crossing, profile);
+    let derived_hop = PreparedClHop::derive(Arc::new(v3_seq));
 
     let cached = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &cl_prepared,
-        &[true, false, true],
+        &[
+            MixedHopView::V2(&v2_hop1),
+            MixedHopView::Cl(&cached_hop),
+            MixedHopView::V2(&v2_hop2),
+        ],
         None,
         &SolveRuntimeConfig::default(),
         None,
     );
     let offline = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &[None, None, None],
-        &[true, false, true],
+        &[
+            MixedHopView::V2(&v2_hop1),
+            MixedHopView::Cl(&derived_hop),
+            MixedHopView::V2(&v2_hop2),
+        ],
         None,
         &SolveRuntimeConfig::default(),
         None,
@@ -2597,11 +2557,9 @@ fn solve_mixed_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
         &[None, Some(cl_seq.clone())],
         &[true, false],
     );
+    let cl_prepared = PreparedClHop::derive(Arc::new(cl_seq));
     let result = solve_mixed_piecewise(
-        &[Some(v2_entry), None],
-        &[None, Some(&cl_seq)],
-        &[None, None],
-        &[true, false],
+        &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&cl_prepared)],
         None,
         &SolveRuntimeConfig::default(),
         None,

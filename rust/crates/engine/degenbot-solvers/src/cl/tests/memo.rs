@@ -13,7 +13,7 @@ use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 
 use crate::cl::memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, MemoProbe, WalkMemo};
-use crate::cl::{solve_cl_piecewise, solve_mixed_piecewise, PreparedClHop};
+use crate::cl::{solve_cl_piecewise, solve_mixed_piecewise, MixedHopView, PreparedClHop};
 use crate::runtime::SolveRuntimeConfig;
 
 use super::{
@@ -432,21 +432,13 @@ fn memo_negative_entries_gauge_mirrors_the_cache() {
 #[test]
 fn memo_mixed_cached_hit_replays_the_solution_without_the_walk() {
     let (v2, cl_seq) = mixed_memo_fixture();
-    let v2_hops = [Some(v2), None];
-    let cl_sequences = [None, Some(&cl_seq)];
+    let cl_prepared = PreparedClHop::derive(std::sync::Arc::new(cl_seq));
+    let hops = [MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)];
     let cfg = SolveRuntimeConfig::default();
     let memo = WalkMemo::new(true, true);
 
     // First solve: Miss → the walk runs and stores the solution.
-    let first = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &[None, None],
-        &[true, false],
-        Some(&memo),
-        &cfg,
-        None,
-    );
+    let first = solve_mixed_piecewise(&hops, Some(&memo), &cfg, None);
     let first_result = first.result.expect("mixed fixture must be profitable");
     #[cfg(feature = "telemetry")]
     assert!(first.stats.sims > 0, "first solve must run the walk");
@@ -462,15 +454,7 @@ fn memo_mixed_cached_hit_replays_the_solution_without_the_walk() {
     memo.begin_block(2);
 
     // Second solve: the cached hit replays byte-identically, no walk.
-    let second = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &[None, None],
-        &[true, false],
-        Some(&memo),
-        &cfg,
-        None,
-    );
+    let second = solve_mixed_piecewise(&hops, Some(&memo), &cfg, None);
     assert_eq!(
         second.result,
         Some(first_result),
@@ -503,20 +487,12 @@ fn memo_mixed_cached_negative_skips_the_walk_on_replay() {
     );
     let cl_hop = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
     let cl_seq = IntV3TickRangeSequence::new(vec![cl_hop]).unwrap();
-    let v2_hops = [Some(v2), None];
-    let cl_sequences = [None, Some(&cl_seq)];
+    let cl_prepared = PreparedClHop::derive(std::sync::Arc::new(cl_seq));
+    let hops = [MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)];
     let cfg = SolveRuntimeConfig::default();
     let memo = WalkMemo::new(true, true);
 
-    let first = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &[None, None],
-        &[true, false],
-        Some(&memo),
-        &cfg,
-        None,
-    );
+    let first = solve_mixed_piecewise(&hops, Some(&memo), &cfg, None);
     assert!(first.result.is_none(), "fixture must be unprofitable");
     #[cfg(feature = "telemetry")]
     assert!(first.stats.sims > 0, "first solve must run the walk");
@@ -533,15 +509,7 @@ fn memo_mixed_cached_negative_skips_the_walk_on_replay() {
 
     memo.begin_block(2);
 
-    let second = solve_mixed_piecewise(
-        &v2_hops,
-        &cl_sequences,
-        &[None, None],
-        &[true, false],
-        Some(&memo),
-        &cfg,
-        None,
-    );
+    let second = solve_mixed_piecewise(&hops, Some(&memo), &cfg, None);
     assert!(second.result.is_none());
     assert_eq!(
         second.stats.sims, 0,
@@ -585,12 +553,10 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
         "a V2 reserve change must change the mixed key"
     );
 
+    let cl_prepared = PreparedClHop::derive(std::sync::Arc::new(cl_seq));
     let memo = WalkMemo::new(true, true);
     let base = solve_mixed_piecewise(
-        &[Some(v2), None],
-        &[None, Some(&cl_seq)],
-        &[None, None],
-        &[true, false],
+        &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
         &cfg,
         None,
@@ -600,19 +566,19 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
     memo.begin_block(2);
 
     let replayed = solve_mixed_piecewise(
-        &[Some(v2_changed.clone()), None],
-        &[None, Some(&cl_seq)],
-        &[None, None],
-        &[true, false],
+        &[
+            MixedHopView::V2(&v2_changed),
+            MixedHopView::Cl(&cl_prepared),
+        ],
         Some(&memo),
         &cfg,
         None,
     );
     let fresh = solve_mixed_piecewise(
-        &[Some(v2_changed), None],
-        &[None, Some(&cl_seq)],
-        &[None, None],
-        &[true, false],
+        &[
+            MixedHopView::V2(&v2_changed),
+            MixedHopView::Cl(&cl_prepared),
+        ],
         None,
         &cfg,
         None,
@@ -656,12 +622,11 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
         "a CL sequence change must change the mixed key"
     );
 
+    let cl_prepared = PreparedClHop::derive(std::sync::Arc::new(cl_seq));
+    let cl_prepared_changed = PreparedClHop::derive(std::sync::Arc::new(cl_seq_changed));
     let memo = WalkMemo::new(true, true);
     let base = solve_mixed_piecewise(
-        &[Some(v2.clone()), None],
-        &[None, Some(&cl_seq)],
-        &[None, None],
-        &[true, false],
+        &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
         &cfg,
         None,
@@ -671,19 +636,19 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
     memo.begin_block(2);
 
     let replayed = solve_mixed_piecewise(
-        &[Some(v2.clone()), None],
-        &[None, Some(&cl_seq_changed)],
-        &[None, None],
-        &[true, false],
+        &[
+            MixedHopView::V2(&v2),
+            MixedHopView::Cl(&cl_prepared_changed),
+        ],
         Some(&memo),
         &cfg,
         None,
     );
     let fresh = solve_mixed_piecewise(
-        &[Some(v2), None],
-        &[None, Some(&cl_seq_changed)],
-        &[None, None],
-        &[true, false],
+        &[
+            MixedHopView::V2(&v2),
+            MixedHopView::Cl(&cl_prepared_changed),
+        ],
         None,
         &cfg,
         None,

@@ -415,27 +415,12 @@ fn solve_walkable_path_int(
         return (None, crate::cl::WalkStats::default());
     }
 
-    // Build hop_order and adapter arrays from the enum (true = V2 hop).
-    let hop_order: Vec<bool> = resolved
-        .hops
-        .iter()
-        .map(|h| matches!(h, ResolvedHop::V2 { .. }))
-        .collect();
-    let v2_hops: Vec<Option<degenbot_math::v2::IntHopState>> = resolved
-        .hops
-        .iter()
-        .map(|h| h.as_v2_state().cloned())
-        .collect();
-    // Borrow the CL sequences straight off the resolved hops - the walk reads
-    // them; a deep clone would copy every ranges Vec per solve.
-    let int_v3_sequences: Vec<Option<&crate::cl::IntV3TickRangeSequence>> =
-        resolved.hops.iter().map(|h| h.as_int_sequence()).collect();
+    let all_cl = resolved.hops.iter().all(|h| h.as_int_sequence().is_some());
 
-    let all_cl = hop_order.iter().all(|&is_v2| !is_v2);
     let out = if all_cl {
-        // The projection's prepared hop IS the all-CL entry's intake now, so
-        // clone it (three `Arc` bumps per hop) rather than translate it to the
-        // mixed entry's table shape.
+        // The projection's prepared hop IS the all-CL entry's intake, so clone
+        // it (three `Arc` bumps per hop) rather than translate it to any other
+        // shape.
         let Some(prepared) = resolved
             .hops
             .iter()
@@ -446,41 +431,25 @@ fn solve_walkable_path_int(
         };
         crate::cl::solve_cl_piecewise(&prepared, gate.walk_memo(), &gate.runtime, walk_env)
     } else {
-        // Per-CL-hop prepared tables from the projection (V2 positions None):
-        // the derivation value rides the resolved hop, so the fingerprint is
-        // folded ONCE at derivation — the translate below only Arc-clones the
-        // tables.
-        let cl_prepared: Vec<Option<crate::cl::ClSolveTables>> = hop_order
-            .iter()
-            .enumerate()
-            .map(|(i, &is_v2)| {
-                if is_v2 {
-                    None
-                } else {
-                    Some(resolved.hops[i].as_prepared_cl_hop()?.to_solve_tables())
+        // ONE borrowed hop view, one entry per position: V2 borrows the
+        // resolved state; CL borrows the projection's prepared value (the
+        // tick-range sequence paired with its `Arc` tables), so the positional
+        // pairing the parallel slices needed is structural and nothing is
+        // derived or rebuilt per solve.
+        let mut hops: Vec<crate::cl::MixedHopView<'_>> = Vec::with_capacity(resolved.hops.len());
+        for h in &resolved.hops {
+            match h {
+                ResolvedHop::V2 { state } => hops.push(crate::cl::MixedHopView::V2(state)),
+                ResolvedHop::V3 { prepared } | ResolvedHop::V4 { prepared } => {
+                    hops.push(crate::cl::MixedHopView::Cl(prepared));
                 }
-            })
-            .collect();
-
-        // Every CL position must carry its prepared tables; a missing one
-        // means the projection is incomplete.
-        if hop_order
-            .iter()
-            .zip(&cl_prepared)
-            .any(|(&is_v2, prepared)| !is_v2 && prepared.is_none())
-        {
-            return (None, crate::cl::WalkStats::default());
+                // Not a walkable V2/CL path (the caller routes other families
+                // elsewhere); refuse rather than solve a partial composition.
+                _ => return (None, crate::cl::WalkStats::default()),
+            }
         }
 
-        crate::cl::solve_mixed_piecewise(
-            &v2_hops,
-            &int_v3_sequences,
-            &cl_prepared,
-            &hop_order,
-            gate.walk_memo(),
-            &gate.runtime,
-            walk_env,
-        )
+        crate::cl::solve_mixed_piecewise(&hops, gate.walk_memo(), &gate.runtime, walk_env)
     };
 
     (

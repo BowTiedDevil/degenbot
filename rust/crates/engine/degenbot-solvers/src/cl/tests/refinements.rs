@@ -29,7 +29,7 @@ use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
 use crate::cl::{
     build_cl_crossing_table, derive_and_solve_cl_piecewise, solve_cl_piecewise,
-    solve_mixed_piecewise,
+    solve_mixed_piecewise, MixedHopView,
 };
 use crate::profit_envelope::{
     path_bound_lines, path_output_bound_at, path_profit_bound, ClHop, GateDeps, HopMath,
@@ -626,51 +626,21 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
     ];
     let cfg = SolveRuntimeConfig::default();
     let env = path_bound_lines(&views, &cfg).expect("mixed bound derivable");
-    let v2_wrapped: Vec<Option<IntHopState>> = v2s.iter().map(|h| Some(h.clone())).collect();
-    let cl_wrapped: Vec<Option<&IntV3TickRangeSequence>> = vec![Some(refs[0]), None, None];
-    let order = [true, false, true];
-    let off = solve_mixed_piecewise(
-        &v2_wrapped,
-        &cl_wrapped,
-        &prep_as_options(&prep, 1),
-        &order,
-        None,
-        &cfg,
-        None,
-    );
-    let on = solve_mixed_piecewise(
-        &v2_wrapped,
-        &cl_wrapped,
-        &prep_as_options(&prep, 1),
-        &order,
-        None,
-        &cfg,
-        Some(&env),
-    );
+    // ONE borrowed hop view: V2 borrows the states, CL borrows the
+    // projection's prepared value (V2 → CL → V2 order).
+    let hops = [
+        MixedHopView::V2(&v2s[0]),
+        MixedHopView::Cl(&prep[0]),
+        MixedHopView::V2(&v2s[1]),
+    ];
+    let off = solve_mixed_piecewise(&hops, None, &cfg, None);
+    let on = solve_mixed_piecewise(&hops, None, &cfg, Some(&env));
     assert_eq!(off.result, on.result, "Loop-21 moved the mixed-path argmax");
     assert!(on.stats.sims <= off.stats.sims);
     println!(
         "mixed: sims off={} on={} refine off={} on={}",
         off.stats.sims, on.stats.sims, off.stats.refine_sims, on.stats.refine_sims
     );
-}
-
-fn prep_as_options(
-    prep: &[crate::cl::PreparedClHop],
-    cl_slots: usize,
-) -> Vec<Option<crate::cl::ClSolveTables>> {
-    let mut out: Vec<Option<crate::cl::ClSolveTables>> = Vec::new();
-    let mut used = 0usize;
-    for _ in 0..=cl_slots {
-        out.push(None);
-    }
-    // CL slot is position 1 in the V2 → CL → V2 order
-    if cl_slots >= 1 {
-        out[1] = Some(prep[used].to_solve_tables());
-        used += 1;
-    }
-    let _ = used;
-    out
 }
 
 #[test]

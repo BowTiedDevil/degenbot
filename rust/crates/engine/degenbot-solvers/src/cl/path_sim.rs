@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use alloy::primitives::U256;
 
-use super::entries::ClSolveTables;
+use super::entries::PreparedClHop;
 use super::hop_sim::simulate_v3_range_swap;
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
 
@@ -38,7 +38,7 @@ pub struct ClPathOutcome {
 /// A reusable, byte-exact CL path simulator.
 ///
 /// Construction derives each hop's crossing table and word profiles once (or
-/// clones them from supplied [`ClSolveTables`]); [`ClPathSim::output`] then
+/// O(1)-clones them from supplied prepared hops); [`ClPathSim::output`] then
 /// reproduces the active-set walk's forward oracle for any input.
 pub struct ClPathSim {
     hops: Vec<ClPathSimHop>,
@@ -46,16 +46,20 @@ pub struct ClPathSim {
 
 impl ClPathSim {
     /// Build a simulator for `sequences` in path order. `prepared[k]`, when
-    /// present, supplies hop `k`'s already-derived tables; otherwise they are
-    /// built here.
+    /// present, supplies hop `k`'s already-derived tables (the projection's
+    /// `Arc`-shared crossing + profile tables); otherwise they are built here.
     #[must_use]
-    pub fn new(sequences: &[&IntV3TickRangeSequence], prepared: Option<&[ClSolveTables]>) -> Self {
+    pub fn new(sequences: &[&IntV3TickRangeSequence], prepared: Option<&[PreparedClHop]>) -> Self {
         let hops = sequences
             .iter()
             .enumerate()
             .map(|(i, seq)| {
-                let (crossings, profiles) = if let Some(tables) = prepared.and_then(|p| p.get(i)) {
-                    (Arc::clone(&tables.crossings), Arc::clone(&tables.profiles))
+                let (crossings, profiles) = if let Some(prepared) = prepared.and_then(|p| p.get(i))
+                {
+                    (
+                        Arc::clone(&prepared.crossings),
+                        Arc::clone(&prepared.profiles),
+                    )
                 } else {
                     let crossings = Arc::new(super::crossings::build_cl_crossing_table(seq));
                     let profiles =
@@ -163,10 +167,7 @@ mod tests {
     /// (anchor, anchor±1..8, every crossing boundary ±1 and +37, plus 0/1).
     fn assert_parity(sequences: &[&IntV3TickRangeSequence], label: &str) {
         let cfg = SolveRuntimeConfig::default();
-        let prepared: Vec<ClSolveTables> =
-            sequences.iter().map(|s| ClSolveTables::derive(s)).collect();
-        // The all-CL entry takes prepared hops directly now; the projection's
-        // shape is one `PreparedClHop` per CL hop.
+        // The projection's shape is one `PreparedClHop` per CL hop.
         let prepared_hops: Vec<PreparedClHop> = sequences
             .iter()
             .map(|s| PreparedClHop::derive(Arc::new(IntV3TickRangeSequence::clone(s))))
@@ -179,7 +180,7 @@ mod tests {
         );
 
         let hops: Vec<PieceView> = sequences.iter().map(|s| cl_walk_hop(s, None)).collect();
-        let helper = ClPathSim::new(sequences, Some(&prepared));
+        let helper = ClPathSim::new(sequences, Some(&prepared_hops));
         let helper_derived = ClPathSim::new(sequences, None);
 
         let mut probes: Vec<U256> = vec![U256::ZERO, U256::ONE];

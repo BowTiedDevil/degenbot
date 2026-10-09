@@ -657,10 +657,10 @@ mod tests {
     /// fixed two-sequence fixture below.
     ///
     /// STABILITY CONTRACT: this value must stay put across refactors —
-    /// `ClSolveTables::source_fingerprint` is built from this function's
-    /// output (and paired against it downstream), and the cross-block memo
+    /// `PreparedClHop::source_fingerprint` is built from this function's
+    /// output (folded once at derivation), and the cross-block memo
     /// (`WalkMemo` cache/census) keys on it. A changed value silently
-    /// invalidates every paired consumer and every memoized key.
+    /// invalidates every derived fingerprint and every memoized key.
     #[test]
     fn fingerprint_golden_two_sequence_fixture() {
         let s1 = make_seq(vec![make_hop(

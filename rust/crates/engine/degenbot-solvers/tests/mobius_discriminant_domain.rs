@@ -19,7 +19,7 @@
 
 use alloy::primitives::U256;
 use degenbot_math::v2::{int_simulate_path, IntHopState};
-use degenbot_solvers::cl::{solve_mixed_piecewise, ClSolveTables, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{solve_mixed_piecewise, MixedHopView};
 use degenbot_solvers::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients};
 use degenbot_solvers::mobius_int_exact::{
     compute_mobius_model_optimal_input, exact_mobius_solve, isqrt_u512, u512_to_u256_internal,
@@ -61,20 +61,8 @@ fn baseline(hops: &[IntHopState]) -> Solve {
 }
 
 fn walk(hops: &[IntHopState]) -> Solve {
-    let v2: Vec<Option<IntHopState>> = hops.iter().cloned().map(Some).collect();
-    let seqs: Vec<Option<&IntV3TickRangeSequence>> = (0..hops.len()).map(|_| None).collect();
-    let prepared: Vec<Option<ClSolveTables>> = (0..hops.len()).map(|_| None).collect();
-    let order: Vec<bool> = (0..hops.len()).map(|_| true).collect();
-    solve_mixed_piecewise(
-        &v2,
-        &seqs,
-        &prepared,
-        &order,
-        None,
-        &SolveRuntimeConfig::default(),
-        None,
-    )
-    .result
+    let views: Vec<MixedHopView<'_>> = hops.iter().map(MixedHopView::V2).collect();
+    solve_mixed_piecewise(&views, None, &SolveRuntimeConfig::default(), None).result
 }
 
 /// `(opt, profit, outputs)` from sweeping `int_simulate_path` at `anchor - 2

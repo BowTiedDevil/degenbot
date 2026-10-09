@@ -34,8 +34,8 @@
 //! - `word_profile` — dense-range forward word-boundary profiles.
 //! - `crossings` — crossing tables, hop assembly, and window-edge helpers.
 //! - `active_set` — the active-set piecewise Möbius walk.
-//! - `entries` — the public solve entry points, [`PreparedClHop`], and
-//!   [`ClSolveTables`].
+//! - `entries` — the public solve entry points, [`PreparedClHop`], and the
+//!   mixed entry's [`MixedHopView`] intake.
 //! - `memo` — the cross-block composition memo.
 //! - `path_sim` — the public byte-exact forward path simulator.
 //! - `telemetry` — walk counters, census, and process-wide timing statics,
@@ -77,7 +77,7 @@ pub use crossings::{
     DENSE_OBSERVE_THRESHOLD,
 };
 pub use entries::{
-    derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_mixed_piecewise, ClSolveTables,
+    derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_mixed_piecewise, MixedHopView,
     PreparedClHop,
 };
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};

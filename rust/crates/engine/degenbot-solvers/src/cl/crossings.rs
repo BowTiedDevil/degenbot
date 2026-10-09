@@ -338,8 +338,9 @@ pub(super) fn cl_walk_hop_cached<'a>(
     PieceView::cl(crossings, profiles)
 }
 
-/// Cache-less variant of [`cl_walk_hop_cached`] for offline callers that only
+/// Cache-less variant of [`cl_walk_hop_cached`] for test callers that only
 /// have a sequence (builds both tables per call).
+#[cfg(test)]
 pub(super) fn cl_walk_hop<'a>(
     seq: &'a IntV3TickRangeSequence,
     profiles: Option<&Arc<ClProfileTable>>,
