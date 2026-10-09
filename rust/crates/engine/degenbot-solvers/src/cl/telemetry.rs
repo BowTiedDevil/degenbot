@@ -334,8 +334,10 @@ thread_local! {
     // 158,283 exact - the fallback is defense-in-depth, not a hot path.
     pub(crate) static WALK_EVENT_SOLVER_OK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_EVENT_SOLVER_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Q3 telemetry: the largest word-boundary count any range reached on this
-    // thread. DB audit (correct metric = max inter-init-tick gap in words,
+    // Q3 telemetry: the largest word-boundary count any range reached in the
+    // current solve on this thread (drained per solve by
+    // `reset_walk_stats_inner` — the outcome's per-path contract). DB audit
+    // (correct metric = max inter-init-tick gap in words,
     // per-pool ts): 210/47,679 registered UNI V3 pools have a >=128-word gap,
     // 161 fall in the solve window (<16 positions), and 27 have their current
     // tick inside one — so dense is load-bearing on real sparse pools today.
@@ -365,6 +367,7 @@ fn reset_walk_stats_inner() {
     WALK_ANCHOR_SIMS.with(|c| c.set(0));
     WALK_EVENT_SOLVER_OK.with(|c| c.set(0));
     WALK_EVENT_SOLVER_FALLBACKS.with(|c| c.set(0));
+    WALK_MAX_DENSE_WORDS.with(|c| c.set(0));
 }
 
 /// Snapshot (no clearing) of the full per-thread walk telemetry.

@@ -2799,6 +2799,65 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
     );
 }
 
+/// Per-path isolation of `WalkStats::max_dense_words`: the walk
+/// drains ALL its counters at solve entry (`reset_walk_stats`), and the
+/// returned outcome carries THIS path's telemetry — the Q3 dense max
+/// included. Two solves on ONE thread: the first exercises a dense range
+/// (a 128-word-boundary profile its table derivation observes), the second
+/// is light; the second outcome must report its own max, never the first
+/// solve's stale thread-lifetime carry. Telemetry-build only — without the
+/// feature every counter reads zero.
+#[test]
+#[cfg(feature = "telemetry")]
+fn walk_outcome_max_dense_words_is_per_path() {
+    // Dense fixture: the proven deep single-range geometry with a
+    // 128-word-boundary profile patched into its (zfo) anchored range —
+    // real Q128.96 prices between the entry and the lower bound, swap order
+    // (descending toward the exit).
+    let mut dense = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+    let lo = dense.ranges[0].sqrt_price_lower_x96;
+    let hi = dense.ranges[0].sqrt_price_x96;
+    let bounds = 128u64;
+    dense.ranges[0].word_boundary_prices = (1..=bounds)
+        .rev()
+        .map(|i| lo + (hi - lo) * U256::from(i) / U256::from(bounds + 1))
+        .collect();
+    // Structural fixture check: the crossing table the solve derives must
+    // actually carry the dense ending range (else the test is vacuous).
+    let dense_crossings = build_cl_crossing_table(&dense);
+    assert!(
+        dense_crossings
+            .iter()
+            .any(|c| c.ending_range.word_boundary_prices.len() >= 128),
+        "fixture must carry a >=128-word-boundary ending range"
+    );
+
+    // Solve 1: the dense path — its own walk must step the dense range.
+    let dense_out = derive_and_solve_cl_piecewise(&[&dense], &SolveRuntimeConfig::default());
+    assert!(dense_out.stats.sims > 0, "dense fixture must run the walk");
+    assert!(
+        dense_out.stats.word_steps > 0,
+        "dense fixture must exercise word-boundary stepping"
+    );
+
+    // Solve 2: the proven light 3-hop geometry (no word boundaries at all).
+    let s1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
+    let s2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
+    let s3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
+    let light_out = derive_and_solve_cl_piecewise(&[&s1, &s2, &s3], &SolveRuntimeConfig::default());
+    // The light walk must have run — otherwise the exit snapshot never
+    // happens and the assertion below is vacuous.
+    assert!(light_out.stats.sims > 0, "light fixture must run the walk");
+
+    // THE per-path contract: the second outcome reports THIS path's dense
+    // max (zero — its ranges span no word boundaries), not the first solve's
+    // thread-lifetime maximum.
+    assert_eq!(
+        light_out.stats.max_dense_words, 0,
+        "max_dense_words carried a stale thread-lifetime max across solves          (reset_walk_stats must drain it at solve entry)"
+    );
+}
+
 /// Property: the walk's profit must match a fine grid
 /// maximization oracle (band tolerance — see the assertion) across BOTH the
 /// shallow/interior and deep/corner liquidity families. The uncapped
