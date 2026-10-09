@@ -98,22 +98,18 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
         )
         .result;
     }
-    let crossings: Vec<&std::sync::Arc<degenbot_solvers::cl::ClCrossingTable>> =
-        prepared.iter().map(|(c, _)| c).collect();
-    let profiles: Vec<&std::sync::Arc<degenbot_solvers::cl::ClProfileTable>> =
-        prepared.iter().map(|(_, p)| p).collect();
-    let prepared_hops: Vec<degenbot_solvers::cl::ClSolveTables> = crossings
+    let prepared_hops: Vec<degenbot_solvers::cl::PreparedClHop> = prepared
         .iter()
-        .zip(profiles.iter())
         .zip(seq_refs.iter())
-        .map(|((c, p), seq)| degenbot_solvers::cl::ClSolveTables {
-            crossings: std::sync::Arc::clone(c),
-            profiles: std::sync::Arc::clone(p),
-            source_fingerprint: degenbot_solvers::cl::walk_path_fingerprint(&[*seq]),
+        .map(|((c, p), seq)| {
+            degenbot_solvers::cl::PreparedClHop::from_parts(
+                std::sync::Arc::new((*seq).clone()),
+                std::sync::Arc::clone(c),
+                std::sync::Arc::clone(p),
+            )
         })
         .collect();
     solve_cl_piecewise(
-        seq_refs,
         &prepared_hops,
         None,
         &degenbot_solvers::runtime::SolveRuntimeConfig::default(),

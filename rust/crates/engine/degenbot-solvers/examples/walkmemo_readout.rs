@@ -11,7 +11,7 @@
 //!
 //! Loads the same capture fixture the other replays use
 //! (`heavy_cl_solve_captures.jsonl` via `capture_fixture::fixture_path`),
-//! derives [`ClSolveTables`] ONCE per captured path (the production shape —
+//! derives [`PreparedClHop`] ONCE per captured path (the production shape —
 //! the A/B must not measure table derivation), then runs `E` epochs over the
 //! FULL path set in two arms:
 //!
@@ -31,7 +31,7 @@
 //! divergence across blocks) are all in place and reported here.
 
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solvers::cl::{solve_cl_piecewise, ClSolveTables, WalkMemo, WalkMemoStats};
+use degenbot_solvers::cl::{solve_cl_piecewise, PreparedClHop, WalkMemo, WalkMemoStats};
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 use serde_json::Value;
 
@@ -122,9 +122,16 @@ fn main() {
     // Production shape: derive the crossing tables + word profiles ONCE per
     // path, exactly what the engine's HopProjectionCache rides — the A/B must
     // not measure table derivation.
-    let prepared: Vec<Vec<ClSolveTables>> = paths
+    let prepared: Vec<Vec<PreparedClHop>> = paths
         .iter()
-        .map(|p| p.seqs.iter().map(ClSolveTables::derive).collect())
+        .map(|p| {
+            p.seqs
+                .iter()
+                .map(|s| {
+                    PreparedClHop::derive(std::sync::Arc::new(IntV3TickRangeSequence::clone(s)))
+                })
+                .collect()
+        })
         .collect();
     let cfg = SolveRuntimeConfig::default();
     println!(
@@ -136,9 +143,8 @@ fn main() {
     for epoch in 1..=epochs {
         let mut walk_sims = 0usize;
         let t0 = std::time::Instant::now();
-        for (p, prep) in paths.iter().zip(prepared.iter()) {
-            let refs: Vec<&IntV3TickRangeSequence> = p.seqs.iter().collect();
-            let out = solve_cl_piecewise(&refs, prep, None, &cfg, None);
+        for prep in &prepared {
+            let out = solve_cl_piecewise(prep, None, &cfg, None);
             walk_sims += out.stats.sims;
         }
         arm_a.push(ArmARow {
@@ -157,9 +163,8 @@ fn main() {
         memo.begin_block(epoch);
         let mut walk_sims = 0usize;
         let t0 = std::time::Instant::now();
-        for (p, prep) in paths.iter().zip(prepared.iter()) {
-            let refs: Vec<&IntV3TickRangeSequence> = p.seqs.iter().collect();
-            let out = solve_cl_piecewise(&refs, prep, Some(&memo), &cfg, None);
+        for prep in &prepared {
+            let out = solve_cl_piecewise(prep, Some(&memo), &cfg, None);
             walk_sims += out.stats.sims;
         }
         let wall_ms = t0.elapsed().as_secs_f64() * 1_000.0;

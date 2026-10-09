@@ -110,7 +110,7 @@ mod tests {
     use super::*;
     use crate::cl::active_set::{simulate_walk_path, PieceView};
     use crate::cl::crossings::{build_cl_crossing_table, cl_walk_hop};
-    use crate::cl::entries::{derive_and_solve_cl_piecewise, solve_cl_piecewise};
+    use crate::cl::entries::{derive_and_solve_cl_piecewise, solve_cl_piecewise, PreparedClHop};
     use crate::runtime::SolveRuntimeConfig;
     use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
     use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
@@ -165,7 +165,13 @@ mod tests {
         let cfg = SolveRuntimeConfig::default();
         let prepared: Vec<ClSolveTables> =
             sequences.iter().map(|s| ClSolveTables::derive(s)).collect();
-        let via_prepared = solve_cl_piecewise(sequences, &prepared, None, &cfg, None);
+        // The all-CL entry takes prepared hops directly now; the projection's
+        // shape is one `PreparedClHop` per CL hop.
+        let prepared_hops: Vec<PreparedClHop> = sequences
+            .iter()
+            .map(|s| PreparedClHop::derive(Arc::new(IntV3TickRangeSequence::clone(s))))
+            .collect();
+        let via_prepared = solve_cl_piecewise(&prepared_hops, None, &cfg, None);
         let via_derived = derive_and_solve_cl_piecewise(sequences, &cfg);
         assert_eq!(
             via_prepared.result, via_derived.result,

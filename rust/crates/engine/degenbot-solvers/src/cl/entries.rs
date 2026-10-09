@@ -10,17 +10,20 @@ use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
 use crate::profit_envelope::PathBoundLines;
 use crate::runtime::SolveRuntimeConfig;
 
-/// One CL hop's prepared tables (crossing + word profiles): the intake value
-/// for the solve entry — built ONCE per (pool, direction) by the projection,
-/// or derived via [`ClSolveTables::derive`] by tableless callers (their cost).
+/// One CL hop's prepared tables (crossing + word profiles): the mixed solve
+/// entry's per-CL-hop intake — built ONCE per (pool, direction) by the
+/// projection, or derived via [`ClSolveTables::derive`] by tableless callers
+/// (their cost). The all-CL entry takes [`PreparedClHop`] directly; this type
+/// rides only until the mixed side's own consolidation.
 #[derive(Clone)]
 pub struct ClSolveTables {
     pub crossings: std::sync::Arc<ClCrossingTable>,
     pub profiles: std::sync::Arc<ClProfileTable>,
     /// [`walk_path_fingerprint`] of the sequence these tables were derived
-    /// from, recorded at derivation so the solve entries can refuse a pair
-    /// whose claimed source disagrees with the sequence at its position
-    /// instead of trusting positional pairing.
+    /// from, recorded at derivation and forwarded by
+    /// [`PreparedClHop::to_solve_tables`]. The per-hop pairing gate that once
+    /// consumed it is gone (the all-CL pairing is structural now); the field
+    /// rides with the type until the mixed side consolidates.
     pub source_fingerprint: u128,
 }
 
@@ -35,17 +38,6 @@ impl ClSolveTables {
             source_fingerprint: walk_path_fingerprint(&[seq]),
         }
     }
-
-    /// The table gate: does this prepared pair actually belong to `seq`?
-    /// Wraps the `source_fingerprint` comparison so the solve entries refuse
-    /// a pair whose claimed source disagrees with the sequence at its
-    /// position instead of trusting positional pairing. Both entries run it
-    /// before the walk uses any table — after the memo probe, so a `Hit` or
-    /// `Negative` replay returns without paying this per-hop
-    /// [`walk_path_fingerprint`] re-derivation.
-    fn matches(&self, seq: &IntV3TickRangeSequence) -> bool {
-        self.source_fingerprint == walk_path_fingerprint(&[seq])
-    }
 }
 
 /// One CL hop's DERIVATION value: the tick-range sequence it was derived from,
@@ -54,12 +46,13 @@ impl ClSolveTables {
 /// the projection.
 ///
 /// This is the projection-carried shape [`ResolvedHop::V3`/`V4`] carries (see
-/// `mixed::ResolvedHop`). The solve entries still take [`ClSolveTables`] —
-/// [`PreparedClHop::to_solve_tables`] translates at the call site, so the
-/// entries keep their signatures and `ClSolveTables` rides until a later chunk
-/// retires it. Folding `source_fingerprint` HERE, not at solve time, is the
-/// point of the value: the fingerprint is a pure function of the sequence, so
-/// it is derived once at derivation and stored.
+/// `mixed::ResolvedHop`) AND the all-CL solve entry's intake: the sequence and
+/// its tables travel as one value, so the pairing the deleted gate defended
+/// is structural. The mixed entry still takes [`ClSolveTables`] —
+/// [`PreparedClHop::to_solve_tables`] translates at that call site. Folding
+/// `source_fingerprint` HERE, not at solve time, is the point of the value: the
+/// fingerprint is a pure function of the sequence, so it is derived once at
+/// derivation and stored.
 #[derive(Clone, Debug)]
 pub struct PreparedClHop {
     /// The tick-range sequence these tables were derived from, `Arc`-shared
@@ -70,9 +63,9 @@ pub struct PreparedClHop {
     /// The dense-range word-boundary profiles, derived from `crossings` (the
     /// fused-epoch winner: ONE crossing build derives both artifacts).
     pub profiles: std::sync::Arc<ClProfileTable>,
-    /// [`walk_path_fingerprint`] of `int_seq`, recorded at derivation so the
-    /// solve entries can refuse a pair whose claimed source disagrees with the
-    /// sequence at its position instead of trusting positional pairing.
+    /// [`walk_path_fingerprint`] of `int_seq`, recorded at derivation (the
+    /// all-CL entry's memo key folds the hops' sequences directly; this field
+    /// is the mixed-side translate's payload).
     pub source_fingerprint: u128,
 }
 
@@ -128,7 +121,7 @@ impl PreparedClHop {
 
 /// Build one CL hop's walk view from a sequence and its optional prepared
 /// tables. `Some` O(1)-clones the projection's `Arc` tables; `None` builds
-/// them here. The single seam both solve entries assemble CL hops through.
+/// them here. The mixed entry assembles its CL hops through this seam.
 fn cl_hop_view<'a>(
     seq: &'a IntV3TickRangeSequence,
     prepared: Option<&ClSolveTables>,
@@ -143,9 +136,8 @@ fn cl_hop_view<'a>(
 /// composition memo at the caller's exact-key `fp` (each entry computes and
 /// documents its own fingerprint). `Some` means a `Hit` or `Negative`
 /// answered the probe and the caller returns the outcome as-is, skipping the
-/// walk; `None` (`Miss`) falls through to the per-hop gate + solve +
-/// [`memo_commit`] (a gate refusal after a `Miss` returns without
-/// [`memo_commit`]).
+/// walk; `None` (`Miss`) falls through to hop assembly + solve +
+/// [`memo_commit`].
 fn memo_replay(memo: &WalkMemo, fp: u128) -> Option<WalkOutcome> {
     match memo.probe(fp) {
         MemoProbe::Hit(hit) => Some(WalkOutcome::from_result(Some(hit))),
@@ -167,49 +159,52 @@ fn memo_commit(memo: &WalkMemo, fp: u128, outcome: &WalkOutcome) {
 }
 
 /// Convenience for callers that only have sequences (tests, examples,
-/// golden-reference harnesses): derives the tables per call (cost is the
-/// caller's) and runs the entry with no memo.
+/// golden-reference harnesses): derives each hop's [`PreparedClHop`] per call
+/// (cost is the caller's) and runs the entry with no memo.
 #[must_use]
 pub fn derive_and_solve_cl_piecewise(
     sequences: &[&IntV3TickRangeSequence],
     cfg: &SolveRuntimeConfig,
 ) -> WalkOutcome {
-    let prepared: Vec<ClSolveTables> = sequences.iter().map(|s| ClSolveTables::derive(s)).collect();
-    solve_cl_piecewise(sequences, &prepared, None, cfg, None)
+    let prepared: Vec<PreparedClHop> = sequences
+        .iter()
+        .map(|s| PreparedClHop::derive(std::sync::Arc::new(IntV3TickRangeSequence::clone(s))))
+        .collect();
+    solve_cl_piecewise(&prepared, None, cfg, None)
 }
 
-/// Stage-1 all-CL solve consuming the projection's precomputed crossing
-/// tables + word-boundary profiles (built once per `(pool, direction)` in
-/// `HopProjectionCache`, shared via `Arc` across paths). `prepared[k]` carries
-/// the tables for `sequences[k]`; tableless callers derive them per call via
-/// [`ClSolveTables::derive`] at their own cost.
-/// THE all-CL solve entry: one interface taking the hop sequences, the
-/// prepared tables (parallel to `sequences`), and the caller's
-/// engine-owned cross-block memo handle.
+/// THE all-CL solve entry: one interface taking the projection's prepared hops
+/// and the caller's engine-owned cross-block memo handle.
+///
+/// `prepared[k]` IS the hop — the tick-range sequence it was derived from plus
+/// the crossing table and word profiles built from it (built once per
+/// `(pool, direction)` in `HopProjectionCache`, shared via `Arc` across paths)
+/// — so the table source and the tables travel as one value and no positional
+/// re-derivation is needed.
 #[must_use]
 #[hotpath::measure(label = "cl_solve.int_solve_cl_path")]
 pub fn solve_cl_piecewise(
-    sequences: &[&IntV3TickRangeSequence],
-    prepared: &[ClSolveTables],
+    prepared: &[PreparedClHop],
     memo: Option<&WalkMemo>,
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
-    if sequences.is_empty() || prepared.len() != sequences.len() {
+    if prepared.is_empty() {
         return WalkOutcome::none();
     }
 
     // Cross-block composition memo: the fingerprint is the exact correctness
-    // key (the tables are pure derivations of the sequence), so an identical
-    // key cannot carry a stale result. The probe runs BEFORE the per-hop
-    // table gate and hop assembly — the key needs only the sequences, so a
-    // `Hit` or `Negative` returns without paying the gate's per-hop
-    // `walk_path_fingerprint` re-derivation or the `PieceView` builds.
-    // `None` memo = disabled run never pays the fingerprint or the lock.
+    // key (the tables are pure derivations of their sequence), so an identical
+    // key cannot carry a stale result. The probe runs BEFORE hop assembly — the
+    // key needs only the hops' sequences, so a `Hit` or `Negative` returns
+    // without paying the `PieceView` builds. `None` memo = disabled run never
+    // pays the fingerprint or the lock.
     let mut commit = None;
     if let Some(memo) = memo {
         if memo.active() {
-            let fp = walk_path_fingerprint(sequences);
+            let seqs: Vec<&IntV3TickRangeSequence> =
+                prepared.iter().map(|h| h.int_seq.as_ref()).collect();
+            let fp = walk_path_fingerprint(&seqs);
             if let Some(outcome) = memo_replay(memo, fp) {
                 return outcome;
             }
@@ -217,21 +212,7 @@ pub fn solve_cl_piecewise(
         }
     }
 
-    // Per-hop table gate: refuse a prepared pair whose claimed source
-    // disagrees with the sequence at its position BEFORE the walk uses any
-    // table. This sits after the memo probe (replays skip it entirely); a
-    // refusal returns `none()` WITHOUT `memo_commit` — the composition was
-    // refused for a pairing error and never walked, and caching it as a
-    // negative would be wrong.
-    if prepared
-        .iter()
-        .zip(sequences)
-        .any(|(tables, seq)| !tables.matches(seq))
-    {
-        return WalkOutcome::none();
-    }
-
-    let outcome = solve_cl_piecewise_inner(sequences, prepared, cfg, env);
+    let outcome = solve_cl_piecewise_inner(prepared, cfg, env);
     if let Some((memo, fp)) = commit {
         memo_commit(memo, fp, &outcome);
     }
@@ -240,15 +221,13 @@ pub fn solve_cl_piecewise(
 
 /// The memo-less solve body (the memo hook is the only difference).
 fn solve_cl_piecewise_inner(
-    sequences: &[&IntV3TickRangeSequence],
-    prepared: &[ClSolveTables],
+    prepared: &[PreparedClHop],
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
-    let hops: Vec<PieceView> = sequences
+    let hops: Vec<PieceView> = prepared
         .iter()
-        .zip(prepared)
-        .map(|(seq, tables)| cl_hop_view(seq, Some(tables)))
+        .map(|h| cl_walk_hop_cached(h.int_seq.as_ref(), Some(&h.crossings), Some(&h.profiles)))
         .collect();
     solve_active_set_path(&hops, cfg, env)
 }
@@ -273,17 +252,15 @@ fn solve_cl_piecewise_inner(
 /// offline/replay shape. `memo` (mirroring [`solve_cl_piecewise`]
 /// position-for-position) is the caller's engine-owned cross-block
 /// composition memo: the entry probes by [`walk_mixed_path_fingerprint`]
-/// BEFORE hop assembly and the per-CL-hop table gate — the key needs only
-/// the hop states, sequences, and order, so a cached `Hit` replays the
-/// solution and a cached `Negative` skips the walk, `note_cost`, and store
-/// without paying for assembly or the gate; a `Miss` falls through to the
-/// gate + hop assembly + solve + `note_cost` + `store`. Pure-V2
-/// compositions (no CL hops at all) route through this entry from
-/// `mixed::solve` too, so they gain memo coverage here as well. The
-/// per-CL-hop table source gate still runs before the walk uses any table
-/// (after the probe, so replays skip it); its refusal is not memo-committed
-/// — a refused pairing never walked, so caching it as a negative would be
-/// wrong.
+/// BEFORE hop assembly — the key needs only the hop states, sequences, and
+/// order, so a cached `Hit` replays the solution and a cached `Negative`
+/// skips the walk, `note_cost`, and store without paying for assembly; a
+/// `Miss` falls through to hop assembly + solve + `note_cost` + `store`.
+/// Pure-V2 compositions (no CL hops at all) route through this entry from
+/// `mixed::solve` too, so they gain memo coverage here as well. (The
+/// per-CL-hop table source gate this entry once ran is gone: the pairing it
+/// defended is structural on the all-CL side, and the mixed side consolidates
+/// with [`ClSolveTables`] in a later chunk.)
 #[must_use]
 #[hotpath::measure(label = "cl_solve.exact_solve_mixed_path_n")]
 pub fn solve_mixed_piecewise(
@@ -324,12 +301,10 @@ pub fn solve_mixed_piecewise(
     // constant-product view consumes; CL: the same per-range folding the
     // all-CL key uses), so the key is exact for mixed compositions — cfg is
     // fixed per engine lifetime and env (PathBoundLines) is a pure
-    // derivation of hop state + cfg. The probe runs BEFORE hop assembly and
-    // the per-CL-hop table gate — the key needs only the hop states,
-    // sequences, and order, so a `Hit` or `Negative` returns without paying
-    // the `PieceView` builds or the gate's per-hop fingerprint
-    // re-derivation. `None` memo = disabled run never pays the fingerprint
-    // or the lock.
+    // derivation of hop state + cfg. The probe runs BEFORE hop assembly — the
+    // key needs only the hop states, sequences, and order, so a `Hit` or
+    // `Negative` returns without paying the `PieceView` builds. `None` memo =
+    // disabled run never pays the fingerprint or the lock.
     let mut commit = None;
     if let Some(memo) = memo {
         if memo.active() {
@@ -341,12 +316,9 @@ pub fn solve_mixed_piecewise(
         }
     }
 
-    // Hop assembly + per-CL-hop table gate, after the memo probe: the gate
-    // refuses a prepared pair whose claimed source disagrees with the
-    // sequence at its position BEFORE the walk uses any table. A refusal
-    // returns `none()` WITHOUT `memo_commit` — the composition was refused
-    // for a pairing error and never walked, and caching it as a negative
-    // would be wrong.
+    // Hop assembly, after the memo probe. The per-CL-hop table source gate
+    // that once ran here is gone: the projection hands each hop a prepared
+    // value paired with its own sequence, so positional pairing is structural.
     let mut hops: Vec<PieceView> = Vec::with_capacity(n_hops);
     for (i, &is_v2) in hop_order.iter().enumerate() {
         if is_v2 {
@@ -358,11 +330,6 @@ pub fn solve_mixed_piecewise(
             let Some(seq) = cl_sequences[i] else {
                 return WalkOutcome::none();
             };
-            if let Some(tables) = cl_prepared[i].as_ref() {
-                if !tables.matches(seq) {
-                    return WalkOutcome::none();
-                }
-            }
             hops.push(cl_hop_view(seq, cl_prepared[i].as_ref()));
         }
     }

@@ -34,7 +34,8 @@
 //! - `word_profile` — dense-range forward word-boundary profiles.
 //! - `crossings` — crossing tables, hop assembly, and window-edge helpers.
 //! - `active_set` — the active-set piecewise Möbius walk.
-//! - `entries` — the public solve entry points and [`ClSolveTables`].
+//! - `entries` — the public solve entry points, [`PreparedClHop`], and
+//!   [`ClSolveTables`].
 //! - `memo` — the cross-block composition memo.
 //! - `path_sim` — the public byte-exact forward path simulator.
 //! - `telemetry` — walk counters, census, and process-wide timing statics,

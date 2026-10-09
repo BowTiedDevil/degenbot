@@ -47,7 +47,7 @@ use alloy::primitives::U256;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::{solve_cl_piecewise, ClSolveTables, WalkMemo, WalkOutcome};
+use degenbot_solvers::cl::{solve_cl_piecewise, PreparedClHop, WalkMemo, WalkOutcome};
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -132,7 +132,7 @@ fn multi_range_sequence(
     IntV3TickRangeSequence::new(ranges).unwrap()
 }
 
-/// A bank of two-sequence compositions with pre-derived `ClSolveTables`
+/// A bank of two-sequence compositions with pre-derived `PreparedClHop`s
 /// (the projection-cache shape: tables exist per pool/direction before any
 /// solve). One `solve_at` is one production memo op through the public
 /// entry — fingerprint, locked probe, and only on a `Miss` the walk and the
@@ -140,7 +140,7 @@ fn multi_range_sequence(
 struct PairBank {
     seq_a: Vec<IntV3TickRangeSequence>,
     seq_b: Vec<IntV3TickRangeSequence>,
-    prepared: Vec<[ClSolveTables; 2]>,
+    prepared: Vec<[PreparedClHop; 2]>,
 }
 
 impl PairBank {
@@ -153,15 +153,16 @@ impl PairBank {
     }
 
     fn push(&mut self, a: IntV3TickRangeSequence, b: IntV3TickRangeSequence) {
-        self.prepared
-            .push([ClSolveTables::derive(&a), ClSolveTables::derive(&b)]);
+        self.prepared.push([
+            PreparedClHop::derive(Arc::new(a.clone())),
+            PreparedClHop::derive(Arc::new(b.clone())),
+        ]);
         self.seq_a.push(a);
         self.seq_b.push(b);
     }
 
     fn solve_at(&self, i: usize, memo: &WalkMemo, cfg: &SolveRuntimeConfig) -> WalkOutcome {
-        let pair = [&self.seq_a[i], &self.seq_b[i]];
-        solve_cl_piecewise(&pair, &self.prepared[i], Some(memo), cfg, None)
+        solve_cl_piecewise(&self.prepared[i], Some(memo), cfg, None)
     }
 }
 

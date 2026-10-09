@@ -431,47 +431,47 @@ fn solve_walkable_path_int(
     let int_v3_sequences: Vec<Option<&crate::cl::IntV3TickRangeSequence>> =
         resolved.hops.iter().map(|h| h.as_int_sequence()).collect();
 
-    // Per-CL-hop prepared tables from the projection (V2 positions None): the
-    // derivation value rides the resolved hop, so the fingerprint is folded
-    // ONCE at derivation — the translate below only Arc-clones the tables.
-    let cl_prepared: Vec<Option<crate::cl::ClSolveTables>> = hop_order
-        .iter()
-        .enumerate()
-        .map(|(i, &is_v2)| {
-            if is_v2 {
-                None
-            } else {
-                Some(resolved.hops[i].as_prepared_cl_hop()?.to_solve_tables())
-            }
-        })
-        .collect();
-
-    // Every CL position must carry its prepared tables; a missing one means
-    // the projection is incomplete.
-    if hop_order
-        .iter()
-        .zip(&cl_prepared)
-        .any(|(&is_v2, prepared)| !is_v2 && prepared.is_none())
-    {
-        return (None, crate::cl::WalkStats::default());
-    }
-
     let all_cl = hop_order.iter().all(|&is_v2| !is_v2);
     let out = if all_cl {
-        let Some(sequences) = int_v3_sequences.iter().copied().collect::<Option<Vec<_>>>() else {
+        // The projection's prepared hop IS the all-CL entry's intake now, so
+        // clone it (three `Arc` bumps per hop) rather than translate it to the
+        // mixed entry's table shape.
+        let Some(prepared) = resolved
+            .hops
+            .iter()
+            .map(|h| h.as_prepared_cl_hop().cloned())
+            .collect::<Option<Vec<_>>>()
+        else {
             return (None, crate::cl::WalkStats::default());
         };
-        let Some(prepared) = cl_prepared.iter().cloned().collect::<Option<Vec<_>>>() else {
-            return (None, crate::cl::WalkStats::default());
-        };
-        crate::cl::solve_cl_piecewise(
-            &sequences,
-            &prepared,
-            gate.walk_memo(),
-            &gate.runtime,
-            walk_env,
-        )
+        crate::cl::solve_cl_piecewise(&prepared, gate.walk_memo(), &gate.runtime, walk_env)
     } else {
+        // Per-CL-hop prepared tables from the projection (V2 positions None):
+        // the derivation value rides the resolved hop, so the fingerprint is
+        // folded ONCE at derivation — the translate below only Arc-clones the
+        // tables.
+        let cl_prepared: Vec<Option<crate::cl::ClSolveTables>> = hop_order
+            .iter()
+            .enumerate()
+            .map(|(i, &is_v2)| {
+                if is_v2 {
+                    None
+                } else {
+                    Some(resolved.hops[i].as_prepared_cl_hop()?.to_solve_tables())
+                }
+            })
+            .collect();
+
+        // Every CL position must carry its prepared tables; a missing one
+        // means the projection is incomplete.
+        if hop_order
+            .iter()
+            .zip(&cl_prepared)
+            .any(|(&is_v2, prepared)| !is_v2 && prepared.is_none())
+        {
+            return (None, crate::cl::WalkStats::default());
+        }
+
         crate::cl::solve_mixed_piecewise(
             &v2_hops,
             &int_v3_sequences,

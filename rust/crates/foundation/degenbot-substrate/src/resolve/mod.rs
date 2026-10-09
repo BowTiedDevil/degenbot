@@ -919,23 +919,18 @@ mod tests {
             .collect()
     }
 
-    /// The all-CL intake: resolve -> cached tables -> `solve_cl_piecewise`.
+    /// The all-CL intake: resolve -> prepared hops -> `solve_cl_piecewise`.
     fn all_cl_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
-        let seqs: Vec<_> = r
-            .hops
-            .iter()
-            .filter_map(ResolvedHop::as_int_sequence)
-            .collect();
-        // The projection's derivation value rides each CL hop; translate it to
-        // the entries' intake shape (the fingerprint is already folded once).
+        // The projection's derivation value rides each CL hop and IS the
+        // entry's intake now: clone the hop (three `Arc` bumps) rather than
+        // translate it to the mixed entry's table shape.
         let prepared: Vec<_> = r
             .hops
             .iter()
             .filter_map(ResolvedHop::as_prepared_cl_hop)
-            .map(|p| p.to_solve_tables())
+            .cloned()
             .collect();
         degenbot_solvers::cl::solve_cl_piecewise(
-            &seqs,
             &prepared,
             None,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),

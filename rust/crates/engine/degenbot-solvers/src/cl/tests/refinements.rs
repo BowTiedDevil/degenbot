@@ -160,21 +160,23 @@ fn cp_seq_tables(
     seqs: &[&IntV3TickRangeSequence],
 ) -> (
     Vec<std::sync::Arc<Vec<crate::cl::IntTickRangeCrossing>>>,
-    Vec<crate::cl::ClSolveTables>,
+    Vec<crate::cl::PreparedClHop>,
 ) {
     let tables: Vec<std::sync::Arc<Vec<crate::cl::IntTickRangeCrossing>>> = seqs
         .iter()
         .map(|s| std::sync::Arc::new(build_cl_crossing_table(s)))
         .collect();
-    let prep: Vec<crate::cl::ClSolveTables> = tables
+    let prep: Vec<crate::cl::PreparedClHop> = tables
         .iter()
         .zip(seqs)
-        .map(|(t, seq)| crate::cl::ClSolveTables {
-            crossings: t.clone(),
-            profiles: std::sync::Arc::new(crate::cl::build_cl_word_profiles_from_crossings(
-                t.as_slice(),
-            )),
-            source_fingerprint: crate::cl::walk_path_fingerprint(&[*seq]),
+        .map(|(t, seq)| {
+            crate::cl::PreparedClHop::from_parts(
+                std::sync::Arc::new((*seq).clone()),
+                t.clone(),
+                std::sync::Arc::new(crate::cl::build_cl_word_profiles_from_crossings(
+                    t.as_slice(),
+                )),
+            )
         })
         .collect();
     (tables, prep)
@@ -506,8 +508,8 @@ fn loop21_envelope_pruned_refine_is_argmax_equal_and_never_loses_sims() {
         let cfg = SolveRuntimeConfig::default();
         let env = path_bound_lines(&views, &cfg);
         assert!(env.is_some(), "{name}: walk bound lines derivable");
-        let off = solve_cl_piecewise(&refs, &prep, None, &cfg, None);
-        let on = solve_cl_piecewise(&refs, &prep, None, &cfg, env.as_ref());
+        let off = solve_cl_piecewise(&prep, None, &cfg, None);
+        let on = solve_cl_piecewise(&prep, None, &cfg, env.as_ref());
         assert_eq!(
             off.result, on.result,
             "{name}: Loop-21 pruned refine moved the argmax"
@@ -654,7 +656,7 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
 }
 
 fn prep_as_options(
-    prep: &[crate::cl::ClSolveTables],
+    prep: &[crate::cl::PreparedClHop],
     cl_slots: usize,
 ) -> Vec<Option<crate::cl::ClSolveTables>> {
     let mut out: Vec<Option<crate::cl::ClSolveTables>> = Vec::new();
@@ -664,19 +666,11 @@ fn prep_as_options(
     }
     // CL slot is position 1 in the V2 → CL → V2 order
     if cl_slots >= 1 {
-        out[1] = Some(clone_tables(&prep[used]));
+        out[1] = Some(prep[used].to_solve_tables());
         used += 1;
     }
     let _ = used;
     out
-}
-
-fn clone_tables(t: &crate::cl::ClSolveTables) -> crate::cl::ClSolveTables {
-    crate::cl::ClSolveTables {
-        crossings: std::sync::Arc::clone(&t.crossings),
-        profiles: std::sync::Arc::clone(&t.profiles),
-        source_fingerprint: t.source_fingerprint,
-    }
 }
 
 #[test]

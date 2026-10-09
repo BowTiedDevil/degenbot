@@ -301,7 +301,7 @@ mod tests {
     use super::*;
     use ::alloy::primitives::U256;
     use ::degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-    use ::degenbot_solvers::cl::{solve_cl_piecewise, ClSolveTables};
+    use ::degenbot_solvers::cl::{solve_cl_piecewise, PreparedClHop};
     use ::degenbot_solvers::runtime::SolveRuntimeConfig;
     use parking_lot::Mutex;
 
@@ -357,9 +357,9 @@ mod tests {
     /// `active()` (the only outside-reachable probe/store drive — probe,
     /// `note_cost`, store are `pub(super)` in the solvers crate), so one call
     /// is exactly one probe + one cache consult + a commit.
-    fn solve_once(memo: &WalkMemo, seq: &IntV3TickRangeSequence, tables: &ClSolveTables) {
+    fn solve_once(memo: &WalkMemo, prepared: &PreparedClHop) {
         let cfg = SolveRuntimeConfig::default();
-        let _ = solve_cl_piecewise(&[seq], std::slice::from_ref(tables), Some(memo), &cfg, None);
+        let _ = solve_cl_piecewise(std::slice::from_ref(prepared), Some(memo), &cfg, None);
     }
 
     #[test]
@@ -394,13 +394,13 @@ mod tests {
         let sink = VecSink::default();
         let memo = WalkMemo::new(true, true);
         let seq = one_hop_sequence();
-        let tables = ClSolveTables::derive(&seq);
+        let prepared = PreparedClHop::derive(std::sync::Arc::new(seq.clone()));
 
         // --- epoch 100: two solves of the same composition ---------------
         drain_epoch_boundary_into(&memo, 100, &sink); // boot: silent
         memo.begin_block(100);
-        solve_once(&memo, &seq, &tables);
-        solve_once(&memo, &seq, &tables);
+        solve_once(&memo, &prepared);
+        solve_once(&memo, &prepared);
 
         // Boundary into 101 drains epoch 100: two probes, one distinct
         // fingerprint, two cache consults, no hits (the previous census was
@@ -418,8 +418,8 @@ mod tests {
         assert!(first["ts"].as_str().is_some_and(|ts| !ts.is_empty()));
 
         // --- epoch 101: the same composition now replays from the census --
-        solve_once(&memo, &seq, &tables);
-        solve_once(&memo, &seq, &tables);
+        solve_once(&memo, &prepared);
+        solve_once(&memo, &prepared);
 
         // Boundary into 102 drains epoch 101: the counters RESET between
         // lines (probes 2, not 4) and the cross-block census now reports
@@ -440,10 +440,10 @@ mod tests {
         let sink = VecSink::default();
         let memo = WalkMemo::new(true, true);
         let seq = one_hop_sequence();
-        let tables = ClSolveTables::derive(&seq);
+        let prepared = PreparedClHop::derive(std::sync::Arc::new(seq.clone()));
 
         memo.begin_block(500);
-        solve_once(&memo, &seq, &tables);
+        solve_once(&memo, &prepared);
 
         // Engine stop: no boundary follows epoch 500, so the FINAL drain is
         // the only thing standing between these counters and oblivion. The
@@ -473,10 +473,10 @@ mod tests {
         let sink = VecSink::default();
         let memo = WalkMemo::new(true, true);
         let seq = one_hop_sequence();
-        let tables = ClSolveTables::derive(&seq);
+        let prepared = PreparedClHop::derive(std::sync::Arc::new(seq.clone()));
 
         memo.begin_block(7);
-        solve_once(&memo, &seq, &tables);
+        solve_once(&memo, &prepared);
         drain_epoch_boundary_into(&memo, 8, &sink);
 
         let value = parse_line(&sink.lines()[0]);

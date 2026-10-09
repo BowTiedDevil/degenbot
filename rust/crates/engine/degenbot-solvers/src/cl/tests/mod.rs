@@ -1065,43 +1065,6 @@ fn walk_mixed_fingerprint_separates_hop_order() {
 }
 
 #[test]
-fn solve_cl_piecewise_refuses_prepared_tables_of_another_sequence() {
-    // The late-liquidity 2-hop cycle below solves profitably — so an outcome
-    // of `None` from the same sequences proves refusal, not an unprofitable
-    // walk.
-    let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
-    let mut liquidities = vec![1_000_000_000u128; 10];
-    liquidities.push(10_000_000_000_000u128);
-    liquidities.push(1_000_000_000u128);
-    let seq2 = multi_range_sequence(0, 60, false, &liquidities);
-
-    let aligned = solve_cl_piecewise(
-        &[&seq1, &seq2],
-        &[ClSolveTables::derive(&seq1), ClSolveTables::derive(&seq2)],
-        None,
-        &SolveRuntimeConfig::default(),
-        None,
-    );
-    assert!(aligned.result.is_some(), "the aligned control must solve");
-
-    // The sibling differs by one wei of liquidity: trusted positionally, its
-    // tables still walk this profitable cycle to a result — only the identity
-    // check distinguishes refusal from that silent solve.
-    let wrong = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_001]);
-    let misaligned = solve_cl_piecewise(
-        &[&seq1, &seq2],
-        &[ClSolveTables::derive(&wrong), ClSolveTables::derive(&seq2)],
-        None,
-        &SolveRuntimeConfig::default(),
-        None,
-    );
-    assert!(
-        misaligned.result.is_none(),
-        "tables derived from another sequence must be refused, not walked"
-    );
-}
-
-#[test]
 fn test_solve_cl_piecewise_2hop_prepared_matches_derived() {
     // Prepared projection tables and per-call derivation must walk the same
     // 2-hop CL path byte-identically.
@@ -1111,15 +1074,14 @@ fn test_solve_cl_piecewise_2hop_prepared_matches_derived() {
     let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
 
-    let prepared = [ClSolveTables::derive(&seq1), ClSolveTables::derive(&seq2)];
-    let result_prepared = solve_cl_piecewise(
-        &[&seq1, &seq2],
-        &prepared,
-        None,
-        &SolveRuntimeConfig::default(),
-        None,
-    )
-    .result;
+    // Prepared projection hops and per-call derivation must walk the same
+    // 2-hop CL path byte-identically.
+    let prepared = [
+        PreparedClHop::derive(Arc::new(seq1.clone())),
+        PreparedClHop::derive(Arc::new(seq2.clone())),
+    ];
+    let result_prepared =
+        solve_cl_piecewise(&prepared, None, &SolveRuntimeConfig::default(), None).result;
     let result_derived =
         derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
 
@@ -1304,25 +1266,10 @@ fn cl_path_cached_crossings_match_profile_only_solve() {
     // Carried tables must equal the per-call derived solve (byte-identical
     // CL math).
     let prepared = [
-        ClSolveTables {
-            crossings: Arc::clone(&c1),
-            profiles: Arc::clone(&p1),
-            source_fingerprint: walk_path_fingerprint(&[&seq1]),
-        },
-        ClSolveTables {
-            crossings: Arc::clone(&c2),
-            profiles: Arc::clone(&p2),
-            source_fingerprint: walk_path_fingerprint(&[&seq2]),
-        },
+        PreparedClHop::from_parts(Arc::new(seq1.clone()), Arc::clone(&c1), Arc::clone(&p1)),
+        PreparedClHop::from_parts(Arc::new(seq2.clone()), Arc::clone(&c2), Arc::clone(&p2)),
     ];
-    let cached = solve_cl_piecewise(
-        &[&seq1, &seq2],
-        &prepared,
-        None,
-        &SolveRuntimeConfig::default(),
-        None,
-    )
-    .result;
+    let cached = solve_cl_piecewise(&prepared, None, &SolveRuntimeConfig::default(), None).result;
     let offline =
         derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
     assert_eq!(cached, offline);

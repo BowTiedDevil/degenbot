@@ -13,7 +13,7 @@ use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 
 use crate::cl::memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, MemoProbe, WalkMemo};
-use crate::cl::{solve_cl_piecewise, solve_mixed_piecewise, ClSolveTables};
+use crate::cl::{solve_cl_piecewise, solve_mixed_piecewise, PreparedClHop};
 use crate::runtime::SolveRuntimeConfig;
 
 use super::{
@@ -129,12 +129,15 @@ fn memo_cached_negative_skips_the_walk_on_replay() {
     let hop2 = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
     let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
-    let prepared = [ClSolveTables::derive(&seq1), ClSolveTables::derive(&seq2)];
+    let prepared = [
+        PreparedClHop::derive(std::sync::Arc::new(seq1.clone())),
+        PreparedClHop::derive(std::sync::Arc::new(seq2.clone())),
+    ];
     let cfg = SolveRuntimeConfig::default();
     let memo = WalkMemo::new(true, true);
 
     // First solve: Miss → the walk runs and stores the negative.
-    let first = solve_cl_piecewise(&[&seq1, &seq2], &prepared, Some(&memo), &cfg, None);
+    let first = solve_cl_piecewise(&prepared, Some(&memo), &cfg, None);
     assert!(first.result.is_none(), "fixture must be unprofitable");
     #[cfg(feature = "telemetry")]
     assert!(first.stats.sims > 0, "first solve must run the walk");
@@ -153,7 +156,7 @@ fn memo_cached_negative_skips_the_walk_on_replay() {
     memo.begin_block(2);
 
     // Second solve: the cached negative answers without the walk.
-    let second = solve_cl_piecewise(&[&seq1, &seq2], &prepared, Some(&memo), &cfg, None);
+    let second = solve_cl_piecewise(&prepared, Some(&memo), &cfg, None);
     assert!(second.result.is_none());
     assert_eq!(
         second.stats.sims, 0,
@@ -180,11 +183,14 @@ fn memo_cached_hit_replays_the_solution_without_the_walk() {
     liquidities.push(10_000_000_000_000u128);
     liquidities.push(1_000_000_000u128);
     let seq2 = multi_range_sequence(0, 60, false, &liquidities);
-    let prepared = [ClSolveTables::derive(&seq1), ClSolveTables::derive(&seq2)];
+    let prepared = [
+        PreparedClHop::derive(std::sync::Arc::new(seq1.clone())),
+        PreparedClHop::derive(std::sync::Arc::new(seq2.clone())),
+    ];
     let cfg = SolveRuntimeConfig::default();
     let memo = WalkMemo::new(true, true);
 
-    let first = solve_cl_piecewise(&[&seq1, &seq2], &prepared, Some(&memo), &cfg, None);
+    let first = solve_cl_piecewise(&prepared, Some(&memo), &cfg, None);
     let first_result = first.result.expect("fixture must be profitable");
     let st1 = memo.take_stats();
     assert_eq!(st1.negatives_played, 0);
@@ -193,7 +199,7 @@ fn memo_cached_hit_replays_the_solution_without_the_walk() {
         "profitable compositions cache Some"
     );
 
-    let second = solve_cl_piecewise(&[&seq1, &seq2], &prepared, Some(&memo), &cfg, None);
+    let second = solve_cl_piecewise(&prepared, Some(&memo), &cfg, None);
     assert_eq!(
         second.result,
         Some(first_result),
