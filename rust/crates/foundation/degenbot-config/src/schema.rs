@@ -431,6 +431,8 @@ crate::config_schema! {
             doc = "QTZGFL: retained (carried) key retention window W in blocks — on each block advance the ledger prunes buckets older than head - W and counts degenbot.detached.leads_expired. Default 50.";
         min_profit_wei [u128] = 0, env = "DEGENBOT_MIN_PROFIT_WEI", def = "0",
             doc = "Minimum path profit floor in wei (decimal text; TOML: quoted string).";
+        clamp_margin_wei [u128] = 1, env = "DEGENBOT_CLAMP_MARGIN_WEI", def = "1",
+            doc = "CL-hop clamp margin in wei: the amount subtracted from a hop's committed input before the exact-in loop runs. Default 1 wei commits input - 1, so the loop converts nearly everything and stops at the last funded tick (maximum extraction). The margin must stay strictly greater than the worst solver-vs-engine over-prediction, which a parity sweep pins; raise it only when investigating a runaway swap.";
         walk_event_solver_legacy [bool_not] = false, env = "DEGENBOT_WALK_EVENT_SOLVER", def = "false",
             doc = "Legacy event-solver path is enabled by `DEGENBOT_WALK_EVENT_SOLVER=0` (inverted flag).";
         walk_event_census [bool] = false, env = "DEGENBOT_WALK_EVENT_CENSUS", def = "false",

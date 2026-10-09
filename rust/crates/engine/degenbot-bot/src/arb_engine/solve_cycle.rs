@@ -119,6 +119,10 @@ pub(crate) struct SolveCycleShared {
     /// The pre-solve profitability floor as an instance value, set at
     /// construction from `cfg.solve.min_profit_wei`.
     pub(crate) min_profit: U256,
+    /// The CL-hop clamp margin (wei) as an instance value, packed from
+    /// `solve.clamp_margin_wei` through `EngineRetune` — never a process
+    /// static read.
+    pub(crate) clamp_margin: U256,
     /// the instance-scoped solver runtime stance, threaded down —
     /// the solver crate has no process-global config anymore.
     pub(crate) runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig,
@@ -181,6 +185,7 @@ impl SolveCycleShared {
                 ::degenbot_solvers::profit_envelope::PrefixCache::new(),
             ),
             min_profit: U256::ZERO,
+            clamp_margin: U256::from(1u128),
             runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             path_cost_ledger: super::path_cost_ledger::PathCostLedger::new(
                 solve_block,
@@ -294,6 +299,9 @@ pub(crate) struct SolveCycle {
     /// The pre-solve profitability floor. A packed instance
     /// value, never a process static.
     pub(crate) min_profit_floor: U256,
+    /// The CL-hop clamp margin packed from the typed config
+    /// (`solve.clamp_margin_wei`) via `EngineRetune`.
+    pub(crate) clamp_margin: U256,
     /// The inline-sim stance as an engine instance value (documented stance
     /// semantics unchanged, SIMPIPE2 T2/T4).
     pub(crate) inline_sim_enabled: bool,
@@ -469,44 +477,6 @@ pub(crate) struct Registration {
 // worker` both drive the same `clamp_result_with_state`; there is exactly
 // one clamp body (ADR-046 "no inherent twins").
 // ===========================================================================
-/// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
-/// before it is committed). Decision: 1 wei — commit
-/// `input_consumed - 1` so the exact-in loop converts nearly everything and
-/// stops on `amountRemaining==0` at the last funded tick. 1 wei is the
-/// maximum-extraction choice; a larger margin can be revisited if runaway
-/// swaps recur. Override via the `CLAMP_MARGIN` env var for sensitivity
-/// sweeps (twin of the `path5000_v2v4v3_solver_fixture` fixture).
-///
-/// ## Measured basis
-///
-/// The margin must be strictly larger than the worst solver-vs-engine
-/// (solver `hop_outputs[i]` vs the tier-3-proven `v4_simulate_swap`/
-/// `v3_simulate_swap` pool twin) OVER-prediction, so the clamp never lands
-/// exactly on an over-predicted tight value and re-enters the EMPTY march
-/// The `v4_crossing_solver_vs_sim_parity`/
-/// `v4_word_boundary_solver_divergence`/`v4_fee1_solver_path_matches_v4_simulate_swap`
-/// suites assert byte-exact solver==twin across the fee-3000/ts-60 multi-tick
-/// corpus AND the fee-1/ts-1 low-fee topology in both swap directions — i.e.
-/// the worst observed over-prediction is **0 wei**. The historical live
-/// `+1..+3` wei residuals (fee-1, ts=1) were localized to crossing-math
-/// rounding and fixed (the zfo step-0 current-tick flooring), not absorbed
-/// by margin. A dedicated sweep
-/// (`cl_hop_clamp_margin_exceeds_worst_solver_over_prediction`) measures the
-/// strict over-prediction direction across the corpus and asserts
-/// `margin > worst`, guarding this choice against regression. 1 wei is the
-/// smallest positive integer > 0, giving zero extraction loss (path-5000
-/// fixture: clamped output == solver output byte-identical).
-fn cl_hop_clamp_margin() -> U256 {
-    std::env::var("CLAMP_MARGIN")
-        .ok()
-        .and_then(|s| s.parse::<u128>().ok())
-        .map_or_else(|| U256::from(1u128), U256::from)
-}
-/// The clamp shared by the merge-site gate and the SIMPIPE2 T2 worker
-/// relocation — the pool list is a parameter so the WORKER can drive the
-/// identical logic from its `to_solve`-aligned snapshot. The worker takes
-/// the SAME short core read the merge-site clamp took (
-/// engine-then-core, short read, no guard across awaits).
 /// The clamp-skip error kind for a hop with no byte-exact twin at the clamp
 /// seam. `None` for the V2/V3/V4 families that DO execute the twin arm.
 pub(crate) fn clamp_skip_kind(hop: HopType) -> Option<&'static str> {
@@ -521,17 +491,44 @@ pub(crate) fn clamp_skip_kind(hop: HopType) -> Option<&'static str> {
     }
 }
 
+/// The clamp shared by the merge-site gate and the SIMPIPE2 T2 worker
+/// relocation — the pool list is a parameter so the WORKER can drive the
+/// identical logic from its `to_solve`-aligned snapshot, and the clamp margin
+/// arrives as a parameter packed from the typed config (never a process-static
+/// read). The worker takes the SAME short core read the merge-site clamp took
+/// (engine-then-core, short read, no guard across awaits).
+///
+/// ## Margin basis
+///
+/// `margin` is an absolute wei amount subtracted from `input_consumed` before
+/// it is committed. The typed config default is 1 wei: the exact-in loop then
+/// converts nearly everything and stops on `amountRemaining==0` at the last
+/// funded tick, the maximum-extraction choice. The margin must stay strictly
+/// larger than the worst solver-vs-engine over-prediction, so the clamp never
+/// lands exactly on an over-predicted tight value and re-enters the empty-word
+/// march. The `v4_crossing_solver_vs_sim_parity` /
+/// `v4_word_boundary_solver_divergence` / `v4_fee1_solver_path_matches_v4_simulate_swap`
+/// suites assert byte-exact solver==twin across the fee-3000/ts-60 multi-tick
+/// corpus AND the fee-1/ts-1 low-fee topology in both swap directions — the
+/// worst observed over-prediction is **0 wei**. The historical live `+1..+3`
+/// wei residuals (fee-1, ts=1) were localized to crossing-math rounding and
+/// fixed (the zfo step-0 current-tick flooring), not absorbed by margin. A
+/// dedicated sweep (`cl_hop_clamp_margin_exceeds_worst_solver_over_prediction`)
+/// measures the strict over-prediction direction across the corpus and asserts
+/// `margin > worst`, guarding the choice against regression. 1 wei is the
+/// smallest positive integer > 0, giving zero extraction loss (path-5000
+/// fixture: clamped output == solver output byte-identical).
 #[expect(clippy::too_many_lines)] // multi-hop CL twin loop + post-clamp profit recompute
 pub(crate) fn clamp_result_with_state(
     core: &BotState,
     path_id: u64,
     pools: &[MixedPoolRef],
+    margin: U256,
     result: &mut SolvePathResult,
 ) -> u64 {
     if pools.len() != result.consumed_inputs.len() {
         return 0; // Index misalignment — never clamp a wrong hop
     }
-    let margin = cl_hop_clamp_margin();
     // successful twin simulations executed this call (returned to
     // the caller for the solve-cycle completion event).
     let mut twins_executed: u64 = 0;
@@ -1132,7 +1129,7 @@ impl SolveCycle {
         let core = self
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-        clamp_result_with_state(&core, path_id, &path.pools, result)
+        clamp_result_with_state(&core, path_id, &path.pools, self.clamp_margin, result)
     }
     #[expect(clippy::too_many_lines)]
     pub(crate) fn run_epoch(
@@ -1774,6 +1771,7 @@ impl SolveCycle {
             core: std::sync::Arc::clone(&self.core),
             pool_refs,
             min_profit: self.min_profit_floor,
+            clamp_margin: self.clamp_margin,
             worker_clamp: self.inline_sim_enabled,
             inline_sim: self.inline_sim.clone(),
         });
@@ -2082,6 +2080,7 @@ impl SolveCycle {
         let results_block = self.cursor.results_block();
         let runtime_cfg = self.runtime_cfg;
         let min_floor = self.min_profit_floor;
+        let clamp_margin = self.clamp_margin;
         let (tx, rx) = std::sync::mpsc::channel::<(u64, SolvePathResult)>();
         for (bin_idx, bin) in bins.iter().enumerate() {
             let bin = bin.clone();
@@ -2122,8 +2121,13 @@ impl SolveCycle {
                         if let Some(path) = path_pools.get(path_id) {
                             let core_read =
                                 core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
-                            let _ =
-                                clamp_result_with_state(&core_read, *path_id, &path.pools, &mut r);
+                            let _ = clamp_result_with_state(
+                                &core_read,
+                                *path_id,
+                                &path.pools,
+                                clamp_margin,
+                                &mut r,
+                            );
                         }
                         let _ = tx.send((*path_id, r));
                     }

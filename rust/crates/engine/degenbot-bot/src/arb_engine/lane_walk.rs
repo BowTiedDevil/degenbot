@@ -50,7 +50,13 @@ pub(crate) fn clamp_result_in_worker(
     let core = ctx
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    clamp_result_with_state(&core, pid, &ctx.pool_refs[idx].pools, result)
+    clamp_result_with_state(
+        &core,
+        pid,
+        &ctx.pool_refs[idx].pools,
+        ctx.clamp_margin,
+        result,
+    )
 }
 /// SIMPIPE2 T3: the WORKER-side inline sim — resolve the per-path payload
 /// from the clamp-committed result on the SAME worker context the T2 clamp

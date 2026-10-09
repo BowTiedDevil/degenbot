@@ -40,6 +40,10 @@ pub struct EngineRetune {
     /// Minimum result profit (in wei) for the delivery policy window (strict
     /// `>`).
     pub min_profit: U256,
+    /// The CL-hop clamp margin (wei) subtracted from a hop's committed input
+    /// before the exact-in loop runs. Packed from `solve.clamp_margin_wei`
+    /// (default 1 wei, the maximum-extraction choice).
+    pub clamp_margin: U256,
     /// Maximum result profit (in wei) for the delivery policy window
     /// (inclusive).
     pub max_profit: U256,
@@ -77,6 +81,7 @@ impl EngineRetune {
             path_cap: None,
             min_profit: U256::from(cfg.solve.min_profit_wei),
             max_profit: U256::MAX,
+            clamp_margin: U256::from(cfg.solve.clamp_margin_wei),
             force_deferred: None,
         }
     }
@@ -91,6 +96,7 @@ impl Default for EngineRetune {
             path_cap: None,
             min_profit: U256::ZERO,
             max_profit: U256::MAX,
+            clamp_margin: U256::from(1u128),
             force_deferred: None,
         }
     }
@@ -143,6 +149,8 @@ mod tests {
         assert!(!e.event_buffer_expiry_enabled);
         assert_eq!(e.delivery.min_profit, U256::ZERO);
         assert_eq!(e.delivery.max_profit, U256::MAX);
+        // The clamp margin default rides the schema (1 wei).
+        assert_eq!(e.cycle.clamp_margin, U256::from(1u128));
     }
     /// `EngineStages::apply_retune` overwrites every live value — the runtime
     /// operator entry (the engine's twin of the fleet's posture feeder).
@@ -157,6 +165,7 @@ mod tests {
             path_cap: Some(11),
             min_profit: U256::from(7u64),
             max_profit: U256::from(9u64),
+            clamp_margin: U256::from(3u64),
             force_deferred: Some(HashSet::from([42u64])),
         };
         stages.apply_retune(&retune);
@@ -168,6 +177,7 @@ mod tests {
         assert_eq!(e.registry.cap(), Some(11));
         assert_eq!(e.delivery.min_profit, U256::from(7u64));
         assert_eq!(e.delivery.max_profit, U256::from(9u64));
+        assert_eq!(e.cycle.clamp_margin, U256::from(3u64));
         assert_eq!(e.cycle.force_deferred, Some(HashSet::from([42u64])));
     }
 }

@@ -92,14 +92,10 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/engine/degenbot-bot/src/profiling.rs",
             &["HOTPATH_SHUTDOWN_MS"][..],
         );
-        // the CH-hop clamp (and its CLAMP_MARGIN dev-margin
-        // override) moved out of the deleted solver_dispatch.rs onto the
-        // cycle's solve_cycle.rs home. The probe-fixture names below are
-        // already enumerated on the executor_ab_probe entry.
-        m.insert(
-            "crates/engine/degenbot-bot/src/arb_engine/solve_cycle.rs",
-            &["CLAMP_MARGIN"][..], // dev wei-margin override (cl-hop clamp lab)
-        );
+        // the CL-hop clamp margin now rides the typed config
+        // (`solve.clamp_margin_wei`), so the cycle source reads no
+        // environment; the probe-fixture loader below is the remaining
+        // offline entry.
         m.insert(
             // the probe fixture loader moved out of solver_dispatch
             // into its own test-only module (corpus path override, cfg(test)).

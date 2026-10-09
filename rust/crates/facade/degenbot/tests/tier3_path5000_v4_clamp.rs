@@ -63,9 +63,9 @@ const FIXTURE_PATH: &str = concat!(
     "/../../../../tests/fixtures/path5000_v2v4v3_block25704509.json"
 );
 
-/// The VAASFM clamp margin (must stay in sync with
-/// `ArbitrageEngine::cl_hop_clamp_margin` in degenbot-bot — 1 wei, the
-/// maximum-extraction choice; see the margin-policy checkpoint).
+/// The VAASFM clamp margin (must stay in sync with the typed config's
+/// `solve.clamp_margin_wei` default — 1 wei, the maximum-extraction choice;
+/// see the margin-policy checkpoint).
 const CLAMP_MARGIN: u64 = 1;
 
 /// The recorded byte-exact V4 output the clamp must preserve (== the recorded

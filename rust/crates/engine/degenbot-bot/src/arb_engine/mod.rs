@@ -552,6 +552,7 @@ impl ArbitrageEngine {
                     ::degenbot_solvers::profit_envelope::PrefixCache::new(),
                 ),
                 min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),
+                clamp_margin: retune.clamp_margin,
                 inline_sim_enabled: cfg.solve.solve_inline_sim,
                 path_cost_history: std::sync::Arc::new(
                     crate::arb_engine::path_cost_ledger::PathCostHistory::new(),
@@ -616,6 +617,7 @@ impl ArbitrageEngine {
         self.delivery
             .set_profit_thresholds(retune.min_profit, retune.max_profit);
         // The diagnostic force-deferred override.
+        self.cycle.clamp_margin = retune.clamp_margin;
         self.cycle.force_deferred.clone_from(&retune.force_deferred);
     }
     /// Immutable access to the shared `BotState` `Arc` (ADR-003 / ADR-006
