@@ -75,6 +75,18 @@ degenbot-eventhub.workspace = true
 # passthrough they are unreachable through the umbrella — the gap that left
 # the pure-Rust settlement-bot example with no telemetry at all.
 otel = ["degenbot-bot/otel"]
+# Drain-path profiling passthrough: forwards `degenbot-bot/hotpath` so a
+# `cargo add degenbot, features = ["hotpath"]` consumer compiles the
+# `#[hotpath::measure]` spans on the pump → EngineStages solve path as real
+# instrumentation and the pump-lifetime guard (`BlockPump::run_with_stream`,
+# degenbot-bot/src/profiling.rs) flushes its report. Without this forward the
+# spans stayed compile-time no-ops through the umbrella — the gap that left
+# the pure-Rust settlement-bot example unable to flush a hotpath report at
+# all. The guard itself stays env-gated (`DEGENBOT_HOTPATH=1`): the feature
+# widens what CAN be measured, never what default runs do. The narrower
+# variants (`hotpath-cpu`/`hotpath-alloc`/`hotpath-prometheus`) stay
+# unforwarded — they tune profiling posture, not consumer reachability.
+hotpath = ["degenbot-bot/hotpath"]
 # The replay bench's statement-ledger passthrough (ADR-068 D6 measurement):
 # forwards to degenbot-db's test/bench-only SQL ledger feature. Default OFF,
 # mirroring degenbot-db (the ledger never compiles into production paths).

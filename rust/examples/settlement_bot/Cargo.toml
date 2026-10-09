@@ -46,6 +46,21 @@ tracing = "^0.1"
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
 degenbot-eventhub.workspace = true
 
+[features]
+# Drain-path profiling opt-in: forwards the umbrella's `hotpath` passthrough
+# so this driver's build compiles the pump's hotpath instrumentation and the
+# pump-lifetime guard in `BlockPump::run_with_stream`
+# (degenbot-bot/src/profiling.rs) flushes a report at pump exit. Default OFF:
+# without the feature the `#[hotpath::measure]` spans are no-op stubs and the
+# guard refuses, so default builds are behavior-identical. The guard itself
+# stays env-gated (`DEGENBOT_HOTPATH=1`); the report knobs
+# (HOTPATH_OUTPUT_FORMAT/HOTPATH_OUTPUT_PATH/HOTPATH_REPORT) live in
+# degenbot-bot/src/profiling.rs. No example-side guard is constructed here ON
+# PURPOSE: the pump owns the process's single HotpathGuard, and building a
+# second live one panics (hotpath 0.28.5) — a guard held across
+# `EngineDriver::resume` would abort the driven run it is meant to measure.
+hotpath = ["degenbot/hotpath"]
+
 [dev-dependencies]
 # start_paused + tokio::time::advance give the session-watch tests a
 # controlled clock instead of real sleeps ("test-util" enables paused time).
