@@ -1,7 +1,6 @@
 ---
 name: rust-rebuild
-description: How degenbot's build receipt proves the installed Python extension (.so) was built from the current Rust sources, and how to diagnose stale builds. Use when just verify-build-fresh or just rebuild-if-stale fails, when a Python run behaves as if recent Rust edits are absent, or before trusting any maturin/uv rebuild, or when the console prints a
-`console may be stale` warning at startup.
+description: How degenbot's build receipt proves the installed Python extension (.so) was built from the current Rust sources, and how to diagnose stale builds. Use when just verify-build-fresh or just rebuild-if-stale fails, when a Python run behaves as if recent Rust edits are absent, or before trusting any maturin/uv rebuild, or when the console prints a `console may be stale` warning at startup.
 ---
 
 # Rust Rebuild & Build-Receipt Mechanics
