@@ -706,6 +706,7 @@ fn cl_lines_and_cap(
     max_tangent_lines: usize,
     mass: bool,
     fan_cache: Option<(&PrefixCache, u64)>,
+    stats: &mut GateStats,
 ) -> Option<(Vec<Line>, U256)> {
     if crossings.is_empty() {
         return None;
@@ -727,10 +728,10 @@ fn cl_lines_and_cap(
     let fan = if let Some((store, epoch)) = fan_cache {
         let key = cl_fan_key(crossings, n_keeps, &sel, max_tangent_lines, mass);
         if let Some(hit) = store.get_cl_fan(epoch, &key) {
-            gate_tls(|t| t.cl_fan_hits += 1);
+            record_gate(stats, |t| t.cl_fan_hits += 1);
             hit
         } else {
-            gate_tls(|t| t.cl_fan_misses += 1);
+            record_gate(stats, |t| t.cl_fan_misses += 1);
             // A hard-reject fan is never cached (no poisoned entries).
             let derived = Arc::new(derive_cl_fan(crossings, &sel)?);
             store.insert_cl_fan(epoch, key, Arc::clone(&derived));
@@ -759,8 +760,12 @@ fn cl_lines_and_cap(
 
 /// Affine lines dominating one hop's output curve, plus the hop's maximum
 /// extractable output (used to cap the search domain).
-fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<Line>, U256)> {
-    hop_lines_and_cap_cached(hop, cfg, None)
+fn hop_lines_and_cap(
+    hop: HopMath<'_>,
+    cfg: &SolveRuntimeConfig,
+    stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
+    hop_lines_and_cap_cached(hop, cfg, None, stats)
 }
 
 /// [`hop_lines_and_cap`] with the owner's pool-static CL fan cache threaded
@@ -770,6 +775,7 @@ fn hop_lines_and_cap_cached(
     hop: HopMath<'_>,
     cfg: &SolveRuntimeConfig,
     fan_cache: Option<(&PrefixCache, u64)>,
+    stats: &mut GateStats,
 ) -> Option<(Vec<Line>, U256)> {
     match hop {
         HopMath::V2(h) => {
@@ -801,6 +807,7 @@ fn hop_lines_and_cap_cached(
                 max_tangent_lines,
                 cfg.tangent_sample_by_mass,
                 fan_cache,
+                stats,
             )
         }
         HopMath::SolidlyVolatile {
@@ -1055,13 +1062,13 @@ pub(crate) fn capture_degenerate_path(
 /// domain endpoint: a candidate dominated at both 0 and `upper` never
 /// matters for any input in [0, upper] (two affine lines cross once).
 #[expect(clippy::too_many_lines)]
-fn prune(lines: &mut Vec<Line>, upper: U256) {
+fn prune(lines: &mut Vec<Line>, upper: U256, stats: &mut GateStats) {
     struct S1Key {
         f0: f64,
         fu: f64,
         idx: usize,
     }
-    gate_tls(|t| {
+    record_gate(stats, |t| {
         t.prune_calls += 1;
         t.prune_lines += lines.len() as u64;
     });
@@ -1134,11 +1141,11 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
             .then_with(|| {
                 if exact_at_zero_memo[x.idx].is_none() {
                     exact_at_zero_memo[x.idx] = Some(lines[x.idx].eval(&U256::ZERO));
-                    gate_tls(|t| t.prune_tie_evals += 1);
+                    record_gate(stats, |t| t.prune_tie_evals += 1);
                 }
                 if exact_at_zero_memo[y.idx].is_none() {
                     exact_at_zero_memo[y.idx] = Some(lines[y.idx].eval(&U256::ZERO));
-                    gate_tls(|t| t.prune_tie_evals += 1);
+                    record_gate(stats, |t| t.prune_tie_evals += 1);
                 }
                 exact_at_zero_memo[x.idx].cmp(&exact_at_zero_memo[y.idx])
             })
@@ -1146,11 +1153,11 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
             .then_with(|| {
                 if exact_at_upper_memo[x.idx].is_none() {
                     exact_at_upper_memo[x.idx] = Some(lines[x.idx].eval(&upper));
-                    gate_tls(|t| t.prune_tie_evals += 1);
+                    record_gate(stats, |t| t.prune_tie_evals += 1);
                 }
                 if exact_at_upper_memo[y.idx].is_none() {
                     exact_at_upper_memo[y.idx] = Some(lines[y.idx].eval(&upper));
-                    gate_tls(|t| t.prune_tie_evals += 1);
+                    record_gate(stats, |t| t.prune_tie_evals += 1);
                 }
                 exact_at_upper_memo[x.idx].cmp(&exact_at_upper_memo[y.idx])
             })
@@ -1170,7 +1177,7 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
                 } else {
                     let v = lines[item.idx].eval(&upper);
                     exact_at_upper_memo[item.idx] = Some(v);
-                    gate_tls(|t| t.prune_tie_evals += 1);
+                    record_gate(stats, |t| t.prune_tie_evals += 1);
                     v
                 };
                 if min_idx == usize::MAX {
@@ -1203,8 +1210,10 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     if surv.is_empty() {
         surv.push(lines[indexed[0].idx]);
     }
-    gate_tls(|t| t.prune_stage1_ns += stage1_t0.elapsed().as_nanos());
-    gate_tls(|t| t.prune_hull_lines += surv.len() as u64);
+    record_gate(stats, |t| {
+        t.prune_stage1_ns += stage1_t0.elapsed().as_nanos()
+    });
+    record_gate(stats, |t| t.prune_hull_lines += surv.len() as u64);
     if surv.len() < 2 {
         *lines = surv;
         return;
@@ -1306,14 +1315,15 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
         .filter(|&&(bx, _)| bx <= upper)
         .map(|&(_, i)| parsed[i])
         .collect();
-    gate_tls(|t| t.prune_hull_ns += hull_t0.elapsed().as_nanos());
+    record_gate(stats, |t| t.prune_hull_ns += hull_t0.elapsed().as_nanos());
     *lines = keep;
 }
 
-/// Gate telemetry: per-solve-cycle counters, thread-local like the walk
-/// stats (rayon workers aggregate them the same way). `unsupported` counts
-/// paths whose hop families lack an envelope — those are SOLVED normally,
-/// never skipped.
+/// Gate telemetry: per-path counters carried out on the mixed solve
+/// outcome (the asymmetric twin of `WalkOutcome`'s walk stats — rayon
+/// workers return them the same way and the bot merges them per cycle).
+/// `unsupported` counts paths whose hop families lack an envelope — those
+/// are SOLVED normally, never skipped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GateStats {
     /// Paths whose bound was derived and compared against `min_profit`.
@@ -1513,16 +1523,13 @@ impl GateStats {
     }
 }
 
-thread_local! {
-    // ONE TLS block entry (loop-16 T4): the per-timer statics exhausted
-    // the dlopen static-TLS surplus on the Python import path
-    // ("cannot allocate memory in static TLS block").
-    static GATE_TLS: std::cell::RefCell<GateStats> =
-        const { std::cell::RefCell::new(GateStats::EMPTY) };
-}
-
-pub(crate) fn gate_tls<R>(f: impl FnOnce(&mut GateStats) -> R) -> R {
-    GATE_TLS.with(|t| f(&mut t.borrow_mut()))
+/// Apply `f` to the caller-owned gate accumulator. Replaces the retired
+/// gate thread-local: gate stats now ride the mixed solve outcome
+/// (the asymmetric twin of `WalkOutcome`'s walk stats — one value out,
+/// no thread-local read-back).
+#[inline]
+fn record_gate<R>(stats: &mut GateStats, f: impl FnOnce(&mut GateStats) -> R) -> R {
+    f(stats)
 }
 
 /// Prefix-composition cache (loop-8): composed lower-envelope line sets
@@ -1752,19 +1759,6 @@ impl std::fmt::Debug for PrefixCache {
     }
 }
 
-/// Reset all gate counters on the calling thread (call at solve-cycle start,
-/// mirroring `reset_walk_stats`).
-pub fn reset_gate_stats() {
-    gate_tls(|t| *t = GateStats::EMPTY);
-}
-
-/// Read-and-clear the calling thread's gate counters (the ONE read-back
-/// accessor — phase splits and pair volume are fields of the same struct).
-#[must_use]
-pub fn take_last_gate_stats() -> GateStats {
-    gate_tls(|t| std::mem::replace(t, GateStats::EMPTY))
-}
-
 /// The gate's typed verdict: [`Envelope::Bound`] is a
 /// rigorous upper bound on `max_x [path_output(x) − x]` — skip ONLY when its
 /// value is at or below the caller's profit floor. [`Envelope::Unsupported`]
@@ -1863,6 +1857,18 @@ pub struct GateCaptureCfg {
 /// on full hop content and generationed by [`GateDeps::epoch`].
 #[must_use]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>], deps: &GateDeps<'_>) -> Envelope {
+    path_profit_bound_impl(hops, deps, None).0
+}
+
+/// [`path_profit_bound`] plus the per-path gate counters it produced — the
+/// returned-value form (no thread-local read-back). The bot consumes the
+/// counters from the mixed solve outcome; the offline harnesses read them
+/// here.
+#[must_use]
+pub fn path_profit_bound_with_stats(
+    hops: &[Option<HopMath<'_>>],
+    deps: &GateDeps<'_>,
+) -> (Envelope, GateStats) {
     path_profit_bound_impl(hops, deps, None)
 }
 
@@ -1881,7 +1887,7 @@ pub fn path_profit_bound_with_floor(
     hops: &[Option<HopMath<'_>>],
     deps: &GateDeps<'_>,
     min_profit: U256,
-) -> Envelope {
+) -> (Envelope, GateStats) {
     path_profit_bound_impl(hops, deps, Some(min_profit))
 }
 
@@ -1889,25 +1895,24 @@ fn path_profit_bound_impl(
     hops: &[Option<HopMath<'_>>],
     deps: &GateDeps<'_>,
     floor: Option<U256>,
-) -> Envelope {
+) -> (Envelope, GateStats) {
+    let mut stats = GateStats::EMPTY;
     let gate_t0 = std::time::Instant::now();
-    let result = path_profit_bound_inner(hops, deps, floor);
-    gate_tls(|t| t.duration_ns = gate_t0.elapsed().as_nanos());
+    let result = path_profit_bound_inner(hops, deps, floor, &mut stats);
+    stats.duration_ns = gate_t0.elapsed().as_nanos();
     match result {
         Ok(b) => {
-            gate_tls(|t| t.evaluated += 1);
-            Envelope::Bound(b)
+            stats.evaluated += 1;
+            (Envelope::Bound(b), stats)
         }
         Err(cause) => {
-            gate_tls(|t| {
-                t.unsupported += 1;
-                match cause {
-                    GateSkipCause::UnmappedHop => t.none_hop_unmapped += 1,
-                    GateSkipCause::DegenerateHop => t.none_degenerate += 1,
-                    GateSkipCause::DomainOverflow => t.none_overflow += 1,
-                }
-            });
-            Envelope::Unsupported(cause)
+            stats.unsupported += 1;
+            match cause {
+                GateSkipCause::UnmappedHop => stats.none_hop_unmapped += 1,
+                GateSkipCause::DegenerateHop => stats.none_degenerate += 1,
+                GateSkipCause::DomainOverflow => stats.none_overflow += 1,
+            }
+            (Envelope::Unsupported(cause), stats)
         }
     }
 }
@@ -1917,6 +1922,7 @@ fn path_profit_bound_inner(
     hops: &[Option<HopMath<'_>>],
     deps: &GateDeps<'_>,
     floor: Option<U256>,
+    stats: &mut GateStats,
 ) -> Result<U256, GateSkipCause> {
     let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
@@ -1932,7 +1938,8 @@ fn path_profit_bound_inner(
         let Some(hop) = slot.as_ref() else {
             return Err(GateSkipCause::UnmappedHop);
         };
-        let Some((hop_ls, cap)) = hop_lines_and_cap_cached(hop.clone(), &deps.runtime, fan_cache)
+        let Some((hop_ls, cap)) =
+            hop_lines_and_cap_cached(hop.clone(), &deps.runtime, fan_cache, stats)
         else {
             // Degenerate diagnostic: log the hop family + the reject
             // reason so the steady-state degenerate rate can be classified as
@@ -1999,7 +2006,7 @@ fn path_profit_bound_inner(
         }
         all_hops.push((hop_ls, cap));
     }
-    gate_tls(|t| t.derive_ns += phase_derive.elapsed().as_nanos());
+    record_gate(stats, |t| t.derive_ns += phase_derive.elapsed().as_nanos());
     let phase_compose = std::time::Instant::now();
     // Second pass against the FULL known input domain. Every line that
     // cannot be beaten below within [0,domain] can never best at any path
@@ -2062,11 +2069,11 @@ fn path_profit_bound_inner(
             let hit = deps.prefix_store.and_then(|s| s.get(deps.epoch, &chain));
             if let Some(hit_lines) = hit {
                 lines2 = hit_lines;
-                gate_tls(|t| t.prefix_hits += 1);
+                record_gate(stats, |t| t.prefix_hits += 1);
                 continue;
             }
         }
-        gate_tls(|t| t.boundaries_composed += 1);
+        record_gate(stats, |t| t.boundaries_composed += 1);
         // Prune each hop's tangent lines BEFORE composition.
         //
         // Soundness: CL swap output is monotonically increasing (more input
@@ -2093,7 +2100,8 @@ fn path_profit_bound_inner(
         // without sampling (see `compose_envelopes_exact`). The old
         // product+sample path survives only as the documented fallback
         // (overflow / ambiguity), counted via TLS.
-        let mut next: Vec<Line> = compose_envelopes_exact(hop_ls, &lines2, domain, compose_cap)?;
+        let mut next: Vec<Line> =
+            compose_envelopes_exact(hop_ls, &lines2, domain, compose_cap, stats)?;
         // One reduction pass per hop boundary (O(survivors)) — replaces the
         // per-pair reduction removed from Line::compose. Byte-identical
         // coefficients to the old per-pair pass (same ceil/floor rules).
@@ -2102,7 +2110,7 @@ fn path_profit_bound_inner(
             for l in &mut next {
                 l.reduce(COMPOSE_TARGET_BITS);
             }
-            gate_tls(|t| t.postprune_reduce_ns += t0.elapsed().as_nanos());
+            record_gate(stats, |t| t.postprune_reduce_ns += t0.elapsed().as_nanos());
         }
         // sampled_compose_lines() cap: the composing side is dropped to a
         // uniform Pareto-order sample across the lower envelope, bounding
@@ -2120,7 +2128,9 @@ fn path_profit_bound_inner(
         trace_boundary(hop_idx, hop_ls_len_dbg, next.len(), &next);
         lines2 = next;
     }
-    gate_tls(|t| t.compose_ns += phase_compose.elapsed().as_nanos());
+    record_gate(stats, |t| {
+        t.compose_ns += phase_compose.elapsed().as_nanos()
+    });
     let phase_search = std::time::Instant::now();
     let lines = lines2;
     // Diagnostic: line explosion is the gate bottleneck on dense-CL paths.
@@ -2137,9 +2147,9 @@ fn path_profit_bound_inner(
     if xmax.is_zero() {
         return Ok(U256::ZERO);
     }
-    let best = concave_max(&lines, xmax, floor);
+    let best = concave_max(&lines, xmax, floor, stats);
 
-    gate_tls(|t| t.search_ns += phase_search.elapsed().as_nanos());
+    record_gate(stats, |t| t.search_ns += phase_search.elapsed().as_nanos());
     // Rounding slack: composed reductions and I512 ceiling evaluation can
     // leave the derived lower envelope a hair BELOW the true curve. The
     // deficit is ~2^-11 of the bound per reduction for very deep chains
@@ -2168,7 +2178,7 @@ fn path_profit_bound_inner(
 /// rigorous upper bound of the true profit at that x, so the scan's soundness
 /// is unchanged by the early exit.
 #[expect(clippy::too_many_lines)]
-fn concave_max(lines: &[Line], xmax: U256, floor: Option<U256>) -> I512 {
+fn concave_max(lines: &[Line], xmax: U256, floor: Option<U256>, stats: &mut GateStats) -> I512 {
     // Lower-envelope hull over the surviving lines: order by slope (b/c,
     // exact rational compare) descending, drop same-slope dominated
     // intercepts, and store per-hull-line the ceil-rounded integer
@@ -2302,7 +2312,7 @@ fn concave_max(lines: &[Line], xmax: U256, floor: Option<U256>) -> I512 {
         if bp.is_zero() || bp > xmax {
             continue;
         }
-        gate_tls(|t| t.search_segments += 1);
+        record_gate(stats, |t| t.search_segments += 1);
         for &cand in &[bp, (bp + one).min(xmax)] {
             let v = f(&cand);
             if v > best {
@@ -2364,24 +2374,25 @@ pub fn path_output_bound_at(
     x: &U256,
     cfg: &SolveRuntimeConfig,
 ) -> Option<U256> {
+    let mut stats = GateStats::EMPTY;
     let mut lines = vec![Line::IDENTITY];
     for slot in hops {
         let Some(hop) = slot.as_ref() else {
-            gate_tls(|t| t.none_hop_unmapped += 1);
+            record_gate(&mut stats, |t| t.none_hop_unmapped += 1);
             return None;
         };
-        let (hop_ls, _cap) = hop_lines_and_cap(hop.clone(), cfg)?;
+        let (hop_ls, _cap) = hop_lines_and_cap(hop.clone(), cfg, &mut stats)?;
         let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());
         for outer in &hop_ls {
             for inner in &lines {
                 let Some(composed) = outer.compose(inner) else {
-                    gate_tls(|t| t.none_overflow += 1);
+                    record_gate(&mut stats, |t| t.none_overflow += 1);
                     return None;
                 };
                 next.push(composed);
             }
         }
-        prune(&mut next, *x);
+        prune(&mut next, *x, &mut stats);
         lines = next;
     }
     let mut best = I512::MAX;
@@ -2409,20 +2420,33 @@ pub struct PathBoundLines {
 }
 /// Compose the path's bound lines ([`path_bound_lines`] intake; same
 /// degenerate/overflow causes as the gate).
+#[cfg(test)]
 pub(crate) fn path_bound_lines(
     hops: &[Option<HopMath<'_>>],
     cfg: &SolveRuntimeConfig,
+) -> Option<PathBoundLines> {
+    let mut stats = GateStats::EMPTY;
+    path_bound_lines_with_stats(hops, cfg, &mut stats)
+}
+
+/// [`path_bound_lines`] with the caller's gate accumulator threaded in: the
+/// walk-refine envelope's prune / exact-compose counters land in the same
+/// `GateStats` the gate call returned (no thread-local read-back).
+pub(crate) fn path_bound_lines_with_stats(
+    hops: &[Option<HopMath<'_>>],
+    cfg: &SolveRuntimeConfig,
+    stats: &mut GateStats,
 ) -> Option<PathBoundLines> {
     let mut lines = vec![Line::IDENTITY];
     let mut total_cap = U256::ZERO;
     for slot in hops {
         let hop = slot.as_ref()?;
-        let (hop_ls, cap) = hop_lines_and_cap(hop.clone(), cfg)?;
+        let (hop_ls, cap) = hop_lines_and_cap(hop.clone(), cfg, stats)?;
         total_cap = total_cap.checked_add(cap)?;
         let compose_cap = cfg.sampled_compose_lines.max(1);
         // Exact composition keeps the walk-refine envelope on the same
         // hull the gate uses; only the documented fallback samples.
-        lines = compose_envelopes_exact(&hop_ls, &lines, total_cap, compose_cap).ok()?;
+        lines = compose_envelopes_exact(&hop_ls, &lines, total_cap, compose_cap, stats).ok()?;
     }
     let _ = total_cap;
     Some(PathBoundLines { lines })
@@ -2669,6 +2693,7 @@ fn compose_selected_pairs(
     chain: &[Line],
     selected: &[(usize, usize)],
     upper: U256,
+    stats: &mut GateStats,
 ) -> Result<Vec<Line>, GateSkipCause> {
     let mut ordered: Vec<(usize, usize)> = selected.to_vec();
     ordered.sort_unstable_by_key(|&(oj, oi)| (oj, oi));
@@ -2679,7 +2704,7 @@ fn compose_selected_pairs(
         };
         next.push(composed);
     }
-    prune(&mut next, upper);
+    prune(&mut next, upper, stats);
     for l in &mut next {
         l.reduce(COMPOSE_TARGET_BITS);
     }
@@ -2723,39 +2748,41 @@ fn compose_boundary_merged(
     chain: &[Line],
     upper: U256,
     cap: usize,
+    stats: &mut GateStats,
 ) -> Result<Vec<Line>, GateSkipCause> {
-    let legacy = |reason: MergeFallbackReason| -> Result<Vec<Line>, GateSkipCause> {
-        gate_tls(|t| {
-            t.merge_legacy_fallbacks += 1;
-            match reason {
-                MergeFallbackReason::BSign => t.merge_fb_b_sign += 1,
-                MergeFallbackReason::Flat => t.merge_fb_flat += 1,
-                MergeFallbackReason::EmptyPieces => t.merge_fb_empty_pieces += 1,
-                MergeFallbackReason::EmptySelection => t.merge_fb_empty_selection += 1,
-                MergeFallbackReason::YDisorder => t.merge_fb_y_disorder += 1,
-                MergeFallbackReason::CmpOverflow => t.merge_fb_cmp_overflow += 1,
-            }
-        });
-        diag!(
-            domain = solver,
-            reason = reason.key(),
-            "compose merge fell back to legacy pair product"
-        );
-        compose_boundary_reference(hop_lines, chain, upper, cap)
-    };
+    let legacy =
+        |stats: &mut GateStats, reason: MergeFallbackReason| -> Result<Vec<Line>, GateSkipCause> {
+            record_gate(stats, |t| {
+                t.merge_legacy_fallbacks += 1;
+                match reason {
+                    MergeFallbackReason::BSign => t.merge_fb_b_sign += 1,
+                    MergeFallbackReason::Flat => t.merge_fb_flat += 1,
+                    MergeFallbackReason::EmptyPieces => t.merge_fb_empty_pieces += 1,
+                    MergeFallbackReason::EmptySelection => t.merge_fb_empty_selection += 1,
+                    MergeFallbackReason::YDisorder => t.merge_fb_y_disorder += 1,
+                    MergeFallbackReason::CmpOverflow => t.merge_fb_cmp_overflow += 1,
+                }
+            });
+            diag!(
+                domain = solver,
+                reason = reason.key(),
+                "compose merge fell back to legacy pair product"
+            );
+            compose_boundary_reference(hop_lines, chain, upper, cap, stats)
+        };
     // Selection needs monotone preimages: every line non-decreasing.
     let monotone = |lines: &[Line]| lines.iter().all(|l| l.b >= I512::ZERO);
     if !monotone(hop_lines) || !monotone(chain) {
-        return legacy(MergeFallbackReason::BSign);
+        return legacy(stats, MergeFallbackReason::BSign);
     }
     let mut hop_ls = hop_lines.to_vec();
-    prune(&mut hop_ls, upper);
+    prune(&mut hop_ls, upper, stats);
     // Flat (b == 0) pieces make E_inner / OW non-strictly monotone and
     // collapse y-intervals to points; selection can double-visit — fall
     // back (telemetry counts how often; stableswap reserve-cap lines are
     // the expected production source).
     if hop_ls.iter().any(|l| l.b == I512::ZERO) || chain.iter().any(|l| l.b == I512::ZERO) {
-        return legacy(MergeFallbackReason::Flat);
+        return legacy(stats, MergeFallbackReason::Flat);
     }
     // Exact pair selection over the <= K1+K2 y-overlapping hull pieces, then
     // the canonical hull of the composed pairs. This is the merge without the
@@ -2764,15 +2791,15 @@ fn compose_boundary_merged(
     let select_t0 = std::time::Instant::now();
     let selected = match select_compose_pairs(&hop_ls, chain, upper) {
         Ok(s) => s,
-        Err(reason) => return legacy(reason),
+        Err(reason) => return legacy(stats, reason),
     };
-    gate_tls(|t| {
+    record_gate(stats, |t| {
         t.merge_selected += selected.len() as u64;
         t.pairs_enumerated += (hop_ls.len() as u64) * (chain.len() as u64);
         t.pairs += selected.len() as u64;
     });
-    let mut next = compose_selected_pairs(&hop_ls, chain, &selected, upper)?;
-    gate_tls(|t| t.product_ns += select_t0.elapsed().as_nanos());
+    let mut next = compose_selected_pairs(&hop_ls, chain, &selected, upper, stats)?;
+    record_gate(stats, |t| t.product_ns += select_t0.elapsed().as_nanos());
     // Sample tail: GATE-COMPOSE-2's byte-identity contract with the frozen
     // reference is the reason this path still samples. min(fewer lines) >=
     // min(all lines), so dropping lines can only loosen (raise) the bound.
@@ -2819,51 +2846,53 @@ pub(crate) fn compose_envelopes_exact(
     chain: &[Line],
     upper: U256,
     cap: usize,
+    stats: &mut GateStats,
 ) -> Result<Vec<Line>, GateSkipCause> {
-    let fallback = |reason: MergeFallbackReason| -> Result<Vec<Line>, GateSkipCause> {
-        gate_tls(|t| {
-            t.exact_compose_fallbacks += 1;
-            match reason {
-                MergeFallbackReason::BSign => t.exact_fb_b_sign += 1,
-                MergeFallbackReason::Flat => t.exact_fb_flat += 1,
-                MergeFallbackReason::EmptyPieces => t.exact_fb_empty_pieces += 1,
-                MergeFallbackReason::EmptySelection => t.exact_fb_empty_selection += 1,
-                MergeFallbackReason::YDisorder => t.exact_fb_y_disorder += 1,
-                MergeFallbackReason::CmpOverflow => t.exact_fb_cmp_overflow += 1,
-            }
-        });
-        diag!(
-            domain = solver,
-            reason = reason.key(),
-            "exact compose fell back to sampled composition"
-        );
-        compose_boundary_reference(hop_lines, chain, upper, cap)
-    };
+    let fallback =
+        |stats: &mut GateStats, reason: MergeFallbackReason| -> Result<Vec<Line>, GateSkipCause> {
+            record_gate(stats, |t| {
+                t.exact_compose_fallbacks += 1;
+                match reason {
+                    MergeFallbackReason::BSign => t.exact_fb_b_sign += 1,
+                    MergeFallbackReason::Flat => t.exact_fb_flat += 1,
+                    MergeFallbackReason::EmptyPieces => t.exact_fb_empty_pieces += 1,
+                    MergeFallbackReason::EmptySelection => t.exact_fb_empty_selection += 1,
+                    MergeFallbackReason::YDisorder => t.exact_fb_y_disorder += 1,
+                    MergeFallbackReason::CmpOverflow => t.exact_fb_cmp_overflow += 1,
+                }
+            });
+            diag!(
+                domain = solver,
+                reason = reason.key(),
+                "exact compose fell back to sampled composition"
+            );
+            compose_boundary_reference(hop_lines, chain, upper, cap, stats)
+        };
     // Selection needs monotone preimages: every line non-decreasing.
     let monotone = |lines: &[Line]| lines.iter().all(|l| l.b >= I512::ZERO);
     if !monotone(hop_lines) || !monotone(chain) {
-        return fallback(MergeFallbackReason::BSign);
+        return fallback(stats, MergeFallbackReason::BSign);
     }
     let mut hop_ls = hop_lines.to_vec();
-    prune(&mut hop_ls, upper);
+    prune(&mut hop_ls, upper, stats);
     // Flat (b == 0) reserve-cap pieces make the monotone preimage machinery
     // non-strict; fall back to the sampled reference (same stance as
     // GATE-COMPOSE-2) and count the reason.
     if hop_ls.iter().any(|l| l.b == I512::ZERO) || chain.iter().any(|l| l.b == I512::ZERO) {
-        return fallback(MergeFallbackReason::Flat);
+        return fallback(stats, MergeFallbackReason::Flat);
     }
     let select_t0 = std::time::Instant::now();
     let selected = match select_compose_pairs(&hop_ls, chain, upper) {
         Ok(s) => s,
-        Err(reason) => return fallback(reason),
+        Err(reason) => return fallback(stats, reason),
     };
-    gate_tls(|t| {
+    record_gate(stats, |t| {
         t.exact_hull_pairs += selected.len() as u64;
         t.exact_pairs_enumerated += (hop_ls.len() as u64) * (chain.len() as u64);
         t.pairs += selected.len() as u64;
     });
-    let Ok(next) = compose_selected_pairs(&hop_ls, chain, &selected, upper) else {
-        gate_tls(|t| {
+    let Ok(next) = compose_selected_pairs(&hop_ls, chain, &selected, upper, stats) else {
+        record_gate(stats, |t| {
             t.exact_compose_fallbacks += 1;
             t.exact_fb_overflow += 1;
         });
@@ -2871,9 +2900,9 @@ pub(crate) fn compose_envelopes_exact(
             domain = solver,
             "exact compose exhausted I512; falling back to sampled composition"
         );
-        return compose_boundary_reference(hop_lines, chain, upper, cap);
+        return compose_boundary_reference(hop_lines, chain, upper, cap, stats);
     };
-    gate_tls(|t| {
+    record_gate(stats, |t| {
         t.exact_compose_ns += select_t0.elapsed().as_nanos();
         t.exact_hull_lines += next.len() as u64;
     });
@@ -2984,9 +3013,10 @@ fn compose_boundary_reference(
     chain: &[Line],
     upper: U256,
     cap: usize,
+    stats: &mut GateStats,
 ) -> Result<Vec<Line>, GateSkipCause> {
     let mut hop_ls = hop_lines.to_vec();
-    prune(&mut hop_ls, upper);
+    prune(&mut hop_ls, upper, stats);
     let lines2 = chain.to_vec();
     let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
     for outer in &hop_ls {
@@ -2997,7 +3027,7 @@ fn compose_boundary_reference(
             next.push(composed);
         }
     }
-    prune(&mut next, upper);
+    prune(&mut next, upper, stats);
     for l in &mut next {
         l.reduce(COMPOSE_TARGET_BITS);
     }
@@ -3023,6 +3053,58 @@ mod tests {
     use super::*;
     use crate::cl::simulate_v3_range_swap;
     use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
+
+    // Test shims: the production helpers now thread a caller-owned
+    // accumulator instead of a thread-local. These tests never read the
+    // prune / hop-line / reference-compose counters, so the shims discard
+    // into a throwaway `GateStats`; the counter-reading tests call `super::*`
+    // with an explicit local accumulator.
+    fn prune(lines: &mut Vec<Line>, upper: U256) {
+        super::prune(lines, upper, &mut GateStats::default());
+    }
+
+    fn hop_lines_and_cap(hop: HopMath<'_>, cfg: &SolveRuntimeConfig) -> Option<(Vec<Line>, U256)> {
+        super::hop_lines_and_cap(hop, cfg, &mut GateStats::default())
+    }
+
+    fn hop_lines_and_cap_cached(
+        hop: HopMath<'_>,
+        cfg: &SolveRuntimeConfig,
+        fan_cache: Option<(&PrefixCache, u64)>,
+    ) -> Option<(Vec<Line>, U256)> {
+        super::hop_lines_and_cap_cached(hop, cfg, fan_cache, &mut GateStats::default())
+    }
+
+    fn compose_boundary_reference(
+        hop_lines: &[Line],
+        chain: &[Line],
+        upper: U256,
+        cap: usize,
+    ) -> Result<Vec<Line>, GateSkipCause> {
+        super::compose_boundary_reference(hop_lines, chain, upper, cap, &mut GateStats::default())
+    }
+
+    fn compose_boundary_merged(
+        hop_lines: &[Line],
+        chain: &[Line],
+        upper: U256,
+        cap: usize,
+    ) -> Result<Vec<Line>, GateSkipCause> {
+        super::compose_boundary_merged(hop_lines, chain, upper, cap, &mut GateStats::default())
+    }
+
+    fn compose_envelopes_exact(
+        hop_lines: &[Line],
+        chain: &[Line],
+        upper: U256,
+        cap: usize,
+    ) -> Result<Vec<Line>, GateSkipCause> {
+        super::compose_envelopes_exact(hop_lines, chain, upper, cap, &mut GateStats::default())
+    }
+
+    fn concave_max(lines: &[Line], xmax: U256, floor: Option<U256>) -> I512 {
+        super::concave_max(lines, xmax, floor, &mut GateStats::default())
+    }
 
     // ===================================================================
     // GATE-COMPOSE-2: merged pair-selection compose.
@@ -4127,23 +4209,19 @@ mod tests {
             );
 
             let store = PrefixCache::new();
-            gate_tls(|t| {
-                t.cl_fan_hits = 0;
-                t.cl_fan_misses = 0;
-            });
+            let mut stats = GateStats::EMPTY;
             let (cold, cold_cap) =
-                hop_lines_and_cap_cached(mk(), &cfg, Some((&store, 1))).expect("derivable");
-            assert_eq!(gate_tls(|t| t.cl_fan_misses), 1, "cold must miss once");
-            assert_eq!(gate_tls(|t| t.cl_fan_hits), 0);
+                super::hop_lines_and_cap_cached(mk(), &cfg, Some((&store, 1)), &mut stats)
+                    .expect("derivable");
+            assert_eq!(stats.cl_fan_misses, 1, "cold must miss once");
+            assert_eq!(stats.cl_fan_hits, 0);
 
-            gate_tls(|t| {
-                t.cl_fan_hits = 0;
-                t.cl_fan_misses = 0;
-            });
+            let mut stats = GateStats::EMPTY;
             let (warm, warm_cap) =
-                hop_lines_and_cap_cached(mk(), &cfg, Some((&store, 1))).expect("derivable");
-            assert_eq!(gate_tls(|t| t.cl_fan_hits), 1, "warm must hit once");
-            assert_eq!(gate_tls(|t| t.cl_fan_misses), 0);
+                super::hop_lines_and_cap_cached(mk(), &cfg, Some((&store, 1)), &mut stats)
+                    .expect("derivable");
+            assert_eq!(stats.cl_fan_hits, 1, "warm must hit once");
+            assert_eq!(stats.cl_fan_misses, 0);
 
             assert_eq!(
                 hash_lines(&reference),
@@ -4195,14 +4273,12 @@ mod tests {
             key_of(&moved),
             "price move must reuse the fan key"
         );
-        gate_tls(|t| {
-            t.cl_fan_hits = 0;
-            t.cl_fan_misses = 0;
-        });
+        let mut stats = GateStats::EMPTY;
         let (moved_lines, _) =
-            hop_lines_and_cap_cached(view(&moved), &cfg, Some((&store, 1))).expect("derivable");
-        assert_eq!(gate_tls(|t| t.cl_fan_hits), 1, "price move must hit");
-        assert_eq!(gate_tls(|t| t.cl_fan_misses), 0);
+            super::hop_lines_and_cap_cached(view(&moved), &cfg, Some((&store, 1)), &mut stats)
+                .expect("derivable");
+        assert_eq!(stats.cl_fan_hits, 1, "price move must hit");
+        assert_eq!(stats.cl_fan_misses, 0);
         assert_ne!(
             base_lines, moved_lines,
             "the head tangent must be rebuilt from the new live price"
@@ -4217,13 +4293,11 @@ mod tests {
             key_of(&changed),
             "changed tick set must produce a different key"
         );
-        gate_tls(|t| {
-            t.cl_fan_hits = 0;
-            t.cl_fan_misses = 0;
-        });
+        let mut stats = GateStats::EMPTY;
         let (_changed_lines, _) =
-            hop_lines_and_cap_cached(view(&changed), &cfg, Some((&store, 1))).expect("derivable");
-        assert_eq!(gate_tls(|t| t.cl_fan_misses), 1, "changed table must miss");
+            super::hop_lines_and_cap_cached(view(&changed), &cfg, Some((&store, 1)), &mut stats)
+                .expect("derivable");
+        assert_eq!(stats.cl_fan_misses, 1, "changed table must miss");
     }
 
     /// A hard-reject fan (zero entry price deeper in the table) must not write
@@ -4248,17 +4322,11 @@ mod tests {
         );
 
         let valid = build_cl_crossing_table(&seq);
-        gate_tls(|t| {
-            t.cl_fan_hits = 0;
-            t.cl_fan_misses = 0;
-        });
-        let hit = hop_lines_and_cap_cached(view(&valid), &cfg, Some((&store, 1)));
+        let mut stats = GateStats::EMPTY;
+        let hit =
+            super::hop_lines_and_cap_cached(view(&valid), &cfg, Some((&store, 1)), &mut stats);
         assert!(hit.is_some(), "the valid table must still derive");
-        assert_eq!(
-            gate_tls(|t| t.cl_fan_misses),
-            1,
-            "nothing was cached by the reject"
-        );
+        assert_eq!(stats.cl_fan_misses, 1, "nothing was cached by the reject");
     }
 
     /// Early-exit focused test: `concave_max` must (a) stop before the last
@@ -4292,25 +4360,25 @@ mod tests {
         let xmax = U256::from(100u8);
 
         // Exact max, full scan (no floor threaded).
-        gate_tls(|t| t.search_segments = 0);
-        let exact = concave_max(&lines, xmax, None);
-        let full_segments = gate_tls(|t| t.search_segments);
+        let mut stats = GateStats::EMPTY;
+        let exact = super::concave_max(&lines, xmax, None, &mut stats);
+        let full_segments = stats.search_segments;
         assert_eq!(exact, ival(86), "exact max");
         assert_eq!(full_segments, 2, "full scan visits both hull segments");
 
         // (a) floor 80 < max: the first segment's candidates clear it, so the
         // scan must stop without ever reaching the last segment.
-        gate_tls(|t| t.search_segments = 0);
-        let early = concave_max(&lines, xmax, Some(U256::from(80u8)));
-        let early_segments = gate_tls(|t| t.search_segments);
+        let mut stats = GateStats::EMPTY;
+        let early = super::concave_max(&lines, xmax, Some(U256::from(80u8)), &mut stats);
+        let early_segments = stats.search_segments;
         assert_eq!(early, ival(86));
         assert_eq!(early_segments, 1, "early exit before the last segment");
 
         // (b) floor 100 > max: nothing clears it, every hull segment is
         // evaluated and the exact max is still returned (verdict: skip).
-        gate_tls(|t| t.search_segments = 0);
-        let never = concave_max(&lines, xmax, Some(U256::from(100u8)));
-        let never_segments = gate_tls(|t| t.search_segments);
+        let mut stats = GateStats::EMPTY;
+        let never = super::concave_max(&lines, xmax, Some(U256::from(100u8)), &mut stats);
+        let never_segments = stats.search_segments;
         assert_eq!(never, ival(86));
         assert_eq!(never_segments, 2, "floor above max scans every segment");
     }
@@ -4421,13 +4489,11 @@ mod tests {
         let hop = concave_front(k1, 7);
         let chain = concave_front(k2, 5);
         let upper = U256::from(200u64);
-        gate_tls(|t| {
-            t.exact_hull_pairs = 0;
-            t.exact_pairs_enumerated = 0;
-        });
-        let mid =
-            compose_envelopes_exact(&chain, &[Line::IDENTITY], upper, 8).expect("first boundary");
-        let exact = compose_envelopes_exact(&hop, &mid, upper, 8).expect("second boundary");
+        let mut stats = GateStats::EMPTY;
+        let mid = super::compose_envelopes_exact(&chain, &[Line::IDENTITY], upper, 8, &mut stats)
+            .expect("first boundary");
+        let exact = super::compose_envelopes_exact(&hop, &mid, upper, 8, &mut stats)
+            .expect("second boundary");
         assert!(
             exact.len() <= k1 + k2,
             "hull size {} exceeds K1+K2={}",
@@ -4440,8 +4506,8 @@ mod tests {
             exact.len(),
             k1 * k2
         );
-        let pairs = gate_tls(|t| t.exact_hull_pairs);
-        let enumerated = gate_tls(|t| t.exact_pairs_enumerated);
+        let pairs = stats.exact_hull_pairs;
+        let enumerated = stats.exact_pairs_enumerated;
         assert!(
             pairs <= (k1 + k2) as u64 * 2,
             "selected pairs {pairs} blew past the additive bound"
@@ -4559,7 +4625,7 @@ mod tests {
                 .join("tests/fixtures")
                 .join(name);
             let content = crate::capture_fixture::read_fixture(&fixture);
-            gate_tls(|t| t.exact_compose_fallbacks = 0);
+            let mut stats = GateStats::EMPTY;
             let mut n = 0usize;
             let mut tightened = 0usize;
             let mut equal = 0usize;
@@ -4592,7 +4658,9 @@ mod tests {
                     let (hop_ls, hop_cap) = hop_lines_and_cap(hop.clone(), &cfg).unwrap();
                     domain = domain.checked_add(hop_cap).unwrap();
                     let t_exact = std::time::Instant::now();
-                    exact = compose_envelopes_exact(&hop_ls, &exact, domain, cap).unwrap();
+                    exact =
+                        super::compose_envelopes_exact(&hop_ls, &exact, domain, cap, &mut stats)
+                            .unwrap();
                     exact_ns += t_exact.elapsed().as_nanos();
                     let t_sampled = std::time::Instant::now();
                     sampled = compose_boundary_reference(&hop_ls, &sampled, domain, cap).unwrap();
@@ -4673,7 +4741,7 @@ mod tests {
                 ratios.push(i512_to_f64(s_xmax) / i512_to_f64(e_xmax).max(1.0));
                 n += 1;
             }
-            let fallbacks = gate_tls(|t| t.exact_compose_fallbacks);
+            let fallbacks = stats.exact_compose_fallbacks;
             ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             peak_ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let pick = |v: &[f64], num: usize, den: usize| {

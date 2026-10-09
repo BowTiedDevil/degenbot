@@ -14,8 +14,9 @@ use std::sync::Arc;
 
 use alloy::primitives::{U256, U512};
 
-use crate::profit_envelope::gate_tls;
-use crate::profit_envelope::{path_profit_bound_with_floor, ClHop, Envelope, GateDeps, HopMath};
+use crate::profit_envelope::{
+    path_profit_bound_with_floor, ClHop, Envelope, GateDeps, GateStats, HopMath,
+};
 
 use crate::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, ResolvedHop,
@@ -44,6 +45,9 @@ pub struct SolveOutcome {
     /// rejection; `Unsupported` remains solve-unscreened.
     pub envelope: Envelope,
     pub stats: crate::cl::WalkStats,
+    /// The gate phase counters this solve produced — carried out on the
+    /// outcome (the asymmetric twin of `stats`; no thread-local read-back).
+    pub gate_stats: GateStats,
 }
 
 #[must_use]
@@ -140,7 +144,7 @@ pub fn solve_path_with_min_profit(
             }
         })
         .collect();
-    let envelope = path_profit_bound_with_floor(&views, gate, min_profit);
+    let (envelope, mut gate_stats) = path_profit_bound_with_floor(&views, gate, min_profit);
     match envelope {
         // Unsupported families are SOLVED unscreened, never skipped — the
         // gate counts its own verdicts (evaluated / unsupported / cause).
@@ -151,19 +155,22 @@ pub fn solve_path_with_min_profit(
             // results downstream), so skipping is outcome-identical and saves
             // the walk.
             if bound <= min_profit {
-                gate_tls(|t| t.skipped += 1);
+                gate_stats.skipped += 1;
                 return SolveOutcome {
                     result: None,
                     envelope,
                     stats: crate::cl::WalkStats::default(),
+                    gate_stats,
                 };
             }
         }
     }
     // Loop-21 `envelope_pruned_refine`: hand the walk the composed bound so
-    // its refine windows skip the inputs the bound disproves.
+    // its refine windows skip the inputs the bound disproves. Its prune /
+    // exact-compose counters merge into the same returned `GateStats` the
+    // gate call produced.
     let walk_env = if gate.runtime.envelope_pruned_refine {
-        crate::profit_envelope::path_bound_lines(&views, &gate.runtime)
+        crate::profit_envelope::path_bound_lines_with_stats(&views, &gate.runtime, &mut gate_stats)
     } else {
         None
     };
@@ -172,6 +179,7 @@ pub fn solve_path_with_min_profit(
         result,
         envelope,
         stats,
+        gate_stats,
     }
 }
 
@@ -1454,7 +1462,6 @@ fn curve_brute_force_best(hops: &[ResolvedHop], start: U256) -> Option<U256> {
 mod gate_tests {
     use super::*;
     use crate::mixed::ResolvedMixedPath;
-    use crate::profit_envelope::take_last_gate_stats;
     use degenbot_math::v2::IntHopState;
     use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -1488,13 +1495,12 @@ mod gate_tests {
     #[test]
     fn gate_huge_floor_skips_and_counts() {
         let p = profitable_path();
-        let _ = take_last_gate_stats(); // clear thread counters
         let r = solve_path_with_min_profit(&p, U256::MAX, &GateDeps::offline());
         assert!(
             r.result.is_none(),
             "infinite floor skips every screened path"
         );
-        let stats = take_last_gate_stats();
+        let stats = r.gate_stats;
         assert_eq!(stats.skipped, 1, "skip must be counted");
         assert_eq!(stats.evaluated, 1);
         assert_eq!(stats.unsupported, 0);
@@ -1548,13 +1554,12 @@ mod gate_tests {
             state_nonces: vec![1, 2],
             max_update_block: 0,
         };
-        let _ = take_last_gate_stats();
         let r = solve_path_with_min_profit(&p, U256::ZERO, &GateDeps::offline());
         assert!(
             r.result.is_none(),
             "fee-dominated round trip must be skipped at floor 0"
         );
-        let stats = take_last_gate_stats();
+        let stats = r.gate_stats;
         assert_eq!(stats.skipped, 1);
         assert_eq!(stats.evaluated, 1);
     }
@@ -1772,9 +1777,8 @@ mod gate_tests {
             state_nonces: vec![],
             max_update_block: 0,
         };
-        let _ = take_last_gate_stats();
-        let _ = solve_path_with_min_profit(&p, U256::ZERO, &GateDeps::offline());
-        let stats = take_last_gate_stats();
+        let r = solve_path_with_min_profit(&p, U256::ZERO, &GateDeps::offline());
+        let stats = r.gate_stats;
         assert_eq!(stats.unsupported, 0);
         assert_eq!(stats.evaluated, 1);
     }

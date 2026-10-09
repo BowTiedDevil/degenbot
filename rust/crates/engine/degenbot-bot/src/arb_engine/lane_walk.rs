@@ -182,7 +182,6 @@ pub(crate) fn solve_one_path(
         path.profit = tracing::field::Empty,
     );
     let _path_ctx = path_span.enter();
-    ::degenbot_solvers::profit_envelope::reset_gate_stats();
     let t0 = std::time::Instant::now();
     let outcome =
         ::degenbot_solvers::mixed::solve_path_with_min_profit(resolved, ctx.min_profit, &gate_deps);
@@ -191,7 +190,8 @@ pub(crate) fn solve_one_path(
         u64::try_from(micros).unwrap_or(u64::MAX),
         std::sync::atomic::Ordering::Relaxed,
     );
-    let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
+    // Gate telemetry rides the solve outcome now — no TLS read-back.
+    let gs = outcome.gate_stats;
     let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
     if let Some(p) = crate::instruments::pipeline() {
         #[expect(clippy::cast_precision_loss)]

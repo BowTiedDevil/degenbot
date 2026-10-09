@@ -16,7 +16,7 @@
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::cl::WalkStats;
-use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
+use degenbot_solvers::profit_envelope::{GateDeps, HopMath};
 use serde_json::Value;
 use std::time::Instant;
 
@@ -116,9 +116,11 @@ fn replay_captured_heavy_paths() {
             .map(|s| Some(HopMath::cl_derived(s)))
             .collect();
         let gt0 = Instant::now();
-        let _bound = path_profit_bound(&views, &GateDeps::offline());
+        let (_bound, gs) = degenbot_solvers::profit_envelope::path_profit_bound_with_stats(
+            &views,
+            &GateDeps::offline(),
+        );
         let gate_us = gt0.elapsed().as_micros();
-        let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
         let (d_ns, c_ns, s_ns) = (gs.derive_ns, gs.compose_ns, gs.search_ns);
         let pairs = gs.pairs;
         sub.product_us += (gs.product_ns / 1_000) as u64;

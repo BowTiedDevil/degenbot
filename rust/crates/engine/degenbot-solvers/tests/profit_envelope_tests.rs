@@ -367,20 +367,19 @@ fn m6776w_balancer_weighted_3hop_no_overflow() {
 #[test]
 fn m6776w_none_cause_classifies_each_exit() {
     // The typed verdict + per-cause counters classify WHY the gate returned
-    // Unsupported — used to diagnose the prod soak's unsupported rate.
-    use degenbot_solvers::profit_envelope::{reset_gate_stats, take_last_gate_stats};
-    reset_gate_stats();
+    // Unsupported — used to diagnose the prod soak's unsupported rate. The
+    // counters now ride the gate's returned value, not a thread-local.
+    use degenbot_solvers::profit_envelope::path_profit_bound_with_stats;
     // Hop unmapped: a None slot (a hop family the gate doesn't map OR a
     // degenerate hop_state the caller couldn't build).
+    let (env, s) = path_profit_bound_with_stats(&[None], &GateDeps::offline());
     assert!(matches!(
-        path_profit_bound(&[None], &GateDeps::offline()),
+        env,
         Envelope::Unsupported(GateSkipCause::UnmappedHop)
     ));
-    let s = take_last_gate_stats();
     assert_eq!(s.none_hop_unmapped, 1);
     assert_eq!(s.none_degenerate, 0);
     assert_eq!(s.none_overflow, 0);
-    reset_gate_stats();
     // Degenerate: a HopMath slot whose hops_lines_and_cap rejects
     // (zero reserves — a V2 hop with both reserves 0).
     let v2_zero = degenbot_solvers::profit_envelope::HopMath::V2(&IntHopState::new(
@@ -389,11 +388,11 @@ fn m6776w_none_cause_classifies_each_exit() {
         0,
         1,
     ));
+    let (env, s) = path_profit_bound_with_stats(&[Some(v2_zero)], &GateDeps::offline());
     assert!(matches!(
-        path_profit_bound(&[Some(v2_zero)], &GateDeps::offline()),
+        env,
         Envelope::Unsupported(GateSkipCause::DegenerateHop)
     ));
-    let s = take_last_gate_stats();
     assert_eq!(s.none_hop_unmapped, 0);
     assert_eq!(s.none_degenerate, 1);
     assert_eq!(s.none_overflow, 0);
@@ -506,10 +505,10 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
         None,
         SolveRuntimeConfig::default(),
     );
-    let first = path_profit_bound(&views, &deps);
-    let _gs1 = degenbot_solvers::profit_envelope::take_last_gate_stats();
-    let second = path_profit_bound(&views, &deps);
-    let gs2 = degenbot_solvers::profit_envelope::take_last_gate_stats();
+    let (first, _gs1) =
+        degenbot_solvers::profit_envelope::path_profit_bound_with_stats(&views, &deps);
+    let (second, gs2) =
+        degenbot_solvers::profit_envelope::path_profit_bound_with_stats(&views, &deps);
     assert_eq!(first, second, "prefix reuse must be byte-identical");
     assert!(
         gs2.prefix_hits > 0,
@@ -520,11 +519,10 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
         "prefix reuse should cut composed boundaries"
     );
     // No cache reset exists — a new epoch in GateDeps drops older entries.
-    let dropped = path_profit_bound(
+    let (dropped, gs3) = degenbot_solvers::profit_envelope::path_profit_bound_with_stats(
         &views,
         &GateDeps::per_block(2, &store, None, None, SolveRuntimeConfig::default()),
     );
-    let gs3 = degenbot_solvers::profit_envelope::take_last_gate_stats();
     assert_eq!(dropped, first, "new-epoch solve must be byte-identical");
     assert_eq!(
         gs3.prefix_hits, 0,
@@ -680,12 +678,11 @@ fn prefix_cache_chains_through_v2_hops() {
         &GateDeps::per_block(5, &store, None, None, SolveRuntimeConfig::default()),
     );
     assert_eq!(cold, expected, "cold populate must be byte-identical");
-    let warm = path_profit_bound(
+    let (warm, gs) = degenbot_solvers::profit_envelope::path_profit_bound_with_stats(
         &views,
         &GateDeps::per_block(5, &store, None, None, SolveRuntimeConfig::default()),
     );
     assert_eq!(warm, expected, "mixed-prefix reuse must be byte-identical");
-    let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
     assert!(
         gs.prefix_hits > 0,
         "mixed [V2, CL] prefixes must produce cache hits (V2 no longer breaks the chain)"
@@ -789,9 +786,8 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     let tmp = tempfile::NamedTempFile::new().expect("temp file");
     let path = tmp.path().to_str().unwrap().to_string();
 
-    // The existing thread-local capture counter persists across tests; reset
-    // it so the cap doesn't prematurely fire.
-    degenbot_solvers::profit_envelope::reset_gate_stats();
+    // The gate keeps no thread-local counters now; the capture cap is driven
+    // by `GateCaptureCfg` alone.
 
     // A CL path with a zero-liquidity crossing range (the 40% bucket).
     let good_price = p_at_tick(0);
@@ -854,8 +850,6 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
 /// overflow, but keeps the lines that DO fit and lets the solver decide.
 #[test]
 fn extreme_entry_price_is_not_rejected() {
-    degenbot_solvers::profit_envelope::reset_gate_stats();
-
     // sqrt_price_x96 = 2^130 — far above the old P_ENTRY_LIMIT = 2^128.
     // This represents a pool at an extreme tick (misrouted swap recovery).
     let extreme_price = U256::from(1u128) << 130;

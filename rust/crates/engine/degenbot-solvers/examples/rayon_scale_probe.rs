@@ -47,7 +47,6 @@ use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles, WalkStats};
 use degenbot_solvers::mixed::{solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath};
-use degenbot_solvers::profit_envelope::{reset_gate_stats, take_last_gate_stats};
 use rayon::prelude::*;
 use serde_json::Value;
 
@@ -190,14 +189,26 @@ fn reconstruct(doc: &Value) -> Result<(u64, Arc<ResolvedMixedPath>, Option<u128>
     ))
 }
 
-fn solve_measure(p: &Arc<ResolvedMixedPath>) -> (u128, bool, WalkStats) {
+fn solve_measure(
+    p: &Arc<ResolvedMixedPath>,
+) -> (
+    u128,
+    bool,
+    WalkStats,
+    ::degenbot_solvers::profit_envelope::GateStats,
+) {
     let t0 = Instant::now();
     let out = solve_path_with_min_profit(
         p.as_ref(),
         U256::ZERO,
         &::degenbot_solvers::profit_envelope::GateDeps::offline(),
     );
-    (t0.elapsed().as_micros(), out.result.is_some(), out.stats)
+    (
+        t0.elapsed().as_micros(),
+        out.result.is_some(),
+        out.stats,
+        out.gate_stats,
+    )
 }
 
 /// Rayon fan-out over the items: bare solve vs production-diagnostics closure
@@ -225,11 +236,9 @@ fn run_rayon(items: &[Arc<ResolvedMixedPath>], threads: usize, diag: bool) -> Ro
                 .par_iter()
                 .map(|p| {
                     let _g = span.enter();
-                    reset_gate_stats();
-                    let (us, some, ws) = solve_measure(p);
+                    let (us, some, ws, gs) = solve_measure(p);
                     c0.fetch_add(u64::try_from(us).unwrap_or(u64::MAX), Relaxed);
                     c1.fetch_add(u64::from(some), Relaxed);
-                    let gs = take_last_gate_stats();
                     c2.fetch_add(gs.evaluated, Relaxed);
                     c3.fetch_add(gs.skipped, Relaxed);
                     c4.fetch_add(gs.unsupported, Relaxed);
