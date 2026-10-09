@@ -3,7 +3,7 @@
 # Docs: https://hotpath.rs/cloud
 
 # A regression or a broken budget fails the pull request's check.
-pr_check = "fail_on_regression"
+pr_check = "fail"
 
 [functions]
 min_percent_total = 2
