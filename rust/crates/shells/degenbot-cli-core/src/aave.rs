@@ -242,13 +242,22 @@ fn activate(ctx: &CliContext<'_>, chain_id: u64) -> Result<AaveReport, CliError>
     let rpc_url = ctx.node_request_uri_for(chain_id)?.value;
     let chain = i64::try_from(chain_id)
         .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;
-    let result = activate_aave_market(
-        &database_path,
-        chain,
-        &deployment.pool_address_provider.to_checksum(None),
-        &deployment.gho_token_address.to_checksum(None),
-        &rpc_url,
-    )
+    // The thin live-provider wrapper (ADR-068 D5): one build per activation on
+    // the shared runtime, and the core only injects it. Mirrors the update
+    // arm's per-market build below.
+    let result = match crate::pool::shared_runtime_block_on(async {
+        AlloyProvider::new(&rpc_url, RPC_MAX_RETRIES).await
+    }) {
+        Ok(Ok(provider)) => activate_aave_market(
+            &database_path,
+            chain,
+            &deployment.pool_address_provider.to_checksum(None),
+            &deployment.gho_token_address.to_checksum(None),
+            &provider,
+        ),
+        Ok(Err(err)) => Err(RunError::from(err)),
+        Err(cli_err) => return Err(cli_err),
+    }
     .map_err(CliError::AaveUpdate)?;
     tracing::info!(
         chain_id,

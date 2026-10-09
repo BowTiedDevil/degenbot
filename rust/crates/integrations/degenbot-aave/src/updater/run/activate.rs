@@ -2,7 +2,6 @@
 //! `deactivate_aave_market` + the one-transaction market-seed substrate fns.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_core::runtime::get_runtime;
@@ -10,7 +9,7 @@ use degenbot_db::{DbError, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
-use super::{RunError, RPC_MAX_RETRIES};
+use super::RunError;
 #[cfg(test)]
 use rusqlite::params;
 
@@ -213,7 +212,9 @@ pub struct ActivatedMarket {
 /// - `pool_address_provider` — the `PoolAddressProvider` contract address
 ///   (checksummed; stored verbatim).
 /// - `gho_token_address` — the chain's GHO token address (checksummed).
-/// - `rpc_url` — the HTTP RPC endpoint.
+/// - `provider` — the injected live transport (ADR-068 D5). The core never
+///   builds one; the CLI / FFI / recorder shells construct it from their
+///   `rpc_url` and hand it in.
 ///
 /// # Errors
 ///
@@ -233,7 +234,7 @@ pub fn activate_aave_market(
     chain_id: i64,
     pool_address_provider: &str,
     gho_token_address: &str,
-    rpc_url: &str,
+    provider: &AlloyProvider,
 ) -> Result<ActivatedMarket, RunError> {
     let (db, _state) = DegenbotDb::open_for_writes(database_path)?;
 
@@ -255,7 +256,7 @@ pub fn activate_aave_market(
         chain_id,
         pool_address_provider,
         gho_token_address,
-        rpc_url,
+        provider,
         ap_address,
         gho_address,
     ))
@@ -274,22 +275,20 @@ async fn activate_aave_market_rpc(
     chain_id: i64,
     pool_address_provider: &str,
     gho_token_address: &str,
-    rpc_url: &str,
+    provider: &AlloyProvider,
     ap_address: Address,
     gho_address: Address,
 ) -> Result<ActivatedMarket, RunError> {
-    let provider = Arc::new(AlloyProvider::new(rpc_url, RPC_MAX_RETRIES).await?);
-
     // 1. RPC: `getMarketId()` on the PoolAddressProvider (a dynamic `string`
     //    return — reuse the same decoder as `fetch_erc20_string_metadata`).
-    let market_name = fetch_market_id(&provider, &ap_address).await?;
+    let market_name = fetch_market_id(provider, &ap_address).await?;
 
     // 2. RPC: GHO token `name()`/`symbol()`/`decimals()` (string + bytes32 +
     //    uint256 fallbacks). `block_number` is irrelevant (token metadata is
     //    immutable) — pass `None` for latest.
     let preview_block = provider.get_block_number().await?;
     let (gho_name, gho_symbol, gho_decimals) =
-        crate::config_dispatch::fetch_erc20_metadata(&provider, &gho_address, preview_block).await;
+        crate::config_dispatch::fetch_erc20_metadata(provider, &gho_address, preview_block).await;
 
     // 3. ONE transaction: seed/activate the market + contract + GHO rows.
     let (market_id, created) = {

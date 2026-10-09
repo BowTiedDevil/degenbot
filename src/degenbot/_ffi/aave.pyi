@@ -40,9 +40,10 @@ def activate_aave_market(
     inserts the `POOL_ADDRESS_PROVIDER` contract row, + seeds the GHO
     `erc20_tokens` + `aave_gho_tokens` rows, all in ONE transaction.
 
-    The GIL is released across the WHOLE call (`py.detach`) — the core owns
-    its tokio runtime + does the RPC fetches (`getMarketId()` + GHO metadata)
-    + the DB writes internally.
+    The GIL is released across the WHOLE call (`py.detach`) — the shell
+    builds the live provider from `rpc_url` on the shared runtime, then the
+    core does the RPC fetches (`getMarketId()` + GHO metadata) + the DB writes
+    internally.
 
     # Returns
 

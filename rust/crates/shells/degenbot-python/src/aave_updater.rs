@@ -557,9 +557,10 @@ fn cleanup_zero_balance_positions(
 /// inserts the `POOL_ADDRESS_PROVIDER` contract row, + seeds the GHO
 /// `erc20_tokens` + `aave_gho_tokens` rows, all in ONE transaction.
 ///
-/// The GIL is released across the WHOLE call (`py.detach`) — the core owns
-/// its tokio runtime + does the RPC fetches (`getMarketId()` + GHO metadata)
-/// + the DB writes internally.
+/// The GIL is released across the WHOLE call (`py.detach`) — the shell
+/// builds the live provider from `rpc_url` on the shared runtime, then the
+/// core does the RPC fetches (`getMarketId()` + GHO metadata) + the DB writes
+/// internally.
 ///
 /// # Returns
 ///
@@ -582,12 +583,21 @@ fn activate_aave_market(
     let path = PathBuf::from(database_path);
     let result = py
         .detach(move || {
+            // The thin live-provider wrapper (ADR-068 D5): the shell builds
+            // the live transport from `rpc_url` on the shared runtime (the
+            // worker thread carries no ambient tokio context, so the
+            // block_on is legal) and the core only injects it.
+            use degenbot_core::runtime::get_runtime;
+            use degenbot_rpc::provider::AlloyProvider;
+            let provider = get_runtime()
+                .block_on(AlloyProvider::new(rpc_url, 5))
+                .map_err(RunError::from)?;
             core_activate_aave_market(
                 &path,
                 chain_id,
                 pool_address_provider,
                 gho_token_address,
-                rpc_url,
+                &provider,
             )
         })
         .map_err(run_err_to_py)?;

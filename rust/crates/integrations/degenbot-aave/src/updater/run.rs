@@ -49,11 +49,6 @@ use crate::aave_fetch::{
 use crate::config_dispatch::ConfigDispatchError;
 use crate::transaction_processor::ProcessTxError;
 
-/// The max RPC retries for the runtime-bound `AlloyProvider` the activation
-/// path still builds from its `rpc_url` (the run entries are provider-INJECTED
-/// per ADR-068 D5 and build nothing).
-const RPC_MAX_RETRIES: u32 = 5;
-
 /// The cadence for the chunk loop's operator-facing progress line. A short
 /// time-throttle keeps a long backfill's console output readable while still
 /// proving forward progress; the final chunk always logs regardless of the

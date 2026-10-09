@@ -611,14 +611,20 @@ async fn record_aave_run_chunk(
         let dir = tempfile::TempDir::new().map_err(|e| format!("tempdir: {e}"))?;
         let db_path = dir.path().join("aave-run.db");
 
-        // (1) The real one-shot market seed (its RPC half blocks on the shared
-        //     runtime internally - legal on this plain thread).
+        // (1) The real one-shot market seed. The shell builds the live
+        //     provider (activate's RPC is a harness input, not part of the
+        //     recorded run surface) on the shared runtime - legal on this
+        //     plain thread - and the core's RPC half blocks on the same
+        //     runtime internally.
+        let activate_provider = degenbot::core::runtime::get_runtime()
+            .block_on(AlloyProvider::new(&node_uri, 5))
+            .map_err(|e| format!("activate provider: {e}"))?;
         let activated = activate_aave_market(
             &db_path,
             chain_id_i64,
             &address_provider.to_checksum(None),
             &gho.to_checksum(None),
-            &node_uri,
+            &activate_provider,
         )
         .map_err(|e| format!("activate_aave_market: {e}"))?;
         let market_id = activated.market_id;
