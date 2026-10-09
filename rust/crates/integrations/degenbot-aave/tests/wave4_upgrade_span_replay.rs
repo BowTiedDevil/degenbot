@@ -45,7 +45,12 @@
 //! the pre-upgrade revision answer (3) instead sends the post-upgrade
 //! pre-pass down the `getDiscountPercent` branch — an unrecorded call, so
 //! the replay fails loud — while the unmutated cassette replays green.
-#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stderr,
+    clippy::panic
+)]
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -119,7 +124,7 @@ fn dump_golden_path(name: &str) -> String {
     )
 }
 
-/// Regenerate-and-diff (ADR-068 D4): with REGENERATE_SQL_GOLDENS=1 the gate
+/// Regenerate-and-diff (ADR-068 D4): with `REGENERATE_SQL_GOLDENS=1` the gate
 /// WRITES the golden instead of comparing — the pipeline that writes the
 /// artifact is the same one the gate runs, so a stale comparison is theater.
 /// Re-record only with the drift evidence in the commit message.
