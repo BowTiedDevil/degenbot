@@ -1,5 +1,5 @@
 //! The path cost ledger: the solve cycle's single owner of per-path cost
-//! accounting (commit 2 of PR C4).
+//! accounting (commits 2-3 of PR C4).
 //!
 //! [`PathCostLedger`] absorbs the live sinks that `lane_walk::solve_one_path`'s
 //! fan-out used to touch one by one:
@@ -8,18 +8,24 @@
 //!   `observe_per_path_gate_duration`),
 //! - the K-slowest retention (a `BinaryHeap` of [`PathTimeRecord`] — the
 //!   former ten-slot positional tuple, now a named struct),
-//! - the two heavy-path capture hooks (`capture` / `capture_mixed`).
+//! - the two heavy-path capture hooks (`capture` / `capture_mixed`),
+//! - the next-cycle LPT cost history ([`PathCostHistory`]).
 //!
 //! The lane walk makes ONE [`PathCostLedger::record`] call; the fan-out lives
 //! here. The tracing span attributes (`path.us` / `path.sims` / `path.pieces`
 //! / `gate.us` / `path.profit`) stay on the span — those are tracing, not
 //! ledger state, and are recorded by the walk.
 //!
-//! NOT owned here: the next-cycle bin-packing cost history
-//! (`sims_recorder` / `gate_recorder`, the LPT history) and the Q3-DENSE
-//! alert — both live on later commits of PR C4.
+//! It also owns the next-cycle bin-packing cost history (commit 3): the LPT
+//! carry-over the walk writes per path via [`PathCostLedger::record`] and the
+//! bin packer reads once per cycle as a typed [`CostSnapshot`]. The old raw
+//! per-path maps and the `lock().clone()` snapshot idiom live behind
+//! [`PathCostHistory::record`] / [`PathCostHistory::snapshot`].
+//!
+//! NOT owned here: the Q3-DENSE alert — it lands on a later commit of PR C4.
 
 use super::solver_capture::HeavyPathCapture;
+use super::HashMap;
 use std::sync::Arc;
 
 /// How many slowest-path entries the retention keeps (a min-heap keeps this
@@ -60,6 +66,69 @@ pub(crate) struct PathTimeRecord {
 /// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
 type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<PathTimeRecord>>;
 
+/// One path's MEASURED cost from the previous cycle: the walk's full-sim
+/// count and the gate envelope's micros. The LPT predictor reads both terms as
+/// one row (same micros scale, see `workload_partition::sims_aware_cost`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PathCost {
+    /// Full path simulations measured on the path's last solve.
+    pub(crate) sims: u64,
+    /// Gate-envelope micros measured on the path's last solve.
+    pub(crate) gate_us: u64,
+}
+
+impl PathCost {
+    /// One measured row: the walk sims plus the gate micros.
+    pub(crate) fn new(sims: u64, gate_us: u64) -> Self {
+        Self { sims, gate_us }
+    }
+}
+
+/// The ledger's durable LPT carry-over: the per-path cost each cycle's walk
+/// writes, read back by the NEXT cycle's bin packer. It outlives the cycle
+/// that writes it, so the engine owns one and the per-cycle [`PathCostLedger`]
+/// holds the handle.
+#[derive(Default)]
+pub(crate) struct PathCostHistory {
+    rows: parking_lot::Mutex<HashMap<u64, PathCost>>,
+}
+
+impl PathCostHistory {
+    /// An empty history — no path has a measured previous-cycle cost yet
+    /// (a cold start bins on the structural proxy alone).
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Write one path's measured cost. [`PathCostLedger::record`] calls this
+    /// per solved path; it is also the seed seam for a test that pins an LPT
+    /// placement (a huge sims cost sorts the path first into its own bin).
+    pub(crate) fn record(&self, pid: u64, cost: PathCost) {
+        self.rows.lock().insert(pid, cost);
+    }
+
+    /// The ONE lock per cycle: freeze the history into the typed snapshot the
+    /// bin packer queries.
+    pub(crate) fn snapshot(&self) -> CostSnapshot {
+        CostSnapshot {
+            costs: self.rows.lock().clone(),
+        }
+    }
+}
+
+/// One cycle's frozen view of the LPT carry-over, immutable by convention:
+/// the bin packer only queries it, never mutates it.
+pub(crate) struct CostSnapshot {
+    costs: HashMap<u64, PathCost>,
+}
+
+impl CostSnapshot {
+    /// The previous-cycle measured cost for `pid`, if the path solved then.
+    pub(crate) fn cost(&self, pid: u64) -> Option<PathCost> {
+        self.costs.get(&pid).copied()
+    }
+}
+
 /// The per-cycle per-path cost sink, owned as ONE field on
 /// `solve_cycle::SolveCycleShared`.
 pub(crate) struct PathCostLedger {
@@ -71,28 +140,40 @@ pub(crate) struct PathCostLedger {
     capture_mixed: Option<Arc<HeavyPathCapture>>,
     /// The K-slowest retention.
     path_times: parking_lot::Mutex<PathTimesHeap>,
+    /// The engine-owned LPT carry-over this cycle's per-path records feed.
+    history: Arc<PathCostHistory>,
 }
 
 impl PathCostLedger {
-    /// Build the per-cycle ledger: the solve block plus the two capture
-    /// hooks (engine-owned, snapshotted once per cycle).
+    /// Build the per-cycle ledger: the solve block, the two capture hooks
+    /// (engine-owned, snapshotted once per cycle), and the handle to the
+    /// engine-owned LPT carry-over.
     pub(crate) fn new(
         solve_block: u64,
         capture: Option<Arc<HeavyPathCapture>>,
         capture_mixed: Option<Arc<HeavyPathCapture>>,
+        history: Arc<PathCostHistory>,
     ) -> Self {
         Self {
             solve_block,
             capture,
             capture_mixed,
             path_times: parking_lot::Mutex::new(PathTimesHeap::new()),
+            history,
         }
     }
 
+    /// The ONE snapshot per cycle: the typed LPT carry-over the bin packer
+    /// reads (`cost(pid)` per path), taken before the cycle's own walk runs.
+    pub(crate) fn snapshot(&self) -> CostSnapshot {
+        self.history.snapshot()
+    }
+
     /// The lane walk's ONE ledger call: record one solved path's cost facts —
-    /// the pipeline instruments, the K-slowest retention, and the capture
-    /// triggers. The walk computes `elapsed` ONCE around the solve and also
-    /// uses it for the tracing span attributes.
+    /// the pipeline instruments, the K-slowest retention, the capture
+    /// triggers, and this block's LPT cost row for the next cycle. The walk
+    /// computes `elapsed` ONCE around the solve and also uses it for the
+    /// tracing span attributes.
     pub(crate) fn record(
         &self,
         pid: u64,
@@ -114,6 +195,13 @@ impl PathCostLedger {
 
         let ws = outcome.stats;
         let (pieces, sims) = (ws.pieces, ws.sims);
+
+        // The next cycle's LPT cost: this block's measured sims and gate
+        // micros (the walk no longer writes them itself).
+        self.history.record(
+            pid,
+            PathCost::new(u64::try_from(sims).unwrap_or(0), gate_us),
+        );
 
         self.retain_slowest(PathTimeRecord {
             micros,

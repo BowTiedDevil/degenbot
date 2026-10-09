@@ -138,9 +138,12 @@ fn worker_probe_ctx(
         walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
         prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
         min_profit: ::alloy::primitives::U256::ZERO,
-        path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(0, None, None),
-        sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-        gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+        path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(
+            0,
+            None,
+            None,
+            Arc::new(crate::arb_engine::path_cost_ledger::PathCostHistory::new()),
+        ),
         test_solve_delay: None,
         #[cfg(test)]
         test_solve_panic: None,

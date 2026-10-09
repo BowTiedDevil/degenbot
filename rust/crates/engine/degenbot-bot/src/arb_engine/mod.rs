@@ -553,8 +553,9 @@ impl ArbitrageEngine {
                 ),
                 min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),
                 inline_sim_enabled: cfg.solve.solve_inline_sim,
-                last_walk_sims: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
-                last_gate_us: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
+                path_cost_history: std::sync::Arc::new(
+                    crate::arb_engine::path_cost_ledger::PathCostHistory::new(),
+                ),
                 streaming_delivery,
                 deferred_re_record: None,
                 resolve_par_stance,

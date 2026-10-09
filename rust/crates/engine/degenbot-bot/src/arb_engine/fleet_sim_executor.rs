@@ -401,7 +401,6 @@ mod fleet_sim_stance_tests {
     use crate::arb_engine::BlockMetadata;
     use alloy::primitives::{I256, U256};
     use degenbot_solvers::mixed::{HopType, MixedPath, MixedPoolRef, SolvePathResult};
-    use hashbrown::HashMap;
     use std::sync::Arc;
     // ---- deterministic sim stub ------------------------------------------------
     /// Deterministic primitive-payload sim: the payload is a pure function
@@ -528,10 +527,11 @@ mod fleet_sim_stance_tests {
             prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
             min_profit: ::alloy::primitives::U256::ZERO,
             path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(
-                42, None, None,
+                42,
+                None,
+                None,
+                Arc::new(crate::arb_engine::path_cost_ledger::PathCostHistory::new()),
             ),
-            sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             core: Arc::new(degenbot_substrate::state_lock::StateLock::new(
                 degenbot_substrate::BotState::new(),
             )),

@@ -122,15 +122,11 @@ pub(crate) struct SolveCycleShared {
     /// the instance-scoped solver runtime stance, threaded down —
     /// the solver crate has no process-global config anymore.
     pub(crate) runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig,
-    /// The per-path cost sinks (pipeline instruments, the K-slowest
-    /// retention, and the two capture hooks) behind ONE record call from the
-    /// lane walk (commit 2 of PR C4). The LPT history
-    /// (`sims_recorder` / `gate_recorder`) is NOT in here.
+    /// Every per-path cost sink — the pipeline instruments, the K-slowest
+    /// retention, the two capture hooks, and the next-cycle LPT cost history —
+    /// behind ONE record call from the lane walk, plus the ONE typed snapshot
+    /// the bin packer reads (commits 2-3 of PR C4).
     pub(crate) path_cost_ledger: super::path_cost_ledger::PathCostLedger,
-    /// Engine-owned per-path measured-sims recorder (Arc-d engine field).
-    pub(crate) sims_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
-    /// Engine-owned per-path gate-us recorder (Arc-d engine field).
-    pub(crate) gate_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
     /// Test-only deterministic per-path delay hook.
     #[cfg(test)]
     pub(crate) test_solve_delay: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
@@ -257,13 +253,12 @@ pub(crate) struct SolveCycle {
     /// The inline-sim stance as an engine instance value (documented stance
     /// semantics unchanged, SIMPIPE2 T2/T4).
     pub(crate) inline_sim_enabled: bool,
-    /// Per-path previous-block MEASURED walk sims (recorded by `solve_fn`
-    /// after each solve; lock-free-read at bin construction). Refines the
-    /// LPT makespan predictor for stable pool shapes (loop-12 lab).
-    pub(crate) last_walk_sims: Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
-    /// Per-path previous-block MEASURED gate time (µs, recorded by `solve_fn`;
-    /// lock-free-read at bin construction). Loop-18.
-    pub(crate) last_gate_us: Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
+    /// Per-path previous-block MEASURED cost (walk sims + gate µs, written by
+    /// the walk's ledger `record` after each solve; ONE typed snapshot read at
+    /// bin construction). Refines the LPT makespan predictor for stable pool
+    /// shapes (loop-12 lab); the gate term covers gate-heavy paths that carry
+    /// sims≈0 and were bin-packed cheap (loop-18).
+    pub(crate) path_cost_history: Arc<super::path_cost_ledger::PathCostHistory>,
     /// T3: emit each clamp-passed above-threshold result as an
     /// IMMEDIATE single-entry [`ResultBatch`] during the drain instead of
     /// waiting for the pump debounce. Construction-time stance.
@@ -1726,9 +1721,8 @@ impl SolveCycle {
                 solve_block,
                 capture.map(std::sync::Arc::new),
                 capture_mixed.map(std::sync::Arc::new),
+                std::sync::Arc::clone(&self.path_cost_history),
             ),
-            sims_recorder: std::sync::Arc::clone(&self.last_walk_sims),
-            gate_recorder: std::sync::Arc::clone(&self.last_gate_us),
             #[cfg(test)]
             test_solve_delay: self.test_solve_delay.clone(),
             #[cfg(test)]
@@ -1768,19 +1762,19 @@ impl SolveCycle {
             let plan = plan_bins(n_threads, n_threads);
             let n_threads = plan.bins;
             // Loop-12 lab: previous-block measured walk sims refine the
-            // LPT cost; snapshot once (single lock) before binning.
-            // Loop-18: measured gate us rides the same snapshot - gate-heavy
-            // paths (dense-CL compose) need the bins to know they are
-            // expensive despite sims~0.
-            let last_sims_snapshot: HashMap<u64, u64> = shared.sims_recorder.lock().clone();
-            let last_gate_snapshot: HashMap<u64, u64> = shared.gate_recorder.lock().clone();
+            // LPT cost; the ledger's typed snapshot is taken once (single
+            // lock) before binning. Loop-18: measured gate us rides the same
+            // snapshot - gate-heavy paths (dense-CL compose) need the bins to
+            // know they are expensive despite sims~0.
+            let last_cost = shared.path_cost_ledger.snapshot();
             let costs: Vec<usize> = to_solve
                 .iter()
                 .map(|(pid, r)| {
+                    let measured = last_cost.cost(*pid);
                     sims_aware_cost(
                         path_cost_proxy(r),
-                        last_sims_snapshot.get(pid).copied(),
-                        last_gate_snapshot.get(pid).copied(),
+                        measured.map(|c| c.sims),
+                        measured.map(|c| c.gate_us),
                     )
                 })
                 .collect();

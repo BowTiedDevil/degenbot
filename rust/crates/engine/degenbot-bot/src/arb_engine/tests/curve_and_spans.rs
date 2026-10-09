@@ -1010,6 +1010,7 @@ fn solve_cycle_skips_span_when_nothing_dirty() {
 )]
 #[test]
 fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
+    use crate::arb_engine::path_cost_ledger::PathCost;
     if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
         eprintln!("skipping: streaming-merge test requires >=2 cores");
         return;
@@ -1094,22 +1095,19 @@ fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
     // the slow path sorts it FIRST into its own bin, so the other bins
     // always host fast paths no matter what order the (HashSet-ordered)
     // work items land in. Without this, bin position is nondeterministic
-    // (equal structural costs + arbitrary dirty-set iteration order).
-    engine
-        .cycle
-        .last_walk_sims
-        .lock()
-        .insert(slow_pid, u64::MAX - 1);
-    engine
-        .cycle
-        .last_walk_sims
-        .lock()
-        .insert(*fast_pids.first().unwrap_or(&0), u64::MAX / 4);
-    engine
-        .cycle
-        .last_walk_sims
-        .lock()
-        .insert(*fast_pids.get(1).unwrap_or(&0), u64::MAX / 8);
+    // (equal structural costs + arbitrary dirty-set iteration order). The
+    // seed goes through the ledger's own history — no raw per-path map is
+    // locked or poked here.
+    let history = &engine.cycle.path_cost_history;
+    history.record(slow_pid, PathCost::new(u64::MAX - 1, 0));
+    history.record(
+        *fast_pids.first().unwrap_or(&0),
+        PathCost::new(u64::MAX / 4, 0),
+    );
+    history.record(
+        *fast_pids.get(1).unwrap_or(&0),
+        PathCost::new(u64::MAX / 8, 0),
+    );
     let hook_probe = probe.clone();
     let hook_fast = fast_pids.clone();
     engine

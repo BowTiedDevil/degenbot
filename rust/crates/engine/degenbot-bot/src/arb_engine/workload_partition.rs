@@ -133,7 +133,10 @@ pub(crate) fn path_cost_proxy(resolved: &ResolvedMixedPath) -> usize {
 /// the proxy floors it for freshly dirty pools. (loop-12 lab;
 /// loop-18 adds the gate-µs term — gate-heavy paths carry sims≈0 and were
 /// bin-packed cheap while dominating wall time.) The sims and gate terms add
-/// (same µs-scale: a walk sim ≈0.7-0.8µs, so `sims` ≈ walk µs).
+/// (same µs-scale: a walk sim ≈0.7-0.8µs, so `sims` ≈ walk µs). Both come
+/// from the per-cycle cost snapshot the bin packer takes once
+/// (`path_cost_ledger::CostSnapshot::cost`); the lane walk no longer writes
+/// any map the packer reads.
 pub(crate) fn sims_aware_cost(
     proxy: usize,
     last_sims: Option<u64>,

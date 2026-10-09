@@ -8,7 +8,7 @@
 //! (`WALK_DENSE_ALERTED`).
 //!
 //! The per-path cost sinks (the pipeline instruments, the K-slowest
-//! retention, and the capture hooks) live in the
+//! retention, the capture hooks, and the LPT carry-over) live in the
 //! [`super::path_cost_ledger::PathCostLedger`] the walk records into.
 //!
 //! Direction of dependency is `lane_walk -> {solve_cycle, executor,
@@ -203,14 +203,6 @@ pub(crate) fn solve_one_path(
     }
     let ws = *outcome_stats;
     let (pieces, sims) = (ws.pieces, ws.sims);
-    // Record this block's measured walk sims for the next
-    // block's LPT cost (loop-12 lab).
-    ctx.sims_recorder
-        .lock()
-        .insert(pid, u64::try_from(sims).unwrap_or(0));
-    // Loop-18: record measured gate time for the LPT cost too
-    // (gate-heavy paths carry sims≈0 and were bin-packed cheap).
-    ctx.gate_recorder.lock().insert(pid, gate_us);
     // seal the per-path span - walk counters become attributes
     // on the `degenbot.arb.path` node (guard drops at fn end, so the
     // recorded values are inside the exported duration).
@@ -221,9 +213,10 @@ pub(crate) fn solve_one_path(
     if let Some(r) = outcome.result.as_ref() {
         path_span.record("path.profit", tracing::field::display(r.profit));
     }
-    // ONE ledger call carries every remaining per-path cost sink: the
-    // pipeline instruments, the K-slowest retention, and the two capture
-    // hooks (the fan-out lives inside `PathCostLedger::record`).
+    // ONE ledger call carries every per-path cost sink: the pipeline
+    // instruments, the K-slowest retention, the two capture hooks, and this
+    // block's measured sims + gate micros for the next block's LPT bins (the
+    // fan-out lives inside `PathCostLedger::record`).
     ctx.path_cost_ledger
         .record(pid, resolved, &outcome, elapsed);
 

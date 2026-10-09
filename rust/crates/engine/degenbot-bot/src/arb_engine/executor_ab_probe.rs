@@ -18,7 +18,6 @@ use crate::arb_engine::BlockMetadata;
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles, PreparedClHop};
-use hashbrown::HashMap;
 use serde_json::Value;
 use std::sync::Arc;
 fn fixture_path() -> std::path::PathBuf {
@@ -132,9 +131,12 @@ pub(in crate::arb_engine) fn probe_ctx() -> Arc<SolveCycleShared> {
         walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
         prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
         min_profit: ::alloy::primitives::U256::ZERO,
-        path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(0, None, None),
-        sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-        gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+        path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(
+            0,
+            None,
+            None,
+            Arc::new(crate::arb_engine::path_cost_ledger::PathCostHistory::new()),
+        ),
         core: Arc::new(degenbot_substrate::state_lock::StateLock::new(
             BotState::new(),
         )),
