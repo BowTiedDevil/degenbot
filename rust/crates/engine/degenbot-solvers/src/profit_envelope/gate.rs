@@ -541,6 +541,19 @@ impl GateDeps<'_> {
         Self::default()
     }
 
+    /// The owner's prefix store + epoch as the chain-composition cache
+    /// handle, or `None` when prefix reuse is out of stance for this solve.
+    /// The gate verdict and the walk-side bound both derive their cache here,
+    /// so one solve shares one cache and the CL fans are derived once.
+    #[must_use]
+    pub(crate) fn fan_cache(&self) -> Option<(&PrefixCache, u64)> {
+        if self.prefix_cache {
+            self.prefix_store.map(|store| (store, self.epoch))
+        } else {
+            None
+        }
+    }
+
     /// Production solve cycle: the prefix cache against this block's epoch,
     /// served from the owner's `PrefixCache` (C4 — the constructor takes the
     /// store so a caller cannot arm the bool and silently get None). The
@@ -648,92 +661,58 @@ fn path_profit_bound_impl(
     }
 }
 
+/// The composed path bound: the lower-envelope line set plus the domain
+/// (sum of the per-hop output caps) it was pruned against.
+pub(crate) struct PathBound {
+    pub lines: Vec<Line>,
+    pub xmax: U256,
+}
+
+/// Why the chain-composition path failed, plus the hop it failed on (the
+/// gate reports the reason and captures the state; the walk-side bound just
+/// needs the `None`).
+pub(crate) struct PathBoundError {
+    pub hop_index: usize,
+    pub cause: GateSkipCause,
+}
+
+/// The ONE chain-composition path. Derive every hop's line set — the
+/// pool-static CL tangent fans reused from `cache` when present — then chain
+/// the sets through the exact concave-envelope composition, reusing the
+/// owner's composed-prefix memo when present. The gate verdict and the
+/// walk-side bound are two queries against this: for identical inputs they
+/// yield the identical hull by construction, and the CL fans are derived
+/// once (the second query is all cache hits).
 #[expect(clippy::too_many_lines)]
-fn path_profit_bound_inner(
+pub(crate) fn compose_path_bound(
     hops: &[Option<HopMath<'_>>],
-    deps: &GateDeps<'_>,
-    floor: Option<U256>,
+    cfg: &SolveRuntimeConfig,
+    cache: Option<(&PrefixCache, u64)>,
     stats: &mut GateStats,
-) -> Result<U256, GateSkipCause> {
+) -> Result<PathBound, PathBoundError> {
     let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
-    // Pool-static CL fans are shared across a block's paths; `None` (offline
-    // deps, no store) leaves `hop_lines_and_cap`'s uncached path in place.
-    let fan_cache = if deps.prefix_cache {
-        deps.prefix_store.map(|store| (store, deps.epoch))
-    } else {
-        None
-    };
     let phase_derive = std::time::Instant::now();
     for (hop_idx, slot) in hops.iter().enumerate() {
         let Some(hop) = slot.as_ref() else {
-            return Err(GateSkipCause::UnmappedHop);
+            return Err(PathBoundError {
+                hop_index: hop_idx,
+                cause: GateSkipCause::UnmappedHop,
+            });
         };
-        let Some((hop_ls, cap)) =
-            hop_lines_and_cap_cached(hop.clone(), &deps.runtime, fan_cache, stats)
-        else {
-            // Degenerate diagnostic: log the hop family + the reject
-            // reason so the steady-state degenerate rate can be classified as
-            // the expected shape (sparse CL with empty active range / zero
-            // reserves) vs a real coverage gap. Debug-level: opt-in via
-            // `RUST_LOG=degenbot_solvers::profit_envelope=debug`.
-            let family = match hop {
-                HopMath::V2(h) => {
-                    let z = h.reserve_in.is_zero() || h.reserve_out.is_zero();
-                    format!("V2(zero_reserve={z})")
-                }
-                HopMath::Cl(ch) => {
-                    let empty = ch.seq.ranges.is_empty();
-                    let reason = classify_cl_rejection(ch.seq);
-                    format!(
-                        "Cl(ranges={n},empty={empty},{reason})",
-                        n = ch.seq.ranges.len()
-                    )
-                }
-                HopMath::SolidlyVolatile {
-                    reserve_in,
-                    reserve_out,
-                    ..
-                } => {
-                    format!(
-                        "SolidlyVolatile(zero={})",
-                        reserve_in.is_zero() || reserve_out.is_zero()
-                    )
-                }
-                HopMath::Weighted {
-                    balance_in,
-                    balance_out,
-                    ..
-                } => {
-                    format!(
-                        "Weighted(zero={})",
-                        balance_in.is_zero() || balance_out.is_zero()
-                    )
-                }
-                HopMath::ReserveCap { reserve_out } => {
-                    format!("ReserveCap(zero={})", reserve_out.is_zero())
-                }
-            };
-            diag!(domain = solver, hop_index = hop_idx,
-                family = %family,
-                "degenerate hop rejected (impossible to bound — solved unscreened)"
-            );
-            // Golden capture: serialize the full per-hop state when a
-            // capture harness is configured so the pool states can be replayed
-            // offline for fix experimentation.
-            if let Some(cfg) = deps.capture {
-                let reason = match hop {
-                    HopMath::Cl(ch) => classify_cl_rejection(ch.seq),
-                    _ => family.clone(),
-                };
-                capture_degenerate_path(hops, hop_idx, &reason, cfg);
-            }
-            return Err(GateSkipCause::DegenerateHop);
+        let Some((hop_ls, cap)) = hop_lines_and_cap_cached(hop.clone(), cfg, cache, stats) else {
+            return Err(PathBoundError {
+                hop_index: hop_idx,
+                cause: GateSkipCause::DegenerateHop,
+            });
         };
         if let Some(v) = xmax.checked_add(cap) {
             xmax = v;
         } else {
-            return Err(GateSkipCause::DomainOverflow);
+            return Err(PathBoundError {
+                hop_index: hop_idx,
+                cause: GateSkipCause::DomainOverflow,
+            });
         }
         all_hops.push((hop_ls, cap));
     }
@@ -783,7 +762,7 @@ fn path_profit_bound_inner(
     };
     let mut chain: Vec<HopCacheKey> = Vec::with_capacity(hops.len());
     for (hop_idx, (hop_ls, _)) in all_hops.iter_mut().enumerate() {
-        match if deps.prefix_cache {
+        match if cache.is_some() {
             hop_key(hop_idx)
         } else {
             None
@@ -791,13 +770,13 @@ fn path_profit_bound_inner(
             Some(k) => chain.push(k),
             None => chain.clear(),
         }
-        let chainable = deps.prefix_cache && !chain.is_empty();
+        let chainable = cache.is_some() && !chain.is_empty();
         if chainable {
             // Cache lookup for this exact content chain. The key IS the full
             // per-hop content, so a hit is a content match; entries from an
             // older epoch are dropped on first touch of the new one (no
             // public reset — the epoch rides [GateDeps]).
-            let hit = deps.prefix_store.and_then(|s| s.get(deps.epoch, &chain));
+            let hit = cache.and_then(|(store, epoch)| store.get(epoch, &chain));
             if let Some(hit_lines) = hit {
                 lines2 = hit_lines;
                 record_gate(stats, |t| t.prefix_hits += 1);
@@ -824,7 +803,7 @@ fn path_profit_bound_inner(
         // Fallback cap for the sampled reference: the exact path ignores it
         // (its hull is <= K1 + K2), but the documented overflow/ambiguity
         // fallback still applies the owner's `sampled_compose_lines` stance.
-        let compose_cap = deps.runtime.sampled_compose_lines.max(1);
+        let compose_cap = cfg.sampled_compose_lines.max(1);
         // Exact concave-envelope composition: both sides are initialised at
         // their (min-over-lines) hull pieces, only the <= K1 + K2
         // y-overlapping pairs are composed, and the canonical hull is kept
@@ -832,7 +811,12 @@ fn path_profit_bound_inner(
         // product+sample path survives only as the documented fallback
         // (overflow / ambiguity), counted via TLS.
         let mut next: Vec<Line> =
-            compose_envelopes_exact(hop_ls, &lines2, domain, compose_cap, stats)?;
+            compose_envelopes_exact(hop_ls, &lines2, domain, compose_cap, stats).map_err(
+                |cause| PathBoundError {
+                    hop_index: hop_idx,
+                    cause,
+                },
+            )?;
         // One reduction pass per hop boundary (O(survivors)) — replaces the
         // per-pair reduction removed from Line::compose. Byte-identical
         // coefficients to the old per-pair pass (same ceil/floor rules).
@@ -852,8 +836,8 @@ fn path_profit_bound_inner(
         // Cache the composed prefix set under the content-key chain. Only
         // miss paths reach here; a hit path returns early above.
         if chainable {
-            if let Some(store) = deps.prefix_store {
-                store.insert(deps.epoch, chain.clone(), next.clone());
+            if let Some((store, epoch)) = cache {
+                store.insert(epoch, chain.clone(), next.clone());
             }
         }
         trace_boundary(hop_idx, hop_ls_len_dbg, next.len(), &next);
@@ -862,24 +846,38 @@ fn path_profit_bound_inner(
     record_gate(stats, |t| {
         t.compose_ns += phase_compose.elapsed().as_nanos();
     });
-    let phase_search = std::time::Instant::now();
-    let lines = lines2;
     // Diagnostic: line explosion is the gate bottleneck on dense-CL paths.
     #[cfg(not(feature = "hotpath"))]
-    if lines.len() > 200 {
+    if lines2.len() > 200 {
         let hop_counts: Vec<usize> = all_hops.iter().map(|(ls, _)| ls.len()).collect();
-        op_warn!(domain = solver, gate_lines = lines.len(),
+        op_warn!(domain = solver, gate_lines = lines2.len(),
             gate_hop_line_counts = ?hop_counts,
             gate_domain = %domain,
             "composed tangent-line explosion"
         );
     }
+    Ok(PathBound {
+        lines: lines2,
+        xmax,
+    })
+}
+
+/// The gate verdict tail: the discrete concave max of
+/// `f(x) = min_lines(x) − x` over `[0, xmax]`, plus the unconditional
+/// `best/2048` rounding slack. Split out so the walk-side equivalence test
+/// maximizes the walk-side hull with the exact arithmetic the gate uses.
+fn finalize_bound(
+    lines: &[Line],
+    xmax: U256,
+    floor: Option<U256>,
+    stats: &mut GateStats,
+) -> Result<U256, GateSkipCause> {
+    let phase_search = std::time::Instant::now();
     // Discrete concave max of f(x) = min_lines(x) − x over [0, xmax].
     if xmax.is_zero() {
         return Ok(U256::ZERO);
     }
-    let best = concave_max(&lines, xmax, floor, stats);
-
+    let best = concave_max(lines, xmax, floor, stats);
     record_gate(stats, |t| t.search_ns += phase_search.elapsed().as_nanos());
     // Rounding slack: composed reductions and I512 ceiling evaluation can
     // leave the derived lower envelope a hair BELOW the true curve. The
@@ -895,6 +893,85 @@ fn path_profit_bound_inner(
         return Ok(b.saturating_add(b / U256::from(2048u64)));
     }
     Err(GateSkipCause::DomainOverflow)
+}
+
+/// The gate entry: one query against [`compose_path_bound`] (the SAME path
+/// the walk-side bound uses), with the degenerate-hop diagnostic + capture on
+/// the error exit, then the verdict max.
+fn path_profit_bound_inner(
+    hops: &[Option<HopMath<'_>>],
+    deps: &GateDeps<'_>,
+    floor: Option<U256>,
+    stats: &mut GateStats,
+) -> Result<U256, GateSkipCause> {
+    let bound = match compose_path_bound(hops, &deps.runtime, deps.fan_cache(), stats) {
+        Ok(bound) => bound,
+        Err(e) => {
+            if e.cause == GateSkipCause::DegenerateHop {
+                if let Some(hop) = hops.get(e.hop_index).and_then(Option::as_ref) {
+                    // Degenerate diagnostic: log the hop family + the reject
+                    // reason so the steady-state degenerate rate can be
+                    // classified as the expected shape (sparse CL with empty
+                    // active range / zero reserves) vs a real coverage gap.
+                    // Debug-level: opt-in via
+                    // `RUST_LOG=degenbot_solvers::profit_envelope=debug`.
+                    let family = match hop {
+                        HopMath::V2(h) => {
+                            let z = h.reserve_in.is_zero() || h.reserve_out.is_zero();
+                            format!("V2(zero_reserve={z})")
+                        }
+                        HopMath::Cl(ch) => {
+                            let empty = ch.seq.ranges.is_empty();
+                            let reason = classify_cl_rejection(ch.seq);
+                            format!(
+                                "Cl(ranges={n},empty={empty},{reason})",
+                                n = ch.seq.ranges.len()
+                            )
+                        }
+                        HopMath::SolidlyVolatile {
+                            reserve_in,
+                            reserve_out,
+                            ..
+                        } => {
+                            format!(
+                                "SolidlyVolatile(zero={})",
+                                reserve_in.is_zero() || reserve_out.is_zero()
+                            )
+                        }
+                        HopMath::Weighted {
+                            balance_in,
+                            balance_out,
+                            ..
+                        } => {
+                            format!(
+                                "Weighted(zero={})",
+                                balance_in.is_zero() || balance_out.is_zero()
+                            )
+                        }
+                        HopMath::ReserveCap { reserve_out } => {
+                            format!("ReserveCap(zero={})", reserve_out.is_zero())
+                        }
+                    };
+                    diag!(domain = solver, hop_index = e.hop_index,
+                        family = %family,
+                        "degenerate hop rejected (impossible to bound — solved unscreened)"
+                    );
+                    // Golden capture: serialize the full per-hop state when a
+                    // capture harness is configured so the pool states can be
+                    // replayed offline for fix experimentation.
+                    if let Some(capture) = deps.capture {
+                        let reason = match hop {
+                            HopMath::Cl(ch) => classify_cl_rejection(ch.seq),
+                            _ => family.clone(),
+                        };
+                        capture_degenerate_path(hops, e.hop_index, &reason, capture);
+                    }
+                }
+            }
+            return Err(e.cause);
+        }
+    };
+    finalize_bound(&bound.lines, bound.xmax, floor, stats)
 }
 
 #[must_use]
@@ -938,47 +1015,43 @@ pub fn path_output_bound_at(
 }
 
 /// Walk-side composed envelope (Loop-21 `envelope_pruned_refine`): the line
-/// set the active-set walk intersects its refine windows against. Built with
-/// the same exact hull composition as the gate ([`compose_envelopes_exact`]),
-/// so the refine clamp sees the tightest sound envelope. Soundness contract
-/// identical: the lines pointwise-dominate the true path output, so any input
+/// set the active-set walk intersects its refine windows against. A second
+/// query against the same [`compose_path_bound`] chain-composition path the
+/// gate verdict uses — with the owner's cache threaded in, the walk-side
+/// bound reuses the tangent fans and composed prefixes the gate already
+/// derived instead of re-deriving them. Soundness contract identical to the
+/// gate's: the lines pointwise-dominate the true path output, so any input
 /// the lines disprove can never beat the walk's best.
 #[derive(Debug)]
 pub struct PathBoundLines {
     pub lines: Vec<Line>,
 }
-/// Compose the path's bound lines ([`path_bound_lines`] intake; same
-/// degenerate/overflow causes as the gate).
+
+/// Compose the path's bound lines with no cache ([`path_bound_lines`] test
+/// intake; same degenerate/overflow causes as the gate).
 #[cfg(test)]
 pub(crate) fn path_bound_lines(
     hops: &[Option<HopMath<'_>>],
     cfg: &SolveRuntimeConfig,
 ) -> Option<PathBoundLines> {
     let mut stats = GateStats::EMPTY;
-    path_bound_lines_with_stats(hops, cfg, &mut stats)
+    path_bound_lines_with_stats(hops, cfg, None, &mut stats)
 }
 
 /// [`path_bound_lines`] with the caller's gate accumulator threaded in: the
-/// walk-refine envelope's prune / exact-compose counters land in the same
-/// `GateStats` the gate call returned (no thread-local read-back).
+/// walk-refine envelope's derive / prune / exact-compose counters land in the
+/// same `GateStats` the gate call returned (no thread-local read-back).
+/// `cache` is the owner's prefix store + epoch (the gate derives it from its
+/// [`GateDeps`] via `fan_cache`) — passing it makes the walk-side bound a
+/// cache query against the hull the gate already built.
 pub(crate) fn path_bound_lines_with_stats(
     hops: &[Option<HopMath<'_>>],
     cfg: &SolveRuntimeConfig,
+    cache: Option<(&PrefixCache, u64)>,
     stats: &mut GateStats,
 ) -> Option<PathBoundLines> {
-    let mut lines = vec![Line::IDENTITY];
-    let mut total_cap = U256::ZERO;
-    for slot in hops {
-        let hop = slot.as_ref()?;
-        let (hop_ls, cap) = hop_lines_and_cap(hop.clone(), cfg, stats)?;
-        total_cap = total_cap.checked_add(cap)?;
-        let compose_cap = cfg.sampled_compose_lines.max(1);
-        // Exact composition keeps the walk-refine envelope on the same
-        // hull the gate uses; only the documented fallback samples.
-        lines = compose_envelopes_exact(&hop_ls, &lines, total_cap, compose_cap, stats).ok()?;
-    }
-    let _ = total_cap;
-    Some(PathBoundLines { lines })
+    let bound = compose_path_bound(hops, cfg, cache, stats).ok()?;
+    Some(PathBoundLines { lines: bound.lines })
 }
 
 #[cfg(test)]
@@ -990,6 +1063,7 @@ pub(crate) mod tests {
     use crate::profit_envelope::derive::tests::hop_lines_and_cap;
     use crate::profit_envelope::derive::{ClHop, HopMath};
     use crate::profit_envelope::kernel::{Line, COMPOSE_TARGET_BITS};
+    use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
     use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
     // Test shims: the production helpers now thread a caller-owned
@@ -1339,5 +1413,117 @@ pub(crate) mod tests {
             }
             other @ Envelope::Unsupported(_) => panic!("gate unsupported: {other:?}"),
         }
+    }
+
+    /// Dense zero-for-one CL sequence: `n` contiguous 1-tick ranges below the
+    /// anchor with `liq` (a fat table that trips the tangent sample cap).
+    fn fat_walk_seq(n: i32, liq: u128) -> IntV3TickRangeSequence {
+        let sp_at =
+            |tick: i32| U256::from(get_sqrt_ratio_at_tick_internal(tick).unwrap_or_default());
+        let ranges = (0..n)
+            .map(|i| {
+                let (tick_lo, tick_hi) = (-(i + 1), -i);
+                IntV3TickRangeHop {
+                    liquidity: liq,
+                    sqrt_price_x96: sp_at(-i),
+                    sqrt_price_lower_x96: sp_at(tick_lo),
+                    sqrt_price_upper_x96: sp_at(tick_hi),
+                    gamma_numer: 997_000,
+                    fee_denom: 1_000_000,
+                    zero_for_one: true,
+                    word_boundary_prices: Vec::new(),
+                }
+            })
+            .collect();
+        IntV3TickRangeSequence::new(ranges).expect("valid sequence")
+    }
+
+    /// C2.2 kill witness: the walk-side bound is the SAME chain-composition
+    /// path as the gate verdict. For identical inputs both queries return the
+    /// identical hull, so maximizing the walk-side lines with the gate's own
+    /// arithmetic reproduces the gate's bound exactly — and the kill is
+    /// observable: the walk-side query records zero CL-fan misses (it reuses
+    /// the fans the gate derived) and one hit per CL hop, where before this
+    /// change it re-derived every fan uncached.
+    #[test]
+    #[expect(
+        clippy::panic,
+        reason = "the test asserts a bounded gate and panics by design"
+    )]
+    fn walk_side_bound_equals_gate_bound_and_reuses_fans() {
+        // Two DISTINCT dense CL hops (distinct fan keys), so the fan cache is
+        // exercised hop by hop.
+        let seq_a = fat_walk_seq(120, 1_000_000_000_000);
+        let seq_b = fat_walk_seq(95, 1_000_000_000_000);
+        let views: Vec<Option<HopMath<'_>>> = vec![
+            Some(HopMath::Cl(ClHop {
+                seq: &seq_a,
+                crossings: std::borrow::Cow::Owned(build_cl_crossing_table(&seq_a)),
+            })),
+            Some(HopMath::Cl(ClHop {
+                seq: &seq_b,
+                crossings: std::borrow::Cow::Owned(build_cl_crossing_table(&seq_b)),
+            })),
+        ];
+        let cfg = SolveRuntimeConfig::default();
+        let n_cl = 2u64;
+        let store = PrefixCache::new();
+        let deps = GateDeps::per_block(1, &store, None, None, cfg);
+
+        // Query 1 — the gate verdict, cold: each CL hop's pool-static fan is
+        // derived exactly once.
+        let (gate_env, gs_gate) = path_profit_bound_with_stats(&views, &deps);
+        let gate_bound = match gate_env {
+            Envelope::Bound(b) => b,
+            other @ Envelope::Unsupported(_) => panic!("gate must produce a bound, got {other:?}"),
+        };
+        assert_eq!(
+            gs_gate.cl_fan_misses, n_cl,
+            "gate must derive each CL fan once, cold"
+        );
+        assert_eq!(gs_gate.cl_fan_hits, 0);
+
+        // Query 2 — the walk-side bound against the SAME cache/epoch: the
+        // fans are REUSED (zero misses), so the double derivation is dead,
+        // observably.
+        let mut gs_walk = GateStats::EMPTY;
+        let walk = path_bound_lines_with_stats(&views, &cfg, deps.fan_cache(), &mut gs_walk)
+            .expect("walk bound derivable");
+        assert_eq!(
+            gs_walk.cl_fan_misses, 0,
+            "walk side re-derived the CL fans (the kill failed)"
+        );
+        assert_eq!(
+            gs_walk.cl_fan_hits, n_cl,
+            "walk side must reuse the gate's fans"
+        );
+
+        // The walk-side hull IS the gate's hull: maximize it with the gate's
+        // own arithmetic (same concave max + slack) and the verdict matches.
+        let xmax: U256 = {
+            let mut acc = U256::ZERO;
+            for slot in &views {
+                let Some(hop) = slot.clone() else {
+                    continue;
+                };
+                let (_, cap) = hop_lines_and_cap(hop, &cfg).expect("hop derivable");
+                acc = acc.checked_add(cap).expect("domain sum");
+            }
+            acc
+        };
+        let mut finalize_stats = GateStats::EMPTY;
+        let walk_bound = finalize_bound(&walk.lines, xmax, None, &mut finalize_stats)
+            .expect("walk bound finalizable");
+        assert_eq!(walk_bound, gate_bound, "walk-side bound != gate bound");
+
+        // And the cached hull equals a fresh cacheless derivation, byte for
+        // byte (the cache is a pure memo, not a different derivation).
+        let mut gs_fresh = GateStats::EMPTY;
+        let fresh =
+            path_bound_lines_with_stats(&views, &cfg, None, &mut gs_fresh).expect("derivable");
+        assert_eq!(
+            fresh.lines, walk.lines,
+            "cached hull diverged from uncached"
+        );
     }
 }

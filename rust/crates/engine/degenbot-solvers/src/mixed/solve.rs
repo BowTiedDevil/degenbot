@@ -157,11 +157,19 @@ pub fn solve_path_with_min_profit(
         }
     }
     // Loop-21 `envelope_pruned_refine`: hand the walk the composed bound so
-    // its refine windows skip the inputs the bound disproves. Its prune /
-    // exact-compose counters merge into the same returned `GateStats` the
-    // gate call produced.
+    // its refine windows skip the inputs the bound disproves. This is the
+    // SECOND query against the gate's chain-composition path — it shares the
+    // gate's prefix store, so the CL tangent fans and composed prefixes are
+    // reused rather than re-derived. Its derive / prune / exact-compose
+    // counters merge into the same returned `GateStats` the gate call
+    // produced.
     let walk_env = if gate.runtime.envelope_pruned_refine {
-        crate::profit_envelope::path_bound_lines_with_stats(&views, &gate.runtime, &mut gate_stats)
+        crate::profit_envelope::path_bound_lines_with_stats(
+            &views,
+            &gate.runtime,
+            gate.fan_cache(),
+            &mut gate_stats,
+        )
     } else {
         None
     };
