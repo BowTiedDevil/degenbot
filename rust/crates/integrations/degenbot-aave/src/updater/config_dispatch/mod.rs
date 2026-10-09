@@ -16,29 +16,29 @@
 //!
 //! The dispatch loop + the shared decode/RPC helpers every resolver rides
 //! (the checksum/calldata encoders, the batch-or-direct multicall seam, the
-//! word/string decoders). [`dispatch_config_events`] routes each decoded
+//! word/string decoders). `dispatch_config_events` routes each decoded
 //! event to its resolver + applies each emitted event to the chunk `conn`
 //! AS it is dispatched (logIndex order), so a later event's dispatch sees an
 //! earlier event's apply — surface-table row 6
 //! (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)).
 //!
 //! The resolvers live in the child modules, one seam each:
-//! - [`context`]: the per-chunk dispatch context ([`ChunkContext`] + the
-//!   block-pinned [`RevisionMemo`]) + the apply→bump→dispatch ordering
+//! - `context`: the per-chunk dispatch context (`ChunkContext` + the
+//!   block-pinned `RevisionMemo`) + the apply→bump→dispatch ordering
 //!   (rows 3, 7, 11).
-//! - [`revision`]: the upgrade-transition revision resolvers — `Upgraded`,
+//! - `revision`: the upgrade-transition revision resolvers — `Upgraded`,
 //!   `PoolUpdated`/`PoolConfiguratorUpdated`, `ProxyCreated` (rows 4, 5, 11).
-//! - [`discount`]: the GHO-discount channel — the per-tx snapshot pre-pass,
+//! - `discount`: the GHO-discount channel — the per-tx snapshot pre-pass,
 //!   the discount-config dispatchers, the stkAAVE transfer path (row 7's
 //!   consumer side; §(C) W6).
-//! - [`asset_config`]: the per-asset config handlers — the 8 sync
+//! - `asset_config`: the per-asset config handlers — the 8 sync
 //!   dispatchers + the `ReserveInitialized`/`CollateralConfigurationChanged`
 //!   RPC resolutions + the ERC20 metadata family (row 9).
 //!
-//! Six config events route through [`resolve_missing_variant_event`] —
+//! Six config events route through `resolve_missing_variant_event` —
 //! `Upgraded`, `PoolUpdated`, `PoolConfiguratorUpdated`,
 //! `PoolDataProviderUpdated`, `AddressSet`, `ProxyCreated` — the
-//! upgrade-transition resolvers in [`revision`] + the pure-decode arms here.
+//! upgrade-transition resolvers in `revision` + the pure-decode arms here.
 //!
 //! # The dispatch flow (mirror of Python `_process_transaction` L320-430)
 //!
@@ -52,7 +52,7 @@
 //! # Chunk atomicity
 //!
 //! The dispatch rides the chunk's single `Transaction` through the
-//! [`ChunkContext`], which borrows it (and the chunk substrate) for the
+//! `ChunkContext`, which borrows it (and the chunk substrate) for the
 //! dispatch's duration.
 //! All `get_or_create_*` / `lookup_*` substrate calls run on it — the
 //! chunk-atomicity
@@ -74,24 +74,33 @@ use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
-pub(crate) use asset_config::{
-    decode_dynamic_string, fetch_erc20_metadata, resolve_reserve_initialized,
-};
-pub use asset_config::{
+// ── the module's exported face ────────────────────────────────────────────
+//
+// The re-export tiers collapse to what the crate actually consumes. The
+// names `run/` reaches through this module are `pub(crate)`: the context and
+// its span/memo, the proxy matcher and its resolution, the ERC20 metadata
+// fetch, the dynamic-string decoder, and the post-apply discount refresh.
+// Every dispatch arm is reached only through this module's own dispatch loop
+// and the in-crate unit tests, so it stays a private import (its definition
+// drops to `pub(super)` at the child-module seam).
+
+pub(crate) use asset_config::{decode_dynamic_string, fetch_erc20_metadata};
+pub(crate) use context::{ChunkContext, ChunkSpan, RevisionMemo};
+pub(crate) use discount::refresh_gho_discount;
+pub(crate) use revision::{match_proxy_id, ProxyCreationResolution};
+
+use asset_config::{
     dispatch_asset_collateral_in_emode_changed, dispatch_asset_source_updated,
     dispatch_e_mode_asset_category_changed, dispatch_e_mode_category_added,
     dispatch_price_oracle_updated, dispatch_reserve_data_updated,
     dispatch_reserve_used_as_collateral, dispatch_user_e_mode_set,
-    resolve_collateral_configuration,
+    resolve_collateral_configuration, resolve_reserve_initialized,
 };
-pub use context::ChunkContext;
-pub(crate) use context::{ChunkSpan, RevisionMemo};
-pub use discount::{
+use discount::{
     build_discount_snapshot, dispatch_discount_percent_updated,
     dispatch_discount_rate_strategy_updated, dispatch_discount_token_updated,
-    dispatch_stk_aave_transfer, refresh_gho_discount,
+    dispatch_stk_aave_transfer,
 };
-pub(crate) use revision::{match_proxy_id, ProxyCreationResolution};
 use revision::{resolve_contract_revision_updated, resolve_upgraded};
 
 /// The GHO-discount deprecation revision (V4+). Mirrors the Python

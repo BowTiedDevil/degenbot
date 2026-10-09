@@ -18,7 +18,7 @@
 //! row 7 (consumer side of the per-tx revision re-resolve) + §(C) W6 + the
 //! deprecation negative probe.
 
-#![expect(clippy::missing_errors_doc, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use std::collections::{HashMap, HashSet};
 
@@ -40,7 +40,7 @@ use super::{
 /// [`AaveChunkEvent::GhoDiscountPercentUpdated`]. Mirrors
 /// `_process_discount_percent_updated_event` (`newDiscountPercent` is topic[2]
 /// — the decoder already extracted it).
-pub fn dispatch_discount_percent_updated(
+pub(super) fn dispatch_discount_percent_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountPercentUpdatedEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -81,7 +81,7 @@ pub fn dispatch_discount_percent_updated(
 /// handlers are now retired (the Python never processed Staked/Redeem for
 /// balance mutation — they're fetched only for classification in
 /// `fetch_stk_aave_events`); all balance mutation flows through this fn now.
-pub async fn dispatch_stk_aave_transfer(
+pub(super) async fn dispatch_stk_aave_transfer(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
@@ -180,7 +180,7 @@ pub async fn dispatch_stk_aave_transfer(
 /// `Staked`/`Transfer` event YET; the on-chain value at the previous block is
 /// the authoritative balance before any current-block events. No-op when the
 /// column is already populated (the apply will mutate the cached value).
-pub(crate) async fn backfill_user_stk_aave_balance_if_none(
+async fn backfill_user_stk_aave_balance_if_none(
     provider: &AlloyProvider,
     conn: &Connection,
     user_id: i64,
@@ -232,7 +232,7 @@ pub(crate) async fn backfill_user_stk_aave_balance_if_none(
 /// it: returns `Ok(None)` when the GHO vToken FK is missing OR the decoded
 /// emitter (`decoded.v_token_address` = `log.address()`) doesn't match
 /// `gho_asset.v_token_address`. The apply fn never sees the skip.
-pub fn dispatch_discount_token_updated(
+pub(super) fn dispatch_discount_token_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountTokenUpdatedEvent,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
@@ -260,7 +260,7 @@ pub fn dispatch_discount_token_updated(
 /// Same emitter-validation guard as [`dispatch_discount_token_updated`] — see
 /// its docs; the chain-wide fetch + the Python's `event["address"]` guard
 /// apply identically (divergence #2).
-pub fn dispatch_discount_rate_strategy_updated(
+pub(super) fn dispatch_discount_rate_strategy_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
@@ -301,7 +301,7 @@ pub fn dispatch_discount_rate_strategy_updated(
 ///
 /// Returns an empty map when there's no GHO vToken (`gho_vtoken_address` is
 /// `None`) or the revision couldn't be resolved.
-pub async fn build_discount_snapshot(
+pub(super) async fn build_discount_snapshot(
     provider: &AlloyProvider,
     tx_logs: &[&alloy::rpc::types::Log],
     block_number: u64,
@@ -422,8 +422,7 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
 /// `discount_token` is the chain's (freshly-per-tx-resolved)
 /// `v_gho_discount_token` — `None` (no discount token configured) → no-op.
 /// `market_id` is unused (the refresh target is `aave_v3_users.id`).
-#[expect(clippy::missing_errors_doc)]
-pub async fn refresh_gho_discount(
+pub(crate) async fn refresh_gho_discount(
     provider: &AlloyProvider,
     conn: &Connection,
     #[expect(unused_variables)] market_id: i64,

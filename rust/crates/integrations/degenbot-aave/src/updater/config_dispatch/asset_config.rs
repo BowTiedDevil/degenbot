@@ -19,7 +19,7 @@
 //! applies each emitted `ReserveInitialized` before a later config event in
 //! the same transaction dispatches.
 
-#![expect(clippy::missing_errors_doc, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use crate::run::AaveChunkEvent;
 use alloy::primitives::{Address, Bytes, U256};
@@ -54,7 +54,7 @@ pub(super) const EIP_1967_IMPLEMENTATION_SLOT: U256 = match U256::from_str_radix
 /// `event_handlers._process_reserve_data_update_event` (the
 /// `assert asset_in_db is not None` lifts to a `DecodeShape` error — the
 /// orchestrator pre-seeds assets via `ReserveInitialized`).
-pub fn dispatch_reserve_data_updated(
+pub(super) fn dispatch_reserve_data_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveDataUpdatedEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -82,7 +82,7 @@ pub fn dispatch_reserve_data_updated(
 
 /// `UserEModeSet(user, categoryId)` → [`AaveChunkEvent::UserEModeSet`].
 /// Mirrors `event_handlers._process_user_e_mode_set_event`.
-pub fn dispatch_user_e_mode_set(
+pub(super) fn dispatch_user_e_mode_set(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UserEModeSetEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -102,7 +102,7 @@ pub fn dispatch_user_e_mode_set(
 /// [`AaveChunkEvent::ReserveUsedAsCollateral`]. Mirrors
 /// `_process_reserve_used_as_collateral_enabled_event` /
 /// `_process_reserve_used_as_collateral_disabled_event`.
-pub fn dispatch_reserve_used_as_collateral(
+pub(super) fn dispatch_reserve_used_as_collateral(
     ctx: &mut ChunkContext<'_>,
     reserve: Address,
     user: Address,
@@ -134,7 +134,11 @@ pub fn dispatch_reserve_used_as_collateral(
 /// Mirrors `_process_price_oracle_updated_event` (the `assert existing_oracle
 /// is None` lifts to an idempotent overwrite — the apply fn handles the
 /// INSERT-not-UPDATE guard).
-pub fn dispatch_price_oracle_updated(
+//
+// The arm keeps the uniform `Result` shape the dispatch match relies on
+// (`Some(dispatch_*(ctx, ev)?)`); this handler itself cannot fail.
+#[expect(clippy::unnecessary_wraps)]
+pub(super) fn dispatch_price_oracle_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ConfigAddressPairEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -146,7 +150,7 @@ pub fn dispatch_price_oracle_updated(
 
 /// `AssetSourceUpdated(asset, source)` → [`AaveChunkEvent::AssetSourceUpdated`].
 /// Mirrors `_process_asset_source_updated_event`.
-pub fn dispatch_asset_source_updated(
+pub(super) fn dispatch_asset_source_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetSourceUpdatedEvent,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
@@ -178,7 +182,10 @@ pub fn dispatch_asset_source_updated(
 /// `EModeCategoryAdded(id, label, ltv, lt, bonus, oracle)` →
 /// [`AaveChunkEvent::EModeCategoryAdded`]. Mirrors
 /// `_process_e_mode_category_added_event`.
-pub fn dispatch_e_mode_category_added(
+//
+// Same uniform-arm rationale as `dispatch_price_oracle_updated`.
+#[expect(clippy::unnecessary_wraps)]
+pub(super) fn dispatch_e_mode_category_added(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeCategoryAddedEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -212,7 +219,7 @@ pub fn dispatch_e_mode_category_added(
 /// Mirrors the Python's unconditionally-set `e_mode_category_id` (`None` when
 /// `new_category_id == 0`). NB: the apply fn takes `new_category_id: i64` +
 /// zero means "clear".
-pub fn dispatch_e_mode_asset_category_changed(
+pub(super) fn dispatch_e_mode_asset_category_changed(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeAssetCategoryChangedEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -236,7 +243,7 @@ pub fn dispatch_e_mode_asset_category_changed(
 /// `AssetCollateralInEModeChanged(asset, category, is_collateral)` →
 /// [`AaveChunkEvent::AssetCollateralInEModeChanged`] (the newer Aave 3.4+
 /// variant).
-pub fn dispatch_asset_collateral_in_emode_changed(
+pub(super) fn dispatch_asset_collateral_in_emode_changed(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetCollateralInEModeChangedEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -267,7 +274,7 @@ pub fn dispatch_asset_collateral_in_emode_changed(
 /// trust the event's `ltv`/`threshold`/`bonus` fields — it RPC-fetches the
 /// full bitmap from the Pool contract at the event's block (a pool upgrade
 /// can emit stale values). The apply fn decodes the bitmap.
-pub async fn resolve_collateral_configuration(
+pub(super) async fn resolve_collateral_configuration(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3CollateralConfigurationChangedEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -315,7 +322,7 @@ pub async fn resolve_collateral_configuration(
 /// substrate `get_or_create_erc20_token_on_conn` takes metadata as a caller
 /// param, so this is consistent with the existing contract — the gap is
 /// isolated to this fn's token resolution).
-pub(crate) async fn resolve_reserve_initialized(
+pub(super) async fn resolve_reserve_initialized(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
     oracle_address: Address,
@@ -489,7 +496,7 @@ pub(crate) async fn fetch_erc20_metadata(
 /// decision consumes the batched results, so the values are identical to
 /// the sequential shape; only the request set always carries the fallback
 /// spelling (read-only calls; a recorder records the batched shape whole).
-pub(crate) async fn fetch_erc20_metadata_batched(
+async fn fetch_erc20_metadata_batched(
     provider: &AlloyProvider,
     tokens: [&Address; 3],
     block_number: u64,

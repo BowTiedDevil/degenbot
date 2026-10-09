@@ -167,7 +167,7 @@ pub(super) fn whole_range_span() -> &'static ChunkSpan {
 /// or cross a chunk boundary — the memo's block-pinned staleness rule (an
 /// `Upgraded` in one chunk must never serve a pre-upgrade revision to a later
 /// chunk) is enforced by construction, not by convention.
-pub struct ChunkContext<'span> {
+pub(crate) struct ChunkContext<'span> {
     span: &'span ChunkSpan,
     provider: AlloyProvider,
     market_id: i64,
