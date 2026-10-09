@@ -158,7 +158,9 @@ pub(crate) fn solve_one_path(
     let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
         ctx.epoch,
         &ctx.prefix_cache,
-        ctx.gate_capture.as_ref(),
+        ctx.gate_capture
+            .as_ref()
+            .map(|s| s as &dyn ::degenbot_solvers::profit_envelope::DegeneratePathSink),
         Some(&*ctx.walk_memo),
         ctx.runtime,
     );

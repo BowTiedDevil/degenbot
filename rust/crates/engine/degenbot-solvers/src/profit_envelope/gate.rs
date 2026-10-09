@@ -4,9 +4,10 @@ use degenbot_core::diag;
 #[cfg(not(feature = "hotpath"))]
 use degenbot_core::op_warn;
 
+use super::capture::{DegeneratePathEvent, DegeneratePathSink};
 use super::derive::{
-    capture_degenerate_path, cl_table_key, classify_cl_rejection, content_mix_u256,
-    hop_lines_and_cap, hop_lines_and_cap_cached, HopCacheKey, HopMath, PrefixCache,
+    cl_table_key, classify_cl_rejection, content_mix_u256, hop_lines_and_cap,
+    hop_lines_and_cap_cached, HopCacheKey, HopMath, PrefixCache,
 };
 use super::kernel::{
     approx_cmp_ceil, approx_cmp_ratio, ceil_div, compose_envelopes_exact, concave_max, i512_to_f64,
@@ -517,7 +518,7 @@ pub enum GateSkipCause {
 /// The gate's per-call dependency value. Carries everything that used to be
 /// process-global: the solve-cycle epoch (the prefix cache drops entries
 /// from an older epoch on first touch), the cache opt-in, and the optional
-/// degenerate-path capture config. One interface, no hidden state.
+/// degenerate-path capture sink. One interface, no hidden state.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GateDeps<'a> {
     pub(crate) epoch: u64,
@@ -525,7 +526,11 @@ pub struct GateDeps<'a> {
     /// The owner-scoped prefix store (C4); `None` disables reuse for this
     /// solve (offline deps, tests). Replaces the retired process static.
     pub(crate) prefix_store: Option<&'a PrefixCache>,
-    pub(crate) capture: Option<&'a GateCaptureCfg>,
+    /// The caller-supplied degenerate-path capture sink (C2.3); `None` (the
+    /// offline/test default) captures nothing. The solver performs no I/O —
+    /// the engine's file-writing adapter implements
+    /// [`DegeneratePathSink`].
+    pub(crate) capture: Option<&'a dyn DegeneratePathSink>,
     /// The engine-owned cross-block walk-memo handle; `None`
     /// disables the memo for this solve.
     pub(crate) walk_memo: Option<&'a crate::cl::WalkMemo>,
@@ -557,14 +562,14 @@ impl GateDeps<'_> {
     /// Production solve cycle: the prefix cache against this block's epoch,
     /// served from the owner's `PrefixCache` (C4 — the constructor takes the
     /// store so a caller cannot arm the bool and silently get None). The
-    /// optional capture config and the engine-owned walk-memo handle ride the
+    /// optional capture sink and the engine-owned walk-memo handle ride the
     /// same call; `prefix_cache` is armed here because the store is required,
     /// so the bool can no longer disagree with it.
     #[must_use]
     pub fn per_block<'a>(
         epoch: u64,
         prefix_store: &'a PrefixCache,
-        capture: Option<&'a GateCaptureCfg>,
+        capture: Option<&'a dyn DegeneratePathSink>,
         walk_memo: Option<&'a crate::cl::WalkMemo>,
         runtime: SolveRuntimeConfig,
     ) -> GateDeps<'a> {
@@ -583,16 +588,6 @@ impl GateDeps<'_> {
     pub fn walk_memo(&self) -> Option<&crate::cl::WalkMemo> {
         self.walk_memo
     }
-}
-
-/// Degenerate-path capture config: where to write + how many paths
-/// to capture. The production engine and the harnesses build it from the
-/// typed `capture` config section (`DEGENBOT_GATE_CAPTURE*` env keys load
-/// there); the gate itself reads no environment.
-#[derive(Clone, Debug)]
-pub struct GateCaptureCfg {
-    pub out_path: std::path::PathBuf,
-    pub max_paths: u64,
 }
 
 /// The ONE gate entry: a rigorous upper bound on
@@ -956,15 +951,23 @@ fn path_profit_bound_inner(
                         family = %family,
                         "degenerate hop rejected (impossible to bound — solved unscreened)"
                     );
-                    // Golden capture: serialize the full per-hop state when a
-                    // capture harness is configured so the pool states can be
-                    // replayed offline for fix experimentation.
-                    if let Some(capture) = deps.capture {
-                        let reason = match hop {
-                            HopMath::Cl(ch) => classify_cl_rejection(ch.seq),
-                            _ => family.clone(),
-                        };
-                        capture_degenerate_path(hops, e.hop_index, &reason, capture);
+                    // Golden capture: hand the typed capture EVENT to the
+                    // caller-supplied sink so the pool states can be replayed
+                    // offline for fix experimentation. The sink owns the cap +
+                    // the file adapter; `try_reserve` first so an over-cap path
+                    // never builds the (100KB+) event.
+                    if let Some(sink) = deps.capture {
+                        if sink.try_reserve() {
+                            let reason = match hop {
+                                HopMath::Cl(ch) => classify_cl_rejection(ch.seq),
+                                _ => family.clone(),
+                            };
+                            sink.capture(&DegeneratePathEvent::from_hops(
+                                hops,
+                                e.hop_index,
+                                reason,
+                            ));
+                        }
                     }
                 }
             }

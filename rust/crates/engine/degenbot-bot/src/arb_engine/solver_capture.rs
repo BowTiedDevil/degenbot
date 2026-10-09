@@ -7,20 +7,73 @@
 //! its ~500 lines (writer + variants + tests) churn independently of the
 //! lane walk.
 use ::degenbot_solvers::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-/// Degenerate-path capture config parse — the owner side of the
-/// `capture` config section (the gate itself reads no env).
-/// `gate_capture` is a typed bool (the presence-gated
+use ::degenbot_solvers::profit_envelope::{DegeneratePathEvent, DegeneratePathSink};
+
+/// Degenerate-path capture sink — the engine-owned FILE-WRITING adapter for
+/// the solver's degenerate-path capture events (C2.3). The solver builds the
+/// typed event and performs no I/O; this owns the write lock, the `MAX_PATHS`
+/// counter, the serialization and the append.
+#[derive(Debug)]
+pub(crate) struct DegeneratePathFileSink {
+    out_path: std::path::PathBuf,
+    max_paths: u64,
+    count: std::sync::atomic::AtomicU64,
+    write_lock: std::sync::Mutex<()>,
+}
+
+impl DegeneratePathSink for DegeneratePathFileSink {
+    fn try_reserve(&self) -> bool {
+        self.count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            < self.max_paths
+    }
+
+    /// Append one capture event as a JSONL row.
+    ///
+    /// Thread-safety: a `Mutex<()>` serializes the open + `write_all` +
+    /// trailing newline so concurrent path-registration threads cannot
+    /// interleave their (100KB+) records mid-write. `O_APPEND` keeps the
+    /// file-offset update atomic at the kernel level; the userspace lock keeps
+    /// the data write non-interleaved across the (possibly multi-syscall)
+    /// `write_all`. Serialize-to-string happens BEFORE the lock so the critical
+    /// section is just the open + write. `unwrap_or_else(into_inner)` recovers
+    /// from a poisoned guard (a prior panicking caller) rather than
+    /// propagating — capture is best-effort diagnostic, not a tripwire.
+    fn capture(&self, event: &DegeneratePathEvent<'_>) {
+        use std::io::Write;
+        // Serialize before taking the lock (records can be 100KB+); the event
+        // is local to this call, so the to_string is race-free without it.
+        let serialized = event.to_jsonl_row();
+        let _guard = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.out_path)
+        else {
+            return;
+        };
+        let _ = f.write_all(serialized.as_bytes());
+        let _ = f.write_all(b"\n");
+    }
+}
+
+/// The owner side of the `capture` config section (the gate itself reads no
+/// env): a file-writing sink over `gate_capture_out`, capped at
+/// `gate_capture_cap`. `gate_capture` is a typed bool (the presence-gated
 /// `DEGENBOT_GATE_CAPTURE` legacy is retired; `0`/false disables).
 #[must_use]
 pub(crate) fn gate_capture_from_cfg(
     cfg: &::degenbot_config::BotConfig,
-) -> Option<::degenbot_solvers::profit_envelope::GateCaptureCfg> {
-    cfg.capture
-        .gate_capture
-        .then(|| ::degenbot_solvers::profit_envelope::GateCaptureCfg {
-            out_path: cfg.capture.gate_capture_out.clone(),
-            max_paths: u64::try_from(cfg.capture.gate_capture_cap).unwrap_or(u64::MAX),
-        })
+) -> Option<DegeneratePathFileSink> {
+    cfg.capture.gate_capture.then(|| DegeneratePathFileSink {
+        out_path: cfg.capture.gate_capture_out.clone(),
+        max_paths: u64::try_from(cfg.capture.gate_capture_cap).unwrap_or(u64::MAX),
+        count: std::sync::atomic::AtomicU64::new(0),
+        write_lock: std::sync::Mutex::new(()),
+    })
 }
 /// One-shot capture of heavy solver inputs, so the offline replay harnesses
 /// (`solve_cl_piecewise` for all-CL, `examples/mixed_solve_replay.rs` for mixed
@@ -478,5 +531,53 @@ mod heavy_path_capture_tests {
             );
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+}
+
+#[cfg(test)]
+mod degenerate_path_file_sink_tests {
+    #![expect(clippy::unwrap_used)] // known-good temp paths + JSONL parsing
+
+    use super::DegeneratePathFileSink;
+    use ::degenbot_solvers::profit_envelope::{DegeneratePathEvent, DegeneratePathSink, HopMath};
+
+    fn sink(out: std::path::PathBuf, max_paths: u64) -> DegeneratePathFileSink {
+        DegeneratePathFileSink {
+            out_path: out,
+            max_paths,
+            count: std::sync::atomic::AtomicU64::new(0),
+            write_lock: std::sync::Mutex::new(()),
+        }
+    }
+
+    fn event<'a>(hops: &'a [Option<HopMath<'a>>]) -> DegeneratePathEvent<'a> {
+        DegeneratePathEvent::from_hops(hops, 0, "reject=all_zero_liq".to_string())
+    }
+
+    /// The engine adapter appends one JSONL row per reserved event and the
+    /// solver-supplied cap bounds the file (the retired in-solver counter's
+    /// semantics, now the sink's).
+    #[test]
+    fn writes_jsonl_rows_and_honors_the_cap() {
+        let out =
+            std::env::temp_dir().join(format!("degenbot_degen_sink_{}.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let s = sink(out.clone(), 2);
+        let hops: [Option<HopMath<'_>>; 1] = [None];
+        for _ in 0..3 {
+            if s.try_reserve() {
+                s.capture(&event(&hops));
+            }
+        }
+        let content = std::fs::read_to_string(&out).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2, "cap must bound the rows written");
+        for line in lines {
+            let doc: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(doc["n_hops"], 1);
+            assert_eq!(doc["hops"][0]["family"], "unmapped");
+            assert!(doc["hops"][0]["ranges"].is_null());
+        }
+        let _ = std::fs::remove_file(&out);
     }
 }

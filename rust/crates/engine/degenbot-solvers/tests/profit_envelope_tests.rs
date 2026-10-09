@@ -779,15 +779,54 @@ fn bound_dominates_golden_profit_on_heavy_cl_captures() {
 // M6776W degenerate-path golden capture harness tests
 // ---------------------------------------------------------------------------
 
+/// In-memory [`degenbot_solvers::profit_envelope::DegeneratePathSink`] — the
+/// test stand-in for the engine's file-writing adapter. The solver performs no
+/// I/O, so a harness collects the serialized JSONL rows in memory and asserts
+/// on them directly (no temp file).
+#[derive(Debug)]
+struct InMemoryCaptureSink {
+    max_paths: u64,
+    reserved: std::sync::atomic::AtomicU64,
+    rows: std::sync::Mutex<Vec<String>>,
+}
+
+impl InMemoryCaptureSink {
+    fn new(max_paths: u64) -> Self {
+        Self {
+            max_paths,
+            reserved: std::sync::atomic::AtomicU64::new(0),
+            rows: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn rows(&self) -> Vec<String> {
+        self.rows.lock().expect("capture rows lock").clone()
+    }
+}
+
+impl degenbot_solvers::profit_envelope::DegeneratePathSink for InMemoryCaptureSink {
+    fn try_reserve(&self) -> bool {
+        self.reserved
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            < self.max_paths
+    }
+
+    fn capture(&self, event: &degenbot_solvers::profit_envelope::DegeneratePathEvent<'_>) {
+        self.rows
+            .lock()
+            .expect("capture rows lock")
+            .push(event.to_jsonl_row());
+    }
+}
+
 /// The capture harness must serialize a degenerate CL path's full range state
-/// to JSONL so it can be replayed offline for fix experimentation.
+/// to a JSONL row through the caller-supplied sink so it can be replayed
+/// offline for fix experimentation. The row is pinned byte-for-byte against the
+/// historical schema.
 #[test]
 fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
-    let tmp = tempfile::NamedTempFile::new().expect("temp file");
-    let path = tmp.path().to_str().unwrap().to_string();
-
     // The gate keeps no thread-local counters now; the capture cap is driven
-    // by `GateCaptureCfg` alone.
+    // by the sink alone.
 
     // A CL path with a zero-liquidity crossing range (the 40% bucket).
     let good_price = p_at_tick(0);
@@ -796,18 +835,15 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::cl_derived(&seq))];
 
     // path_profit_bound returns Unsupported(DegenerateHop) and triggers the
-    // capture (the harness supplies the config the gate reads no env for).
-    let capture_cfg = degenbot_solvers::profit_envelope::GateCaptureCfg {
-        out_path: std::path::PathBuf::from(&path),
-        max_paths: 10,
-    };
+    // capture through the sink the harness supplies (the gate reads no env).
+    let sink = InMemoryCaptureSink::new(10);
     // The constructor requires the store; the degenerate reject fires before
     // any prefix lookup, so the cache stays empty and the outcome is identical.
     let store = degenbot_solvers::profit_envelope::PrefixCache::new();
     let deps = degenbot_solvers::profit_envelope::GateDeps::per_block(
         0,
         &store,
-        Some(&capture_cfg),
+        Some(&sink),
         None,
         SolveRuntimeConfig::default(),
     );
@@ -818,10 +854,39 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
         )
     ));
 
-    // The JSONL file must exist and contain one line with the rejection reason.
-    let content = std::fs::read_to_string(&path).expect("capture file written");
-    assert!(!content.is_empty(), "capture file must not be empty");
-    let doc: serde_json::Value = serde_json::from_str(content.trim()).expect("valid JSONL line");
+    // The sink must hold exactly one row (one degenerate path -> one row).
+    let rows = sink.rows();
+    assert_eq!(rows.len(), 1, "one degenerate path must yield one row");
+    let row = &rows[0];
+    assert!(
+        !row.contains('\n'),
+        "a JSONL row must not contain interior newlines"
+    );
+
+    // Byte-for-byte: the row equals the historical schema, field for field.
+    let expected = serde_json::json!({
+        "reject_hop": 0,
+        "reject_reason": "reject=all_zero_liq",
+        "n_hops": 1,
+        "hops": [{
+            "hop_index": 0,
+            "family": "cl",
+            "ranges": [{
+                "liquidity": "0",
+                "sqrt_price_x96": p_at_tick(0).to_string(),
+                "sqrt_price_lower_x96": p_at_tick(-10).to_string(),
+                "sqrt_price_upper_x96": p_at_tick(10).to_string(),
+                "gamma_numer": 997_000,
+                "fee_denom": 1_000_000,
+                "zero_for_one": true,
+                "word_boundary_prices": [],
+            }],
+        }],
+    });
+    assert_eq!(row, &expected.to_string(), "capture row format drifted");
+
+    // And it must parse back as the documented fields.
+    let doc: serde_json::Value = serde_json::from_str(row.trim()).expect("valid JSONL line");
     assert_eq!(doc["n_hops"], 1);
     assert_eq!(doc["reject_hop"], 0);
     let reason = doc["reject_reason"].as_str().expect("reject_reason str");

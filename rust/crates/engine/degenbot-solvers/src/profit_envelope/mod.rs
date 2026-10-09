@@ -36,10 +36,12 @@
 //! - `gate` — the gate entry (`path_profit_bound*`), the typed verdict, the
 //!   per-call dependency value, and the `GateStats` telemetry.
 
+mod capture;
 mod derive;
 mod gate;
 mod kernel;
 
+pub use capture::{CapturedHop, DegeneratePathEvent, DegeneratePathSink};
 pub use derive::{ClHop, HopMath, PrefixCache};
 
 #[cfg(test)]
@@ -47,8 +49,7 @@ pub(crate) use gate::path_bound_lines;
 pub(crate) use gate::path_bound_lines_with_stats;
 pub use gate::{
     path_output_bound_at, path_profit_bound, path_profit_bound_with_floor,
-    path_profit_bound_with_stats, Envelope, GateCaptureCfg, GateDeps, GateSkipCause, GateStats,
-    PathBoundLines,
+    path_profit_bound_with_stats, Envelope, GateDeps, GateSkipCause, GateStats, PathBoundLines,
 };
 
 pub(crate) use kernel::clamp_window_to_bound;

@@ -55,7 +55,9 @@ use super::lane_walk::{drive_lane_walk, LaneArmPolicy, LaneWalkBinPlan, WalkSubm
 use super::path_info::describe_hop;
 use super::path_lifecycle::PathSolveStatus;
 use super::path_registry::{PathRegistration, PathRegistrationError, PathRegistry};
-use super::solver_capture::{gate_capture_from_cfg, CaptureVariant, HeavyPathCapture};
+use super::solver_capture::{
+    gate_capture_from_cfg, CaptureVariant, DegeneratePathFileSink, HeavyPathCapture,
+};
 use super::workload_partition::{
     lpt_partition, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
 };
@@ -114,7 +116,7 @@ pub(crate) type PathTimesHeap =
 pub(crate) struct SolveCycleShared {
     pub(crate) solve_block: u64,
     pub(crate) epoch: u64,
-    pub(crate) gate_capture: Option<::degenbot_solvers::profit_envelope::GateCaptureCfg>,
+    pub(crate) gate_capture: Option<DegeneratePathFileSink>,
     pub(crate) walk_memo: std::sync::Arc<::degenbot_solvers::cl::WalkMemo>,
     /// The engine-owned prefix-composition cache; epoch-generationed, so
     /// entries never survive a block boundary.
