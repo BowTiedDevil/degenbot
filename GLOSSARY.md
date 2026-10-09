@@ -483,6 +483,19 @@ The benchmark that runs a fixed workload against a golden capture rather than a 
 node.
 _Avoid_: "offline bench", "fixture benchmark"
 
+## Aave updater and digest
+
+**Market reset**:
+Purging one market's rows and re-initializing through the activate seam under a single
+transaction, leaving the market observationally identical to a fresh cold boot.
+_Avoid_: shell-assembled purge-then-re-init across separate transactions.
+
+**Completed-market manifest**:
+The typed record of a completed market — the market facts, the drive block, the
+serialization stamp, and the per-table digests — owned in both directions (render and
+validated parse) by the digest writer.
+_Avoid_: opaque pre-rendered strings; hand-parsed JSON inverses.
+
 ## Piecewise CL solving
 
 **Piecewise walker**:
@@ -502,6 +515,13 @@ The precomputed prefix of per-word-boundary swap steps for a dense CL range, whe
 boundary list, entry state, and fee are fixed — converts a sim query into a partition
 search plus one live landing step. Built once per range, shared by the walk across paths.
 _Avoid_: "caching table", "profile cache".
+
+**Prepared hop**:
+One CL hop's walk intake: the tick-range sequence paired structurally with its crossing
+table, word profiles, and derivation fingerprint — built once per (pool, direction) by the
+projection and shared across paths. The composition memo's key is folded from the same
+value the walk consumes.
+_Avoid_: positional pairing of parallel table slices; per-solve fingerprint re-derivation.
 
 **Composition memo**:
 The engine-owned cross-block fingerprint map from exact hop-composition fingerprints to
@@ -811,6 +831,13 @@ _Avoid_: "solve loop" (the pump's block loop), bare "cycle", "engine cycle".
 **Cycle-transient state**:
 The state a cycle borrows between blocks — admission verdict, cycle arm, pending new
 paths, cursor advance — owned by the cycle rather than smeared across engine fields.
+
+**Path cost ledger**:
+The solve cycle's owner of per-path cost accounting — the pipeline instruments, the
+slowest-path retention, the next-cycle bin-packing cost history, and the capture triggers
+— behind one record call from the lane walk.
+_Avoid_: per-sink fields smeared across the cycle's shared context; accumulators nothing
+reads.
 
 **Cycle outcome**:
 The typed fact a solve cycle returns: the arm (shed / skipped-empty / solved), the
