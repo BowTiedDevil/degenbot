@@ -4,9 +4,11 @@
 //! market/chain ids, Pool + oracle addresses) plus the block-pinned
 //! [`RevisionMemo`], a `(implementation, selector, block) → revision` cache
 //! over the 4 revision reads, so repeated same-implementation probes inside
-//! one chunk issue one RPC. The context borrows its [`ChunkSpan`], so it
-//! cannot outlive the chunk that built it — the block-pinned staleness rule
-//! is enforced by construction, not by convention.
+//! one chunk issue one RPC. The context borrows its [`ChunkSpan`], the chunk
+//! `Connection`, and the [`ChunkSubstrate`], so it cannot outlive the chunk
+//! that built it — the block-pinned staleness rule is enforced by
+//! construction, not by convention — and every dispatch arm takes the single
+//! context instead of the exploded id + connection + substrate list.
 //!
 //! [`ChunkContext::dispatch_transaction`] is the chunk overlay's ONE
 //! apply→bump→dispatch seam, in the fixed order the read-your-own-writes
@@ -144,8 +146,19 @@ impl ChunkSpan {
     }
 }
 
-/// The per-chunk config-dispatch context: the chunk-scoped dispatch constants
-/// + the block-pinned [`RevisionMemo`], in ONE owner with a single lifetime.
+/// A whole-range [`ChunkSpan`] for the in-crate unit tests: one shared
+/// instance the test-built contexts borrow, so a single-block fixture sits
+/// inside any test's span.
+#[cfg(test)]
+pub(super) fn whole_range_span() -> &'static ChunkSpan {
+    use std::sync::OnceLock;
+    static SPAN: OnceLock<ChunkSpan> = OnceLock::new();
+    SPAN.get_or_init(|| ChunkSpan::new(0, u64::MAX))
+}
+
+/// The per-chunk config-dispatch context: the chunk-scoped dispatch constants,
+/// the chunk `Connection`, the [`ChunkSubstrate`], and the block-pinned
+/// [`RevisionMemo`], in ONE owner with a single lifetime.
 ///
 /// Built by [`ChunkContext::for_chunk`] at the top of a chunk apply and
 /// threaded by `&mut` through the dispatch. The constructor borrows a
@@ -153,7 +166,7 @@ impl ChunkSpan {
 /// or cross a chunk boundary — the memo's block-pinned staleness rule (an
 /// `Upgraded` in one chunk must never serve a pre-upgrade revision to a later
 /// chunk) is enforced by construction, not by convention.
-pub(crate) struct ChunkContext<'span> {
+pub struct ChunkContext<'span> {
     span: &'span ChunkSpan,
     provider: AlloyProvider,
     market_id: i64,
@@ -161,10 +174,19 @@ pub(crate) struct ChunkContext<'span> {
     pool_address: Address,
     oracle_address: Option<Address>,
     memo: RevisionMemo,
+    conn: &'span Connection,
+    substrate: &'span mut ChunkSubstrate,
+    block_number: u64,
 }
 
 impl<'span> ChunkContext<'span> {
-    /// Build the context owning a fresh memo for one chunk.
+    /// Build the context for one chunk, borrowing the chunk `Connection` and
+    /// the [`ChunkSubstrate`] for the context's whole lifetime.
+    ///
+    /// `block_number` starts at the span's first block; each log-transaction's
+    /// dispatch enters its own block through [`ChunkContext::begin_transaction`]
+    /// before any read or emitted event.
+    #[expect(clippy::too_many_arguments)] // the chunk's dispatch constants, one constructor
     pub(crate) fn for_chunk(
         span: &'span ChunkSpan,
         provider: AlloyProvider,
@@ -172,6 +194,8 @@ impl<'span> ChunkContext<'span> {
         chain_id: i64,
         pool_address: Address,
         oracle_address: Option<Address>,
+        conn: &'span Connection,
+        substrate: &'span mut ChunkSubstrate,
     ) -> Self {
         Self {
             span,
@@ -181,7 +205,35 @@ impl<'span> ChunkContext<'span> {
             pool_address,
             oracle_address,
             memo: RevisionMemo::new(),
+            conn,
+            substrate,
+            block_number: span.chunk_start,
         }
+    }
+
+    /// Enter one log-transaction's dispatch scope: the block every read and
+    /// every emitted event for that transaction rides.
+    pub(crate) fn begin_transaction(&mut self, block_number: u64) {
+        self.block_number = block_number;
+    }
+
+    /// The block the current log-transaction's dispatch reads + emits at.
+    pub(super) fn block_number(&self) -> u64 {
+        self.block_number
+    }
+
+    /// The chunk `Connection` — the single transaction the whole dispatch
+    /// rides. Returned with the context's own lifetime so a caller may keep it
+    /// while borrowing the substrate.
+    pub(super) fn conn(&self) -> &'span Connection {
+        self.conn
+    }
+
+    /// The chunk substrate, for the callers that drive it directly (the
+    /// per-transaction ops parser, the end-of-chunk flush, the stkAAVE
+    /// backfill).
+    pub(crate) fn substrate_mut(&mut self) -> &mut ChunkSubstrate {
+        &mut *self.substrate
     }
 
     /// The provider every dispatch RPC rides.
@@ -235,11 +287,11 @@ impl<'span> ChunkContext<'span> {
     /// drops the chunk `Transaction` (rollback).
     pub(crate) fn apply_events(
         &mut self,
-        conn: &Connection,
         events: &[AaveChunkEvent],
-        substrate: &mut ChunkSubstrate,
     ) -> Result<AaveChunkWriteReport, DbError> {
-        apply_chunk_events_on_conn(conn, self.market_id, events, substrate)
+        let conn = self.conn;
+        let market_id = self.market_id;
+        apply_chunk_events_on_conn(conn, market_id, events, &mut *self.substrate)
     }
 
     /// Read `sig` on `target` at `block_number` through the memo — the one
@@ -285,14 +337,14 @@ impl<'span> ChunkContext<'span> {
     /// Propagates a substrate lookup failure or the dispatch's own error.
     pub(crate) async fn dispatch_transaction(
         &mut self,
-        conn: &Connection,
-        substrate: &mut ChunkSubstrate,
         tx_logs: &[&alloy::rpc::types::Log],
-        block_number: u64,
     ) -> Result<TransactionDispatch, ConfigDispatchError> {
+        let conn = self.conn;
+        let market_id = self.market_id;
+        let block_number = self.block_number;
         // (0) Re-resolve the GHO row for THIS transaction — sees a prior
         //     transaction's write through the overlay's dirty-mark contract.
-        let gho_asset = substrate.gho_asset(conn)?;
+        let gho_asset = self.substrate.gho_asset(conn)?;
         let underlying = gho_asset
             .as_ref()
             .and_then(|g| g.gho_token_address.as_deref())
@@ -312,8 +364,9 @@ impl<'span> ChunkContext<'span> {
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())
         {
-            Some(addr_str) => substrate
-                .lookup_asset_row(conn, self.market_id, ASSET_KIND_V_TOKEN, addr_str)?
+            Some(addr_str) => self
+                .substrate
+                .lookup_asset_row(conn, market_id, ASSET_KIND_V_TOKEN, addr_str)?
                 .map(|row| row.v_token_revision),
             None => None,
         };
@@ -326,7 +379,7 @@ impl<'span> ChunkContext<'span> {
             block_number,
             gho_vtoken,
             vtoken_revision,
-            self.market_id,
+            market_id,
             conn,
         )
         .await?;
@@ -334,15 +387,7 @@ impl<'span> ChunkContext<'span> {
         // (3) The config-event dispatch (RPC + substrate lookups). The
         //     revision reads ride the per-chunk memo; the same-block
         //     independent `eth_call`s ride the multicall batch.
-        let config_events = dispatch_config_events(
-            self,
-            tx_logs,
-            conn,
-            gho_asset.as_ref(),
-            block_number,
-            substrate,
-        )
-        .await?;
+        let config_events = dispatch_config_events(self, tx_logs, gho_asset.as_ref()).await?;
 
         Ok(TransactionDispatch {
             discounts,
@@ -365,8 +410,8 @@ impl<'span> ChunkContext<'span> {
         id: &alloy::primitives::B256,
         proxy_address: &Address,
         implementation_address: &Address,
-        block_number: u64,
     ) -> Result<Option<ProxyCreationResolution>, ConfigDispatchError> {
+        let block_number = self.block_number;
         match_proxy_id(
             &mut self.memo,
             &self.provider,

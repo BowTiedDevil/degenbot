@@ -25,13 +25,13 @@ use std::collections::{HashMap, HashSet};
 use crate::gho_processor::calculate_gho_discount_rate;
 use crate::ray_mul;
 use crate::run::AaveChunkEvent;
-use crate::updater::run::substrate::ChunkSubstrate;
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::{DbError, DebtPositionRefreshContext, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::{Connection, OptionalExtension as _};
 
+use super::context::ChunkContext;
 use super::{
     checksum, discount_to_i64, encode_single_address_call, eth_calls_batched_or_direct,
     word0_to_u256, ConfigDispatchError, GHO_DISCOUNT_DEPRECATION_REVISION,
@@ -42,15 +42,15 @@ use super::{
 /// `_process_discount_percent_updated_event` (`newDiscountPercent` is topic[2]
 /// — the decoder already extracted it).
 pub fn dispatch_discount_percent_updated(
-    market_id: i64,
-    block_number: u64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountPercentUpdatedEvent,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let conn = ctx.conn();
     let user_str = checksum(&decoded.user);
-    let user_id = substrate.user_id_or_create(conn, market_id, &user_str, 0)?;
-    let _ = block_number;
+    let user_id = ctx
+        .substrate_mut()
+        .user_id_or_create(conn, market_id, &user_str, 0)?;
     Ok(AaveChunkEvent::GhoDiscountPercentUpdated {
         user_id,
         new_discount_percent: discount_to_i64(decoded.new_discount_percent),
@@ -83,14 +83,12 @@ pub fn dispatch_discount_percent_updated(
 /// balance mutation — they're fetched only for classification in
 /// `fetch_stk_aave_events`); all balance mutation flows through this fn now.
 pub fn dispatch_stk_aave_transfer(
-    market_id: i64,
-    block_number: u64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
     gho_asset: Option<&AaveGhoAsset>,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    let _ = block_number;
+    let market_id = ctx.market_id();
+    let conn = ctx.conn();
     // Scope: only the discount-token (stkAAVE) emitter.
     let Some(g) = gho_asset else {
         return Ok(None);
@@ -123,12 +121,18 @@ pub fn dispatch_stk_aave_transfer(
     let from_user_id = if decoded.from == Address::ZERO {
         None // the mint-from-zero leg — skipped at apply.
     } else {
-        Some(substrate.user_id_or_create(conn, market_id, &checksum(&decoded.from), 0)?)
+        Some(
+            ctx.substrate_mut()
+                .user_id_or_create(conn, market_id, &checksum(&decoded.from), 0)?,
+        )
     };
     let to_user_id = if decoded.to == Address::ZERO {
         None // the burn-to-zero leg — skipped at apply.
     } else {
-        Some(substrate.user_id_or_create(conn, market_id, &checksum(&decoded.to), 0)?)
+        Some(
+            ctx.substrate_mut()
+                .user_id_or_create(conn, market_id, &checksum(&decoded.to), 0)?,
+        )
     };
     // The degenerate `Transfer(0x0 → 0x0)` lands both `None` (no real user) —
     // still emitted (counts as processed) but the apply is a no-op.
@@ -158,37 +162,28 @@ pub fn dispatch_stk_aave_transfer(
 /// (byte-exact magnitude). The backfill is a no-op when the column is already
 /// non-`NULL` (set by a prior same-tx Transfer or the (C) refresh).
 pub(crate) async fn dispatch_stk_aave_transfer_with_backfill(
-    provider: &AlloyProvider,
-    conn: &Connection,
-    market_id: i64,
-    block_number: u64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
     gho_asset: Option<&AaveGhoAsset>,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     // None-guard: no GHO market row at tx start — skip (a chain-wide fetch can
     // surface events from chains without a seeded GHO market).
     if gho_asset.is_none() {
         return Ok(None);
     }
+    let block_number = ctx.block_number();
+    let conn = ctx.conn();
     // Re-resolve gho_asset FRESH from conn (read-your-own-writes — a same-tx
     // DiscountTokenUpdated at an earlier logIndex bumps v_gho_discount_token
     // AFTER the per-tx snapshot was taken). Mirrors
     // `dispatch_discount_token_updated_with_fresh_resolution`.
-    let fresh = substrate.gho_asset(conn)?;
+    let fresh = ctx.substrate_mut().gho_asset(conn)?;
     let Some(g) = fresh.as_ref() else {
         return Ok(None);
     };
     // Re-use the sync dispatch fn for the emitter-validation guard +
     // StkAaveTransfer emission (skip the re-resolution since we just did it).
-    let event = dispatch_stk_aave_transfer(
-        market_id,
-        block_number,
-        decoded,
-        Some(g),
-        conn,
-        &mut *substrate,
-    )?;
+    let event = dispatch_stk_aave_transfer(ctx, decoded, Some(g))?;
     let Some(AaveChunkEvent::StkAaveTransfer {
         from_user_id,
         to_user_id,
@@ -214,12 +209,24 @@ pub(crate) async fn dispatch_stk_aave_transfer_with_backfill(
         }
     };
     if let Some(uid) = from_user_id {
-        backfill_user_stk_aave_balance_if_none(provider, conn, uid, block_number, discount_token)
-            .await?;
+        backfill_user_stk_aave_balance_if_none(
+            ctx.provider(),
+            conn,
+            uid,
+            block_number,
+            discount_token,
+        )
+        .await?;
     }
     if let Some(uid) = to_user_id {
-        backfill_user_stk_aave_balance_if_none(provider, conn, uid, block_number, discount_token)
-            .await?;
+        backfill_user_stk_aave_balance_if_none(
+            ctx.provider(),
+            conn,
+            uid,
+            block_number,
+            discount_token,
+        )
+        .await?;
     }
     Ok(Some(AaveChunkEvent::StkAaveTransfer {
         from_user_id,
@@ -331,10 +338,9 @@ pub fn dispatch_discount_rate_strategy_updated(
 /// The `gho_asset` param is the None-guard (no GHO market row at tx start
 /// = skip).
 pub(super) fn dispatch_discount_token_updated_with_fresh_resolution(
+    ctx: &mut ChunkContext<'_>,
     gho_asset: Option<&AaveGhoAsset>,
     ev: &degenbot_decoders::aave_event_decoder::AaveV3DiscountTokenUpdatedEvent,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     // None-guard: no GHO market row at tx start = skip (the chain-wide fetch
     // can surface events from chains without a seeded GHO market).
@@ -349,7 +355,8 @@ pub(super) fn dispatch_discount_token_updated_with_fresh_resolution(
     // lazy-loads the just-applied FK). The discount-config events are rare
     // (a handful over the whole drive), so the per-event conn lookup is
     // negligible.
-    let fresh = substrate.gho_asset(conn)?;
+    let conn = ctx.conn();
+    let fresh = ctx.substrate_mut().gho_asset(conn)?;
     match fresh.as_ref() {
         Some(g) => dispatch_discount_token_updated(g, ev),
         None => Ok(None),
@@ -360,15 +367,15 @@ pub(super) fn dispatch_discount_token_updated_with_fresh_resolution(
 /// read-your-own-writes re-resolution as
 /// [`dispatch_discount_token_updated_with_fresh_resolution`] — see its docs.
 pub(super) fn dispatch_discount_rate_strategy_updated_with_fresh_resolution(
+    ctx: &mut ChunkContext<'_>,
     gho_asset: Option<&AaveGhoAsset>,
     ev: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     if gho_asset.is_none() {
         return Ok(None);
     }
-    let fresh = substrate.gho_asset(conn)?;
+    let conn = ctx.conn();
+    let fresh = ctx.substrate_mut().gho_asset(conn)?;
     match fresh.as_ref() {
         Some(g) => dispatch_discount_rate_strategy_updated(g, ev),
         None => Ok(None),

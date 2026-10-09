@@ -20,11 +20,9 @@
 #![expect(clippy::doc_markdown)]
 
 use crate::run::AaveChunkEvent;
-use crate::updater::run::substrate::ChunkSubstrate;
 use alloy::primitives::Address;
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_rpc::provider::AlloyProvider;
-use rusqlite::Connection;
 
 use super::context::{ChunkContext, RevisionMemo};
 use super::{checksum, discount_to_i64, ConfigDispatchError, GHO_DISCOUNT_DEPRECATION_REVISION};
@@ -83,18 +81,21 @@ pub(super) async fn resolve_upgraded(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UpgradedEvent,
     gho_asset: Option<&AaveGhoAsset>,
-    block_number: u64,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let market_id = ctx.market_id();
+    let block_number = ctx.block_number();
+    let conn = ctx.conn();
     let proxy_str = checksum(&decoded.proxy_address);
     // 1. asset lookup: a_token first, then v_token.
-    let a_asset = substrate.lookup_asset_row(conn, market_id, "a_token", &proxy_str)?;
+    let a_asset = ctx
+        .substrate_mut()
+        .lookup_asset_row(conn, market_id, "a_token", &proxy_str)?;
     let (asset_id, is_a_token) = if let Some(row) = a_asset {
         (row.id, true)
     } else {
-        let v_asset = substrate.lookup_asset_row(conn, market_id, "v_token", &proxy_str)?;
+        let v_asset = ctx
+            .substrate_mut()
+            .lookup_asset_row(conn, market_id, "v_token", &proxy_str)?;
         let Some(row) = v_asset else {
             return Err(ConfigDispatchError::DecodeShape(format!(
                 "Upgraded: proxy {proxy_str} is neither a known aToken nor vToken \
@@ -151,8 +152,8 @@ pub(super) async fn resolve_contract_revision_updated(
     new_address: Address,
     contract_name: &str,
     revision_fn: &str,
-    block_number: u64,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let block_number = ctx.block_number();
     let revision = ctx
         .read_revision(&new_address, revision_fn, block_number)
         .await?;

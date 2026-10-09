@@ -140,7 +140,8 @@ pub(super) async fn process_chunk_on_conn(
     let mut decode_compute_time = Duration::ZERO;
     let mut apply_time = Duration::ZERO;
     // Perf D: the per-chunk dispatch context — ONE owner holding the
-    // chunk-scoped dispatch constants + the `RevisionMemo`, so the 4 revision
+    // chunk-scoped dispatch constants, the chunk connection, the chunk
+    // substrate, and the `RevisionMemo`, so the 4 revision
     // reads (`ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` / `POOL_REVISION()` /
     // `CONFIGURATOR_REVISION()`) dedupe per `(implementation, selector,
     // block)`. Chunks partition the block range, so chunk scope is the full
@@ -148,7 +149,9 @@ pub(super) async fn process_chunk_on_conn(
     // memo safe across an in-chunk `Upgraded` (the upgrade's own read sits
     // at the upgrade block; every later read sits at a later block — a
     // distinct key — so no pre-upgrade value can leak across the boundary).
-    // The context borrows the chunk span, so it cannot outlive the chunk.
+    // The context borrows the chunk span, the connection, and the substrate,
+    // so it cannot outlive the chunk; the loop sets each transaction's block
+    // on it before dispatching.
     let chunk_span = ChunkSpan::new(chunk_start, chunk_end);
     let mut ctx = ChunkContext::for_chunk(
         &chunk_span,
@@ -157,11 +160,14 @@ pub(super) async fn process_chunk_on_conn(
         chain_id,
         pool_address,
         oracle_address,
+        conn,
+        &mut substrate,
     );
 
     for group in tx_groups {
         let block_number = group.block_number;
         let tx_hashes_refs: Vec<&Log> = group.logs.clone();
+        ctx.begin_transaction(block_number);
 
         for log in &group.logs {
             let topics = log.topics();
@@ -199,9 +205,7 @@ pub(super) async fn process_chunk_on_conn(
         //     config events (each applied intra-dispatch). The seam owns the
         //     order; `ChunkContext::dispatch_transaction` carries the rationale
         //     + the Python-mirror notes for each stage.
-        let dispatch = ctx
-            .dispatch_transaction(conn, &mut substrate, &tx_hashes_refs, block_number)
-            .await?;
+        let dispatch = ctx.dispatch_transaction(&tx_hashes_refs).await?;
         let discounts = dispatch.discounts;
         let config_events = dispatch.config_events;
         let discount_token_tx = dispatch.stk_aave_address;
@@ -224,7 +228,7 @@ pub(super) async fn process_chunk_on_conn(
             &tx_hashes_refs,
             group.tx_hash,
             &discounts,
-            &mut substrate,
+            ctx.substrate_mut(),
         )
         .map_err(|e| {
             #[expect(clippy::print_stderr)] // auditable stderr parse-fail line
@@ -256,7 +260,7 @@ pub(super) async fn process_chunk_on_conn(
         );
         let apply_guard = apply_span.enter();
         let apply_started = Instant::now();
-        ctx.apply_events(conn, &op_events, &mut substrate)?;
+        ctx.apply_events(&op_events)?;
         apply_time += apply_started.elapsed();
         drop(apply_guard);
         apply_span.record(
@@ -399,7 +403,7 @@ pub(super) async fn process_chunk_on_conn(
     // the flush sits inside the chunk's transaction (a rollback reverts it
     // with the chunk; the in-memory buffer drops with the substrate). The
     // post-commit verification gate reads the flushed values.
-    substrate.flush_reserve_data_updates(conn)?;
+    ctx.substrate_mut().flush_reserve_data_updates(conn)?;
     DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;

@@ -22,13 +22,11 @@
 #![expect(clippy::missing_errors_doc, clippy::doc_markdown)]
 
 use crate::run::AaveChunkEvent;
-use crate::updater::run::substrate::ChunkSubstrate;
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
-use rusqlite::Connection;
 
 use super::context::ChunkContext;
 use super::{
@@ -58,14 +56,15 @@ pub(super) const EIP_1967_IMPLEMENTATION_SLOT: U256 = match U256::from_str_radix
 /// `assert asset_in_db is not None` lifts to a `DecodeShape` error — the
 /// orchestrator pre-seeds assets via `ReserveInitialized`).
 pub fn dispatch_reserve_data_updated(
-    market_id: i64,
-    block_number: u64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveDataUpdatedEvent,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let block_number = ctx.block_number();
+    let conn = ctx.conn();
     let addr_str = checksum(&decoded.reserve);
-    let asset = substrate
+    let asset = ctx
+        .substrate_mut()
         .lookup_asset_row(conn, market_id, "underlying", &addr_str)?
         .ok_or_else(|| {
             ConfigDispatchError::DecodeShape(format!(
@@ -85,15 +84,15 @@ pub fn dispatch_reserve_data_updated(
 /// `UserEModeSet(user, categoryId)` → [`AaveChunkEvent::UserEModeSet`].
 /// Mirrors `event_handlers._process_user_e_mode_set_event`.
 pub fn dispatch_user_e_mode_set(
-    market_id: i64,
-    block_number: u64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UserEModeSetEvent,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let conn = ctx.conn();
     let addr_str = checksum(&decoded.user);
-    let user_id = substrate.user_id_or_create(conn, market_id, &addr_str, 0)?;
-    let _ = block_number;
+    let user_id = ctx
+        .substrate_mut()
+        .user_id_or_create(conn, market_id, &addr_str, 0)?;
     Ok(AaveChunkEvent::UserEModeSet {
         user_id,
         e_mode: i64::from(decoded.category_id),
@@ -105,17 +104,20 @@ pub fn dispatch_user_e_mode_set(
 /// `_process_reserve_used_as_collateral_enabled_event` /
 /// `_process_reserve_used_as_collateral_disabled_event`.
 pub fn dispatch_reserve_used_as_collateral(
-    market_id: i64,
+    ctx: &mut ChunkContext<'_>,
     reserve: Address,
     user: Address,
     enabled: bool,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let conn = ctx.conn();
     let user_str = checksum(&user);
-    let user_id = substrate.user_id_or_create(conn, market_id, &user_str, 0)?;
+    let user_id = ctx
+        .substrate_mut()
+        .user_id_or_create(conn, market_id, &user_str, 0)?;
     let asset_str = checksum(&reserve);
-    let asset = substrate
+    let asset = ctx
+        .substrate_mut()
         .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
         .ok_or_else(|| {
             ConfigDispatchError::DecodeShape(format!(
@@ -134,11 +136,11 @@ pub fn dispatch_reserve_used_as_collateral(
 /// is None` lifts to an idempotent overwrite — the apply fn handles the
 /// INSERT-not-UPDATE guard).
 pub fn dispatch_price_oracle_updated(
-    market_id: i64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ConfigAddressPairEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     Ok(AaveChunkEvent::PriceOracleUpdated {
-        market_id,
+        market_id: ctx.market_id(),
         new_oracle_address: checksum(&decoded.new_address),
     })
 }
@@ -146,13 +148,16 @@ pub fn dispatch_price_oracle_updated(
 /// `AssetSourceUpdated(asset, source)` → [`AaveChunkEvent::AssetSourceUpdated`].
 /// Mirrors `_process_asset_source_updated_event`.
 pub fn dispatch_asset_source_updated(
-    market_id: i64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetSourceUpdatedEvent,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
-    let Some(asset) = substrate.lookup_asset_row(conn, market_id, "underlying", &asset_str)? else {
+    let Some(asset) =
+        ctx.substrate_mut()
+            .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
+    else {
         // Cold-boot tolerance: on a fresh-market cold-boot, the
         // `AssetSourceUpdated` for a not-yet-initialized reserve can precede
         // its `ReserveInitialized` within the same tx (mainnet block
@@ -175,11 +180,11 @@ pub fn dispatch_asset_source_updated(
 /// [`AaveChunkEvent::EModeCategoryAdded`]. Mirrors
 /// `_process_e_mode_category_added_event`.
 pub fn dispatch_e_mode_category_added(
-    market_id: i64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeCategoryAddedEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     Ok(AaveChunkEvent::EModeCategoryAdded {
-        market_id,
+        market_id: ctx.market_id(),
         category_id: i64::from(decoded.category_id),
         ltv: decoded.ltv.to::<u64>(),
         liquidation_threshold: decoded.liquidation_threshold.to::<u64>(),
@@ -209,13 +214,14 @@ pub fn dispatch_e_mode_category_added(
 /// `new_category_id == 0`). NB: the apply fn takes `new_category_id: i64` +
 /// zero means "clear".
 pub fn dispatch_e_mode_asset_category_changed(
-    market_id: i64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeAssetCategoryChangedEvent,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
-    let asset = substrate
+    let asset = ctx
+        .substrate_mut()
         .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
         .ok_or_else(|| {
             ConfigDispatchError::DecodeShape(format!(
@@ -232,13 +238,15 @@ pub fn dispatch_e_mode_asset_category_changed(
 /// [`AaveChunkEvent::AssetCollateralInEModeChanged`] (the newer Aave 3.4+
 /// variant).
 pub fn dispatch_asset_collateral_in_emode_changed(
-    market_id: i64,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetCollateralInEModeChangedEvent,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
-    let asset = substrate.lookup_asset_row(conn, market_id, "underlying", &asset_str)?
+    let asset = ctx
+        .substrate_mut()
+        .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
     .ok_or_else(|| {
         ConfigDispatchError::DecodeShape(format!(
             "AssetCollateralInEModeChanged: no asset for underlying {asset_str} in market {market_id}"
@@ -261,24 +269,26 @@ pub fn dispatch_asset_collateral_in_emode_changed(
 /// full bitmap from the Pool contract at the event's block (a pool upgrade
 /// can emit stale values). The apply fn decodes the bitmap.
 pub async fn resolve_collateral_configuration(
-    provider: &AlloyProvider,
-    pool_address: Address,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3CollateralConfigurationChangedEvent,
-    market_id: i64,
-    block_number: u64,
-    conn: &Connection,
-    substrate: &mut ChunkSubstrate,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let block_number = ctx.block_number();
+    let pool_address = ctx.pool_address();
+    let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
-    let asset = substrate.lookup_asset_row(conn, market_id, "underlying", &asset_str)?
-    .ok_or_else(|| {
-        ConfigDispatchError::DecodeShape(format!(
-            "CollateralConfigurationChanged: no asset for underlying {asset_str} in market {market_id}"
-        ))
-    })?;
+    let asset = ctx
+        .substrate_mut()
+        .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
+        .ok_or_else(|| {
+            ConfigDispatchError::DecodeShape(format!(
+                "CollateralConfigurationChanged: no asset for underlying {asset_str} in market {market_id}"
+            ))
+        })?;
     // getConfiguration(address) — 4-byte selector + 32-byte address.
     let calldata = encode_single_address_call("getConfiguration(address)", &decoded.asset);
-    let ret = provider
+    let ret = ctx
+        .provider()
         .eth_call(&pool_address, calldata, Some(block_number))
         .await?;
     let config_bitmap = word0_to_u256(&ret).ok_or_else(|| {
@@ -311,9 +321,11 @@ pub(crate) async fn resolve_reserve_initialized(
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
     oracle_address: Address,
     gho_asset: Option<&AaveGhoAsset>,
-    block_number: u64,
-    conn: &Connection,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let market_id = ctx.market_id();
+    let chain_id = ctx.chain_id();
+    let block_number = ctx.block_number();
+    let conn = ctx.conn();
     // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken),
     //    RPC-fetching the name/symbol/decimals from the chain (the
     //    standalone-Rust-core constraint — Rust owns the loop, no PyO3 FFI for
@@ -339,7 +351,7 @@ pub(crate) async fn resolve_reserve_initialized(
         metadata;
     let underlying_asset_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
-        ctx.chain_id(),
+        chain_id,
         &underlying_str,
         underlying_name.as_deref(),
         underlying_symbol.as_deref(),
@@ -347,7 +359,7 @@ pub(crate) async fn resolve_reserve_initialized(
     )?;
     let a_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
-        ctx.chain_id(),
+        chain_id,
         &a_token_str,
         a_name.as_deref(),
         a_symbol.as_deref(),
@@ -355,7 +367,7 @@ pub(crate) async fn resolve_reserve_initialized(
     )?;
     let v_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
-        ctx.chain_id(),
+        chain_id,
         &v_token_str,
         v_name.as_deref(),
         v_symbol.as_deref(),
@@ -382,12 +394,11 @@ pub(crate) async fn resolve_reserve_initialized(
             vtoken_impl,
             &decoded.asset,
             &oracle_address,
-            block_number,
         )
         .await?;
 
     Ok(AaveChunkEvent::ReserveInitialized {
-        market_id: ctx.market_id(),
+        market_id,
         underlying_asset_id,
         a_token_id,
         a_token_revision: discount_to_i64(a_token_revision),
@@ -453,8 +464,8 @@ async fn read_reserve_init_revisions_and_source(
     vtoken_impl: Address,
     underlying: &Address,
     oracle_address: &Address,
-    block_number: u64,
 ) -> Result<(U256, U256, Option<String>), ConfigDispatchError> {
+    let block_number = ctx.block_number();
     let a_selector = revision_selector("ATOKEN_REVISION()");
     let v_selector = revision_selector("DEBT_TOKEN_REVISION()");
     let mut a_revision = ctx.memo().get(&atoken_impl, a_selector, block_number);
