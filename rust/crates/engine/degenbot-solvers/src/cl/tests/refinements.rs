@@ -451,16 +451,12 @@ fn loop20_mass_sampling_stays_sound_and_measures_tightness() {
             tangent_sample_by_mass: true,
             ..cfg_even
         };
-        // Offline stance with only the runtime varied (fields are crate-visible
-        // to this internal harness; no offline-with-runtime constructor exists).
-        let mut deps_even = GateDeps::offline();
-        deps_even.runtime = cfg_even;
+        let deps_even = GateDeps::offline_with_runtime(cfg_even);
         let b_even = match path_profit_bound(&views, &deps_even) {
             crate::profit_envelope::Envelope::Bound(b) => b,
             other => panic!("case{case}: even gate failed: {other:?}"),
         };
-        let mut deps_mass = GateDeps::offline();
-        deps_mass.runtime = cfg_mass;
+        let deps_mass = GateDeps::offline_with_runtime(cfg_mass);
         let b_mass = match path_profit_bound(&views, &deps_mass) {
             crate::profit_envelope::Envelope::Bound(b) => b,
             other => panic!("case{case}: mass gate failed: {other:?}"),

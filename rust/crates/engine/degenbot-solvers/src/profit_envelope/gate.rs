@@ -546,6 +546,17 @@ impl GateDeps<'_> {
         Self::default()
     }
 
+    /// Offline/cacheless with a custom runtime stance: the offline posture
+    /// (no prefix reuse, epoch 0, capture off, no memo) carrying the caller's
+    /// `runtime` (envelope caps + trace gate) instead of the default.
+    #[must_use]
+    pub fn offline_with_runtime(runtime: SolveRuntimeConfig) -> Self {
+        Self {
+            runtime,
+            ..Self::default()
+        }
+    }
+
     /// The owner's prefix store + epoch as the chain-composition cache
     /// handle, or `None` when prefix reuse is out of stance for this solve.
     /// The gate verdict and the walk-side bound both derive their cache here,
