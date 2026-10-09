@@ -1211,7 +1211,7 @@ fn prune(lines: &mut Vec<Line>, upper: U256, stats: &mut GateStats) {
         surv.push(lines[indexed[0].idx]);
     }
     record_gate(stats, |t| {
-        t.prune_stage1_ns += stage1_t0.elapsed().as_nanos()
+        t.prune_stage1_ns += stage1_t0.elapsed().as_nanos();
     });
     record_gate(stats, |t| t.prune_hull_lines += surv.len() as u64);
     if surv.len() < 2 {
@@ -2129,7 +2129,7 @@ fn path_profit_bound_inner(
         lines2 = next;
     }
     record_gate(stats, |t| {
-        t.compose_ns += phase_compose.elapsed().as_nanos()
+        t.compose_ns += phase_compose.elapsed().as_nanos();
     });
     let phase_search = std::time::Instant::now();
     let lines = lines2;
