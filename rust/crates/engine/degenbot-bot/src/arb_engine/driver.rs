@@ -847,6 +847,12 @@ impl EngineDriver {
                 "EngineDriver: BlockPump not running (no pump handle to stop)"
             );
         }
+        // Final WalkMemo stats drain: the pump is down
+        // and no further cycle can advance an epoch, so drain the LAST
+        // epoch's counters here — no boundary will. Inert unless the memo
+        // recorded activity (a stop-before-resume run emits nothing); the
+        // observation never fails the stop.
+        self.stages.drain_walk_memo_final();
         *self.subscribe_state.lock() = None;
         self.stages.close_delivery_channels();
         Ok(())

@@ -1173,6 +1173,13 @@ impl SolveCycle {
         // Cross-block walk-composition census: advance the epoch BEFORE the
         // per-path probes so a path solved both this block and the previous
         // one reports a hit (the engine-owned WalkMemo handle.
+        // DRAIN-THEN-ADVANCE (observation only, zero solve-behavior change):
+        // the epoch that just ended is tapped to the stats sink BEFORE
+        // `begin_block` advances — `take_stats` resets the counters it
+        // returns, so this call site is the ONE drain per boundary. The tap
+        // is inert on the first boundary of a run and on a disabled memo
+        // (the zero-activity gate — see `super::walk_telemetry`).
+        super::walk_telemetry::drain_epoch_boundary(&self.walk_memo, solve_block);
         self.walk_memo.begin_block(solve_block);
         // -----------------------------------------------------------------
         // ADMISSION DRAW: the DRAW already made the SINGLE

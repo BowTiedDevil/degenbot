@@ -128,6 +128,12 @@ mod solver_capture;
 // extracted from the retired grab file (import-only move; the module
 // owns its honesty probe + test islands).
 mod workload_partition;
+// The per-epoch WalkMemoStats tap: drains the
+// engine-owned WalkMemo ONCE per begin_block boundary (drain-then-advance)
+// plus a final drain at EngineDriver::stop, into the logs/walkmemo_stats.jsonl
+// sink and the ADR-043 `degenbot.solver.walk_memo_*` instruments.
+// Observation only — zero behavior change to solving.
+pub(crate) mod walk_telemetry;
 // ADR-045 T1: the solve-cycle data-type seam (`CycleOutcome` /
 // `CycleArm` / `ResolveCensus` / `Registration`) — T3/T4 assemble
 // `SolveCycle` on top of it; nothing consumes the types yet.

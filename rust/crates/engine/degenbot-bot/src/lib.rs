@@ -213,6 +213,16 @@ pub mod instruments {
         pub fn count_detached_shed(&self) {}
         /// no-op (retained admission keys expired by the retention window)
         pub fn count_detached_leads_expired(&self, _n: u64) {}
+        /// no-op (per-epoch `WalkMemo` stats tap — five scalar observations)
+        pub fn add_walk_memo_epoch(
+            &self,
+            _probes: u64,
+            _hits: u64,
+            _cache_plays: u64,
+            _negatives_played: u64,
+            _negative_entries: u64,
+        ) {
+        }
     }
 
     /// Close-out: resident set bytes (drift-watch). Default

@@ -275,6 +275,19 @@ pub struct PipelineInstruments {
     /// with the metrics doc queries that string verbatim. Rename here and the
     /// panel together.
     quarantined_pools: Gauge<f64>,
+    // --- WalkMemo stats tap -------------------------------------------------
+    /// Per-epoch composition-memo probes (the tap adds each drained epoch's
+    /// delta; the counters reset per epoch inside the memo).
+    walk_memo_probes: Counter<u64>,
+    /// Per-epoch cross-block census hits.
+    walk_memo_hits: Counter<u64>,
+    /// Per-epoch cache consults (every probe consults; a consult is a play).
+    walk_memo_cache_plays: Counter<u64>,
+    /// Per-epoch cached NEGATIVES played (the skip path).
+    walk_memo_negatives_played: Counter<u64>,
+    /// Running gauge mirroring the live cache's `None` entries (maintained
+    /// across stores and census evictions; NOT a per-epoch counter).
+    walk_memo_negative_entries: Gauge<f64>,
 }
 
 impl PipelineInstruments {
@@ -671,6 +684,29 @@ impl PipelineInstruments {
                     "Resident set bytes of the bot process (drift-watch)",
                 )
                 .build(),
+            // --- WalkMemo stats tap -----------------------------------------
+            walk_memo_probes: meter
+                .u64_counter("degenbot.solver.walk_memo_probes")
+                .with_description("Per-epoch composition-memo probes (drain-then-advance tap)")
+                .build(),
+            walk_memo_hits: meter
+                .u64_counter("degenbot.solver.walk_memo_hits")
+                .with_description("Per-epoch cross-block census hits (replayed compositions)")
+                .build(),
+            walk_memo_cache_plays: meter
+                .u64_counter("degenbot.solver.walk_memo_cache_plays")
+                .with_description("Per-epoch composition-cache consults (one per probe)")
+                .build(),
+            walk_memo_negatives_played: meter
+                .u64_counter("degenbot.solver.walk_memo_negatives_played")
+                .with_description("Per-epoch cached negatives played (the unprofitable skip path)")
+                .build(),
+            walk_memo_negative_entries: meter
+                .f64_gauge("degenbot.solver.walk_memo_negative_entries")
+                .with_description(
+                    "Cached negatives currently stored (running cache mirror, not per-epoch)",
+                )
+                .build(),
         };
         // Cold-start trace: zero-initialize the degraded-cycle counter. The
         // OTel Prometheus exporter omits an instrument that never recorded a
@@ -689,6 +725,15 @@ impl PipelineInstruments {
         // as "nothing shed / nothing expired" (the 9395c481b lesson).
         instruments.detached_shed.add(0, &[]);
         instruments.detached_leads_expired.add(0, &[]);
+        // Zero-init the WalkMemo stats-tap counters (same cold-start
+        // contract as the detached/admission families above): the tap adds
+        // per-epoch deltas, so an enabled-but-quiet memo must still scrape
+        // an explicit 0 rather than an absent series. The gauge needs no
+        // init — the tap records its running value every epoch it fires.
+        instruments.walk_memo_probes.add(0, &[]);
+        instruments.walk_memo_hits.add(0, &[]);
+        instruments.walk_memo_cache_plays.add(0, &[]);
+        instruments.walk_memo_negatives_played.add(0, &[]);
         instruments
     }
 
@@ -1167,6 +1212,28 @@ impl PipelineInstruments {
     #[expect(clippy::cast_precision_loss)]
     pub fn set_process_rss_bytes(&self, bytes: u64) {
         self.process_rss_bytes.record(bytes as f64, &[]);
+    }
+
+    /// One epoch's `WalkMemo` stats observation (the per-epoch stats tap).
+    /// The four per-epoch counters add the drained epoch's deltas (the memo
+    /// reset its counters in the same breath);
+    /// `negative_entries` is a running gauge mirroring the live cache, so
+    /// it records last-value-wins.
+    #[expect(clippy::cast_precision_loss)]
+    pub fn add_walk_memo_epoch(
+        &self,
+        probes: u64,
+        hits: u64,
+        cache_plays: u64,
+        negatives_played: u64,
+        negative_entries: u64,
+    ) {
+        self.walk_memo_probes.add(probes, &[]);
+        self.walk_memo_hits.add(hits, &[]);
+        self.walk_memo_cache_plays.add(cache_plays, &[]);
+        self.walk_memo_negatives_played.add(negatives_played, &[]);
+        self.walk_memo_negative_entries
+            .record(negative_entries as f64, &[]);
     }
 }
 

@@ -34,6 +34,7 @@
 //! `latest_results` / `register_path` / the FFI surface keep their
 //! StateLock-mediated core locking — this type adds NO lock layer.
 use super::solve_cycle::CycleOutcome;
+use super::walk_telemetry;
 use super::ArbitrageEngine;
 use super::EngineRetune;
 use super::PumpPhase;
@@ -371,6 +372,16 @@ impl EngineStages {
     pub fn close_delivery_channels(&self) {
         self.block_clock.lock().close();
         self.engine.lock().delivery.lifecycle.close();
+    }
+
+    /// Final `WalkMemo` stats drain at engine teardown: `EngineDriver::stop`
+    /// calls this AFTER the pump task is down — no further cycle can advance
+    /// an epoch, so the LAST epoch's counters have no boundary left to flush
+    /// them and are drained here instead. Inert unless the memo recorded
+    /// activity (disabled memos and quiet epochs emit nothing); observation
+    /// only, never fails the stop.
+    pub(crate) fn drain_walk_memo_final(&self) {
+        walk_telemetry::final_drain(&self.engine.lock().cycle.walk_memo);
     }
 
     /// The engine's solve cycle — the behavior port of the dissolved
