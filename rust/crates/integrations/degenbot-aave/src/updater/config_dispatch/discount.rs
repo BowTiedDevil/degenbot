@@ -2,10 +2,10 @@
 //!
 //! The per-tx discount snapshot pre-pass ([`build_discount_snapshot`], the
 //! 3-way hybrid: DB cache → RPC `getDiscountPercent` (pre-deprecation only)
-//! → V4+ deprecation zero), the three discount-config event dispatchers with
-//! their read-your-own-writes fresh-resolution wrappers, the stkAAVE
-//! transfer channel (the canonical + only stkAAVE balance-mutation path)
-//! with the NULL-balance backfill, + the post-apply discount refresh.
+//! → V4+ deprecation zero), the three discount-config event dispatchers (each
+//! reading the GHO asset through the ctx-owned always-fresh accessor), the
+//! stkAAVE transfer channel (the canonical + only stkAAVE balance-mutation
+//! path) with the NULL-balance backfill, + the post-apply discount refresh.
 //!
 //! The pre-pass consumes the vToken revision its caller re-resolved per
 //! transaction (stage 1 of `ChunkContext::dispatch_transaction`) — the W6
@@ -26,7 +26,6 @@ use crate::gho_processor::calculate_gho_discount_rate;
 use crate::ray_mul;
 use crate::run::AaveChunkEvent;
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::{DbError, DebtPositionRefreshContext, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::{Connection, OptionalExtension as _};
@@ -82,21 +81,27 @@ pub fn dispatch_discount_percent_updated(
 /// handlers are now retired (the Python never processed Staked/Redeem for
 /// balance mutation — they're fetched only for classification in
 /// `fetch_stk_aave_events`); all balance mutation flows through this fn now.
-pub fn dispatch_stk_aave_transfer(
+pub async fn dispatch_stk_aave_transfer(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
-    gho_asset: Option<&AaveGhoAsset>,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     let market_id = ctx.market_id();
+    let block_number = ctx.block_number();
     let conn = ctx.conn();
+    // Read the GHO asset through the ctx-owned always-fresh accessor: a same-tx
+    // `DiscountTokenUpdated` at an earlier logIndex bumps
+    // `v_gho_discount_token` through an apply that marks the overlay dirty, so
+    // this read sees it (the per-call re-resolution is a cache hit until then).
+    let gho = ctx.gho_asset()?;
     // Scope: only the discount-token (stkAAVE) emitter.
-    let Some(g) = gho_asset else {
+    let Some(g) = gho.as_ref() else {
         return Ok(None);
     };
-    let Some(token_str) = g.v_gho_discount_token.as_deref() else {
-        return Ok(None);
-    };
-    let Ok(discount_token) = token_str.parse::<Address>() else {
+    let Some(discount_token) = g
+        .v_gho_discount_token
+        .as_deref()
+        .and_then(|s| s.parse::<Address>().ok())
+    else {
         return Ok(None);
     };
     if decoded.token_address != discount_token {
@@ -134,80 +139,10 @@ pub fn dispatch_stk_aave_transfer(
                 .user_id_or_create(conn, market_id, &checksum(&decoded.to), 0)?,
         )
     };
-    // The degenerate `Transfer(0x0 → 0x0)` lands both `None` (no real user) —
-    // still emitted (counts as processed) but the apply is a no-op.
-    Ok(Some(AaveChunkEvent::StkAaveTransfer {
-        from_user_id,
-        to_user_id,
-        amount: decoded.value,
-    }))
-}
-
-/// [`dispatch_stk_aave_transfer`] wrapper that re-resolves the GHO asset
-/// FRESH from `conn` AND pre-apply backfills each side's `stk_aave_balance`
-/// from on-chain `balanceOf(user)` at `block_number - 1` when the column is
-/// `NULL`. Crash #4: the per-tx `gho_asset` snapshot is taken once
-/// before `dispatch_config_events`'s per-event loop; a same-tx
-/// `DiscountTokenUpdated` at an earlier logIndex bumps `v_gho_discount_token`
-/// AFTER the snapshot, so a stale `None` snapshot would make dispatch skip the
-/// matched transfer (the sibling per-chunk refresh of
-/// `spec.stk_aave_address` handles cross-chunk staleness from the cold-boot
-/// `NULL`; this handles same-tx staleness). The pre-apply backfill mirrors
-/// Python's `get_or_init_stk_aave_balance` (stkaave.py:116-122): without it,
-/// `apply_stk_aave_transfer_on_conn` treats `NULL` as `U256::ZERO` and applies
-/// `0 ± amount`, omitting the pre-event on-chain balance. For the crash
-/// user's mint-then-burn pattern, `burn_value == on_chain_initial +
-/// mint_value` — without the `on_chain_initial` backfill, the burn apply
-/// underflows → chunk-rollback → wrong balance → GHO-burn overshoot crash
-/// (byte-exact magnitude). The backfill is a no-op when the column is already
-/// non-`NULL` (set by a prior same-tx Transfer or the (C) refresh).
-pub(crate) async fn dispatch_stk_aave_transfer_with_backfill(
-    ctx: &mut ChunkContext<'_>,
-    decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
-    gho_asset: Option<&AaveGhoAsset>,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    // None-guard: no GHO market row at tx start — skip (a chain-wide fetch can
-    // surface events from chains without a seeded GHO market).
-    if gho_asset.is_none() {
-        return Ok(None);
-    }
-    let block_number = ctx.block_number();
-    let conn = ctx.conn();
-    // Re-resolve gho_asset FRESH from conn (read-your-own-writes — a same-tx
-    // DiscountTokenUpdated at an earlier logIndex bumps v_gho_discount_token
-    // AFTER the per-tx snapshot was taken). Mirrors
-    // `dispatch_discount_token_updated_with_fresh_resolution`.
-    let fresh = ctx.substrate_mut().gho_asset(conn)?;
-    let Some(g) = fresh.as_ref() else {
-        return Ok(None);
-    };
-    // Re-use the sync dispatch fn for the emitter-validation guard +
-    // StkAaveTransfer emission (skip the re-resolution since we just did it).
-    let event = dispatch_stk_aave_transfer(ctx, decoded, Some(g))?;
-    let Some(AaveChunkEvent::StkAaveTransfer {
-        from_user_id,
-        to_user_id,
-        amount: _,
-    }) = event
-    else {
-        return Ok(event);
-    };
     // Pre-apply backfill of either side when the column is `NULL` — mirrors
-    // Python's `get_or_init_stk_aave_balance` at `block_number - 1`.
-    let discount_token: Address = match g
-        .v_gho_discount_token
-        .as_deref()
-        .and_then(|s| s.parse().ok())
-    {
-        Some(addr) => addr,
-        None => {
-            return Ok(Some(AaveChunkEvent::StkAaveTransfer {
-                from_user_id,
-                to_user_id,
-                amount: decoded.value,
-            }));
-        }
-    };
+    // Python's `get_or_init_stk_aave_balance` at `block_number - 1` (without
+    // it, an apply would treat `NULL` as zero and omit the pre-event on-chain
+    // balance). No-op when the column is already populated.
     if let Some(uid) = from_user_id {
         backfill_user_stk_aave_balance_if_none(
             ctx.provider(),
@@ -228,6 +163,8 @@ pub(crate) async fn dispatch_stk_aave_transfer_with_backfill(
         )
         .await?;
     }
+    // The degenerate `Transfer(0x0 → 0x0)` lands both `None` (no real user) —
+    // still emitted (counts as processed) but the apply is a no-op.
     Ok(Some(AaveChunkEvent::StkAaveTransfer {
         from_user_id,
         to_user_id,
@@ -296,14 +233,22 @@ pub(crate) async fn backfill_user_stk_aave_balance_if_none(
 /// emitter (`decoded.v_token_address` = `log.address()`) doesn't match
 /// `gho_asset.v_token_address`. The apply fn never sees the skip.
 pub fn dispatch_discount_token_updated(
-    gho_asset: &AaveGhoAsset,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountTokenUpdatedEvent,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    if gho_asset.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
+    // The GHO asset through the ctx-owned always-fresh accessor — the guard
+    // below compares against the just-linked `v_token_address` (a same-tx
+    // `ReserveInitialized` at an earlier logIndex is visible), never a per-tx
+    // snapshot. No row → `Ok(None)` (a chain-wide fetch can surface events from
+    // chains without a seeded GHO market).
+    let Some(g) = ctx.gho_asset()? else {
+        return Ok(None);
+    };
+    if g.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
         return Ok(None);
     }
     Ok(Some(AaveChunkEvent::GhoDiscountTokenUpdated {
-        gho_token_id: gho_asset.id,
+        gho_token_id: g.id,
         new_discount_token: Some(checksum(&decoded.new_discount_token)),
     }))
 }
@@ -316,70 +261,19 @@ pub fn dispatch_discount_token_updated(
 /// its docs; the chain-wide fetch + the Python's `event["address"]` guard
 /// apply identically (divergence #2).
 pub fn dispatch_discount_rate_strategy_updated(
-    gho_asset: &AaveGhoAsset,
+    ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    if gho_asset.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
+    let Some(g) = ctx.gho_asset()? else {
+        return Ok(None);
+    };
+    if g.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
         return Ok(None);
     }
     Ok(Some(AaveChunkEvent::GhoDiscountRateStrategyUpdated {
-        gho_token_id: gho_asset.id,
+        gho_token_id: g.id,
         new_strategy: Some(checksum(&decoded.new_strategy)),
     }))
-}
-
-/// [`dispatch_discount_token_updated`] wrapper that re-resolves the GHO vToken
-/// address FRESH from `conn` before the emitter-validation guard
-/// (read-your-own-writes — a same-tx `ReserveInitialized` at an earlier
-/// logIndex links `v_token_id` AFTER the per-tx `gho_asset` snapshot was
-/// taken, so the snapshot's `v_token_address` is stale `None` → the guard
-/// would skip the INITIAL-set event where `old=None→stkAAVE`). Mirrors
-/// Python's live ORM (`gho_asset.v_token` lazy-loads the just-applied FK).
-/// The `gho_asset` param is the None-guard (no GHO market row at tx start
-/// = skip).
-pub(super) fn dispatch_discount_token_updated_with_fresh_resolution(
-    ctx: &mut ChunkContext<'_>,
-    gho_asset: Option<&AaveGhoAsset>,
-    ev: &degenbot_decoders::aave_event_decoder::AaveV3DiscountTokenUpdatedEvent,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    // None-guard: no GHO market row at tx start = skip (the chain-wide fetch
-    // can surface events from chains without a seeded GHO market).
-    if gho_asset.is_none() {
-        return Ok(None);
-    }
-    // Re-resolve FRESH from conn (read-your-own-writes — a same-tx
-    // `ReserveInitialized` at an earlier logIndex links `v_token_id` AFTER the
-    // per-tx snapshot was taken, so the snapshot's `v_token_address` is stale
-    // `None` → the guard would skip the INITIAL-set event where
-    // `old=None→stkAAVE`). Mirrors Python's live ORM (`gho_asset.v_token`
-    // lazy-loads the just-applied FK). The discount-config events are rare
-    // (a handful over the whole drive), so the per-event conn lookup is
-    // negligible.
-    let conn = ctx.conn();
-    let fresh = ctx.substrate_mut().gho_asset(conn)?;
-    match fresh.as_ref() {
-        Some(g) => dispatch_discount_token_updated(g, ev),
-        None => Ok(None),
-    }
-}
-
-/// [`dispatch_discount_rate_strategy_updated`] wrapper with the same
-/// read-your-own-writes re-resolution as
-/// [`dispatch_discount_token_updated_with_fresh_resolution`] — see its docs.
-pub(super) fn dispatch_discount_rate_strategy_updated_with_fresh_resolution(
-    ctx: &mut ChunkContext<'_>,
-    gho_asset: Option<&AaveGhoAsset>,
-    ev: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    if gho_asset.is_none() {
-        return Ok(None);
-    }
-    let conn = ctx.conn();
-    let fresh = ctx.substrate_mut().gho_asset(conn)?;
-    match fresh.as_ref() {
-        Some(g) => dispatch_discount_rate_strategy_updated(g, ev),
-        None => Ok(None),
-    }
 }
 
 // ── the discount pre-pass (the 3-way hybrid) ───────────────────────────────

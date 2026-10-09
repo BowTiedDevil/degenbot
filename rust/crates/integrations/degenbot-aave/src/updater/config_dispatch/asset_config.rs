@@ -23,7 +23,6 @@
 
 use crate::run::AaveChunkEvent;
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
@@ -320,12 +319,15 @@ pub(crate) async fn resolve_reserve_initialized(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
     oracle_address: Address,
-    gho_asset: Option<&AaveGhoAsset>,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let chain_id = ctx.chain_id();
     let block_number = ctx.block_number();
     let conn = ctx.conn();
+    // The GHO asset through the ctx-owned always-fresh accessor, for the
+    // GHO-vToken-FK link below: the fresh read mirrors Python's live ORM read
+    // of `gho_asset.token.address` (a cache hit until an apply marks it dirty).
+    let gho_asset = ctx.gho_asset()?;
     // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken),
     //    RPC-fetching the name/symbol/decimals from the chain (the
     //    standalone-Rust-core constraint — Rust owns the loop, no PyO3 FFI for
@@ -411,6 +413,7 @@ pub(crate) async fn resolve_reserve_initialized(
         //    the precondition for the discount-event emitter guard (which compares
         //    against `gho_asset.v_token_address`, resolved via the FK).
         gho_link_token_id: gho_asset
+            .as_ref()
             .filter(|g| g.gho_token_address.as_deref() == Some(underlying_str.as_str()))
             .map(|g| g.id),
     })

@@ -1573,7 +1573,7 @@ fn build_gho_chunk_event(
     // `ScaledTokenProcessor` does not — GHO is the exception). Mirrors the
     // Python's read of `debt_position.balance` / `.last_index`.
     //
-    // THE PER-TX RUNNING-STATE FIX (crash #7 / `*_with_fresh_resolution`):
+    // THE PER-TX RUNNING-STATE FIX (crash #7):
     // when a single tx has multiple GHO events for the same position
     // (e.g., borrow + accrued-interest Mint + zero-noop Mint in the same
     // `process_transaction`), each event MUST thread the running

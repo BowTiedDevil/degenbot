@@ -68,7 +68,6 @@ mod revision;
 
 use crate::run::AaveChunkEvent;
 use alloy::primitives::{keccak256, Address, Bytes, U256};
-use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::{DbError, DegenbotDb};
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
@@ -87,15 +86,10 @@ pub use asset_config::{
 };
 pub use context::ChunkContext;
 pub(crate) use context::{ChunkSpan, RevisionMemo};
-pub(crate) use discount::dispatch_stk_aave_transfer_with_backfill;
 pub use discount::{
     build_discount_snapshot, dispatch_discount_percent_updated,
     dispatch_discount_rate_strategy_updated, dispatch_discount_token_updated,
     dispatch_stk_aave_transfer, refresh_gho_discount,
-};
-use discount::{
-    dispatch_discount_rate_strategy_updated_with_fresh_resolution,
-    dispatch_discount_token_updated_with_fresh_resolution,
 };
 pub(crate) use revision::{match_proxy_id, ProxyCreationResolution};
 use revision::{resolve_contract_revision_updated, resolve_upgraded};
@@ -148,14 +142,13 @@ fn revision_selector(sig: &str) -> [u8; 4] {
 pub(crate) async fn dispatch_config_events(
     ctx: &mut ChunkContext<'_>,
     tx_logs: &[&alloy::rpc::types::Log],
-    gho_asset: Option<&AaveGhoAsset>,
 ) -> Result<Vec<AaveChunkEvent>, ConfigDispatchError> {
     let mut events = Vec::new();
     for log in tx_logs {
         let Some(decoded) = decode_aave_log(log) else {
             continue; // not an Aave event (may be an unrelated ERC20/etc.).
         };
-        if let Some(ev) = dispatch_single_config_event(&decoded, ctx, gho_asset).await? {
+        if let Some(ev) = dispatch_single_config_event(&decoded, ctx).await? {
             // Intra-dispatch apply: apply each config event
             // to `conn` AS it's dispatched (in logIndex order), so a later
             // config event's dispatch sees an earlier event's apply — e.g.
@@ -203,7 +196,6 @@ fn resolve_reserve_oracle_address(
 async fn dispatch_single_config_event(
     decoded: &DecodedAaveEvent,
     ctx: &mut ChunkContext<'_>,
-    gho_asset: Option<&AaveGhoAsset>,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     let ev = match decoded {
         // ── the 8 sync handlers (no RPC) ──
@@ -227,11 +219,9 @@ async fn dispatch_single_config_event(
         DecodedAaveEvent::DiscountPercentUpdated(ev) => {
             Some(dispatch_discount_percent_updated(ctx, ev)?)
         }
-        DecodedAaveEvent::DiscountTokenUpdated(ev) => {
-            dispatch_discount_token_updated_with_fresh_resolution(ctx, gho_asset, ev)?
-        }
+        DecodedAaveEvent::DiscountTokenUpdated(ev) => dispatch_discount_token_updated(ctx, ev)?,
         DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => {
-            dispatch_discount_rate_strategy_updated_with_fresh_resolution(ctx, gho_asset, ev)?
+            dispatch_discount_rate_strategy_updated(ctx, ev)?
         }
         // ── the 2 async RPC handlers ──
         DecodedAaveEvent::CollateralConfigurationChanged(ev) => {
@@ -240,7 +230,7 @@ async fn dispatch_single_config_event(
         DecodedAaveEvent::ReserveInitialized(ev) => {
             let oracle =
                 resolve_reserve_oracle_address(ctx.conn(), ctx.market_id(), ctx.oracle_address())?;
-            Some(resolve_reserve_initialized(ctx, ev, oracle, gho_asset).await?)
+            Some(resolve_reserve_initialized(ctx, ev, oracle).await?)
         }
         // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
         // dispatch. Crash #3: the prior design processed
@@ -252,9 +242,7 @@ async fn dispatch_single_config_event(
         DecodedAaveEvent::Staked(_) | DecodedAaveEvent::Redeem(_) => None,
         // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
         // neither-zero case via Option<i64>; scoped to the discount token). ──
-        DecodedAaveEvent::Erc20Transfer(ev) => {
-            dispatch_stk_aave_transfer_with_backfill(ctx, ev, gho_asset).await?
-        }
+        DecodedAaveEvent::Erc20Transfer(ev) => dispatch_stk_aave_transfer(ctx, ev).await?,
         // ── the 6 missing-variant config events ──────────────────
         // Delegated to `resolve_missing_variant_event` to keep this fn under
         // the 100-line `clippy::too_many_lines` limit.
@@ -263,7 +251,7 @@ async fn dispatch_single_config_event(
         // 6 missing-variant events both fall through to the `_` arm. The
         // `resolve_missing_variant_event` fn matches on the 6 missing-variant
         // variants; for operation events it returns `Ok(None)`.
-        _ => resolve_missing_variant_event(decoded, ctx, gho_asset).await?,
+        _ => resolve_missing_variant_event(decoded, ctx).await?,
     };
     Ok(ev)
 }
@@ -288,11 +276,10 @@ async fn dispatch_single_config_event(
 async fn resolve_missing_variant_event(
     decoded: &DecodedAaveEvent,
     ctx: &mut ChunkContext<'_>,
-    gho_asset: Option<&AaveGhoAsset>,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let ev = match decoded {
-        DecodedAaveEvent::Upgraded(ev) => Some(resolve_upgraded(ctx, ev, gho_asset).await?),
+        DecodedAaveEvent::Upgraded(ev) => Some(resolve_upgraded(ctx, ev).await?),
         DecodedAaveEvent::PoolUpdated(ev) => Some(
             resolve_contract_revision_updated(ctx, ev.new_address, "POOL", "POOL_REVISION()")
                 .await?,
@@ -1176,29 +1163,39 @@ mod tests {
     // (the Python's `gho_asset.v_token is None` guard) or (b) the decoded
     // emitter (log.address) doesn't match gho_asset.v_token_address (the
     // Python's `v_token.address != event["address"]` guard). Only an emitting
-    // log from the matching vToken yields a chunk event.
-    fn sample_gho_asset(v_token_address: Option<&str>) -> AaveGhoAsset {
-        AaveGhoAsset {
-            id: 1,
-            token_id: 10,
-            v_token_id: Some(11),
-            gho_token_address: Some(checksum(&Address::ZERO)),
-            v_token_address: v_token_address.map(str::to_string),
-            v_gho_discount_rate_strategy: None,
-            v_gho_discount_token: None,
-        }
+    // log from the matching vToken yields a chunk event. Every test reads the
+    // asset through the ctx-owned always-fresh accessor, so the rows below are
+    // the accessor's source.
+    fn seed_gho_row(conn: &Connection, v_token_address: Option<Address>) {
+        let addr_str = |a: Address| degenbot_core::address_utils::address_to_checksum_string(&a);
+        conn.execute(
+            "INSERT INTO erc20_tokens (id, chain, address) VALUES (10, 1, ?1)",
+            params![addr_str(Address::ZERO)],
+        )
+        .unwrap();
+        let v_token_id = v_token_address.map(|a| {
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (11, 1, ?1)",
+                params![addr_str(a)],
+            )
+            .unwrap();
+            11_i64
+        });
+        conn.execute(
+            "INSERT INTO aave_gho_tokens (id, token_id, v_token_id) VALUES (1, 10, ?1)",
+            params![v_token_id],
+        )
+        .unwrap();
     }
 
-    /// Discount-config gap (fork A): the per-tx `gho_asset`
-    /// snapshot is taken BEFORE the same-tx `ReserveInitialized` (which links
-    /// `v_token_id`) applies. The `dispatch_discount_token_updated` guard
-    /// checks `v_token_address` (resolved from the FK) — with the stale
-    /// snapshot it's `None` → the INITIAL-set event (old=None→stkAAVE) is
-    /// SKIPPED. The `_with_fresh_resolution` wrapper re-resolves from `conn`
-    /// (read-your-own-writes, mirrors Python's live ORM) so the guard sees
-    /// the just-linked FK. On mainnet both events fire in tx 0xae8e542d… at
-    /// block 17699249 (ReserveInitialized logIdx 85, DiscountTokenUpdated
-    /// logIdx 91) — same tx, so the per-tx snapshot is necessarily stale.
+    /// The ctx-owned accessor re-resolves the GHO asset FRESH on every call
+    /// (read-your-own-writes), so a same-tx `ReserveInitialized` that links
+    /// `v_token_id` between dispatch reads is visible to the
+    /// `dispatch_discount_token_updated` emitter guard. With a per-tx snapshot
+    /// that FK would be stale `None` → the INITIAL-set event (old=None→stkAAVE)
+    /// is SKIPPED. On mainnet both events fire in tx 0xae8e542d… at block
+    /// 17699249 (ReserveInitialized logIdx 85, DiscountTokenUpdated logIdx 91)
+    /// — same tx, so a per-tx snapshot is necessarily stale.
     #[test]
     fn discount_token_updated_fresh_resolution_sees_intra_tx_v_token_link() {
         let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
@@ -1227,32 +1224,29 @@ mod tests {
             )
             .unwrap();
         }
-        // The STALE per-tx snapshot: resolved BEFORE ReserveInitialized
-        // applied → v_token_address is None (v_token_id is NULL).
         let conn = db.lock();
-        let stale = DegenbotDb::fetch_aave_gho_asset_on_conn(&conn, 1)
-            .unwrap()
-            .expect("GHO asset row seeded");
-        assert_eq!(
-            stale.v_token_address, None,
-            "pre-link snapshot: v_token_address None (v_token_id NULL)"
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        // Before the link the accessor sees no v_token_address.
+        assert!(
+            ctx.gho_asset().unwrap().unwrap().v_token_address.is_none(),
+            "pre-link read: v_token_address is None"
         );
-        // Simulate the same-tx ReserveInitialized apply (links v_token_id=11).
+        // Simulate the same-tx ReserveInitialized apply: link v_token_id=11 and
+        // mark the overlay dirty (exactly what the apply arm does).
         conn.execute(
             "UPDATE aave_gho_tokens SET v_token_id = 11 WHERE id = 1",
             [],
         )
         .unwrap();
+        ctx.substrate_mut().mark_gho_dirty();
         let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: gho_vtoken,       // the GHO vToken emitter
             old_discount_token: Address::ZERO, // the INITIAL set (old=None)
             new_discount_token,
         };
-        // The wrapper re-resolves from conn → sees the link → guard passes.
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
-        let r = dispatch_discount_token_updated_with_fresh_resolution(&mut ctx, Some(&stale), &ev)
-            .unwrap();
+        // The accessor re-resolves FRESH → sees the link → guard passes.
+        let r = dispatch_discount_token_updated(&mut ctx, &ev).unwrap();
         match r {
             Some(AaveChunkEvent::GhoDiscountTokenUpdated {
                 gho_token_id,
@@ -1267,8 +1261,10 @@ mod tests {
 
     #[test]
     fn dispatch_discount_token_updated_returns_none_when_emitter_mismatches() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let conn = db.lock();
         let gho_vtoken = Address::from([0xa0; 20]);
-        let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
+        seed_gho_row(&conn, Some(gho_vtoken));
         // An off-market emitter (any other contract) — the chain-wide fetch can
         // surface these; the Python guard drops them.
         let off_emitter = Address::from([0xb; 20]);
@@ -1277,36 +1273,46 @@ mod tests {
             old_discount_token: Address::ZERO,
             new_discount_token: Address::from([0xc; 20]),
         };
-        assert!(dispatch_discount_token_updated(&gho_asset, &ev)
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        assert!(dispatch_discount_token_updated(&mut ctx, &ev)
             .unwrap()
             .is_none());
     }
 
     #[test]
     fn dispatch_discount_token_updated_returns_none_when_vtoken_fk_missing() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let conn = db.lock();
         // gho_asset.v_token is None — the Python's first guard.
-        let gho_asset = sample_gho_asset(None);
+        seed_gho_row(&conn, None);
         let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: Address::from([0xa0; 20]),
             old_discount_token: Address::ZERO,
             new_discount_token: Address::from([0xc; 20]),
         };
-        assert!(dispatch_discount_token_updated(&gho_asset, &ev)
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        assert!(dispatch_discount_token_updated(&mut ctx, &ev)
             .unwrap()
             .is_none());
     }
 
     #[test]
     fn dispatch_discount_token_updated_emits_when_emitter_matches() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let conn = db.lock();
         let gho_vtoken = Address::from([0xa0; 20]);
-        let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
+        seed_gho_row(&conn, Some(gho_vtoken));
         let new_tok = Address::from([0xc; 20]);
         let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: gho_vtoken,
             old_discount_token: Address::ZERO,
             new_discount_token: new_tok,
         };
-        match dispatch_discount_token_updated(&gho_asset, &ev).unwrap() {
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        match dispatch_discount_token_updated(&mut ctx, &ev).unwrap() {
             Some(AaveChunkEvent::GhoDiscountTokenUpdated {
                 gho_token_id,
                 new_discount_token,
@@ -1323,30 +1329,38 @@ mod tests {
 
     #[test]
     fn dispatch_discount_rate_strategy_updated_returns_none_when_emitter_mismatches() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let conn = db.lock();
         let gho_vtoken = Address::from([0xa0; 20]);
-        let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
+        seed_gho_row(&conn, Some(gho_vtoken));
         let off_emitter = Address::from([0xb; 20]);
         let ev = AaveV3DiscountRateStrategyUpdatedEvent {
             v_token_address: off_emitter,
             old_strategy: Address::ZERO,
             new_strategy: Address::from([0xd; 20]),
         };
-        assert!(dispatch_discount_rate_strategy_updated(&gho_asset, &ev)
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        assert!(dispatch_discount_rate_strategy_updated(&mut ctx, &ev)
             .unwrap()
             .is_none());
     }
 
     #[test]
     fn dispatch_discount_rate_strategy_updated_emits_when_emitter_matches() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let conn = db.lock();
         let gho_vtoken = Address::from([0xa0; 20]);
-        let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
+        seed_gho_row(&conn, Some(gho_vtoken));
         let new_strat = Address::from([0xd; 20]);
         let ev = AaveV3DiscountRateStrategyUpdatedEvent {
             v_token_address: gho_vtoken,
             old_strategy: Address::ZERO,
             new_strategy: new_strat,
         };
-        match dispatch_discount_rate_strategy_updated(&gho_asset, &ev).unwrap() {
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        match dispatch_discount_rate_strategy_updated(&mut ctx, &ev).unwrap() {
             Some(AaveChunkEvent::GhoDiscountRateStrategyUpdated {
                 gho_token_id,
                 new_strategy,

@@ -119,6 +119,30 @@ fn dump_golden_path(name: &str) -> String {
     )
 }
 
+/// Regenerate-and-diff (ADR-068 D4): with REGENERATE_SQL_GOLDENS=1 the gate
+/// WRITES the golden instead of comparing — the pipeline that writes the
+/// artifact is the same one the gate runs, so a stale comparison is theater.
+/// Re-record only with the drift evidence in the commit message.
+fn regen_requested() -> bool {
+    std::env::var("REGENERATE_SQL_GOLDENS").is_ok_and(|v| v != "0")
+}
+
+fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
+    if regen_requested() {
+        std::fs::write(golden_path, produced).expect("write the regenerated golden");
+        eprintln!("regenerated {name} at {golden_path}");
+    } else {
+        let committed = std::fs::read_to_string(golden_path)
+            .unwrap_or_else(|e| panic!("the committed {name} golden must exist: {e}"));
+        assert_eq!(
+            produced, committed,
+            "{name} drift: regenerate-and-diff must be byte-identical \
+             (ADR-068 D4); if the chunk loop's SQL surface legitimately \
+             changed, re-run with REGENERATE_SQL_GOLDENS=1"
+        );
+    }
+}
+
 /// The per-window independent literals: the committed cassette's served
 /// round-trip count and the run's committed chunk count. A regression that
 /// changes the RPC surface or the chunk boundaries fails these before the
@@ -375,17 +399,12 @@ fn replay_and_gate(name: &str, expect: &WindowExpectations) -> ReplayRun {
 
     let records = ledger.records().expect("the capture session is armed");
     let ledger_json = ledger_golden_json(&records);
-    let committed_ledger = std::fs::read_to_string(ledger_golden_path(name)).unwrap();
-    assert_eq!(
-        ledger_json, committed_ledger,
-        "{name}: statement-ledger drift"
-    );
+    check_or_regen(name, &ledger_json, &ledger_golden_path(name));
 
     let conn = ledger.db().lock();
     let dump_json = dump_tables_golden_json(&conn, DUMP_TABLES).expect("dump");
     drop(conn);
-    let committed_dump = std::fs::read_to_string(dump_golden_path(name)).unwrap();
-    assert_eq!(dump_json, committed_dump, "{name}: DB-dump drift");
+    check_or_regen(name, &dump_json, &dump_golden_path(name));
 
     let db_path = dir.keep().join("golden.db");
     ReplayRun {

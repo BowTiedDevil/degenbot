@@ -21,7 +21,6 @@
 
 use crate::run::AaveChunkEvent;
 use alloy::primitives::Address;
-use degenbot_db::aave::AaveGhoAsset;
 use degenbot_rpc::provider::AlloyProvider;
 
 use super::context::{ChunkContext, RevisionMemo};
@@ -80,7 +79,6 @@ pub(crate) struct ProxyCreationResolution {
 pub(super) async fn resolve_upgraded(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UpgradedEvent,
-    gho_asset: Option<&AaveGhoAsset>,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let block_number = ctx.block_number();
@@ -122,7 +120,14 @@ pub(super) async fn resolve_upgraded(
     let deprecated_gho_token_id = if is_a_token {
         None
     } else {
+        // The GHO asset through the ctx-owned always-fresh accessor — the
+        // deprecation gate compares against the just-linked `v_token_address` (a
+        // same-tx `ReserveInitialized` at an earlier logIndex is visible), never
+        // a per-tx snapshot. Read here (only the vToken path consults it) so an
+        // aToken `Upgraded` never touches the GHO row.
+        let gho_asset = ctx.gho_asset()?;
         let matches_gho_vtoken = gho_asset
+            .as_ref()
             .and_then(|g| g.v_token_address.as_deref())
             .is_some_and(|addr| addr == proxy_str);
         if matches_gho_vtoken

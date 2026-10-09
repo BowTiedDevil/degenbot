@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use crate::run::{apply_chunk_events_on_conn, AaveChunkEvent, AaveChunkWriteReport};
 use crate::updater::run::substrate::{ChunkSubstrate, ASSET_KIND_V_TOKEN};
 use alloy::primitives::{Address, U256};
+use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
@@ -236,6 +237,26 @@ impl<'span> ChunkContext<'span> {
         &mut *self.substrate
     }
 
+    /// The GHO asset row for the current transaction, re-resolved FRESH
+    /// through the substrate's read-your-own-writes overlay on EVERY call.
+    ///
+    /// This is the ONE freshness rule for the GHO asset: the substrate's
+    /// dirty-mark contract (every apply that touches `aave_gho_tokens` calls
+    /// [`ChunkSubstrate::mark_gho_dirty`]) makes a repeated read a cache hit
+    /// until a write invalidates it, so re-resolving per event is both
+    /// always-correct (a same-tx `ReserveInitialized` or
+    /// `DiscountTokenUpdated` at an earlier logIndex is visible) and cheap. A
+    /// `None` here is the genuine "no GHO market row" state, never a stale
+    /// snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the substrate lookup failure.
+    pub(crate) fn gho_asset(&mut self) -> Result<Option<AaveGhoAsset>, DbError> {
+        let conn = self.conn;
+        self.substrate.gho_asset(conn)
+    }
+
     /// The provider every dispatch RPC rides.
     pub(super) fn provider(&self) -> &AlloyProvider {
         &self.provider
@@ -344,7 +365,7 @@ impl<'span> ChunkContext<'span> {
         let block_number = self.block_number;
         // (0) Re-resolve the GHO row for THIS transaction — sees a prior
         //     transaction's write through the overlay's dirty-mark contract.
-        let gho_asset = self.substrate.gho_asset(conn)?;
+        let gho_asset = self.gho_asset()?;
         let underlying = gho_asset
             .as_ref()
             .and_then(|g| g.gho_token_address.as_deref())
@@ -387,7 +408,7 @@ impl<'span> ChunkContext<'span> {
         // (3) The config-event dispatch (RPC + substrate lookups). The
         //     revision reads ride the per-chunk memo; the same-block
         //     independent `eth_call`s ride the multicall batch.
-        let config_events = dispatch_config_events(self, tx_logs, gho_asset.as_ref()).await?;
+        let config_events = dispatch_config_events(self, tx_logs).await?;
 
         Ok(TransactionDispatch {
             discounts,

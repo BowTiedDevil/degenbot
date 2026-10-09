@@ -597,14 +597,14 @@
       "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
     },
     {
-      "arg_count": 2,
-      "rows_changed": 1,
-      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
-    },
-    {
       "arg_count": 1,
       "rows_changed": 0,
       "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "UPDATE aave_v3_assets SET v_token_revision = ? WHERE id = ?"
     },
     {
       "arg_count": 3,
