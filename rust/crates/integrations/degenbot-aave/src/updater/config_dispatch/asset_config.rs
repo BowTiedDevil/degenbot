@@ -6,7 +6,7 @@
 //! `AssetCollateralInEModeChanged` — resolve ids against the chunk substrate
 //! and emit their [`AaveChunkEvent`]s. The 2 async RPC resolutions:
 //! [`resolve_reserve_initialized`] (the 3-token ERC20 metadata burst, the
-//! EIP-1967 implementation-slot reads, the memo-carrying
+//! EIP-1967 implementation-slot reads, the context-memoized
 //! `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` reads and `getSourceOfAsset` — folded into ONE
 //! transport pass when 2+ remain pending) and
 //! [`resolve_collateral_configuration`] (`getConfiguration(address)` fetched
@@ -27,11 +27,11 @@ use degenbot_db::DegenbotDb;
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
 
-use super::context::ChunkContext;
+use super::context::{BatchRead, BatchReadResult, ChunkContext};
 use super::{
     checksum, decimals_from_batch, decode_address_return, decode_string_return, discount_to_i64,
-    encode_no_arg_call, encode_single_address_call, eth_calls_batched_or_direct, revision_selector,
-    string_field_from_batch, word0_to_u256, ConfigDispatchError,
+    encode_no_arg_call, encode_single_address_call, string_field_from_batch, word0_to_u256,
+    ConfigDispatchError,
 };
 
 /// The EIP-1967 implementation storage slot (the canonically-fixed
@@ -388,24 +388,39 @@ pub(crate) async fn resolve_reserve_initialized(
     //    + getSourceOfAsset(address) on the PRICE_ORACLE — three
     //    mutually-independent same-block reads folded into ONE transport pass
     //    when 2+ remain after the memo (a lone remaining call keeps the exact
-    //    sequential shape; see `eth_calls_batched_or_direct`).
-    let (a_token_revision, v_token_revision, price_source) =
-        read_reserve_init_revisions_and_source(
-            ctx,
-            atoken_impl,
-            vtoken_impl,
-            &decoded.asset,
-            &oracle_address,
-        )
-        .await?;
+    //    sequential shape; see `eth_calls_batched_or_direct`). The context owns
+    //    the memo keying for the two revision slots.
+    let pending = [
+        BatchRead::Revision {
+            target: atoken_impl,
+            sig: "ATOKEN_REVISION()",
+        },
+        BatchRead::Revision {
+            target: vtoken_impl,
+            sig: "DEBT_TOKEN_REVISION()",
+        },
+        BatchRead::Plain {
+            target: oracle_address,
+            calldata: encode_single_address_call("getSourceOfAsset(address)", &decoded.asset),
+        },
+    ];
+    let results = ctx.read_revision_batch(&pending).await?;
+    let [BatchReadResult::Revision(a_token_revision), BatchReadResult::Revision(v_token_revision), BatchReadResult::Plain(source_return)] =
+        results.as_slice()
+    else {
+        return Err(ConfigDispatchError::DecodeShape(
+            "ReserveInitialized: the batched read returned an unexpected slot shape".to_string(),
+        ));
+    };
+    let price_source = decode_address_return(source_return);
 
     Ok(AaveChunkEvent::ReserveInitialized {
         market_id,
         underlying_asset_id,
         a_token_id,
-        a_token_revision: discount_to_i64(a_token_revision),
+        a_token_revision: discount_to_i64(*a_token_revision),
         v_token_id,
-        v_token_revision: discount_to_i64(v_token_revision),
+        v_token_revision: discount_to_i64(*v_token_revision),
         price_source,
         // 5. GHO-vToken-FK link (divergence #8): mirror the Python's
         //    `if asset_address == gho_asset.token.address: gho_token_entry
@@ -431,95 +446,6 @@ async fn read_implementation_slot(
         .await?;
     // The slot is a 32-byte word; the address is the low 20 bytes.
     Ok(Address::from_slice(&slot.as_slice()[12..]))
-}
-
-/// Which pending same-block read one `ReserveInitialized` dispatch slot
-/// feeds — the two memo-carrying revision reads + the always-pending price
-/// source read.
-#[derive(Debug)]
-enum PendingRead {
-    /// `ATOKEN_REVISION()` on the aToken implementation — carries the memo
-    /// key to record the answered value under.
-    ATokenRevision((Address, [u8; 4], u64)),
-    /// `DEBT_TOKEN_REVISION()` on the vToken implementation — same key shape.
-    VTokenRevision((Address, [u8; 4], u64)),
-    /// `getSourceOfAsset(address)` on the PRICE_ORACLE (not a revision — no
-    /// memo; it is a distinct contract read at the same block).
-    SourceOfAsset,
-}
-
-/// The `ReserveInitialized` dispatch's step-3+4 reads —
-/// `ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` on the two implementations +
-/// `getSourceOfAsset(underlying)` on the oracle — folded into ONE transport
-/// pass when 2+ remain after the memo (the price-source read is always
-/// pending, so the batch runs whenever either revision misses; when both
-/// revisions are memo hits the lone source call keeps the exact sequential
-/// shape). Revision results are recorded into `memo` under their
-/// `(implementation, selector, block)` keys.
-///
-/// # Errors
-///
-/// Propagates the batch's error contract (see
-/// [`eth_calls_batched_or_direct`]).
-async fn read_reserve_init_revisions_and_source(
-    ctx: &mut ChunkContext<'_>,
-    atoken_impl: Address,
-    vtoken_impl: Address,
-    underlying: &Address,
-    oracle_address: &Address,
-) -> Result<(U256, U256, Option<String>), ConfigDispatchError> {
-    let block_number = ctx.block_number();
-    let a_selector = revision_selector("ATOKEN_REVISION()");
-    let v_selector = revision_selector("DEBT_TOKEN_REVISION()");
-    let mut a_revision = ctx.memo().get(&atoken_impl, a_selector, block_number);
-    let mut v_revision = ctx.memo().get(&vtoken_impl, v_selector, block_number);
-
-    let mut pending: Vec<(Address, Bytes, PendingRead)> = Vec::new();
-    if a_revision.is_none() {
-        pending.push((
-            atoken_impl,
-            encode_no_arg_call("ATOKEN_REVISION()"),
-            PendingRead::ATokenRevision((atoken_impl, a_selector, block_number)),
-        ));
-    }
-    if v_revision.is_none() {
-        pending.push((
-            vtoken_impl,
-            encode_no_arg_call("DEBT_TOKEN_REVISION()"),
-            PendingRead::VTokenRevision((vtoken_impl, v_selector, block_number)),
-        ));
-    }
-    let source_calldata = encode_single_address_call("getSourceOfAsset(address)", underlying);
-    pending.push((*oracle_address, source_calldata, PendingRead::SourceOfAsset));
-
-    let pairs: Vec<(Address, Bytes)> = pending.iter().map(|(t, d, _)| (*t, d.clone())).collect();
-    let rets = eth_calls_batched_or_direct(ctx.provider(), &pairs, block_number).await?;
-    let mut source = None;
-    for ((_, _, slot), ret) in pending.iter().zip(rets) {
-        match slot {
-            PendingRead::ATokenRevision((t, s, b)) => {
-                let v = word0_to_u256(&ret).unwrap_or(U256::ZERO);
-                ctx.memo().insert(t, *s, *b, v);
-                a_revision = Some(v);
-            }
-            PendingRead::VTokenRevision((t, s, b)) => {
-                let v = word0_to_u256(&ret).unwrap_or(U256::ZERO);
-                ctx.memo().insert(t, *s, *b, v);
-                v_revision = Some(v);
-            }
-            PendingRead::SourceOfAsset => source = decode_address_return(&ret),
-        }
-    }
-    // Both revision slots are filled by construction — a memo hit or the
-    // batched read above (the source slot is always pending, so the batch
-    // always runs). The guard keeps the invariant loud rather than assumed.
-    match (a_revision, v_revision) {
-        (Some(a), Some(v)) => Ok((a, v, source)),
-        _ => Err(ConfigDispatchError::DecodeShape(
-            "ReserveInitialized: a revision slot was left unfilled after the batched reads"
-                .to_string(),
-        )),
-    }
 }
 
 // ── ERC20 metadata fetch (name/symbol/decimals) — the dynamic-string ABI decode ──

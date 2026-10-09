@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use crate::run::{apply_chunk_events_on_conn, AaveChunkEvent, AaveChunkWriteReport};
 use crate::updater::run::substrate::{ChunkSubstrate, ASSET_KIND_V_TOKEN};
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
 use degenbot_rpc::provider::AlloyProvider;
@@ -39,7 +39,7 @@ use super::build_discount_snapshot;
 use super::dispatch_config_events;
 use super::revision::{match_proxy_id, ProxyCreationResolution};
 use super::revision_selector;
-use super::{encode_no_arg_call, word0_to_u256, ConfigDispatchError};
+use super::{encode_no_arg_call, eth_calls_batched_or_direct, word0_to_u256, ConfigDispatchError};
 
 // ── the revision memo ──────────────────────────────────────────────────────
 
@@ -283,13 +283,6 @@ impl<'span> ChunkContext<'span> {
         self.oracle_address
     }
 
-    /// The block-pinned revision memo. Every revision read the dispatch issues
-    /// resolves through here, so the memo's block lane is applied at exactly
-    /// the reads that need it.
-    pub(super) fn memo(&mut self) -> &mut RevisionMemo {
-        &mut self.memo
-    }
-
     /// The chunk overlay's ONE apply seam: commit `events` to `conn` and let
     /// the apply arms record every cache-visible write into `substrate` (the
     /// `Upgraded` revision bump, the scaled-token balances, the GHO dirty
@@ -315,8 +308,10 @@ impl<'span> ChunkContext<'span> {
         apply_chunk_events_on_conn(conn, market_id, events, &mut *self.substrate)
     }
 
-    /// Read `sig` on `target` at `block_number` through the memo — the one
-    /// seam every revision read in the dispatch goes through.
+    /// Read `sig` on `target` at `block_number` through the memo — one of the
+    /// two seams every revision read in the dispatch goes through (the other is
+    /// [`ChunkContext::read_revision_batch`]), so the memo's block lane is
+    /// applied at exactly the reads that need it.
     ///
     /// # Errors
     ///
@@ -334,6 +329,86 @@ impl<'span> ChunkContext<'span> {
         self.memo
             .read(&self.provider, target, sig, block_number)
             .await
+    }
+
+    /// Read several same-block calls in ONE transport pass, owning the revision
+    /// memo for every [`BatchRead::Revision`] slot — the batched sibling of
+    /// [`ChunkContext::read_revision`], and the second of the two seams every
+    /// revision read goes through.
+    ///
+    /// A revision slot is a memo key lookup first: a hit issues no call. Every
+    /// remaining revision miss and every plain slot fold into ONE
+    /// [`eth_calls_batched_or_direct`] pass in slot order, and each answered
+    /// revision value is recorded under its `(implementation, selector, block)`
+    /// key before the call returns. Results come back aligned with `pending`,
+    /// so the caller never touches the memo or the block lane directly.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the underlying `eth_call` failure on a memo miss.
+    pub(super) async fn read_revision_batch(
+        &mut self,
+        pending: &[BatchRead<'_>],
+    ) -> Result<Vec<BatchReadResult>, ConfigDispatchError> {
+        let block_number = self.block_number;
+        debug_assert!(
+            self.span.contains(block_number),
+            "chunk-dispatch revision read at a block outside the chunk span"
+        );
+        let mut calls: Vec<(Address, Bytes)> = Vec::new();
+        // The index into `calls` each slot's read occupies, or `None` when the
+        // memo already answered the slot.
+        let mut call_of_slot: Vec<Option<usize>> = Vec::with_capacity(pending.len());
+        let mut results: Vec<Option<BatchReadResult>> = (0..pending.len()).map(|_| None).collect();
+        for (i, slot) in pending.iter().enumerate() {
+            match slot {
+                BatchRead::Revision { target, sig } => {
+                    let selector = revision_selector(sig);
+                    if let Some(v) = self.memo.get(target, selector, block_number) {
+                        results[i] = Some(BatchReadResult::Revision(v));
+                        call_of_slot.push(None);
+                    } else {
+                        call_of_slot.push(Some(calls.len()));
+                        calls.push((*target, encode_no_arg_call(sig)));
+                    }
+                }
+                BatchRead::Plain { target, calldata } => {
+                    call_of_slot.push(Some(calls.len()));
+                    calls.push((*target, calldata.clone()));
+                }
+            }
+        }
+        let returns = eth_calls_batched_or_direct(&self.provider, &calls, block_number).await?;
+        for (i, slot) in pending.iter().enumerate() {
+            let Some(call_index) = call_of_slot[i] else {
+                continue;
+            };
+            let ret = &returns[call_index];
+            match slot {
+                BatchRead::Revision { target, sig } => {
+                    let selector = revision_selector(sig);
+                    let v = word0_to_u256(ret).unwrap_or(U256::ZERO);
+                    self.memo.insert(target, selector, block_number, v);
+                    results[i] = Some(BatchReadResult::Revision(v));
+                }
+                BatchRead::Plain { .. } => {
+                    results[i] = Some(BatchReadResult::Plain(ret.clone()));
+                }
+            }
+        }
+        // Every slot is filled by construction — a memo hit or its own batched
+        // read. The guard keeps the invariant loud rather than assumed.
+        results
+            .into_iter()
+            .map(|r| {
+                r.ok_or_else(|| {
+                    ConfigDispatchError::DecodeShape(
+                        "read_revision_batch: a slot was left unfilled after the batched reads"
+                            .to_string(),
+                    )
+                })
+            })
+            .collect()
     }
 
     /// Run one log-transaction's overlay-mediated read + dispatch stages in
@@ -443,6 +518,31 @@ impl<'span> ChunkContext<'span> {
         )
         .await
     }
+}
+
+/// One slot in a [`ChunkContext::read_revision_batch`] pass, in caller order.
+///
+/// A revision slot is memo-keyed by the context (the batch derives the
+/// selector, checks the memo, and records the answered value) and reads `sig`
+/// as a no-arg call; a plain slot is any other same-block `eth_call` that
+/// rides the same transport pass but is never cached.
+#[derive(Debug)]
+pub(super) enum BatchRead<'a> {
+    /// A memoized revision read: `sig` on `target`, at the context block.
+    Revision { target: Address, sig: &'a str },
+    /// A plain same-block read: `calldata` on `target`, never memoized.
+    Plain { target: Address, calldata: Bytes },
+}
+
+/// The decoded outcome of one [`BatchRead`], aligned by index with the pass.
+/// A revision outcome is the memoized value; a plain outcome is the raw return
+/// the caller decodes itself.
+#[derive(Debug)]
+pub(super) enum BatchReadResult {
+    /// The revision value (also recorded in the memo).
+    Revision(U256),
+    /// The raw return of a plain read.
+    Plain(Bytes),
 }
 
 /// The products of one log-transaction's dispatch stages — the GHO-discount
