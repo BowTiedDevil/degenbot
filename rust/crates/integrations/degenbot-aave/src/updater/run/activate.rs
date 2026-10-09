@@ -262,6 +262,48 @@ pub fn activate_aave_market(
     ))
 }
 
+/// The RPC-fetched metadata one market activation seeds from: the on-chain
+/// market name plus the GHO token's `name()` / `symbol()` / `decimals()`.
+#[derive(Debug, Clone)]
+pub(crate) struct ActivationMetadata {
+    /// The on-chain `getMarketId()` return (e.g. `"Aave Ethereum Market"`).
+    pub market_name: String,
+    /// The GHO token's `name()` (`None` when the fetch or decode failed).
+    pub gho_name: Option<String>,
+    /// The GHO token's `symbol()`.
+    pub gho_symbol: Option<String>,
+    /// The GHO token's `decimals()`.
+    pub gho_decimals: Option<i64>,
+}
+
+/// The RPC half shared by [`activate_aave_market`] and the market-reset
+/// module: fetch the market name (`getMarketId()` on the address provider, a
+/// dynamic `string` return) plus the GHO token's metadata at the current head.
+///
+/// The metadata read's `block_number` is irrelevant (token metadata is
+/// immutable), so the head block is pinned.
+///
+/// # Errors
+///
+/// Returns [`RunError::Provider`] on an RPC failure and [`RunError::Db`] when
+/// `getMarketId()` returns no decodable string.
+pub(crate) async fn fetch_activation_metadata(
+    provider: &AlloyProvider,
+    ap_address: &Address,
+    gho_address: &Address,
+) -> Result<ActivationMetadata, RunError> {
+    let market_name = fetch_market_id(provider, ap_address).await?;
+    let preview_block = provider.get_block_number().await?;
+    let (gho_name, gho_symbol, gho_decimals) =
+        crate::config_dispatch::fetch_erc20_metadata(provider, gho_address, preview_block).await;
+    Ok(ActivationMetadata {
+        market_name,
+        gho_name,
+        gho_symbol,
+        gho_decimals,
+    })
+}
+
 /// The RPC half of [`activate_aave_market`] — the ONE future under
 /// `get_runtime().block_on`. The DB seed transaction runs synchronously at
 /// the end (no `.await` while the `db.lock()` guard is held — no
@@ -279,16 +321,9 @@ async fn activate_aave_market_rpc(
     ap_address: Address,
     gho_address: Address,
 ) -> Result<ActivatedMarket, RunError> {
-    // 1. RPC: `getMarketId()` on the PoolAddressProvider (a dynamic `string`
-    //    return — reuse the same decoder as `fetch_erc20_string_metadata`).
-    let market_name = fetch_market_id(provider, &ap_address).await?;
-
-    // 2. RPC: GHO token `name()`/`symbol()`/`decimals()` (string + bytes32 +
-    //    uint256 fallbacks). `block_number` is irrelevant (token metadata is
-    //    immutable) — pass `None` for latest.
-    let preview_block = provider.get_block_number().await?;
-    let (gho_name, gho_symbol, gho_decimals) =
-        crate::config_dispatch::fetch_erc20_metadata(provider, &gho_address, preview_block).await;
+    // 1-2. RPC: the market name plus the GHO token metadata (the same fetch
+    //      the market-reset module's re-seed uses).
+    let metadata = fetch_activation_metadata(provider, &ap_address, &gho_address).await?;
 
     // 3. ONE transaction: seed/activate the market + contract + GHO rows.
     let (market_id, created) = {
@@ -300,7 +335,7 @@ async fn activate_aave_market_rpc(
         let existed = tx
             .query_row(
                 "SELECT 1 FROM aave_v3_markets WHERE chain_id = ?1 AND name = ?2",
-                rusqlite::params![chain_id, market_name],
+                rusqlite::params![chain_id, metadata.market_name.as_str()],
                 |_| Ok(()),
             )
             .optional()
@@ -309,12 +344,12 @@ async fn activate_aave_market_rpc(
         let id = activate_aave_market_on_conn(
             &tx,
             chain_id,
-            &market_name,
+            &metadata.market_name,
             pool_address_provider,
             gho_token_address,
-            gho_name.as_deref(),
-            gho_symbol.as_deref(),
-            gho_decimals,
+            metadata.gho_name.as_deref(),
+            metadata.gho_symbol.as_deref(),
+            metadata.gho_decimals,
             ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
         )?;
         tx.commit().map_err(DbError::from)?;
@@ -323,7 +358,7 @@ async fn activate_aave_market_rpc(
 
     Ok(ActivatedMarket {
         market_id,
-        market_name,
+        market_name: metadata.market_name,
         created,
     })
 }

@@ -13,6 +13,7 @@ mod activate;
 mod apply;
 mod fetch;
 mod process;
+mod reset;
 pub mod substrate;
 
 pub use activate::{
@@ -25,6 +26,7 @@ pub use apply::{
 };
 use fetch::{bootstrap_pool_contracts, build_fetch_spec};
 use process::{group_logs_by_tx, process_chunk_on_conn};
+pub use reset::{reset_market_to_cold_boot, MarketResetFacts};
 
 // ── the outer chunk loop (RPC-bound; the chunk-atomicity owner) ──
 
