@@ -179,11 +179,14 @@ rows, so the market stays registered and active. Rows belonging to another marke
 and every table no market keys (`erc20_tokens`, `pools`, `exchanges`, price data)
 are untouched, so a reset of one market never disturbs unrelated data.
 
-The whole purge runs inside one transaction: a failure part-way through leaves
-the database unchanged. `--dry-run` prints the per-table row counts the purge
-would remove and writes nothing. An unknown market name is refused rather than
-registered. Two resets of the same database cannot interleave — the second is
-refused with the lock path the first holds.
+The purge and the cold-boot re-seed commit inside ONE transaction (the
+market-reset module composes both): a failure part-way through leaves the
+database unchanged, and no kill can land between the two halves. The re-seed
+reads the on-chain market name and the GHO metadata through the configured RPC,
+so a reset needs a working endpoint. `--dry-run` prints the per-table row counts
+the purge would remove and writes nothing. An unknown market name is refused
+rather than registered. Two resets of the same database cannot interleave — the
+second is refused with the lock path the first holds.
 
 ```bash
 # Preview the blast radius

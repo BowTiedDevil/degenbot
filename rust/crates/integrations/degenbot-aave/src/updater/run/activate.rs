@@ -51,9 +51,9 @@ pub const ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK: i64 = 16_291_070;
 ///
 /// Returns the market `id`. Pure substrate — NO RPC. The orchestrator
 /// [`activate_aave_market`] fetches the market name + GHO metadata via RPC
-/// then calls this; `aave reset`'s re-init calls it directly (the market
-/// name + GHO metadata ride the shipped deployment constants there, so the
-/// completion path never builds an RPC transport).
+/// then calls this; the market-reset module
+/// ([`reset_market_to_cold_boot`](super::reset_market_to_cold_boot)) reuses
+/// that same fetch, then calls this on the caller's transaction.
 ///
 /// # Errors
 ///

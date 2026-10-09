@@ -828,20 +828,20 @@ pub enum AaveUpdateOutcome {
     },
 }
 
-/// The outcome of `aave reset`'s re-init half: the activate seam's
-/// completion of the purged market (the market row + the
-/// `POOL_ADDRESS_PROVIDER` contract row) and the cursor it left. The
-/// command does NOT run an update; the next `aave update` cold-boots from
-/// this cursor.
+/// The facts `aave reset` renders: what the market-reset module read back
+/// from the reset transaction — the market row's `active` flag, the
+/// `POOL_ADDRESS_PROVIDER` contract row's presence, and the cursor the reset
+/// left. They are read, never assumed. The command does NOT run an update;
+/// the next `aave update` cold-boots from this cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AaveReinit {
-    /// The market row was re-activated (the activate seam ran).
+    /// The market row's `active` flag after the reset, read from the row.
     pub market_activated: bool,
-    /// The `POOL_ADDRESS_PROVIDER` contract row is present after the
-    /// re-init (the bootstrap's fetch anchor).
+    /// Whether the `POOL_ADDRESS_PROVIDER` contract row is present after the
+    /// reset (the bootstrap's fetch anchor).
     pub contract_row_present: bool,
-    /// The `last_update_block` the re-init left — the bootstrap block on
-    /// the shipped mainnet deployment.
+    /// The `last_update_block` the reset left — the bootstrap block on the
+    /// shipped mainnet deployment.
     pub last_update_block: Option<i64>,
 }
 
@@ -916,7 +916,7 @@ pub enum AaveReport {
         counts: Vec<AaveMarketPurgeCount>,
         /// `true` when the arm previewed the purge and touched nothing.
         dry_run: bool,
-        /// The re-init's activate-seam outcome; `None` on a preview.
+        /// The facts the reset transaction verified; `None` on a preview.
         reinit: Option<AaveReinit>,
     },
     /// `aave position show`.
@@ -1070,7 +1070,7 @@ fn entry_lines(entry: &AaveUpdateEntry) -> Vec<String> {
 }
 
 /// The lines for an `aave reset`: the purge plan the operator sees BEFORE
-/// anything is written, then the re-init outcome.
+/// anything is written, then the verified facts the reset transaction left.
 fn reset_lines(
     chain_id: u64,
     market_id: i64,
