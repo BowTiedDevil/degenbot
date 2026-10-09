@@ -116,12 +116,28 @@ RUN mkdir -p "${HOME}/.config" "${HOME}/.local/bin" \
 RUN curl -L https://foundry.paradigm.xyz | bash \
     && /home/${USERNAME}/.foundry/bin/foundryup
 
-# pi (curl-installed via pi.dev's install script). The installer targets
-# ~/.local/bin by default (already on PATH via ENV above, and pre-created in
-# the npm-prefix step). Baked into the image for the same attach reason as
-# foundry. Matches host version era; rebuild the image to bump. The trailing
-# `pi --version` fails the build loudly if the binary didn't land on PATH.
-RUN curl -fsSL https://pi.dev/install.sh | sh \
+# pi (curl-installed via pi.dev's install script). Baked into the image for
+# the same attach reason as foundry. Matches host version era; rebuild the
+# image to bump. The managed launcher lands in ~/.local/bin (already on PATH
+# via ENV above, pre-created in the npm-prefix step); the trailing
+# `command -v pi && pi --version` fails the build loudly if it didn't.
+#
+# PI_CODING_AGENT_DIR deliberately relocates the managed install OUT of
+# ~/.pi: devcontainer.json bind-mounts the host ~/.pi over /home/dev/.pi at
+# RUN time (shared extensions/auth/state), which would shadow the image's
+# ~/.pi/agent/install tree and leave ~/.local/bin/pi a dangling symlink —
+# "pi: not found" despite correct PATH (this build-time guard cannot see
+# runtime mounts). Relocation keeps the pinned install/releases tree (the
+# reason this installer is used over bare `npm i -g`, which floats
+# transitive deps) outside the mount, while runtime STATE still resolves to
+# ~/.pi/agent by default (pi dist/config.js) — extensions/auth keep flowing
+# through the mount. The env is scoped to this RUN via export, NOT baked as
+# ENV: the runtime reads the same variable and would move state too.
+# `export VAR && curl | sh` (not `VAR=x curl | sh`) is deliberate — a prefix
+# assignment binds to curl only and the installer's sh never sees it.
+RUN export PI_CODING_AGENT_DIR="/home/${USERNAME}/.local/share/pi-agent" \
+    && curl -fsSL https://pi.dev/install.sh | sh \
+    && command -v pi \
     && pi --version
 RUN npm install -g agent-browser
 RUN agent-browser install --with-deps
