@@ -14,7 +14,7 @@
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::cl::solve_cl_piecewise;
-use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy, PreparedHop};
+use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy};
 use serde_json::Value;
 
 const PROFIT_EPS: u128 = 100_000;
@@ -56,7 +56,9 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
     event: &CacheEvent,
     seq_refs: &[&IntV3TickRangeSequence],
 ) -> Option<(U256, U256, Vec<U256>)> {
-    let prepared: Vec<PreparedHop> = strategy.refill(seqs, event);
+    // The strategy hands back the one intake value directly (the projection's
+    // `PreparedClHop`), so no per-solve re-pairing of tables to sequences.
+    let prepared = strategy.refill(seqs, event);
     if prepared.is_empty() {
         return degenbot_solvers::cl::derive_and_solve_cl_piecewise(
             seq_refs,
@@ -64,19 +66,8 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
         )
         .result;
     }
-    let prepared_hops: Vec<degenbot_solvers::cl::PreparedClHop> = prepared
-        .iter()
-        .zip(seq_refs.iter())
-        .map(|((c, p), seq)| {
-            degenbot_solvers::cl::PreparedClHop::from_parts(
-                std::sync::Arc::new((*seq).clone()),
-                std::sync::Arc::clone(c),
-                std::sync::Arc::clone(p),
-            )
-        })
-        .collect();
     solve_cl_piecewise(
-        &prepared_hops,
+        &prepared,
         None,
         &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         None,

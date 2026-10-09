@@ -17,9 +17,9 @@ use crate::runtime::SolveRuntimeConfig;
 /// This is the projection-carried shape [`ResolvedHop::V3`/`V4`] carries (see
 /// `mixed::ResolvedHop`) AND the solve entries' intake: the sequence and its
 /// tables travel as one value, so the pairing the deleted gate defended is
-/// structural. Folding `source_fingerprint` HERE, not at solve time, is the
-/// point of the value: the fingerprint is a pure function of the sequence, so
-/// it is derived once at derivation and stored.
+/// structural. Folding the fingerprint HERE, not at solve time, is the point
+/// of the value: the fingerprint is a pure function of the sequence, so it is
+/// derived once at derivation and stored.
 #[derive(Clone, Debug)]
 pub struct PreparedClHop {
     /// The tick-range sequence these tables were derived from, `Arc`-shared
@@ -30,10 +30,11 @@ pub struct PreparedClHop {
     /// The dense-range word-boundary profiles, derived from `crossings` (the
     /// fused-epoch winner: ONE crossing build derives both artifacts).
     pub profiles: std::sync::Arc<ClProfileTable>,
-    /// [`walk_path_fingerprint`] of `int_seq`, recorded at derivation (the
-    /// all-CL entry's memo key folds the hops' sequences directly; this field
+    /// The derivation-time composition key of `int_seq`, folded ONCE when the
+    /// projection built this value and read through [`Self::fingerprint`] (the
+    /// all-CL entry's memo key folds the hops' sequences directly; this value
     /// is the mixed-side translate's payload).
-    pub source_fingerprint: u128,
+    fingerprint: u128,
 }
 
 impl PreparedClHop {
@@ -47,12 +48,12 @@ impl PreparedClHop {
     pub fn derive(int_seq: std::sync::Arc<IntV3TickRangeSequence>) -> Self {
         let crossings = std::sync::Arc::new(build_cl_crossing_table(&int_seq));
         let profiles = std::sync::Arc::new(build_cl_word_profiles_from_crossings(&crossings));
-        let source_fingerprint = walk_path_fingerprint(&[int_seq.as_ref()]);
+        let fingerprint = walk_path_fingerprint(&[int_seq.as_ref()]);
         Self {
             int_seq,
             crossings,
             profiles,
-            source_fingerprint,
+            fingerprint,
         }
     }
 
@@ -64,13 +65,21 @@ impl PreparedClHop {
         crossings: std::sync::Arc<ClCrossingTable>,
         profiles: std::sync::Arc<ClProfileTable>,
     ) -> Self {
-        let source_fingerprint = walk_path_fingerprint(&[int_seq.as_ref()]);
+        let fingerprint = walk_path_fingerprint(&[int_seq.as_ref()]);
         Self {
             int_seq,
             crossings,
             profiles,
-            source_fingerprint,
+            fingerprint,
         }
+    }
+
+    /// The composition-key material folded once at derivation: the fingerprint
+    /// of this hop's `int_seq`. Consumers read this carried value rather than
+    /// re-walking the sequence at solve time.
+    #[must_use]
+    pub const fn fingerprint(&self) -> u128 {
+        self.fingerprint
     }
 }
 

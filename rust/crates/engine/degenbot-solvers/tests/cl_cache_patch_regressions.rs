@@ -136,7 +136,7 @@ fn trailing_range_liquidity_event_patches_without_resegmentation() {
             &CacheEvent::Liquidity { hop: 0, range: 1 },
         );
         assert_eq!(prepared.len(), 1);
-        assert_crossings_equal(&prepared[0].0, &build_cl_crossing_table(&seq1));
+        assert_crossings_equal(&prepared[0].crossings, &build_cl_crossing_table(&seq1));
         assert_eq!(
             strategy.counters().crossing_tables,
             1,
@@ -175,7 +175,7 @@ fn liquidity_patch_rejects_stale_cached_segments() {
             &CacheEvent::Liquidity { hop: 0, range: 1 },
         );
         assert_eq!(prepared.len(), 1);
-        assert_crossings_equal(&prepared[0].0, &build_cl_crossing_table(&next));
+        assert_crossings_equal(&prepared[0].crossings, &build_cl_crossing_table(&next));
     }
 }
 
@@ -195,6 +195,6 @@ fn price_patch_on_single_range_sequence_stays_exact() {
             &CacheEvent::PriceMove { hop: 0 },
         );
         assert_eq!(prepared.len(), 1);
-        assert_crossings_equal(&prepared[0].0, &build_cl_crossing_table(&moved));
+        assert_crossings_equal(&prepared[0].crossings, &build_cl_crossing_table(&moved));
     }
 }

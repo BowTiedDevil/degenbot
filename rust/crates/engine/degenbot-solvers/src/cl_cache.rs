@@ -20,7 +20,7 @@ use alloy::primitives::U256;
 use crate::cl::{
     build_cl_crossing_table, build_cl_word_profiles, build_cl_word_profiles_from_crossings,
     ClCrossingTable, ClProfileTable, IntTickRangeCrossing, IntV3TickRangeHop,
-    IntV3TickRangeSequence,
+    IntV3TickRangeSequence, PreparedClHop,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -41,12 +41,22 @@ pub enum CacheEvent {
     Restore,
 }
 
-pub type PreparedHop = (Arc<ClCrossingTable>, Arc<ClProfileTable>);
-
 pub trait ClCacheStrategy {
     fn name(&self) -> &'static str;
-    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], event: &CacheEvent) -> Vec<PreparedHop>;
+    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], event: &CacheEvent)
+        -> Vec<PreparedClHop>;
     fn counters(&self) -> &BuildCounters;
+}
+
+/// Wrap a freshly built crossing table + word profiles as the one intake
+/// value, folding the sequence's derivation fingerprint once so every
+/// strategy hands back the same `PreparedClHop` shape the projection builds.
+fn prepared_hop(
+    seq: &IntV3TickRangeSequence,
+    crossings: Arc<ClCrossingTable>,
+    profiles: Arc<ClProfileTable>,
+) -> PreparedClHop {
+    PreparedClHop::from_parts(Arc::new(seq.clone()), crossings, profiles)
 }
 
 pub fn strategy_catalog() -> Vec<Box<dyn ClCacheStrategy + Send>> {
@@ -245,7 +255,7 @@ fn add_delta_dir(cur: U256, old: U256, new: U256) -> U256 {
 fn fresh_tables(
     seq: &IntV3TickRangeSequence,
     counters: &mut BuildCounters,
-) -> (PreparedHop, Vec<(U256, U256)>) {
+) -> (PreparedClHop, Vec<(U256, U256)>) {
     let table = build_cl_crossing_table(seq);
     let mut segs = Vec::with_capacity(table.len().saturating_sub(1));
     for (k, c) in table.iter().enumerate().skip(1) {
@@ -260,7 +270,7 @@ fn fresh_tables(
     counters.profile_tables += 1;
     let crossings = Arc::new(table);
     let profiles = Arc::new(build_cl_word_profiles(seq));
-    ((Arc::clone(&crossings), profiles), segs)
+    (prepared_hop(seq, crossings, profiles), segs)
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +291,7 @@ impl ClCacheStrategy for FullRebuild {
         &mut self,
         _seqs: &[IntV3TickRangeSequence],
         _event: &CacheEvent,
-    ) -> Vec<PreparedHop> {
+    ) -> Vec<PreparedClHop> {
         self.counters.crossing_tables = self.counters.crossing_tables.saturating_add(1);
         self.counters.profile_tables = self.counters.profile_tables.saturating_add(1);
         self.counters.solves += 1;
@@ -299,7 +309,7 @@ impl ClCacheStrategy for FullRebuild {
 
 #[derive(Default)]
 pub struct FusedEpochCache {
-    tables: HashMap<(usize, String), PreparedHop>,
+    tables: HashMap<(usize, String), PreparedClHop>,
     counters: BuildCounters,
 }
 
@@ -308,7 +318,11 @@ impl ClCacheStrategy for FusedEpochCache {
         "S1_fused_epoch"
     }
 
-    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], _event: &CacheEvent) -> Vec<PreparedHop> {
+    fn refill(
+        &mut self,
+        seqs: &[IntV3TickRangeSequence],
+        _event: &CacheEvent,
+    ) -> Vec<PreparedClHop> {
         let mut out = Vec::with_capacity(seqs.len());
         for (i, seq) in seqs.iter().enumerate() {
             let key = state_key(seq);
@@ -321,9 +335,9 @@ impl ClCacheStrategy for FusedEpochCache {
             self.counters.crossing_tables += 1;
             self.counters.profile_tables += 1;
             self.counters.sequence_rebuilds += 1;
-            self.tables
-                .insert((i, key), (Arc::clone(&crossings), Arc::clone(&profiles)));
-            out.push((crossings, profiles));
+            let hop = prepared_hop(seq, crossings, profiles);
+            self.tables.insert((i, key), hop.clone());
+            out.push(hop);
         }
         self.counters.solves += 1;
         out
@@ -341,7 +355,7 @@ impl ClCacheStrategy for FusedEpochCache {
 
 #[derive(Default)]
 pub struct PriceOverlayPatch {
-    hops: HashMap<usize, (String, String, PreparedHop)>,
+    hops: HashMap<usize, (String, String, PreparedClHop)>,
     counters: BuildCounters,
 }
 
@@ -350,7 +364,11 @@ impl ClCacheStrategy for PriceOverlayPatch {
         "S2_price_overlay_patch"
     }
 
-    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], event: &CacheEvent) -> Vec<PreparedHop> {
+    fn refill(
+        &mut self,
+        seqs: &[IntV3TickRangeSequence],
+        event: &CacheEvent,
+    ) -> Vec<PreparedClHop> {
         let mut out = Vec::with_capacity(seqs.len());
         for (i, seq) in seqs.iter().enumerate() {
             let key = state_key(seq);
@@ -368,9 +386,9 @@ impl ClCacheStrategy for PriceOverlayPatch {
                     if let Some(c1) = seq.compute_crossing(1) {
                         let new_g = c1.crossing_gross_input;
                         let new_o = c1.crossing_output;
-                        let old_g = t.0[1].crossing_gross_input;
-                        let old_o = t.0[1].crossing_output;
-                        let mut patched = (*t.0).clone();
+                        let old_g = t.crossings[1].crossing_gross_input;
+                        let old_o = t.crossings[1].crossing_output;
+                        let mut patched = (*t.crossings).clone();
                         for c in patched.iter_mut().skip(1) {
                             c.crossing_gross_input =
                                 add_delta_dir(c.crossing_gross_input, old_g, new_g);
@@ -380,9 +398,9 @@ impl ClCacheStrategy for PriceOverlayPatch {
                             seq.ranges.first().map_or(U256::ZERO, |r| r.sqrt_price_x96);
                         let profiles = Arc::new(rebuild_range0_profile(
                             patched.first().expect("non-empty"),
-                            (*t.1).clone(),
+                            (*t.profiles).clone(),
                         ));
-                        let t2 = (Arc::new(patched), profiles);
+                        let t2 = prepared_hop(seq, Arc::new(patched), profiles);
                         self.hops
                             .insert(i, (key.clone(), struct_key(seq), t2.clone()));
                         self.counters.partial_rebuilds += 1;
@@ -416,7 +434,7 @@ impl ClCacheStrategy for PriceOverlayPatch {
 
 #[derive(Default)]
 pub struct SegmentPrefixCache {
-    hops: HashMap<usize, (String, String, Vec<(U256, U256)>, PreparedHop)>,
+    hops: HashMap<usize, (String, String, Vec<(U256, U256)>, PreparedClHop)>,
     counters: BuildCounters,
 }
 
@@ -425,7 +443,11 @@ impl ClCacheStrategy for SegmentPrefixCache {
         "S3_segment_prefix"
     }
 
-    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], event: &CacheEvent) -> Vec<PreparedHop> {
+    fn refill(
+        &mut self,
+        seqs: &[IntV3TickRangeSequence],
+        event: &CacheEvent,
+    ) -> Vec<PreparedClHop> {
         let mut out = Vec::with_capacity(seqs.len());
         for (i, seq) in seqs.iter().enumerate() {
             let key = state_key(seq);
@@ -457,9 +479,9 @@ impl ClCacheStrategy for SegmentPrefixCache {
                         let crossings = Arc::new(assemble_crossings(seq, &segs));
                         let profiles = Arc::new(rebuild_range0_profile(
                             crossings.first().expect("non-empty"),
-                            (*t.1).clone(),
+                            (*t.profiles).clone(),
                         ));
-                        let t2 = (Arc::clone(&crossings), profiles);
+                        let t2 = prepared_hop(seq, Arc::clone(&crossings), profiles);
                         self.hops
                             .insert(i, (key.clone(), struct_key(seq), segs, t2.clone()));
                         self.counters.partial_rebuilds += 1;
@@ -493,7 +515,7 @@ impl ClCacheStrategy for SegmentPrefixCache {
 
 #[derive(Default)]
 pub struct DirtySuffixSegmentCache {
-    hops: HashMap<usize, (String, String, Vec<(U256, U256)>, PreparedHop)>,
+    hops: HashMap<usize, (String, String, Vec<(U256, U256)>, PreparedClHop)>,
     counters: BuildCounters,
 }
 
@@ -502,7 +524,11 @@ impl ClCacheStrategy for DirtySuffixSegmentCache {
         "S4_dirty_suffix_segments"
     }
 
-    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], event: &CacheEvent) -> Vec<PreparedHop> {
+    fn refill(
+        &mut self,
+        seqs: &[IntV3TickRangeSequence],
+        event: &CacheEvent,
+    ) -> Vec<PreparedClHop> {
         let liq_range = match event {
             CacheEvent::Liquidity { hop, range } => Some((*hop, *range)),
             _ => None,
@@ -538,16 +564,16 @@ impl ClCacheStrategy for DirtySuffixSegmentCache {
                         let crossings = Arc::new(assemble_crossings(seq, &segs));
                         let profiles = Arc::new(rebuild_range0_profile(
                             crossings.first().expect("non-empty"),
-                            (*t.1).clone(),
+                            (*t.profiles).clone(),
                         ));
-                        let t2 = (Arc::clone(&crossings), profiles);
+                        let t2 = prepared_hop(seq, Arc::clone(&crossings), profiles);
                         self.hops
                             .insert(i, (key.clone(), struct_key(seq), segs, t2.clone()));
                         self.counters.partial_rebuilds += 1;
                         done = Some(t2);
                     }
                 } else if let Some((h, range)) = liq_range {
-                    if h != i || !crossings_match_shape(seq, &t.0, Some(range)) {
+                    if h != i || !crossings_match_shape(seq, &t.crossings, Some(range)) {
                         // Event targeted another hop, or the cached shape no
                         // longer matches this sequence (segments carried over
                         // from another path would offset every prefix) —
@@ -563,9 +589,9 @@ impl ClCacheStrategy for DirtySuffixSegmentCache {
                         let profiles = Arc::new(rebuild_profile_at(
                             crossings.get(range).expect("range in table"),
                             range,
-                            (*t.1).clone(),
+                            (*t.profiles).clone(),
                         ));
-                        let t2 = (Arc::clone(&crossings), profiles);
+                        let t2 = prepared_hop(seq, Arc::clone(&crossings), profiles);
                         self.hops
                             .insert(i, (key.clone(), struct_key(seq), segs, t2.clone()));
                         self.counters.partial_rebuilds += 1;
@@ -599,7 +625,7 @@ impl ClCacheStrategy for DirtySuffixSegmentCache {
 #[derive(Default)]
 pub struct SeqMemoProbe {
     seen: HashMap<usize, String>,
-    tables: HashMap<(usize, String), PreparedHop>,
+    tables: HashMap<(usize, String), PreparedClHop>,
     counters: BuildCounters,
 }
 
@@ -608,7 +634,11 @@ impl ClCacheStrategy for SeqMemoProbe {
         "S5_seq_memo_probe"
     }
 
-    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], _event: &CacheEvent) -> Vec<PreparedHop> {
+    fn refill(
+        &mut self,
+        seqs: &[IntV3TickRangeSequence],
+        _event: &CacheEvent,
+    ) -> Vec<PreparedClHop> {
         let mut out = Vec::with_capacity(seqs.len());
         for (i, seq) in seqs.iter().enumerate() {
             let key = state_key(seq);
@@ -624,9 +654,9 @@ impl ClCacheStrategy for SeqMemoProbe {
             let profiles = Arc::new(build_cl_word_profiles(seq));
             self.counters.crossing_tables += 1;
             self.counters.profile_tables += 1;
-            self.tables
-                .insert((i, key), (Arc::clone(&crossings), Arc::clone(&profiles)));
-            out.push((crossings, profiles));
+            let hop = prepared_hop(seq, crossings, profiles);
+            self.tables.insert((i, key), hop.clone());
+            out.push(hop);
         }
         self.counters.solves += 1;
         out
@@ -655,7 +685,11 @@ impl ClCacheStrategy for ProfileSplitCache {
         "S6_profile_split"
     }
 
-    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], _event: &CacheEvent) -> Vec<PreparedHop> {
+    fn refill(
+        &mut self,
+        seqs: &[IntV3TickRangeSequence],
+        _event: &CacheEvent,
+    ) -> Vec<PreparedClHop> {
         let mut out = Vec::with_capacity(seqs.len());
         for (i, seq) in seqs.iter().enumerate() {
             let key = state_key(seq);
@@ -691,7 +725,7 @@ impl ClCacheStrategy for ProfileSplitCache {
             }
             self.last_profile_keys.insert(i, new_keys);
             self.profiles.insert((i, key), table.clone());
-            out.push((crossings, Arc::new(table)));
+            out.push(prepared_hop(seq, crossings, Arc::new(table)));
         }
         self.counters.solves += 1;
         out
@@ -719,7 +753,11 @@ impl ClCacheStrategy for CompositeSplitCache {
         "S7_composite_split"
     }
 
-    fn refill(&mut self, seqs: &[IntV3TickRangeSequence], event: &CacheEvent) -> Vec<PreparedHop> {
+    fn refill(
+        &mut self,
+        seqs: &[IntV3TickRangeSequence],
+        event: &CacheEvent,
+    ) -> Vec<PreparedClHop> {
         let liq_range = match event {
             CacheEvent::Liquidity { hop, range } => Some((*hop, *range)),
             _ => None,
@@ -731,7 +769,7 @@ impl ClCacheStrategy for CompositeSplitCache {
                 if *fk == key {
                     let t = Arc::clone(t);
                     let table = self.split_profiles(i, &key, seq, &t);
-                    out.push((t, Arc::new(table)));
+                    out.push(prepared_hop(seq, t, Arc::new(table)));
                     continue;
                 }
             }
@@ -811,7 +849,7 @@ impl ClCacheStrategy for CompositeSplitCache {
                 }
             };
             let table = self.split_profiles(i, &key, seq, &crossings);
-            out.push((crossings, Arc::new(table)));
+            out.push(prepared_hop(seq, crossings, Arc::new(table)));
         }
         self.counters.solves += 1;
         out
@@ -900,8 +938,8 @@ mod tests {
         assert_eq!(s.counters().crossing_tables, 1);
         let second = s.refill(std::slice::from_ref(&seq), &CacheEvent::Restore);
         assert_eq!(s.counters().crossing_tables, 1, "identical state must hit");
-        let p0 = std::sync::Arc::as_ptr(&first[0].0);
-        let p1 = std::sync::Arc::as_ptr(&second[0].0);
+        let p0 = std::sync::Arc::as_ptr(&first[0].crossings);
+        let p1 = std::sync::Arc::as_ptr(&second[0].crossings);
         assert_eq!(p0, p1, "same allocation reused");
     }
 

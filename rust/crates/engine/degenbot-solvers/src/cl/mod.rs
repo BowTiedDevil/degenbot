@@ -81,7 +81,7 @@ pub use entries::{
     PreparedClHop,
 };
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
-pub use memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, WalkMemo, WalkMemoStats};
+pub use memo::{WalkMemo, WalkMemoStats};
 pub use path_sim::{ClPathOutcome, ClPathSim};
 pub use telemetry::{
     WalkEventCensus, WALK_ANCHOR_ARGMAX_NS, WALK_ANCHOR_BUILD_NS, WALK_ANCHOR_COMPOSE_NS,

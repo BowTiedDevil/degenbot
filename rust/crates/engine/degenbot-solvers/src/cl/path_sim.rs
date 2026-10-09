@@ -14,14 +14,7 @@ use alloy::primitives::U256;
 
 use super::entries::PreparedClHop;
 use super::hop_sim::simulate_v3_range_swap;
-use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
-
-/// One CL hop's precomputed tables, reusing the projection's `Arc`-shared
-/// tables when supplied.
-struct ClPathSimHop {
-    crossings: Arc<ClCrossingTable>,
-    profiles: Arc<ClProfileTable>,
-}
+use super::IntV3TickRangeSequence;
 
 /// The forward simulation of a CL path at one input: per-hop outputs, the
 /// ending-range index landed in per hop, and the final output.
@@ -41,7 +34,7 @@ pub struct ClPathOutcome {
 /// O(1)-clones them from supplied prepared hops); [`ClPathSim::output`] then
 /// reproduces the active-set walk's forward oracle for any input.
 pub struct ClPathSim {
-    hops: Vec<ClPathSimHop>,
+    hops: Vec<PreparedClHop>,
 }
 
 impl ClPathSim {
@@ -54,21 +47,15 @@ impl ClPathSim {
             .iter()
             .enumerate()
             .map(|(i, seq)| {
-                let (crossings, profiles) = if let Some(prepared) = prepared.and_then(|p| p.get(i))
-                {
-                    (
-                        Arc::clone(&prepared.crossings),
-                        Arc::clone(&prepared.profiles),
-                    )
+                if let Some(prepared) = prepared.and_then(|p| p.get(i)) {
+                    // The projection's prepared value: `Arc`-shared sequence +
+                    // tables, nothing rebuilt.
+                    prepared.clone()
                 } else {
                     let crossings = Arc::new(super::crossings::build_cl_crossing_table(seq));
                     let profiles =
                         Arc::new(super::crossings::build_word_profiles(crossings.as_slice()));
-                    (crossings, profiles)
-                };
-                ClPathSimHop {
-                    crossings,
-                    profiles,
+                    PreparedClHop::from_parts(Arc::new((*seq).clone()), crossings, profiles)
                 }
             })
             .collect();
