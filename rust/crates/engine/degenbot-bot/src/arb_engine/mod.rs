@@ -120,6 +120,11 @@ mod snapshot_verify;
 // solve + diagnostics body the Solver seats' bins execute) lives here; the
 // walk driver and Lane* policy types are later tasks' inhabitants.
 mod lane_walk;
+
+// the solve cycle's single owner of per-path cost accounting (commit 2 of
+// PR C4): the pipeline instruments, the K-slowest retention, and the two
+// heavy-path capture hooks, behind one `record` call from the lane walk.
+mod path_cost_ledger;
 // heavy-path capture diagnostics, extracted from the retired
 // grab file (import-only move; the module owns its honesty probe + test island).
 mod solver_capture;

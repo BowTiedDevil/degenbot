@@ -1,7 +1,7 @@
 #![expect(clippy::expect_used)] // tests assert clamp/merge invariants
 use crate::arb_engine::lane_walk::clamp_result_in_worker;
 use crate::arb_engine::lifecycle::register_path;
-use crate::arb_engine::solve_cycle::{PathTimesHeap, SolveCycleShared};
+use crate::arb_engine::solve_cycle::SolveCycleShared;
 use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
 use crate::bot_core::{TickInfo, V4PoolKey};
 use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
@@ -138,9 +138,7 @@ fn worker_probe_ctx(
         walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
         prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
         min_profit: ::alloy::primitives::U256::ZERO,
-        capture: None,
-        capture_mixed: None,
-        path_times: parking_lot::Mutex::new(PathTimesHeap::new()),
+        path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(0, None, None),
         sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         test_solve_delay: None,

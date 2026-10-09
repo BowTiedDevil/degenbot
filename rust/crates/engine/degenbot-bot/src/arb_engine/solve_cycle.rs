@@ -101,11 +101,6 @@ struct ResolveChunkOut {
     invalid_reasons: HashMap<String, u64>,
     deferred: Vec<u64>,
 }
-/// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
-/// The record tuple now lives with the walk (`arb_engine::lane_walk`);
-/// T5 retires the heap itself.
-pub(crate) type PathTimesHeap =
-    std::collections::BinaryHeap<std::cmp::Reverse<super::lane_walk::PathTimeRecord>>;
 /// `DEGENBOT_SOLVE_INLINE_SIM` —
 /// stance semantics unchanged; it is the `SolveCycle` instance
 /// value `inline_sim_enabled`, never a process static.
@@ -127,9 +122,11 @@ pub(crate) struct SolveCycleShared {
     /// the instance-scoped solver runtime stance, threaded down —
     /// the solver crate has no process-global config anymore.
     pub(crate) runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig,
-    pub(crate) capture: Option<std::sync::Arc<HeavyPathCapture>>,
-    pub(crate) capture_mixed: Option<std::sync::Arc<HeavyPathCapture>>,
-    pub(crate) path_times: parking_lot::Mutex<PathTimesHeap>,
+    /// The per-path cost sinks (pipeline instruments, the K-slowest
+    /// retention, and the two capture hooks) behind ONE record call from the
+    /// lane walk (commit 2 of PR C4). The LPT history
+    /// (`sims_recorder` / `gate_recorder`) is NOT in here.
+    pub(crate) path_cost_ledger: super::path_cost_ledger::PathCostLedger,
     /// Engine-owned per-path measured-sims recorder (Arc-d engine field).
     pub(crate) sims_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
     /// Engine-owned per-path gate-us recorder (Arc-d engine field).
@@ -1687,8 +1684,6 @@ impl SolveCycle {
         // above, pending_new_paths, results_block stamping - is preserved
         // by construction with NO epoch guards.
         // -----------------------------------------------------------------
-        let path_times: parking_lot::Mutex<PathTimesHeap> =
-            parking_lot::Mutex::new(PathTimesHeap::new());
         // Degenerate-path capture config: env parsed ONCE per cycle
         // at the owner; the gate itself reads no environment. The prefix-
         // composition cache is generationed by the block epoch inside the
@@ -1727,9 +1722,11 @@ impl SolveCycle {
             walk_memo: std::sync::Arc::clone(&self.walk_memo),
             prefix_cache: std::sync::Arc::clone(&self.prefix_cache),
             runtime: self.runtime_cfg,
-            capture: capture.map(std::sync::Arc::new),
-            capture_mixed: capture_mixed.map(std::sync::Arc::new),
-            path_times,
+            path_cost_ledger: super::path_cost_ledger::PathCostLedger::new(
+                solve_block,
+                capture.map(std::sync::Arc::new),
+                capture_mixed.map(std::sync::Arc::new),
+            ),
             sims_recorder: std::sync::Arc::clone(&self.last_walk_sims),
             gate_recorder: std::sync::Arc::clone(&self.last_gate_us),
             #[cfg(test)]

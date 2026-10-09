@@ -4,8 +4,12 @@
 //! body every Solver seat's bin executes — and of THE ONE
 //! LANE WALK (`drive_lane_walk` plus its policy/context/result
 //! types (`LaneArmPolicy`, `LaneWalkBinPlan`, `WalkSubmitCtx`,
-//! `LaneWalkReads`) and the walk-side telemetry statics/record
-//! (`SLOWEST_PATHS_K`, `WALK_DENSE_ALERTED`, `PathTimeRecord`).
+//! `LaneWalkReads`) and the walk-side telemetry flag
+//! (`WALK_DENSE_ALERTED`).
+//!
+//! The per-path cost sinks (the pipeline instruments, the K-slowest
+//! retention, and the capture hooks) live in the
+//! [`super::path_cost_ledger::PathCostLedger`] the walk records into.
 //!
 //! Direction of dependency is `lane_walk -> {solve_cycle, executor,
 //! inline_sim}`: the walk reads the cycle context, `min_profit_floor`, and
@@ -20,22 +24,11 @@ use crate::arb_engine::executor::{SolveLane, SolveOutcome};
 use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
 use ::degenbot_solvers::mixed::{ResolvedMixedPath, SolvePathResult};
 use degenbot_core::{diag, op_warn};
-/// How many slowest-path entries the solve-cycle completion event names
-///. Walk-side only after the T4 move.
-const SLOWEST_PATHS_K: usize = 5;
 /// Q3 dense one-shot alert flag — the CONSUMER side of the moved alert: the
 /// walk reports `WalkStats::max_dense_words`; this logs once per process.
 /// Walk-side only after the T4 move.
 static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
-/// K-slowest-path attribution record: (`time_us`, `pieces_visited`,
-/// `path_sims`, `word_steps`, `refine_sims`, `gate_us`, `gate_derive_us`,
-/// `gate_compose_us`, `gate_search_us`, `path_id`) — lets the completion
-/// event name the cost driver of the slowest routes: gate-envelope bound
-/// composition (with its derive/compose/search phase split) vs the walk
-/// proper, not just wall time. `pub(crate)` because `solve_cycle::PathTimesHeap`
-/// aliases it (T5 relocated the heap; NO re-export shim remains).
-pub(crate) type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 // ===========================================================================
 // the walk-adjacent helpers, moved here with the walk they
 // serve (the retired grab file is deleted outright).
@@ -132,7 +125,6 @@ pub(crate) fn flush_solved_item(
 /// closure did (worker threads have no ambient context). Each
 /// item also emits a `degenbot.arb.path` DEBUG child span parented under
 /// that re-entered cycle span (per-path latency as attributes).
-#[expect(clippy::too_many_lines)] // the moved solve + diagnostics pipeline is one narrative
 pub(crate) fn solve_one_path(
     ctx: &SolveCycleShared,
     solve_span: &tracing::Span,
@@ -187,17 +179,13 @@ pub(crate) fn solve_one_path(
     let t0 = std::time::Instant::now();
     let outcome =
         ::degenbot_solvers::mixed::solve_path_with_min_profit(resolved, ctx.min_profit, &gate_deps);
-    let micros = t0.elapsed().as_micros();
+    // The solve wall time is measured ONCE: it feeds the tracing
+    // span attributes here and the ledger's single `record` call below.
+    let elapsed = t0.elapsed();
+    let micros = elapsed.as_micros();
     // Gate telemetry rides the solve outcome now — no TLS read-back.
     let gs = outcome.gate_stats;
     let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
-    if let Some(p) = crate::instruments::pipeline() {
-        #[expect(clippy::cast_precision_loss)]
-        {
-            p.observe_per_path_solve_duration(micros as f64 / 1e6);
-            p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
-        }
-    }
     // Walk telemetry OUT the return path: the
     // outcome carries this path's counters — no TLS
     // read-back. The Q3 dense one-shot alert is the
@@ -214,8 +202,7 @@ pub(crate) fn solve_one_path(
         );
     }
     let ws = *outcome_stats;
-    let (pieces, sims, word_steps, refine_sims) =
-        (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
+    let (pieces, sims) = (ws.pieces, ws.sims);
     // Record this block's measured walk sims for the next
     // block's LPT cost (loop-12 lab).
     ctx.sims_recorder
@@ -224,11 +211,6 @@ pub(crate) fn solve_one_path(
     // Loop-18: record measured gate time for the LPT cost too
     // (gate-heavy paths carry sims≈0 and were bin-packed cheap).
     ctx.gate_recorder.lock().insert(pid, gate_us);
-    let (gate_derive_us, gate_compose_us, gate_search_us) = (
-        u64::try_from(gs.derive_ns / 1_000).unwrap_or(u64::MAX),
-        u64::try_from(gs.compose_ns / 1_000).unwrap_or(u64::MAX),
-        u64::try_from(gs.search_ns / 1_000).unwrap_or(u64::MAX),
-    );
     // seal the per-path span - walk counters become attributes
     // on the `degenbot.arb.path` node (guard drops at fn end, so the
     // recorded values are inside the exported duration).
@@ -239,52 +221,12 @@ pub(crate) fn solve_one_path(
     if let Some(r) = outcome.result.as_ref() {
         path_span.record("path.profit", tracing::field::display(r.profit));
     }
-    let mut heap = ctx.path_times.lock();
-    {
-        let worst = heap.peek().map_or(
-            u128::MAX,
-            |std::cmp::Reverse((w, _, _, _, _, _, _, _, _, _))| *w,
-        );
-        if heap.len() < SLOWEST_PATHS_K || micros > worst {
-            heap.push(std::cmp::Reverse((
-                micros,
-                u64::try_from(pieces).unwrap_or(0),
-                u64::try_from(sims).unwrap_or(0),
-                u64::try_from(word_steps).unwrap_or(0),
-                u64::try_from(refine_sims).unwrap_or(0),
-                gate_us,
-                gate_derive_us,
-                gate_compose_us,
-                gate_search_us,
-                pid,
-            )));
-            if heap.len() > SLOWEST_PATHS_K {
-                heap.pop();
-            }
-        }
-    }
-    if let Some(cap) = ctx.capture.as_ref() {
-        cap.maybe_capture(
-            pid,
-            ctx.solve_block,
-            u64::try_from(micros).unwrap_or(u64::MAX),
-            u64::try_from(sims).unwrap_or(0),
-            u64::try_from(pieces).unwrap_or(0),
-            outcome.result.as_ref(),
-            resolved,
-        );
-    }
-    if let Some(cap) = ctx.capture_mixed.as_ref() {
-        cap.maybe_capture(
-            pid,
-            ctx.solve_block,
-            u64::try_from(micros).unwrap_or(u64::MAX),
-            u64::try_from(sims).unwrap_or(0),
-            u64::try_from(pieces).unwrap_or(0),
-            outcome.result.as_ref(),
-            resolved,
-        );
-    }
+    // ONE ledger call carries every remaining per-path cost sink: the
+    // pipeline instruments, the K-slowest retention, and the two capture
+    // hooks (the fan-out lives inside `PathCostLedger::record`).
+    ctx.path_cost_ledger
+        .record(pid, resolved, &outcome, elapsed);
+
     outcome.result.map(|r| (pid, r))
 }
 // ---------------------------------------------------------------------------

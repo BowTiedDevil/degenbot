@@ -397,7 +397,6 @@ mod fleet_sim_stance_tests {
         AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
         InlineSwapFamily, SimulatedPathResult,
     };
-    use crate::arb_engine::solve_cycle::PathTimesHeap;
     use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::arb_engine::BlockMetadata;
     use alloy::primitives::{I256, U256};
@@ -528,9 +527,9 @@ mod fleet_sim_stance_tests {
             walk_memo: Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
             prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
             min_profit: ::alloy::primitives::U256::ZERO,
-            capture: None,
-            capture_mixed: None,
-            path_times: parking_lot::Mutex::new(PathTimesHeap::new()),
+            path_cost_ledger: crate::arb_engine::path_cost_ledger::PathCostLedger::new(
+                42, None, None,
+            ),
             sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             core: Arc::new(degenbot_substrate::state_lock::StateLock::new(
