@@ -430,9 +430,11 @@ mod direct_seam_tests {
         }])
         .expect("valid tick range sequence");
         ResolvedHop::V3 {
-            int_seq: Arc::new(seq),
-            word_profiles: Arc::new(Vec::new()),
-            crossing_table: Arc::new(Vec::new()),
+            prepared: ::degenbot_solvers::cl::PreparedClHop::from_parts(
+                Arc::new(seq),
+                Arc::new(Vec::new()),
+                Arc::new(Vec::new()),
+            ),
         }
     }
     /// `path_cost_proxy` is the structural LPT cost: the total count of

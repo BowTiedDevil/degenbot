@@ -18,7 +18,7 @@ use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles};
+use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles, PreparedClHop};
 use hashbrown::HashMap;
 use serde_json::Value;
 use std::sync::Arc;
@@ -107,10 +107,10 @@ pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_solvers::mixed:
                 }
             }
             let seq = IntV3TickRangeSequence { ranges };
+            let crossings = Arc::from(build_cl_crossing_table(&seq));
+            let profiles = Arc::from(build_cl_word_profiles(&seq));
             hops.push(::degenbot_solvers::mixed::ResolvedHop::V3 {
-                word_profiles: Arc::from(build_cl_word_profiles(&seq)),
-                crossing_table: Arc::from(build_cl_crossing_table(&seq)),
-                int_seq: Arc::new(seq),
+                prepared: PreparedClHop::from_parts(Arc::new(seq), crossings, profiles),
             });
         }
         items.push(Arc::new(::degenbot_solvers::mixed::ResolvedMixedPath {

@@ -45,7 +45,9 @@ use std::time::Instant;
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles, WalkStats};
+use degenbot_solvers::cl::{
+    build_cl_crossing_table, build_cl_word_profiles, PreparedClHop, WalkStats,
+};
 use degenbot_solvers::mixed::{solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath};
 use rayon::prelude::*;
 use serde_json::Value;
@@ -158,10 +160,10 @@ fn reconstruct(doc: &Value) -> Result<(u64, Arc<ResolvedMixedPath>, Option<u128>
         }
         let ranges = ra.iter().map(range).collect::<Result<Vec<_>, String>>()?;
         let seq = IntV3TickRangeSequence { ranges };
+        let crossings = Arc::from(build_cl_crossing_table(&seq));
+        let profiles = Arc::from(build_cl_word_profiles(&seq));
         hops.push(ResolvedHop::V3 {
-            word_profiles: Arc::from(build_cl_word_profiles(&seq)),
-            crossing_table: Arc::from(build_cl_crossing_table(&seq)),
-            int_seq: Arc::new(seq),
+            prepared: PreparedClHop::from_parts(Arc::new(seq), crossings, profiles),
         });
     }
     let golden = doc.get("golden").filter(|g| !g.is_null()).and_then(|g| {

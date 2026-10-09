@@ -148,10 +148,10 @@ impl CaptureVariant {
                             "gamma_numer": state.gamma_numer.to_string(),
                             "fee_denom": state.fee_denom.to_string(),
                         }),
-                        ResolvedHop::V3 { int_seq, .. } | ResolvedHop::V4 { int_seq, .. } => {
+                        ResolvedHop::V3 { prepared, .. } | ResolvedHop::V4 { prepared, .. } => {
                             serde_json::json!({
                                 "kind": "CL",
-                                "ranges": cl_ranges_json(int_seq),
+                                "ranges": cl_ranges_json(&prepared.int_seq),
                             })
                         }
                         _ => serde_json::Value::Null,
@@ -319,9 +319,11 @@ mod heavy_path_capture_tests {
         }])
         .expect("valid tick range sequence");
         ResolvedHop::V3 {
-            int_seq: std::sync::Arc::new(seq),
-            word_profiles: std::sync::Arc::new(Vec::new()),
-            crossing_table: std::sync::Arc::new(Vec::new()),
+            prepared: ::degenbot_solvers::cl::PreparedClHop::from_parts(
+                std::sync::Arc::new(seq),
+                std::sync::Arc::new(Vec::new()),
+                std::sync::Arc::new(Vec::new()),
+            ),
         }
     }
     fn v2_hop() -> ResolvedHop {

@@ -77,6 +77,7 @@ pub use crossings::{
 };
 pub use entries::{
     derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_mixed_piecewise, ClSolveTables,
+    PreparedClHop,
 };
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, WalkMemo, WalkMemoStats};

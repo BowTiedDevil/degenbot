@@ -6,39 +6,21 @@
 //! load-bearing differences — fee convention (V3 `gamma = 1e6 − lp_fee` vs V4
 //! combined `swapFee`), current-tick drain framing (V3 leading hop vs V4
 //! `base_liquidity` fold), and per-range net-sign direction (V4 only).
+//!
+//! TABLE DERIVATION (shared, still downstream of the per-family sequence
+//! builders): the promoted fused-epoch pair (cache-lab winner S1) lives in
+//! [`PreparedClHop::derive`] — ONE crossing build derives BOTH the crossing
+//! table and the word profiles from it, and folds the sequence's derivation
+//! fingerprint once. It reinterprets nothing about fee convention,
+//! current-tick drain framing, or net-sign direction; only the (identical for
+//! both families) table derivation is shared.
 
-use std::sync::Arc;
-
-use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles_from_crossings};
+use degenbot_solvers::cl::PreparedClHop;
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
 use crate::PoolTickCoverage;
-
-/// The promoted fused-epoch table pair (cache-lab winner S1): ONE
-/// crossing build derives BOTH artifacts as a unit — the crossing table
-/// directly, the word profiles from that same table — and hands them back
-/// `Arc`'d, ready for the hop-projection memo's O(1) clone. This is the
-/// shared derivation the memo holds per (pool, direction, nonce).
-///
-/// GUARDRAIL (GLOSSARY.md "CL-projection guardrail", still load-bearing):
-/// this helper sits DOWNSTREAM of the self-contained `build_int_v*_sequence`
-/// calls and reinterprets nothing about fee convention, current-tick drain
-/// framing, or net-sign direction — sequence construction stays per-projector
-/// above; only the table derivation (identical math for both families) is
-/// shared.
-#[must_use]
-fn fused_cl_tables(
-    seq: &degenbot_solvers::cl::IntV3TickRangeSequence,
-) -> (
-    Arc<degenbot_solvers::cl::ClCrossingTable>,
-    Arc<degenbot_solvers::cl::ClProfileTable>,
-) {
-    let crossings = Arc::new(build_cl_crossing_table(seq));
-    let profiles = Arc::new(build_cl_word_profiles_from_crossings(&crossings));
-    (crossings, profiles)
-}
 
 /// V3 projection: read pool state + identity off `core` (ADR-003) and build
 /// the integer tick-range sequence the CL solver consumes lock-free.
@@ -68,15 +50,10 @@ pub(crate) fn project_v3(
         .ok_or(MissingHopReason::SequenceUnavailable)?;
     let int_seq = std::sync::Arc::new(int_seq);
 
-    let (crossing_table, word_profiles) = fused_cl_tables(&int_seq);
-    Ok((
-        ResolvedHop::V3 {
-            int_seq,
-            word_profiles,
-            crossing_table,
-        },
-        pool_state.state_nonce,
-    ))
+    // Derive the crossing table + word profiles + fingerprint ONCE (the fused
+    // S1 derivation) — the projection constructs the carried value here.
+    let prepared = PreparedClHop::derive(int_seq);
+    Ok((ResolvedHop::V3 { prepared }, pool_state.state_nonce))
 }
 
 /// V4 projection: identical CL math as V3 (BotState-owned, ADR-003), with
@@ -118,15 +95,10 @@ pub(crate) fn project_v4(
         .ok_or(MissingHopReason::SequenceUnavailable)?;
     let int_seq = std::sync::Arc::new(int_seq);
 
-    let (crossing_table, word_profiles) = fused_cl_tables(&int_seq);
-    Ok((
-        ResolvedHop::V4 {
-            int_seq,
-            word_profiles,
-            crossing_table,
-        },
-        pool_state.state_nonce,
-    ))
+    // Derive as the V3 site: ONE crossing build, word profiles from it, the
+    // sequence's fingerprint folded once at derivation.
+    let prepared = PreparedClHop::derive(int_seq);
+    Ok((ResolvedHop::V4 { prepared }, pool_state.state_nonce))
 }
 
 #[cfg(test)]

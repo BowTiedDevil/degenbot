@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};
 
-use crate::cl::{ClWordProfile, IntTickRangeCrossing, IntV3TickRangeSequence};
+use crate::cl::{ClWordProfile, IntTickRangeCrossing, IntV3TickRangeSequence, PreparedClHop};
 use degenbot_math::balancer::PowVersion;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::v2::IntHopState;
@@ -330,24 +330,15 @@ pub struct CurveStableswapHopState {
 pub enum ResolvedHop {
     /// V2 constant-product hop
     V2 { state: IntHopState },
-    /// V3 concentrated-liquidity hop. `word_profiles` is the Stage-1 precomputed
-    /// dense-range word-boundary profile table (parallel to `int_seq.ranges`), built
-    /// once per `(pool, direction)` projection and shared via `Arc` so N paths
-    /// reusing the pool re-walk a dense range once, not once per solve.
-    /// `crossing_table` is the parallel precomputed per-ending-range crossing
-    /// data (`build_cl_crossing_table`), also built once per projection.
-    V3 {
-        int_seq: std::sync::Arc<IntV3TickRangeSequence>,
-        word_profiles: Arc<Vec<Option<Arc<ClWordProfile>>>>,
-        crossing_table: Arc<Vec<IntTickRangeCrossing>>,
-    },
-    /// V4 concentrated-liquidity hop (same CL math as V3, different settlement).
-    /// `word_profiles` + `crossing_table`: as `Self::V3`.
-    V4 {
-        int_seq: std::sync::Arc<IntV3TickRangeSequence>,
-        word_profiles: Arc<Vec<Option<Arc<ClWordProfile>>>>,
-        crossing_table: Arc<Vec<IntTickRangeCrossing>>,
-    },
+    /// V3 concentrated-liquidity hop. `prepared` is the projection's
+    /// derivation value ([`PreparedClHop`]): the tick-range sequence paired
+    /// with its `Arc`-shared crossing table + word profiles and the
+    /// sequence's derivation fingerprint, folded once per `(pool, direction)`
+    /// projection and shared across N paths reusing the pool.
+    V3 { prepared: PreparedClHop },
+    /// V4 concentrated-liquidity hop (same CL math as V3, different
+    /// settlement). `prepared`: as `Self::V3`.
+    V4 { prepared: PreparedClHop },
     /// Solidly/Aerodrome/Camelot stable or volatile hop. Owns its own solve
     /// branch — NOT concentrated-liquidity, so `as_int_sequence()` returns
     /// `None`. See [`SolidlyHopState`].
@@ -394,7 +385,7 @@ impl ResolvedHop {
         // The sequence is Arc-shared (built once per projection;
         // the memo deep-cloning it per path was the point of this change).
         match self {
-            Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
+            Self::V3 { prepared } | Self::V4 { prepared } => Some(&prepared.int_seq),
             Self::V2 { .. }
             | Self::SolidlyStable { .. }
             | Self::BalancerWeighted { .. }
@@ -408,7 +399,7 @@ impl ResolvedHop {
     #[must_use]
     pub fn as_word_profiles(&self) -> Option<&Arc<Vec<Option<Arc<ClWordProfile>>>>> {
         match self {
-            Self::V3 { word_profiles, .. } | Self::V4 { word_profiles, .. } => Some(word_profiles),
+            Self::V3 { prepared } | Self::V4 { prepared } => Some(&prepared.profiles),
             Self::V2 { .. }
             | Self::SolidlyStable { .. }
             | Self::BalancerWeighted { .. }
@@ -423,9 +414,21 @@ impl ResolvedHop {
     #[must_use]
     pub fn as_crossing_table(&self) -> Option<&Arc<Vec<IntTickRangeCrossing>>> {
         match self {
-            Self::V3 { crossing_table, .. } | Self::V4 { crossing_table, .. } => {
-                Some(crossing_table)
-            }
+            Self::V3 { prepared } | Self::V4 { prepared } => Some(&prepared.crossings),
+            Self::V2 { .. }
+            | Self::SolidlyStable { .. }
+            | Self::BalancerWeighted { .. }
+            | Self::BalancerStable { .. }
+            | Self::CurveStableswap { .. } => None,
+        }
+    }
+
+    /// The projection's [`PreparedClHop`] derivation value (sequence +
+    /// `Arc` tables + derivation fingerprint), if this is a CL hop (V3 or V4).
+    #[must_use]
+    pub fn as_prepared_cl_hop(&self) -> Option<&PreparedClHop> {
+        match self {
+            Self::V3 { prepared } | Self::V4 { prepared } => Some(prepared),
             Self::V2 { .. }
             | Self::SolidlyStable { .. }
             | Self::BalancerWeighted { .. }

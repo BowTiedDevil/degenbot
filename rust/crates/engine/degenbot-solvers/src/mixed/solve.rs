@@ -10,8 +10,6 @@
 //! The CL hop uses `crate::cl::*` (same crate); the V2 + CL
 //! Möbius arms call `crate::mobius_int::*` / `crate::mobius_int_exact::*`.
 
-use std::sync::Arc;
-
 use alloy::primitives::{U256, U512};
 
 use crate::profit_envelope::{
@@ -73,19 +71,12 @@ pub fn solve_path_with_min_profit(
         .iter()
         .map(|h| match h {
             ResolvedHop::V2 { state } => Some(HopMath::V2(state)),
-            ResolvedHop::V3 {
-                int_seq,
-                crossing_table,
-                ..
+            ResolvedHop::V3 { prepared, .. } | ResolvedHop::V4 { prepared, .. } => {
+                Some(HopMath::Cl(ClHop {
+                    seq: &prepared.int_seq,
+                    crossings: std::borrow::Cow::Borrowed(&prepared.crossings),
+                }))
             }
-            | ResolvedHop::V4 {
-                int_seq,
-                crossing_table,
-                ..
-            } => Some(HopMath::Cl(ClHop {
-                seq: int_seq,
-                crossings: std::borrow::Cow::Borrowed(crossing_table),
-            })),
             // Solidly volatile is the constant-product family → the
             // fee-agnostic V2 lines. Solidly stable is a stableswap whose
             // marginal rate is non-monotone → sound reserve cap only (loose);
@@ -372,8 +363,8 @@ pub fn solve_path_inner(
             .hops
             .iter()
             .map(|hop| match hop {
-                ResolvedHop::V3 { int_seq, .. } | ResolvedHop::V4 { int_seq, .. } => {
-                    if let Some(range) = int_seq.ranges.first() {
+                ResolvedHop::V3 { prepared, .. } | ResolvedHop::V4 { prepared, .. } => {
+                    if let Some(range) = prepared.int_seq.ranges.first() {
                         let family = if matches!(hop, ResolvedHop::V3 { .. }) {
                             "V3"
                         } else {
@@ -440,7 +431,9 @@ fn solve_walkable_path_int(
     let int_v3_sequences: Vec<Option<&crate::cl::IntV3TickRangeSequence>> =
         resolved.hops.iter().map(|h| h.as_int_sequence()).collect();
 
-    // Per-CL-hop prepared tables from the projection (V2 positions None).
+    // Per-CL-hop prepared tables from the projection (V2 positions None): the
+    // derivation value rides the resolved hop, so the fingerprint is folded
+    // ONCE at derivation — the translate below only Arc-clones the tables.
     let cl_prepared: Vec<Option<crate::cl::ClSolveTables>> = hop_order
         .iter()
         .enumerate()
@@ -448,12 +441,7 @@ fn solve_walkable_path_int(
             if is_v2 {
                 None
             } else {
-                let seq = int_v3_sequences[i]?;
-                Some(crate::cl::ClSolveTables {
-                    crossings: Arc::clone(resolved.hops[i].as_crossing_table()?),
-                    profiles: Arc::clone(resolved.hops[i].as_word_profiles()?),
-                    source_fingerprint: crate::cl::walk_path_fingerprint(&[seq]),
-                })
+                Some(resolved.hops[i].as_prepared_cl_hop()?.to_solve_tables())
             }
         })
         .collect();

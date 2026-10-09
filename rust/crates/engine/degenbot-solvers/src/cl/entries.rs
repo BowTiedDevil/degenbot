@@ -2,7 +2,8 @@ use degenbot_math::v2::IntHopState;
 
 use super::active_set::{solve_active_set_path, PieceView, WalkOutcome};
 use super::crossings::{
-    build_cl_crossing_table, build_word_profiles, cl_walk_hop, cl_walk_hop_cached,
+    build_cl_crossing_table, build_cl_word_profiles_from_crossings, build_word_profiles,
+    cl_walk_hop, cl_walk_hop_cached,
 };
 use super::memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, MemoProbe, WalkMemo};
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
@@ -44,6 +45,84 @@ impl ClSolveTables {
     /// [`walk_path_fingerprint`] re-derivation.
     fn matches(&self, seq: &IntV3TickRangeSequence) -> bool {
         self.source_fingerprint == walk_path_fingerprint(&[seq])
+    }
+}
+
+/// One CL hop's DERIVATION value: the tick-range sequence it was derived from,
+/// paired with the crossing table + word profiles built from that sequence and
+/// the sequence's derivation fingerprint, folded ONCE per (pool, direction) by
+/// the projection.
+///
+/// This is the projection-carried shape [`ResolvedHop::V3`/`V4`] carries (see
+/// `mixed::ResolvedHop`). The solve entries still take [`ClSolveTables`] —
+/// [`PreparedClHop::to_solve_tables`] translates at the call site, so the
+/// entries keep their signatures and `ClSolveTables` rides until a later chunk
+/// retires it. Folding `source_fingerprint` HERE, not at solve time, is the
+/// point of the value: the fingerprint is a pure function of the sequence, so
+/// it is derived once at derivation and stored.
+#[derive(Clone, Debug)]
+pub struct PreparedClHop {
+    /// The tick-range sequence these tables were derived from, `Arc`-shared
+    /// across every path reusing the projection.
+    pub int_seq: std::sync::Arc<IntV3TickRangeSequence>,
+    /// The per-ending-range crossing table ([`build_cl_crossing_table`]).
+    pub crossings: std::sync::Arc<ClCrossingTable>,
+    /// The dense-range word-boundary profiles, derived from `crossings` (the
+    /// fused-epoch winner: ONE crossing build derives both artifacts).
+    pub profiles: std::sync::Arc<ClProfileTable>,
+    /// [`walk_path_fingerprint`] of `int_seq`, recorded at derivation so the
+    /// solve entries can refuse a pair whose claimed source disagrees with the
+    /// sequence at its position instead of trusting positional pairing.
+    pub source_fingerprint: u128,
+}
+
+impl PreparedClHop {
+    /// Derive the crossing table + word profiles from `int_seq` and fold the
+    /// sequence's derivation fingerprint once — the projection's construction.
+    ///
+    /// The crossing table is built directly and the word profiles derived from
+    /// that same table (not rebuilt from the sequence), so the O(n²) crossing
+    /// build runs exactly once per (pool, direction).
+    #[must_use]
+    pub fn derive(int_seq: std::sync::Arc<IntV3TickRangeSequence>) -> Self {
+        let crossings = std::sync::Arc::new(build_cl_crossing_table(&int_seq));
+        let profiles = std::sync::Arc::new(build_cl_word_profiles_from_crossings(&crossings));
+        let source_fingerprint = walk_path_fingerprint(&[int_seq.as_ref()]);
+        Self {
+            int_seq,
+            crossings,
+            profiles,
+            source_fingerprint,
+        }
+    }
+
+    /// Wrap an already-built sequence + tables (offline/replay callers that
+    /// build the tables themselves), folding the fingerprint once.
+    #[must_use]
+    pub fn from_parts(
+        int_seq: std::sync::Arc<IntV3TickRangeSequence>,
+        crossings: std::sync::Arc<ClCrossingTable>,
+        profiles: std::sync::Arc<ClProfileTable>,
+    ) -> Self {
+        let source_fingerprint = walk_path_fingerprint(&[int_seq.as_ref()]);
+        Self {
+            int_seq,
+            crossings,
+            profiles,
+            source_fingerprint,
+        }
+    }
+
+    /// Translate to the solve entries' intake type: `Arc`-clone the tables and
+    /// forward the derivation-time fingerprint. The entries' signatures (and
+    /// the tables themselves) are unchanged.
+    #[must_use]
+    pub fn to_solve_tables(&self) -> ClSolveTables {
+        ClSolveTables {
+            crossings: std::sync::Arc::clone(&self.crossings),
+            profiles: std::sync::Arc::clone(&self.profiles),
+            source_fingerprint: self.source_fingerprint,
+        }
     }
 }
 

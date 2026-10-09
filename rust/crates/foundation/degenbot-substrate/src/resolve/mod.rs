@@ -587,7 +587,7 @@ mod tests {
     ) -> *const Vec<Option<Arc<ClWordProfile>>> {
         match &cache.get_entry(key).expect("entry") {
             (CachedProjection::Hop(arc), _) => match arc.as_ref() {
-                ResolvedHop::V3 { word_profiles, .. } => Arc::as_ptr(word_profiles),
+                ResolvedHop::V3 { prepared, .. } => Arc::as_ptr(&prepared.profiles),
                 _ => panic!("expected a cached V3 hop"),
             },
             (CachedProjection::Invalid(_), _) => panic!("expected a cached hop, got invalid"),
@@ -602,7 +602,7 @@ mod tests {
     ) -> *const Vec<IntTickRangeCrossing> {
         match &cache.get_entry(key).expect("entry") {
             (CachedProjection::Hop(arc), _) => match arc.as_ref() {
-                ResolvedHop::V3 { crossing_table, .. } => Arc::as_ptr(crossing_table),
+                ResolvedHop::V3 { prepared, .. } => Arc::as_ptr(&prepared.crossings),
                 _ => panic!("expected a cached V3 hop"),
             },
             (CachedProjection::Invalid(_), _) => panic!("expected a cached hop, got invalid"),
@@ -926,25 +926,13 @@ mod tests {
             .iter()
             .filter_map(ResolvedHop::as_int_sequence)
             .collect();
-        let profiles: Vec<_> = r
+        // The projection's derivation value rides each CL hop; translate it to
+        // the entries' intake shape (the fingerprint is already folded once).
+        let prepared: Vec<_> = r
             .hops
             .iter()
-            .filter_map(ResolvedHop::as_word_profiles)
-            .collect();
-        let crossings: Vec<_> = r
-            .hops
-            .iter()
-            .filter_map(ResolvedHop::as_crossing_table)
-            .collect();
-        let prepared: Vec<degenbot_solvers::cl::ClSolveTables> = seqs
-            .iter()
-            .zip(crossings.iter())
-            .zip(profiles.iter())
-            .map(|((seq, c), p)| degenbot_solvers::cl::ClSolveTables {
-                crossings: std::sync::Arc::clone(c),
-                profiles: std::sync::Arc::clone(p),
-                source_fingerprint: degenbot_solvers::cl::walk_path_fingerprint(&[*seq]),
-            })
+            .filter_map(ResolvedHop::as_prepared_cl_hop)
+            .map(|p| p.to_solve_tables())
             .collect();
         degenbot_solvers::cl::solve_cl_piecewise(
             &seqs,
@@ -975,31 +963,16 @@ mod tests {
         // Borrow: the walk reads the sequences only.
         let seqs: Vec<Option<&degenbot_solvers::cl::IntV3TickRangeSequence>> =
             r.hops.iter().map(ResolvedHop::as_int_sequence).collect();
-        let crossings: Vec<Option<std::sync::Arc<degenbot_solvers::cl::ClCrossingTable>>> = r
-            .hops
-            .iter()
-            .map(ResolvedHop::as_crossing_table)
-            .map(|opt| opt.cloned())
-            .collect();
-        let profiles: Vec<Option<std::sync::Arc<degenbot_solvers::cl::ClProfileTable>>> = r
-            .hops
-            .iter()
-            .map(ResolvedHop::as_word_profiles)
-            .map(|opt| opt.cloned())
-            .collect();
-        let cl_prepared: Vec<Option<degenbot_solvers::cl::ClSolveTables>> = hop_order
+        // The projection's derivation value rides each CL hop; translate it to
+        // the entries' intake shape (the fingerprint is already folded once).
+        let cl_prepared: Vec<Option<_>> = hop_order
             .iter()
             .enumerate()
             .map(|(i, &is_v2)| {
                 if is_v2 {
                     None
                 } else {
-                    let seq = seqs[i]?;
-                    Some(degenbot_solvers::cl::ClSolveTables {
-                        crossings: std::sync::Arc::clone(crossings[i].as_ref()?),
-                        profiles: std::sync::Arc::clone(profiles[i].as_ref()?),
-                        source_fingerprint: degenbot_solvers::cl::walk_path_fingerprint(&[seq]),
-                    })
+                    Some(r.hops[i].as_prepared_cl_hop()?.to_solve_tables())
                 }
             })
             .collect();
