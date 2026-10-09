@@ -332,9 +332,9 @@ pub enum ResolvedHop {
     V2 { state: IntHopState },
     /// V3 concentrated-liquidity hop. `prepared` is the projection's
     /// derivation value ([`PreparedClHop`]): the tick-range sequence paired
-    /// with its `Arc`-shared crossing table + word profiles and the
-    /// sequence's derivation fingerprint, folded once per `(pool, direction)`
-    /// projection and shared across N paths reusing the pool.
+    /// with its `Arc`-shared crossing table + word profiles, built once per
+    /// `(pool, direction)` projection and shared across N paths reusing the
+    /// pool.
     V3 { prepared: PreparedClHop },
     /// V4 concentrated-liquidity hop (same CL math as V3, different
     /// settlement). `prepared`: as `Self::V3`.
@@ -424,7 +424,7 @@ impl ResolvedHop {
     }
 
     /// The projection's [`PreparedClHop`] derivation value (sequence +
-    /// `Arc` tables + derivation fingerprint), if this is a CL hop (V3 or V4).
+    /// `Arc` tables), if this is a CL hop (V3 or V4).
     #[must_use]
     pub fn as_prepared_cl_hop(&self) -> Option<&PreparedClHop> {
         match self {

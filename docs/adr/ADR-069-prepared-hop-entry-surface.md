@@ -68,3 +68,5 @@ the walkmemo cross-block replay A/B.
 - The "fingerprint = what the walker reads" invariant stops being prose across three
   files and becomes a property of the value: the key and the walk are computed from the
   same fields.
+- The stored per-hop fingerprint retired with the table gate it fed: D5's fold body stays
+  byte-identical and crate-private, and the value no longer carries a copy.

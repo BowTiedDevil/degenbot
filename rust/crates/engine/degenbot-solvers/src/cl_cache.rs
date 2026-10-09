@@ -49,8 +49,8 @@ pub trait ClCacheStrategy {
 }
 
 /// Wrap a freshly built crossing table + word profiles as the one intake
-/// value, folding the sequence's derivation fingerprint once so every
-/// strategy hands back the same `PreparedClHop` shape the projection builds.
+/// value, so every strategy hands back the same `PreparedClHop` shape the
+/// projection builds.
 fn prepared_hop(
     seq: &IntV3TickRangeSequence,
     crossings: Arc<ClCrossingTable>,

@@ -486,7 +486,6 @@ pub(crate) fn walk_mixed_path_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cl::PreparedClHop;
     use ::degenbot_pools::int_v3_hop::IntV3TickRangeHop;
 
     /// Fixture range with arbitrary (fingerprint-opaque) small Q128.96-style
@@ -538,13 +537,13 @@ mod tests {
         ])
     }
 
-    /// The key a `PreparedClHop` derives for `seq` — the value the sweep pins
-    /// (read through the accessor, so the sweep also covers the carried value).
+    /// The all-CL memo key for a single-sequence path — what the sweep pins
+    /// (folded from the sequence directly; no stored per-hop value remains).
     fn prepared_key(seq: &IntV3TickRangeSequence) -> u128 {
-        PreparedClHop::derive(std::sync::Arc::new(seq.clone())).fingerprint()
+        walk_path_fingerprint(&[seq])
     }
 
-    /// Perturb one CL-range field and assert the prepared hop's key moves.
+    /// Perturb one CL-range field and assert the folded key moves.
     fn assert_cl_field_moves_key(label: &str, mutate: impl Fn(&mut IntV3TickRangeSequence)) {
         let base = base_seq();
         let key = prepared_key(&base);
