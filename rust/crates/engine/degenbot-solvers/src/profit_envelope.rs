@@ -1795,18 +1795,18 @@ pub enum GateSkipCause {
 /// degenerate-path capture config. One interface, no hidden state.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GateDeps<'a> {
-    pub epoch: u64,
-    pub prefix_cache: bool,
+    pub(crate) epoch: u64,
+    pub(crate) prefix_cache: bool,
     /// The owner-scoped prefix store (C4); `None` disables reuse for this
     /// solve (offline deps, tests). Replaces the retired process static.
-    pub prefix_store: Option<&'a PrefixCache>,
-    pub capture: Option<&'a GateCaptureCfg>,
+    pub(crate) prefix_store: Option<&'a PrefixCache>,
+    pub(crate) capture: Option<&'a GateCaptureCfg>,
     /// The engine-owned cross-block walk-memo handle; `None`
     /// disables the memo for this solve.
-    pub walk_memo: Option<&'a crate::cl::WalkMemo>,
+    pub(crate) walk_memo: Option<&'a crate::cl::WalkMemo>,
     /// the owner's runtime stance (envelope caps + trace gate),
     /// instance-scoped and passed down — the gate reads no environment.
-    pub runtime: SolveRuntimeConfig,
+    pub(crate) runtime: SolveRuntimeConfig,
 }
 
 impl GateDeps<'_> {
@@ -1818,37 +1818,24 @@ impl GateDeps<'_> {
 
     /// Production solve cycle: the prefix cache against this block's epoch,
     /// served from the owner's `PrefixCache` (C4 — the constructor takes the
-    /// store so a caller cannot arm the bool and silently get None).
+    /// store so a caller cannot arm the bool and silently get None). The
+    /// optional capture config and the engine-owned walk-memo handle ride the
+    /// same call; `prefix_cache` is armed here because the store is required,
+    /// so the bool can no longer disagree with it.
     #[must_use]
     pub fn per_block<'a>(
         epoch: u64,
-        capture: Option<&'a GateCaptureCfg>,
         prefix_store: &'a PrefixCache,
-    ) -> GateDeps<'a> {
-        GateDeps {
-            epoch,
-            prefix_cache: true,
-            prefix_store: Some(prefix_store),
-            capture,
-            walk_memo: None,
-            runtime: SolveRuntimeConfig::default(),
-        }
-    }
-
-    /// Production solve cycle with the owner's instance runtime config.
-    #[must_use]
-    pub fn per_block_with<'a>(
-        epoch: u64,
         capture: Option<&'a GateCaptureCfg>,
+        walk_memo: Option<&'a crate::cl::WalkMemo>,
         runtime: SolveRuntimeConfig,
-        prefix_store: &'a PrefixCache,
     ) -> GateDeps<'a> {
         GateDeps {
             epoch,
             prefix_cache: true,
             prefix_store: Some(prefix_store),
             capture,
-            walk_memo: None,
+            walk_memo,
             runtime,
         }
     }

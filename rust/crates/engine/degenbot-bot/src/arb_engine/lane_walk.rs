@@ -155,14 +155,13 @@ pub(crate) fn solve_one_path(
     // memo + owned capture cfg land in the shared ctx per cycle; the
     // prefix cache is generationed by the block epoch - same semantics
     // as the old single borrowed GateDeps shared by the scope workers.
-    let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps {
-        epoch: ctx.epoch,
-        prefix_cache: true,
-        prefix_store: Some(&ctx.prefix_cache),
-        capture: ctx.gate_capture.as_ref(),
-        walk_memo: Some(&*ctx.walk_memo),
-        runtime: ctx.runtime,
-    };
+    let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
+        ctx.epoch,
+        &ctx.prefix_cache,
+        ctx.gate_capture.as_ref(),
+        Some(&*ctx.walk_memo),
+        ctx.runtime,
+    );
     let _solve_ctx = solve_span.enter();
     // per-path child span. Created BEFORE the walk (the exported
     // duration is the real solve wall) and recorded after; the walk counters

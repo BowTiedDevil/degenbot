@@ -25,6 +25,7 @@ use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::profit_envelope::{
     path_output_bound_at, path_profit_bound, ClHop, Envelope, GateDeps, GateSkipCause, HopMath,
 };
+use degenbot_solvers::runtime::SolveRuntimeConfig;
 use std::borrow::Cow;
 
 /// The gate through its one entry at offline deps, unwrapped to the bound
@@ -498,7 +499,13 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
 
     // Same epoch both calls: populate the (content-keyed) cache, then reuse.
     let store = degenbot_solvers::profit_envelope::PrefixCache::new();
-    let deps = degenbot_solvers::profit_envelope::GateDeps::per_block(1, None, &store);
+    let deps = degenbot_solvers::profit_envelope::GateDeps::per_block(
+        1,
+        &store,
+        None,
+        None,
+        SolveRuntimeConfig::default(),
+    );
     let first = path_profit_bound(&views, &deps);
     let _gs1 = degenbot_solvers::profit_envelope::take_last_gate_stats();
     let second = path_profit_bound(&views, &deps);
@@ -513,7 +520,10 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
         "prefix reuse should cut composed boundaries"
     );
     // No cache reset exists — a new epoch in GateDeps drops older entries.
-    let dropped = path_profit_bound(&views, &GateDeps::per_block(2, None, &store));
+    let dropped = path_profit_bound(
+        &views,
+        &GateDeps::per_block(2, &store, None, None, SolveRuntimeConfig::default()),
+    );
     let gs3 = degenbot_solvers::profit_envelope::take_last_gate_stats();
     assert_eq!(dropped, first, "new-epoch solve must be byte-identical");
     assert_eq!(
@@ -568,9 +578,15 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
     let expected_large = path_profit_bound(&large_views, &GateDeps::offline());
     // Populate the cache under the SMALL domain first.
     let store = degenbot_solvers::profit_envelope::PrefixCache::new();
-    let _ = path_profit_bound(&small_views, &GateDeps::per_block(3, None, &store));
+    let _ = path_profit_bound(
+        &small_views,
+        &GateDeps::per_block(3, &store, None, None, SolveRuntimeConfig::default()),
+    );
     // Now solve the large-domain path with the cache on (same epoch).
-    let cached = path_profit_bound(&large_views, &GateDeps::per_block(3, None, &store));
+    let cached = path_profit_bound(
+        &large_views,
+        &GateDeps::per_block(3, &store, None, None, SolveRuntimeConfig::default()),
+    );
     assert_eq!(
         cached, expected_large,
         "prefix entry composed under a smaller domain leaked into a larger-domain path"
@@ -609,8 +625,14 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
     let expected_tiny = path_profit_bound(&tiny_views, &GateDeps::offline());
     let expected_huge = path_profit_bound(&huge_views, &GateDeps::offline());
     let store = degenbot_solvers::profit_envelope::PrefixCache::new();
-    let _ = path_profit_bound(&tiny_views, &GateDeps::per_block(4, None, &store));
-    let cached_huge = path_profit_bound(&huge_views, &GateDeps::per_block(4, None, &store));
+    let _ = path_profit_bound(
+        &tiny_views,
+        &GateDeps::per_block(4, &store, None, None, SolveRuntimeConfig::default()),
+    );
+    let cached_huge = path_profit_bound(
+        &huge_views,
+        &GateDeps::per_block(4, &store, None, None, SolveRuntimeConfig::default()),
+    );
     assert_eq!(
         cached_huge, expected_huge,
         "ladder prefix composed under a tiny domain leaked into a huge-domain path"
@@ -653,9 +675,15 @@ fn prefix_cache_chains_through_v2_hops() {
     // then the warm solve must hit DETERMINISTICALLY (no spin; C4 retired the
     // process-global store that made cross-test interference possible).
     let store = degenbot_solvers::profit_envelope::PrefixCache::new();
-    let cold = path_profit_bound(&views, &GateDeps::per_block(5, None, &store));
+    let cold = path_profit_bound(
+        &views,
+        &GateDeps::per_block(5, &store, None, None, SolveRuntimeConfig::default()),
+    );
     assert_eq!(cold, expected, "cold populate must be byte-identical");
-    let warm = path_profit_bound(&views, &GateDeps::per_block(5, None, &store));
+    let warm = path_profit_bound(
+        &views,
+        &GateDeps::per_block(5, &store, None, None, SolveRuntimeConfig::default()),
+    );
     assert_eq!(warm, expected, "mixed-prefix reuse must be byte-identical");
     let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
     assert!(
@@ -777,14 +805,16 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
         out_path: std::path::PathBuf::from(&path),
         max_paths: 10,
     };
-    let deps = degenbot_solvers::profit_envelope::GateDeps {
-        epoch: 0,
-        prefix_cache: false,
-        prefix_store: None,
-        capture: Some(&capture_cfg),
-        walk_memo: None,
-        runtime: degenbot_solvers::runtime::SolveRuntimeConfig::default(),
-    };
+    // The constructor requires the store; the degenerate reject fires before
+    // any prefix lookup, so the cache stays empty and the outcome is identical.
+    let store = degenbot_solvers::profit_envelope::PrefixCache::new();
+    let deps = degenbot_solvers::profit_envelope::GateDeps::per_block(
+        0,
+        &store,
+        Some(&capture_cfg),
+        None,
+        SolveRuntimeConfig::default(),
+    );
     assert!(matches!(
         path_profit_bound(&views, &deps),
         degenbot_solvers::profit_envelope::Envelope::Unsupported(

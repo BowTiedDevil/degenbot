@@ -2085,13 +2085,13 @@ impl SolveCycle {
             let run_bin = move || {
                 // Cold start: no capture wiring — deps with the
                 // registered-epoch guard + the engine walk-memo handle.
-                let mut gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block_with(
+                let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
                     results_block,
-                    None,
-                    runtime_cfg,
                     &prefix_store,
+                    None,
+                    Some(&memo),
+                    runtime_cfg,
                 );
-                gate_deps.walk_memo = Some(&memo);
                 for &i in &bin {
                     let (path_id, resolved) = &to_solve_bin[i];
                     let _solve_ctx = solve_span_bin.enter();
