@@ -104,25 +104,33 @@ struct ResolveChunkOut {
 
 /// The solve-cycle block scope: the ONE owner of the block boundary.
 ///
-/// It holds the engine-owned walk-composition memo and prefix-composition
-/// cache handles and owns [`advance`](Self::advance) — the memo's
-/// drain-and-advance in ONE call, returning the epoch that just ended — plus
-/// the block number every per-path `GateDeps::per_block` is built from. Both
-/// epoch notions deliberately share ONE block number: the memo's census epoch
-/// and the prefix cache's generation are the same solved block, so a block's
-/// deps can never disagree with the memo's epoch.
+/// It holds the engine-owned walk-composition memo, walk-telemetry collector,
+/// and prefix-composition cache handles and owns [`advance`](Self::advance) —
+/// the memo's drain-and-advance in ONE call, returning the epoch that just
+/// ended — plus the block number every per-path `GateDeps::per_block` is built
+/// from. Both epoch notions deliberately share ONE block number: the memo's
+/// census epoch and the prefix cache's generation are the same solved block,
+/// so a block's deps can never disagree with the memo's epoch. Keeping the
+/// collector here too means every per-block handle a path's deps needs lives
+/// in one place.
 #[derive(Clone)]
 pub(crate) struct BlockScope {
     walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>,
+    walk_telemetry: Arc<::degenbot_solvers::cl::WalkTelemetry>,
     prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
     epoch: u64,
 }
 
 impl BlockScope {
-    /// A fresh scope at epoch 0 over the given walk-composition memo handle.
-    pub(crate) fn new(walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>) -> Self {
+    /// A fresh scope at epoch 0 over the given walk-composition memo and
+    /// walk-telemetry collector handles.
+    pub(crate) fn new(
+        walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>,
+        walk_telemetry: Arc<::degenbot_solvers::cl::WalkTelemetry>,
+    ) -> Self {
         Self {
             walk_memo,
+            walk_telemetry,
             prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
             epoch: 0,
         }
@@ -148,6 +156,12 @@ impl BlockScope {
     #[must_use]
     pub(crate) fn walk_memo(&self) -> &Arc<::degenbot_solvers::cl::WalkMemo> {
         &self.walk_memo
+    }
+
+    /// The engine-owned walk telemetry collector handle.
+    #[must_use]
+    pub(crate) fn walk_telemetry(&self) -> &Arc<::degenbot_solvers::cl::WalkTelemetry> {
+        &self.walk_telemetry
     }
 
     /// The engine-owned prefix-composition cache handle.
@@ -233,9 +247,10 @@ impl SolveCycleShared {
             solve_block,
             metadata,
             gate_capture: None,
-            scope: BlockScope::new(std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(
-                false, false,
-            ))),
+            scope: BlockScope::new(
+                std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
+                std::sync::Arc::new(::degenbot_solvers::cl::WalkTelemetry::new()),
+            ),
             min_profit: U256::ZERO,
             clamp_margin: U256::from(1u128),
             runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
@@ -2122,6 +2137,7 @@ impl SolveCycle {
         // the pool-ref map for the empty-march clamp. No engine state is touched
         // (engine-then-core invariant intact; the mixer only reads core).
         let memo = std::sync::Arc::clone(self.scope.walk_memo());
+        let walk_telemetry = std::sync::Arc::clone(self.scope.walk_telemetry());
         let prefix_store_out = std::sync::Arc::clone(self.scope.prefix_cache());
         let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> = registry.path_pools().clone();
         let core = std::sync::Arc::clone(&self.core);
@@ -2135,6 +2151,7 @@ impl SolveCycle {
             let to_solve_bin = to_solve.clone();
             let memo = std::sync::Arc::clone(&memo);
             let prefix_store = std::sync::Arc::clone(&prefix_store_out);
+            let walk_telemetry = std::sync::Arc::clone(&walk_telemetry);
             let path_pools = path_pools.clone();
             let core = std::sync::Arc::clone(&core);
             let tx = tx.clone();
@@ -2148,7 +2165,8 @@ impl SolveCycle {
                     None,
                     Some(&memo),
                     runtime_cfg,
-                );
+                )
+                .with_telemetry(Some(&walk_telemetry));
                 for &i in &bin {
                     let (path_id, resolved) = &to_solve_bin[i];
                     let _solve_ctx = solve_span_bin.enter();

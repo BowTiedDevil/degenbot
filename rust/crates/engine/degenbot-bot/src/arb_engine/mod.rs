@@ -544,10 +544,13 @@ impl ArbitrageEngine {
                 // the machine's pre-cycle init lives on the machine
                 // (dormant Unopened, pipe closed, counters at 0).
                 detached_cycle: detached_cycle::DetachedCycle::new(),
-                scope: BlockScope::new(std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(
-                    cfg.solve.solver_walk_memo,
-                    cfg.solve.solver_walk_memo_stats,
-                ))),
+                scope: BlockScope::new(
+                    std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(
+                        cfg.solve.solver_walk_memo,
+                        cfg.solve.solver_walk_memo_stats,
+                    )),
+                    std::sync::Arc::new(::degenbot_solvers::cl::WalkTelemetry::new()),
+                ),
                 min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),
                 clamp_margin: retune.clamp_margin,
                 inline_sim_enabled: cfg.solve.solve_inline_sim,

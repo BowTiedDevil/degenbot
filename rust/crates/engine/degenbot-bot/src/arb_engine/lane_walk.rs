@@ -155,7 +155,8 @@ pub(crate) fn solve_one_path(
             .map(|s| s as &dyn ::degenbot_solvers::profit_envelope::DegeneratePathSink),
         Some(&**ctx.scope.walk_memo()),
         ctx.runtime,
-    );
+    )
+    .with_telemetry(Some(&**ctx.scope.walk_telemetry()));
     let _solve_ctx = solve_span.enter();
     // per-path child span. Created BEFORE the walk (the exported
     // duration is the real solve wall) and recorded after; the walk counters

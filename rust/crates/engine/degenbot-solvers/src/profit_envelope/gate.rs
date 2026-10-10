@@ -594,9 +594,9 @@ impl GateDeps<'_> {
             prefix_store: Some(prefix_store),
             capture,
             walk_memo,
-            // The engine-owned collector injection point: the bot wires this
-            // once its ownership step lands; offline and test deps keep the
-            // census off here.
+            // The collector's injection point: the bot attaches it with
+            // [`Self::with_telemetry`] from the block scope it already holds;
+            // offline and test deps keep the census off here.
             telemetry: None,
             runtime,
         }
@@ -613,6 +613,19 @@ impl GateDeps<'_> {
     #[must_use]
     pub fn telemetry(&self) -> Option<&crate::cl::WalkTelemetry> {
         self.telemetry
+    }
+}
+
+impl<'a> GateDeps<'a> {
+    /// The same deps with the engine-owned walk telemetry collector attached —
+    /// the bot's per-path construction point (the collector's `Arc` lives on
+    /// the block scope beside the memo, so the deps for a block carry every
+    /// handle the walk needs). `None` leaves the ns census off for this solve,
+    /// exactly as [`Self::per_block`] seeds it.
+    #[must_use]
+    pub fn with_telemetry(mut self, telemetry: Option<&'a crate::cl::WalkTelemetry>) -> Self {
+        self.telemetry = telemetry;
+        self
     }
 }
 
