@@ -10,7 +10,7 @@
 //! Every function is `#[cfg(test)]` (the module is declared behind that gate in
 //! `mod.rs`), so none of this compiles into a production build.
 use super::boot_stamp::BootStamp;
-use super::solve_cycle::CycleOutcome;
+use super::solve_cycle::{CycleOutcome, CycleTicket};
 use super::ArbitrageEngine;
 use super::BlockMetadata;
 use crate::bot_core::V3SwapUpdate;
@@ -37,7 +37,7 @@ pub(crate) fn run_test_cycle(
     affected: &[degenbot_solvers::affected_keys::AffectedKey],
 ) -> CycleOutcome {
     let outcome = engine.cycle.run_epoch(
-        affected,
+        cycle_ticket(affected),
         block_number,
         metadata,
         &engine.registry,
@@ -107,8 +107,13 @@ pub(crate) fn process_updates(
         }
     }
     // Re-solve only paths containing updated pools (test-only intake)
+    let ticket = cycle_ticket(&super::tests::test_keys::affected_keys(
+        &v2_affected,
+        &v3_affected,
+        &HashSet::new(),
+    ));
     engine.cycle.run_epoch(
-        &super::tests::test_keys::affected_keys(&v2_affected, &v3_affected, &HashSet::new()),
+        ticket,
         block_number,
         metadata,
         &engine.registry,
@@ -120,15 +125,43 @@ pub(crate) fn process_updates(
 
 /// Test-only read accessor for the block cursor's solved boundary.
 pub(crate) fn last_solved_block(engine: &ArbitrageEngine) -> u64 {
-    engine.cycle.cursor.last_solved_block()
+    engine.cycle.cursor.coordinates().last_solved_block
 }
 
 /// Test-only read accessor for the forward-log flag on the block cursor.
 pub(crate) fn has_logs_this_block(engine: &ArbitrageEngine) -> bool {
-    engine.cycle.cursor.has_logs_this_block()
+    engine.cycle.cursor.coordinates().has_logs_this_block
 }
 
 /// Test-only read accessor for the cycle's hop-projection counter.
 pub(crate) fn hop_projection_count(engine: &ArbitrageEngine) -> u64 {
     engine.cycle.hop_projection_count
+}
+
+/// The cycle ticket for a direct engine drive: the stage row that carries the
+/// draw's ticket in production has no counterpart here, so a white-box drive
+/// mints the value the draw would have minted (the non-admission stance never
+/// sheds). This is the sanctioned door — a direct drive never reaches for the
+/// cycle's private stash.
+pub(crate) fn cycle_ticket(
+    affected: &[degenbot_solvers::affected_keys::AffectedKey],
+) -> CycleTicket {
+    CycleTicket::for_test(affected.to_vec())
+}
+
+/// The pending-new carry (the eager-registration handoff to the next dirty
+/// cycle): the read door for the carry the cycle keeps private.
+pub(crate) fn pending_new_paths(engine: &ArbitrageEngine) -> &HashSet<u64> {
+    engine.cycle.pending_new_paths()
+}
+
+/// The pending-new carry, mutable: a fixture arms the handoff without
+/// registering a path first.
+pub(crate) fn pending_new_paths_mut(engine: &mut ArbitrageEngine) -> &mut HashSet<u64> {
+    engine.cycle.pending_new_paths_mut()
+}
+
+/// The current cycle's same-state reuse counter (a cycle-transient probe).
+pub(crate) fn same_state_this_cycle(engine: &ArbitrageEngine) -> u64 {
+    engine.cycle.same_state_this_cycle()
 }

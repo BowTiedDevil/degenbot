@@ -388,7 +388,11 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
             // keys, solve exactly what the take returned.
             let keys = marker_delta.take_keys();
             if !keys.is_empty() {
-                handle.run_solve_cycle(&keys, block + i, &BlockMetadata::default());
+                handle.run_solve_cycle(
+                    crate::arb_engine::test_harness::cycle_ticket(&keys),
+                    block + i,
+                    &BlockMetadata::default(),
+                );
             }
         }
     });
@@ -525,7 +529,7 @@ fn finalize_block_consumes_no_dirt_and_emits_no_solve() {
         );
         assert!(!has_logs_this_block(&engine,));
         // Results anchor advanced for the terminal batch.
-        assert_eq!(engine.cycle.cursor.results_block(), 5);
+        assert_eq!(engine.cycle.cursor.coordinates().results_block, 5);
     }
     // Terminal publish: the boundary batch still flows to Python with the
     // finalized block as its solve_block.
@@ -609,11 +613,19 @@ fn solve_spans_anchor_to_their_own_published_block() {
         // (1) Exact hit: solve of the PUBLISHED block 100 re-attaches to
         // the published epoch(100) span, not the ambient 101 span.
         let h100 = Arc::clone(&handles[0]);
-        h100.run_solve_cycle(&oracle.to_affected_keys(), 100, &BlockMetadata::default());
+        h100.run_solve_cycle(
+            crate::arb_engine::test_harness::cycle_ticket(&oracle.to_affected_keys()),
+            100,
+            &BlockMetadata::default(),
+        );
         // (2) Exact miss: solve of block 101 (never published) keeps the
         // ambient parent - no fallback re-parenting, no orphan.
         let h101 = Arc::clone(&handles[1]);
-        h101.run_solve_cycle(&oracle.to_affected_keys(), 101, &BlockMetadata::default());
+        h101.run_solve_cycle(
+            crate::arb_engine::test_harness::cycle_ticket(&oracle.to_affected_keys()),
+            101,
+            &BlockMetadata::default(),
+        );
     });
     provider.force_flush().expect("flush");
     let spans = exporter.get_finished_spans().expect("spans");
@@ -653,7 +665,7 @@ fn solve_spans_anchor_to_their_own_published_block() {
     );
 }
 /// The arb.solve span records `cycle.solve_block` (the cycle's
-/// anchored work block = `engine.cycle.cursor.results_block()`) alongside the entry
+/// anchored work block = `engine.cycle.cursor.coordinates().results_block`) alongside the entry
 /// block.number tag. At a settle boundary the anchor is the pool-state
 /// head and can run one (or more) ahead of the entry block - the field
 /// makes that visible/self-documenting in Jaeger instead of showing a
@@ -682,7 +694,7 @@ fn solve_span_records_cycle_solve_block() {
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(
-            &oracle.to_affected_keys(),
+            crate::arb_engine::test_harness::cycle_ticket(&oracle.to_affected_keys()),
             MY_SOLVE_BLOCK,
             &BlockMetadata::default(),
         );
@@ -693,7 +705,7 @@ fn solve_span_records_cycle_solve_block() {
         .iter()
         .find(|sp| sp.name.as_ref() == "degenbot.arb.solve")
         .expect("solve span must be exported");
-    let expected = engine_arc.lock().cycle.cursor.results_block();
+    let expected = engine_arc.lock().cycle.cursor.coordinates().results_block;
     let recorded = solve
         .attributes
         .iter()
@@ -731,7 +743,7 @@ fn solve_cycle_emits_arb_solve_span_with_block_number() {
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(
-            &oracle.to_affected_keys(),
+            crate::arb_engine::test_harness::cycle_ticket(&oracle.to_affected_keys()),
             MY_SOLVE_BLOCK,
             &BlockMetadata::default(),
         );
@@ -786,7 +798,7 @@ fn solve_cycle_skips_expire_spans_when_max_age_unset() {
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(
-            &oracle.to_affected_keys(),
+            crate::arb_engine::test_harness::cycle_ticket(&oracle.to_affected_keys()),
             0x0BAD_F00D,
             &BlockMetadata::default(),
         );
@@ -853,10 +865,12 @@ fn run_epoch_emits_stage_span_with_paths_staged() {
     .expect("path registers");
     tracing::subscriber::with_default(subscriber, || {
         engine.cycle.run_epoch(
-            &crate::arb_engine::tests::test_keys::affected_keys(
-                &HashSet::from([a]),
-                &HashSet::new(),
-                &HashSet::new(),
+            crate::arb_engine::test_harness::cycle_ticket(
+                &crate::arb_engine::tests::test_keys::affected_keys(
+                    &HashSet::from([a]),
+                    &HashSet::new(),
+                    &HashSet::new(),
+                ),
             ),
             5,
             &BlockMetadata::default(),
@@ -912,7 +926,7 @@ fn solve_cycle_emits_expire_spans_with_phase_split() {
     );
     tracing::subscriber::with_default(subscriber, || {
         handle.run_solve_cycle(
-            &oracle.to_affected_keys(),
+            crate::arb_engine::test_harness::cycle_ticket(&oracle.to_affected_keys()),
             0x0BAD_F00D,
             &BlockMetadata::default(),
         );
@@ -980,7 +994,11 @@ fn solve_cycle_skips_span_when_nothing_dirty() {
         std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     tracing::subscriber::with_default(subscriber, || {
-        handle.run_solve_cycle(&[], 1, &BlockMetadata::default());
+        handle.run_solve_cycle(
+            crate::arb_engine::test_harness::cycle_ticket(&[]),
+            1,
+            &BlockMetadata::default(),
+        );
     });
     provider.force_flush().expect("flush");
     let spans = exporter.get_finished_spans().expect("spans");
@@ -1129,10 +1147,12 @@ fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
     let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
     let joiner = std::thread::spawn(move || {
         engine.cycle.run_epoch(
-            &crate::arb_engine::tests::test_keys::affected_keys(
-                &pool_set,
-                &HashSet::new(),
-                &HashSet::new(),
+            crate::arb_engine::test_harness::cycle_ticket(
+                &crate::arb_engine::tests::test_keys::affected_keys(
+                    &pool_set,
+                    &HashSet::new(),
+                    &HashSet::new(),
+                ),
             ),
             100,
             &BlockMetadata::default(),
@@ -1244,10 +1264,12 @@ fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
     let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
     let joiner = std::thread::spawn(move || {
         engine.cycle.run_epoch(
-            &crate::arb_engine::tests::test_keys::affected_keys(
-                &pool_set,
-                &HashSet::new(),
-                &HashSet::new(),
+            crate::arb_engine::test_harness::cycle_ticket(
+                &crate::arb_engine::tests::test_keys::affected_keys(
+                    &pool_set,
+                    &HashSet::new(),
+                    &HashSet::new(),
+                ),
             ),
             100,
             &BlockMetadata::default(),

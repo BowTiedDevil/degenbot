@@ -24,8 +24,45 @@
 //! `CycleEntry` enum existed only to feed the deleted `solve_entry`, so it is
 //! gone with it.
 //!
+//! ## The ticket (the transient stash's one door)
+//!
+//! The admission draw's verdict used to be a `bool` on the cycle, written by
+//! the resolve call and read by the epoch in a later call — the retired
+//! pending-new-paths disease. [`CycleTicket`] replaces it: the draw mints one,
+//! the Resolved stage row carries it, and the epoch consumes it by value.
+//!
+//! The staleness class cannot compile. The cycle holds no verdict field, no
+//! other module can mint a ticket, and the epoch takes the one it is handed,
+//! so the retired shape has nothing left to name:
+//!
+//! ```text
+//! // The engine-side stash the draw used to write (and a LATER call to read):
+//! fn stale_verdict_read(cycle: &SolveCycle) {
+//!     let _ = cycle.admission_draw_zero; // E0609: no field `admission_draw_zero`
+//! }
+//!
+//! // A ticket cannot be fabricated outside the draw that mints it:
+//! fn fabricated_ticket() -> CycleTicket {
+//!     CycleTicket { affected: Vec::new(), draw_zero: false } // E0603: private field
+//! }
+//!
+//! // And one ticket cannot be spent twice — the epoch takes it by value:
+//! fn ticket_is_spent_once(cycle: &mut SolveCycle, ticket: CycleTicket, epoch: u64) {
+//!     run(cycle, ticket, epoch);
+//!     run(cycle, ticket, epoch); // E0382: use of moved value: `ticket`
+//! }
+//! ```
+//!
+//! The runtime half of the same guard is the Resolved row's take-once slot:
+//! [`crate::bot_core::AffectedPaths::take_ticket`] moves the ticket out exactly
+//! once, so a second Solved pass over one Resolved row panics instead of
+//! solving from a spent ticket.
+//!
 //! ## Test ledger
 //!
+//! * **The cycle ticket** (a deliberate half-step): the draw mints it, the
+//!   epoch consumes it, and the Resolved row's take-once slot is pinned by
+//!   `the_resolved_row_takes_its_ticket_exactly_once`.
 //! * **Green pins** (the ADR-043 vocabulary and the target type shape):
 //!   `cycle_arm_labels_are_byte_stable`,
 //!   `cycle_arm_is_dispatch_selects_detached_arms`,
@@ -271,6 +308,84 @@ impl SolveCycleShared {
         }
     }
 }
+/// The cycle-transient stash: the stashes a cycle carries that are NOT the
+/// epoch's own work — the arm latch the white-box probes and latency
+/// histograms name AFTER the cycle returns, the eager-registration carry
+/// awaiting the next merge, and the same-state reuse counter of the cycle just
+/// run.
+///
+/// They live behind one module-private value with a cold [`Default`], so the
+/// engine's construction stands them up without the fields becoming readable
+/// outside this module. The dispatch verdict is NOT here: it rides the
+/// [`CycleTicket`] the draw mints and the epoch consumes.
+#[derive(Default)]
+pub(crate) struct CycleTransients {
+    /// The typed latch of the most recent cycle's arm (ADR-045 T5). The
+    /// string stash is gone: [`CycleOutcome`] is authoritative and the stage
+    /// hook records `cycle.arm` straight off it. This latch survives only so
+    /// the white-box probes and the latency histograms can name the arm AFTER
+    /// the cycle returns. `None` = no cycle dispatched yet (`"unset"`).
+    last_arm: Option<CycleArm>,
+    /// Paths registered via `register_and_solve_path` that have been eagerly
+    /// solved and appended to `results`, awaiting the next dirty-cycle merge.
+    pending_new_paths: HashSet<u64>,
+    /// Reuse-eligibility counter for the current solve cycle (probe only;
+    /// reset each `solve_dirty` and surfaced on the resolve event).
+    paths_same_state_this_cycle: u64,
+}
+
+/// The cycle ticket: the ONE carrier of a cycle's transient draw facts from
+/// the resolve that drew them to the epoch that consumes them.
+///
+/// The admission draw is the single consumption decision of the epoch ledger
+/// ([`EpochDelta`]), and its verdict — a zero budget SHEDS the cycle — used to
+/// live on the cycle as a `bool` written by the resolve call and read by the
+/// epoch in a LATER call. That is the retired pending-new-paths disease:
+/// engine state a later call can consult after the decision it describes is
+/// gone. The ticket makes the handoff a value instead. [`SolveCycle::draw`]
+/// mints it, the Resolved stage row carries it, and
+/// [`SolveCycle::run_epoch`] consumes it, so a verdict cannot outlive the
+/// cycle it belongs to (the module docs carry the compile-fail probe).
+///
+/// The ticket is linear: no `Clone`, no constructor outside the draw, fields
+/// module-private. The drawn ledger keys have a white-box read; the verdict
+/// has NO accessor at all, so the epoch's consume is its only reader.
+pub(crate) struct CycleTicket {
+    /// The drawn ledger keys, freshest-first (the epoch's affected set).
+    affected: Vec<AffectedKey>,
+    /// The draw's consumption verdict: a zero budget SHED this cycle.
+    draw_zero: bool,
+}
+
+impl CycleTicket {
+    /// Whether the draw carried no keys at all.
+    #[must_use]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.affected.is_empty()
+    }
+}
+
+#[cfg(test)]
+impl CycleTicket {
+    /// The drawn ledger keys, freshest-first — the white-box read of what the
+    /// draw handed over (production consumes the ticket whole).
+    #[must_use]
+    pub(crate) fn affected(&self) -> &[AffectedKey] {
+        &self.affected
+    }
+
+    /// The white-box constructor behind the sanctioned test door
+    /// ([`super::test_harness`]): a direct engine drive has no stage row to
+    /// carry the ticket, so it mints the value the draw would have minted
+    /// (a non-admission draw never sheds).
+    pub(crate) fn for_test(affected: Vec<AffectedKey>) -> Self {
+        Self {
+            affected,
+            draw_zero: false,
+        }
+    }
+}
+
 /// The solve cycle's owned state .
 ///
 /// The resolve companions, the cycle-transient stash, the solve output,
@@ -284,7 +399,11 @@ impl SolveCycleShared {
 /// mechanically to `engine.cycle.*` and the pinned `*_for_test` engine
 /// setters delegate into these fields (ADR-041: knob names never change at
 /// the call site).
-#[expect(clippy::struct_excessive_bools)] // construction stances (projection memo, admission, streaming, resolve-par) + the draw verdict — distinct stances, not flag soup
+///
+/// The cycle-transient stash is module-private: the draw verdict lives in the
+/// [`CycleTicket`] the draw mints (never here), and the remaining stashes are
+/// reachable only through this module's own doors.
+#[expect(clippy::struct_excessive_bools)] // construction stances (projection memo, admission, streaming, resolve-par) — distinct stances, not flag soup
 pub(crate) struct SolveCycle {
     // --- Resolve companions -------------------------------------------
     /// Resolved path states (mutated on each solve). Entries are Arc-shared
@@ -313,26 +432,21 @@ pub(crate) struct SolveCycle {
     /// Telemetry string cache: path id -> formatted hop description, built
     /// once at first emission (paths are immutable after registration).
     pub(crate) path_description_cache: parking_lot::Mutex<HashMap<u64, Arc<str>>>,
-    // --- Cycle-transient stash ----------------------------------------
     /// the ONE engine block cursor — the consolidated owner of the
-    /// block-coordinate residue. Every advance rule lives on the cursor.
+    /// block-coordinate residue. Every advance rule lives on the cursor, and
+    /// its ONE read door hands back a whole
+    /// [`BlockCoordinates`](super::block_cursor::BlockCoordinates) reading
+    /// rather than four separate pokes.
     pub(crate) cursor: BlockCursor,
-    /// The DRAW's consumption verdict for the cycle currently between
-    /// `on_resolve` and the dispatch — `true` when the admission draw's
-    /// budget was zero (the cycle SHEDS).
-    pub(crate) admission_draw_zero: bool,
-    /// The typed latch of the most recent cycle's arm (ADR-045 T5). The
-    /// string stash is gone: [`CycleOutcome`] is authoritative and the stage
-    /// hook records `cycle.arm` straight off it. This latch survives only so
-    /// the white-box probes and the latency histograms can name the arm AFTER
-    /// the cycle returns. `None` = no cycle dispatched yet (`"unset"`).
-    pub(crate) last_arm: Option<CycleArm>,
-    /// Paths registered via `register_and_solve_path` that have been eagerly
-    /// solved and appended to `results`, awaiting the next dirty-cycle merge.
-    pub(crate) pending_new_paths: HashSet<u64>,
-    /// Reuse-eligibility counter for the current solve cycle (probe only;
-    /// reset each `solve_dirty` and surfaced on the resolve event).
-    pub(crate) paths_same_state_this_cycle: u64,
+    /// The cycle's privatized transient stash (see [`CycleTransients`]): the
+    /// stashes a cycle carries that are not the epoch's own work. The dispatch
+    /// verdict itself never lands here — the draw mints it on the
+    /// [`CycleTicket`] the Resolved row carries, and the epoch consumes it.
+    ///
+    /// The field is reachable so the engine's construction can stand the cold
+    /// stash up; its CONTENTS stay private to this module, so no sibling can
+    /// read a latch or the carry.
+    pub(crate) transients: CycleTransients,
     // --- Solve output -------------------------------------------------
     /// Last solved results, keyed by path ID for O(1) updates.
     ///
@@ -851,7 +965,7 @@ impl SolveCycle {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn cycle_arm(&self) -> &'static str {
-        self.last_arm.map_or("unset", |arm| arm.label())
+        self.transients.last_arm.map_or("unset", |arm| arm.label())
     }
     #[cfg(test)]
     pub(crate) fn admission_budget_keys(&self) -> Option<usize> {
@@ -1197,15 +1311,24 @@ impl SolveCycle {
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         clamp_result_with_state(&core, path_id, &path.pools, self.clamp_margin, result)
     }
+    /// The epoch over ONE cycle ticket.
+    ///
+    /// The ticket is consumed here, by value: the drawn keys ARE the epoch's
+    /// affected set and the draw verdict it carries is the only thing the
+    /// dispatch acts on, so no cycle stash survives for a later call to read.
     #[expect(clippy::too_many_lines)]
     pub(crate) fn run_epoch(
         &mut self,
-        affected: &[degenbot_solvers::affected_keys::AffectedKey],
+        ticket: CycleTicket,
         block_number: u64,
         metadata: &BlockMetadata,
         registry: &PathRegistry,
         delivery: &mut DeliveryPolicy,
     ) -> CycleOutcome {
+        let CycleTicket {
+            affected,
+            draw_zero,
+        } = ticket;
         let _ = &mut *delivery;
         let mut same_state_total;
         let mut projections_total;
@@ -1233,7 +1356,7 @@ impl SolveCycle {
         hotpath::measure_block!("arb_solve.dirty_status_scan", {
             // the affected keys ARE the delta's taken (HopType,
             // pool_id) reverse-index keys — one loop, no per-family intake.
-            for key in affected {
+            for key in &affected {
                 if let Some(path_ids) = registry.paths_for(&key.path_index_key()) {
                     for &path_id in path_ids {
                         if self
@@ -1274,11 +1397,11 @@ impl SolveCycle {
         let stats = self.scope.advance(solve_block);
         super::walk_telemetry::emit_epoch_boundary(&stats, solve_block);
         // -----------------------------------------------------------------
-        // ADMISSION DRAW: the DRAW already made the SINGLE
-        // consumption decision in `on_resolve`. Consume and clear its verdict
-        // HERE — the dispatch NEVER re-reads the live gauge (two reads could
-        // disagree, and a fresh zero would discard keys the draw already
-        // removed from the ledger). A zero-budget draw consumed nothing, so a
+        // ADMISSION DRAW: the ticket consumed above carries the SINGLE
+        // consumption decision the DRAW already made in `on_resolve` — the
+        // dispatch NEVER re-reads the live gauge (two reads could disagree, and
+        // a fresh zero would discard keys the draw already removed from the
+        // ledger). A zero-budget draw consumed nothing, so a
         // shed is genuine: this cycle submits NOTHING. The response lives at
         // the draw/cycle level, never the in-cycle dispatch. The machine is
         // NOT consulted for a shed cycle (no `begin_cycle`, no seq tick, no
@@ -1288,7 +1411,6 @@ impl SolveCycle {
         // ledger for a later cycle (carry). The check precedes the
         // pending-new-path merge so a shed never clears work it did not do.
         // -----------------------------------------------------------------
-        let draw_zero = std::mem::take(&mut self.admission_draw_zero);
         if self.solve_admission && draw_zero {
             self.detached_cycle.shed();
             op_info!(
@@ -1313,7 +1435,7 @@ impl SolveCycle {
                     .load(std::sync::atomic::Ordering::Relaxed),
                 target_depth: self.admission_target_depth,
             };
-            self.last_arm = Some(arm);
+            self.transients.last_arm = Some(arm);
             return CycleOutcome {
                 solved_block: solve_block,
                 census: ResolveCensus {
@@ -1330,8 +1452,8 @@ impl SolveCycle {
         // eagerly solved at registration time, but the pump's process_block
         // replaces self.results entirely — so we must include them to avoid
         // dropping their results.
-        affected_path_ids.extend(&self.pending_new_paths);
-        self.pending_new_paths.clear();
+        affected_path_ids.extend(&self.transients.pending_new_paths);
+        self.transients.pending_new_paths.clear();
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
             // Cold-start trace: keys with NO registered paths reach here as a
@@ -1340,7 +1462,7 @@ impl SolveCycle {
             // monotone advance on the block cursor.
             self.cursor.advance_solved(solve_block);
             let arm = CycleArm::SkippedEmpty { keys_affected: 0 };
-            self.last_arm = Some(arm);
+            self.transients.last_arm = Some(arm);
             return CycleOutcome {
                 solved_block: solve_block,
                 census: ResolveCensus {
@@ -1418,7 +1540,7 @@ impl SolveCycle {
         // `deferred_paths` is now reserved for the genuinely illegitimate future-
         // price case below; genuine chain/solver divergence is left to the ADR-021
         // verifier, which fatal-aborts loudly (the preferred failure, esp. in dev).
-        self.paths_same_state_this_cycle = 0;
+        self.transients.paths_same_state_this_cycle = 0;
         // these accumulate from the chunk merges inside the resolve
         // block below (same content the serial loop used to produce inline).
         let mut deferred_paths: HashSet<u64> = HashSet::new();
@@ -1627,7 +1749,7 @@ impl SolveCycle {
                         *invalid_reasons.entry(reason).or_insert(0u64) += count;
                     }
                 }
-                self.paths_same_state_this_cycle = same_state_total;
+                self.transients.paths_same_state_this_cycle = same_state_total;
                 // Lifetime counter (the serial loop accumulated in place).
                 self.hop_projection_count += projections_total;
             });
@@ -1669,7 +1791,7 @@ impl SolveCycle {
             u32::try_from(affected_path_ids.len()).unwrap_or(u32::MAX),
         ));
         hotpath::gauge!("resolve_paths_same_state").set(f64::from(
-            u32::try_from(self.paths_same_state_this_cycle).unwrap_or(u32::MAX),
+            u32::try_from(self.transients.paths_same_state_this_cycle).unwrap_or(u32::MAX),
         ));
         hotpath::gauge!("resolve_paths_deferred").set(f64::from(
             u32::try_from(deferred_paths.len()).unwrap_or(u32::MAX),
@@ -1684,7 +1806,7 @@ impl SolveCycle {
         }
         diag!(domain = solver, block_number = solve_block,
             paths.resolved = affected_path_ids.len(),
-            paths.same_state = self.paths_same_state_this_cycle,
+            paths.same_state = self.transients.paths_same_state_this_cycle,
             hop.projections = self.hop_projection_count,
             paths.deferred_future_price = deferred_paths.len(),
             invalid.reasons = %invalid_reasons.iter().map(|(r, c)| format!("{c}x {r}")).collect::<Vec<_>>().join(", "),
@@ -2094,7 +2216,7 @@ impl SolveCycle {
                 deferred_future_price: deferred_paths.len(),
             }
         };
-        self.last_arm = Some(arm);
+        self.transients.last_arm = Some(arm);
         CycleOutcome {
             solved_block: solve_block,
             census: ResolveCensus {
@@ -2141,7 +2263,7 @@ impl SolveCycle {
         let prefix_store_out = std::sync::Arc::clone(self.scope.prefix_cache());
         let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> = registry.path_pools().clone();
         let core = std::sync::Arc::clone(&self.core);
-        let results_block = self.cursor.results_block();
+        let results_block = self.cursor.coordinates().results_block;
         let runtime_cfg = self.runtime_cfg;
         let min_floor = self.min_profit_floor;
         let clamp_margin = self.clamp_margin;
@@ -2432,7 +2554,7 @@ impl SolveCycle {
                     if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
                         self.clamp_cl_hop_capacity(path_id, &mut solve_result, registry);
                         self.results.insert(path_id, solve_result);
-                        self.pending_new_paths.insert(path_id);
+                        self.transients.pending_new_paths.insert(path_id);
                     }
                 }
             }
@@ -2534,7 +2656,7 @@ impl SolveCycle {
             consumed_inputs: clamp_admitted.consumed_inputs.clone(),
             hop_outputs: clamp_admitted.hop_outputs.clone(),
             state_nonces: clamp_admitted.state_nonces.clone(),
-            sim_block: self.cursor.results_block(),
+            sim_block: self.cursor.coordinates().results_block,
             block_timestamp: metadata.timestamp,
             parent_base_fee: metadata.base_fee_per_gas.unwrap_or(0),
             parent_gas_used: metadata.gas_used,
@@ -2547,11 +2669,15 @@ impl SolveCycle {
     /// The admission DRAW - the SINGLE consumption decision of the
     /// epoch ledger. `budget = max(0, target - in-flight)` keys freshest-first,
     /// the overflow RETAINED for a later cycle; a zero budget is the SHED
-    /// verdict (nothing drawn, the stash records it).
-    pub(crate) fn draw(&mut self, delta: &EpochDelta, head: u64) -> Vec<AffectedKey> {
+    /// verdict, carried on the returned [`CycleTicket`] (never stashed on the
+    /// cycle) so only the epoch that consumes that ticket can act on it.
+    #[must_use]
+    pub(crate) fn draw(&mut self, delta: &EpochDelta, head: u64) -> CycleTicket {
         if !self.solve_admission {
-            self.admission_draw_zero = false;
-            return delta.take_keys();
+            return CycleTicket {
+                affected: delta.take_keys(),
+                draw_zero: false,
+            };
         }
         let outstanding = self
             .detached_cycle
@@ -2562,8 +2688,10 @@ impl SolveCycle {
         let cutoff = head.saturating_sub(self.admission_retention_blocks);
         let expired = delta.expire_older_than(cutoff);
         self.detached_cycle.note_leads_expired(expired);
-        self.admission_draw_zero = budget == 0;
-        delta.draw_freshest(budget)
+        CycleTicket {
+            affected: delta.draw_freshest(budget),
+            draw_zero: budget == 0,
+        }
     }
     /// ADR-045: the ids-path-deregistered coupling. Drops the path's resolve
     /// companions, results, and pending-new carry. The registry removal and the
@@ -2573,11 +2701,26 @@ impl SolveCycle {
         self.path_status.remove(&path_id);
         self.resolved_update_snapshot.remove(&path_id);
         self.results.remove(&path_id);
-        self.pending_new_paths.remove(&path_id);
+        self.transients.pending_new_paths.remove(&path_id);
     }
 }
 #[cfg(test)]
 impl SolveCycle {
+    /// The pending-new carry (the eager-registration handoff to the next
+    /// dirty cycle). The white-box reads go through the sanctioned test door
+    /// ([`super::test_harness`]); the field stays private to this module.
+    pub(crate) fn pending_new_paths(&self) -> &HashSet<u64> {
+        &self.transients.pending_new_paths
+    }
+    /// The pending-new carry, mutable: a fixture that arms the handoff
+    /// without registering a path first.
+    pub(crate) fn pending_new_paths_mut(&mut self) -> &mut HashSet<u64> {
+        &mut self.transients.pending_new_paths
+    }
+    /// The current cycle's same-state reuse counter (probe).
+    pub(crate) fn same_state_this_cycle(&self) -> u64 {
+        self.transients.paths_same_state_this_cycle
+    }
     /// Test harness: drain up to `expected` items from the merge pipe
     /// INLINE through the sidecar's own per-item merge path
     /// (`merge_detached_item`), so a direct `solve_dirty` /
@@ -2812,7 +2955,7 @@ mod tests {
             .expect("eager register must solve the divergent path")
             .path_id;
         assert!(
-            engine.cycle.pending_new_paths.contains(&path_id),
+            engine.cycle.pending_new_paths().contains(&path_id),
             "register_and_solve_path arms the pending-new carry"
         );
         let empty = crate::arb_engine::tests::test_keys::affected_keys(
@@ -2821,18 +2964,18 @@ mod tests {
             &HashSet::new(),
         );
         engine.cycle.run_epoch(
-            &empty,
+            crate::arb_engine::test_harness::cycle_ticket(&empty),
             1,
             &BlockMetadata::default(),
             &engine.registry,
             &mut engine.delivery,
         );
         assert!(
-            engine.cycle.pending_new_paths.is_empty(),
+            engine.cycle.pending_new_paths().is_empty(),
             "the dirty cycle consumes and clears the carry"
         );
         assert_eq!(
-            engine.cycle.cursor.results_block(),
+            engine.cycle.cursor.coordinates().results_block,
             1,
             "the cycle stamps the solve anchor"
         );
@@ -2859,11 +3002,11 @@ mod tests {
             .expect("fresh register")
             .path_id;
         assert!(
-            engine.cycle.pending_new_paths.contains(&path_id),
+            engine.cycle.pending_new_paths().contains(&path_id),
             "a fresh register arms the carry"
         );
         // Model the carry consumed by one dirty cycle.
-        engine.cycle.pending_new_paths.clear();
+        engine.cycle.pending_new_paths_mut().clear();
         let again = engine
             .cycle
             .register_and_solve_path(hops, &mut engine.registry)
@@ -2873,36 +3016,39 @@ mod tests {
             "a dedup hit retains the registry id"
         );
         assert!(
-            engine.cycle.pending_new_paths.is_empty(),
+            engine.cycle.pending_new_paths().is_empty(),
             "a dedup hit (created=false) must not touch the pending-new carry"
         );
     }
     // ---------------------------------------------------------------------
     // T4 wiring: the target surface now exists.
     // ---------------------------------------------------------------------
-    /// The candidate-8 interlock (live at T4): the cycle consumes the
-    /// epoch's work-carried delta (the `affected` vector drawn by the Resolved
-    /// stage) and does not hold or re-read a second swappable handle (the
-    /// retired `admission_draw_zero` stash).
+    /// The candidate-8 interlock, re-pinned on the ticket: the cycle consumes
+    /// the epoch's work-carried delta (the keys the draw put on the ticket)
+    /// and holds no second swappable handle for the verdict.
     #[test]
     fn run_epoch_consumes_the_epoch_work_carried_delta() {
         use degenbot_substrate::EpochDelta;
         // The epoch ledger is the SINGLE work-carried owner. The Resolved
-        // stage draws the cycle's `affected` keys from it; the Solved stage's
-        // `SolveCycle::run_epoch` must consume exactly that vector.
+        // stage draws the cycle's keys from it into the ticket; the Solved
+        // stage's `SolveCycle::run_epoch` consumes exactly that ticket.
         let delta = EpochDelta::new(11u64);
         delta.record_affected(HopType::V2, 1, 11);
         delta.record_affected(HopType::V2, 2, 11);
-        let affected = delta.draw_freshest(usize::MAX);
-        assert_eq!(affected.len(), 2, "the draw is the cycle's affected set");
-        assert!(
-            delta.is_empty(),
-            "the draw IS the single consumption decision — no second handle sees the keys"
-        );
         let mut engine = ArbitrageEngine::new();
         let metadata = BlockMetadata::default();
+        let ticket = engine.cycle.draw(&delta, 11);
+        assert_eq!(
+            ticket.affected().len(),
+            2,
+            "the draw IS the cycle's affected set, carried on the ticket"
+        );
+        assert!(
+            delta.is_empty(),
+            "the draw is the single consumption decision — no second handle sees the keys"
+        );
         let outcome = engine.cycle.run_epoch(
-            &affected,
+            ticket,
             11,
             &metadata,
             &engine.registry,
@@ -2912,6 +3058,16 @@ mod tests {
         // No registered paths reference the drawn keys: the bookkeeping-only
         // arm (a shed/empty pass never dispatches).
         assert!(!outcome.arm.is_dispatch());
+    }
+    /// The runtime half of the ticket guard: the Resolved row's slot yields its
+    /// ticket exactly once, so a second Solved pass over one Resolved row
+    /// fails loudly instead of solving from a spent ticket.
+    #[test]
+    #[should_panic(expected = "the Resolved row's cycle ticket")]
+    fn the_resolved_row_takes_its_ticket_exactly_once() {
+        let row = crate::bot_core::AffectedPaths::drawn(CycleTicket::for_test(Vec::new()));
+        let _spent = row.take_ticket();
+        let _again = row.take_ticket();
     }
     /// The fresh-vs-dedup `Registration` facts (ADR-045).
     #[test]

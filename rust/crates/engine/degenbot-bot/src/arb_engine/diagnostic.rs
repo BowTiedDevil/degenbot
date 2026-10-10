@@ -353,10 +353,10 @@ pub(crate) fn diagnostic_path_state(
     path_id: u64,
 ) -> Option<DiagnosticPathState> {
     let path = engine.registry.get(path_id)?;
-    let solve_block = if engine.cycle.cursor.is_anchored() {
-        Some(engine.cycle.cursor.results_block())
+    let solve_block = if engine.cycle.cursor.coordinates().is_anchored() {
+        Some(engine.cycle.cursor.coordinates().results_block)
     } else {
-        engine.cycle.cursor.last_processed_block()
+        engine.cycle.cursor.coordinates().last_processed_block
     };
     let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
     // capture the engine's last-applied block alongside the
@@ -366,7 +366,7 @@ pub(crate) fn diagnostic_path_state(
     // onchain fetch pinned to `solve_block` is a SNAPSHOT TIMING ARTIFACT
     // (post-publish swap included in live engine_state but excluded by the
     // pinned RPC), not real publish-time lag.
-    snapshot.engine_processed_block = engine.cycle.cursor.last_processed_block();
+    snapshot.engine_processed_block = engine.cycle.cursor.coordinates().last_processed_block;
     // ADR-003: V2 state lives in BotState. One core-lock window covers all
     // V2 lookups in this loop; V3/V4 state still reads the per-family
     // block engines (disjoint fields, immutable borrows coexist).

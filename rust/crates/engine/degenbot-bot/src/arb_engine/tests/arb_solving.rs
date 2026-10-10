@@ -300,10 +300,12 @@ fn future_state_path_is_reanchored_to_pool_state_head() {
     // path is solved (never skipped): a future-vs-drain-clock block is live
     // state, not a poison to drop.
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::from([v2_a, v2_b]),
-            &HashSet::from([v3_future]),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::from([v2_a, v2_b]),
+                &HashSet::from([v3_future]),
+                &HashSet::new(),
+            ),
         ),
         50,
         &BlockMetadata::default(),
@@ -495,10 +497,12 @@ fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
         let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 498);
     }
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::from([v2_a, v2_b]),
-            &HashSet::new(),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::from([v2_a, v2_b]),
+                &HashSet::new(),
+                &HashSet::new(),
+            ),
         ),
         500,
         &BlockMetadata::default(),
@@ -521,10 +525,12 @@ fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
         let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 10);
     }
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::from([v2_a, v2_b]),
-            &HashSet::new(),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::from([v2_a, v2_b]),
+                &HashSet::new(),
+                &HashSet::new(),
+            ),
         ),
         500,
         &BlockMetadata::default(),
@@ -577,10 +583,12 @@ fn no_update_block_age_defers_a_quiet_path() {
     // Never-advanced pools (`update_block == 0`) at a far solve block are
     // NOT deferred — the ADR-021 verifier diffs them at the solve block.
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::from([v2_a, v2_b]),
-            &HashSet::new(),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::from([v2_a, v2_b]),
+                &HashSet::new(),
+                &HashSet::new(),
+            ),
         ),
         500,
         &BlockMetadata::default(),
@@ -601,10 +609,12 @@ fn no_update_block_age_defers_a_quiet_path() {
         let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 490);
     }
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::from([v2_a, v2_b]),
-            &HashSet::new(),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::from([v2_a, v2_b]),
+                &HashSet::new(),
+                &HashSet::new(),
+            ),
         ),
         500,
         &BlockMetadata::default(),
@@ -625,10 +635,12 @@ fn no_update_block_age_defers_a_quiet_path() {
         let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 489);
     }
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::from([v2_a, v2_b]),
-            &HashSet::new(),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::from([v2_a, v2_b]),
+                &HashSet::new(),
+                &HashSet::new(),
+            ),
         ),
         500,
         &BlockMetadata::default(),

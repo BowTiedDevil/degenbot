@@ -475,10 +475,12 @@ mod tests {
         // fleet; B's rides it. The `&'static` handle identity across the
         // two submits PROVES the single shared fleet.
         engine_a.cycle.run_epoch(
-            &crate::arb_engine::tests::test_keys::affected_keys(
-                &HashSet::from([hub_a, hub_b]),
-                &HashSet::new(),
-                &HashSet::new(),
+            crate::arb_engine::test_harness::cycle_ticket(
+                &crate::arb_engine::tests::test_keys::affected_keys(
+                    &HashSet::from([hub_a, hub_b]),
+                    &HashSet::new(),
+                    &HashSet::new(),
+                ),
             ),
             500,
             &BlockMetadata::default(),
@@ -487,10 +489,12 @@ mod tests {
         );
         let handle_after_a = crate::arb_engine::fleet_solve_executor::global_fleet_solve_executor();
         engine_b.cycle.run_epoch(
-            &crate::arb_engine::tests::test_keys::affected_keys(
-                &HashSet::from([b_hub_a, b_hub_b]),
-                &HashSet::new(),
-                &HashSet::new(),
+            crate::arb_engine::test_harness::cycle_ticket(
+                &crate::arb_engine::tests::test_keys::affected_keys(
+                    &HashSet::from([b_hub_a, b_hub_b]),
+                    &HashSet::new(),
+                    &HashSet::new(),
+                ),
             ),
             501,
             &BlockMetadata::default(),

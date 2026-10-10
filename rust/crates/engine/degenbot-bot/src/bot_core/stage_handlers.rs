@@ -187,11 +187,65 @@ pub struct QuiesceOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CandidateId(pub u64);
 
-/// The affected-path set derived at the Resolved row from the epoch's delta.
-/// ( carries the real ledger keys — the `EpochDelta` take — not loose
-/// ids, so the Solved hook receives exactly what the solver consumes.)
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AffectedPaths(pub Vec<degenbot_solvers::affected_keys::AffectedKey>);
+/// The Resolved row's output: the cycle ticket the Solved row consumes.
+///
+/// The ticket carries the real ledger keys — the `EpochDelta` take, not loose
+/// ids — plus the draw's verdict, so the Solved hook receives exactly what the
+/// solver consumes and no cycle-transient fact lives on an engine between the
+/// two rows.
+///
+/// The row reaches the Solved hook by borrow, so the ticket sits in a
+/// take-once slot: [`take_ticket`](Self::take_ticket) moves it out exactly
+/// once, and a second Solved pass over the same Resolved row fails loudly
+/// instead of solving from a spent ticket.
+pub struct AffectedPaths(std::cell::Cell<Option<crate::arb_engine::CycleTicket>>);
+
+impl AffectedPaths {
+    /// The row for one freshly drawn ticket.
+    pub(crate) fn drawn(ticket: crate::arb_engine::CycleTicket) -> Self {
+        Self(std::cell::Cell::new(Some(ticket)))
+    }
+
+    /// The row's ticket, moved out of the take-once slot.
+    ///
+    /// # Panics
+    /// When the row was already consumed — a second Solved pass over one
+    /// Resolved row, or a test double's empty row.
+    #[expect(clippy::expect_used)] // a spent row must fail loudly, never solve empty
+    pub(crate) fn take_ticket(&self) -> crate::arb_engine::CycleTicket {
+        self.0
+            .take()
+            .expect("the Resolved row's cycle ticket rides exactly one Solved pass")
+    }
+}
+
+impl Default for AffectedPaths {
+    /// The empty row a test double returns. Taking its ticket is a loud
+    /// failure, never a silent empty solve.
+    fn default() -> Self {
+        Self(std::cell::Cell::new(None))
+    }
+}
+
+#[cfg(test)]
+impl AffectedPaths {
+    /// White-box read of the row's ticket without consuming it: the slot is
+    /// closed again before returning, so the Solved hook still sees it.
+    #[expect(clippy::expect_used)] // a spent row must fail loudly, never read empty
+    pub(crate) fn with_ticket<R>(
+        &self,
+        read: impl FnOnce(&crate::arb_engine::CycleTicket) -> R,
+    ) -> R {
+        let ticket = self.0.take();
+        let out = read(
+            ticket
+                .as_ref()
+                .expect("the Resolved row's cycle ticket rides exactly one Solved pass"),
+        );
+        self.0.set(ticket);
+        out
+    }
+}
 
 /// The Solved row's output: the cursor fact AND the product. The seam now
 /// carries the epoch the cycle was anchored at ('solved', required - a cycle
@@ -1215,7 +1269,7 @@ mod conformance {
                     to_epoch: work.ctx.epoch().rewind(),
                 });
             }
-            Ok(AffectedPaths(Vec::new()))
+            Ok(AffectedPaths::default())
         }
 
         fn on_solve(&self, work: &Solve) -> Result<SolveOutcome, StageError> {

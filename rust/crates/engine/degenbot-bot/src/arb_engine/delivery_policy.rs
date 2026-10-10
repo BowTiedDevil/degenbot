@@ -318,7 +318,7 @@ pub(crate) fn set_profit_thresholds(
 /// The [`DeliveryPolicy`] refuses to publish at block 0 (safety net) if no
 /// anchor has been seeded yet.
 pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &BlockMetadata) {
-    let results_block = engine.cycle.cursor.results_block();
+    let results_block = engine.cycle.cursor.coordinates().results_block;
     // f701ccd3 bridge: capture the settle-entered block span as the
     // propagation parent for `results_block` — the Python simulate seam
     // re-attaches it (telemetry::simulate_dispatch_span) so the whole block
@@ -341,7 +341,7 @@ pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &Blo
         .collect();
     engine.cycle.inline_payloads.clear();
     // the anchored gate comes from the block cursor.
-    let anchored = engine.cycle.cursor.is_anchored();
+    let anchored = engine.cycle.cursor.coordinates().is_anchored();
     engine.delivery.diff_and_send(
         &results_snapshot,
         results_block,

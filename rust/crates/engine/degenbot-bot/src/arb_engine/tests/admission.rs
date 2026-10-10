@@ -119,7 +119,7 @@ fn admission_zero_budget_sheds_the_whole_cycle() {
         })
         .expect("resolve hook is infallible");
     assert!(
-        drawn.0.is_empty(),
+        drawn.with_ticket(crate::arb_engine::CycleTicket::is_empty),
         "a zero-budget draw consumes nothing; the keys are RETAINED"
     );
     let sheds_before = engine
@@ -153,7 +153,7 @@ fn admission_zero_budget_sheds_the_whole_cycle() {
         "the shed counter must fire exactly once"
     );
     assert_eq!(
-        guard.cycle.cursor.results_block(),
+        guard.cycle.cursor.coordinates().results_block,
         100,
         "a shed cycle advances the solved-block cursor like skipped_empty"
     );
@@ -202,7 +202,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
     )
     .expect("eager path registration succeeds");
     assert!(
-        engine.cycle.pending_new_paths.contains(&pid),
+        crate::arb_engine::test_harness::pending_new_paths(&engine).contains(&pid),
         "the eager path starts in the merge pipe"
     );
     engine.cycle.set_solve_admission(true);
@@ -231,7 +231,10 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
             delta: &delta,
         })
         .expect("resolve hook is infallible");
-    assert!(drawn.0.is_empty(), "zero budget draws nothing");
+    assert!(
+        drawn.with_ticket(crate::arb_engine::CycleTicket::is_empty),
+        "zero budget draws nothing"
+    );
     stages
         .on_solve(&Solve { ctx, paths: drawn })
         .expect("solve hook is infallible");
@@ -239,7 +242,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
         let guard = engine.lock();
         assert_eq!(guard.cycle.cycle_arm(), "shed");
         assert!(
-            guard.cycle.pending_new_paths.contains(&pid),
+            crate::arb_engine::test_harness::pending_new_paths(&guard).contains(&pid),
             "a draw-zero shed must NOT consume the eager merge protection"
         );
         assert!(
@@ -273,7 +276,8 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
     loop {
         let merged = {
             let guard = engine.lock();
-            guard.cycle.pending_new_paths.is_empty() && guard.cycle.results.contains_key(&pid)
+            crate::arb_engine::test_harness::pending_new_paths(&guard).is_empty()
+                && guard.cycle.results.contains_key(&pid)
         };
         if merged {
             break;
@@ -286,7 +290,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
     }
     let guard = engine.lock();
     assert!(
-        guard.cycle.pending_new_paths.is_empty(),
+        crate::arb_engine::test_harness::pending_new_paths(&guard).is_empty(),
         "the next normal cycle merges + clears the eager-registration pipe"
     );
     assert!(
@@ -321,7 +325,7 @@ fn admission_race_positive_draw_never_sheds() {
     engine.cycle.set_admission_target_depth(8);
     // An eager-registration path in the merge pipe: a post-merge race
     // shed would be the F2 data-loss class.
-    engine.cycle.pending_new_paths.insert(path_ids[1]);
+    crate::arb_engine::test_harness::pending_new_paths_mut(&mut engine).insert(path_ids[1]);
     let engine = Arc::new(parking_lot::Mutex::new(engine));
     let delta = Arc::new(EpochDelta::new(0u64));
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
@@ -344,7 +348,7 @@ fn admission_race_positive_draw_never_sheds() {
         })
         .expect("resolve hook is infallible");
     assert!(
-        !drawn.0.is_empty(),
+        !drawn.with_ticket(crate::arb_engine::CycleTicket::is_empty),
         "an empty pipe must draw a positive budget"
     );
     assert!(
@@ -376,7 +380,7 @@ fn admission_race_positive_draw_never_sheds() {
         let merged = {
             let guard = engine.lock();
             path_ids.iter().all(|p| guard.cycle.results.contains_key(p))
-                && guard.cycle.pending_new_paths.is_empty()
+                && crate::arb_engine::test_harness::pending_new_paths(&guard).is_empty()
         };
         if merged {
             break;
@@ -407,7 +411,7 @@ fn admission_race_positive_draw_never_sheds() {
         "the drawn keys must be SUBMITTED, never discarded"
     );
     assert!(
-        guard.cycle.pending_new_paths.is_empty(),
+        crate::arb_engine::test_harness::pending_new_paths(&guard).is_empty(),
         "the race cycle must still merge + clear the eager-registration pipe (F2)"
     );
 }
@@ -451,7 +455,7 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
         })
         .expect("resolve hook is infallible");
     assert!(
-        drawn.0.is_empty(),
+        drawn.with_ticket(crate::arb_engine::CycleTicket::is_empty),
         "zero-budget draw takes nothing; the keys are RETAINED"
     );
     assert_eq!(
@@ -475,7 +479,7 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
         })
         .expect("resolve hook is infallible");
     assert_eq!(
-        drawn.0,
+        drawn.with_ticket(|t| t.affected().to_vec()),
         vec![keys[0], keys[1]],
         "the carried keys are drawn freshest-first in insertion order"
     );
@@ -493,7 +497,11 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
             delta: &delta,
         })
         .expect("resolve hook is infallible");
-    assert_eq!(drawn.0, vec![keys[2]], "the last carried key drains");
+    assert_eq!(
+        drawn.with_ticket(|t| t.affected().to_vec()),
+        vec![keys[2]],
+        "the last carried key drains"
+    );
     assert!(delta.is_empty());
 }
 /// Retention: on a block advance the ledger prunes carried keys older than
@@ -529,7 +537,11 @@ fn admission_retention_window_expires_carried_leads() {
             delta: &delta,
         })
         .expect("resolve hook is infallible");
-    assert_eq!(drawn.0, vec![fresh], "only the in-window lead is drawn");
+    assert_eq!(
+        drawn.with_ticket(|t| t.affected().to_vec()),
+        vec![fresh],
+        "only the in-window lead is drawn"
+    );
     assert_eq!(
         engine
             .lock()
@@ -604,7 +616,7 @@ fn admission_off_keeps_take_all_and_never_sheds() {
         })
         .expect("resolve hook is infallible");
     assert_eq!(
-        drawn.0.len(),
+        drawn.with_ticket(|t| t.affected().len()),
         5,
         "flag OFF: take_keys consumes the whole ledger"
     );
@@ -750,10 +762,12 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
             &BlockMetadata::default(),
         );
         engine.cycle.run_epoch(
-            &crate::arb_engine::tests::test_keys::affected_keys(
-                &HashSet::from([hub_a, hub_b]),
-                &HashSet::new(),
-                &HashSet::new(),
+            crate::arb_engine::test_harness::cycle_ticket(
+                &crate::arb_engine::tests::test_keys::affected_keys(
+                    &HashSet::from([hub_a, hub_b]),
+                    &HashSet::new(),
+                    &HashSet::new(),
+                ),
             ),
             500,
             &BlockMetadata::default(),
@@ -771,10 +785,12 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
             &BlockMetadata::default(),
         );
         engine.cycle.run_epoch(
-            &crate::arb_engine::tests::test_keys::affected_keys(
-                &HashSet::from([hub_b]),
-                &HashSet::new(),
-                &HashSet::new(),
+            crate::arb_engine::test_harness::cycle_ticket(
+                &crate::arb_engine::tests::test_keys::affected_keys(
+                    &HashSet::from([hub_b]),
+                    &HashSet::new(),
+                    &HashSet::new(),
+                ),
             ),
             501,
             &BlockMetadata::default(),
@@ -789,7 +805,7 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
             .collect();
         (
             results,
-            engine.cycle.paths_same_state_this_cycle,
+            crate::arb_engine::test_harness::same_state_this_cycle(&engine),
             projections_delta,
             path_ids,
             hop_shapes,

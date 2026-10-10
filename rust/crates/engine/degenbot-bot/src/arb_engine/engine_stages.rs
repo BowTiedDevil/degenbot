@@ -33,7 +33,7 @@
 //!
 //! `latest_results` / `register_path` / the FFI surface keep their
 //! StateLock-mediated core locking — this type adds NO lock layer.
-use super::solve_cycle::CycleOutcome;
+use super::solve_cycle::{CycleOutcome, CycleTicket};
 use super::walk_telemetry;
 use super::ArbitrageEngine;
 use super::EngineRetune;
@@ -398,7 +398,7 @@ impl EngineStages {
     /// hard-cut (no shims).
     pub(crate) fn run_solve_cycle(
         &self,
-        affected: &[degenbot_solvers::affected_keys::AffectedKey],
+        ticket: CycleTicket,
         block: u64,
         metadata: &BlockMetadata,
     ) -> CycleOutcome {
@@ -414,11 +414,11 @@ impl EngineStages {
         // driven engine; the sidecar owns the pipe here.
         #[cfg(test)]
         engine.cycle.set_sync_merge_for_test(false);
-        if affected.is_empty() {
+        if ticket.is_empty() {
             // Kept for inner bookkeeping parity (last_processed_block et al)
             // plus the pre-cycle expiry; provably cannot consume dirt under
             // this continuous hold.
-            let outcome = run_engine_cycle(&mut engine, affected, block, metadata);
+            let outcome = run_engine_cycle(&mut engine, ticket, block, metadata);
             drop(engine);
             self.spawn_detached_sidecar_if_pending();
             return outcome;
@@ -457,13 +457,16 @@ impl EngineStages {
             let hold_start = std::time::Instant::now();
             cycle_outcome = if is_multi_thread_runtime() {
                 tokio::task::block_in_place(|| {
-                    run_engine_cycle(&mut engine, affected, block, metadata)
+                    run_engine_cycle(&mut engine, ticket, block, metadata)
                 })
             } else {
-                run_engine_cycle(&mut engine, affected, block, metadata)
+                run_engine_cycle(&mut engine, ticket, block, metadata)
             };
             // Surface the cycle's anchored block on the span.
-            span.record("cycle.solve_block", engine.cycle.cursor.results_block());
+            span.record(
+                "cycle.solve_block",
+                engine.cycle.cursor.coordinates().results_block,
+            );
             // Cold-start trace (ADR-045 T5): attribute the cycle arm from the
             // typed OUTCOME, never a post-hoc engine stash.
             let _ = record_cycle_arm_telemetry(&span, cycle_outcome.arm_label());
@@ -516,9 +519,9 @@ impl EngineStages {
 /// byte-identical to the retired engine method (never takes the engine lock
 /// while holding the core lock).
 ///
-/// the affected keys arrive from the block's `EpochDelta` (consumed
-/// by the stage surface's `on_resolve` hook); no engine-local dirty-set
-/// intake remains.
+/// the cycle ticket arrives from the block's `EpochDelta` (the draw the
+/// stage surface's `on_resolve` hook ran) and the epoch consumes it; no
+/// engine-local dirty-set intake remains.
 ///
 /// Carry (the doc that lived on the deleted
 /// `rebuild_and_solve_affected`): re-resolve and re-solve only paths that
@@ -530,13 +533,13 @@ impl EngineStages {
 /// When the merged drain's outcome accounting undercounts (exactness fuse): the cycle thread fails loudly, never silently mis-sizes.
 fn run_engine_cycle(
     engine: &mut ArbitrageEngine,
-    affected: &[degenbot_solvers::affected_keys::AffectedKey],
+    ticket: CycleTicket,
     block_number: u64,
     metadata: &BlockMetadata,
 ) -> CycleOutcome {
     expire_buffered_events(engine, block_number);
     let outcome = engine.cycle.run_epoch(
-        affected,
+        ticket,
         block_number,
         metadata,
         &engine.registry,
@@ -659,18 +662,18 @@ impl StageHandlers for EngineStages {
     /// inner lock — never the reverse.
     ///
     /// THIS is the SINGLE consumption decision (F3). The zero-budget
-    /// verdict is stashed on the engine for the same cycle's dispatch — the
-    /// dispatch consumes and clears it under the engine mutex and never
-    /// re-reads the live gauge. The stage machine drives Resolved -> Solved
-    /// sequentially on the driver thread, so no other draw can interleave
-    /// between the stash and the read.
+    /// verdict rides the returned ticket, which the Resolved row carries into
+    /// the same cycle's dispatch — no engine stash holds it, so no later call
+    /// can read it. The stage machine drives Resolved -> Solved sequentially
+    /// on the driver thread, and the row's take-once slot admits exactly one
+    /// Solved pass.
     fn on_resolve(&self, work: &Resolve<'_>) -> Result<AffectedPaths, StageError> {
         let mut engine = self.engine.lock();
         // ADR-045 T4: the admission draw is the cycle's `draw` (engine mutex
         // held, ledger mutex inner - order unchanged).
-        let affected = engine.cycle.draw(work.delta, work.ctx.block());
+        let ticket = engine.cycle.draw(work.delta, work.ctx.block());
         drop(engine);
-        Ok(AffectedPaths(affected))
+        Ok(AffectedPaths::drawn(ticket))
     }
     /// Solved row: the engine's solve cycle over the affected keys. The
     /// in-process simulation (ADR-019) and the gate (ADR-040) run INSIDE
@@ -681,7 +684,10 @@ impl StageHandlers for EngineStages {
         // that cursor fact onto the Solved row's outcome so the driver can
         // derive the engine cursor from the product rather than re-poking
         // the seam after the hook returns.
-        let outcome = self.run_solve_cycle(&work.paths.0, work.ctx.block(), work.ctx.metadata());
+        // The row yields its ticket exactly once: the epoch consumes it here,
+        // so a second Solved pass over this Resolved row fails loudly.
+        let ticket = work.paths.take_ticket();
+        let outcome = self.run_solve_cycle(ticket, work.ctx.block(), work.ctx.metadata());
         Ok(SolveOutcome {
             candidates: Vec::new(),
             solved: Epoch::at(outcome.solved_block()),

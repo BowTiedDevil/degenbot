@@ -218,7 +218,7 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
         })
         .expect("resolve hook is infallible");
     assert_eq!(
-        drawn.0.len(),
+        drawn.with_ticket(|t| t.affected().len()),
         pool_ids.len(),
         "cycle 1 draws every seed key"
     );
@@ -250,7 +250,10 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
             delta: &delta,
         })
         .expect("resolve hook is infallible");
-    let drawn_keys: HashSet<_> = drawn.0.iter().copied().collect();
+    let drawn_keys: HashSet<_> = drawn
+        .with_ticket(|t| t.affected().to_vec())
+        .into_iter()
+        .collect();
     for key in &deferred_keys {
         assert!(
             drawn_keys.contains(key),
@@ -272,7 +275,7 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert_eq!(
-        engine.lock().cycle.cursor.results_block(),
+        engine.lock().cycle.cursor.coordinates().results_block,
         101,
         "the retried path solves at the retry cycle's block"
     );
@@ -328,7 +331,7 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
         .leads_expired
         .load(Ordering::Relaxed);
     // The re-record targeted cycle 1's solve block.
-    let defer_block = engine.lock().cycle.cursor.results_block();
+    let defer_block = engine.lock().cycle.cursor.coordinates().results_block;
     // Cycle 2: narrow the window to zero and advance one block — the
     // cutoff prunes the deferred lead's bucket before the draw, so it is
     // never redrawn.
@@ -346,7 +349,7 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
         })
         .expect("resolve hook is infallible");
     assert!(
-        !drawn.0.iter().any(|key| deferred_keys.contains(key)),
+        !drawn.with_ticket(|t| t.affected().iter().any(|key| deferred_keys.contains(key))),
         "the deferred retry lead expired at the retention window boundary"
     );
     stages

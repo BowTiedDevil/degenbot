@@ -299,10 +299,12 @@ fn quiet_pool_that_swapped_11_blocks_ago_is_still_solved() {
     );
     // Re-solve at block 111: pool A trails by 11 blocks — quiet, not stale.
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::from([v2_fwd_a]),
-            &HashSet::new(),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::from([v2_fwd_a]),
+                &HashSet::new(),
+                &HashSet::new(),
+            ),
         ),
         111,
         &BlockMetadata::default(),
@@ -378,10 +380,12 @@ fn invalid_path_skips_unrelated_dirty_but_rechecks_own_pool() {
     // path (no snapshot re-insertion).
     engine.cycle.resolved_update_snapshot.clear();
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::from([v2]),
-            &HashSet::new(),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::from([v2]),
+                &HashSet::new(),
+                &HashSet::new(),
+            ),
         ),
         5,
         &BlockMetadata::default(),
@@ -402,10 +406,12 @@ fn invalid_path_skips_unrelated_dirty_but_rechecks_own_pool() {
     // Dirtying the path's OWN responsible empty pool clears the container
     // and re-checks it (still empty → Invalid again, but it WAS re-checked).
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::new(),
-            &HashSet::from([empty_v3]),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::new(),
+                &HashSet::from([empty_v3]),
+                &HashSet::new(),
+            ),
         ),
         6,
         &BlockMetadata::default(),
@@ -696,7 +702,7 @@ fn register_and_solve_path_eagerly_solves() {
     )
     .unwrap();
     // Should be tracked as pending so run_epoch can merge
-    assert!(engine.cycle.pending_new_paths.contains(&path_id));
+    assert!(crate::arb_engine::test_harness::pending_new_paths(&engine).contains(&path_id));
     // Results should already contain the eagerly-solved path
     let (results, _block) = latest_results(&engine);
     let solve_result = results.get(&path_id);
@@ -746,10 +752,12 @@ fn pending_new_paths_survive_rebuild() {
     // Process an empty block (no affected pools) — run_epoch
     // should still include the pending path and not drop it
     engine.cycle.run_epoch(
-        &crate::arb_engine::tests::test_keys::affected_keys(
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
+        crate::arb_engine::test_harness::cycle_ticket(
+            &crate::arb_engine::tests::test_keys::affected_keys(
+                &HashSet::new(),
+                &HashSet::new(),
+                &HashSet::new(),
+            ),
         ),
         1,
         &BlockMetadata::default(),
@@ -757,7 +765,7 @@ fn pending_new_paths_survive_rebuild() {
         &mut engine.delivery,
     );
     // Pending set should be cleared
-    assert!(engine.cycle.pending_new_paths.is_empty());
+    assert!(crate::arb_engine::test_harness::pending_new_paths(&engine).is_empty());
     // The path's result should survive the rebuild
     let (results, block) = latest_results(&engine);
     assert_eq!(block, 1);
@@ -1005,7 +1013,7 @@ fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
     // Pump seeds the settled resume boundary (block 500) at resume.
     engine.cycle.cursor.advance_solved(500);
     assert_eq!(
-        engine.cycle.cursor.results_block(),
+        engine.cycle.cursor.coordinates().results_block,
         500,
         "cold-start anchor seeded to settled resume block"
     );
@@ -1060,7 +1068,7 @@ fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
     engine.cycle.cursor.set_results_block_for_test(900);
     engine.cycle.cursor.advance_solved(600);
     assert_eq!(
-        engine.cycle.cursor.results_block(),
+        engine.cycle.cursor.coordinates().results_block,
         900,
         "set_solve_anchor never clobbers a real anchor"
     );
@@ -1080,14 +1088,14 @@ fn late_solve_stamp_cannot_regress_results_anchor() {
     // First solve cycle anchors at block 10.
     run_test_cycle(&mut engine, 10, &BlockMetadata::default(), &[]);
     assert_eq!(
-        engine.cycle.cursor.results_block(),
+        engine.cycle.cursor.coordinates().results_block,
         10,
         "the solve-stamp path anchors results_block at the cycle's solve block"
     );
     // A late/stale stamp through the same path must not regress it.
     run_test_cycle(&mut engine, 5, &BlockMetadata::default(), &[]);
     assert_eq!(
-        engine.cycle.cursor.results_block(),
+        engine.cycle.cursor.coordinates().results_block,
         10,
         "a stale solve stamp must never regress the results anchor"
     );

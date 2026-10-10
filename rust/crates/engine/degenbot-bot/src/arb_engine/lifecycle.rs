@@ -176,14 +176,14 @@ pub(crate) fn latest_results(engine: &ArbitrageEngine) -> (HashMap<u64, SolvePat
             .iter()
             .map(|r| (*r.key(), r.value().clone()))
             .collect(),
-        engine.cycle.cursor.results_block(),
+        engine.cycle.cursor.coordinates().results_block,
     )
 }
 /// Return the last block number processed by `process_block`.
 /// Returns `None` if no block has been processed yet.
 #[must_use]
 pub(crate) fn last_processed_block(engine: &ArbitrageEngine) -> Option<u64> {
-    engine.cycle.cursor.last_processed_block()
+    engine.cycle.cursor.coordinates().last_processed_block
 }
 /// Set the last processed block manually (machine-direct cursor poke).
 ///

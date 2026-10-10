@@ -215,7 +215,11 @@ fn detached_undercount_trips_the_fan_in_assert() {
         delta.record_affected(HopType::V2, p, 0u64);
     }
     let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine), delta);
-    stages.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
+    stages.run_solve_cycle(
+        crate::arb_engine::test_harness::cycle_ticket(&affected_keys_v2),
+        100,
+        &BlockMetadata::default(),
+    );
     // Wait for the dispositions to land (the sidecar merges async).
     // Widened ~15s: the detached sidecar shares the fleet solve seats with
     // other concurrently-running tests; the disposition lands in <50ms when
@@ -296,7 +300,11 @@ fn detached_panic_does_not_leak_inflight_gauge() {
         delta.record_affected(HopType::V2, p, 0u64);
     }
     let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine), delta);
-    stages.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
+    stages.run_solve_cycle(
+        crate::arb_engine::test_harness::cycle_ticket(&affected_keys_v2),
+        100,
+        &BlockMetadata::default(),
+    );
     // After all dispositions land, the gauge must be back at g0 EXACTLY
     // (a leaked count OR a sagged count both move it off g0 — only the
     // exact value pins BOTH directions of a broken pairing).

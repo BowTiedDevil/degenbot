@@ -34,7 +34,7 @@
 //!   are non-decreasing).
 //! - `delivery_policy.rs::diff_and_send`: re-derived
 //!   `anchored = results_block != 0` → consumes
-//!   [`BlockCursor::is_anchored`] handed over by the engine.
+//!   [`BlockCoordinates::is_anchored`] handed over by the engine.
 //!
 //! ## The monotone discipline
 //!
@@ -89,6 +89,40 @@ pub(crate) struct BlockCursor {
     /// by `finalize`. Owned by the engine.
     has_logs_this_block: bool,
 }
+/// One coherent reading of the engine block cursor: the solve-anchor stamp,
+/// the processed boundary, the solved boundary, and the forward-log flag.
+///
+/// The cursor hands this value out in ONE call ([`BlockCursor::coordinates`])
+/// instead of per-coordinate accessors, so a reader sees a consistent snapshot
+/// and the derivation of a coordinate (e.g. "anchored") has exactly one home.
+// The `_block` postfix is the settled vocabulary the cursor's coordinates carried
+// before the fold (the same names `BlockCursor` keeps); it is the point, not drift.
+#[expect(clippy::struct_field_names)]
+pub(crate) struct BlockCoordinates {
+    /// The solve-anchor stamp (`0` = cold start, no solve yet).
+    pub(crate) results_block: u64,
+    /// The processed boundary (`None` = nothing processed yet).
+    pub(crate) last_processed_block: Option<u64>,
+    /// The solved boundary (the finalize one-shot guard's left side).
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) last_solved_block: u64,
+    /// Whether any forward log applied since the last finalize.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) has_logs_this_block: bool,
+}
+
+impl BlockCoordinates {
+    /// Whether a real solve has anchored `results_block` (`!= 0`): the
+    /// delivery policy's publish gate (a 0 anchor would sim at block 0 —
+    /// the 0x841820 code-less panic) and the sim-diag solve-block fallback
+    /// condition. The cursor owns the derivation; no reader re-derives it
+    /// from the raw integer.
+    #[must_use]
+    pub(crate) const fn is_anchored(&self) -> bool {
+        self.results_block != 0
+    }
+}
+
 impl BlockCursor {
     /// The guarded combined finalize transition — the engine's
     /// `finalize_block` boundary. The `block > last_solved_block` guard is
@@ -148,36 +182,19 @@ impl BlockCursor {
     pub(crate) fn record_logs(&mut self) {
         self.has_logs_this_block = true;
     }
-    /// Whether a real solve has anchored `results_block` (`!= 0`): the
-    /// delivery policy's publish gate (a 0 anchor would sim at block 0 —
-    /// the 0x841820 code-less panic) and the sim-diag solve-block fallback
-    /// condition. The cursor owns the derivation; no reader re-derives it
-    /// from the raw integer.
+    /// The ONE read door: the cursor's four block coordinates as one value.
+    ///
+    /// A reader that needs several coordinates takes one reading of the whole
+    /// cursor, so it can never mix coordinates captured across different
+    /// advances.
     #[must_use]
-    pub(crate) const fn is_anchored(&self) -> bool {
-        self.results_block != 0
-    }
-    /// The solve-anchor stamp.
-    #[must_use]
-    pub(crate) const fn results_block(&self) -> u64 {
-        self.results_block
-    }
-    /// The processed boundary (`None` = nothing processed yet).
-    #[must_use]
-    pub(crate) const fn last_processed_block(&self) -> Option<u64> {
-        self.last_processed_block
-    }
-    /// The solved boundary (the finalize one-shot guard's left side).
-    #[must_use]
-    #[cfg_attr(not(test), expect(dead_code))]
-    pub(crate) const fn last_solved_block(&self) -> u64 {
-        self.last_solved_block
-    }
-    /// Whether any forward log applied since the last [`Self::finalize`].
-    #[must_use]
-    #[cfg_attr(not(test), expect(dead_code))]
-    pub(crate) const fn has_logs_this_block(&self) -> bool {
-        self.has_logs_this_block
+    pub(crate) const fn coordinates(&self) -> BlockCoordinates {
+        BlockCoordinates {
+            results_block: self.results_block,
+            last_processed_block: self.last_processed_block,
+            last_solved_block: self.last_solved_block,
+            has_logs_this_block: self.has_logs_this_block,
+        }
     }
     /// White-box test seam: byte-identical replacement for the
     /// tests' direct `engine.results_block = n` writes (the field moved

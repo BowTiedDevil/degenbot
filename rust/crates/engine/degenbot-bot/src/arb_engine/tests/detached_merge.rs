@@ -26,7 +26,11 @@ fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
         std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
     );
     let t0 = std::time::Instant::now();
-    handle.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
+    handle.run_solve_cycle(
+        crate::arb_engine::test_harness::cycle_ticket(&affected_keys_v2),
+        100,
+        &BlockMetadata::default(),
+    );
     let returned = t0.elapsed();
     // RETURNS before the merge lands: strictly inside the injected 400ms
     // slow-solve window, and the slow path's result is NOT in the map yet.
@@ -473,12 +477,24 @@ async fn detached_stragglers_do_not_block_inline_stage_work() {
     let t0 = std::time::Instant::now();
     // The detached cycle: the solve call RETURNS (enqueue-end) while the
     // 400ms slow solve still runs — no in-cycle multi-second hold.
-    stages.run_solve_cycle(&affected_keys_v2, 100, &meta);
+    stages.run_solve_cycle(
+        crate::arb_engine::test_harness::cycle_ticket(&affected_keys_v2),
+        100,
+        &meta,
+    );
     // The shipped cadence continues UNCHANGED mid-merge: a debounce publish
     // + further block cycles interleave with the sidecar's merges.
     compute_diff_and_send(&mut engine.lock(), &meta);
-    stages.run_solve_cycle(&[], 101, &meta);
-    stages.run_solve_cycle(&[], 102, &meta);
+    stages.run_solve_cycle(
+        crate::arb_engine::test_harness::cycle_ticket(&[]),
+        101,
+        &meta,
+    );
+    stages.run_solve_cycle(
+        crate::arb_engine::test_harness::cycle_ticket(&[]),
+        102,
+        &meta,
+    );
     assert!(
             t0.elapsed() < std::time::Duration::from_millis(250),
             "the whole cadence must complete inside the 400ms slow-solve window (enqueue-end, not apply-end)"

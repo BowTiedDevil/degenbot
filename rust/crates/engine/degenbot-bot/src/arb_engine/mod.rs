@@ -54,7 +54,7 @@ use dashmap::DashMap;
 use degenbot_substrate::resolve::HopProjectionCache;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use std::sync::Arc;
 // THE construction-stamped fleet boot carrier: the engine's own
 // FleetBoot value + the ride ledger the per-role fleet statics consult.
@@ -143,6 +143,10 @@ pub(crate) mod walk_telemetry;
 // `CycleArm` / `ResolveCensus` / `Registration`) — T3/T4 assemble
 // `SolveCycle` on top of it; nothing consumes the types yet.
 mod solve_cycle;
+// The cycle ticket: the solve cycle's transient-handoff value. The Resolved
+// stage row (`bot_core::AffectedPaths`) carries it from the draw to the epoch,
+// so the stage machine can name its payload without reaching into the module.
+pub(crate) use solve_cycle::CycleTicket;
 // the executor A/B probe fixtures (heavy-CL corpus loader, shared
 // solve-cycle fixture, production LPT bin packer) live test-only beside their
 // consumers; `#[cfg(test)]` so the fixtures never compile into production.
@@ -532,10 +536,7 @@ impl ArbitrageEngine {
                 path_description_cache: parking_lot::Mutex::new(HashMap::new()),
                 resolved_update_snapshot: HashMap::new(),
                 cursor: BlockCursor::default(), // (0, None, 0, false) — the pre-cursor init, unchanged
-                admission_draw_zero: false,
-                last_arm: None,
-                pending_new_paths: HashSet::new(),
-                paths_same_state_this_cycle: 0,
+                transients: solve_cycle::CycleTransients::default(),
                 results: DashMap::new(),
                 inline_payloads: DashMap::new(),
                 solve_admission: retune.solve_admission,
