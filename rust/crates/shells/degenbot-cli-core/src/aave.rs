@@ -24,7 +24,7 @@ use alloy::primitives::{address, Address};
 use degenbot_aave::updater::verify::cleanup_zero_balance_positions_on_conn;
 use degenbot_aave::{
     activate_aave_market, deactivate_aave_market, reset_market_to_cold_boot, run_aave_update,
-    NoProgress, RunError,
+    NoProgress, RunError, RunSpec, VerifyPolicy,
 };
 use degenbot_db::{
     aave_market_digest_for, ops, render_completed_market_manifest, CompletedMarketDrive, DbError,
@@ -389,6 +389,18 @@ struct UpdateArgs<'a> {
     enable_backup: bool,
 }
 
+/// The `aave update` flags' projection onto the run's [`VerifyPolicy`]: the
+/// market-wide interval gate is live only when `--verify-all` is set.
+impl From<&UpdateArgs<'_>> for VerifyPolicy {
+    fn from(args: &UpdateArgs<'_>) -> Self {
+        Self {
+            verify_chunk: args.verify_chunk,
+            verify_all_interval: args.verify_all.then_some(args.verify_all_interval),
+            verify_all_at_completion: args.verify_all,
+        }
+    }
+}
+
 /// `aave update`.
 #[expect(clippy::too_many_lines)]
 fn update(
@@ -409,11 +421,6 @@ fn update(
         return Err(CliError::NoActiveAaveMarkets);
     }
     let spec = parse_to_block(args.to_block)?;
-    let interval = if args.verify_all {
-        Some(args.verify_all_interval)
-    } else {
-        None
-    };
     let max_chunks = if args.stop_after_one_chunk {
         Some(1)
     } else {
@@ -470,17 +477,17 @@ fn update(
             }) {
                 Ok(Ok(provider)) => run_aave_update(
                     &database_path,
-                    chain,
-                    market.id,
-                    resolved,
-                    args.chunk_size,
-                    provider,
-                    cancel.flag(),
-                    Arc::new(NoProgress),
-                    args.verify_chunk,
-                    interval,
-                    args.verify_all,
-                    max_chunks,
+                    RunSpec {
+                        chain_id: chain,
+                        market_id: market.id,
+                        to_block: resolved,
+                        chunk_size: args.chunk_size,
+                        provider,
+                        cancel: cancel.flag(),
+                        progress: Arc::new(NoProgress),
+                        verify: VerifyPolicy::from(args),
+                        max_chunks,
+                    },
                 ),
                 Ok(Err(err)) => Err(RunError::from(err)),
                 Err(cli_err) => return Err(cli_err),

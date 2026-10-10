@@ -39,7 +39,7 @@ use degenbot_aave::{
         cleanup_zero_balance_positions_on_conn, verify_all_positions_on_conn,
         verify_touched_positions_on_conn,
     },
-    AaveUpdateReport, NoProgress, ProgressSink, RunError,
+    AaveUpdateReport, NoProgress, ProgressSink, RunError, RunSpec, VerifyPolicy,
 };
 
 use crate::cancel::CancelHandle;
@@ -174,17 +174,21 @@ fn run_aave_update(
                 .map_err(RunError::from)?;
             core_run_aave_update(
                 &path,
-                chain_id,
-                market_id,
-                to_block,
-                chunk_size,
-                provider,
-                cancel,
-                progress,
-                verify_chunk,
-                verify_all_interval,
-                verify_all_at_completion,
-                max_chunks,
+                RunSpec {
+                    chain_id,
+                    market_id,
+                    to_block,
+                    chunk_size,
+                    provider,
+                    cancel,
+                    progress,
+                    verify: VerifyPolicy {
+                        verify_chunk,
+                        verify_all_interval,
+                        verify_all_at_completion,
+                    },
+                    max_chunks,
+                },
             )
         })
         .map_err(run_err_to_py)?;

@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use degenbot_aave::updater::{
     activate_aave_market_on_conn, run_aave_update_on_db, AaveUpdateReport, NoProgress, RunError,
+    RunSpec, VerifyPolicy,
 };
 use degenbot_aave::ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK;
 use degenbot_db::sql_ledger::dump_tables_golden_json;
@@ -583,17 +584,17 @@ fn run_once(
     let provider = transport.as_alloy_provider();
     let result = run_aave_update_on_db(
         db,
-        CHAIN_ID,
-        1,
-        Some(to_block),
-        BOOTSTRAP_WINDOW + 1,
-        provider,
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        Some(1),
+        RunSpec {
+            chain_id: CHAIN_ID,
+            market_id: 1,
+            to_block: Some(to_block),
+            chunk_size: BOOTSTRAP_WINDOW + 1,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: Some(1),
+        },
     );
     let snapshot = transport.served_snapshot();
     (result, snapshot.requests, snapshot.served)

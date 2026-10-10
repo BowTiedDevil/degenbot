@@ -56,7 +56,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use degenbot_aave::updater::{run_aave_update_on_db, NoProgress};
+use degenbot_aave::updater::{run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy};
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{entry_digest, verify_cassette_bytes, Cassette, CassetteResponse};
@@ -384,17 +384,17 @@ fn replay_and_gate(name: &str, expect: &WindowExpectations) -> ReplayRun {
     let (ledger, _state) = LedgerDb::open_for_writes(&db_path).unwrap();
     let report = run_aave_update_on_db(
         ledger.db(),
-        CHAIN_ID,
-        market_id,
-        Some(seed.to_block),
-        seed.chunk_size,
-        provider,
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
+        RunSpec {
+            chain_id: CHAIN_ID,
+            market_id,
+            to_block: Some(seed.to_block),
+            chunk_size: seed.chunk_size,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
     )
     .unwrap_or_else(|e| panic!("{name}: the replayed span must commit cleanly: {e}"));
     assert_eq!(
@@ -442,17 +442,17 @@ fn replay_probe_capture(
     let (ledger, _state) = LedgerDb::open_for_writes(&db_path).unwrap();
     let run = run_aave_update_on_db(
         ledger.db(),
-        CHAIN_ID,
-        market_id,
-        Some(seed.to_block),
-        seed.chunk_size,
-        provider,
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
+        RunSpec {
+            chain_id: CHAIN_ID,
+            market_id,
+            to_block: Some(seed.to_block),
+            chunk_size: seed.chunk_size,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
     );
     match run {
         Ok(_) => {

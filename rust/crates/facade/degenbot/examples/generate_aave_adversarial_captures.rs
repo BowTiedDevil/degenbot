@@ -82,7 +82,7 @@ use std::sync::Arc;
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::transports::Transport as _;
 use degenbot::aave::updater::{
-    run_aave_update, run_aave_update_on_db, AaveUpdateReport, NoProgress,
+    run_aave_update, run_aave_update_on_db, AaveUpdateReport, NoProgress, RunSpec, VerifyPolicy,
 };
 use degenbot::db::DegenbotDb;
 use degenbot::rpc::cassette::{
@@ -614,17 +614,17 @@ fn run_recorded_chunk(
 ) -> AaveUpdateReport {
     run_aave_update(
         db_path,
-        1,
-        market_id,
-        Some(SPAN_TO),
-        SPAN_TO - DEPLOY_BLOCK + 1,
-        provider,
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
+        RunSpec {
+            chain_id: 1,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - DEPLOY_BLOCK + 1,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
     )
     .expect("the recording run of the scenario chunk must commit cleanly")
 }
@@ -642,17 +642,17 @@ fn golden_pass(
     let (ledger, _state) = LedgerDb::open_for_writes(&db2).expect("ledger opens");
     run_aave_update_on_db(
         ledger.db(),
-        1,
-        market_id,
-        Some(SPAN_TO),
-        SPAN_TO - DEPLOY_BLOCK + 1,
-        replay_provider,
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
+        RunSpec {
+            chain_id: 1,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - DEPLOY_BLOCK + 1,
+            provider: replay_provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
     )
     .expect("the golden replay of the scenario chunk must commit cleanly");
     let records = ledger.records().expect("the capture session is armed");

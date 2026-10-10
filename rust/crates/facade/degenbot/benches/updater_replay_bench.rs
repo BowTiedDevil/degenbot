@@ -48,7 +48,8 @@ use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
 use degenbot_aave::updater::{
-    run_aave_update_on_db, AaveChunkProgress, ProgressSink as AaveProgressSink,
+    run_aave_update_on_db, AaveChunkProgress, ProgressSink as AaveProgressSink, RunSpec,
+    VerifyPolicy,
 };
 use degenbot_db::sql_ledger::LedgerDb;
 use degenbot_db::DegenbotDb;
@@ -837,17 +838,17 @@ fn aave_iteration(
         let (ledger, _state) = LedgerDb::open_for_writes(&path).unwrap();
         let report = run_aave_update_on_db(
             ledger.db(),
-            chain_id,
-            market_id,
-            Some(to_block),
-            to_block - from_block + 1,
-            provider,
-            Arc::new(AtomicBool::new(false)),
-            collector.clone(),
-            false,
-            None,
-            false,
-            None,
+            RunSpec {
+                chain_id,
+                market_id,
+                to_block: Some(to_block),
+                chunk_size: to_block - from_block + 1,
+                provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: collector.clone(),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
         )
         .unwrap_or_else(|e| panic!("the replayed aave run must commit cleanly: {e}"));
         let records = ledger.records().expect("the capture session is armed");
@@ -900,17 +901,17 @@ fn aave_config_iteration(
         let (ledger, _state) = LedgerDb::open_for_writes(&path).unwrap();
         let report = run_aave_update_on_db(
             ledger.db(),
-            chain_id,
-            market_id,
-            Some(to_block),
-            to_block - from_block + 1,
-            provider,
-            Arc::new(AtomicBool::new(false)),
-            collector.clone(),
-            false,
-            None,
-            false,
-            None,
+            RunSpec {
+                chain_id,
+                market_id,
+                to_block: Some(to_block),
+                chunk_size: to_block - from_block + 1,
+                provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: collector.clone(),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
         )
         .unwrap_or_else(|e| panic!("the replayed aave run must commit cleanly: {e}"));
         let records = ledger.records().expect("the capture session is armed");

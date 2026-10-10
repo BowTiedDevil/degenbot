@@ -40,7 +40,9 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use degenbot_aave::updater::{run_aave_update, run_aave_update_on_db, NoProgress};
+use degenbot_aave::updater::{
+    run_aave_update, run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy,
+};
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{entry_digest, verify_cassette_bytes, Cassette, CassetteResponse};
@@ -330,17 +332,17 @@ fn replay_and_gate(name: &str, seed: &ScenarioSeed) -> ReplayRun {
     let (ledger, _state) = LedgerDb::open_for_writes(&db_path).unwrap();
     let report = run_aave_update_on_db(
         ledger.db(),
-        1,
-        market_id,
-        Some(SPAN_TO),
-        SPAN_TO - SPAN_FROM + 1,
-        provider.clone(),
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
+        RunSpec {
+            chain_id: 1,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            provider: provider.clone(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
     )
     .unwrap_or_else(|e| panic!("{name}: the replayed chunk must commit cleanly: {e}"));
     assert_eq!(
@@ -420,17 +422,17 @@ fn replay_probe(
     }
     run_aave_update(
         &db_path,
-        1,
-        market_id,
-        Some(SPAN_TO),
-        SPAN_TO - SPAN_FROM + 1,
-        provider,
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
+        RunSpec {
+            chain_id: 1,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
     )
     .unwrap_or_else(|e| panic!("{name}: the probe replay must commit cleanly: {e}"));
     let db_path = dir.keep().join("probe.db");

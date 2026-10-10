@@ -38,7 +38,9 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot::aave::updater::aave_fetch::resolve_aave_substrate;
-use degenbot::aave::updater::{run_aave_update, run_aave_update_on_db, NoProgress};
+use degenbot::aave::updater::{
+    run_aave_update, run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy,
+};
 use degenbot::db::DegenbotDb;
 use degenbot::rpc::cassette::{
     rfc3339_utc, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
@@ -306,17 +308,17 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
     let (db_path, market_id) = seed_db(dir.path(), "record.db", &substrate, window.cursor);
     let report = run_aave_update(
         &db_path,
-        CHAIN_ID,
-        market_id,
-        Some(window.to_block),
-        window.chunk_size,
-        recorder.as_alloy_provider(),
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
+        RunSpec {
+            chain_id: CHAIN_ID,
+            market_id,
+            to_block: Some(window.to_block),
+            chunk_size: window.chunk_size,
+            provider: recorder.as_alloy_provider(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
     )
     .unwrap_or_else(|e| panic!("{}: recording run must commit cleanly: {e}", window.name));
     println!(
@@ -347,17 +349,17 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
     let (ledger, _state) = LedgerDb::open_for_writes(&db2).expect("ledger opens");
     run_aave_update_on_db(
         ledger.db(),
-        CHAIN_ID,
-        market_id2,
-        Some(window.to_block),
-        window.chunk_size,
-        replay,
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(NoProgress),
-        false,
-        None,
-        false,
-        None,
+        RunSpec {
+            chain_id: CHAIN_ID,
+            market_id: market_id2,
+            to_block: Some(window.to_block),
+            chunk_size: window.chunk_size,
+            provider: replay,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
     )
     .unwrap_or_else(|e| panic!("{}: golden replay must commit cleanly: {e}", window.name));
     let records = ledger.records().expect("the capture session is armed");

@@ -56,7 +56,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use degenbot::aave::updater::aave_fetch::fetch_pool_logs;
-use degenbot::aave::updater::{activate_aave_market, run_aave_update};
+use degenbot::aave::updater::{activate_aave_market, run_aave_update, RunSpec, VerifyPolicy};
 use degenbot::db::DegenbotDb;
 use degenbot::pool_updater::fetch::{
     fetch_pool_created_logs, fetch_v3_liquidity_logs_grouped, PoolFamily,
@@ -658,17 +658,17 @@ async fn record_aave_run_chunk(
         // (4) The REAL chunk loop over the recording transport.
         let report = run_aave_update(
             &db_path,
-            chain_id_i64,
-            market_id,
-            Some(to_block),
-            to_block - from_block + 1,
-            recorder.as_alloy_provider(),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(degenbot::aave::updater::NoProgress),
-            false,
-            None,
-            false,
-            None,
+            RunSpec {
+                chain_id: chain_id_i64,
+                market_id,
+                to_block: Some(to_block),
+                chunk_size: to_block - from_block + 1,
+                provider: recorder.as_alloy_provider(),
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(degenbot::aave::updater::NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
         )
         .map_err(|e| format!("run_aave_update: {e}"))?;
         Ok((market_id, report.total_events_applied))
