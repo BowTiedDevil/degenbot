@@ -3,12 +3,21 @@
 //! A regeneration that changes the record's SHAPE fails here instead of
 //! drifting silently; the digest bytes themselves are the drive's outcome,
 //! re-pinned per run.
+//!
+//! **Regeneration:** with `REGENERATE_SQL_GOLDENS=1` the byte-identity gate
+//! rewrites the committed pin through the same writer it compares with (the
+//! typed record re-renders to the committed bytes plus the printer's one
+//! final LF; ADR-068 D4's regenerate-and-diff). Only run it when the record's
+//! canonical serialization legitimately changed.
 
-#![expect(clippy::expect_used, clippy::panic)]
+#![expect(clippy::expect_used, clippy::panic, clippy::print_stderr)]
 
 use serde_json::Value;
 
-use degenbot_db::digest::{MARKET_DIGEST_SERIALIZATION, MARKET_DIGEST_TABLES};
+use degenbot_db::digest::{
+    parse_completed_market_manifest, render_completed_market_manifest, MARKET_DIGEST_SERIALIZATION,
+    MARKET_DIGEST_TABLES,
+};
 
 /// The committed record, at the repo root (four levels above this crate).
 const MANIFEST_PATH: &str = concat!(
@@ -146,6 +155,39 @@ fn the_committed_record_digests_exactly_the_ten_market_tables() {
         assert!(
             entry.get("rows").and_then(Value::as_u64).is_some(),
             "table {name} carries a non-negative row count"
+        );
+    }
+}
+
+/// Regenerate-and-diff (ADR-068 D4): with `REGENERATE_SQL_GOLDENS=1` the gate
+/// WRITES the pin instead of comparing — the writer that emits the record is
+/// the one the gate runs, so a stale comparison is theater.
+fn regen_requested() -> bool {
+    std::env::var("REGENERATE_SQL_GOLDENS").is_ok_and(|value| value != "0")
+}
+
+/// The committed pin is exactly the typed record's canonical bytes plus the
+/// printer's one final LF (the console writes the document with `writeln!`).
+/// Parsing and re-rendering the committed bytes must reproduce them, so a
+/// drift in either direction is caught byte-for-byte.
+#[test]
+fn the_committed_record_re_renders_to_its_exact_bytes() {
+    let committed = std::fs::read_to_string(MANIFEST_PATH).unwrap_or_else(|error| {
+        panic!("the committed completed-market manifest must be readable: {error}")
+    });
+    let manifest = parse_completed_market_manifest(&committed)
+        .expect("the committed manifest parses under the current serialization version");
+    let rendered = render_completed_market_manifest(&manifest);
+    let produced = format!("{rendered}\n");
+    if regen_requested() {
+        std::fs::write(MANIFEST_PATH, &produced).expect("write the regenerated manifest");
+        eprintln!("regenerated the completed-market manifest at {MANIFEST_PATH}");
+    } else {
+        assert_eq!(
+            produced, committed,
+            "completed-market manifest drift: the committed pin must re-render \
+             byte-identical; if the canonical serialization legitimately changed, \
+             re-run with REGENERATE_SQL_GOLDENS=1"
         );
     }
 }

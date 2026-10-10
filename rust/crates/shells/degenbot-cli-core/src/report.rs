@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use alloy::primitives::U256;
 use degenbot_db::ops::HealReport;
-use degenbot_db::{AaveMarketPurgeCount, SchemaState};
+use degenbot_db::{
+    render_completed_market_manifest, AaveMarketPurgeCount, CompletedMarketManifest, SchemaState,
+};
 
 use crate::error::{CliError, ExitCode};
 use crate::pool::PoolFamily;
@@ -894,9 +896,10 @@ pub enum AaveReport {
     },
     /// `aave digest`.
     Digest {
-        /// The rendered completed-market manifest JSON (one JSON document;
-        /// the operator redirects stdout to pin it).
-        manifest: String,
+        /// The typed completed-market record; the facade renders its
+        /// canonical manifest bytes (one JSON document the operator
+        /// redirects stdout to pin).
+        manifest: CompletedMarketManifest,
     },
     /// `aave update`.
     Updated {
@@ -980,10 +983,10 @@ impl AaveReport {
                     )]
                 }
             },
-            // The digest arm's payload IS the operator-facing output: one
-            // JSON document printed verbatim (the drive pins it by
-            // redirecting stdout).
-            Self::Digest { manifest } => vec![manifest.clone()],
+            // The digest arm's payload IS the operator-facing output: the
+            // typed record's canonical bytes, printed verbatim (the drive
+            // pins it by redirecting stdout).
+            Self::Digest { manifest } => vec![render_completed_market_manifest(manifest)],
             Self::Updated { entries } => entries.iter().flat_map(entry_lines).collect(),
             Self::Reset {
                 chain_id,

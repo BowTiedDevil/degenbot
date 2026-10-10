@@ -27,8 +27,8 @@ use degenbot_aave::{
     NoProgress, RunError, RunSpec, VerifyPolicy,
 };
 use degenbot_db::{
-    aave_market_digest_for, ops, render_completed_market_manifest, CompletedMarketDrive, DbError,
-    DegenbotDb,
+    aave_market_digest_for, ops, parse_completed_market_manifest, CompletedMarketDrive,
+    CompletedMarketManifest, DbError, DegenbotDb,
 };
 use degenbot_rpc::provider::AlloyProvider;
 
@@ -325,7 +325,7 @@ fn digest(
     let chain = i64::try_from(chain_id)
         .map_err(|_| CliError::InvalidArgument(format!("chain id {chain_id} is out of range")))?;
     let drive = drive_manifest.map(carried_drive).transpose()?;
-    let market_digest = {
+    let digest = {
         // The read handle locks down at open (`query_only=on`): the digest
         // arm observes the DB, it never writes it.
         let db = (DegenbotDb::open(&database_path)?).0;
@@ -333,46 +333,23 @@ fn digest(
         aave_market_digest_for(&conn, Some(chain), market_name)?
     };
     Ok(AaveReport::Digest {
-        manifest: render_completed_market_manifest(&market_digest, drive.as_ref()),
+        manifest: CompletedMarketManifest { digest, drive },
     })
 }
 
-/// Parse the `market.drive` block out of a previous completed-market
-/// record — the one content the record carries that the DB cannot yield.
+/// Parse a previous completed-market record with the typed reader and carry
+/// its `market.drive` block — the one content the record has that the DB
+/// cannot yield.
+///
+/// The record must be one this writer emitted (the serialization stamp is
+/// the version discriminant) and must carry a drive block; a record without
+/// one has nothing to carry.
 fn carried_drive(path: &std::path::Path) -> Result<CompletedMarketDrive, CliError> {
     let raw = std::fs::read_to_string(path).map_err(CliError::Io)?;
-    let record: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
-        CliError::InvalidArgument(format!("{} is not valid JSON: {error}", path.display()))
-    })?;
-    let drive = record
-        .get("market")
-        .and_then(|market| market.get("drive"))
-        .ok_or_else(|| {
-            CliError::InvalidArgument(format!("{} carries no market.drive block", path.display()))
-        })?;
-    let unsigned = |key: &str| {
-        drive
-            .get(key)
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| {
-                CliError::InvalidArgument(format!(
-                    "market.drive.{key} is not a non-negative integer"
-                ))
-            })
-    };
-    let verify = drive
-        .get("verify")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            CliError::InvalidArgument("market.drive.verify is not a string".to_string())
-        })?
-        .to_string();
-    Ok(CompletedMarketDrive {
-        chunks: unsigned("chunks")?,
-        events_applied: unsigned("events_applied")?,
-        from_block: unsigned("from_block")?,
-        to_block: unsigned("to_block")?,
-        verify,
+    let manifest = parse_completed_market_manifest(&raw)
+        .map_err(|error| CliError::InvalidArgument(format!("{}: {error}", path.display())))?;
+    manifest.drive.ok_or_else(|| {
+        CliError::InvalidArgument(format!("{} carries no market.drive block", path.display()))
     })
 }
 

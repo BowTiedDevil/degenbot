@@ -80,9 +80,9 @@ pub use degenbot_math::cl::liquidity_mapping::{
 /// same vocabulary without a direct dependency on the zero-dependency leaf.
 pub use degenbot_pathfinding::PoolKind;
 pub use digest::{
-    aave_market_digest, aave_market_digest_for, render_completed_market_manifest,
-    CompletedMarketDrive, MarketDigest, MarketFacts, TableDigest, MARKET_DIGEST_SERIALIZATION,
-    MARKET_DIGEST_TABLES,
+    aave_market_digest, aave_market_digest_for, parse_completed_market_manifest,
+    render_completed_market_manifest, CompletedMarketDrive, CompletedMarketManifest, MarketDigest,
+    MarketFacts, TableDigest, MARKET_DIGEST_SERIALIZATION, MARKET_DIGEST_TABLES,
 };
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use discovery_read::{
