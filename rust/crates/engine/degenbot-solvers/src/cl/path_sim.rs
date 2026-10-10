@@ -13,7 +13,7 @@ use std::sync::Arc;
 use alloy::primitives::U256;
 
 use super::entries::PreparedClHop;
-use super::hop_sim::simulate_v3_range_swap_tallied;
+use super::hop_sim::simulate_v3_range_swap;
 use super::tally::WalkTally;
 use super::IntV3TickRangeSequence;
 
@@ -54,8 +54,11 @@ impl ClPathSim {
                     prepared.clone()
                 } else {
                     let crossings = Arc::new(super::crossings::build_cl_crossing_table(seq));
-                    let profiles =
-                        Arc::new(super::crossings::build_word_profiles(crossings.as_slice()));
+                    let mut tally = WalkTally::default();
+                    let profiles = Arc::new(super::crossings::build_word_profiles(
+                        crossings.as_slice(),
+                        &mut tally,
+                    ));
                     PreparedClHop::from_parts(Arc::new((*seq).clone()), crossings, profiles)
                 }
             })
@@ -83,10 +86,9 @@ impl ClPathSim {
             let crossing = &hop.crossings[k];
             let remaining = current - crossing.crossing_gross_input;
             let ending_output = match hop.profiles.get(k).and_then(Option::as_deref) {
-                Some(profile) => profile.swap(remaining).output,
+                Some(profile) => profile.swap(remaining, &mut tally).output,
                 None => {
-                    simulate_v3_range_swap_tallied(remaining, &crossing.ending_range, &mut tally)
-                        .output
+                    simulate_v3_range_swap(remaining, &crossing.ending_range, &mut tally).output
                 }
             };
             let out = crossing.crossing_output.saturating_add(ending_output);

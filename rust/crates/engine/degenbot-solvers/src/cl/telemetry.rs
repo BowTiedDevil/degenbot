@@ -1,12 +1,14 @@
-//! Ambient walk telemetry: the per-thread counters the per-solve tally has not
-//! yet absorbed (the edge / event-solver census and the profile word steps),
-//! the event census, and the process-wide timing statics the cache lab reads.
+//! Ambient walk telemetry: the event census the per-solve tally has not yet
+//! absorbed, plus the process-wide timing statics the cache lab still drains.
 //!
-//! The active-set walk now threads its own owned accumulator (`cl::tally`)
-//! instead of writing most of these cells; what remains here is the subset the
-//! next migration chunk moves. Compiling `degenbot-solvers` without its
-//! `telemetry` feature (the default) flushes every writer to a no-op, so the
-//! counters read as zero and the release build pays nothing for them.
+//! The active-set walk, the crossing helpers, and the word-profile build all
+//! thread their own owned accumulator (`cl::tally`) now; what remains here is
+//! the event census alone — its increment carries the runtime census gate. The
+//! process-wide timing statics survive for the cache lab's swap-sweep readout
+//! until that reader cuts over to the collector's drain. Compiling
+//! `degenbot-solvers` without its `telemetry` feature (the default) flushes
+//! every writer to a no-op, so the counters read as zero and the release build
+//! pays nothing for them.
 
 use alloy::primitives::U256;
 
@@ -123,7 +125,7 @@ fn event_census_record_inner(
     if !event_census_on(cfg) {
         return;
     }
-    let pred = walk_event_first_above_predicted(hops, ks);
+    let pred = walk_event_first_above_predicted(hops, ks, tally);
     let mut c = EVENT_CENSUS.get();
     match (x_r, pred) {
         (None, None) => c.terminal_agree += 1,
@@ -293,46 +295,7 @@ pub static WALK_ANCHOR_COMPOSE_NS: std::sync::atomic::AtomicU64 =
 pub static WALK_ANCHOR_ARGMAX_NS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
-// Test-only instrumentation for the active-set walk: pieces visited and
-// path simulations executed per solve. Guard tests bound both (regression
-// net against re-introducing combinatorial behavior).
-//
-// Thread-local because `cargo test` runs tests (and their solves) on
-// separate threads concurrently — a shared static would mix counts.
-thread_local! {
-    // The ambient counters the per-solve tally has not yet absorbed. Each
-    // writer rides the `telemetry` feature gate, so a default build keeps them
-    // at their zero initializers.
-    // Total `compute_swap_step_v3` steps executed inside the profile build and
-    // its partial landing step — the per-simulation cost driver for dense
-    // (many-word-boundary) CL ranges. `sims × per-sim steps` is the real cost
-    // (the walk's own remaining word steps now land in the per-solve tally).
-    pub(crate) static WALK_WORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Loop-13 atomization: per-piece window-edge bisection probes and
-    // the transitional-anchor sweep. Everything else (straddle probes,
-    // landed_beyond scans, skipped-tuple checks, neighbor coarse grids) is
-    // the residual of total - (left+right+anchor+refine).
-    pub(crate) static WALK_LEFT_EDGE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WALK_RIGHT_EDGE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Event solver (loop 15): pieces whose right edge came from the
-    // nested ceil-inversion (accepted on the two verify probes) vs pieces
-    // that fell back to the grow + bisection. Live-corpus census: 158,283 of
-    // 158,283 exact - the fallback is defense-in-depth, not a hot path.
-    pub(crate) static WALK_EVENT_SOLVER_OK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WALK_EVENT_SOLVER_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Q3 telemetry: the largest word-boundary count any range reached in the
-    // current solve on this thread (drained per solve by the entry reset — the
-    // outcome's per-path contract). DB audit (correct metric = max
-    // inter-init-tick gap in words, per-pool ts): 210/47,679 registered UNI V3
-    // pools have a >=128-word gap, 161 fall in the solve window (<16
-    // positions), and 27 have their current tick inside one — so dense is
-    // load-bearing on real sparse pools today. This observes the largest count,
-    // and a one-shot >= DENSE_OBSERVE_THRESHOLD alert fires when a range
-    // approaches the profile threshold.
-    pub(crate) static WALK_MAX_DENSE_WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Drain the ambient per-thread counters + census state on the calling thread.
+/// Drain the ambient per-thread census state on the calling thread.
 /// Drain = read-and-clear; the discarded value is the prior path's.
 pub(crate) fn reset_walk_stats() {
     #[cfg(feature = "telemetry")]
@@ -342,17 +305,10 @@ pub(crate) fn reset_walk_stats() {
 #[cfg(feature = "telemetry")]
 fn reset_walk_stats_inner() {
     EVENT_CENSUS.with(|c| c.set(WalkEventCensus::default()));
-    WALK_WORD_STEPS.with(|c| c.set(0));
-    WALK_LEFT_EDGE_SIMS.with(|c| c.set(0));
-    WALK_RIGHT_EDGE_SIMS.with(|c| c.set(0));
-    WALK_EVENT_SOLVER_OK.with(|c| c.set(0));
-    WALK_EVENT_SOLVER_FALLBACKS.with(|c| c.set(0));
-    WALK_MAX_DENSE_WORDS.with(|c| c.set(0));
 }
 
-/// Snapshot (no clearing) of the ambient per-thread walk telemetry. The
-/// counters the per-solve tally now owns read as zero here; the solve entry
-/// folds only the still-ambient fields into its outcome.
+/// Snapshot (no clearing) of the remaining ambient per-thread walk telemetry:
+/// the event census, which the solve entry folds into its outcome.
 #[must_use]
 pub(super) fn peek_walk_stats() -> WalkStats {
     #[cfg(feature = "telemetry")]
@@ -368,70 +324,9 @@ pub(super) fn peek_walk_stats() -> WalkStats {
 #[cfg(feature = "telemetry")]
 fn peek_walk_stats_inner() -> WalkStats {
     WalkStats {
-        word_steps: WALK_WORD_STEPS.with(std::cell::Cell::get),
-        left_edge_sims: WALK_LEFT_EDGE_SIMS.with(std::cell::Cell::get),
-        right_edge_sims: WALK_RIGHT_EDGE_SIMS.with(std::cell::Cell::get),
-        event_solver_ok: WALK_EVENT_SOLVER_OK.with(std::cell::Cell::get),
-        event_solver_fallbacks: WALK_EVENT_SOLVER_FALLBACKS.with(std::cell::Cell::get),
-        max_dense_words: WALK_MAX_DENSE_WORDS.with(std::cell::Cell::get),
         census: EVENT_CENSUS.with(std::cell::Cell::get),
         ..WalkStats::default()
     }
-}
-
-// ---------------------------------------------------------------------------
-// Gated writer accessors
-//
-// Every ambient mutation routes through one of these helpers. With the
-// `telemetry` feature off each is a no-op, so the counters stay at their
-// zero initializers and the release build never touches the cells or statics.
-// ---------------------------------------------------------------------------
-
-/// Adds `by` to one thread-local walk counter.
-macro_rules! gated_cell_bump {
-    ($name:ident, $cell:ident) => {
-        #[inline]
-        pub(super) fn $name(by: usize) {
-            #[cfg(feature = "telemetry")]
-            $cell.with(|c| c.set(c.get() + by));
-            #[cfg(not(feature = "telemetry"))]
-            let _ = by;
-        }
-    };
-}
-
-gated_cell_bump!(bump_word_steps, WALK_WORD_STEPS);
-gated_cell_bump!(bump_left_edge_sims, WALK_LEFT_EDGE_SIMS);
-gated_cell_bump!(bump_right_edge_sims, WALK_RIGHT_EDGE_SIMS);
-gated_cell_bump!(bump_event_solver_ok, WALK_EVENT_SOLVER_OK);
-gated_cell_bump!(bump_event_solver_fallbacks, WALK_EVENT_SOLVER_FALLBACKS);
-
-/// Adds `ns` to one process-wide timing counter.
-macro_rules! gated_atomic_add {
-    ($name:ident, $atomic:ident) => {
-        #[inline]
-        pub(super) fn $name(ns: u64) {
-            #[cfg(feature = "telemetry")]
-            $atomic.fetch_add(ns, std::sync::atomic::Ordering::Relaxed);
-            #[cfg(not(feature = "telemetry"))]
-            let _ = ns;
-        }
-    };
-}
-
-gated_atomic_add!(add_pred_ns, WALK_PRED_NS_TOTAL);
-
-/// Raises this thread's largest observed word-boundary count to at least `n`.
-#[inline]
-pub(super) fn observe_max_dense_words(n: usize) {
-    #[cfg(feature = "telemetry")]
-    WALK_MAX_DENSE_WORDS.with(|m| {
-        if n > m.get() {
-            m.set(n);
-        }
-    });
-    #[cfg(not(feature = "telemetry"))]
-    let _ = n;
 }
 
 /// Drains the thread's census piece recorder (empty without `telemetry`).

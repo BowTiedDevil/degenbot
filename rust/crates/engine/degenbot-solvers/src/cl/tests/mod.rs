@@ -89,14 +89,19 @@ fn int_simulate_cl_path_n(
                 };
             }
             let remaining = current_input - crossing.crossing_gross_input;
-            let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
+            let ending = simulate_v3_range_swap(
+                remaining,
+                &crossing.ending_range,
+                &mut WalkTally::default(),
+            );
             let out = crossing.crossing_output.saturating_add(ending.output);
             let consumed = crossing
                 .crossing_gross_input
                 .saturating_add(ending.consumed_input);
             (consumed, out)
         } else {
-            let result = simulate_v3_range_swap(current_input, &base_ranges[i]);
+            let result =
+                simulate_v3_range_swap(current_input, &base_ranges[i], &mut WalkTally::default());
             (result.consumed_input, result.output)
         };
 
@@ -155,7 +160,7 @@ fn int_simulate_v3_v3_path(
             };
         }
         let remaining = amount_in - c1.crossing_gross_input;
-        let ending = simulate_v3_range_swap(remaining, &c1.ending_range);
+        let ending = simulate_v3_range_swap(remaining, &c1.ending_range, &mut WalkTally::default());
         let out = c1.crossing_output.saturating_add(ending.output);
         // consumed = crossing_gross_input + ending.consumed_input
         let consumed = c1
@@ -163,7 +168,7 @@ fn int_simulate_v3_v3_path(
             .saturating_add(ending.consumed_input);
         (consumed, out)
     } else {
-        let result = simulate_v3_range_swap(amount_in, base_range1);
+        let result = simulate_v3_range_swap(amount_in, base_range1, &mut WalkTally::default());
         (result.consumed_input, result.output)
     };
 
@@ -185,14 +190,14 @@ fn int_simulate_v3_v3_path(
             };
         }
         let remaining = output1 - c2.crossing_gross_input;
-        let ending = simulate_v3_range_swap(remaining, &c2.ending_range);
+        let ending = simulate_v3_range_swap(remaining, &c2.ending_range, &mut WalkTally::default());
         let out = c2.crossing_output.saturating_add(ending.output);
         let consumed = c2
             .crossing_gross_input
             .saturating_add(ending.consumed_input);
         (consumed, out)
     } else {
-        let result = simulate_v3_range_swap(output1, base_range2);
+        let result = simulate_v3_range_swap(output1, base_range2, &mut WalkTally::default());
         (result.consumed_input, result.output)
     };
 
@@ -322,7 +327,11 @@ fn int_simulate_mixed_path_n(
                     };
                 }
                 let remaining = current_input - crossing.crossing_gross_input;
-                let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
+                let ending = simulate_v3_range_swap(
+                    remaining,
+                    &crossing.ending_range,
+                    &mut WalkTally::default(),
+                );
                 let out = crossing.crossing_output.saturating_add(ending.output);
                 let consumed = crossing
                     .crossing_gross_input
@@ -342,7 +351,8 @@ fn int_simulate_mixed_path_n(
                         steps: steps.into(),
                     };
                 };
-                let result = simulate_v3_range_swap(current_input, base_range);
+                let result =
+                    simulate_v3_range_swap(current_input, base_range, &mut WalkTally::default());
                 (result.consumed_input, result.output)
             };
             steps.push(StepOutcome {
@@ -437,7 +447,7 @@ fn test_simulate_v3_range_swap_small_input_zfo() {
 
     // Small swap: 1000 token0 in, zfo
     let input = U256::from(1000u64);
-    let result = simulate_v3_range_swap(input, &hop);
+    let result = simulate_v3_range_swap(input, &hop, &mut WalkTally::default());
 
     // Should produce positive output less than input (due to fees on 1:1 pool)
     assert!(
@@ -460,7 +470,7 @@ fn test_simulate_v3_range_swap_small_input_ofz() {
 
     // Small swap: 1000 token1 in, ofz
     let input = U256::from(1000u64);
-    let result = simulate_v3_range_swap(input, &hop);
+    let result = simulate_v3_range_swap(input, &hop, &mut WalkTally::default());
 
     assert!(result.output > U256::ZERO);
     assert!(
@@ -473,7 +483,7 @@ fn test_simulate_v3_range_swap_small_input_ofz() {
 #[test]
 fn test_simulate_v3_range_swap_zero_input() {
     let hop = make_v3_hop_at_1to1(1_000_000u128, true);
-    let result = simulate_v3_range_swap(U256::ZERO, &hop);
+    let result = simulate_v3_range_swap(U256::ZERO, &hop, &mut WalkTally::default());
     assert!(result.output.is_zero());
     assert!(result.consumed_input.is_zero());
 }
@@ -490,7 +500,7 @@ fn test_simulate_v3_range_swap_zero_liquidity() {
         zero_for_one: true,
         word_boundary_prices: Vec::new(),
     };
-    let result = simulate_v3_range_swap(U256::from(1000u64), &hop);
+    let result = simulate_v3_range_swap(U256::from(1000u64), &hop, &mut WalkTally::default());
     assert!(result.output.is_zero());
     assert!(result.consumed_input.is_zero());
 }
@@ -882,9 +892,11 @@ fn test_int_simulate_v3_v3_path_hop_outputs_single_range() {
         result.steps.last().map(|s| s.output).unwrap()
     );
     // Invariant: hop_outputs[1] is the output after hop 2 using hop 1's output as input
-    let expected_hop1 = simulate_v3_range_swap(U256::from(1_000_000u64), &hop1);
+    let expected_hop1 =
+        simulate_v3_range_swap(U256::from(1_000_000u64), &hop1, &mut WalkTally::default());
     assert_eq!(result.steps[0].output, expected_hop1.output);
-    let expected_hop2 = simulate_v3_range_swap(expected_hop1.output, &hop2);
+    let expected_hop2 =
+        simulate_v3_range_swap(expected_hop1.output, &hop2, &mut WalkTally::default());
     assert_eq!(result.steps[1].output, expected_hop2.output);
     assert_eq!(result.final_output, expected_hop2.output);
 }
@@ -920,11 +932,11 @@ fn test_int_simulate_cl_path_n_3hop() {
     // 3 hops → 3 hop_outputs
     assert_eq!(result.steps.len(), 3);
     // Verify chain: output1 feeds into hop2, output2 feeds into hop3
-    let expected1 = simulate_v3_range_swap(amount_in, &hop1);
+    let expected1 = simulate_v3_range_swap(amount_in, &hop1, &mut WalkTally::default());
     assert_eq!(result.steps[0].output, expected1.output);
-    let expected2 = simulate_v3_range_swap(expected1.output, &hop2);
+    let expected2 = simulate_v3_range_swap(expected1.output, &hop2, &mut WalkTally::default());
     assert_eq!(result.steps[1].output, expected2.output);
-    let expected3 = simulate_v3_range_swap(expected2.output, &hop3);
+    let expected3 = simulate_v3_range_swap(expected2.output, &hop3, &mut WalkTally::default());
     assert_eq!(result.steps[2].output, expected3.output);
     assert_eq!(result.final_output, expected3.output);
 }
@@ -1433,7 +1445,7 @@ fn test_int_simulate_mixed_path_n_3hop() {
     assert_eq!(result.steps[0].consumed_input, amount_in);
 
     // Hop 2 (CL): swap output through V3
-    let expected_out2 = simulate_v3_range_swap(expected_out1, &cl_hop);
+    let expected_out2 = simulate_v3_range_swap(expected_out1, &cl_hop, &mut WalkTally::default());
     assert_eq!(result.steps[1].output, expected_out2.output);
 
     // Hop 3 (V2): swap output through V2 pool 2
@@ -1574,7 +1586,8 @@ fn solver_swap(
     }
     let crossing = &crossings[k];
     let remaining = amount_in - crossing.crossing_gross_input;
-    let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
+    let ending =
+        simulate_v3_range_swap(remaining, &crossing.ending_range, &mut WalkTally::default());
     Some((
         crossing
             .crossing_gross_input
@@ -1766,7 +1779,7 @@ fn simulate_v3_range_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3(
     .expect("oracle compute_swap_step_v3 must succeed");
 
     // Solver:
-    let result = simulate_v3_range_swap(amount_in, &hop);
+    let result = simulate_v3_range_swap(amount_in, &hop, &mut WalkTally::default());
 
     assert_eq!(
         result.output, step.amount_out,
@@ -1839,7 +1852,7 @@ fn simulate_v3_range_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3_
                 fee_pips,
             )
             .expect("oracle compute_swap_step_v3 must succeed");
-            let result = simulate_v3_range_swap(amount_in, &hop);
+            let result = simulate_v3_range_swap(amount_in, &hop, &mut WalkTally::default());
             assert_eq!(
                 result.output, step.amount_out,
                 "zfo partial output mismatch L={} spc={} amount_in={amount_in}: solver={}, oracle={}",
@@ -1900,7 +1913,7 @@ fn simulate_v3_range_swap_partial_step_ofz_matches_onchain_compute_swap_step_v3_
                 fee_pips,
             )
             .expect("oracle compute_swap_step_v3 must succeed");
-            let result = simulate_v3_range_swap(amount_in, &hop);
+            let result = simulate_v3_range_swap(amount_in, &hop, &mut WalkTally::default());
             assert_eq!(
                 result.output, step.amount_out,
                 "ofz partial output mismatch L={} spc={} amount_in={amount_in}: solver={}, oracle={}",
@@ -1948,7 +1961,7 @@ fn simulate_v3_range_swap_dust_amount_zfo_consumes_full_input_onchain_only() {
         fee_pips,
     )
     .expect("oracle must succeed");
-    let result = simulate_v3_range_swap(amount_in, &hop);
+    let result = simulate_v3_range_swap(amount_in, &hop, &mut WalkTally::default());
 
     // AGREEMENT: output is 0 on both sides.
     assert_eq!(result.output, U256::ZERO);
@@ -2151,7 +2164,8 @@ fn run_predicted_lattice_verification(
         if !tuples.insert(landed.clone()) {
             continue;
         }
-        let Some(pa) = walk_event_first_above_predicted(hops, &landed) else {
+        let Some(pa) = walk_event_first_above_predicted(hops, &landed, &mut WalkTally::default())
+        else {
             continue; // terminal shapes may legitimately predict None
         };
         let above = landed_any_above(
@@ -2204,10 +2218,10 @@ fn word_profile_min_input_for_output_matches_bruteforce() {
         word_boundary_prices: Vec::new(),
     };
     for hop in [&dense_zfo, &sparse_ofz] {
-        let Some(profile) = ClWordProfile::build(hop) else {
+        let Some(profile) = ClWordProfile::build(hop, &mut WalkTally::default()) else {
             panic!("profile build failed");
         };
-        let cap = profile.swap(U256::MAX).output;
+        let cap = profile.swap(U256::MAX, &mut WalkTally::default()).output;
         assert!(!cap.is_zero());
         // Sample demands: ladder + boundary outputs +− 1.
         let mut demands: Vec<U256> = Vec::new();
@@ -2222,13 +2236,15 @@ fn word_profile_min_input_for_output_matches_bruteforce() {
             let Some(inv) = word_profile_min_input_for_output(&profile, w) else {
                 panic!("inversion returned None for demand {w} of cap {cap}");
             };
-            let out_at = profile.swap(inv).output;
+            let out_at = profile.swap(inv, &mut WalkTally::default()).output;
             assert!(
                 out_at >= w,
                 "demand {w}: inversion {inv} produced only {out_at}"
             );
             if inv > U256::ZERO {
-                let out_below = profile.swap(inv - U256::ONE).output;
+                let out_below = profile
+                    .swap(inv - U256::ONE, &mut WalkTally::default())
+                    .output;
                 assert!(
                     out_below < w,
                     "demand {w}: inversion {inv} not minimal ({out_below} >= {w} at −1)"
@@ -3238,7 +3254,7 @@ fn block_25641093_pool_feed_hop2_predicts_revm_output() {
     let gross_in = lead_in + last_leg_gross;
     let oracle_out = lead_out + last_leg_out;
 
-    let profiles = Arc::new(build_word_profiles(&crossings));
+    let profiles = Arc::new(build_word_profiles(&crossings, &mut WalkTally::default()));
     let hops = [PieceView::cl(crossings, profiles)];
     let outcome = simulate_walk_path(gross_in, &hops, &mut WalkTally::default());
     let got = outcome.hop_outputs[0];
@@ -3290,7 +3306,8 @@ fn v3_word_profile_matches_linear_walk_on_dense_hop() {
         !hop.word_boundary_prices.is_empty(),
         "test hop must carry word boundaries to take the profile path"
     );
-    let prof = ClWordProfile::build(&hop).expect("profile builds for a valid dense hop");
+    let prof = ClWordProfile::build(&hop, &mut WalkTally::default())
+        .expect("profile builds for a valid dense hop");
     let full = prof.consumed.last().copied().expect("non-empty profile");
     assert!(!full.is_zero(), "dense crossing capacity must be nonzero");
     // 0 ..= 4x full traversal: partial landings (i < 32) and full traversal
@@ -3298,8 +3315,8 @@ fn v3_word_profile_matches_linear_walk_on_dense_hop() {
     let mut any_nonzero = false;
     for i in 0..=128u128 {
         let x = full * U256::from(i) / U256::from(32);
-        let linear = simulate_v3_range_swap(x, &hop);
-        let profile = prof.swap(x);
+        let linear = simulate_v3_range_swap(x, &hop, &mut WalkTally::default());
+        let profile = prof.swap(x, &mut WalkTally::default());
         assert_eq!(
             linear.consumed_input, profile.consumed_input,
             "consumed mismatch at x={x}"

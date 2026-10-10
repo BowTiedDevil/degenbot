@@ -43,7 +43,7 @@ use std::path::PathBuf;
 use alloy::primitives::{U256, U512};
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
-use degenbot_solvers::cl::simulate_v3_range_swap;
+use degenbot_solvers::cl::{simulate_v3_range_swap, WalkTally};
 use num_bigint::BigUint;
 use serde_json::{json, Value};
 
@@ -439,7 +439,7 @@ fn main() {
                 let Ok(out_v2) = baseline.swap(x) else {
                     continue;
                 };
-                let cl = simulate_v3_range_swap(x, &cl_hop);
+                let cl = simulate_v3_range_swap(x, &cl_hop, &mut WalkTally::default());
                 let out_cl = cl.output;
                 let delta: i128 = i128::try_from(out_cl).unwrap_or(i128::MAX)
                     - i128::try_from(out_v2).unwrap_or(i128::MAX);

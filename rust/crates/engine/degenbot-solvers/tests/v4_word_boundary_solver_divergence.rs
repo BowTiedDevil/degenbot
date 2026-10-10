@@ -53,7 +53,7 @@ use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally};
 
 const TICK_SPACING: i32 = 60;
 const LP_FEE: u32 = 3_000;
@@ -129,7 +129,8 @@ fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Opti
         return Some(U256::ZERO);
     }
     let remaining = amount_in - crossing.crossing_gross_input;
-    let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
+    let ending =
+        simulate_v3_range_swap(remaining, &crossing.ending_range, &mut WalkTally::default());
     Some(crossing.crossing_output.saturating_add(ending.output))
 }
 

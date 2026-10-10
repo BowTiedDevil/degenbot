@@ -51,16 +51,8 @@ pub struct V3RangeSwapResult {
 /// as the output. If the price target is reached, only the portion needed to
 /// reach the target is consumed.
 #[must_use = "the V3 swap result should be used"]
-pub fn simulate_v3_range_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3RangeSwapResult {
-    // The public entry keeps its shape for external harnesses; the walk
-    // threads its per-solve tally through the tallied variant below, so the
-    // word-step count lands in the accumulator instead of an ambient cell.
-    let mut tally = WalkTally::default();
-    simulate_v3_range_swap_tallied(amount_in, v3_hop, &mut tally)
-}
-
 #[hotpath::measure(label = "cl_solve.int_simulate_v3_swap")]
-pub(crate) fn simulate_v3_range_swap_tallied(
+pub fn simulate_v3_range_swap(
     amount_in: U256,
     v3_hop: &IntV3TickRangeHop,
     tally: &mut WalkTally,

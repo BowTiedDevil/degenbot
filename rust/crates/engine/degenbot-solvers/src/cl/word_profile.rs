@@ -3,7 +3,7 @@ use alloy::primitives::U256;
 use super::IntV3TickRangeHop;
 
 use super::hop_sim::V3RangeSwapResult;
-use super::telemetry::bump_word_steps;
+use super::tally::WalkTally;
 
 // ---------------------------------------------------------------------------
 // Event-solver inversion (loop 15)
@@ -97,7 +97,7 @@ pub struct ClWordProfile {
 impl ClWordProfile {
     /// Build the profile with one full walk. `None` for a degenerate hop (zero
     /// liquidity or no word boundaries) which the linear walk already handles.
-    pub(super) fn build(v3_hop: &IntV3TickRangeHop) -> Option<Self> {
+    pub(super) fn build(v3_hop: &IntV3TickRangeHop, tally: &mut WalkTally) -> Option<Self> {
         use alloy::primitives::I256;
         use degenbot_math::cl::swap_math::compute_swap_step_v3;
         let liquidity = i128::try_from(v3_hop.liquidity).ok()?;
@@ -128,7 +128,7 @@ impl ClWordProfile {
             .copied()
             .chain(std::iter::once(exit_price))
         {
-            bump_word_steps(1);
+            tally.bump_word_steps(1);
             let Ok(step) = compute_swap_step_v3(sp, target_price, liquidity, full, fee_pips) else {
                 return None;
             };
@@ -152,7 +152,7 @@ impl ClWordProfile {
 
     /// O(log K) replacement for `simulate_v3_range_swap(amount_in, v3_hop)` on the
     /// hop this profile was built from.
-    pub(super) fn swap(&self, amount_in: U256) -> V3RangeSwapResult {
+    pub(super) fn swap(&self, amount_in: U256, tally: &mut WalkTally) -> V3RangeSwapResult {
         use alloy::primitives::I256;
         use degenbot_math::cl::swap_math::compute_swap_step_v3;
         if amount_in.is_zero() {
@@ -178,7 +178,7 @@ impl ClWordProfile {
                 output: base_o,
             };
         }
-        bump_word_steps(1);
+        tally.bump_word_steps(1);
         let Ok(step) = compute_swap_step_v3(
             self.price[j],
             self.target[j],

@@ -11,7 +11,7 @@ use super::crossings::{
     cl_hop_min_input_for_output, landed_ending_range_index, piece_window_left_edge,
     piece_window_right_edge, piece_window_right_edge_evented,
 };
-use super::hop_sim::simulate_v3_range_swap_tallied;
+use super::hop_sim::simulate_v3_range_swap;
 use super::tally::{WalkSection, WalkTally, WalkTelemetry};
 use super::telemetry::{
     event_census_record, peek_walk_stats, reset_walk_stats, take_event_census_pieces, Mark,
@@ -127,10 +127,8 @@ impl<'a> PieceView<'a> {
                 let crossing = &crossings[k];
                 let remaining = current - crossing.crossing_gross_input;
                 let ending = match &profiles[k] {
-                    Some(profile) => profile.swap(remaining),
-                    None => {
-                        simulate_v3_range_swap_tallied(remaining, &crossing.ending_range, tally)
-                    }
+                    Some(profile) => profile.swap(remaining, tally),
+                    None => simulate_v3_range_swap(remaining, &crossing.ending_range, tally),
                 };
                 (crossing.crossing_output.saturating_add(ending.output), k)
             }
@@ -177,7 +175,12 @@ impl<'a> PieceView<'a> {
     /// least `demand`; `None` when the demand is unreachable within the
     /// landing (constant-product overflow-revert, CL capacity, or an
     /// upstream exit preempting the next boundary).
-    pub(super) fn min_input_for_output(&self, k: usize, demand: U256) -> Option<U256> {
+    pub(super) fn min_input_for_output(
+        &self,
+        k: usize,
+        demand: U256,
+        tally: &mut WalkTally,
+    ) -> Option<U256> {
         match &self.family {
             PieceFamily::ConstantProduct(hop_state) => hop_state.swap_exact_out(demand).ok(),
             PieceFamily::Cl {
@@ -185,7 +188,8 @@ impl<'a> PieceView<'a> {
                 profiles,
             } => {
                 let crossing = &crossings[k];
-                let z = cl_hop_min_input_for_output(crossing, profiles[k].as_deref(), demand)?;
+                let z =
+                    cl_hop_min_input_for_output(crossing, profiles[k].as_deref(), demand, tally)?;
                 if let Some(next_boundary) = crossings.get(k + 1) {
                     if z >= next_boundary.crossing_gross_input {
                         return None;
@@ -687,25 +691,19 @@ pub(super) fn solve_active_set_path(
 ) -> WalkOutcome {
     let s_t0 = std::time::Instant::now();
     // The walk keeps a per-solve accumulator on the solving stack and threads
-    // it by `&mut` to every writer it owns; the returned outcome carries THIS
-    // path's counters. The counters whose writers still live in the ambient
-    // module (the edge/event-solver census and the profile word steps, threaded
-    // in the next chunk) are drained into the tally's complement at entry and
-    // folded back at exit. The one merge into the engine collector happens
-    // here, at exit, under the crate's telemetry feature.
+    // it by `&mut` to every writer it owns — the crossing helpers and the
+    // word-profile build included — so the returned outcome carries THIS
+    // path's counters by construction. The event census is the one writer
+    // still riding the ambient module (its increment carries the runtime
+    // census gate); the entry folds only that drained census in. The one merge
+    // into the engine collector happens here, at exit, under the crate's
+    // telemetry feature.
     reset_walk_stats();
     let mut tally = WalkTally::default();
     let out = solve_active_set_path_inner(hops, cfg, env, &mut tally);
     tally.add_solve_ns(u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
     let mut stats = tally.walk_stats();
-    let ambient = peek_walk_stats();
-    stats.word_steps = stats.word_steps.saturating_add(ambient.word_steps);
-    stats.left_edge_sims = ambient.left_edge_sims;
-    stats.right_edge_sims = ambient.right_edge_sims;
-    stats.event_solver_ok = ambient.event_solver_ok;
-    stats.event_solver_fallbacks = ambient.event_solver_fallbacks;
-    stats.max_dense_words = ambient.max_dense_words;
-    stats.census = ambient.census;
+    stats.census = peek_walk_stats().census;
     let census_pieces = take_event_census_pieces();
     #[cfg(feature = "telemetry")]
     if let Some(tele) = tele {

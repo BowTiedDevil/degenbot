@@ -4,10 +4,6 @@ use alloy::primitives::U256;
 
 use super::active_set::{landed_any_above, simulate_walk_path, PieceView};
 use super::tally::WalkTally;
-use super::telemetry::{
-    add_pred_ns, bump_event_solver_fallbacks, bump_event_solver_ok, bump_left_edge_sims,
-    bump_right_edge_sims, observe_max_dense_words,
-};
 use super::word_profile::{word_profile_min_input_for_output, ClWordProfile};
 use super::{ClCrossingTable, ClProfileTable, IntTickRangeCrossing, IntV3TickRangeSequence};
 use crate::runtime::SolveRuntimeConfig;
@@ -19,6 +15,7 @@ pub(super) fn cl_hop_min_input_for_output(
     crossing: &IntTickRangeCrossing,
     profile: Option<&ClWordProfile>,
     w: U256,
+    tally: &mut WalkTally,
 ) -> Option<U256> {
     if w <= crossing.crossing_output {
         return Some(crossing.crossing_gross_input);
@@ -29,7 +26,7 @@ pub(super) fn cl_hop_min_input_for_output(
     let r = if let Some(p) = profile {
         word_profile_min_input_for_output(p, w_ending)?
     } else {
-        let built = ClWordProfile::build(&crossing.ending_range)?;
+        let built = ClWordProfile::build(&crossing.ending_range, tally)?;
         word_profile_min_input_for_output(&built, w_ending)?
     };
     crossing.crossing_gross_input.checked_add(r)
@@ -45,14 +42,22 @@ pub(super) fn cl_hop_min_input_for_output(
 /// This is the *exact* realized-chain inversion under the floor-cancel
 /// lemma; the loop-15 census measures how often it agrees with the bisection
 /// ground truth on captured states.
-pub(super) fn walk_event_first_above_predicted(hops: &[PieceView], ks: &[usize]) -> Option<U256> {
+pub(super) fn walk_event_first_above_predicted(
+    hops: &[PieceView],
+    ks: &[usize],
+    tally: &mut WalkTally,
+) -> Option<U256> {
     let p_t0 = std::time::Instant::now();
-    let out = walk_event_first_above_predicted_inner(hops, ks);
-    add_pred_ns(u64::try_from(p_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
+    let out = walk_event_first_above_predicted_inner(hops, ks, tally);
+    tally.add_pred_ns(u64::try_from(p_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
     out
 }
 
-fn walk_event_first_above_predicted_inner(hops: &[PieceView], ks: &[usize]) -> Option<U256> {
+fn walk_event_first_above_predicted_inner(
+    hops: &[PieceView],
+    ks: &[usize],
+    tally: &mut WalkTally,
+) -> Option<U256> {
     let mut best: Option<U256> = None;
     for i in 0..hops.len() {
         let Some(mut demand) = hops[i].next_boundary_gross(ks[i]) else {
@@ -67,7 +72,7 @@ fn walk_event_first_above_predicted_inner(hops: &[PieceView], ks: &[usize]) -> O
             if demand.is_zero() {
                 break;
             }
-            let Some(z) = hops[h].min_input_for_output(ks[h], demand) else {
+            let Some(z) = hops[h].min_input_for_output(ks[h], demand, tally) else {
                 reachable = false;
                 break;
             };
@@ -108,7 +113,7 @@ pub(super) fn piece_window_left_edge(
     let mut lo = U256::ZERO;
     let mut hi = hint.max(U256::ONE);
     for _ in 0..256 {
-        bump_left_edge_sims(1);
+        tally.bump_left_edge_sims(1);
         let landed = simulate_walk_path(hi, hops, tally).landed;
         if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             break; // predicate true
@@ -123,7 +128,7 @@ pub(super) fn piece_window_left_edge(
     // then scan for the exact first in-window input.
     while hi.saturating_sub(lo) > U256::from(64u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
-        bump_left_edge_sims(1);
+        tally.bump_left_edge_sims(1);
         let landed = simulate_walk_path(mid, hops, tally).landed;
         if landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             lo = mid;
@@ -133,7 +138,7 @@ pub(super) fn piece_window_left_edge(
     }
     let mut x = lo + U256::from(1u64);
     while x < hi {
-        bump_left_edge_sims(1);
+        tally.bump_left_edge_sims(1);
         let landed = simulate_walk_path(x, hops, tally).landed;
         if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             return x;
@@ -171,21 +176,21 @@ pub(super) fn piece_window_right_edge_evented(
     if cfg.event_solver_legacy {
         return piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed, tally);
     }
-    if let Some(pa) = walk_event_first_above_predicted(hops, ks) {
+    if let Some(pa) = walk_event_first_above_predicted(hops, ks, tally) {
         let usable = !pa.is_zero() && {
             let above = simulate_walk_path(pa, hops, tally).landed;
             landed_any_above(&above, ks)
         };
         if usable {
             let below = simulate_walk_path(pa - U256::ONE, hops, tally).landed;
-            bump_right_edge_sims(2);
+            tally.bump_right_edge_sims(2);
             if !landed_any_above(&below, ks) {
-                bump_event_solver_ok(1);
+                tally.bump_event_solver_ok(1);
                 return (Some(pa - U256::ONE), pa);
             }
         }
     }
-    bump_event_solver_fallbacks(1);
+    tally.bump_event_solver_fallbacks(1);
     piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed, tally)
 }
 
@@ -228,7 +233,7 @@ fn piece_window_right_edge_seeded(
         hi = hseed.max(hint.max(U256::ONE));
     }
     for _ in 0..256 {
-        bump_right_edge_sims(1);
+        tally.bump_right_edge_sims(1);
         let landed = simulate_walk_path(hi, hops, tally).landed;
         if landed_any_above(&landed, ks) {
             confirmed = true;
@@ -246,7 +251,7 @@ fn piece_window_right_edge_seeded(
     // Bisect to a ≤4 bracket: lo is the largest known ≤ ks input.
     while hi.saturating_sub(lo) > U256::from(4u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
-        bump_right_edge_sims(1);
+        tally.bump_right_edge_sims(1);
         let landed = simulate_walk_path(mid, hops, tally).landed;
         if landed_any_above(&landed, ks) {
             hi = mid;
@@ -286,10 +291,11 @@ pub const DENSE_OBSERVE_THRESHOLD: usize = 64;
 #[hotpath::measure(label = "cl_solve.build_word_profiles")]
 pub(super) fn build_word_profiles(
     crossings: &[IntTickRangeCrossing],
+    tally: &mut WalkTally,
 ) -> Vec<Option<Arc<ClWordProfile>>> {
     for c in crossings {
         let n = c.ending_range.word_boundary_prices.len();
-        observe_max_dense_words(n);
+        tally.observe_max_dense_words(n);
         // KEEP ledger (Stage-1 sharing): a dense profile builds ONCE per
         // (pool, direction) and is Arc-shared across every path reusing the
         // projection — build cost amortized over paths, O(1) clone per path,
@@ -298,7 +304,7 @@ pub(super) fn build_word_profiles(
     }
     crossings
         .iter()
-        .map(|c| ClWordProfile::build(&c.ending_range).map(Arc::new))
+        .map(|c| ClWordProfile::build(&c.ending_range, tally).map(Arc::new))
         .collect()
 }
 
@@ -315,7 +321,11 @@ pub fn build_cl_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRange
 /// `seq.ranges` (`None` for ranges below `WORD_PROFILE_THRESHOLD`).
 #[must_use]
 pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> ClProfileTable {
-    build_word_profiles(&build_crossing_table(seq))
+    // Offline table build: the dense-max observation lands in a throwaway
+    // accumulator (the per-solve tally of the walk that later consumes these
+    // profiles carries the real one).
+    let mut tally = WalkTally::default();
+    build_word_profiles(&build_crossing_table(seq), &mut tally)
 }
 
 /// Dense-range profiles derived from an already-built crossing table. The
@@ -323,7 +333,8 @@ pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> ClProfileTable {
 /// table is not rebuilt a second time just to derive word profiles.
 #[must_use]
 pub fn build_cl_word_profiles_from_crossings(crossings: &[IntTickRangeCrossing]) -> ClProfileTable {
-    build_word_profiles(crossings)
+    let mut tally = WalkTally::default();
+    build_word_profiles(crossings, &mut tally)
 }
 
 /// Build a `PieceView` for one CL
@@ -340,9 +351,11 @@ pub(super) fn cl_walk_hop_cached<'a>(
         Some(c) => Arc::clone(c),
         None => Arc::new(build_crossing_table(seq)),
     };
-    let profiles = match profiles {
-        Some(p) => Arc::clone(p),
-        None => Arc::new(build_word_profiles(&crossings)),
+    let profiles = if let Some(p) = profiles {
+        Arc::clone(p)
+    } else {
+        let mut tally = WalkTally::default();
+        Arc::new(build_word_profiles(&crossings, &mut tally))
     };
     PieceView::cl(crossings, profiles)
 }

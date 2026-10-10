@@ -1073,7 +1073,7 @@ pub(crate) fn path_bound_lines_with_stats(
 pub(crate) mod tests {
     use super::*;
 
-    use crate::cl::{build_cl_crossing_table, simulate_v3_range_swap};
+    use crate::cl::{build_cl_crossing_table, simulate_v3_range_swap, WalkTally};
     use crate::profit_envelope::derive::tests::hop_lines_and_cap;
     use crate::profit_envelope::derive::{ClHop, HopMath};
     use crate::profit_envelope::kernel::{Line, COMPOSE_TARGET_BITS};
@@ -1136,7 +1136,7 @@ pub(crate) mod tests {
                 zero_for_one: r.zero_for_one,
                 word_boundary_prices: r.word_boundary_prices.clone(),
             };
-            let res = simulate_v3_range_swap(x, &sim_hop);
+            let res = simulate_v3_range_swap(x, &sim_hop, &mut WalkTally::default());
             out += res.output;
             x -= res.consumed_input;
         }
@@ -1230,7 +1230,8 @@ pub(crate) mod tests {
             1_000_000_000_000u64,
             5_000_000_000_000u64,
         ] {
-            let res = simulate_v3_range_swap(U256::from(x), &s.ranges[46]);
+            let res =
+                simulate_v3_range_swap(U256::from(x), &s.ranges[46], &mut WalkTally::default());
             println!(
                 "sim46(x={x}) out={} consumed={}",
                 res.output, res.consumed_input

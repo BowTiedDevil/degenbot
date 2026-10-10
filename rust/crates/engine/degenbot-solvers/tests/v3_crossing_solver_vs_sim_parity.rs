@@ -81,7 +81,7 @@ use degenbot_pools::v3_state::{
 };
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence};
+use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally};
 
 /// Sqrt-price limit that lets the walk cross every tick the input can reach
 /// (V3 Pool.swap's `sqrtPriceLimit` MIN/MAX bound for the direction).
@@ -179,7 +179,8 @@ fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Opti
         return Some(U256::ZERO);
     }
     let remaining = amount_in - crossing.crossing_gross_input;
-    let ending = simulate_v3_range_swap(remaining, &crossing.ending_range);
+    let ending =
+        simulate_v3_range_swap(remaining, &crossing.ending_range, &mut WalkTally::default());
     Some(crossing.crossing_output.saturating_add(ending.output))
 }
 
