@@ -2,7 +2,7 @@ use alloy::primitives::U256;
 
 use super::IntV3TickRangeHop;
 
-use super::telemetry::bump_word_steps;
+use super::tally::WalkTally;
 
 // ---------------------------------------------------------------------------
 // Integer V3 Swap Simulation
@@ -51,8 +51,20 @@ pub struct V3RangeSwapResult {
 /// as the output. If the price target is reached, only the portion needed to
 /// reach the target is consumed.
 #[must_use = "the V3 swap result should be used"]
-#[hotpath::measure(label = "cl_solve.int_simulate_v3_swap")]
 pub fn simulate_v3_range_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3RangeSwapResult {
+    // The public entry keeps its shape for external harnesses; the walk
+    // threads its per-solve tally through the tallied variant below, so the
+    // word-step count lands in the accumulator instead of an ambient cell.
+    let mut tally = WalkTally::default();
+    simulate_v3_range_swap_tallied(amount_in, v3_hop, &mut tally)
+}
+
+#[hotpath::measure(label = "cl_solve.int_simulate_v3_swap")]
+pub(crate) fn simulate_v3_range_swap_tallied(
+    amount_in: U256,
+    v3_hop: &IntV3TickRangeHop,
+    tally: &mut WalkTally,
+) -> V3RangeSwapResult {
     // Per-step parity: per-step rounding is delegated to the canonical V3
     // step function `compute_swap_step_v3` — the single source of the
     // word-boundary flooring parity. The on-chain V3/V4 PoolManager floors
@@ -99,7 +111,7 @@ pub fn simulate_v3_range_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3
         if remaining <= I256::ZERO {
             break;
         }
-        bump_word_steps(1);
+        tally.bump_word_steps(1);
         let Ok(step) = compute_swap_step_v3(sp, *target, liquidity, remaining, fee_pips) else {
             return V3RangeSwapResult::default();
         };

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use alloy::primitives::U256;
 
 use super::active_set::{landed_any_above, simulate_walk_path, PieceView};
+use super::tally::WalkTally;
 use super::telemetry::{
     add_pred_ns, bump_event_solver_fallbacks, bump_event_solver_ok, bump_left_edge_sims,
     bump_right_edge_sims, observe_max_dense_words,
@@ -93,7 +94,12 @@ pub(super) fn landed_ending_range_index(
 ///
 /// `landed(x)` is componentwise non-decreasing in `x`, so the predicate is
 /// monotone and bisection is sound.
-pub(super) fn piece_window_left_edge(hops: &[PieceView], ks: &[usize], hint: U256) -> U256 {
+pub(super) fn piece_window_left_edge(
+    hops: &[PieceView],
+    ks: &[usize],
+    hint: U256,
+    tally: &mut WalkTally,
+) -> U256 {
     if ks.iter().all(|&k| k == 0) {
         return U256::ZERO;
     }
@@ -103,7 +109,7 @@ pub(super) fn piece_window_left_edge(hops: &[PieceView], ks: &[usize], hint: U25
     let mut hi = hint.max(U256::ONE);
     for _ in 0..256 {
         bump_left_edge_sims(1);
-        let landed = simulate_walk_path(hi, hops).landed;
+        let landed = simulate_walk_path(hi, hops, tally).landed;
         if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             break; // predicate true
         }
@@ -118,7 +124,7 @@ pub(super) fn piece_window_left_edge(hops: &[PieceView], ks: &[usize], hint: U25
     while hi.saturating_sub(lo) > U256::from(64u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
         bump_left_edge_sims(1);
-        let landed = simulate_walk_path(mid, hops).landed;
+        let landed = simulate_walk_path(mid, hops, tally).landed;
         if landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             lo = mid;
         } else {
@@ -128,7 +134,7 @@ pub(super) fn piece_window_left_edge(hops: &[PieceView], ks: &[usize], hint: U25
     let mut x = lo + U256::from(1u64);
     while x < hi {
         bump_left_edge_sims(1);
-        let landed = simulate_walk_path(x, hops).landed;
+        let landed = simulate_walk_path(x, hops, tally).landed;
         if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             return x;
         }
@@ -146,8 +152,9 @@ pub(super) fn piece_window_right_edge(
     hops: &[PieceView],
     ks: &[usize],
     hint: U256,
+    tally: &mut WalkTally,
 ) -> Option<U256> {
-    piece_window_right_edge_seeded(hops, ks, hint, None, None).0
+    piece_window_right_edge_seeded(hops, ks, hint, None, None, tally).0
 }
 
 pub(super) fn piece_window_right_edge_evented(
@@ -157,19 +164,20 @@ pub(super) fn piece_window_right_edge_evented(
     lo_seed: Option<U256>,
     hi_seed: Option<U256>,
     cfg: &SolveRuntimeConfig,
+    tally: &mut WalkTally,
 ) -> (Option<U256>, U256) {
     // Rollout gate: the runtime config's stance forces the legacy grow +
     // bisection (A/B toggle; packed by the owner at construction).
     if cfg.event_solver_legacy {
-        return piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed);
+        return piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed, tally);
     }
     if let Some(pa) = walk_event_first_above_predicted(hops, ks) {
         let usable = !pa.is_zero() && {
-            let above = simulate_walk_path(pa, hops).landed;
+            let above = simulate_walk_path(pa, hops, tally).landed;
             landed_any_above(&above, ks)
         };
         if usable {
-            let below = simulate_walk_path(pa - U256::ONE, hops).landed;
+            let below = simulate_walk_path(pa - U256::ONE, hops, tally).landed;
             bump_right_edge_sims(2);
             if !landed_any_above(&below, ks) {
                 bump_event_solver_ok(1);
@@ -178,7 +186,7 @@ pub(super) fn piece_window_right_edge_evented(
         }
     }
     bump_event_solver_fallbacks(1);
-    piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed)
+    piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed, tally)
 }
 
 /// [`piece_window_right_edge`] with warm-started bisection brackets.
@@ -198,6 +206,7 @@ fn piece_window_right_edge_seeded(
     hint: U256,
     lo_seed: Option<U256>,
     hi_seed: Option<U256>,
+    tally: &mut WalkTally,
 ) -> (Option<U256>, U256) {
     let mut lo = U256::ZERO; // landed(0) = all zeros ≤ ks for any ks
     let mut hi = hint.max(U256::ONE);
@@ -220,7 +229,7 @@ fn piece_window_right_edge_seeded(
     }
     for _ in 0..256 {
         bump_right_edge_sims(1);
-        let landed = simulate_walk_path(hi, hops).landed;
+        let landed = simulate_walk_path(hi, hops, tally).landed;
         if landed_any_above(&landed, ks) {
             confirmed = true;
             break;
@@ -238,7 +247,7 @@ fn piece_window_right_edge_seeded(
     while hi.saturating_sub(lo) > U256::from(4u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
         bump_right_edge_sims(1);
-        let landed = simulate_walk_path(mid, hops).landed;
+        let landed = simulate_walk_path(mid, hops, tally).landed;
         if landed_any_above(&landed, ks) {
             hi = mid;
         } else {

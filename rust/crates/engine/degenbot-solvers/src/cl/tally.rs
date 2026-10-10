@@ -399,6 +399,20 @@ impl WalkTally {
         std::mem::take(&mut self.census_pieces)
     }
 
+    /// Sims snapshot (the timed-section helper's delta base).
+    #[inline]
+    #[must_use]
+    pub fn sims(&self) -> usize {
+        self.sims
+    }
+
+    /// Walk-sim wall-time snapshot (the timed-section helper's delta base).
+    #[inline]
+    #[must_use]
+    pub fn sim_ns(&self) -> u64 {
+        self.ns.sim
+    }
+
     /// The [`WalkStats`] projection this tally carries — the value
     /// `WalkOutcome` reports.
     #[must_use]

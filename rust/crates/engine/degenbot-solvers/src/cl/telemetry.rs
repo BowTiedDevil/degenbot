@@ -1,10 +1,12 @@
-//! Ambient walk telemetry: per-thread walk-combinator counters (pieces, sims,
-//! word steps, refinement and per-edge probe splits), the event census, and the
-//! process-wide timing statics the cache lab reads.
+//! Ambient walk telemetry: the per-thread counters the per-solve tally has not
+//! yet absorbed (the edge / event-solver census and the profile word steps),
+//! the event census, and the process-wide timing statics the cache lab reads.
 //!
-//! Compiling `degenbot-solvers` without its `telemetry` feature (the default)
-//! flushes every writer to a no-op, so the counters read as zero and the
-//! release build pays nothing for them. The read accessors keep their shape.
+//! The active-set walk now threads its own owned accumulator (`cl::tally`)
+//! instead of writing most of these cells; what remains here is the subset the
+//! next migration chunk moves. Compiling `degenbot-solvers` without its
+//! `telemetry` feature (the default) flushes every writer to a no-op, so the
+//! counters read as zero and the release build pays nothing for them.
 
 use alloy::primitives::U256;
 
@@ -13,6 +15,7 @@ use super::active_set::{landed_any_above, simulate_walk_path};
 use super::active_set::{PieceView, WalkStats};
 #[cfg(feature = "telemetry")]
 use super::crossings::walk_event_first_above_predicted;
+use super::tally::{WalkSection, WalkTally};
 use crate::runtime::SolveRuntimeConfig;
 
 // ---------------------------------------------------------------------------
@@ -100,11 +103,12 @@ pub(super) fn event_census_record(
     x_r: Option<U256>,
     hi: U256,
     cfg: &SolveRuntimeConfig,
+    tally: &mut WalkTally,
 ) {
     #[cfg(feature = "telemetry")]
-    event_census_record_inner(hops, ks, x_r, hi, cfg);
+    event_census_record_inner(hops, ks, x_r, hi, cfg, tally);
     #[cfg(not(feature = "telemetry"))]
-    let _ = (hops, ks, x_r, hi, cfg);
+    let _ = (hops, ks, x_r, hi, cfg, tally);
 }
 
 #[cfg(feature = "telemetry")]
@@ -114,6 +118,7 @@ fn event_census_record_inner(
     x_r: Option<U256>,
     hi: U256,
     cfg: &SolveRuntimeConfig,
+    tally: &mut WalkTally,
 ) {
     if !event_census_on(cfg) {
         return;
@@ -130,9 +135,12 @@ fn event_census_record_inner(
                 c.in_bracket += 1;
                 // Verify probes: pa crosses OUT of the tuple, and pa−1 does
                 // not — which proves pa is the exact first-above.
-                let above = landed_any_above(&simulate_walk_path(pa, hops).landed, ks);
+                let above = landed_any_above(&simulate_walk_path(pa, hops, tally).landed, ks);
                 let below_ok = pa.is_zero()
-                    || !landed_any_above(&simulate_walk_path(pa - U256::ONE, hops).landed, ks);
+                    || !landed_any_above(
+                        &simulate_walk_path(pa - U256::ONE, hops, tally).landed,
+                        ks,
+                    );
                 c.census_sims += 2;
                 if above && below_ok {
                     c.exact += 1;
@@ -240,48 +248,38 @@ pub(super) struct Mark {
 }
 
 impl Mark {
+    /// Snapshots the section start instant plus the accumulated sims and
+    /// walk-sim wall time the section delta is measured against.
     #[inline]
-    pub(super) fn start() -> Self {
+    pub(super) fn start(tally: &WalkTally) -> Self {
         #[cfg(feature = "telemetry")]
         {
             Self {
                 at: std::time::Instant::now(),
-                probes: u64::try_from(WALK_PATH_SIMULATIONS.with(std::cell::Cell::get))
-                    .unwrap_or(u64::MAX),
-                probe_ns: WALK_SIM_NS_TOTAL.load(std::sync::atomic::Ordering::Relaxed),
+                probes: u64::try_from(tally.sims()).unwrap_or(u64::MAX),
+                probe_ns: tally.sim_ns(),
             }
         }
         #[cfg(not(feature = "telemetry"))]
         {
+            let _ = tally;
             Self {}
         }
     }
 
+    /// Commits the section's `(wall, sims, sim-ns)` triple into the solve's
+    /// per-solve accumulator.
     #[inline]
-    pub(super) fn commit(
-        self,
-        wall: &std::sync::atomic::AtomicU64,
-        tally: &std::sync::atomic::AtomicU64,
-        probe_ns: &std::sync::atomic::AtomicU64,
-    ) {
+    pub(super) fn commit(self, tally: &mut WalkTally, section: WalkSection) {
         #[cfg(not(feature = "telemetry"))]
-        let _ = (self, wall, tally, probe_ns);
+        let _ = (self, tally, section);
         #[cfg(feature = "telemetry")]
         {
-            use std::sync::atomic::Ordering::Relaxed;
-            wall.fetch_add(
-                u64::try_from(self.at.elapsed().as_nanos()).unwrap_or(u64::MAX),
-                Relaxed,
-            );
-            let now_probes =
-                u64::try_from(WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)).unwrap_or(u64::MAX);
-            tally.fetch_add(now_probes.saturating_sub(self.probes), Relaxed);
-            probe_ns.fetch_add(
-                WALK_SIM_NS_TOTAL
-                    .load(Relaxed)
-                    .saturating_sub(self.probe_ns),
-                Relaxed,
-            );
+            let wall = u64::try_from(self.at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            let now_probes = u64::try_from(tally.sims()).unwrap_or(u64::MAX);
+            let sims = now_probes.saturating_sub(self.probes);
+            let sim_ns = tally.sim_ns().saturating_sub(self.probe_ns);
+            tally.mark_commit(section, wall, sims, sim_ns);
         }
     }
 }
@@ -302,32 +300,20 @@ pub static WALK_ANCHOR_ARGMAX_NS: std::sync::atomic::AtomicU64 =
 // Thread-local because `cargo test` runs tests (and their solves) on
 // separate threads concurrently — a shared static would mix counts.
 thread_local! {
-    // Production-scoped walk-combinator counters. Writers ride the `telemetry`
-    // feature gate: the rayon solve resets + reads them once per path to name
-    // the cost driver of slow solves (pieces × simulations × word-boundary
-    // walk) — telemetry builds only (see `WalkStats`'s counter policy).
-    pub(crate) static WALK_PIECES_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // See `WALK_PIECES_VISITED`.
-    pub(crate) static WALK_PATH_SIMULATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Total `compute_swap_step_v3` steps executed inside `simulate_v3_range_swap`
-    //'s word-boundary walk — the per-simulation cost driver for dense
-    // (many-word-boundary) CL ranges. `sims × per-sim steps` is the real cost.
+    // The ambient counters the per-solve tally has not yet absorbed. Each
+    // writer rides the `telemetry` feature gate, so a default build keeps them
+    // at their zero initializers.
+    // Total `compute_swap_step_v3` steps executed inside the profile build and
+    // its partial landing step — the per-simulation cost driver for dense
+    // (many-word-boundary) CL ranges. `sims × per-sim steps` is the real cost
+    // (the walk's own remaining word steps now land in the per-solve tally).
     pub(crate) static WALK_WORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Stop-time refinement (`walk_refine_window` ternary + dense sweep) sim
-    // count — the measurement split for the 64-wei refinement-resolution cost.
-    pub(crate) static WALK_REFINE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // Refinement split: sims in the ternary narrowing phase vs sims
-    // in the final coarse-grid / dense-sweep phase. Names the probe-budget
-    // driver so the next optimization touches the right loop.
-    pub(crate) static WALK_TERNARY_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WALK_GRID_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // Loop-13 atomization: per-piece window-edge bisection probes and
     // the transitional-anchor sweep. Everything else (straddle probes,
     // landed_beyond scans, skipped-tuple checks, neighbor coarse grids) is
     // the residual of total - (left+right+anchor+refine).
     pub(crate) static WALK_LEFT_EDGE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_RIGHT_EDGE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WALK_ANCHOR_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // Event solver (loop 15): pieces whose right edge came from the
     // nested ceil-inversion (accepted on the two verify probes) vs pieces
     // that fell back to the grow + bisection. Live-corpus census: 158,283 of
@@ -335,18 +321,18 @@ thread_local! {
     pub(crate) static WALK_EVENT_SOLVER_OK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_EVENT_SOLVER_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // Q3 telemetry: the largest word-boundary count any range reached in the
-    // current solve on this thread (drained per solve by
-    // `reset_walk_stats_inner` — the outcome's per-path contract). DB audit
-    // (correct metric = max inter-init-tick gap in words,
-    // per-pool ts): 210/47,679 registered UNI V3 pools have a >=128-word gap,
-    // 161 fall in the solve window (<16 positions), and 27 have their current
-    // tick inside one — so dense is load-bearing on real sparse pools today.
-    // This observes the largest count, and a one-shot >= DENSE_OBSERVE_THRESHOLD
-    // alert fires when a range approaches the profile threshold.
+    // current solve on this thread (drained per solve by the entry reset — the
+    // outcome's per-path contract). DB audit (correct metric = max
+    // inter-init-tick gap in words, per-pool ts): 210/47,679 registered UNI V3
+    // pools have a >=128-word gap, 161 fall in the solve window (<16
+    // positions), and 27 have their current tick inside one — so dense is
+    // load-bearing on real sparse pools today. This observes the largest count,
+    // and a one-shot >= DENSE_OBSERVE_THRESHOLD alert fires when a range
+    // approaches the profile threshold.
     pub(crate) static WALK_MAX_DENSE_WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Drain ALL walk counters + census state on the calling thread.
+/// Drain the ambient per-thread counters + census state on the calling thread.
 /// Drain = read-and-clear; the discarded value is the prior path's.
 pub(crate) fn reset_walk_stats() {
     #[cfg(feature = "telemetry")]
@@ -356,21 +342,17 @@ pub(crate) fn reset_walk_stats() {
 #[cfg(feature = "telemetry")]
 fn reset_walk_stats_inner() {
     EVENT_CENSUS.with(|c| c.set(WalkEventCensus::default()));
-    WALK_PIECES_VISITED.with(|c| c.set(0));
-    WALK_PATH_SIMULATIONS.with(|c| c.set(0));
     WALK_WORD_STEPS.with(|c| c.set(0));
-    WALK_REFINE_SIMS.with(|c| c.set(0));
-    WALK_TERNARY_SIMS.with(|c| c.set(0));
-    WALK_GRID_SIMS.with(|c| c.set(0));
     WALK_LEFT_EDGE_SIMS.with(|c| c.set(0));
     WALK_RIGHT_EDGE_SIMS.with(|c| c.set(0));
-    WALK_ANCHOR_SIMS.with(|c| c.set(0));
     WALK_EVENT_SOLVER_OK.with(|c| c.set(0));
     WALK_EVENT_SOLVER_FALLBACKS.with(|c| c.set(0));
     WALK_MAX_DENSE_WORDS.with(|c| c.set(0));
 }
 
-/// Snapshot (no clearing) of the full per-thread walk telemetry.
+/// Snapshot (no clearing) of the ambient per-thread walk telemetry. The
+/// counters the per-solve tally now owns read as zero here; the solve entry
+/// folds only the still-ambient fields into its outcome.
 #[must_use]
 pub(super) fn peek_walk_stats() -> WalkStats {
     #[cfg(feature = "telemetry")]
@@ -386,19 +368,14 @@ pub(super) fn peek_walk_stats() -> WalkStats {
 #[cfg(feature = "telemetry")]
 fn peek_walk_stats_inner() -> WalkStats {
     WalkStats {
-        pieces: WALK_PIECES_VISITED.with(std::cell::Cell::get),
-        sims: WALK_PATH_SIMULATIONS.with(std::cell::Cell::get),
         word_steps: WALK_WORD_STEPS.with(std::cell::Cell::get),
-        refine_sims: WALK_REFINE_SIMS.with(std::cell::Cell::get),
-        ternary_sims: WALK_TERNARY_SIMS.with(std::cell::Cell::get),
-        grid_sims: WALK_GRID_SIMS.with(std::cell::Cell::get),
         left_edge_sims: WALK_LEFT_EDGE_SIMS.with(std::cell::Cell::get),
         right_edge_sims: WALK_RIGHT_EDGE_SIMS.with(std::cell::Cell::get),
-        anchor_sims: WALK_ANCHOR_SIMS.with(std::cell::Cell::get),
         event_solver_ok: WALK_EVENT_SOLVER_OK.with(std::cell::Cell::get),
         event_solver_fallbacks: WALK_EVENT_SOLVER_FALLBACKS.with(std::cell::Cell::get),
         max_dense_words: WALK_MAX_DENSE_WORDS.with(std::cell::Cell::get),
         census: EVENT_CENSUS.with(std::cell::Cell::get),
+        ..WalkStats::default()
     }
 }
 
@@ -423,15 +400,9 @@ macro_rules! gated_cell_bump {
     };
 }
 
-gated_cell_bump!(bump_path_simulations, WALK_PATH_SIMULATIONS);
-gated_cell_bump!(bump_pieces_visited, WALK_PIECES_VISITED);
 gated_cell_bump!(bump_word_steps, WALK_WORD_STEPS);
-gated_cell_bump!(bump_refine_sims, WALK_REFINE_SIMS);
-gated_cell_bump!(bump_ternary_sims, WALK_TERNARY_SIMS);
-gated_cell_bump!(bump_grid_sims, WALK_GRID_SIMS);
 gated_cell_bump!(bump_left_edge_sims, WALK_LEFT_EDGE_SIMS);
 gated_cell_bump!(bump_right_edge_sims, WALK_RIGHT_EDGE_SIMS);
-gated_cell_bump!(bump_anchor_sims, WALK_ANCHOR_SIMS);
 gated_cell_bump!(bump_event_solver_ok, WALK_EVENT_SOLVER_OK);
 gated_cell_bump!(bump_event_solver_fallbacks, WALK_EVENT_SOLVER_FALLBACKS);
 
@@ -448,13 +419,7 @@ macro_rules! gated_atomic_add {
     };
 }
 
-gated_atomic_add!(add_sim_ns, WALK_SIM_NS_TOTAL);
-gated_atomic_add!(add_anchor_ns, WALK_ANCHOR_NS_TOTAL);
 gated_atomic_add!(add_pred_ns, WALK_PRED_NS_TOTAL);
-gated_atomic_add!(add_solve_ns, WALK_SOLVE_NS_TOTAL);
-gated_atomic_add!(add_anchor_build_ns, WALK_ANCHOR_BUILD_NS);
-gated_atomic_add!(add_anchor_compose_ns, WALK_ANCHOR_COMPOSE_NS);
-gated_atomic_add!(add_anchor_argmax_ns, WALK_ANCHOR_ARGMAX_NS);
 
 /// Raises this thread's largest observed word-boundary count to at least `n`.
 #[inline]
@@ -467,29 +432,6 @@ pub(super) fn observe_max_dense_words(n: usize) {
     });
     #[cfg(not(feature = "telemetry"))]
     let _ = n;
-}
-
-/// Zeroes this thread's pieces/sims at the start of a solve.
-#[inline]
-pub(super) fn clear_walk_pieces_and_sims() {
-    #[cfg(feature = "telemetry")]
-    {
-        WALK_PIECES_VISITED.with(|c| c.set(0));
-        WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-    }
-}
-
-/// Sims executed so far on this thread (`0` without `telemetry`).
-#[inline]
-pub(super) fn path_simulations_now() -> usize {
-    #[cfg(feature = "telemetry")]
-    {
-        WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)
-    }
-    #[cfg(not(feature = "telemetry"))]
-    {
-        0
-    }
 }
 
 /// Drains the thread's census piece recorder (empty without `telemetry`).

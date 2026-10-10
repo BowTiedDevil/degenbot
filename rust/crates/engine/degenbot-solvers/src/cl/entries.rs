@@ -189,7 +189,7 @@ fn solve_cl_piecewise_inner(
         .iter()
         .map(|h| cl_walk_hop_cached(h.int_seq.as_ref(), Some(&h.crossings), Some(&h.profiles)))
         .collect();
-    solve_active_set_path(&hops, cfg, env)
+    solve_active_set_path(&hops, cfg, env, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +277,7 @@ pub fn solve_mixed_piecewise(
     // nothing is derived or rebuilt per solve).
     let pieces: Vec<PieceView> = hops.iter().map(|h| h.piece_view()).collect();
 
-    let outcome = solve_active_set_path(&pieces, cfg, env);
+    let outcome = solve_active_set_path(&pieces, cfg, env, None);
     if let Some((memo, fp)) = commit {
         memo_commit(memo, fp, &outcome);
     }

@@ -11,16 +11,11 @@ use super::crossings::{
     cl_hop_min_input_for_output, landed_ending_range_index, piece_window_left_edge,
     piece_window_right_edge, piece_window_right_edge_evented,
 };
-use super::hop_sim::simulate_v3_range_swap;
+use super::hop_sim::simulate_v3_range_swap_tallied;
+use super::tally::{WalkSection, WalkTally, WalkTelemetry};
 use super::telemetry::{
-    add_anchor_argmax_ns, add_anchor_build_ns, add_anchor_compose_ns, add_anchor_ns, add_sim_ns,
-    add_solve_ns, bump_anchor_sims, bump_grid_sims, bump_path_simulations, bump_pieces_visited,
-    bump_refine_sims, bump_ternary_sims, clear_walk_pieces_and_sims, event_census_record,
-    path_simulations_now, peek_walk_stats, reset_walk_stats, take_event_census_pieces, Mark,
-    WalkEventCensus, WALK_CENSUS_DIR_NS, WALK_CENSUS_DIR_SIMNS, WALK_CENSUS_DIR_SIMS,
-    WALK_CENSUS_EDGE_NS, WALK_CENSUS_EDGE_SIMNS, WALK_CENSUS_EDGE_SIMS, WALK_CENSUS_REDGE_NS,
-    WALK_CENSUS_REDGE_SIMNS, WALK_CENSUS_REDGE_SIMS, WALK_CENSUS_REFINE_NS,
-    WALK_CENSUS_REFINE_SIMNS, WALK_CENSUS_REFINE_SIMS,
+    event_census_record, peek_walk_stats, reset_walk_stats, take_event_census_pieces, Mark,
+    WalkEventCensus,
 };
 use super::{ClCrossingTable, ClProfileTable};
 use crate::profit_envelope::{clamp_window_to_bound, PathBoundLines};
@@ -117,7 +112,7 @@ impl<'a> PieceView<'a> {
 
     /// Forward step for a non-zero `current`: the hop output and the
     /// ending-range index the input landed in (always 0 for constant product).
-    pub(super) fn step(&self, current: U256) -> (U256, usize) {
+    pub(super) fn step(&self, current: U256, tally: &mut WalkTally) -> (U256, usize) {
         match &self.family {
             PieceFamily::ConstantProduct(hop_state) => {
                 // V2 overflow-reverts on-chain → the path yields nothing there.
@@ -133,7 +128,9 @@ impl<'a> PieceView<'a> {
                 let remaining = current - crossing.crossing_gross_input;
                 let ending = match &profiles[k] {
                     Some(profile) => profile.swap(remaining),
-                    None => simulate_v3_range_swap(remaining, &crossing.ending_range),
+                    None => {
+                        simulate_v3_range_swap_tallied(remaining, &crossing.ending_range, tally)
+                    }
                 };
                 (crossing.crossing_output.saturating_add(ending.output), k)
             }
@@ -220,15 +217,23 @@ pub(super) struct WalkPathOutcome {
 /// the assumption), this walker always simulates the piece the input truly
 /// lands in — which is what makes it usable as the walk's ground truth for
 /// any candidate.
-pub(super) fn simulate_walk_path(amount_in: U256, hops: &[PieceView]) -> WalkPathOutcome {
-    bump_path_simulations(1);
+pub(super) fn simulate_walk_path(
+    amount_in: U256,
+    hops: &[PieceView],
+    tally: &mut WalkTally,
+) -> WalkPathOutcome {
+    tally.bump_sims(1);
     let sim_t0 = std::time::Instant::now();
-    let out = simulate_walk_path_inner(amount_in, hops);
-    add_sim_ns(u64::try_from(sim_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
+    let out = simulate_walk_path_inner(amount_in, hops, tally);
+    tally.add_sim_ns(u64::try_from(sim_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
     out
 }
 
-fn simulate_walk_path_inner(amount_in: U256, hops: &[PieceView]) -> WalkPathOutcome {
+fn simulate_walk_path_inner(
+    amount_in: U256,
+    hops: &[PieceView],
+    tally: &mut WalkTally,
+) -> WalkPathOutcome {
     let n_hops = hops.len();
     let mut hop_outputs = Vec::with_capacity(n_hops);
     let mut landed = Vec::with_capacity(n_hops);
@@ -240,7 +245,7 @@ fn simulate_walk_path_inner(amount_in: U256, hops: &[PieceView]) -> WalkPathOutc
             landed.push(0);
             continue;
         }
-        let (out, k) = hop.step(current);
+        let (out, k) = hop.step(current, tally);
         landed.push(k);
         hop_outputs.push(out);
         current = out;
@@ -359,8 +364,13 @@ impl WalkRecorder {
 
     /// Simulate `candidate`, update the bests, and return the outcome (the
     /// caller needs `landed` / `final_output` for direction decisions).
-    fn eval_and_record(&mut self, candidate: U256, hops: &[PieceView]) -> WalkPathOutcome {
-        let outcome = simulate_walk_path(candidate, hops);
+    fn eval_and_record(
+        &mut self,
+        candidate: U256,
+        hops: &[PieceView],
+        tally: &mut WalkTally,
+    ) -> WalkPathOutcome {
+        let outcome = simulate_walk_path(candidate, hops, tally);
         let score = walk_profit_score(outcome.final_output, candidate);
         if score > self.top_score {
             self.top_score = score;
@@ -439,6 +449,10 @@ const REFINE_ADAPTIVE_MIN_TOTAL_PIECES: usize = 64;
 /// picks the maximizer. This is a **profit-ε** search (not exact-wei): the
 /// flat interior top makes the coarse grid profit-equivalent, and the bounded
 /// corner is captured because `hi` is the pinned right edge.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the walk-domain refine carry (window pair + hint + recorder + runtime stance + per-solve tally) is coherent as a flat signature"
+)]
 pub(super) fn walk_refine_window(
     hops: &[PieceView],
     lo: U256,
@@ -447,6 +461,7 @@ pub(super) fn walk_refine_window(
     piece_anchor: Option<U256>,
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
+    tally: &mut WalkTally,
 ) -> (U256, alloy::primitives::I256) {
     use alloy::primitives::I256;
     // Loop-21 envelope pruning (`envelope_pruned_refine`): the composed bound
@@ -489,13 +504,13 @@ pub(super) fn walk_refine_window(
     let mut best_score = I256::MIN;
     // phase 0 = ternary narrowing, phase 1 = final grid / dense sweep.
     let mut probe = |x: U256, hops: &[PieceView], rec: &mut WalkRecorder, phase: u8| -> I256 {
-        bump_refine_sims(1);
+        tally.bump_refine_sims(1);
         if phase == 0 {
-            bump_ternary_sims(1);
+            tally.bump_ternary_sims(1);
         } else {
-            bump_grid_sims(1);
+            tally.bump_grid_sims(1);
         }
-        let o = rec.eval_and_record(x, hops);
+        let o = rec.eval_and_record(x, hops, tally);
         let s = walk_profit_score(o.final_output, x);
         if s > best_score {
             best_score = s;
@@ -668,15 +683,36 @@ pub(super) fn solve_active_set_path(
     hops: &[PieceView],
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
+    tele: Option<&WalkTelemetry>,
 ) -> WalkOutcome {
     let s_t0 = std::time::Instant::now();
-    // The walk drains its own counters at entry; the returned outcome carries
-    // THIS path's telemetry (no frozen thread-locals on the read-back path).
+    // The walk keeps a per-solve accumulator on the solving stack and threads
+    // it by `&mut` to every writer it owns; the returned outcome carries THIS
+    // path's counters. The counters whose writers still live in the ambient
+    // module (the edge/event-solver census and the profile word steps, threaded
+    // in the next chunk) are drained into the tally's complement at entry and
+    // folded back at exit. The one merge into the engine collector happens
+    // here, at exit, under the crate's telemetry feature.
     reset_walk_stats();
-    let out = solve_active_set_path_inner(hops, cfg, env);
-    add_solve_ns(u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
-    let stats = peek_walk_stats();
+    let mut tally = WalkTally::default();
+    let out = solve_active_set_path_inner(hops, cfg, env, &mut tally);
+    tally.add_solve_ns(u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
+    let mut stats = tally.walk_stats();
+    let ambient = peek_walk_stats();
+    stats.word_steps = stats.word_steps.saturating_add(ambient.word_steps);
+    stats.left_edge_sims = ambient.left_edge_sims;
+    stats.right_edge_sims = ambient.right_edge_sims;
+    stats.event_solver_ok = ambient.event_solver_ok;
+    stats.event_solver_fallbacks = ambient.event_solver_fallbacks;
+    stats.max_dense_words = ambient.max_dense_words;
+    stats.census = ambient.census;
     let census_pieces = take_event_census_pieces();
+    #[cfg(feature = "telemetry")]
+    if let Some(tele) = tele {
+        tally.merge_into(tele);
+    }
+    #[cfg(not(feature = "telemetry"))]
+    let _ = tele;
     WalkOutcome {
         result: out,
         stats,
@@ -689,12 +725,19 @@ fn solve_active_set_path_inner(
     hops: &[PieceView],
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
+    tally: &mut WalkTally,
 ) -> Option<(U256, U256, Vec<U256>)> {
     /// Advance the landed tuple one piece past the window's right edge
     /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).
-    fn landed_beyond(hops: &[PieceView], right_edge: U256, ks: &[usize]) -> Option<Vec<usize>> {
+    fn landed_beyond(
+        hops: &[PieceView],
+        right_edge: U256,
+        ks: &[usize],
+        tally: &mut WalkTally,
+    ) -> Option<Vec<usize>> {
         for d in 1u64..=8 {
-            let landed = simulate_walk_path(right_edge.saturating_add(U256::from(d)), hops).landed;
+            let landed =
+                simulate_walk_path(right_edge.saturating_add(U256::from(d)), hops, tally).landed;
             if landed_any_above(&landed, ks) {
                 return Some(landed);
             }
@@ -722,6 +765,7 @@ fn solve_active_set_path_inner(
         refine_neighbor: bool,
         cfg: &SolveRuntimeConfig,
         env: Option<&PathBoundLines>,
+        tally: &mut WalkTally,
     ) {
         let Some(hint) = anchor else {
             return;
@@ -732,7 +776,7 @@ fn solve_active_set_path_inner(
                 .max(x_l.saturating_add(U256::from(1024u64)))
         });
         if x_l <= hi_current {
-            walk_refine_window(hops, x_l, hi_current, rec, anchor, cfg, env);
+            walk_refine_window(hops, x_l, hi_current, rec, anchor, cfg, env, tally);
         }
         // Gated forward-neighbor refine: a full ternary +
         // grid over the neighbor window runs on climbing stops (edge can
@@ -748,11 +792,11 @@ fn solve_active_set_path_inner(
             let Some(xr) = x_r else {
                 return;
             };
-            let Some(next) = landed_beyond(hops, xr, ks) else {
+            let Some(next) = landed_beyond(hops, xr, ks, tally) else {
                 return;
             };
             let n_l = xr + U256::from(1u64);
-            let n_r = piece_window_right_edge_evented(hops, &next, hint, None, None, cfg).0;
+            let n_r = piece_window_right_edge_evented(hops, &next, hint, None, None, cfg, tally).0;
             let n_hi = n_r.unwrap_or_else(|| {
                 hint.saturating_mul(U256::from(4u64))
                     .max(n_l.saturating_mul(U256::from(2u64)))
@@ -765,12 +809,12 @@ fn solve_active_set_path_inner(
                 // spans [n_l, n_hi] (covers +2 whenever span >= 2); the coarse
                 // grid's first point is n_l (+1).
                 if span < U256::from(2u64) {
-                    rec.eval_and_record(xr + U256::from(2u64), hops);
+                    rec.eval_and_record(xr + U256::from(2u64), hops, tally);
                 }
                 let mut best_coarse = alloy::primitives::I256::MIN;
                 for i in 0..33u64 {
                     let x = n_l + (span * U256::from(i)) / U256::from(32u64);
-                    let o = rec.eval_and_record(x, hops);
+                    let o = rec.eval_and_record(x, hops, tally);
                     let s = walk_profit_score(o.final_output, x);
                     if s > best_coarse {
                         best_coarse = s;
@@ -779,7 +823,7 @@ fn solve_active_set_path_inner(
                 let grace = rec.top_score.max(alloy::primitives::I256::ZERO)
                     / alloy::primitives::I256::from_raw(alloy::primitives::U256::from(1_000u64));
                 if best_coarse + grace >= rec.top_score {
-                    walk_refine_window(hops, n_l, n_hi, rec, None, cfg, env);
+                    walk_refine_window(hops, n_l, n_hi, rec, None, cfg, env, tally);
                 }
             }
             return;
@@ -787,18 +831,18 @@ fn solve_active_set_path_inner(
         let Some(xr) = x_r else {
             return;
         };
-        let Some(next) = landed_beyond(hops, xr, ks) else {
+        let Some(next) = landed_beyond(hops, xr, ks, tally) else {
             return;
         };
         let n_l = xr + U256::from(1u64);
-        let n_r = piece_window_right_edge(hops, &next, hint);
+        let n_r = piece_window_right_edge(hops, &next, hint, tally);
         let n_hi = n_r.unwrap_or_else(|| {
             hint.saturating_mul(U256::from(4u64))
                 .max(n_l.saturating_mul(U256::from(2u64)))
                 .max(n_l.saturating_add(U256::from(1024u64)))
         });
         if n_l <= n_hi {
-            walk_refine_window(hops, n_l, n_hi, rec, None, cfg, env);
+            walk_refine_window(hops, n_l, n_hi, rec, None, cfg, env, tally);
         }
     }
 
@@ -806,8 +850,6 @@ fn solve_active_set_path_inner(
     if hops.is_empty() {
         return None;
     }
-
-    clear_walk_pieces_and_sims();
 
     let iteration_cap: usize = hops.iter().map(PieceView::piece_count).sum::<usize>() + 2;
     // The anchor fixed-point re-entry is scoped to wide/deep books: below this
@@ -843,7 +885,7 @@ fn solve_active_set_path_inner(
         if !visited.insert(ks.clone()) {
             break;
         }
-        bump_pieces_visited(1);
+        tally.bump_pieces(1);
 
         // Transitional anchor: extra candidates (±2 sweep) and edge-growth
         // hint; never trusted for the direction decision.
@@ -854,23 +896,23 @@ fn solve_active_set_path_inner(
         let anchor_all_t0 = std::time::Instant::now();
         let anchor_build_t0 = std::time::Instant::now();
         let anchor_pieces = build_shifted_piece_hops(hops, &ks);
-        add_anchor_build_ns(
+        tally.add_anchor_build_ns(
             u64::try_from(anchor_build_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
         let anchor_compose_t0 = std::time::Instant::now();
         let anchor_coeffs = anchor_memo.piece_coefficients(&anchor_pieces, &ks);
-        add_anchor_compose_ns(
+        tally.add_anchor_compose_ns(
             u64::try_from(anchor_compose_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
         let anchor_argmax_t0 = std::time::Instant::now();
         let anchor = crate::mobius_shifted_piece::shifted_piece_model_optimal_input(&anchor_coeffs)
             .unwrap_or(U256::ZERO);
-        add_anchor_argmax_ns(
+        tally.add_anchor_argmax_ns(
             u64::try_from(anchor_argmax_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
-        add_anchor_ns(u64::try_from(anchor_all_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
+        tally.add_anchor_ns(u64::try_from(anchor_all_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
         if !anchor.is_zero() {
-            let anchor_t0 = path_simulations_now();
+            let anchor_t0 = tally.sims();
             let deltas: &[i32] = match sweep {
                 AnchorSweep::Full => &[-2, -1, 0, 1, 2],
                 AnchorSweep::CenterOnly => &[0],
@@ -889,10 +931,10 @@ fn solve_active_set_path_inner(
                 if candidate.is_zero() {
                     continue;
                 }
-                rec.eval_and_record(candidate, hops);
+                rec.eval_and_record(candidate, hops, tally);
             }
-            let anchor_delta = path_simulations_now() - anchor_t0;
-            bump_anchor_sims(anchor_delta);
+            let anchor_delta = tally.sims() - anchor_t0;
+            tally.bump_anchor_sims(anchor_delta);
         }
         if single_piece_path {
             // F1 corner guard (adversarial review): the exact unclamped smooth
@@ -912,19 +954,24 @@ fn solve_active_set_path_inner(
             // 0/MAX (the corner is the floor). Pure-CP (no corner) → skip.
             if let Some(e) = sat {
                 if e > U256::ZERO {
-                    rec.eval_and_record(e, hops);
-                    rec.eval_and_record(e - U256::from(1), hops);
+                    rec.eval_and_record(e, hops, tally);
+                    rec.eval_and_record(e - U256::from(1), hops, tally);
                 }
             }
             let hi = sat.map_or(anchor.max(U256::from(1024)), |e| e.max(anchor));
             if hi > U256::ZERO {
-                let rq_mk = Mark::start();
-                walk_refine_window(hops, U256::ZERO, hi, &mut rec, Some(anchor), cfg, env);
-                rq_mk.commit(
-                    &WALK_CENSUS_REFINE_NS,
-                    &WALK_CENSUS_REFINE_SIMS,
-                    &WALK_CENSUS_REFINE_SIMNS,
+                let rq_mk = Mark::start(tally);
+                walk_refine_window(
+                    hops,
+                    U256::ZERO,
+                    hi,
+                    &mut rec,
+                    Some(anchor),
+                    cfg,
+                    env,
+                    tally,
                 );
+                rq_mk.commit(tally, WalkSection::Refine);
             }
             break;
         }
@@ -932,14 +979,14 @@ fn solve_active_set_path_inner(
         // Window left edge: reuse the previous piece's right edge when
         // walking consecutively (scan a few steps forward); fall back to a
         // full bisection otherwise. (Section-census timers on every exit.)
-        let le_mk = Mark::start();
+        let le_mk = Mark::start(tally);
         let x_l = if ks.iter().all(|&k| k == 0) {
             U256::ZERO
         } else if let Some(prev) = prev_right_edge {
             let mut found = None;
             for d in 1u64..=9 {
                 let probe = prev + U256::from(d);
-                let landed = simulate_walk_path(probe, hops).landed;
+                let landed = simulate_walk_path(probe, hops, tally).landed;
                 if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
                     found = Some(probe);
                     break;
@@ -947,59 +994,43 @@ fn solve_active_set_path_inner(
             }
             match found {
                 Some(x) => x,
-                None => piece_window_left_edge(hops, &ks, anchor),
+                None => piece_window_left_edge(hops, &ks, anchor, tally),
             }
         } else {
-            piece_window_left_edge(hops, &ks, anchor)
+            piece_window_left_edge(hops, &ks, anchor, tally)
         };
 
         // Skipped tuple: `x_l` lands strictly ABOVE `ks` in some component —
         // the lattice path never lands exactly on `ks`. Advance without
         // treating this as a real piece.
         {
-            let landed = simulate_walk_path(x_l, hops).landed;
+            let landed = simulate_walk_path(x_l, hops, tally).landed;
             if landed != ks {
                 if landed_any_above(&landed, &ks) {
                     ks = landed;
                     prev_right_edge = None;
-                    le_mk.commit(
-                        &WALK_CENSUS_EDGE_NS,
-                        &WALK_CENSUS_EDGE_SIMS,
-                        &WALK_CENSUS_EDGE_SIMNS,
-                    );
+                    le_mk.commit(tally, WalkSection::Edge);
                     continue;
                 }
                 // landed BELOW ks means the left-edge search went wrong;
                 // fall back to a full edge computation before giving up.
-                let x_l_full = piece_window_left_edge(hops, &ks, anchor);
-                let landed_full = simulate_walk_path(x_l_full, hops).landed;
+                let x_l_full = piece_window_left_edge(hops, &ks, anchor, tally);
+                let landed_full = simulate_walk_path(x_l_full, hops, tally).landed;
                 if landed_full != ks {
                     if landed_any_above(&landed_full, &ks) {
                         ks = landed_full;
                         prev_right_edge = None;
-                        le_mk.commit(
-                            &WALK_CENSUS_EDGE_NS,
-                            &WALK_CENSUS_EDGE_SIMS,
-                            &WALK_CENSUS_EDGE_SIMNS,
-                        );
+                        le_mk.commit(tally, WalkSection::Edge);
                         continue;
                     }
-                    le_mk.commit(
-                        &WALK_CENSUS_EDGE_NS,
-                        &WALK_CENSUS_EDGE_SIMS,
-                        &WALK_CENSUS_EDGE_SIMNS,
-                    );
+                    le_mk.commit(tally, WalkSection::Edge);
                     break; // degenerate piece — terminate with what we have
                 }
             }
         }
-        le_mk.commit(
-            &WALK_CENSUS_EDGE_NS,
-            &WALK_CENSUS_EDGE_SIMS,
-            &WALK_CENSUS_EDGE_SIMNS,
-        );
+        le_mk.commit(tally, WalkSection::Edge);
 
-        let re_mk = Mark::start();
+        let re_mk = Mark::start(tally);
         let (x_r, right_confirm_hi) = piece_window_right_edge_evented(
             hops,
             &ks,
@@ -1007,19 +1038,16 @@ fn solve_active_set_path_inner(
             right_bracket.map(|b| b.0),
             right_bracket.map(|b| b.1),
             cfg,
+            tally,
         );
         // Loop-15 census (`DEGENBOT_WALK_EVENT_CENSUS=1`): the nested
         // ceil-inversion's prediction vs this bisection bracket. No-op
         // (one bool load) when the gate is unset.
-        event_census_record(hops, &ks, x_r, right_confirm_hi, cfg);
-        re_mk.commit(
-            &WALK_CENSUS_REDGE_NS,
-            &WALK_CENSUS_REDGE_SIMS,
-            &WALK_CENSUS_REDGE_SIMNS,
-        );
+        event_census_record(hops, &ks, x_r, right_confirm_hi, cfg, tally);
+        re_mk.commit(tally, WalkSection::Redge);
         let Some(xr) = x_r else {
             // Terminal piece (unbounded right): refine and finish.
-            let term_mk = Mark::start();
+            let term_mk = Mark::start(tally);
             refine_at_stop(
                 hops,
                 &ks,
@@ -1030,12 +1058,9 @@ fn solve_active_set_path_inner(
                 false,
                 cfg,
                 env,
+                tally,
             );
-            term_mk.commit(
-                &WALK_CENSUS_REFINE_NS,
-                &WALK_CENSUS_REFINE_SIMS,
-                &WALK_CENSUS_REFINE_SIMNS,
-            );
+            term_mk.commit(tally, WalkSection::Refine);
             break;
         };
         prev_right_edge = Some(xr);
@@ -1049,22 +1074,19 @@ fn solve_active_set_path_inner(
         // edge, with +1-wei staircase tolerance. Climbing ⇒ advance one
         // piece; falling or level ⇒ the peak is at or behind this edge —
         // stop and refine this piece plus its forward neighbor.
-        let di_mk = Mark::start();
+        let di_mk = Mark::start(tally);
         let back = xr.saturating_sub(U256::from(64u64)).max(x_l);
         let fwd = xr.saturating_add(U256::from(64u64));
-        let score_back = walk_profit_score(rec.eval_and_record(back, hops).final_output, back);
-        let score_fwd = walk_profit_score(rec.eval_and_record(fwd, hops).final_output, fwd);
+        let score_back =
+            walk_profit_score(rec.eval_and_record(back, hops, tally).final_output, back);
+        let score_fwd = walk_profit_score(rec.eval_and_record(fwd, hops, tally).final_output, fwd);
         let climbing = score_fwd + I256::ONE >= score_back;
         let advance = if climbing {
-            landed_beyond(hops, xr, &ks)
+            landed_beyond(hops, xr, &ks, tally)
         } else {
             None
         };
-        di_mk.commit(
-            &WALK_CENSUS_DIR_NS,
-            &WALK_CENSUS_DIR_SIMS,
-            &WALK_CENSUS_DIR_SIMNS,
-        );
+        di_mk.commit(tally, WalkSection::Dir);
         if let Some(next) = advance {
             ks = next;
             continue;
@@ -1091,7 +1113,7 @@ fn solve_active_set_path_inner(
             && (anchor_reentry_active || degenerate_lead)
             && !climbing
         {
-            let anchor_landed = simulate_walk_path(anchor, hops).landed;
+            let anchor_landed = simulate_walk_path(anchor, hops, tally).landed;
             if anchor_landed != ks && !visited.contains(&anchor_landed) {
                 // Run the full stop-time refine (current window + gated forward
                 // neighbor) before leaving, so the extra exploration only adds
@@ -1107,6 +1129,7 @@ fn solve_active_set_path_inner(
                     false,
                     cfg,
                     env,
+                    tally,
                 );
                 anchor_reentry_active = true;
                 ks = anchor_landed;
@@ -1115,7 +1138,7 @@ fn solve_active_set_path_inner(
                 continue;
             }
         }
-        let term_mk = Mark::start();
+        let term_mk = Mark::start(tally);
         refine_at_stop(
             hops,
             &ks,
@@ -1126,12 +1149,9 @@ fn solve_active_set_path_inner(
             climbing,
             cfg,
             env,
+            tally,
         );
-        term_mk.commit(
-            &WALK_CENSUS_REFINE_NS,
-            &WALK_CENSUS_REFINE_SIMS,
-            &WALK_CENSUS_REFINE_SIMNS,
-        );
+        term_mk.commit(tally, WalkSection::Refine);
         break;
     }
 
@@ -1141,7 +1161,7 @@ fn solve_active_set_path_inner(
     // but a pathological pool can still burn excessive pieces or
     // simulations. Surface those cases for diagnosis (not for screening —
     // the solve still completes and returns its result).
-    let ws = peek_walk_stats();
+    let ws = tally.walk_stats();
     let over_threshold =
         ws.pieces > SOLVE_TELEMETRY_PIECES_WARN || ws.sims > SOLVE_TELEMETRY_SIMS_WARN;
     if over_threshold {

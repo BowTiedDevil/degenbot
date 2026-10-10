@@ -13,7 +13,8 @@ use std::sync::Arc;
 use alloy::primitives::U256;
 
 use super::entries::PreparedClHop;
-use super::hop_sim::simulate_v3_range_swap;
+use super::hop_sim::simulate_v3_range_swap_tallied;
+use super::tally::WalkTally;
 use super::IntV3TickRangeSequence;
 
 /// The forward simulation of a CL path at one input: per-hop outputs, the
@@ -69,6 +70,9 @@ impl ClPathSim {
         let mut hop_outputs = Vec::with_capacity(n_hops);
         let mut landed = Vec::with_capacity(n_hops);
         let mut current = amount_in;
+        // The helper has no collector; the tally is a throwaway so the
+        // byte-exact forward oracle keeps one shape for every caller.
+        let mut tally = WalkTally::default();
         for hop in &self.hops {
             if current.is_zero() {
                 hop_outputs.push(U256::ZERO);
@@ -80,7 +84,10 @@ impl ClPathSim {
             let remaining = current - crossing.crossing_gross_input;
             let ending_output = match hop.profiles.get(k).and_then(Option::as_deref) {
                 Some(profile) => profile.swap(remaining).output,
-                None => simulate_v3_range_swap(remaining, &crossing.ending_range).output,
+                None => {
+                    simulate_v3_range_swap_tallied(remaining, &crossing.ending_range, &mut tally)
+                        .output
+                }
             };
             let out = crossing.crossing_output.saturating_add(ending_output);
             landed.push(k);
@@ -102,6 +109,7 @@ mod tests {
     use crate::cl::active_set::{simulate_walk_path, PieceView};
     use crate::cl::crossings::{build_cl_crossing_table, cl_walk_hop};
     use crate::cl::entries::{derive_and_solve_cl_piecewise, solve_cl_piecewise, PreparedClHop};
+    use crate::cl::WalkTally;
     use crate::runtime::SolveRuntimeConfig;
     use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
     use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
@@ -198,7 +206,7 @@ mod tests {
                 *profit,
                 "{label}: helper final_output - x vs walk profit"
             );
-            let walk = simulate_walk_path(*x_star, &hops);
+            let walk = simulate_walk_path(*x_star, &hops, &mut WalkTally::default());
             assert_eq!(
                 at_optimum.landed, walk.landed,
                 "{label}: helper landed vs walk landed"
@@ -212,7 +220,7 @@ mod tests {
         for x in probes {
             let from_prepared = helper.output(x);
             let from_derived = helper_derived.output(x);
-            let walk = simulate_walk_path(x, &hops);
+            let walk = simulate_walk_path(x, &hops, &mut WalkTally::default());
             assert_eq!(
                 from_prepared.hop_outputs, walk.hop_outputs,
                 "{label}: hop_outputs mismatch at x={x}"

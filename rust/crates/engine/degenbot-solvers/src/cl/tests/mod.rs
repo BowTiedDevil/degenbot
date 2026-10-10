@@ -17,7 +17,7 @@ use super::crossings::*;
 use super::entries::*;
 use super::hop_sim::*;
 use super::memo::*;
-use super::telemetry::*;
+use super::tally::WalkTally;
 use super::word_profile::*;
 use super::{IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence};
 
@@ -2145,15 +2145,23 @@ fn run_predicted_lattice_verification(
     while let Some(x) = worklist.pop() {
         guard += 1;
         assert!(guard < 10_000, "lattice walk did not terminate");
-        let landed = simulate_walk_path(x, hops).landed.clone();
+        let landed = simulate_walk_path(x, hops, &mut WalkTally::default())
+            .landed
+            .clone();
         if !tuples.insert(landed.clone()) {
             continue;
         }
         let Some(pa) = walk_event_first_above_predicted(hops, &landed) else {
             continue; // terminal shapes may legitimately predict None
         };
-        let above = landed_any_above(&simulate_walk_path(pa, hops).landed, &landed);
-        let below_ok = !landed_any_above(&simulate_walk_path(pa - U256::ONE, hops).landed, &landed);
+        let above = landed_any_above(
+            &simulate_walk_path(pa, hops, &mut WalkTally::default()).landed,
+            &landed,
+        );
+        let below_ok = !landed_any_above(
+            &simulate_walk_path(pa - U256::ONE, hops, &mut WalkTally::default()).landed,
+            &landed,
+        );
         assert!(
             above && below_ok,
             "{label}: ks={landed:?} predicted first_above={pa} above={above} below_exact={below_ok}"
@@ -2524,7 +2532,7 @@ fn solve_cl_piecewise_beyond_ten_range_prefix_finds_corner_profit() {
     // 10-tuple prefix (indices 0..=9): in the deep range 10, possibly
     // spilling into the last thin range 11 at the saturation corner.
     let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
-    let landed = simulate_walk_path(x, &hops).landed;
+    let landed = simulate_walk_path(x, &hops, &mut WalkTally::default()).landed;
     assert!(
         landed[1] >= 10,
         "solver input must land hop 2 past the legacy prefix (indices 0..=9), got landed[1]={}",
@@ -2643,17 +2651,14 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
     liquidities.push(1_000_000_000u128);
     let seq2 = multi_range_sequence(0, 60, false, &liquidities);
 
-    WALK_PIECES_VISITED.with(|c| c.set(0));
-    WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-    let result =
-        derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
-    assert!(result.is_some());
-    let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
-    let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
-    let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
-    let ternary_sims = WALK_TERNARY_SIMS.with(std::cell::Cell::get);
-    let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
-    let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
+    let outcome = derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default());
+    assert!(outcome.result.is_some());
+    let pieces = outcome.stats.pieces;
+    let sims = outcome.stats.sims;
+    let refine_sims = outcome.stats.refine_sims;
+    let ternary_sims = outcome.stats.ternary_sims;
+    let grid_sims = outcome.stats.grid_sims;
+    let word_steps = outcome.stats.word_steps;
     eprintln!(
         "deep fixture: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
     );
@@ -2680,15 +2685,13 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
     let s1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
     let s2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
     let s3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
-    WALK_PIECES_VISITED.with(|c| c.set(0));
-    WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-    let _ = derive_and_solve_cl_piecewise(&[&s1, &s2, &s3], &SolveRuntimeConfig::default()).result;
-    let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
-    let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
-    let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
-    let ternary_sims = WALK_TERNARY_SIMS.with(std::cell::Cell::get);
-    let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
-    let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
+    let outcome = derive_and_solve_cl_piecewise(&[&s1, &s2, &s3], &SolveRuntimeConfig::default());
+    let pieces = outcome.stats.pieces;
+    let sims = outcome.stats.sims;
+    let refine_sims = outcome.stats.refine_sims;
+    let ternary_sims = outcome.stats.ternary_sims;
+    let grid_sims = outcome.stats.grid_sims;
+    let word_steps = outcome.stats.word_steps;
     eprintln!(
         "3-hop: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
     );
@@ -2779,7 +2782,7 @@ fn cl_path_solver_matches_fine_grid_oracle_across_families() {
         // Coarse ×1.05 scan over the plausible input range.
         let mut x = U256::from(1000u64);
         for _ in 0..1200 {
-            let out = simulate_walk_path(x, hops).final_output;
+            let out = simulate_walk_path(x, hops, &mut WalkTally::default()).final_output;
             if out > x && out - x > best {
                 best = out - x;
                 best_x = x;
@@ -2798,7 +2801,7 @@ fn cl_path_solver_matches_fine_grid_oracle_across_families() {
         let step = ((hi - lo) / U256::from(400u64)).max(U256::ONE);
         let mut y = lo;
         while y <= hi {
-            let out = simulate_walk_path(y, hops).final_output;
+            let out = simulate_walk_path(y, hops, &mut WalkTally::default()).final_output;
             if out > y && out - y > best {
                 best = out - y;
                 best_x = y;
@@ -2810,7 +2813,7 @@ fn cl_path_solver_matches_fine_grid_oracle_across_families() {
         let hi = best_x.saturating_add(U256::from(64u64));
         let mut y = lo;
         while y <= hi {
-            let out = simulate_walk_path(y, hops).final_output;
+            let out = simulate_walk_path(y, hops, &mut WalkTally::default()).final_output;
             if out > y && out - y > best {
                 best = out - y;
             }
@@ -2910,14 +2913,11 @@ fn bench_active_set_walk_solve() {
     {
         use std::sync::atomic::Ordering::Relaxed;
         let _ = Relaxed;
-        WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-        WALK_PIECES_VISITED.with(|c| c.set(0));
-        let _ =
-            derive_and_solve_cl_piecewise(&[&mr2h1, &mr2h2], &SolveRuntimeConfig::default()).result;
+        let outcome =
+            derive_and_solve_cl_piecewise(&[&mr2h1, &mr2h2], &SolveRuntimeConfig::default());
         eprintln!(
             "2-hop 8-range walk: pieces={} sims={}",
-            WALK_PIECES_VISITED.with(std::cell::Cell::get),
-            WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)
+            outcome.stats.pieces, outcome.stats.sims
         );
     }
 }
@@ -2945,8 +2945,8 @@ fn exact_shifted_anchor_lands_on_piece_where_transitional_overshoots() {
     let transitional = walk_piece_anchor_transitional(&hops, &ks);
     eprintln!("exact anchor: {exact}, transitional: {transitional}");
 
-    let exact_outcome = simulate_walk_path(exact, &hops);
-    let trans_outcome = simulate_walk_path(transitional, &hops);
+    let exact_outcome = simulate_walk_path(exact, &hops, &mut WalkTally::default());
+    let trans_outcome = simulate_walk_path(transitional, &hops, &mut WalkTally::default());
     let exact_score = walk_profit_score(exact_outcome.final_output, exact);
     let trans_score = walk_profit_score(trans_outcome.final_output, transitional);
     eprintln!("scores: exact={exact_score} transitional={trans_score}");
@@ -2993,10 +2993,12 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
                 };
                 assert!(!profit.is_zero());
                 let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
-                let ks = simulate_walk_path(x_star, &hops).landed;
+                let ks = simulate_walk_path(x_star, &hops, &mut WalkTally::default()).landed;
                 let anchor = walk_piece_anchor(&hops, &ks);
-                let x_l = piece_window_left_edge(&hops, &ks, anchor);
-                let Some(x_r) = piece_window_right_edge(&hops, &ks, anchor) else {
+                let x_l = piece_window_left_edge(&hops, &ks, anchor, &mut WalkTally::default());
+                let Some(x_r) =
+                    piece_window_right_edge(&hops, &ks, anchor, &mut WalkTally::default())
+                else {
                     continue;
                 };
                 let mut rec = WalkRecorder::new();
@@ -3008,12 +3010,15 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
                     Some(anchor),
                     &SolveRuntimeConfig::default(),
                     None,
+                    &mut WalkTally::default(),
                 );
 
                 // Skip corner members: the refined argmax must sit strictly
                 // interior to the window.
-                let x_star_i =
-                    walk_profit_score(simulate_walk_path(x_star, &hops).final_output, x_star);
+                let x_star_i = walk_profit_score(
+                    simulate_walk_path(x_star, &hops, &mut WalkTally::default()).final_output,
+                    x_star,
+                );
                 let near_left = x_star <= x_l.saturating_add(U256::from(8u64));
                 let near_right = x_star.saturating_add(U256::from(8u64)) >= x_r;
                 if near_left || near_right {
@@ -3021,11 +3026,13 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
                 }
                 interior_members += 1;
 
-                let exact_score =
-                    walk_profit_score(simulate_walk_path(anchor, &hops).final_output, anchor);
+                let exact_score = walk_profit_score(
+                    simulate_walk_path(anchor, &hops, &mut WalkTally::default()).final_output,
+                    anchor,
+                );
                 let transitional = walk_piece_anchor_transitional(&hops, &ks);
                 let trans_score = walk_profit_score(
-                    simulate_walk_path(transitional, &hops).final_output,
+                    simulate_walk_path(transitional, &hops, &mut WalkTally::default()).final_output,
                     transitional,
                 );
                 eprintln!(
@@ -3233,7 +3240,7 @@ fn block_25641093_pool_feed_hop2_predicts_revm_output() {
 
     let profiles = Arc::new(build_word_profiles(&crossings));
     let hops = [PieceView::cl(crossings, profiles)];
-    let outcome = simulate_walk_path(gross_in, &hops);
+    let outcome = simulate_walk_path(gross_in, &hops, &mut WalkTally::default());
     let got = outcome.hop_outputs[0];
     // vs the validated step-faithful oracle: the residual is per-step
     // floor slack (observed 7 wei).
@@ -3329,7 +3336,7 @@ fn single_piece_saturation_kink_is_not_missed() {
     // Chain-saturation corner: the max path input in the upstream (hop0,
     // zfo) range — past it, hop0 stops adding output and profit falls.
     let x_sat = seq1.ranges[0].max_gross_input_in_range();
-    let sat = simulate_walk_path(x_sat, &hops);
+    let sat = simulate_walk_path(x_sat, &hops, &mut WalkTally::default());
     let corner_profit = sat.final_output.checked_sub(x_sat).unwrap_or(U256::ZERO);
     assert!(
         corner_profit > U256::ZERO,
@@ -3372,7 +3379,7 @@ fn single_piece_hop1_binding_kink_is_not_dropped() {
     // hop1's saturation input, in hop1's input units (= hop0's output).
     let y_cap = seq1.ranges[0].max_gross_input_in_range();
     let hop0_max_in = seq0.ranges[0].max_gross_input_in_range();
-    let outcome_at = |x: U256| simulate_walk_path(x, &hops);
+    let outcome_at = |x: U256| simulate_walk_path(x, &hops, &mut WalkTally::default());
     let profit_at = |x: U256| {
         outcome_at(x)
             .final_output
@@ -3460,7 +3467,7 @@ fn dense_edge_direction_guard_synthetic() {
         &[10_000_000_000_000u128, 10_000_000_000_000u128],
     );
     let hops = [cl_walk_hop(&seq0, None), cl_walk_hop(&seq1, None)];
-    let o = |x: U256| simulate_walk_path(x, &hops).final_output;
+    let o = |x: U256| simulate_walk_path(x, &hops, &mut WalkTally::default()).final_output;
     let p = |x: U256| o(x).checked_sub(x).unwrap_or(U256::ZERO);
 
     // Fine-grid oracle: coarse 128-step scan over [0, hi], then a fine
