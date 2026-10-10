@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use alloy::primitives::{Address, U256};
 use degenbot_math::curve::calculate_dy;
 
-use super::{check_metapool_liquidity, resolve_dy_inputs};
+use super::{check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs};
 use crate::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 use crate::curve_state::CurvePoolIdentity;
 
@@ -358,6 +358,20 @@ fn ramping_a_interpolates_with_timestamp() {
     // (the ramping A is already the full amplified A, matching the companion
     // `_a` which returns the interpolated value directly, not x A_PRECISION)
     assert_eq!(inputs.amp, U256::from(150_u64));
+}
+
+#[test]
+fn pool_liquidity_passes_when_every_balance_is_nonzero() {
+    assert!(check_pool_liquidity(&[E21, TWO_E21]).is_ok());
+}
+
+#[test]
+fn pool_liquidity_rejects_a_zero_balance() {
+    let err = check_pool_liquidity(&[E21, U256::ZERO]).expect_err("a zero balance must refuse");
+    assert!(matches!(
+        err,
+        crate::curve_dy_io::CurveInputsError::NoLiquidity
+    ));
 }
 
 #[test]

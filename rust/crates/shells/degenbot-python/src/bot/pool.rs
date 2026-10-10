@@ -2131,6 +2131,12 @@ impl PyLiquidityPool {
         });
         let out = match result {
             Ok(v) => v,
+            Err(CurveInputsError::NoLiquidity) => {
+                return Err(curve_no_liquidity_error(
+                    py,
+                    "One or more of the tokens has a zero balance.",
+                ));
+            }
             Err(e) => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "Curve get_dy failure: {e:?}"

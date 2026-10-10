@@ -26,8 +26,8 @@ use degenbot_pools::balancer_weighted_state::{
 use degenbot_pools::curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
 
 use super::{
-    check_metapool_liquidity, resolve_dy_inputs, BotCurveBasePoolPort, BotState, CurveInputsError,
-    PoolEntry,
+    check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, BotCurveBasePoolPort,
+    BotState, CurveInputsError, PoolEntry,
 };
 
 /// The Curve swap-fee denominator (1e10).
@@ -242,6 +242,12 @@ impl BotState {
             .get(&pool_id)
             .and_then(PoolEntry::curve)
             .ok_or(CurveInputsError::UnknownPool(pool_id))?;
+
+        // The contract's zero-balance refusal, evaluated where the balance
+        // vector is read (core-side; the companion's
+        // `calculate_tokens_out_from_tokens_in` pre-validation is gone).
+        check_pool_liquidity(&state.balances)?;
+
         let provider = state.data_provider.as_deref();
         let inputs = resolve_dy_inputs(
             identity,

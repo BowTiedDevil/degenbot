@@ -197,6 +197,67 @@ fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
 }
 
 #[test]
+fn curve_get_dy_refuses_a_zero_balance_direct_pool() {
+    // The direct-pool zero-balance refusal is core-owned (the companion
+    // `calculate_tokens_out_from_tokens_in` pre-validation is gone): a zero
+    // balance on any coin returns the typed `NoLiquidity` from `curve_get_dy`,
+    // raised where the balance vector is read.
+    use crate::RegisterCurvePoolParams;
+
+    const E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+    const E21: U256 = U256::from_limbs([11_627_460_059_052_638_208, 162, 0, 0]);
+
+    let params = |address: Address, balances: Vec<U256>| RegisterCurvePoolParams {
+        address,
+        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+        a_coefficient: 100,
+        a_precision: 100,
+        fee: 500_000,
+        admin_fee: 0,
+        rate_multipliers: vec![E18, E18],
+        balances,
+        update_block: 1,
+        swap_style: 1,
+        lending_rate_style: 1,
+        d_variant: 1,
+        y_variant: 1,
+        yd_variant: 1,
+        base_pool: None,
+        initial_a_coefficient: None,
+        future_a_coefficient: None,
+        initial_a_coefficient_time: None,
+        future_a_coefficient_time: None,
+        create_timestamp: None,
+        fee_gamma: None,
+        mid_fee: None,
+        offpeg_fee_multiplier: None,
+        out_fee: None,
+        gamma: None,
+        lp_token: None,
+        use_lending: Vec::new(),
+        precision_multipliers: vec![E18, E18],
+        tokens_underlying: None,
+        metapool_rate_style: 1,
+        metapool_underlying_style: 1,
+        data_provider: None,
+    };
+
+    let mut core = BotState::new();
+
+    // A zero coin balance refuses on the direct path.
+    let zero_id =
+        core.register_curve_pool(&params(Address::from([0x11u8; 20]), vec![U256::ZERO, E21]));
+    let err = core
+        .curve_get_dy(zero_id, 0, 1, E18, 1, None)
+        .expect_err("a zero balance must refuse");
+    assert!(matches!(err, CurveInputsError::NoLiquidity));
+
+    // A fully funded pool still computes dy (the check is not a blanket refusal).
+    let funded_id = core.register_curve_pool(&params(Address::from([0x12u8; 20]), vec![E21, E21]));
+    assert!(core.curve_get_dy(funded_id, 0, 1, E18, 1, None).is_ok());
+}
+
+#[test]
 #[expect(clippy::too_many_lines)]
 fn pool_family_dispatches_every_registered_family() {
     // Each non-V2 `PoolEntry` variant resolves to its own family tag.

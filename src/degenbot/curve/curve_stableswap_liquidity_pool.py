@@ -25,7 +25,6 @@ from degenbot.curve.types import (
 )
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool
@@ -736,13 +735,16 @@ class CurveStableswapPool(
     ) -> int:
         """Calculate the expected token OUTPUT for a target INPUT at current pool reserves.
 
+        The zero-balance refusal is core-owned: the direct-pool arm delegates to
+        `get_dy` -> the Rust `curve_get_dy`, which raises the typed `NoLiquidity`
+        where the balances are read (the Python-side raise is gone).
+
         Returns:
             The computed integer value.
 
         Raises:
             DegenbotValueError: See function documentation.
             InvalidSwapInputAmount: See function documentation.
-            NoLiquidity: See function documentation.
 
         """
         block_number = self._resolve_block_number(block_identifier)
@@ -767,9 +769,8 @@ class CurveStableswapPool(
             ]
 
         if all(tokens_used_this_pool):
-            if any(balance == 0 for balance in self.balances):
-                raise NoLiquidity(message="One or more of the tokens has a zero balance.")
-
+            # The zero-balance refusal is core-owned: `curve_get_dy` raises the
+            # typed `NoLiquidity` where the balances are read, so this delegates.
             return self.get_dy(
                 i=self._tokens.index(token_in),
                 j=self._tokens.index(token_out),

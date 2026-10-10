@@ -46,7 +46,7 @@ pub enum CurveInputsError {
     UnknownPool(u64),
     /// `get_dy_underlying` on a pool with no base pool (a plain pool).
     NotMetapool,
-    /// A metapool base swap where one side's balance vector has a zero entry.
+    /// A direct-pool or metapool swap where a balance vector has a zero entry.
     NoLiquidity,
 }
 
@@ -75,6 +75,21 @@ pub fn check_metapool_liquidity(
     base_balances: &[U256],
 ) -> Result<(), CurveInputsError> {
     if base_balances.iter().any(U256::is_zero) || meta_balances.iter().any(U256::is_zero) {
+        return Err(CurveInputsError::NoLiquidity);
+    }
+    Ok(())
+}
+
+/// Reject a direct-pool swap when any balance is zero — the same contract
+/// `NoLiquidity` refusal as [`check_metapool_liquidity`], evaluated where the
+/// balance vector is read (the core-side home the companion
+/// `calculate_tokens_out_from_tokens_in` pre-validation occupied).
+///
+/// # Errors
+///
+/// Returns [`CurveInputsError::NoLiquidity`] when any balance is zero.
+pub fn check_pool_liquidity(balances: &[U256]) -> Result<(), CurveInputsError> {
+    if balances.iter().any(U256::is_zero) {
         return Err(CurveInputsError::NoLiquidity);
     }
     Ok(())
