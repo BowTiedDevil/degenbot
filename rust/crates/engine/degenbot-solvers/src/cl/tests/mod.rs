@@ -580,6 +580,7 @@ fn test_solve_mixed_piecewise_v3_then_v2_no_panic() {
     let result = solve_mixed_piecewise(
         &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2_hop)],
         None,
+        None,
         &SolveRuntimeConfig::default(),
         None,
     )
@@ -1033,6 +1034,7 @@ fn walk_mixed_fingerprint_separates_hop_order() {
     let base = solve_mixed_piecewise(
         &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
+        None,
         &cfg,
         None,
     )
@@ -1042,11 +1044,13 @@ fn walk_mixed_fingerprint_separates_hop_order() {
     let replayed = solve_mixed_piecewise(
         &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2)],
         Some(&memo),
+        None,
         &cfg,
         None,
     );
     let fresh = solve_mixed_piecewise(
         &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2)],
+        None,
         None,
         &cfg,
         None,
@@ -1080,7 +1084,7 @@ fn test_solve_cl_piecewise_2hop_prepared_matches_derived() {
         PreparedClHop::derive(Arc::new(seq2.clone())),
     ];
     let result_prepared =
-        solve_cl_piecewise(&prepared, None, &SolveRuntimeConfig::default(), None).result;
+        solve_cl_piecewise(&prepared, None, None, &SolveRuntimeConfig::default(), None).result;
     let result_derived =
         derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
 
@@ -1239,6 +1243,7 @@ fn test_solve_mixed_piecewise_2hop_delegates() {
     let result = solve_mixed_piecewise(
         &[MixedHopView::V2(&v2_hop), MixedHopView::Cl(&cl_prepared)],
         None,
+        None,
         &SolveRuntimeConfig::default(),
         None,
     );
@@ -1266,7 +1271,8 @@ fn cl_path_cached_crossings_match_profile_only_solve() {
         PreparedClHop::from_parts(Arc::new(seq1.clone()), Arc::clone(&c1), Arc::clone(&p1)),
         PreparedClHop::from_parts(Arc::new(seq2.clone()), Arc::clone(&c2), Arc::clone(&p2)),
     ];
-    let cached = solve_cl_piecewise(&prepared, None, &SolveRuntimeConfig::default(), None).result;
+    let cached =
+        solve_cl_piecewise(&prepared, None, None, &SolveRuntimeConfig::default(), None).result;
     let offline =
         derive_and_solve_cl_piecewise(&[&seq1, &seq2], &SolveRuntimeConfig::default()).result;
     assert_eq!(cached, offline);
@@ -1293,11 +1299,13 @@ fn mixed_path_cached_crossings_match_offline_solve() {
     let cached = solve_mixed_piecewise(
         &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&cached_hop)],
         None,
+        None,
         &SolveRuntimeConfig::default(),
         None,
     );
     let offline = solve_mixed_piecewise(
         &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&derived_hop)],
+        None,
         None,
         &SolveRuntimeConfig::default(),
         None,
@@ -1336,6 +1344,7 @@ fn test_solve_mixed_piecewise_3hop_v2_cl_v2() {
             MixedHopView::Cl(&cl_prepared),
             MixedHopView::V2(&v2_hop2),
         ],
+        None,
         None,
         &SolveRuntimeConfig::default(),
         None,
@@ -1388,6 +1397,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
             MixedHopView::V2(&v2_hop2),
         ],
         None,
+        None,
         &SolveRuntimeConfig::default(),
         None,
     );
@@ -1397,6 +1407,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
             MixedHopView::Cl(&derived_hop),
             MixedHopView::V2(&v2_hop2),
         ],
+        None,
         None,
         &SolveRuntimeConfig::default(),
         None,
@@ -2584,6 +2595,7 @@ fn solve_mixed_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
     let cl_prepared = PreparedClHop::derive(Arc::new(cl_seq));
     let result = solve_mixed_piecewise(
         &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&cl_prepared)],
+        None,
         None,
         &SolveRuntimeConfig::default(),
         None,

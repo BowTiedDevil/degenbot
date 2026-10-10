@@ -437,7 +437,13 @@ fn solve_walkable_path_int(
         else {
             return (None, crate::cl::WalkStats::default());
         };
-        crate::cl::solve_cl_piecewise(&prepared, gate.walk_memo(), &gate.runtime, walk_env)
+        crate::cl::solve_cl_piecewise(
+            &prepared,
+            gate.walk_memo(),
+            gate.telemetry(),
+            &gate.runtime,
+            walk_env,
+        )
     } else {
         // ONE borrowed hop view, one entry per position: V2 borrows the
         // resolved state; CL borrows the projection's prepared value (the
@@ -457,7 +463,13 @@ fn solve_walkable_path_int(
             }
         }
 
-        crate::cl::solve_mixed_piecewise(&hops, gate.walk_memo(), &gate.runtime, walk_env)
+        crate::cl::solve_mixed_piecewise(
+            &hops,
+            gate.walk_memo(),
+            gate.telemetry(),
+            &gate.runtime,
+            walk_env,
+        )
     };
 
     (

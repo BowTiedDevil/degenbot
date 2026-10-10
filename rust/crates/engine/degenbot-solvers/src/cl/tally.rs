@@ -455,7 +455,7 @@ impl WalkTally {
 ///
 /// Not feature-gated: the type and its signatures exist in every build so the
 /// solve entries keep one shape. No environment reads.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct WalkTelemetry {
     inner: parking_lot::Mutex<WalkTelemetryState>,
 }

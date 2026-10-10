@@ -238,6 +238,7 @@ fn main() {
             let out = solve_mixed_piecewise(
                 &views,
                 None,
+                None,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
                 None,
             );

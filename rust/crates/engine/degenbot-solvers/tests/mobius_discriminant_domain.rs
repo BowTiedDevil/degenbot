@@ -62,7 +62,7 @@ fn baseline(hops: &[IntHopState]) -> Solve {
 
 fn walk(hops: &[IntHopState]) -> Solve {
     let views: Vec<MixedHopView<'_>> = hops.iter().map(MixedHopView::V2).collect();
-    solve_mixed_piecewise(&views, None, &SolveRuntimeConfig::default(), None).result
+    solve_mixed_piecewise(&views, None, None, &SolveRuntimeConfig::default(), None).result
 }
 
 /// `(opt, profit, outputs)` from sweeping `int_simulate_path` at `anchor - 2

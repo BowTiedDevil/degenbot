@@ -162,7 +162,7 @@ impl PairBank {
     }
 
     fn solve_at(&self, i: usize, memo: &WalkMemo, cfg: &SolveRuntimeConfig) -> WalkOutcome {
-        solve_cl_piecewise(&self.prepared[i], Some(memo), cfg, None)
+        solve_cl_piecewise(&self.prepared[i], Some(memo), None, cfg, None)
     }
 }
 

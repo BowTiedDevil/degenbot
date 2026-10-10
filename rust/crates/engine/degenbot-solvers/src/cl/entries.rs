@@ -5,6 +5,7 @@ use super::crossings::{
     build_cl_crossing_table, build_cl_word_profiles_from_crossings, cl_walk_hop_cached,
 };
 use super::memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, MemoProbe, WalkMemo};
+use super::tally::WalkTelemetry;
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
 use crate::profit_envelope::PathBoundLines;
 use crate::runtime::SolveRuntimeConfig;
@@ -120,7 +121,8 @@ fn memo_commit(memo: &WalkMemo, fp: u128, outcome: &WalkOutcome) {
 
 /// Convenience for callers that only have sequences (tests, examples,
 /// golden-reference harnesses): derives each hop's [`PreparedClHop`] per call
-/// (cost is the caller's) and runs the entry with no memo.
+/// (cost is the caller's) and runs the entry with no memo and no telemetry
+/// collector (both ride in as `None`).
 #[must_use]
 pub fn derive_and_solve_cl_piecewise(
     sequences: &[&IntV3TickRangeSequence],
@@ -130,7 +132,7 @@ pub fn derive_and_solve_cl_piecewise(
         .iter()
         .map(|s| PreparedClHop::derive(std::sync::Arc::new(IntV3TickRangeSequence::clone(s))))
         .collect();
-    solve_cl_piecewise(&prepared, None, cfg, None)
+    solve_cl_piecewise(&prepared, None, None, cfg, None)
 }
 
 /// THE all-CL solve entry: one interface taking the projection's prepared hops
@@ -146,6 +148,7 @@ pub fn derive_and_solve_cl_piecewise(
 pub fn solve_cl_piecewise(
     prepared: &[PreparedClHop],
     memo: Option<&WalkMemo>,
+    tele: Option<&WalkTelemetry>,
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
@@ -172,7 +175,7 @@ pub fn solve_cl_piecewise(
         }
     }
 
-    let outcome = solve_cl_piecewise_inner(prepared, cfg, env);
+    let outcome = solve_cl_piecewise_inner(prepared, tele, cfg, env);
     if let Some((memo, fp)) = commit {
         memo_commit(memo, fp, &outcome);
     }
@@ -182,6 +185,7 @@ pub fn solve_cl_piecewise(
 /// The memo-less solve body (the memo hook is the only difference).
 fn solve_cl_piecewise_inner(
     prepared: &[PreparedClHop],
+    tele: Option<&WalkTelemetry>,
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
@@ -189,7 +193,7 @@ fn solve_cl_piecewise_inner(
         .iter()
         .map(|h| cl_walk_hop_cached(h.int_seq.as_ref(), Some(&h.crossings), Some(&h.profiles)))
         .collect();
-    solve_active_set_path(&hops, cfg, env, None)
+    solve_active_set_path(&hops, cfg, env, tele)
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +229,7 @@ fn solve_cl_piecewise_inner(
 pub fn solve_mixed_piecewise(
     hops: &[MixedHopView<'_>],
     memo: Option<&WalkMemo>,
+    tele: Option<&WalkTelemetry>,
     cfg: &SolveRuntimeConfig,
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
@@ -277,7 +282,7 @@ pub fn solve_mixed_piecewise(
     // nothing is derived or rebuilt per solve).
     let pieces: Vec<PieceView> = hops.iter().map(|h| h.piece_view()).collect();
 
-    let outcome = solve_active_set_path(&pieces, cfg, env, None);
+    let outcome = solve_active_set_path(&pieces, cfg, env, tele);
     if let Some((memo, fp)) = commit {
         memo_commit(memo, fp, &outcome);
     }

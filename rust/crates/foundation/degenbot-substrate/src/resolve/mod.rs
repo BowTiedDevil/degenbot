@@ -933,6 +933,7 @@ mod tests {
         degenbot_solvers::cl::solve_cl_piecewise(
             &prepared,
             None,
+            None,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             None,
         )
@@ -958,6 +959,7 @@ mod tests {
         }
         degenbot_solvers::cl::solve_mixed_piecewise(
             &hops,
+            None,
             None,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
             None,

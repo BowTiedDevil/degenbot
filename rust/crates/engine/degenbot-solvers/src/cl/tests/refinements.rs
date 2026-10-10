@@ -504,8 +504,8 @@ fn loop21_envelope_pruned_refine_is_argmax_equal_and_never_loses_sims() {
         let cfg = SolveRuntimeConfig::default();
         let env = path_bound_lines(&views, &cfg);
         assert!(env.is_some(), "{name}: walk bound lines derivable");
-        let off = solve_cl_piecewise(&prep, None, &cfg, None);
-        let on = solve_cl_piecewise(&prep, None, &cfg, env.as_ref());
+        let off = solve_cl_piecewise(&prep, None, None, &cfg, None);
+        let on = solve_cl_piecewise(&prep, None, None, &cfg, env.as_ref());
         assert_eq!(
             off.result, on.result,
             "{name}: Loop-21 pruned refine moved the argmax"
@@ -629,8 +629,8 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
         MixedHopView::Cl(&prep[0]),
         MixedHopView::V2(&v2s[1]),
     ];
-    let off = solve_mixed_piecewise(&hops, None, &cfg, None);
-    let on = solve_mixed_piecewise(&hops, None, &cfg, Some(&env));
+    let off = solve_mixed_piecewise(&hops, None, None, &cfg, None);
+    let on = solve_mixed_piecewise(&hops, None, None, &cfg, Some(&env));
     assert_eq!(off.result, on.result, "Loop-21 moved the mixed-path argmax");
     assert!(on.stats.sims <= off.stats.sims);
     println!(

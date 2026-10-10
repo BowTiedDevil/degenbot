@@ -144,7 +144,7 @@ fn main() {
         let mut walk_sims = 0usize;
         let t0 = std::time::Instant::now();
         for prep in &prepared {
-            let out = solve_cl_piecewise(prep, None, &cfg, None);
+            let out = solve_cl_piecewise(prep, None, None, &cfg, None);
             walk_sims += out.stats.sims;
         }
         arm_a.push(ArmARow {
@@ -164,7 +164,7 @@ fn main() {
         let mut walk_sims = 0usize;
         let t0 = std::time::Instant::now();
         for prep in &prepared {
-            let out = solve_cl_piecewise(prep, Some(&memo), &cfg, None);
+            let out = solve_cl_piecewise(prep, Some(&memo), None, &cfg, None);
             walk_sims += out.stats.sims;
         }
         let wall_ms = t0.elapsed().as_secs_f64() * 1_000.0;

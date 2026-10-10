@@ -358,7 +358,7 @@ mod tests {
     /// is exactly one probe + one cache consult + a commit.
     fn solve_once(memo: &WalkMemo, prepared: &PreparedClHop) {
         let cfg = SolveRuntimeConfig::default();
-        let _ = solve_cl_piecewise(std::slice::from_ref(prepared), Some(memo), &cfg, None);
+        let _ = solve_cl_piecewise(std::slice::from_ref(prepared), Some(memo), None, &cfg, None);
     }
 
     #[test]

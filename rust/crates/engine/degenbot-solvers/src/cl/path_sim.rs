@@ -169,7 +169,7 @@ mod tests {
             .iter()
             .map(|s| PreparedClHop::derive(Arc::new(IntV3TickRangeSequence::clone(s))))
             .collect();
-        let via_prepared = solve_cl_piecewise(&prepared_hops, None, &cfg, None);
+        let via_prepared = solve_cl_piecewise(&prepared_hops, None, None, &cfg, None);
         let via_derived = derive_and_solve_cl_piecewise(sequences, &cfg);
         assert_eq!(
             via_prepared.result, via_derived.result,

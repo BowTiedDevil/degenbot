@@ -534,6 +534,10 @@ pub struct GateDeps<'a> {
     /// The engine-owned cross-block walk-memo handle; `None`
     /// disables the memo for this solve.
     pub(crate) walk_memo: Option<&'a crate::cl::WalkMemo>,
+    /// The engine-owned walk telemetry collector; `None` disables the ns
+    /// census for this solve. Mirrors [`Self::walk_memo`] — the collector and
+    /// the memo are constructed adjacently at the engine.
+    pub(crate) telemetry: Option<&'a crate::cl::WalkTelemetry>,
     /// the owner's runtime stance (envelope caps + trace gate),
     /// instance-scoped and passed down — the gate reads no environment.
     pub(crate) runtime: SolveRuntimeConfig,
@@ -590,6 +594,10 @@ impl GateDeps<'_> {
             prefix_store: Some(prefix_store),
             capture,
             walk_memo,
+            // The engine-owned collector injection point: the bot wires this
+            // once its ownership step lands; offline and test deps keep the
+            // census off here.
+            telemetry: None,
             runtime,
         }
     }
@@ -598,6 +606,13 @@ impl GateDeps<'_> {
     #[must_use]
     pub fn walk_memo(&self) -> Option<&crate::cl::WalkMemo> {
         self.walk_memo
+    }
+
+    /// The engine-owned walk telemetry collector, if any (`None` disables the
+    /// ns census for this solve).
+    #[must_use]
+    pub fn telemetry(&self) -> Option<&crate::cl::WalkTelemetry> {
+        self.telemetry
     }
 }
 

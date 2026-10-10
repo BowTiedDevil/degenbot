@@ -69,6 +69,7 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
     solve_cl_piecewise(
         &prepared,
         None,
+        None,
         &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         None,
     )

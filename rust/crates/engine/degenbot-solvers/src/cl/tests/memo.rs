@@ -137,7 +137,7 @@ fn memo_cached_negative_skips_the_walk_on_replay() {
     let memo = WalkMemo::new(true, true);
 
     // First solve: Miss → the walk runs and stores the negative.
-    let first = solve_cl_piecewise(&prepared, Some(&memo), &cfg, None);
+    let first = solve_cl_piecewise(&prepared, Some(&memo), None, &cfg, None);
     assert!(first.result.is_none(), "fixture must be unprofitable");
     #[cfg(feature = "telemetry")]
     assert!(first.stats.sims > 0, "first solve must run the walk");
@@ -156,7 +156,7 @@ fn memo_cached_negative_skips_the_walk_on_replay() {
     memo.begin_block(2);
 
     // Second solve: the cached negative answers without the walk.
-    let second = solve_cl_piecewise(&prepared, Some(&memo), &cfg, None);
+    let second = solve_cl_piecewise(&prepared, Some(&memo), None, &cfg, None);
     assert!(second.result.is_none());
     assert_eq!(
         second.stats.sims, 0,
@@ -190,7 +190,7 @@ fn memo_cached_hit_replays_the_solution_without_the_walk() {
     let cfg = SolveRuntimeConfig::default();
     let memo = WalkMemo::new(true, true);
 
-    let first = solve_cl_piecewise(&prepared, Some(&memo), &cfg, None);
+    let first = solve_cl_piecewise(&prepared, Some(&memo), None, &cfg, None);
     let first_result = first.result.expect("fixture must be profitable");
     let st1 = memo.take_stats();
     assert_eq!(st1.negatives_played, 0);
@@ -199,7 +199,7 @@ fn memo_cached_hit_replays_the_solution_without_the_walk() {
         "profitable compositions cache Some"
     );
 
-    let second = solve_cl_piecewise(&prepared, Some(&memo), &cfg, None);
+    let second = solve_cl_piecewise(&prepared, Some(&memo), None, &cfg, None);
     assert_eq!(
         second.result,
         Some(first_result),
@@ -438,7 +438,7 @@ fn memo_mixed_cached_hit_replays_the_solution_without_the_walk() {
     let memo = WalkMemo::new(true, true);
 
     // First solve: Miss → the walk runs and stores the solution.
-    let first = solve_mixed_piecewise(&hops, Some(&memo), &cfg, None);
+    let first = solve_mixed_piecewise(&hops, Some(&memo), None, &cfg, None);
     let first_result = first.result.expect("mixed fixture must be profitable");
     #[cfg(feature = "telemetry")]
     assert!(first.stats.sims > 0, "first solve must run the walk");
@@ -454,7 +454,7 @@ fn memo_mixed_cached_hit_replays_the_solution_without_the_walk() {
     memo.begin_block(2);
 
     // Second solve: the cached hit replays byte-identically, no walk.
-    let second = solve_mixed_piecewise(&hops, Some(&memo), &cfg, None);
+    let second = solve_mixed_piecewise(&hops, Some(&memo), None, &cfg, None);
     assert_eq!(
         second.result,
         Some(first_result),
@@ -492,7 +492,7 @@ fn memo_mixed_cached_negative_skips_the_walk_on_replay() {
     let cfg = SolveRuntimeConfig::default();
     let memo = WalkMemo::new(true, true);
 
-    let first = solve_mixed_piecewise(&hops, Some(&memo), &cfg, None);
+    let first = solve_mixed_piecewise(&hops, Some(&memo), None, &cfg, None);
     assert!(first.result.is_none(), "fixture must be unprofitable");
     #[cfg(feature = "telemetry")]
     assert!(first.stats.sims > 0, "first solve must run the walk");
@@ -509,7 +509,7 @@ fn memo_mixed_cached_negative_skips_the_walk_on_replay() {
 
     memo.begin_block(2);
 
-    let second = solve_mixed_piecewise(&hops, Some(&memo), &cfg, None);
+    let second = solve_mixed_piecewise(&hops, Some(&memo), None, &cfg, None);
     assert!(second.result.is_none());
     assert_eq!(
         second.stats.sims, 0,
@@ -558,6 +558,7 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
     let base = solve_mixed_piecewise(
         &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
+        None,
         &cfg,
         None,
     )
@@ -571,6 +572,7 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
             MixedHopView::Cl(&cl_prepared),
         ],
         Some(&memo),
+        None,
         &cfg,
         None,
     );
@@ -579,6 +581,7 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
             MixedHopView::V2(&v2_changed),
             MixedHopView::Cl(&cl_prepared),
         ],
+        None,
         None,
         &cfg,
         None,
@@ -628,6 +631,7 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
     let base = solve_mixed_piecewise(
         &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
+        None,
         &cfg,
         None,
     )
@@ -641,6 +645,7 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
             MixedHopView::Cl(&cl_prepared_changed),
         ],
         Some(&memo),
+        None,
         &cfg,
         None,
     );
@@ -649,6 +654,7 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
             MixedHopView::V2(&v2),
             MixedHopView::Cl(&cl_prepared_changed),
         ],
+        None,
         None,
         &cfg,
         None,
