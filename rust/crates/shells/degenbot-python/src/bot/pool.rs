@@ -2786,21 +2786,27 @@ impl PyLiquidityPool {
     ///
     /// `io` is the driver's `BotIo` façade; the family's fetch/compare/apply
     /// choreography runs core-side against this handle's shared `BotState`.
-    /// `block_number` defaults to the current chain head. Returns `True` when a
-    /// differing state was applied, `False` when the on-chain state already
-    /// matches.
+    /// `block_number` is a resolved number, a canonical block tag
+    /// (`"earliest"` / `"latest"` / `"pending"`), or `None` for the chain head.
+    /// A tag resolves to a number here — at the seam that owns the RPC clock —
+    /// before the core entry is called, so `refresh_pool` stays numeric.
+    /// Returns `True` when a differing state was applied, `False` when the
+    /// on-chain state already matches.
     ///
     /// Raises:
-    ///     `ValueError`: The handle's pool id is not registered, or its family
-    ///         has no refresh path.
+    ///     `ValueError`: The handle's pool id is not registered, its family has
+    ///         no refresh path, or `block_number` is a string that is not a
+    ///         canonical tag.
     #[pyo3(signature = (io, block_number=None))]
     fn refresh_via(
         &self,
         py: Python<'_>,
         io: &Bound<'_, crate::bot::py_bot_io::PyBotIo>,
-        block_number: Option<u64>,
+        block_number: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let construction_io = io.borrow().required_construction_io()?;
+        let block_number =
+            crate::bot::py_bot_io::resolve_block_against(py, &construction_io, block_number)?;
         let core = self.core.clone();
         let pool_id = self.pool_id;
         let outcome = py.detach(move || {

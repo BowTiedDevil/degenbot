@@ -12,6 +12,7 @@ use degenbot_db::rows::{
 };
 use degenbot_rpc::provider::EthBlock;
 
+use super::block_selector::BlockSelector;
 use super::{DbConstruction, RpcConstruction};
 
 /// The composite construction-I/O handle, held by `Bot` (ADR-003).
@@ -173,5 +174,14 @@ impl ConstructionIo {
         block_number: Option<u64>,
     ) -> Result<Bytes, ProviderError> {
         self.rpc.call(to, data, block_number).await
+    }
+
+    /// Resolve a typed [`BlockSelector`] to a concrete block number against
+    /// the RPC clock the `rpc` half owns.
+    pub async fn resolve_block_selector(
+        &self,
+        selector: BlockSelector,
+    ) -> Result<u64, ProviderError> {
+        self.rpc.resolve_block_selector(selector).await
     }
 }

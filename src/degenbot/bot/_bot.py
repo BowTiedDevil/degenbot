@@ -1031,13 +1031,14 @@ class Bot(AccountQueryMixin):
         fetch/compare/apply choreography lives core-side, so this shell no
         longer selects a builder or branches on the pool family.
 
+        `block_number` is a block number, one canonical tag string
+        (``"earliest"`` / ``"latest"`` / ``"pending"``), or ``None`` for the
+        chain head. A tag is handed through unchanged and resolves at the
+        handle seam that owns the RPC clock — it is never pre-coerced to a
+        number here.
+
         Returns:
             True if the state changed, False if the pool was already current.
 
         """
-        resolved_block_number = (
-            int(block_number)
-            if block_number is not None and not isinstance(block_number, int)
-            else block_number
-        )
-        return pool.refresh_via(self._io, block_number=resolved_block_number)
+        return pool.refresh_via(self._io, block_number=block_number)

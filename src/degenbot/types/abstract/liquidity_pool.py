@@ -20,7 +20,7 @@ class AbstractLiquidityPool(AddressComparable, ABC):
     name: str
     _py_pool: Pool
 
-    def refresh_via(self, io: BotIo, *, block_number: int | None = None) -> bool:
+    def refresh_via(self, io: BotIo, *, block_number: int | str | None = None) -> bool:
         """Fetch this pool's current on-chain state and apply it when it differs.
 
         Delegates to the pool handle's core-owned refresh entry: the driver
@@ -28,12 +28,12 @@ class AbstractLiquidityPool(AddressComparable, ABC):
         owns the per-family fetch/compare/apply choreography. `block_number`
         defaults to the current chain head.
 
-        `block_number` is a resolved block number (``int``) or ``None`` — the
-        core refresh takes ``int | None`` and does not understand block-tag
-        strings. Resolution of tags (``"latest"`` / ``"pending"`` / a block
-        hash) to a number belongs at the driver seam that owns the RPC clock
-        (``Bot.update`` resolves before calling here); that tag surface is
-        deferred scope and is deliberately NOT built here.
+        `block_number` is a block number (``int``), one canonical tag string
+        (``"earliest"`` / ``"latest"`` / ``"pending"``), or ``None``. The tag
+        becomes a number at the handle seam that owns the RPC clock — it is
+        never coerced to the head, and never drops to ``None``; the core
+        refresh entry stays numeric. A string that is not a canonical tag is
+        refused.
 
         Returns:
             True when a differing state was applied, False when the on-chain

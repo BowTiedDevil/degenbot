@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from fractions import Fraction
 
+import pytest
+
 from degenbot._ffi import Bot, BotIo
 from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
@@ -119,3 +121,26 @@ class TestPoolRefreshV2:
         pool = self._pool()
         assert pool.refresh_via(io) is True
         assert pool.reserves_token0 == 5000
+
+    def test_refresh_resolves_the_latest_tag_at_the_seam(self) -> None:
+        """A block tag is a typed value: "latest" reads the recorded head (block 1)."""
+        io = BotIo(provider=_reserves_provider(5000, 6000))
+        pool = self._pool()
+        assert pool.refresh_via(io, block_number="latest") is True
+        assert pool.reserves_token0 == 5000
+
+    def test_refresh_refuses_a_string_that_is_not_a_tag(self) -> None:
+        """A decimal string is not a block tag — it is refused, not coerced to a number."""
+        io = BotIo(provider=_reserves_provider(5000, 6000))
+        pool = self._pool()
+        with pytest.raises(ValueError, match="unsupported block identifier"):
+            pool.refresh_via(io, block_number="123")
+
+
+class TestBotIoBlockTagSeam:
+    """The `BotIo` block argument is a typed selector at the seam."""
+
+    def test_page_read_refuses_a_string_that_is_not_a_tag(self) -> None:
+        io = BotIo(provider=_reserves_provider(5000, 6000))
+        with pytest.raises(ValueError, match="unsupported block identifier"):
+            io.get_code(_POOL_ADDRESS, block="0x10")

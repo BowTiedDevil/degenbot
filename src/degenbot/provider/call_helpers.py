@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from degenbot.abi import decode, encode
 from degenbot.crypto import function_selector
+from degenbot.provider.block_helpers import get_number_for_block_identifier
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -79,5 +80,14 @@ def raw_call(
         Decoded response as tuple
 
     """
-    block_num = block_identifier if isinstance(block_identifier, int) else None
+    # Resolve the identifier through the provider that owns the block clock: a
+    # tag names a position (``"earliest"`` is block 0, ``"pending"`` the head
+    # plus one), so it must never fall through to ``None`` (which reads as the
+    # head) the way a bare ``isinstance(..., int)`` coercion did. `None` stays
+    # `None` so the existing head default costs no extra round-trip.
+    block_num = (
+        get_number_for_block_identifier(block_identifier, provider)
+        if block_identifier is not None
+        else None
+    )
     return decode(return_types, provider.call(address, calldata, block=block_num))

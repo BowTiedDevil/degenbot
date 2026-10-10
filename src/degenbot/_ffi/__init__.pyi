@@ -3496,20 +3496,24 @@ class Pool:
         Pool manager contract address (EIP-55 checksummed hex). Empty string if
         not a V4 pool.
         """
-    def refresh_via(self, /, io: BotIo, block_number: int | None = None) -> bool:
+    def refresh_via(self, /, io: BotIo, block_number: Any | None = None) -> bool:
         """
         Fetch this pool's current on-chain state and apply it when it differs —
         the update path's ONE core entry (`refresh_pool`).
 
         `io` is the driver's `BotIo` façade; the family's fetch/compare/apply
         choreography runs core-side against this handle's shared `BotState`.
-        `block_number` defaults to the current chain head. Returns `True` when a
-        differing state was applied, `False` when the on-chain state already
-        matches.
+        `block_number` is a resolved number, a canonical block tag
+        (`"earliest"` / `"latest"` / `"pending"`), or `None` for the chain head.
+        A tag resolves to a number here — at the seam that owns the RPC clock —
+        before the core entry is called, so `refresh_pool` stays numeric.
+        Returns `True` when a differing state was applied, `False` when the
+        on-chain state already matches.
 
         Raises:
-            `ValueError`: The handle's pool id is not registered, or its family
-                has no refresh path.
+            `ValueError`: The handle's pool id is not registered, its family has
+                no refresh path, or `block_number` is a string that is not a
+                canonical tag.
         """
     def reserve_pair(self, /) -> ReservePairView:
         """

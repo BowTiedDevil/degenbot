@@ -19,9 +19,12 @@
 //! fixtures that construct `PyBotIo(provider=…)`). Non-alloy Python providers
 //! (the retired web3/legacy-double fallback) **error loudly** — D1 removed the
 //! Python `provider` delegation tier and D3 removed the inlined `self.alloy`
-//! RPC duplication, leaving one code path per method. Non-integer block tags
-//! (`"latest"`) likewise error loudly: the core `RpcConstruction` trait only
-//! accepts `u64` blocks (tag support is a follow-on trait change).
+//! RPC duplication, leaving one code path per method. A block argument is a
+//! typed selector: an int, or one canonical tag string
+//! (`"earliest"` / `"latest"` / `"pending"`). A tag resolves to a block number
+//! here — at the seam that owns the RPC clock (`ConstructionIo::
+//! resolve_block_selector`) — so the numeric core faces stay numeric; any
+//! other string is refused loudly rather than coalesced to the head.
 //!
 //! ## Async bridging
 //!
@@ -40,6 +43,7 @@ use std::sync::Arc;
 use crate::provider::AlloyProvider;
 use crate::rpc::provider::PyAlloyProvider;
 use crate::rpc::revert_to_pyerr;
+use degenbot_bot::bot_core::construction_io::BlockSelector;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
 
@@ -411,7 +415,7 @@ impl PyBotIo {
         let addr = alloy::primitives::Address::from(parse_address_for_call(
             &address.extract::<String>()?,
         )?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let io = self.required_construction_io()?;
         let code = py
             .detach(|| get_runtime().block_on(async { io.get_code(addr, block_num).await }))
@@ -435,7 +439,7 @@ impl PyBotIo {
         let addr = alloy::primitives::Address::from(parse_address_for_call(
             &address.extract::<String>()?,
         )?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let io = self.required_construction_io()?;
         let balance = py
             .detach(|| get_runtime().block_on(async { io.get_balance(addr, block_num).await }))
@@ -540,7 +544,7 @@ impl PyBotIo {
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_v2_reserves(
@@ -585,7 +589,7 @@ impl PyBotIo {
     ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_v3_slot0_liquidity(
@@ -637,7 +641,7 @@ impl PyBotIo {
         let pool_id_arr: [u8; 32] = pool_id
             .try_into()
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_slot0_liquidity(
@@ -684,7 +688,7 @@ impl PyBotIo {
     ) -> PyResult<Py<PyAny>> {
         let io = self.required_construction_io()?;
         let pool = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::curve_choreography::fetch_curve_balances(
@@ -730,7 +734,7 @@ impl PyBotIo {
         let io = self.required_construction_io()?;
         let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
         let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_token_balance(
@@ -768,7 +772,7 @@ impl PyBotIo {
         let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
         let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
         let spender_addr = alloy::primitives::Address::from(parse_address_for_call(spender)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_token_allowance(
@@ -805,7 +809,7 @@ impl PyBotIo {
     ) -> PyResult<Py<PyAny>> {
         let io = self.required_construction_io()?;
         let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_token_total_supply(
@@ -877,7 +881,9 @@ impl PyBotIo {
             parse_address_for_call(address).expect("probe_pool_type address parse"),
         );
         #[expect(clippy::expect_used)] // invariant-guarded (documented)
-        let block_num = extract_block_u64(block).expect("probe_pool_type block parse");
+        let block_num = self
+            .resolve_block(py, block)
+            .expect("probe_pool_type block parse");
         let family = py
             .detach(|| {
                 get_runtime().block_on(async move {
@@ -933,7 +939,7 @@ impl PyBotIo {
         })?;
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_tick_bitmap(
@@ -973,7 +979,7 @@ impl PyBotIo {
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_tick_data(
@@ -1021,7 +1027,7 @@ impl PyBotIo {
         let io = self.required_construction_io()?;
         let state_view =
             alloy::primitives::Address::from(parse_address_for_call(state_view_address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_tick_bitmap(
@@ -1069,7 +1075,7 @@ impl PyBotIo {
         let io = self.required_construction_io()?;
         let state_view =
             alloy::primitives::Address::from(parse_address_for_call(state_view_address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_tick_data(
@@ -1111,7 +1117,7 @@ impl PyBotIo {
     ) -> PyResult<Py<PyAny>> {
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_pool_id(
@@ -1145,7 +1151,7 @@ impl PyBotIo {
     ) -> PyResult<Py<PyAny>> {
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_swap_fee(
@@ -1180,7 +1186,7 @@ impl PyBotIo {
     ) -> PyResult<Py<PyAny>> {
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_amp(
@@ -1216,7 +1222,7 @@ impl PyBotIo {
     ) -> PyResult<Py<PyAny>> {
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_weights(
@@ -1257,7 +1263,7 @@ impl PyBotIo {
     ) -> PyResult<Py<PyAny>> {
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_rate_providers(
@@ -1309,7 +1315,7 @@ impl PyBotIo {
         let pool_id: [u8; 32] = pool_id
             .try_into()
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_vault_tokens(
@@ -1357,7 +1363,7 @@ impl PyBotIo {
     ) -> PyResult<Py<PyAny>> {
         let io = self.required_construction_io()?;
         let provider = alloy::primitives::Address::from(parse_address_for_call(provider_address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_rate(
@@ -1402,7 +1408,7 @@ impl PyBotIo {
 
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let block_num = extract_block_u64(block)?;
+        let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
                 degenbot_bot::bot_core::pool_builder::choreography::probe_balancer_type(
@@ -1484,6 +1490,27 @@ impl PyBotIo {
             )),
         }
     }
+
+    /// Resolve the `block` kw-sentinel to a concrete block number at the seam
+    /// that owns the RPC clock.
+    ///
+    /// A number (or `None`) short-circuits with no RPC; a typed tag reads the
+    /// head through the attached `ConstructionIo`. This is where a block tag
+    /// becomes a number, so the core faces this seam calls stay numeric.
+    pub(crate) fn resolve_block(
+        &self,
+        py: Python<'_>,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<u64>> {
+        let Some(selector) = extract_block_selector(block)? else {
+            return Ok(None);
+        };
+        if let Some(number) = selector.as_number() {
+            return Ok(Some(number));
+        }
+        let io = self.required_construction_io()?;
+        resolve_block_tag(py, &io, selector).map(Some)
+    }
 }
 
 /// Extract a native Rust `AlloyProvider` from the held Python provider when
@@ -1508,14 +1535,58 @@ pub(crate) fn extract_native_alloy(provider: &Bound<'_, PyAny>) -> Option<Arc<Al
     None
 }
 
-/// Extract an optional block number from the `block` kw-sentinel.
-/// `Ok(None)` when absent; `Ok(Some(n))` when an integer; `Err` when present
-/// but not an integer.
-fn extract_block_u64(block: Option<&Bound<'_, PyAny>>) -> PyResult<Option<u64>> {
-    match block {
-        None => Ok(None),
-        Some(b) => b.extract::<u64>().map(Some),
+/// Parse the `block` kw-sentinel into a typed [`BlockSelector`].
+///
+/// `None` (absent) stays `None`; a Python int is a concrete number; a string
+/// must be one canonical tag (`"earliest"` / `"latest"` / `"pending"`); any
+/// other shape is refused. A tag is carried as a TYPED value here — never the
+/// number it might have been coerced into, and never a `None` it might have
+/// been silently dropped to (which reads as the head).
+fn extract_block_selector(block: Option<&Bound<'_, PyAny>>) -> PyResult<Option<BlockSelector>> {
+    let Some(raw) = block else {
+        return Ok(None);
+    };
+    if let Ok(number) = raw.extract::<u64>() {
+        return Ok(Some(BlockSelector::number(number)));
     }
+    if let Ok(text) = raw.extract::<String>() {
+        return BlockSelector::parse_tag(&text)
+            .map(Some)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()));
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "block must be an int or a canonical block tag string, got {}",
+        raw.get_type().name()?
+    )))
+}
+
+/// Resolve a typed tag to a number through an already-resolved
+/// [`ConstructionIo`] (the seam that owns the RPC clock).
+fn resolve_block_tag(
+    py: Python<'_>,
+    io: &Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>,
+    selector: BlockSelector,
+) -> PyResult<u64> {
+    let io = Arc::clone(io);
+    py.detach(|| get_runtime().block_on(async move { io.resolve_block_selector(selector).await }))
+        .map_err(Into::<PyErr>::into)
+}
+
+/// Resolve the `block` kw-sentinel to a concrete block number against an
+/// already-resolved [`ConstructionIo`]. A number (or `None`) short-circuits
+/// with no RPC; a typed tag reads the head.
+pub(crate) fn resolve_block_against(
+    py: Python<'_>,
+    io: &Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>,
+    block: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<u64>> {
+    let Some(selector) = extract_block_selector(block)? else {
+        return Ok(None);
+    };
+    if let Some(number) = selector.as_number() {
+        return Ok(Some(number));
+    }
+    resolve_block_tag(py, io, selector).map(Some)
 }
 
 /// Parse a 20-byte address from a hex string, returning a borrowed 20-byte array

@@ -16,6 +16,7 @@ use degenbot_db::rows::{
 };
 
 use super::adapters::{AlloyRpcConstruction, DegenbotDbConstruction, NoDb};
+use super::block_selector::BlockSelector;
 use super::handle::ConstructionIo;
 use super::{DbConstruction, RpcConstruction};
 
@@ -198,6 +199,44 @@ async fn composite_routes_call_to_rpc_half() {
     let io = ConstructionIo::new(Arc::new(FakeDb), Arc::new(FakeRpc { block_number: 0 }));
     let bytes = io.call(Address::ZERO, Bytes::new(), None).await.unwrap();
     assert_eq!(bytes.as_ref(), &[0xca, 0xfe]);
+}
+
+/// A number passes through resolution untouched; a tag resolves against the
+/// RPC clock the trait owns (`latest` is the head, `pending` the head + 1,
+/// `earliest` block 0).
+#[tokio::test]
+async fn block_selector_resolves_numbers_and_tags_against_the_clock() {
+    let io = ConstructionIo::new(Arc::new(FakeDb), Arc::new(FakeRpc { block_number: 42 }));
+    assert_eq!(
+        io.resolve_block_selector(BlockSelector::number(7))
+            .await
+            .unwrap(),
+        7
+    );
+    let parse = |raw: &str| BlockSelector::parse_tag(raw).unwrap();
+    assert_eq!(
+        io.resolve_block_selector(parse("latest")).await.unwrap(),
+        42
+    );
+    assert_eq!(
+        io.resolve_block_selector(parse("pending")).await.unwrap(),
+        43
+    );
+    assert_eq!(
+        io.resolve_block_selector(parse("earliest")).await.unwrap(),
+        0
+    );
+}
+
+/// A tag the ladder does not name is refused rather than guessed at.
+#[tokio::test]
+async fn block_selector_refuses_an_unnamed_tag() {
+    let io = ConstructionIo::new(Arc::new(FakeDb), Arc::new(FakeRpc { block_number: 42 }));
+    let err = io
+        .resolve_block_selector(BlockSelector::tag(alloy::eips::BlockNumberOrTag::Safe))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ProviderError::InvalidResponse { .. }));
 }
 
 // ───────────────────────── NoDb adapter ─────────────────────────

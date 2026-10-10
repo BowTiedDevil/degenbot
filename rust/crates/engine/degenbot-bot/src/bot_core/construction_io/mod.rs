@@ -47,6 +47,7 @@
 //! the future → wrap result), matching how `PyBotIo::forward_call_to_provider`
 //! already bridges to the native alloy provider via `get_runtime().block_on`.
 
+use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, Bytes, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
@@ -62,7 +63,9 @@ use degenbot_rpc::provider::EthBlock;
 // adapters (`NoDb`, `DegenbotDbConstruction`, the RPC native adapter) live in
 // `adapters.rs`.
 pub mod adapters;
+pub mod block_selector;
 pub use self::adapters::{AlloyRpcConstruction, DegenbotDbConstruction, NoDb};
+pub use self::block_selector::{BlockSelector, BlockSelectorError};
 pub use self::handle::ConstructionIo;
 
 /// The 12 construction-time DB reads/writes — one trait per concern.
@@ -184,6 +187,29 @@ pub trait RpcConstruction: Send + Sync {
         data: Bytes,
         block_number: Option<u64>,
     ) -> Result<Bytes, ProviderError>;
+
+    /// Resolve a typed [`BlockSelector`] to a concrete block number against
+    /// the RPC clock this trait owns.
+    ///
+    /// A number passes through; `earliest` is block 0; `latest` reads the
+    /// head through [`Self::get_block_number`]; `pending` is the head + 1.
+    /// Any other tag is refused. This is the ONE place a block tag becomes a
+    /// number, so the numeric atomic methods above never see a tag.
+    ///
+    /// # Errors
+    /// Propagates [`ProviderError`] from the head read, or refuses a tag this
+    /// ladder does not name with [`ProviderError::InvalidResponse`].
+    async fn resolve_block_selector(&self, selector: BlockSelector) -> Result<u64, ProviderError> {
+        match selector.as_number_or_tag() {
+            BlockNumberOrTag::Number(block) => Ok(block),
+            BlockNumberOrTag::Earliest => Ok(0),
+            BlockNumberOrTag::Latest => self.get_block_number().await,
+            BlockNumberOrTag::Pending => Ok(self.get_block_number().await?.saturating_add(1)),
+            other => Err(ProviderError::InvalidResponse {
+                message: format!("unsupported block tag {other:?}"),
+            }),
+        }
+    }
 }
 
 mod handle;
