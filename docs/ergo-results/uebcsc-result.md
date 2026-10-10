@@ -180,6 +180,13 @@ Manager ladder (`/tmp/pc2-gates/`): `just pre-push` **exit=0** ("✓ all pre-pus
 `just gen-stubs --check` **exit=0**. No foreign build-lock collision this run. Green against the
 PC0 baseline (run 2).
 
+Commit-time note (manager): the first commit attempt was correctly **aborted by the
+`rust-fmt-staged` hook** — `registration.rs` carried two rustfmt-discordant spots. The hook is the
+formatting authority (per AGENTS.md); the file was formatted with the hook's own invocation
+(`rustfmt --edition 2021 --config skip_children=true`), re-verified CHECK_EXIT=0, and committed.
+Lesson carried forward: `just fmt-check` joins the manager's pre-commit battery — `just pre-push`
+has no fmt lane, so ladder-green is not fmt-green.
+
 ---
 
 ## 5. Design judgment recorded: the shared factory default is NOT safe here
