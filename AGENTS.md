@@ -186,6 +186,17 @@ rebuild is a defect to file, not a signal to rebuild again.
 ## Python Environment
 Use `uv`.
 
+## Node access
+
+An archive-capable Ethereum mainnet node (reth) is ALWAYS available in this
+environment. The URIs come from the devcontainer's `containerEnv`
+(.devcontainer/devcontainer.json), which overrides `tests.env` inside the
+container: `ETHEREUM_ARCHIVE_NODE_HTTP_URI` = `http://host.containers.internal:8545/`
+(WS on `:8546`). The `tests.env` `localhost:8545` form is the same node seen
+from the host. Never conclude "no node access" from tests.env alone, and never
+defer live-node work (golden-capture recording, probes, span reconnaissance)
+on that basis.
+
 ## Local node identity
 
 The node this environment points at is **reth**, not anvil. Identify a node by
