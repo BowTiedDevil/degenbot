@@ -407,6 +407,45 @@ impl DegenbotDb {
         Ok(())
     }
 
+    /// Apply an `AddressSet` address-CHANGE event (`old != ZERO_ADDRESS`):
+    /// update the existing `aave_v3_contracts` row's `address` from
+    /// `old_address` to `new_address`, IN PLACE — the same disposition
+    /// [`Self::apply_pool_data_provider_updated_on_conn`] applies to a
+    /// `PoolDataProviderUpdated` rotation, and the same in-place mutation the
+    /// revision updates use (a contract row is keyed by `(market_id, name)`
+    /// and its columns are replaced, never superseded by a duplicate row). The
+    /// Python reference (`_process_address_set_event`) only ever asserted
+    /// `old == ZERO_ADDRESS`, so the schema convention arbitrates the change
+    /// arm. The row's `revision` is left untouched (an address rotation does
+    /// not change it).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::MissingRow`] when no `aave_v3_contracts` row matches
+    /// `(market_id, name, old_address)` — the loud abort the repo's shape rule
+    /// demands for an unexpected target.
+    pub fn apply_contract_address_changed_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        name: &str,
+        old_address: &str,
+        new_address: &str,
+    ) -> Result<(), DbError> {
+        let updated = conn.execute(
+            "UPDATE aave_v3_contracts SET address = ?1 \
+             WHERE market_id = ?2 AND name = ?3 AND address = ?4",
+            params![new_address, market_id, name, old_address],
+        )?;
+        if updated == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_contracts (market_id={market_id}, name='{name}', \
+                 address='{old_address}') (AddressSet address-change apply target)"
+            )));
+        }
+        Ok(())
+    }
+
     /// Apply an `AddressSet`/`ProxyCreated` event: INSERT a contract row.
     /// Port of `_process_address_set_event` (event_handlers.py:1048-1078) +
     /// `_process_proxy_creation_event` (event_handlers.py:977-1008). For

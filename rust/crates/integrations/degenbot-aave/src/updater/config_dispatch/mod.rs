@@ -143,11 +143,18 @@ fn revision_selector(sig: &str) -> [u8; 4] {
 /// The per-tx config-event dispatch loop. Mirrors Python
 /// `_process_transaction` L328-430: loop over `tx_logs`, decode each via
 /// [`decode_aave_log`], + for the 10 enum-covered config event types,
-/// resolve ids + emit [`AaveChunkEvent`] variants. Skips non-config events
+/// resolve ids + emit [`AaveChunkEvent`] variants. Non-config events
 /// (Supply/Borrow/Mint/Burn/Transfer — the Operation events C3's
-/// `process_transaction` handles) + the 6 missing-variant events (-2b's
-/// scope: `Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
-/// `PoolDataProviderUpdated`/`AddressSet`/`ProxyCreated`).
+/// `process_transaction` handles) are skipped. The six former fenced events
+/// (`Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
+/// `PoolDataProviderUpdated`/`AddressSet`/`ProxyCreated`) are now handled,
+/// all routed through [`resolve_missing_variant_event`]: the upgrade-
+/// transition resolvers fetch revisions, `PoolDataProviderUpdated` + the
+/// `AddressSet` name decode are pure decode, and `ProxyCreated` resolves the
+/// filtered proxy. `AddressSet` covers BOTH shapes — a registration (an
+/// insert) and an address rotation (an in-place replace through
+/// [`ChunkContext`]); closing the rotation gap is this chunk's change.
+/// Pinning all six with golden captures is a later slice's follow-up.
 pub(crate) async fn dispatch_config_events(
     ctx: &mut ChunkContext<'_>,
     tx_logs: &[&alloy::rpc::types::Log],
@@ -279,7 +286,9 @@ async fn dispatch_single_config_event(
 ///   address → `ContractRevisionUpdated` (revision ONLY — the parity gate).
 /// - `PoolDataProviderUpdated` — pure-decode (INSERT when old==zero, else
 ///   UPDATE-by-old-address).
-/// - `AddressSet` — assert old==zero; ASCII-decode the bits32 id.
+/// - `AddressSet` — ASCII-decode the bits32 id into the contract name; a
+///   registration (`old == ZERO`) inserts the row, a rotation (`old != ZERO`)
+///   replaces the existing row's address in place.
 /// - `ProxyCreated` — match the id against the right-padded ASCII `b"POOL"`/
 ///   `b"POOL_CONFIGURATOR"`; RPC the revision on the impl address.
 async fn resolve_missing_variant_event(
@@ -310,19 +319,27 @@ async fn resolve_missing_variant_event(
             })
         }
         DecodedAaveEvent::AddressSet(ev) => {
-            if ev.old_address != Address::ZERO {
-                return Err(ConfigDispatchError::DecodeShape(format!(
-                    "AddressSet: expected old_address == zero, got {}",
-                    checksum(&ev.old_address)
-                )));
-            }
             let name = strip_trailing_nulls_from_ascii(&ev.id);
-            Some(AaveChunkEvent::ContractInserted {
-                market_id,
-                name,
-                address: checksum(&ev.new_address),
-                revision: None,
-            })
+            if ev.old_address == Address::ZERO {
+                // A fresh registration: INSERT the contract row under the
+                // decoded name (unchanged behavior).
+                Some(AaveChunkEvent::ContractInserted {
+                    market_id,
+                    name,
+                    address: checksum(&ev.new_address),
+                    revision: None,
+                })
+            } else {
+                // An address rotation: replace the old row's `address` in
+                // place — see [`AaveChunkEvent::ContractAddressChanged`] for
+                // the disposition the schema convention dictates.
+                Some(AaveChunkEvent::ContractAddressChanged {
+                    market_id,
+                    name,
+                    old_address: checksum(&ev.old_address),
+                    new_address: checksum(&ev.new_address),
+                })
+            }
         }
         DecodedAaveEvent::ProxyCreated(ev) => {
             if let Some(resolved) = ctx
@@ -549,7 +566,8 @@ mod tests {
     use alloy::rpc::types::Log;
     use degenbot_db::connection::DegenbotDb;
     use degenbot_decoders::aave_event_decoder::{
-        AaveV3DiscountRateStrategyUpdatedEvent, AaveV3DiscountTokenUpdatedEvent,
+        AaveV3AddressSetEvent, AaveV3DiscountRateStrategyUpdatedEvent,
+        AaveV3DiscountTokenUpdatedEvent,
     };
     use rusqlite::{params, Connection};
     use std::path::Path;
@@ -1126,6 +1144,178 @@ mod tests {
         assert!(POOL_PROXY_ID[4..].iter().all(|&b| b == 0));
         assert_eq!(&POOL_CONFIGURATOR_PROXY_ID[..17], b"POOL_CONFIGURATOR");
         assert!(POOL_CONFIGURATOR_PROXY_ID[17..].iter().all(|&b| b == 0));
+    }
+
+    // ── the `AddressSet` arms (registration + address rotation) ─────────
+
+    /// A right-padded ASCII bytes32 id for `name` (the AddressSet `id` shape).
+    fn ascii_id(name: &str) -> B256 {
+        let mut id = [0u8; 32];
+        id[..name.len()].copy_from_slice(name.as_bytes());
+        B256::from(id)
+    }
+
+    /// The `AddressSet` registration arm is UNCHANGED: `old == ZERO` emits a
+    /// `ContractInserted`, and applying it lands exactly one `aave_v3_contracts`
+    /// row under the ASCII-decoded name (with a NULL revision — no revision
+    /// RPC on this path).
+    #[test]
+    fn address_set_registration_inserts_a_contract_row() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let new_addr = Address::repeat_byte(0x71);
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        ctx.begin_transaction(100);
+        let decoded = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
+            address_provider: Address::ZERO,
+            id: ascii_id("POOL"),
+            old_address: Address::ZERO,
+            new_address: new_addr,
+        });
+        let ev = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_missing_variant_event(&decoded, &mut ctx))
+            .unwrap()
+            .expect("a registration emits a chunk event");
+        match &ev {
+            AaveChunkEvent::ContractInserted {
+                name,
+                address,
+                revision,
+                ..
+            } => {
+                assert_eq!(name.as_str(), "POOL");
+                assert_eq!(address.as_str(), checksum(&new_addr));
+                assert!(revision.is_none(), "AddressSet fetches no revision");
+            }
+            other => panic!("expected ContractInserted, got {other:?}"),
+        }
+        ctx.apply_events(std::slice::from_ref(&ev)).unwrap();
+        let (addr, rev): (String, Option<i64>) = conn
+            .query_row(
+                "SELECT address, revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(addr, checksum(&new_addr));
+        assert!(rev.is_none());
+    }
+
+    /// The address-ROTATION arm (`old != ZERO`): the existing row's `address`
+    /// is replaced IN PLACE (old-row disposition), its `revision` is left
+    /// untouched, and NO second row appears (no supersede/duplicate).
+    #[test]
+    fn address_set_rotation_replaces_the_row_address_in_place() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let old_addr = Address::repeat_byte(0x51);
+        let new_addr = Address::repeat_byte(0x52);
+        conn.execute(
+            "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+             VALUES (1, 'POOL', ?1, 7)",
+            params![checksum(&old_addr)],
+        )
+        .unwrap();
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        ctx.begin_transaction(100);
+        let decoded = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
+            address_provider: Address::ZERO,
+            id: ascii_id("POOL"),
+            old_address: old_addr,
+            new_address: new_addr,
+        });
+        let ev = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_missing_variant_event(&decoded, &mut ctx))
+            .unwrap()
+            .expect("a rotation emits a chunk event");
+        match &ev {
+            AaveChunkEvent::ContractAddressChanged {
+                name,
+                old_address,
+                new_address,
+                ..
+            } => {
+                assert_eq!(name.as_str(), "POOL");
+                assert_eq!(old_address.as_str(), checksum(&old_addr));
+                assert_eq!(new_address.as_str(), checksum(&new_addr));
+            }
+            other => panic!("expected ContractAddressChanged, got {other:?}"),
+        }
+        ctx.apply_events(std::slice::from_ref(&ev)).unwrap();
+        // The old row moved to the new address; its revision is untouched;
+        // replace-in-place leaves exactly one row.
+        let (addr, rev): (String, Option<i64>) = conn
+            .query_row(
+                "SELECT address, revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            addr,
+            checksum(&new_addr),
+            "the row moved to the new address"
+        );
+        assert_eq!(rev, Some(7), "a rotation does not change the revision");
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 1, "replace-in-place, not supersede: one row remains");
+    }
+
+    /// Event order within a tx: a registration (earlier log) applies BEFORE
+    /// the rotation (later log) that targets the address it left behind —
+    /// the read-your-own-writes order the dispatch loop enforces.
+    #[test]
+    fn address_set_registration_then_rotation_in_tx_order() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let first = Address::repeat_byte(0x61);
+        let second = Address::repeat_byte(0x62);
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        ctx.begin_transaction(100);
+        let registration = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
+            address_provider: Address::ZERO,
+            id: ascii_id("POOL"),
+            old_address: Address::ZERO,
+            new_address: first,
+        });
+        let rotation = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
+            address_provider: Address::ZERO,
+            id: ascii_id("POOL"),
+            old_address: first,
+            new_address: second,
+        });
+        for decoded in [&registration, &rotation] {
+            let ev = degenbot_core::runtime::get_runtime()
+                .block_on(resolve_missing_variant_event(decoded, &mut ctx))
+                .unwrap()
+                .expect("each log emits a chunk event");
+            ctx.apply_events(std::slice::from_ref(&ev)).unwrap();
+        }
+        let address: String = conn
+            .query_row(
+                "SELECT address FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            address,
+            checksum(&second),
+            "the rotation lands on the address the registration left behind"
+        );
     }
 
     #[test]

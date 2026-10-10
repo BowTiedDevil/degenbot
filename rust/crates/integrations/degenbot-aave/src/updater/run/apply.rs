@@ -336,8 +336,10 @@ pub enum AaveChunkEvent {
     /// `AddressSet(id, old, new)` + `ProxyCreated(id, proxy, impl)` (the
     /// id-filtered ones) — INSERT a contract row.
     /// `AddressSet` (event_handlers.py:1048-1078): the `id` is ASCII-decoded
-    /// from the bytes32 topic + null-stripped → the `name`; `old` is asserted
-    /// == zero (the dispatch returns Err otherwise). `revision` is `None`.
+    /// from the bytes32 topic + null-stripped → the `name`; this is the
+    /// `old == ZERO_ADDRESS` registration arm only (the `old != ZERO_ADDRESS`
+    /// rotation routes to [`AaveChunkEvent::ContractAddressChanged`]).
+    /// `revision` is `None`.
     /// `ProxyCreated` (event_handlers.py:977-1008): the `id` is matched
     /// against the right-padded ASCII bytes32 `b"POOL"`/`b"POOL_CONFIGURATOR"`
     /// (NOT `keccak256` — a parity-gate finding); the match resolves the `name` + the
@@ -351,6 +353,23 @@ pub enum AaveChunkEvent {
         /// `Some(rev)` for `ProxyCreated` (RPC-fetched); `None` for `AddressSet`
         /// (no revision RPC — the Python doesn't fetch one).
         revision: Option<i64>,
+    },
+    /// `AddressSet(id, old, new)` with `old != ZERO_ADDRESS` — the address-
+    /// CHANGE arm. The existing `aave_v3_contracts` row (matched by
+    /// `(market_id, name, old_address)`) has its `address` replaced IN PLACE;
+    /// the row's `revision` is untouched (an address rotation does not change
+    /// it). Same disposition as [`AaveChunkEvent::PoolDataProviderUpdated`]'s
+    /// rotation path + the revision updates — a contract row is mutated in
+    /// place, never superseded by a duplicate.
+    ContractAddressChanged {
+        /// The market owning the contract row.
+        market_id: i64,
+        /// The ASCII-decoded, null-stripped contract name (the event's `id`).
+        name: String,
+        /// The checksummed address the row currently carries.
+        old_address: String,
+        /// The checksummed address the row moves to.
+        new_address: String,
     },
 }
 
@@ -394,6 +413,8 @@ pub struct AaveChunkWriteReport {
     pub contract_revision_updated: usize,
     pub pool_data_provider_updated: usize,
     pub contract_inserted: usize,
+    /// The `AddressSet` address-change arm (replace-in-place).
+    pub contract_address_changed: usize,
     /// Zero-balance collateral + debt rows deleted by the end-of-chunk
     /// cleanup (`delete_zero_balance_positions_on_conn`).
     pub zero_balances_cleared: usize,
@@ -906,6 +927,23 @@ pub fn apply_chunk_events_on_conn(
                     substrate.record_contract_insert(*ev_market_id, name, *revision);
                 }
                 report.contract_inserted += 1;
+            }
+            AaveChunkEvent::ContractAddressChanged {
+                market_id: ev_market_id,
+                name,
+                old_address,
+                new_address,
+            } => {
+                DegenbotDb::apply_contract_address_changed_on_conn(
+                    conn,
+                    *ev_market_id,
+                    name,
+                    old_address,
+                    new_address,
+                )?;
+                // The row's `revision` is unchanged (only its `address`
+                // moved), so the name-keyed revision overlay needs no update.
+                report.contract_address_changed += 1;
             }
         }
     }
