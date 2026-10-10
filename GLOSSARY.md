@@ -557,9 +557,9 @@ _Avoid_: "the walk statics", "the process globals", a process-global singleton.
 
 The process-cumulative walk wall-time census (nanoseconds) the collector accumulates: the
 
-whole-solve, sim, anchor and prediction timers plus the left-edge, right-edge, direction and
+whole-solve, sim, anchor and prediction timers, the anchor build/compose/argmax sub-timers, plus
 
-refinement `(wall, sims, sim-ns)` section triples. Merge adds; a drain swaps it back to zero.
+the left-edge, right-edge, direction and refinement `(wall, sims, sim-ns)` section triples. Merge adds; a drain swaps it back to zero.
 
 _Avoid_: reading it as a per-solve value; resetting it mid-solve.
 

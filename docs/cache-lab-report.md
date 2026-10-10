@@ -75,6 +75,12 @@ or clean full rebuild, no partial-state corruption risk.
   total-divergences line only at normal completion and exits 1 on any
   divergence; all runs below completed with 0 divergences and no DIVERGENCE
   lines, so every run exited 0.
+- Timing readouts — the `anchor split`, the `walk-sim`/`anchors`/`predictions`/
+  `solve` totals, and the per-section `edge`/`redge`/`dir`/`refine` nanoseconds —
+  are drained from the engine-owned `WalkTelemetry` collector via `drain_ns()`
+  (one lock per readout), not the retired process-global timing statics. See
+  `docs/architecture/walk-telemetry-collector-sizing.md`; the channel follows
+  ADR-043 (`docs/adr/ADR-043-observability-standard.md`).
 
 ## 1. 369-line corpus sweep (the deliverable run)
 

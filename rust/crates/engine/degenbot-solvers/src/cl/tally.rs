@@ -9,6 +9,13 @@
 //! accumulator's writer bodies ride the crate's default-off `telemetry`
 //! feature, so a default build's bumps compile to no-ops and every value reads
 //! as zero.
+//!
+//! This channel is the solver-internal case of the observability standard in
+//! [ADR-043](../../../../../../docs/adr/ADR-043-observability-standard.md) —
+//! owned, drained state rather than a per-event console emit and never a
+//! process-global ambient cell. [`WalkTelemetry::drain_ns`] and
+//! [`WalkTelemetry::take_census_pieces`] are the drain seam the readout tooling
+//! consumes.
 
 use alloy::primitives::U256;
 
