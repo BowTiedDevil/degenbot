@@ -130,6 +130,22 @@ pub enum ConfigDispatchError {
     /// `is_discount_supported` gate).
     #[error("missing vtoken revision for market {0}")]
     MissingVtokenRevision(i64),
+
+    /// A `ProxyCreated` whose `id` matched neither known proxy id — the
+    /// resolver cannot name the created proxy. The event kind is a permanent
+    /// unknown (the decoding predates it), so per the loud-abort rule the
+    /// chunk aborts loudly rather than skipping the event.
+    #[error(
+        "unresolvable ProxyCreated id {id} (proxy {proxy_address}, implementation {implementation_address})"
+    )]
+    UnresolvableProxyCreated {
+        /// The unmatched proxy id (the event's topic[1]).
+        id: String,
+        /// The created proxy's address (the event's topic[2]).
+        proxy_address: String,
+        /// The implementation behind the proxy (the event's topic[3]).
+        implementation_address: String,
+    },
 }
 
 /// The 4-byte selector of a revision signature (the memo key's middle lane).
@@ -275,8 +291,8 @@ async fn dispatch_single_config_event(
 /// Resolve the 6 missing-variant config events. Extracted from
 /// [`dispatch_single_config_event`] to keep that fn under the 100-line
 /// `clippy::too_many_lines` limit. Returns `Ok(None)` for non-missing-variant
-/// events (operation events) + for `ProxyCreated` when the `id` doesn't match
-/// `POOL`/`POOL_CONFIGURATOR`.
+/// events (operation events). A `ProxyCreated` whose `id` matches neither
+/// known proxy id aborts with [`ConfigDispatchError::UnresolvableProxyCreated`].
 ///
 /// # Events
 ///
@@ -342,19 +358,27 @@ async fn resolve_missing_variant_event(
             }
         }
         DecodedAaveEvent::ProxyCreated(ev) => {
-            if let Some(resolved) = ctx
+            // A `None` here means the id named neither known proxy, so the
+            // resolver cannot name the created proxy. That is a permanent
+            // unknown, not a transient failure — the loud-abort rule makes it
+            // fatal: the chunk rolls back and the wedge is visible, never a
+            // silently dropped event.
+            let Some(resolved) = ctx
                 .resolve_proxy_created(&ev.id, &ev.proxy_address, &ev.implementation_address)
                 .await?
-            {
-                Some(AaveChunkEvent::ContractInserted {
-                    market_id,
-                    name: resolved.name,
-                    address: resolved.address,
-                    revision: Some(resolved.revision),
-                })
-            } else {
-                None
-            }
+            else {
+                return Err(ConfigDispatchError::UnresolvableProxyCreated {
+                    id: ev.id.to_string(),
+                    proxy_address: checksum(&ev.proxy_address),
+                    implementation_address: checksum(&ev.implementation_address),
+                });
+            };
+            Some(AaveChunkEvent::ContractInserted {
+                market_id,
+                name: resolved.name,
+                address: resolved.address,
+                revision: Some(resolved.revision),
+            })
         }
         // Non-missing-variant events (operation events + the 10 already-handled
         // config events — unreachable from `dispatch_single_config_event`'s `_`
@@ -567,7 +591,7 @@ mod tests {
     use degenbot_db::connection::DegenbotDb;
     use degenbot_decoders::aave_event_decoder::{
         AaveV3AddressSetEvent, AaveV3DiscountRateStrategyUpdatedEvent,
-        AaveV3DiscountTokenUpdatedEvent,
+        AaveV3DiscountTokenUpdatedEvent, AaveV3ProxyCreatedEvent,
     };
     use rusqlite::{params, Connection};
     use std::path::Path;
@@ -1316,6 +1340,118 @@ mod tests {
             checksum(&second),
             "the rotation lands on the address the registration left behind"
         );
+    }
+
+    // ── the `ProxyCreated` arms (resolvable insert + unresolvable abort) ──
+
+    /// The resolvable arm is UNCHANGED: a known proxy id resolves the contract
+    /// name + the proxy address + the implementation's RPC-fetched revision,
+    /// and applying the emitted event lands exactly one `aave_v3_contracts`
+    /// row carrying that revision.
+    #[test]
+    fn proxy_created_resolvable_id_inserts_a_contract_row() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let proxy_addr = Address::repeat_byte(0x71);
+        let implementation_addr = Address::repeat_byte(0x72);
+        // The one read the resolver issues: `POOL_REVISION()` on the
+        // implementation at block 100 (its canonical ledger-key form).
+        let key = eth_call_key(
+            &canonical_selector_input("POOL_REVISION()"),
+            &format!("0x{}", alloy::hex::encode(implementation_addr)),
+            100,
+        );
+        let transport =
+            CassetteReplayTransport::new(test_cassette(vec![(key, word_result_hex(3))]));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(Address::repeat_byte(0x99)),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let decoded = DecodedAaveEvent::ProxyCreated(AaveV3ProxyCreatedEvent {
+            address_provider: Address::ZERO,
+            id: B256::from(POOL_PROXY_ID),
+            proxy_address: proxy_addr,
+            implementation_address: implementation_addr,
+        });
+        let ev = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_missing_variant_event(&decoded, &mut ctx))
+            .unwrap()
+            .expect("a resolvable proxy id emits a chunk event");
+        match &ev {
+            AaveChunkEvent::ContractInserted {
+                name,
+                address,
+                revision,
+                ..
+            } => {
+                assert_eq!(name.as_str(), "POOL");
+                assert_eq!(address.as_str(), checksum(&proxy_addr));
+                assert_eq!(*revision, Some(3), "the revision comes from the RPC");
+            }
+            other => panic!("expected ContractInserted, got {other:?}"),
+        }
+        ctx.apply_events(std::slice::from_ref(&ev)).unwrap();
+        let (addr, rev): (String, Option<i64>) = conn
+            .query_row(
+                "SELECT address, revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(addr, checksum(&proxy_addr));
+        assert_eq!(rev, Some(3));
+        assert_eq!(transport.served_snapshot().served, 1, "one revision read");
+    }
+
+    /// An unresolvable proxy id is a permanent unknown: the resolver cannot
+    /// name the created proxy, so per the loud-abort rule the chunk aborts with
+    /// the typed error naming the id + the proxy/implementation addresses —
+    /// never a silent skip. The id match fails before any read, so nothing
+    /// reaches the wire.
+    #[test]
+    fn proxy_created_unresolvable_id_aborts_loudly() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let proxy_addr = Address::repeat_byte(0x81);
+        let implementation_addr = Address::repeat_byte(0x82);
+        let unknown_id = B256::from([0x11u8; 32]);
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ctx_for(&conn, &mut substrate);
+        ctx.begin_transaction(100);
+        let decoded = DecodedAaveEvent::ProxyCreated(AaveV3ProxyCreatedEvent {
+            address_provider: Address::ZERO,
+            id: unknown_id,
+            proxy_address: proxy_addr,
+            implementation_address: implementation_addr,
+        });
+        let err = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_missing_variant_event(&decoded, &mut ctx))
+            .expect_err("an unresolvable proxy id must abort, not skip");
+        match err {
+            ConfigDispatchError::UnresolvableProxyCreated {
+                id,
+                proxy_address,
+                implementation_address,
+            } => {
+                assert!(
+                    id.to_lowercase()
+                        .contains(&alloy::hex::encode(unknown_id.as_slice())),
+                    "the error names the proxy id: {id}"
+                );
+                assert_eq!(proxy_address, checksum(&proxy_addr));
+                assert_eq!(implementation_address, checksum(&implementation_addr));
+            }
+            other => panic!("expected UnresolvableProxyCreated, got {other:?}"),
+        }
     }
 
     #[test]
