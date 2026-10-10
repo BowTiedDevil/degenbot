@@ -18,8 +18,7 @@ policy values only.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -37,13 +36,16 @@ from degenbot.runner.identity import (
     WETH_ADDRESS,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 class _RouteRecordingBot:
     """A fake construction bot: records the build call, raises on demand."""
 
-    def __init__(self, *, exc: BaseException | None = None) -> None:
+    def __init__(self, *, database_path: Path, exc: BaseException | None = None) -> None:
         self.chain_id = 1
-        self.database_path = Path("unused.db")
+        self.database_path = database_path
         self.exc = exc
         self.build_calls: list[dict[str, Any]] = []
 
@@ -93,7 +95,7 @@ def _v4_step() -> Any:
 
 
 class TestConstructionContext:
-    def test_for_bot_resolves_policy_values_without_trackers(self) -> None:
+    def test_for_bot_resolves_policy_values_without_trackers(self, tmp_path: Path) -> None:
         """The context shrinks to resolved policy values: the three V3
         trackers leave it (the core route owns the construction order), and
         the resolved route policy enters."""
@@ -103,7 +105,7 @@ class TestConstructionContext:
                 msg = "the construction route is core policy — the driver must not build trackers"
                 raise AssertionError(msg)
 
-        ctx = ConstructionContext.for_bot(_NoTrackerBot())
+        ctx = ConstructionContext.for_bot(_NoTrackerBot(database_path=tmp_path / "unused.db"))
         assert ctx.bot.chain_id == 1
         assert ctx.weth == f"weth:{WETH_ADDRESS}"
         route = ctx.construction_route
@@ -120,22 +122,25 @@ class TestConstructionContext:
 
 
 class TestRouteFailureClassification:
-    def test_stable_factory_failure_aborts_loudly(self) -> None:
+    def test_stable_factory_failure_aborts_loudly(self, tmp_path: Path) -> None:
         """A stable family refusal (the core route's loud arm) propagates out
         of the unit as the typed fatal — never a silent skip."""
         bot = _RouteRecordingBot(
+            database_path=tmp_path / "unused.db",
             exc=UnsupportedPoolFamilyError(
                 "construction route refused pool at 0x22: factory matches no rung"
-            )
+            ),
         )
         pipeline = _make_pipeline(bot)
         with pytest.raises(UnsupportedPoolFamilyError):
             pipeline._build_hop_pools([_step()], [PoolKind.V3])
 
-    def test_transient_rpc_failure_is_a_counted_skip(self) -> None:
+    def test_transient_rpc_failure_is_a_counted_skip(self, tmp_path: Path) -> None:
         """A transient failure keeps skip semantics: a counted skip outcome,
         never memoized (a retriable blip must stay retryable)."""
-        bot = _RouteRecordingBot(exc=RuntimeError("connection blip"))
+        bot = _RouteRecordingBot(
+            database_path=tmp_path / "unused.db", exc=RuntimeError("connection blip")
+        )
         pipeline = _make_pipeline(bot)
         outcome = pipeline._build_hop_pools([_step()], [PoolKind.V3])
         assert outcome is not None
@@ -149,10 +154,12 @@ class TestRouteFailureClassification:
             is None
         ), "a transient failure is never memoized"
 
-    def test_v4_admission_refusal_keeps_stable_fact_semantics(self) -> None:
+    def test_v4_admission_refusal_keeps_stable_fact_semantics(self, tmp_path: Path) -> None:
         """The V4 admission refusals are stable pool facts: memoized with
         their own counters (counts_as_skip False) — unchanged."""
-        bot = _RouteRecordingBot(exc=HookedPoolRejectedError("hooked"))
+        bot = _RouteRecordingBot(
+            database_path=tmp_path / "unused.db", exc=HookedPoolRejectedError("hooked")
+        )
         pipeline = _make_pipeline(bot)
         step = _v4_step()
         outcome = pipeline._build_hop_pools([step], [PoolKind.V4])
@@ -167,8 +174,10 @@ class TestRouteFailureClassification:
             is not None
         ), "a stable admission fact memoizes"
 
-    def test_v4_dynamic_fee_refusal_keeps_stable_fact_semantics(self) -> None:
-        bot = _RouteRecordingBot(exc=DynamicFeePoolRejectedError("dynamic"))
+    def test_v4_dynamic_fee_refusal_keeps_stable_fact_semantics(self, tmp_path: Path) -> None:
+        bot = _RouteRecordingBot(
+            database_path=tmp_path / "unused.db", exc=DynamicFeePoolRejectedError("dynamic")
+        )
         pipeline = _make_pipeline(bot)
         outcome = pipeline._build_hop_pools([_v4_step()], [PoolKind.V4])
         assert outcome is not None
@@ -176,10 +185,10 @@ class TestRouteFailureClassification:
 
 
 class TestRoutePolicyFlows:
-    def test_v3_build_call_carries_the_resolved_route(self) -> None:
+    def test_v3_build_call_carries_the_resolved_route(self, tmp_path: Path) -> None:
         """The cockpit supplies the resolved route as a policy VALUE on the
         one core build entry — no tracker rungs, no driver-side chain."""
-        bot = _RouteRecordingBot()
+        bot = _RouteRecordingBot(database_path=tmp_path / "unused.db")
         pipeline = _make_pipeline(bot)
         outcome = pipeline._build_hop_pools([_step()], [PoolKind.V3])
         assert isinstance(outcome, list), "a successful build returns the pools, not an outcome"

@@ -20,8 +20,8 @@ import contextlib
 import logging
 import signal
 from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -41,6 +41,9 @@ from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.helpers.boot_actors import inline_registration_scheduler
 from tests.helpers.identity_env import identity_env
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # The endpoint every test in this module resolves to. The session tests inject
 # fakes for bot/engine_registry/async_w3, so the URI is never connected — it
@@ -1506,9 +1509,9 @@ class TestPathRegistrationPipeline:
         _fee_token1: int = 1
 
     class _FakeCtxBot:
-        def __init__(self) -> None:
+        def __init__(self, database_path: Path) -> None:
             self.chain_id = 1
-            self.database_path = Path("unused.db")
+            self.database_path = database_path
             self.receipts: list[object] = []
             # Per-bot fake pool ids, keyed by address (the dedup key).
             self._pool_ids: dict[str, int] = {}
@@ -1567,8 +1570,8 @@ class TestPathRegistrationPipeline:
         hash: object | None = None
 
     @staticmethod
-    def _make_pipeline(fail_on_register: Exception | None = None):
-        bot = TestPathRegistrationPipeline._FakeCtxBot()
+    def _make_pipeline(database_path: Path, fail_on_register: Exception | None = None):
+        bot = TestPathRegistrationPipeline._FakeCtxBot(database_path=database_path)
 
         class _Reg(TestPathRegistrationPipeline._FakeReg):
             def register_crawl_path(self, engine_hops: object) -> tuple[int, bool]:
@@ -1594,8 +1597,8 @@ class TestPathRegistrationPipeline:
         assert pipeline.constr_bot is bot
         return pipeline, reg, PoolKind.V2
 
-    async def test_enqueue_path_registers_single_path(self) -> None:
-        pipeline, reg, t_base = self._make_pipeline()
+    async def test_enqueue_path_registers_single_path(self, tmp_path: Path) -> None:
+        pipeline, reg, t_base = self._make_pipeline(tmp_path / "unused.db")
         step = self._Step(t_base, "0x" + "a" * 40)
         await pipeline.enqueue_path([step], directions=[True])
 
@@ -1606,8 +1609,8 @@ class TestPathRegistrationPipeline:
         # test_enqueue_path_dedups_repeat); the engine registry stays the
         # source of truth behind it.
 
-    async def test_enqueue_path_dedups_repeat(self) -> None:
-        pipeline, reg, t_base = self._make_pipeline()
+    async def test_enqueue_path_dedups_repeat(self, tmp_path: Path) -> None:
+        pipeline, reg, t_base = self._make_pipeline(tmp_path / "unused.db")
         step = self._Step(t_base, "0x" + "b" * 40)
         await pipeline.enqueue_path([step], directions=[True])
         await pipeline.enqueue_path([step], directions=[True])
@@ -1621,18 +1624,18 @@ class TestPathRegistrationPipeline:
         assert reg.register_path_calls == 1
         assert pipeline.dup_count == 1
 
-    def test_pool_ids_resolve_identically_per_fresh_bot(self) -> None:
+    def test_pool_ids_resolve_identically_per_fresh_bot(self, tmp_path: Path) -> None:
         """Ids are owned per bot instance: two fresh bots resolve the same
         address sequence to the same ids, whatever ran before them."""
         addresses = ["0x" + "b" * 40, "0x" + "c" * 40, "0x" + "b" * 40]
-        first_bot = self._FakeCtxBot()
-        second_bot = self._FakeCtxBot()
+        first_bot = self._FakeCtxBot(database_path=tmp_path / "unused.db")
+        second_bot = self._FakeCtxBot(database_path=tmp_path / "unused.db")
         first = [first_bot._pool_id_for(a) for a in addresses]
         second = [second_bot._pool_id_for(a) for a in addresses]
         assert first == second == [1, 2, 1]
 
-    async def test_trigger_discovery_bounded_feeds_shared_consume(self) -> None:
-        pipeline, _reg, _t_base = self._make_pipeline()
+    async def test_trigger_discovery_bounded_feeds_shared_consume(self, tmp_path: Path) -> None:
+        pipeline, _reg, _t_base = self._make_pipeline(tmp_path / "unused.db")
         consumed: list[object] = []
 
         async def counting_consume(item, directions=None):
@@ -1657,9 +1660,9 @@ class TestPathRegistrationPipeline:
         assert n == 2
         assert consumed == ["p0", "p1"]
 
-    async def test_enqueue_path_preserves_fail_fast_tripwire(self) -> None:
+    async def test_enqueue_path_preserves_fail_fast_tripwire(self, tmp_path: Path) -> None:
         pipeline, _reg, t_base = self._make_pipeline(
-            fail_on_register=VerificationMismatchError("boom")
+            tmp_path / "unused.db", fail_on_register=VerificationMismatchError("boom")
         )
         step = self._Step(t_base, "0x" + "c" * 40)
         # A fatal verification mismatch is NOT swallowed by enqueue_path — it
@@ -1667,7 +1670,9 @@ class TestPathRegistrationPipeline:
         with pytest.raises(VerificationMismatchError, match="boom"):
             await pipeline.enqueue_path([step], directions=[True])
 
-    async def test_forever_discovery_plus_mid_run_add_compose_without_stall(self) -> None:
+    async def test_forever_discovery_plus_mid_run_add_compose_without_stall(
+        self, tmp_path: Path
+    ) -> None:
         """Terminal composition: the unbounded forever discovery producer
         and a mid-run operator path-add flow through the SAME live pipeline's
         `_consume` concurrently — the add registers while forever discovery
@@ -1684,7 +1689,7 @@ class TestPathRegistrationPipeline:
         + backpressure forever without live construction and WITHOUT aborting
         the pipeline.
         """
-        pipeline, reg, t_base = self._make_pipeline()
+        pipeline, reg, t_base = self._make_pipeline(tmp_path / "unused.db")
         prior_skips = pipeline.skip_count
 
         async def forever_producer():
@@ -1744,7 +1749,7 @@ class TestPathRegistrationPipeline:
                 await reg_task
 
     async def test_periodic_progress_surfaces_skip_reasons_below_1000(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
     ) -> None:
         """Observability: the registration counters + a top skip-reason
         breakdown must be visible even when ``path_count < 1000``. The legacy
@@ -1753,7 +1758,7 @@ class TestPathRegistrationPipeline:
         discovered, <1000 registered) never prints it and the skip/dup/reject
         reasons stay invisible. The new time-based summary must surface them.
         """
-        pipeline, _reg, _t_base = self._make_pipeline()
+        pipeline, _reg, _t_base = self._make_pipeline(tmp_path / "unused.db")
         # Simulate a crawl that is skipping almost everything well below the
         # 1000-registration print threshold.
         pipeline._record_skip("build-v3:ConnectionError")

@@ -22,10 +22,11 @@ covered by the knob/adapter tests in ``tests/arbitrage/test_sim_submit_pipeline`
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from degenbot.runner._sim_submit import BatchWork
 
 
@@ -79,10 +80,16 @@ class FakeFleetHostedBot:
 
 @dataclass
 class FakePipelineContext:
-    """The construction-context slice ``PathRegistrationPipeline`` reads."""
+    """The construction-context slice ``PathRegistrationPipeline`` reads.
+
+    ``database_path`` is deliberately required: every caller passes a
+    ``tmp_path``-scoped throwaway so no suite run can drop a database file
+    into the repo cwd (the old ``Path("unused.db")`` default did exactly
+    that whenever a test ran from the project root).
+    """
 
     bot: object
+    database_path: Path
     chain_id: int = 1
-    database_path: Path = Path("unused.db")
     construction_route: object | None = None
     weth: object | None = None

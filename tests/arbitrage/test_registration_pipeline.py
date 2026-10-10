@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -51,6 +50,7 @@ from tests.fakes.tokens import FakeToken
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
+    from pathlib import Path
 
 
 @dataclass
@@ -58,8 +58,11 @@ class _PipelineContext:
     """The construction context slice ``PathRegistrationPipeline`` reads."""
 
     bot: object
+
+    # Required: callers pass a tmp_path-scoped throwaway so no suite run can
+    # drop a database file into the repo cwd.
+    database_path: Path
     chain_id: int = 1
-    database_path: Path = Path("unused.db")
     construction_route: object | None = None
     weth: object | None = None
 
@@ -193,10 +196,10 @@ class _OpaqueStep:
 
 
 def _pipeline_with_bot(
-    constr_bot: object, engine_registry: object = None
+    database_path: Path, constr_bot: object, engine_registry: object = None
 ) -> tuple[PathRegistrationPipeline, object]:
     """A pipeline over a supplied construction Bot (the skip-gate pattern)."""
-    ctx = _PipelineContext(bot=constr_bot)
+    ctx = _PipelineContext(bot=constr_bot, database_path=database_path)
     pipeline = PathRegistrationPipeline(
         context=ctx,
         engine_registry=engine_registry,
@@ -217,11 +220,11 @@ async def _producer(paths: list[object]) -> AsyncIterator[object]:
         yield path
 
 
-async def test_crawl_submits_one_unit_per_path_and_resolves_fifo() -> None:
+async def test_crawl_submits_one_unit_per_path_and_resolves_fifo(tmp_path: Path) -> None:
     """Every discovered path = one intake unit; receipts resolve in order."""
     order: list[str] = []
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
 
     def unit_shim(path_steps: object, directions: object = None) -> object:
         order.append(path_steps.name)  # type: ignore[attr-defined]
@@ -239,10 +242,10 @@ async def test_crawl_submits_one_unit_per_path_and_resolves_fifo() -> None:
     assert not pipeline.capped
 
 
-async def test_crawl_window_bounds_in_flight_units() -> None:
+async def test_crawl_window_bounds_in_flight_units(tmp_path: Path) -> None:
     """Backpressure is the submission window — never more than its bound."""
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
 
     def unit_shim(path_steps: object, directions: object = None) -> object:
         return RegistrationUnitOutcome(kind="registered", created=True)
@@ -257,10 +260,10 @@ async def test_crawl_window_bounds_in_flight_units() -> None:
     assert len(bot.submitted) == 100
 
 
-async def test_crawl_stops_submitting_after_the_cap_and_drains() -> None:
+async def test_crawl_stops_submitting_after_the_cap_and_drains(tmp_path: Path) -> None:
     """A cap outcome stops discovery; the window drains cheaply (PRG-4)."""
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
     processed: list[str] = []
 
     def unit_shim(path_steps: object, directions: object = None) -> object:
@@ -284,10 +287,10 @@ async def test_crawl_stops_submitting_after_the_cap_and_drains() -> None:
     assert pipeline.path_count == 3
 
 
-async def test_crawl_fatal_verification_error_aborts_loudly() -> None:
+async def test_crawl_fatal_verification_error_aborts_loudly(tmp_path: Path) -> None:
     """A unit's VerificationMismatchError propagates — no swallow, no cap."""
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
 
     def unit_shim(path_steps: object, directions: object = None) -> object:
         msg = "boom"
@@ -301,10 +304,10 @@ async def test_crawl_fatal_verification_error_aborts_loudly() -> None:
         )
 
 
-def test_absorb_outcome_counter_parity() -> None:
+def test_absorb_outcome_counter_parity(tmp_path: Path) -> None:
     """Outcome folds mirror the retired inline branches exactly."""
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
 
     # Benign skip: skip_count + skip-reason tag.
     pipeline._absorb_outcome(RegistrationUnitOutcome(kind="skip", tag="build-v3:X"))
@@ -347,19 +350,19 @@ def test_absorb_outcome_counter_parity() -> None:
     assert pipeline.capped
 
 
-def test_legacy_stance_pipeline_construction_refuses() -> None:
+def test_legacy_stance_pipeline_construction_refuses(tmp_path: Path) -> None:
     """The hard cutover: no fleet intake, no crawl (loud, actionable)."""
-    ctx = _PipelineContext(bot=_ConstrBot(fleet_hosted=False))
+    ctx = _PipelineContext(bot=_ConstrBot(fleet_hosted=False), database_path=tmp_path / "unused.db")
     with pytest.raises(RuntimeError, match="fleet-hosted only"):
         PathRegistrationPipeline(
             context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000
         )
 
 
-def test_retired_skip_gate_pipeline_tests_upgraded_shape() -> None:
+def test_retired_skip_gate_pipeline_tests_upgraded_shape(tmp_path: Path) -> None:
     """The skip-gate pipeline shape still builds under the fleet intake."""
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
     pipeline._record_skip("v4-no-hash")
     assert pipeline._skip_reasons["v4-no-hash"] == 1
 
@@ -393,16 +396,22 @@ class _RecordingRegistry:
     """Engine-registry double: records verify + crawl-path calls."""
 
     def __init__(self) -> None:
-        self.verifies: list[str] = []
+        self.verifies: list[str | None] = []
         self.registrations: list[list] = []
         self._next_path_id = 0
         self.path_predicate = _PathPredicate()
 
-    def run_v3_verify_lifecycle_sync(self, address: str) -> None:
-        self.verifies.append(address)
-
-    def run_v3_verify_lifecycle_sync_with_retry(self, address: str, policy: object) -> None:
-        self.verifies.append(address)
+    def run_registration_lifecycle(
+        self,
+        *,
+        family: str,
+        mode: str,
+        address: str | None = None,
+        pool_manager: str | None = None,
+        pool_id_hex: str | None = None,
+        policy: object = None,
+    ) -> None:
+        self.verifies.append(address if family == "v3" else pool_manager)
 
     def register_crawl_path(self, engine_hops: list) -> tuple[int, bool]:
         self.registrations.append(list(engine_hops))
@@ -411,7 +420,7 @@ class _RecordingRegistry:
 
 
 def _pipeline_over_registry(
-    registry: _RecordingRegistry,
+    database_path: Path, registry: _RecordingRegistry
 ) -> PathRegistrationPipeline:
     """A pipeline whose V3 builds answer from a fixed address -> pool map."""
 
@@ -425,6 +434,7 @@ def _pipeline_over_registry(
     bot = _ConstrBot(build_pool=lambda address, *, silent=True, **_route: pools[address])
     ctx = _PipelineContext(
         bot=bot,
+        database_path=database_path,
         construction_route=SimpleNamespace(factories=(), generic=True),
         weth=FakeToken(address=WETH_CHECKSUM),
     )
@@ -445,7 +455,7 @@ def _closed_v3_cycle_steps() -> list[_OpaqueStep]:
     ]
 
 
-def test_duplicate_candidate_short_circuits_before_verify_and_engine() -> None:
+def test_duplicate_candidate_short_circuits_before_verify_and_engine(tmp_path: Path) -> None:
     """A hop signature already registered answers dup WITHOUT verify or RPC.
 
     The PRG-4 cutover moved dedup behind the V3/V4 verify lifecycles, so every
@@ -455,7 +465,7 @@ def test_duplicate_candidate_short_circuits_before_verify_and_engine() -> None:
     while leaving the engine's registry untouched after the first sighting.
     """
     registry = _RecordingRegistry()
-    pipeline = _pipeline_over_registry(registry)
+    pipeline = _pipeline_over_registry(tmp_path / "unused.db", registry)
     steps = _closed_v3_cycle_steps()
 
     first = pipeline._registration_unit(steps)
@@ -479,7 +489,7 @@ def test_duplicate_candidate_short_circuits_before_verify_and_engine() -> None:
     assert len(registry.registrations) == 1
 
 
-def test_path_predicate_evaluates_before_verify() -> None:
+def test_path_predicate_evaluates_before_verify(tmp_path: Path) -> None:
     """Policy enforcement happens before any verify choreography.
 
     The predicate docstring promises "before any work"; PRG-4 left it after
@@ -487,7 +497,7 @@ def test_path_predicate_evaluates_before_verify() -> None:
     rejection must now surface with the engine never having verified.
     """
     registry = _RecordingRegistry()
-    pipeline = _pipeline_over_registry(registry)
+    pipeline = _pipeline_over_registry(tmp_path / "unused.db", registry)
 
     class _PolicyRejection(Exception):
         """The recorded refusal."""
@@ -531,7 +541,7 @@ class _RegisterThenFailRegistry(_RecordingRegistry):
 
 
 def _pipeline_over_registry_three_pools(
-    registry: _RecordingRegistry,
+    database_path: Path, registry: _RecordingRegistry
 ) -> PathRegistrationPipeline:
     """Like _pipeline_over_registry but with a third pool; V3-only chain."""
     pools = {
@@ -545,6 +555,7 @@ def _pipeline_over_registry_three_pools(
     bot = _ConstrBot(build_pool=lambda address, *, silent=True, **_route: pools[address])
     ctx = _PipelineContext(
         bot=bot,
+        database_path=database_path,
         construction_route=SimpleNamespace(factories=(), generic=True),
         weth=FakeToken(address=WETH_CHECKSUM),
     )
@@ -557,7 +568,7 @@ def _pipeline_over_registry_three_pools(
     )
 
 
-def test_verify_lifecycle_runs_once_per_pool_across_sightings() -> None:
+def test_verify_lifecycle_runs_once_per_pool_across_sightings(tmp_path: Path) -> None:
     """A completed verify lifecycle is never re-run on later sightings.
 
     The seat claims table dedups CONCURRENT windows only; a register-fail
@@ -568,7 +579,7 @@ def test_verify_lifecycle_runs_once_per_pool_across_sightings() -> None:
     registration does NOT un-verify a pool.
     """
     registry = _RegisterThenFailRegistry()
-    pipeline = _pipeline_over_registry_three_pools(registry)
+    pipeline = _pipeline_over_registry_three_pools(tmp_path / "unused.db", registry)
 
     first = pipeline._registration_unit([
         _OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None),
@@ -599,7 +610,7 @@ def test_verify_lifecycle_runs_once_per_pool_across_sightings() -> None:
     assert registry.verifies.count(POOL_C) == 1
 
 
-def test_stable_build_refusal_memoizes_the_pool() -> None:
+def test_stable_build_refusal_memoizes_the_pool(tmp_path: Path) -> None:
     """A stably-refused pool (typed build rejection) skips at O(hops).
 
     v4-hook-rejected is a POOL fact, not a transient failure: any later
@@ -618,7 +629,7 @@ def test_stable_build_refusal_memoizes_the_pool() -> None:
         build_managed_pool=_build_managed_pool,
         build_pool=lambda *a, **k: None,
     )
-    pipeline, _ = _pipeline_with_bot(bot)
+    pipeline, _ = _pipeline_with_bot(tmp_path / "unused.db", bot)
     steps = [
         _OpaqueStep(type=PoolKind.V4, address=None, hash=0xDEAD),
         _OpaqueStep(type=PoolKind.V4, address=None, hash=0xBEEF),
@@ -640,7 +651,7 @@ def test_stable_build_refusal_memoizes_the_pool() -> None:
     assert build_calls == [0xDEAD]
 
 
-def test_policy_gate_denial_memoizes_the_path() -> None:
+def test_policy_gate_denial_memoizes_the_path(tmp_path: Path) -> None:
     """A policy deny is deterministic per hop signature.
 
     The gate evaluates before any work (order preserved), and its denial is
@@ -659,7 +670,7 @@ def test_policy_gate_denial_memoizes_the_path() -> None:
 
     registry = _ScriptedRegistry()
     registry.path_predicate = _PathPredicate(evaluate=_evaluate)
-    pipeline = _pipeline_over_registry(registry)
+    pipeline = _pipeline_over_registry(tmp_path / "unused.db", registry)
     steps = _closed_v3_cycle_steps()
 
     first = pipeline._registration_unit(steps)
@@ -680,13 +691,13 @@ def test_policy_gate_denial_memoizes_the_path() -> None:
     assert len(gate_calls) == 1
 
 
-async def test_trigger_discovery_stops_once_sweep_completes_for_edition() -> None:
+async def test_trigger_discovery_stops_once_sweep_completes_for_edition(tmp_path: Path) -> None:
     """Once a full (uncapped, unbounded-cut) sweep completes for a graph
     edition, later triggers with the SAME edition stop immediately: the
     unchanged structure can only re-yield already-registered paths.
     """
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
 
     paths = [_closed_v3_cycle_steps() for _ in range(3)]
     sweep_count = {"n": 0}
@@ -716,11 +727,11 @@ async def test_trigger_discovery_stops_once_sweep_completes_for_edition() -> Non
     assert sweep_count["n"] == 2
 
 
-async def test_trigger_discovery_bound_truncation_does_not_latch() -> None:
+async def test_trigger_discovery_bound_truncation_does_not_latch(tmp_path: Path) -> None:
     """A bound-truncated sweep did NOT see the last path — later triggers
     must still enumerate."""
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
 
     paths = [_closed_v3_cycle_steps() for _ in range(3)]
     sweep_count = {"n": 0}
@@ -740,10 +751,10 @@ async def test_trigger_discovery_bound_truncation_does_not_latch() -> None:
     assert sweep_count["n"] == 2
 
 
-async def test_trigger_discovery_probe_failure_never_latches() -> None:
+async def test_trigger_discovery_probe_failure_never_latches(tmp_path: Path) -> None:
     """A failed Rust graph-edition probe leaves the latch disabled."""
     bot = _FleetBot()
-    pipeline, _bot = _pipeline_with_bot(bot)  # context uses an explicit unused path
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
 
     paths = [_closed_v3_cycle_steps() for _ in range(2)]
     sweep_count = {"n": 0}
@@ -760,24 +771,24 @@ async def test_trigger_discovery_probe_failure_never_latches() -> None:
     assert sweep_count["n"] == 2
 
 
-async def test_intake_fault_propagates_through_consume() -> None:
+async def test_intake_fault_propagates_through_consume(tmp_path: Path) -> None:
     """The operator `_consume` seam surfaces the typed lane-death fault.
 
     FALSIFICATION: a swallowed fault (the counters folding a non-outcome) or
     a parked waiter; the typed error must escape `_consume` unchanged.
     """
-    pipeline, _bot = _pipeline_with_bot(_FaultingBot())
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", _FaultingBot())
     with pytest.raises(FleetIntakeFaultedError):
         await pipeline._consume(_ScriptedPath("p"))
     assert pipeline.path_count == 0, "a faulted unit is never folded as registered"
 
 
-async def test_intake_fault_propagates_through_run_registration() -> None:
+async def test_intake_fault_propagates_through_run_registration(tmp_path: Path) -> None:
     """The crawl's `_resolve` seam surfaces the typed lane-death fault.
 
     FALSIFICATION: the crawl returning normally with the fault unobserved.
     """
-    pipeline, _bot = _pipeline_with_bot(_FaultingBot())
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", _FaultingBot())
     with pytest.raises(FleetIntakeFaultedError):
         await pipeline.run_registration(producer=_producer([_ScriptedPath("p")]))
     assert pipeline.path_count == 0
@@ -791,7 +802,7 @@ async def test_intake_fault_propagates_through_run_registration() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_registration_ledger_owns_the_four_memo_concepts() -> None:
+def test_registration_ledger_owns_the_four_memo_concepts(tmp_path: Path) -> None:
     """The four memo collections live on ONE ledger, not on the pipeline.
 
     FALSIFICATION: any retired instance attribute still answering, or a
@@ -799,7 +810,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
     """
     from degenbot.runner._registration_ledger import RegistrationLedger
 
-    pipeline, _bot = _pipeline_with_bot(_FleetBot())
+    pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", _FleetBot())
     assert isinstance(pipeline._ledger, RegistrationLedger)
     for retired in (
         "_registered_paths_seen",
@@ -811,7 +822,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
 
     # Registered-path + verify-once concepts, after one real unit.
     registry = _RecordingRegistry()
-    pipeline = _pipeline_over_registry(registry)
+    pipeline = _pipeline_over_registry(tmp_path / "unused.db", registry)
     steps = _closed_v3_cycle_steps()
     first = pipeline._registration_unit(steps)
     assert first.kind == "registered"
@@ -823,7 +834,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
     # Rejected-path concept (the deny memoizes per hop signature).
     denied = _RecordingRegistry()
     denied.path_predicate = _PathPredicate(evaluate=_raise_path_rejected)
-    pipeline2 = _pipeline_over_registry(denied)
+    pipeline2 = _pipeline_over_registry(tmp_path / "unused.db", denied)
     assert pipeline2._registration_unit(_closed_v3_cycle_steps()).kind == "reject"
     assert pipeline2._ledger.path_rejected(hop_sig), "rejected-path memo"
 
@@ -832,7 +843,7 @@ def test_registration_ledger_owns_the_four_memo_concepts() -> None:
         raise HookedPoolRejectedError
 
     bot = _ConstrBot(build_managed_pool=_build_managed_pool)
-    pipeline3, _ = _pipeline_with_bot(bot)
+    pipeline3, _ = _pipeline_with_bot(tmp_path / "unused.db", bot)
     v4_steps = [_OpaqueStep(type=PoolKind.V4, address=None, hash=0xDEAD)]
     assert pipeline3._registration_unit(v4_steps).tag == "v4-hook-rejected"
     key = pipeline3._ledger.pool_memo_key(v4_steps[0], PoolKind.V4)
@@ -875,7 +886,7 @@ def test_build_refusal_classification_is_typed_not_class_name_based() -> None:
     assert dynamic.counts_as_skip is False
 
 
-def test_impostor_class_name_is_never_memoized() -> None:
+def test_impostor_class_name_is_never_memoized(tmp_path: Path) -> None:
     """A name-only stable match stays retryable (build re-attempted).
 
     FALSIFICATION: the retired class-name set would have memoized the
@@ -890,7 +901,7 @@ def test_impostor_class_name_is_never_memoized() -> None:
         raise impostor(msg)
 
     bot = _ConstrBot(build_pool=_build_pool)
-    pipeline, _ = _pipeline_with_bot(bot)
+    pipeline, _ = _pipeline_with_bot(tmp_path / "unused.db", bot)
     steps = [_OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)]
 
     assert pipeline._registration_unit(steps).kind == "skip"
@@ -904,7 +915,7 @@ def test_impostor_class_name_is_never_memoized() -> None:
     )
 
 
-def test_real_typed_stable_refusal_is_memoized() -> None:
+def test_real_typed_stable_refusal_is_memoized(tmp_path: Path) -> None:
     """The real typed refusal IS a pool fact: the second sighting memoizes."""
     builds: list[str] = []
 
@@ -913,7 +924,7 @@ def test_real_typed_stable_refusal_is_memoized() -> None:
         raise HighFeePoolRejectedError
 
     bot = _ConstrBot(build_pool=_build_pool)
-    pipeline, _ = _pipeline_with_bot(bot)
+    pipeline, _ = _pipeline_with_bot(tmp_path / "unused.db", bot)
     steps = [_OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)]
 
     assert pipeline._registration_unit(steps).kind == "skip"
@@ -921,7 +932,7 @@ def test_real_typed_stable_refusal_is_memoized() -> None:
     assert builds == [POOL_A], "the typed stable refusal memoizes the pool"
 
 
-def test_transient_build_skip_tag_uses_the_bounded_vocabulary() -> None:
+def test_transient_build_skip_tag_uses_the_bounded_vocabulary(tmp_path: Path) -> None:
     """Every production skip tag is a member of the bounded vocabulary.
 
     FALSIFICATION: an interpolated class-name tag (build-v3:ConnectionError)
@@ -935,7 +946,7 @@ def test_transient_build_skip_tag_uses_the_bounded_vocabulary() -> None:
         raise ConnectionError(msg)
 
     bot = _ConstrBot(build_pool=_build_pool)
-    pipeline, _ = _pipeline_with_bot(bot)
+    pipeline, _ = _pipeline_with_bot(tmp_path / "unused.db", bot)
     outcome = pipeline._registration_unit([
         _OpaqueStep(type=PoolKind.V3, address=POOL_A, hash=None)
     ])

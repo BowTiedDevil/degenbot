@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gc
-import pathlib
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -46,6 +45,7 @@ from tests.helpers import verdict_probe as probe
 from tests.helpers.database import seed_v2_topology
 
 if TYPE_CHECKING:
+    import pathlib
     from collections.abc import AsyncGenerator
 
 CHAIN = ChainId.ETH
@@ -67,13 +67,13 @@ def _base_request(database_path: pathlib.Path) -> PathfindingRequest:
     )
 
 
-def _adapter_request() -> PathfindingRequest:
+def _adapter_request(database_path: pathlib.Path) -> PathfindingRequest:
     """Build a path-only request for tests that replace the prep seam."""
     return PathfindingRequest(
         chain_id=1,
         start_tokens=[],
         end_tokens=[],
-        database_path=pathlib.Path("unused.db"),
+        database_path=database_path,
     )
 
 
@@ -289,14 +289,14 @@ def _fake_rust_seam(
     }
 
 
-def test_adapter_forwards_batch_size_to_rust_seam() -> None:
+def test_adapter_forwards_batch_size_to_rust_seam(tmp_path: pathlib.Path) -> None:
     """The adapter hands the requested batch_size straight to the Rust seam."""
     captured: dict[str, object] = {}
     seams = _fake_rust_seam(batches=[[[], []]], captured=captured)
 
     got = asyncio.run(
         _collect(
-            request=_adapter_request(),
+            request=_adapter_request(tmp_path / "unused.db"),
             batch_size=7,
             **seams,  # type: ignore[arg-type]
         )
@@ -309,7 +309,7 @@ def test_adapter_forwards_batch_size_to_rust_seam() -> None:
     assert args[7] == 7  # batch_size
 
 
-async def test_producer_exception_reraises_at_consumer() -> None:
+async def test_producer_exception_reraises_at_consumer(tmp_path: pathlib.Path) -> None:
     """A Rust `__anext__` failure surfaces at the consumer, pending batch first."""
     seams = _fake_rust_seam(
         batches=[[[], []]],
@@ -320,7 +320,7 @@ async def test_producer_exception_reraises_at_consumer() -> None:
     with pytest.raises(_BoomError, match="producer died"):
         await _drain_into(
             find_paths_async(
-                request=_adapter_request(),
+                request=_adapter_request(tmp_path / "unused.db"),
                 batch_size=2,
                 **seams,  # type: ignore[arg-type]
             ),
@@ -330,7 +330,7 @@ async def test_producer_exception_reraises_at_consumer() -> None:
     assert got == [[], []], "the pending batch must be delivered before the raise"
 
 
-async def test_aclose_releases_the_rust_iterator() -> None:
+async def test_aclose_releases_the_rust_iterator(tmp_path: pathlib.Path) -> None:
     """aclose clears the adapter's reference so the Rust iterator can drop."""
     dropped: list[bool] = []
     seams = _fake_rust_seam(
@@ -338,7 +338,8 @@ async def test_aclose_releases_the_rust_iterator() -> None:
         dropped=dropped,
     )
 
-    agen = find_paths_async(request=_adapter_request(), batch_size=2, **seams)  # type: ignore[arg-type]
+    request = _adapter_request(tmp_path / "unused.db")
+    agen = find_paths_async(request=request, batch_size=2, **seams)  # type: ignore[arg-type]
     seen = 0
     async for _path in agen:
         seen += 1
@@ -400,7 +401,7 @@ async def test_aclose_leaves_no_worker_threads(db: pathlib.Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_prep_never_blocks_the_event_loop() -> None:
+async def test_prep_never_blocks_the_event_loop(tmp_path: pathlib.Path) -> None:
     """A slow prep must not stall the asyncio loop (canary keeps ticking).
 
     Previously the one-time prep (`_prepare_traversals`: Rust token
@@ -423,7 +424,7 @@ async def test_prep_never_blocks_the_event_loop() -> None:
 
     canary_task = asyncio.ensure_future(canary())
     agen = find_paths_async(
-        request=_adapter_request(),
+        request=_adapter_request(tmp_path / "unused.db"),
         prepare_traversals=slow_prep,
         find_paths_async_rust=lambda *a, **k: _FakeBatchIterator([[]]),
     )
@@ -482,8 +483,8 @@ def test_typed_config_is_positive_clamped() -> None:
     assert _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"}) == 1
 
 
-def _make_pipeline() -> PathRegistrationPipeline:
-    ctx = FakePipelineContext(bot=FakeFleetHostedBot())
+def _make_pipeline(database_path: pathlib.Path) -> PathRegistrationPipeline:
+    ctx = FakePipelineContext(bot=FakeFleetHostedBot(), database_path=database_path)
     return PathRegistrationPipeline(
         context=ctx,
         engine_registry=None,
@@ -492,14 +493,14 @@ def _make_pipeline() -> PathRegistrationPipeline:
     )
 
 
-def test_discovery_sweep_passes_typed_batch_size() -> None:
+def test_discovery_sweep_passes_typed_batch_size(tmp_path: pathlib.Path) -> None:
     """discovery_sweep forwards the pipeline's resolved batch size."""
     captured: dict[str, object] = {}
 
     def fake_find_paths_async(**kwargs: object) -> None:
         captured.update(kwargs)
 
-    pipeline = _make_pipeline()
+    pipeline = _make_pipeline(tmp_path / "unused.db")
     pipeline.discovery_batch_size = 42
     pipeline.discovery_sweep(find_paths_async=fake_find_paths_async)  # type: ignore[arg-type]
     assert captured["batch_size"] == 42

@@ -75,7 +75,9 @@ def _make_erc20(address: str, chain_id: int = 42161) -> Erc20Token:
 CAMELOT_CHAIN_ID = 42161
 
 
-def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilder:
+def _make_camelot_builder(
+    provider: FakeProvider | None = None, *, database_path: Path
+) -> CamelotBuilder:
     """Create a CamelotBuilder with mock dependencies."""
     erc20_builder = MagicMock(spec=Erc20Builder)
 
@@ -85,7 +87,7 @@ def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilde
     erc20_builder.build = _build_token
 
     ctx = BuilderContext(
-        database_path=Path("unused.db"),
+        database_path=database_path,
         pools=MagicMock(spec=PoolRegistry),
         tokens=MagicMock(spec=TokenRegistry),
         erc20_builder=erc20_builder,
@@ -139,41 +141,41 @@ class TestCamelotBuilderConstruction:
     POOL_ADDRESS = "0x0000000000000000000000000000000000000001"
     FACTORY_ADDRESS = "0x6EcCab422D763aC031210895C81787E87B43A652"
 
-    def test_build_camelot_returns_camelot_pool(self) -> None:
+    def test_build_camelot_returns_camelot_pool(self, tmp_path: Path) -> None:
         """build() should return a CamelotLiquidityPool instance."""
         provider = _camelot_provider()
         io = provider
-        builder = _make_camelot_builder(provider)
+        builder = _make_camelot_builder(provider, database_path=tmp_path / "unused.db")
         pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert isinstance(pool, CamelotLiquidityPool)
         assert isinstance(pool, UniswapV2Pool)
 
-    def test_build_camelot_fetches_camelot_specific_state(self) -> None:
+    def test_build_camelot_fetches_camelot_specific_state(self, tmp_path: Path) -> None:
         """build() should fetch stableSwap, FEE_DENOMINATOR, and fee percents."""
         provider = _camelot_provider(
             stable_swap=True, fee_denominator=1000, fee_token0=5, fee_token1=7
         )
         io = provider
-        builder = _make_camelot_builder(provider)
+        builder = _make_camelot_builder(provider, database_path=tmp_path / "unused.db")
         pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert pool.stable_swap is True
         assert pool.fee_denominator == 1000
         assert pool.fee_token0 == Fraction(5, 1000)
         assert pool.fee_token1 == Fraction(7, 1000)
 
-    def test_build_camelot_stable_swap_false(self) -> None:
+    def test_build_camelot_stable_swap_false(self, tmp_path: Path) -> None:
         """build() with stable_swap=False should set the attribute accordingly."""
         provider = _camelot_provider(stable_swap=False)
         io = provider
-        builder = _make_camelot_builder(provider)
+        builder = _make_camelot_builder(provider, database_path=tmp_path / "unused.db")
         pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert pool.stable_swap is False
 
-    def test_build_camelot_sets_fee_as_fraction(self) -> None:
+    def test_build_camelot_sets_fee_as_fraction(self, tmp_path: Path) -> None:
         """build() should set fee_token0/fee_token1 as Fractions."""
         provider = _camelot_provider(fee_denominator=10000, fee_token0=30, fee_token1=30)
         io = provider
-        builder = _make_camelot_builder(provider)
+        builder = _make_camelot_builder(provider, database_path=tmp_path / "unused.db")
         pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert isinstance(pool.fee_token0, Fraction)
         assert isinstance(pool.fee_token1, Fraction)

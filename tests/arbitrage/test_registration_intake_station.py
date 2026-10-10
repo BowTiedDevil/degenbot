@@ -186,6 +186,7 @@ def test_fleet_station_executes_callables_on_named_fleet_seats() -> None:
 _LEGACY_CHILD = """
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 # FF-T5 determinism (the addendum): a FRESH process - no engine
@@ -209,7 +210,11 @@ else:
 from degenbot.runner.build_paths import PathRegistrationPipeline
 from tests.fakes.runner_pipelines import FakePipelineContext
 
-ctx = FakePipelineContext(bot=bot)
+ctx = FakePipelineContext(
+    bot=bot,
+    # Subprocess: no pytest tmp_path fixture, so mkdtemp keeps the repo cwd clean.
+    database_path=Path(tempfile.mkdtemp(prefix="degenbot-legacy-stance-")) / "unused.db",
+)
 try:
     PathRegistrationPipeline(
         context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000

@@ -126,11 +126,13 @@ def test_the_path_cap_is_not_an_import_time_constant() -> None:
     )
 
 
-def test_the_pipeline_refuses_to_invent_its_own_path_cap() -> None:
+def test_the_pipeline_refuses_to_invent_its_own_path_cap(tmp_path: Path) -> None:
     """No cap argument, no pipeline: there is nothing left to inherit."""
     with pytest.raises(TypeError):
         PathRegistrationPipeline(
-            context=FakePipelineContext(bot=FakeFleetHostedBot()),
+            context=FakePipelineContext(
+                bot=FakeFleetHostedBot(), database_path=tmp_path / "unused.db"
+            ),
             engine_registry=None,
         )
 
@@ -145,12 +147,12 @@ class _CapEngine:
         self.path_cap = cap
 
 
-def test_the_cap_the_caller_resolved_is_the_cap_the_engine_gets() -> None:
+def test_the_cap_the_caller_resolved_is_the_cap_the_engine_gets(tmp_path: Path) -> None:
     """One cap, one owner: the config resolves it and the pipeline installs it."""
     cfg = probe.build_config(env={"DEGENBOT_MAX_PATHS": "1234"})
     engine = _CapEngine()
     PathRegistrationPipeline(
-        context=FakePipelineContext(bot=FakeFleetHostedBot()),
+        context=FakePipelineContext(bot=FakeFleetHostedBot(), database_path=tmp_path / "unused.db"),
         engine_registry=FakeEngineRegistry(engine),
         max_paths=cfg.max_registered_paths,
         discovery_batch_size=cfg.discovery_batch_size,
@@ -160,11 +162,11 @@ def test_the_cap_the_caller_resolved_is_the_cap_the_engine_gets() -> None:
     assert engine.path_cap == 1234
 
 
-def test_an_explicitly_uncapped_pipeline_tells_the_engine_uncapped() -> None:
+def test_an_explicitly_uncapped_pipeline_tells_the_engine_uncapped(tmp_path: Path) -> None:
     """``0`` is the config's uncapped spelling; the engine's is ``None``."""
     engine = FakeEngine()
     PathRegistrationPipeline(
-        context=FakePipelineContext(bot=FakeFleetHostedBot()),
+        context=FakePipelineContext(bot=FakeFleetHostedBot(), database_path=tmp_path / "unused.db"),
         engine_registry=FakeEngineRegistry(engine),
         max_paths=0,
         discovery_batch_size=1000,
