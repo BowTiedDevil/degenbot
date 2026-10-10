@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot._ffi import Bot as _Engine
 from degenbot._ffi import BotIo
-from degenbot.aerodrome.pools import AerodromeV2Pool
+
+# Import-order anchor: the aerodrome package must initialize before the
+# builders below pull in `degenbot.uniswap`, or the latent
+# `degenbot.uniswap.trackers` <-> `degenbot.aerodrome.trackers` import
+# cycle trips. The facade no longer names the class directly.
+from degenbot.aerodrome.pools import AerodromeV2Pool  # ruff:ignore[unused-import]
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALANCER_V2_POOLS
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
@@ -43,13 +48,13 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import BrokenPool, TrackerAlreadyInitialized
 from degenbot.logging import logger
-from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.provider import (
     AlloyProvider,  # ruff:ignore[typing-only-first-party-import]
     AsyncAlloyProvider,  # ruff:ignore[typing-only-first-party-import]
 )
 from degenbot.provider.factory import get_provider_from_config
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
@@ -582,7 +587,7 @@ class Bot(AccountQueryMixin):
         """
         return self.build_erc20token(address)
 
-    # ruff: ignore[too-many-locals, too-many-branches, too-many-statements] - one knob per resolved construction input, mirroring the retired keyword surface
+    # ruff: ignore[too-many-locals] - one knob per resolved construction input, mirroring the retired keyword surface
     def build_pool(
         self,
         address: str,
@@ -645,157 +650,118 @@ class Bot(AccountQueryMixin):
         # Look up the concrete pool class from the registry
         pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
 
-        # Delegated families (V2-style, V3, Aerodrome V2, both Balancer
-        # families) build in the core: the Rust `PoolBuilder` owns ALL the io
-        # choreography (immutables, reserves/state, DEX resolve incl. Camelot,
-        # CREATE2 verify, V3 tick-map DB-first), registers into `BotState`, and
-        # returns the pool id; this facade then registers the pool's tokens in
-        # the same `Bot` (ADR-006) and wraps the structural handle with the
-        # companion pool class. Curve and the registry-builder families keep
-        # their Python builders below.
-        if issubclass(
-            pool_class,
-            (UniswapV2Pool, UniswapV3Pool, AerodromeV2Pool, BalancerV2Pool, BalancerV2StablePool),
-        ):
-            # Resolve the snapshot block: when no explicit `state_block` is
-            # given, use the current chain head — the core fetches at this
-            # block (a `None` would otherwise degrade to `block=0`).
-            block: int | None = (
-                request.state_block
-                if request.state_block is not None
-                else self._io.get_block_number()
-            )
+        family = pool_type.family
+        variant = pool_type.variant
 
-            # One branch per delegated family mirrors the core's entry points:
-            # V3 threads the tick-data fetcher and the fork slot layout,
-            # Balancer stable threads the invariant version, and the V2-style
-            # families return the full builder identity for the return-surface
-            # parity guard.
-            builder_identity: tuple[int, str, str, str, str] | None
-            if issubclass(pool_class, UniswapV3Pool):
-                # The web3-sync fetcher lets swaps lazily pull neighbouring
-                # tick words beyond the single word the core bootstraps.
-                fetcher = self._make_v3_tick_data_fetcher(address, chain_id)
-                # CL slot layout: the PancakeSwap V3 fork has a divergent
-                # storage layout — pass the family explicitly so the engine's
-                # slot-index consumers (divergence probe, sim-anchor
-                # projection) never misread a fork pool.
-                slot_layout = (
-                    "pancakeswap" if issubclass(pool_class, PancakeswapV3Pool) else "uniswap"
-                )
-                # The construction route: the cockpit's resolved policy value —
-                # the core route entry walks it (route order + get-or-register
-                # + build + register) and classifies every failure on the
-                # taxonomy.
-                route = request.construction_route or ConstructionRoute()
-                b_res = self._py_bot.build_v3_pool(
-                    address,
-                    block=block,
-                    db=True,
-                    tick_data_fetcher=fetcher,
-                    slot_layout=slot_layout,
-                    factories=list(route.factories) or None,
-                )
-                pool_id, builder_identity = b_res[0], b_res
-            elif issubclass(pool_class, AerodromeV2Pool):
-                # A distinct structural family from V2 (shared volatile/stable
-                # factory) — the core reads `stable()`+`getFee()` and registers
-                # into PoolEntry::AerodromeV2.
-                pool_id = self._py_bot.build_aerodrome_v2_pool(address, block=block)
-                builder_identity = None
-            elif issubclass(pool_class, BalancerV2Pool):
-                # Balancer weighted — the core reads getPoolId + Vault
-                # getPoolTokens + getSwapFeePercentage + getNormalizedWeights +
-                # bytecode PowVersion + decimals() scaling factors and
-                # registers into PoolEntry::BalancerWeighted.
-                pool_id = self._py_bot.build_balancer_weighted_pool(
-                    address, vault=BALANCER_V2_VAULT_ADDRESS, block=block
-                )
-                builder_identity = None
-            elif issubclass(pool_class, BalancerV2StablePool):
-                # Balancer stable — the core additionally reads the
-                # amplification parameter, BPT-detect, rate provider/rate, and
-                # resolves the invariant version; registers into
-                # PoolEntry::BalancerStable.
-                pool_id = self._py_bot.build_balancer_stable_pool(
-                    address,
-                    vault=BALANCER_V2_VAULT_ADDRESS,
-                    block=block,
-                    invariant_version=request.invariant_version,
-                )
-                builder_identity = None
-            else:
-                b_res = self._py_bot.build_v2_pool(address, block=block)
-                pool_id, builder_identity = b_res[0], b_res
+        # The Curve family is the ONE dispatch the core construction entry does
+        # not classify: Curve pools expose no `factory()`, so their discovery
+        # runs through this Python builder. Every other family builds through
+        # the core's ONE entry below.
+        if family is PoolFamily.STABLESWAP and variant != "balancer_stable":
+            builder = self._builders.get(pool_class)
+            if builder is None:
+                # Fallback: walk MRO of pool_class looking for a registered builder
+                for base in pool_class.__mro__:
+                    builder = self._builders.get(base)
+                    if builder is not None:
+                        break
 
-            py_pool = self._py_bot.get_pool(pool_id)
-            if py_pool is None:  # pragma: no cover
-                msg = f"build_pool: register returned pool_id {pool_id} with no handle"
-                raise DegenbotValueError(message=msg)
+            if builder is None:
+                raise DegenbotValueError(message=f"No builder for pool class {pool_class.__name__}")
 
-            # Return-surface parity: the builder returns the Rust core's own
-            # token0/token1 identity; it must equal what the registered handle
-            # exposes (a divergence is a genuine core/driver seam bug — assert
-            # loudly rather than silently re-deriving).
-            if builder_identity is not None:
-                _b_pid, b_t0, b_t1, _b_addr, _b_fam = builder_identity
-                if (
-                    py_pool.token0_address.casefold() != b_t0.casefold()
-                    or py_pool.token1_address.casefold() != b_t1.casefold()
-                ):
-                    raise DegenbotValueError(
-                        message=(
-                            f"build_pool: builder identity diverged from handle for "
-                            f"{address}: builder token0={b_t0} token1={b_t1}, "
-                            f"handle token0={py_pool.token0_address} "
-                            f"token1={py_pool.token1_address}"
-                        )
-                    )
-
-            # V3: split-seed the reorg genesis anchor. Without it the Sparse
-            # pool journals nothing, so `discard_states_before_block(update_block
-            # + 1)` would not raise — a behavior regression for every consumer
-            # that expects the registration seed to be a known state boundary.
-            if issubclass(pool_class, UniswapV3Pool) and block is not None and block > 0:
-                py_pool.seed_genesis(block_number=block)
-
-            self._register_delegated_tokens(
-                pool_class,
-                py_pool,
+            return self._dispatch_build(
+                builder=builder,
                 address=address,
                 chain_id=chain_id,
+                io=io,
                 request=request,
             )
 
-            # `from_handle` is a concrete-class classmethod (not on the base);
-            # cast to `type[Any]` so the call is type-checkable + the union of
-            # the five delegated families stays branch-free here.
-            pool = cast("type[Any]", pool_class).from_handle(py_pool)
-            # Idempotent register: a concurrent registration worker may have
-            # built this same shared pool first; use the canonical instance so
-            # THIS path still registers instead of being lossily skipped.
-            return cast(
-                "AbstractLiquidityPool",
-                self.pools.get_or_add(pool_address=pool.address, chain_id=chain_id, pool=pool),
+        # Resolve the snapshot block: when no explicit `state_block` is given,
+        # use the current chain head — the core fetches at this block (a `None`
+        # would otherwise degrade to `block=0`).
+        block: int | None = (
+            request.state_block if request.state_block is not None else self._io.get_block_number()
+        )
+
+        # The construction route: the cockpit's resolved policy value — the core
+        # route entry walks it (route order + get-or-register + build +
+        # register) and classifies every failure on the taxonomy.
+        route = request.construction_route or ConstructionRoute()
+
+        # ONE core entry (ADR-059 D6: dispatch at the tier boundary). The
+        # `(family, variant)` identity is DATA from the resolver, never a
+        # subclass test. The core owns the per-family I/O choreography
+        # (immutables, reserves/state, DEX resolve incl. Camelot, CREATE2
+        # verify, the V3 DB-first tick map), registers into `BotState`, and
+        # echoes the construction identity. A new family is a core arm plus a
+        # species-manifest entry — never a new branch here. The V3 fork storage
+        # layout is resolved core-side from the deployment table.
+        is_cl = family is PoolFamily.CONCENTRATED_LIQUIDITY
+        pool_id, b_t0, b_t1, _b_addr, _b_var = self._py_bot.construct_pool(
+            address,
+            family=family.value,
+            variant=variant,
+            block=block,
+            tick_data_fetcher=(
+                self._make_v3_tick_data_fetcher(address, chain_id) if is_cl else None
+            ),
+            factories=list(route.factories) or None,
+            vault=BALANCER_V2_VAULT_ADDRESS,
+            invariant_version=request.invariant_version,
+        )
+
+        py_pool = self._py_bot.get_pool(pool_id)
+        if py_pool is None:  # pragma: no cover
+            msg = f"build_pool: register returned pool_id {pool_id} with no handle"
+            raise DegenbotValueError(message=msg)
+
+        # Return-surface parity: the core entry echoes its own token0/token1
+        # identity, which must equal what the registered handle exposes (a
+        # divergence is a genuine core/driver seam bug — assert loudly rather
+        # than silently re-deriving). The multi-token families echo no token
+        # pair, so the guard applies only where a pair is echoed.
+        if (
+            b_t0
+            and b_t1
+            and (
+                py_pool.token0_address.casefold() != b_t0.casefold()
+                or py_pool.token1_address.casefold() != b_t1.casefold()
+            )
+        ):
+            raise DegenbotValueError(
+                message=(
+                    f"build_pool: core identity diverged from handle for "
+                    f"{address}: core token0={b_t0} token1={b_t1}, "
+                    f"handle token0={py_pool.token0_address} "
+                    f"token1={py_pool.token1_address}"
+                )
             )
 
-        builder = self._builders.get(pool_class)
-        if builder is None:
-            # Fallback: walk MRO of pool_class looking for a registered builder
-            for base in pool_class.__mro__:
-                builder = self._builders.get(base)
-                if builder is not None:
-                    break
+        # V3: split-seed the reorg genesis anchor. Without it the Sparse pool
+        # journals nothing, so `discard_states_before_block(update_block + 1)`
+        # would not raise — a behavior regression for every consumer that
+        # expects the registration seed to be a known state boundary.
+        if is_cl and block is not None and block > 0:
+            py_pool.seed_genesis(block_number=block)
 
-        if builder is None:
-            raise DegenbotValueError(message=f"No builder for pool class {pool_class.__name__}")
-
-        return self._dispatch_build(
-            builder=builder,
+        self._register_delegated_tokens(
+            py_pool,
+            variant=variant,
             address=address,
             chain_id=chain_id,
-            io=io,
             request=request,
+        )
+
+        # `from_handle` is a concrete-class classmethod (not on the base); cast
+        # to `type[Any]` so the call is type-checkable.
+        pool = cast("type[Any]", pool_class).from_handle(py_pool)
+        # Idempotent register: a concurrent registration worker may have built
+        # this same shared pool first; use the canonical instance so THIS path
+        # still registers instead of being lossily skipped.
+        return cast(
+            "AbstractLiquidityPool",
+            self.pools.get_or_add(pool_address=pool.address, chain_id=chain_id, pool=pool),
         )
 
     def _make_v3_tick_data_fetcher(
@@ -895,9 +861,9 @@ class Bot(AccountQueryMixin):
 
     def _register_delegated_tokens(
         self,
-        pool_class: type[AbstractLiquidityPool],
         py_pool: Pool,
         *,
+        variant: str | None,
         address: str,
         chain_id: ChainId,
         request: BuildPoolRequest,
@@ -905,20 +871,21 @@ class Bot(AccountQueryMixin):
         """Register a delegated pool's tokens in this Bot (ADR-006).
 
         V2/V3 families expose exactly two (`token0_address`/`token1_address`);
-        Balancer exposes N via the family-specific token-address getter.
+        Balancer exposes N via the family-specific token-address getter, keyed
+        by the descriptor `variant` (data), never a subclass test.
 
         Raises:
-            BrokenPool: If `pool_class` is a known-broken Balancer pool.
+            BrokenPool: If `address` is a known-broken Balancer pool.
 
         """
-        if issubclass(pool_class, (BalancerV2Pool, BalancerV2StablePool)):
+        if variant in {"balancer_weighted", "balancer_stable"}:
             # Preserve the broken-pool guard from the retired
             # `BalancerBuilder.build` (BrokenPool) so known-bad pools fail fast.
             if address in BROKEN_BALANCER_V2_POOLS:
                 raise BrokenPool
             token_addresses = (
                 py_pool.balancer_token_addresses
-                if issubclass(pool_class, BalancerV2Pool)
+                if variant == "balancer_weighted"
                 else py_pool.balancer_stable_token_addresses
             )
             for token_address in token_addresses:

@@ -892,6 +892,95 @@ impl PyBot {
         )
     }
 
+    /// Construct + register a pool of ANY family through ONE entry — the
+    /// construction switchboard's FFI face (ADR-059 D6: dispatch at the tier
+    /// boundary, then monomorphic). The Python driver resolves the pool's
+    /// `(family, variant)` identity (DB descriptor or on-chain probe) and
+    /// hands it here; this adapter dispatches to the already-shipped
+    /// per-family core builders so a NEW family is a new arm here — never a
+    /// new branch in the Python driver.
+    ///
+    /// Returns the normalized identity echo `(pool_id, token0, token1,
+    /// address, variant)`. The multi-token families (Balancer weighted/stable)
+    /// echo empty token strings — the companion reads its token list off the
+    /// registered handle.
+    ///
+    /// # Errors
+    ///
+    /// As the dispatched per-family builder; `ValueError` on an unknown family
+    /// or a missing required argument (Balancer's `vault`).
+    #[pyo3(signature = (address, family, variant=None, block=None, db=true, tick_data_fetcher=None, factories=None, vault=None, invariant_version=None))]
+    #[expect(clippy::too_many_arguments)] // the family identity + the per-family hints, one flat surface
+    fn construct_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        family: &str,
+        variant: Option<&str>,
+        block: Option<u64>,
+        db: bool,
+        tick_data_fetcher: Option<Bound<'_, PyAny>>,
+        factories: Option<Vec<String>>,
+        vault: Option<&str>,
+        invariant_version: Option<u8>,
+    ) -> PyResult<(u64, String, String, String, String)> {
+        let echo = |pool_id: u64, variant: &str| {
+            (
+                pool_id,
+                String::new(),
+                String::new(),
+                address.to_string(),
+                variant.to_string(),
+            )
+        };
+        match family {
+            // Concentrated liquidity: the V3 construction route (get-or-
+            // register + the route walk + the DB-first tick map). The fork
+            // storage layout is resolved CORE-side from the deployment table,
+            // so the driver never names a fork.
+            "concentrated_liquidity" => {
+                self.build_v3_pool(py, address, block, db, tick_data_fetcher, None, factories)
+            }
+            // Constant product: the V2-style families. Aerodrome is a distinct
+            // structural family with its own core entry; every other V2
+            // variant (Uniswap / Camelot / Sushi / Pancake) shares the V2 entry.
+            "constant_product" => {
+                if variant == Some("aerodrome") {
+                    let pool_id = self.build_aerodrome_v2_pool(py, address, block)?;
+                    Ok(echo(pool_id, "aerodrome"))
+                } else {
+                    self.build_v2_pool(py, address, block)
+                }
+            }
+            // Weighted: Balancer V2 weighted.
+            "weighted" => {
+                let vault = vault.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "construct_pool: the weighted family requires `vault`",
+                    )
+                })?;
+                let pool_id = self.build_balancer_weighted_pool(py, address, vault, block)?;
+                Ok(echo(pool_id, "balancer_weighted"))
+            }
+            // Stableswap: Balancer stable. Curve keeps its Python discovery
+            // builder (the one stableswap the core entry does not classify),
+            // so it never reaches this arm.
+            "stableswap" => {
+                let vault = vault.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "construct_pool: the stableswap family requires `vault`",
+                    )
+                })?;
+                let pool_id =
+                    self.build_balancer_stable_pool(py, address, vault, block, invariant_version)?;
+                Ok(echo(pool_id, "balancer_stable"))
+            }
+            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "construct_pool: unsupported family {other:?}"
+            ))),
+        }
+    }
+
     /// Build + register a V3 pool through the Rust `PoolBuilder` (
     /// delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
     /// map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the

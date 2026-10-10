@@ -922,6 +922,38 @@ class Bot:
         # Errors
         `PyRuntimeError` if the `COMMIT` fails.
         """
+    def construct_pool(
+        self,
+        /,
+        address: str,
+        family: str,
+        variant: str | None = None,
+        block: int | None = None,
+        db: bool = True,
+        tick_data_fetcher: Any | None = None,
+        factories: Sequence[str] | None = None,
+        vault: str | None = None,
+        invariant_version: int | None = None,
+    ) -> tuple[int, str, str, str, str]:
+        """
+        Construct + register a pool of ANY family through ONE entry — the
+        construction switchboard's FFI face (ADR-059 D6: dispatch at the tier
+        boundary, then monomorphic). The Python driver resolves the pool's
+        `(family, variant)` identity (DB descriptor or on-chain probe) and
+        hands it here; this adapter dispatches to the already-shipped
+        per-family core builders so a NEW family is a new arm here — never a
+        new branch in the Python driver.
+
+        Returns the normalized identity echo `(pool_id, token0, token1,
+        address, variant)`. The multi-token families (Balancer weighted/stable)
+        echo empty token strings — the companion reads its token list off the
+        registered handle.
+
+        # Errors
+
+        As the dispatched per-family builder; `ValueError` on an unknown family
+        or a missing required argument (Balancer's `vault`).
+        """
     def curve_get_dy(
         self,
         /,

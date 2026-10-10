@@ -104,7 +104,7 @@ class _ScriptedEngine:
     session-registry identity surface comes from a real ``Bot`` handle.
     """
 
-    build_v2_pool: Callable[..., object] | None = None
+    construct_pool: Callable[..., object] | None = None
     get_pool: Callable[..., object] | None = None
     resolve_v4_identity: Callable[..., object] | None = None
     build_v4_pool: Callable[..., object] | None = None
@@ -278,7 +278,7 @@ class TestBuildDelegatedIdentityReturnSurface:
         # parity guard must raise.
         handle = _PoolHandle(token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40)
         py_bot = _ScriptedEngine(
-            build_v2_pool=lambda address, block=None: (
+            construct_pool=lambda address, family, **kwargs: (
                 7,
                 "0x" + "C" * 40,
                 "0x" + "D" * 40,
