@@ -38,6 +38,9 @@
 //!   mixed entry's [`MixedHopView`] intake.
 //! - `memo` — the cross-block composition memo.
 //! - `path_sim` — the public byte-exact forward path simulator.
+//! - `tally` — the owned walk-telemetry value: the per-solve [`WalkTally`]
+//!   accumulator and the engine-owned [`WalkTelemetry`] collector it merges
+//!   into.
 //! - `telemetry` — walk counters, census, and process-wide timing statics,
 //!   written only when the crate's default-off `telemetry` feature is enabled.
 
@@ -58,6 +61,7 @@ mod entries;
 mod hop_sim;
 mod memo;
 mod path_sim;
+mod tally;
 mod telemetry;
 mod word_profile;
 
@@ -83,6 +87,7 @@ pub use entries::{
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{WalkMemo, WalkMemoStats};
 pub use path_sim::{ClPathOutcome, ClPathSim};
+pub use tally::{WalkNsCensus, WalkSection, WalkTally, WalkTelemetry};
 pub use telemetry::{
     WalkEventCensus, WALK_ANCHOR_ARGMAX_NS, WALK_ANCHOR_BUILD_NS, WALK_ANCHOR_COMPOSE_NS,
     WALK_ANCHOR_NS_TOTAL, WALK_CENSUS_DIR_NS, WALK_CENSUS_DIR_SIMNS, WALK_CENSUS_DIR_SIMS,

@@ -535,6 +535,34 @@ visits, per-section timings, densely-worded-range heights). Read by the run thro
 returned outcome's stats field; production defaults to off.
 _Avoid_: env-gated mutation reads mixed into solve math side effects.
 
+**WalkTally**:
+
+The per-solve walk telemetry accumulator the active-set walk threads by `&mut`; one value per
+
+`solve_active_set_path` call, merged into the engine's `WalkTelemetry` at exit. Solve-scoped, so
+
+it cannot mix counts across solves or tests.
+
+_Avoid_: "thread-local counters", "the TLS cells", treating it as ambient state.
+
+**WalkTelemetry**:
+
+The engine-owned walk telemetry collector (`Arc`, `Option<&WalkTelemetry>` at the solve entries
+
+beside `WalkMemo`): cumulative wall-time census plus the census-piece log, drained by tooling.
+
+_Avoid_: "the walk statics", "the process globals", a process-global singleton.
+
+**WalkNsCensus**:
+
+The process-cumulative walk wall-time census (nanoseconds) the collector accumulates: the
+
+whole-solve, sim, anchor and prediction timers plus the left-edge, right-edge, direction and
+
+refinement `(wall, sims, sim-ns)` section triples. Merge adds; a drain swaps it back to zero.
+
+_Avoid_: reading it as a per-solve value; resetting it mid-solve.
+
 ## Profit envelope
 
 **Profit envelope**:
