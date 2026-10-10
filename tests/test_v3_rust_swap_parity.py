@@ -91,6 +91,37 @@ def _build_v3_pool(
     )
 
 
+def _unsigned_swap(handle, *, zero_for_one: bool, amount_in: int, block: int = 0):
+    """Run the Rust ``simulate`` seam and return the legacy unsigned 5-tuple.
+
+    ``None`` mirrors the retired bare-``None`` not-computable contract.
+    """
+    read = handle.simulate(
+        zero_for_one=zero_for_one,
+        amount_specified=-amount_in,
+        block=block,
+    )
+    if read.get("status") != "computed":
+        return None
+    amount0_delta = int(read["amount0_delta"])
+    amount1_delta = int(read["amount1_delta"])
+    if zero_for_one:
+        return (
+            amount0_delta,
+            -amount1_delta,
+            int(read["sqrt_price_x96"]),
+            int(read["liquidity"]),
+            int(read["tick"]),
+        )
+    return (
+        -amount0_delta,
+        amount1_delta,
+        int(read["sqrt_price_x96"]),
+        int(read["liquidity"]),
+        int(read["tick"]),
+    )
+
+
 def test_sparse_mainline_swap_routed_to_rust_matches_dense_oracle():
     """Sparse pool's mainline swap → Rust fetch+retry == dense-Rust oracle.
 
@@ -191,7 +222,8 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words():
     # via the Rust seam. gen_ticks (now clamped at MIN_TICK) drives the walk
     # to the price limit; the dense path never exercises sparse+fetch, so it
     # is a valid reference for the sparse fetch+retry path below.
-    oracle_outcome = dense._py_pool.simulate_swap_with_fetch(
+    oracle_outcome = _unsigned_swap(
+        dense._py_pool,
         zero_for_one=True,  # zfo (token0 in → token1 out, descending → MIN)
         amount_in=amount_in,
         block=0,
@@ -227,7 +259,8 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words():
     )
     assert sparse.sparse_liquidity_map, "no tick_data ⇒ sparse companion"
 
-    result = sparse._py_pool.simulate_swap_with_fetch(
+    result = _unsigned_swap(
+        sparse._py_pool,
         zero_for_one=True,
         amount_in=amount_in,
         block=0,

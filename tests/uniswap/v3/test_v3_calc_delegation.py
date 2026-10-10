@@ -55,32 +55,22 @@ def _make_tokens(py_bot: Bot, tag: str):
 
 
 class _DelegateSpy:
-    """Wraps a ``Pool`` to record V3 swap-seam calls.
+    """Wraps a ``Pool`` to record the V3 swap-simulation seam calls.
 
     Pass-through for all other handle methods via ``__getattr__``. Records
-    ``simulate_swap_with_fetch`` (exact-input) and
-    ``simulate_exact_output_swap_with_fetch`` (exact-output) invocations.
+    ``simulate`` invocations as ``(zero_for_one, amount_specified)``.
     """
 
     def __init__(self, real_pool):
         self._real = real_pool
-        self.swap_with_fetch_calls: list[tuple[bool, int]] = []
-        self.exact_output_with_fetch_calls: list[tuple[bool, int]] = []
+        self.simulate_calls: list[tuple[bool, int]] = []
 
-    def simulate_swap_with_fetch(self, *, zero_for_one, amount_in, **_):
-        self.swap_with_fetch_calls.append((bool(zero_for_one), int(amount_in)))
-        return self._real.simulate_swap_with_fetch(
+    def simulate(self, *, zero_for_one, amount_specified, **kwargs):
+        self.simulate_calls.append((bool(zero_for_one), int(amount_specified)))
+        return self._real.simulate(
             zero_for_one=zero_for_one,
-            amount_in=amount_in,
-            **_,
-        )
-
-    def simulate_exact_output_swap_with_fetch(self, *, zero_for_one, amount_out, **_):
-        self.exact_output_with_fetch_calls.append((bool(zero_for_one), int(amount_out)))
-        return self._real.simulate_exact_output_swap_with_fetch(
-            zero_for_one=zero_for_one,
-            amount_out=amount_out,
-            **_,
+            amount_specified=amount_specified,
+            **kwargs,
         )
 
     def __getattr__(self, name):
@@ -121,7 +111,7 @@ class TestV3CalcDelegation:
 
     def test_calculate_tokens_out_delegates_to_rust_no_override(self) -> None:
         """No override_state: ``calculate_tokens_out_from_tokens_in`` routes
-        to ``Pool.simulate_swap_with_fetch`` (token0 in → zfo=True)."""
+        to ``Pool.simulate`` (token0 in → zfo=True, exact-input)."""
         py_bot = Bot()
         pool = _make_dense_pool(py_bot)
         spy = _DelegateSpy(pool._py_pool)
@@ -132,8 +122,7 @@ class TestV3CalcDelegation:
             token_in_quantity=1_000,
         )
 
-        assert spy.swap_with_fetch_calls == [(True, 1_000)]
-        assert spy.exact_output_with_fetch_calls == []
+        assert spy.simulate_calls == [(True, -1_000)]
         assert result > 0
 
     def test_calculate_tokens_out_reverse_delegates_to_rust(self) -> None:
@@ -148,13 +137,12 @@ class TestV3CalcDelegation:
             token_in_quantity=1_000,
         )
 
-        assert spy.swap_with_fetch_calls == [(False, 1_000)]
+        assert spy.simulate_calls == [(False, -1_000)]
         assert result > 0
 
     def test_calculate_tokens_in_delegates_to_rust_no_override(self) -> None:
         """No override_state: ``calculate_tokens_in_from_tokens_out`` routes
-        to ``Pool.simulate_exact_output_swap_with_fetch``
-        (token1 out → zfo=True)."""
+        to ``Pool.simulate`` (token1 out → zfo=True, exact-output)."""
         py_bot = Bot()
         pool = _make_dense_pool(py_bot)
         spy = _DelegateSpy(pool._py_pool)
@@ -165,8 +153,7 @@ class TestV3CalcDelegation:
             token_out_quantity=1_000,
         )
 
-        assert spy.exact_output_with_fetch_calls == [(True, 1_000)]
-        assert spy.swap_with_fetch_calls == []
+        assert spy.simulate_calls == [(True, 1_000)]
         assert result > 0
 
     def test_calculate_tokens_in_reverse_delegates_to_rust(self) -> None:
@@ -181,5 +168,31 @@ class TestV3CalcDelegation:
             token_out_quantity=1_000,
         )
 
-        assert spy.exact_output_with_fetch_calls == [(False, 1_000)]
+        assert spy.simulate_calls == [(False, 1_000)]
         assert result > 0
+
+    def test_rust_seam_sign_mapping_dense(self) -> None:
+        """The Rust seam is THE sign-mapping owner (one pin, all four shapes).
+
+        Exact-in and exact-out, both directions: the deposit side reads
+        positive and the sent side negative — the mapping the companions used
+        to re-copy per branch now lives once behind ``Pool.simulate``.
+        """
+        py_bot = Bot()
+        handle = _make_dense_pool(py_bot)._py_pool
+
+        exact_in_zfo = handle.simulate(zero_for_one=True, amount_specified=-1_000, block=0)
+        assert exact_in_zfo["amount0_delta"] == 1_000
+        assert exact_in_zfo["amount1_delta"] < 0
+
+        exact_in_ofz = handle.simulate(zero_for_one=False, amount_specified=-1_000, block=0)
+        assert exact_in_ofz["amount0_delta"] < 0
+        assert exact_in_ofz["amount1_delta"] == 1_000
+
+        exact_out_zfo = handle.simulate(zero_for_one=True, amount_specified=1_000, block=0)
+        assert exact_out_zfo["amount0_delta"] > 0
+        assert exact_out_zfo["amount1_delta"] == -1_000
+
+        exact_out_ofz = handle.simulate(zero_for_one=False, amount_specified=1_000, block=0)
+        assert exact_out_ofz["amount0_delta"] == -1_000
+        assert exact_out_ofz["amount1_delta"] > 0

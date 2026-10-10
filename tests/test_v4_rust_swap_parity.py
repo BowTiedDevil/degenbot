@@ -109,6 +109,37 @@ def _build_dense_v4_pool(py_bot: Bot, address_tag: str, *, coverage: str = "trac
     )
 
 
+def _unsigned_swap(handle, *, zero_for_one: bool, amount_in: int, block: int = 0):
+    """Run the Rust ``simulate`` seam and return the legacy unsigned 5-tuple.
+
+    ``None`` mirrors the retired bare-``None`` not-computable contract.
+    """
+    read = handle.simulate(
+        zero_for_one=zero_for_one,
+        amount_specified=-amount_in,
+        block=block,
+    )
+    if read.get("status") != "computed":
+        return None
+    amount0_delta = int(read["amount0_delta"])
+    amount1_delta = int(read["amount1_delta"])
+    if zero_for_one:
+        return (
+            amount0_delta,
+            -amount1_delta,
+            int(read["sqrt_price_x96"]),
+            int(read["liquidity"]),
+            int(read["tick"]),
+        )
+    return (
+        -amount0_delta,
+        amount1_delta,
+        int(read["sqrt_price_x96"]),
+        int(read["liquidity"]),
+        int(read["tick"]),
+    )
+
+
 def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
     """Sparse V4 pool's mainline swap → fetch+merge == dense oracle.
 
@@ -296,7 +327,8 @@ def test_rust_v4_dense_corpus_matches_on_chain_quoter():
         token_in=pool.token1,
         token_in_quantity=_V4_DIVERGE_AMOUNT,
     )
-    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
+    rust_outcome = _unsigned_swap(
+        pool._py_pool,
         zero_for_one=False,
         amount_in=_V4_DIVERGE_AMOUNT,
         block=0,
@@ -361,7 +393,8 @@ def test_rust_v4_sparse_fetch_corpus_matches_dense():
         sparse=True,
         fetcher=full_fetcher,
     )
-    rust_outcome = rust_pool._py_pool.simulate_swap_with_fetch(
+    rust_outcome = _unsigned_swap(
+        rust_pool._py_pool,
         zero_for_one=False,
         amount_in=_V4_DIVERGE_AMOUNT,
         block=0,
@@ -420,7 +453,8 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
     # via the Rust seam (the seam is the subject under test for the sparse
     # path; the dense path never misses, so it is a valid reference). gen_ticks
     # (now clamped at MIN_TICK) drives the walk to the price limit.
-    oracle_outcome = dense._py_pool.simulate_swap_with_fetch(
+    oracle_outcome = _unsigned_swap(
+        dense._py_pool,
         zero_for_one=True,  # zfo (token0 in → token1 out, descending → MIN)
         amount_in=amount_in,
         block=0,
@@ -472,7 +506,8 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
     sparse._py_pool.update_tick_data({}, {}, 0)
     assert sparse.sparse_liquidity_map, "sparse-registered companion is sparse (Rust coverage)"
 
-    rust_outcome = sparse._py_pool.simulate_swap_with_fetch(
+    rust_outcome = _unsigned_swap(
+        sparse._py_pool,
         zero_for_one=True,
         amount_in=amount_in,
         block=0,

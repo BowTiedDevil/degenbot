@@ -58,6 +58,23 @@ if TYPE_CHECKING:
     from degenbot.types.chain import ChecksummedAddress
 
 
+def _signed_amounts(read: dict, *, zero_for_one: bool) -> tuple[int, int]:
+    """Split a computed swap read's signed deltas into (amount_in, amount_out).
+
+    The Rust seam returns the deposited-`+`/sent-`-` per-token deltas; the
+    input side reads positive and the output side negative.
+
+    Returns:
+        The ``(amount_in, amount_out)`` unsigned magnitudes.
+
+    """
+    amount0_delta = int(read["amount0_delta"])
+    amount1_delta = int(read["amount1_delta"])
+    if zero_for_one:
+        return amount0_delta, -amount1_delta
+    return amount1_delta, -amount0_delta
+
+
 @dataclasses.dataclass(slots=True)
 class SwapResult:
     """SwapResult class."""
@@ -343,101 +360,45 @@ class UniswapV4Pool(
             DegenbotValueError: If token_out is not held by this pool.
             HookedPoolResult: If the pool has active hooks that affect the swap.
             IncompleteSwap: If the swap cannot fulfill the full output amount.
-            LiquidityPoolError: If the simulated execution reverts.
+            LiquidityPoolError: If the simulated execution cannot compute.
 
         """
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_out not found!")
-
         zero_for_one = token_out == self._token1
-
-        # ADR-005 slice 4: mainline exact-output swap (no override) delegates to
-        # the Rust exact-output fetch+retry seam. The V4 exact-output sign
-        # convention (amountSpecified > 0) is handled in the Rust core; a custom
-        # limit threads through (the seam honours it). The override path routes
-        # to the Rust exact-output override seam
-        # (``simulate_exact_output_swap_with_override`` — see below).
-        if override_state is None:
-            outcome = self._py_pool.simulate_exact_output_swap_with_fetch(
-                zero_for_one=zero_for_one,
-                amount_out=token_out_quantity,
-                block=self.update_block,
-            )
-            if outcome is None:
-                raise LiquidityPoolError(
-                    message=(
-                        f"Simulated execution could not compute. "
-                        f"pool={self.address} zfo={zero_for_one} "
-                        f"amount_out={token_out_quantity}"
-                    ),
-                )
-            rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
-            # The output side is the requested token_out; the input side is the
-            # required token_in (opposing amount). zfo: token1 out / token0 in;
-            # ofz: token0 out / token1 in.
-            rust_amount_out = rust_amount1 if zero_for_one else rust_amount0
-            if rust_amount_out < token_out_quantity:
-                rust_amount_in = rust_amount0 if zero_for_one else rust_amount1
-                raise IncompleteSwap(
-                    amount_in=rust_amount_in,
-                    amount_out=rust_amount_out,
-                )
-            return rust_amount0 if zero_for_one else rust_amount1
-
-        # ADR-005 slice 4: exact-output swap over an override (arbitrage
-        # hypothetical) delegates to the Rust fetch-enhanced exact-output
-        # override seam. HookedPoolResult / IncompleteSwap stay in Python.
-        outcome = self._py_pool.simulate_exact_output_swap_with_override(
+        read = self._py_pool.simulate(
             zero_for_one=zero_for_one,
-            amount_out=token_out_quantity,
+            amount_specified=token_out_quantity,
             block=self.update_block,
-            override_sqrt_price_x96=override_state.sqrt_price_x96,
-            override_liquidity=override_state.liquidity,
-            override_tick=override_state.tick,
-            override_tick_data={
-                tick: (la.liquidity_gross, la.liquidity_net, la.block)
-                for tick, la in override_state.tick_data.items()
-            },
-            sqrt_price_limit_x96=None,
+            override_state=override_state,
         )
-        if outcome is None:
+        if read.get("status") != "computed":
             raise LiquidityPoolError(
                 message=(
                     f"Simulated execution could not compute. "
                     f"pool={self.address} zfo={zero_for_one} "
-                    f"amount_out={token_out_quantity} override"
+                    f"amount_out={token_out_quantity}"
                 ),
             )
-        rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
-        # Exact-output: output side is the requested token_out; input side is
-        # the required token_in. ofz (zfo=False): token0 out / token1 in.
-        # zfo: token1 out / token0 in.
-        amount_out = rust_amount1 if zero_for_one else rust_amount0
-        amount_in = rust_amount0 if zero_for_one else rust_amount1
-
-        assert amount_out <= token_out_quantity
-
-        if conflicting_hooks := (
-            {
+        amount_in, amount_out = _signed_amounts(read, zero_for_one=zero_for_one)
+        if override_state is not None:
+            conflicting_hooks = {
                 Hooks.AFTER_SWAP,
                 Hooks.AFTER_SWAP_RETURNS_DELTA,
                 Hooks.BEFORE_SWAP,
                 Hooks.BEFORE_SWAP_RETURNS_DELTA,
-            }
-            & self.active_hooks
-        ):
-            raise HookedPoolResult(
-                amount_in=amount_in,
-                amount_out=amount_out,
-                hooks=conflicting_hooks,
-            )
-
+            } & self.active_hooks
+            if conflicting_hooks:
+                raise HookedPoolResult(
+                    amount_in=amount_in,
+                    amount_out=amount_out,
+                    hooks=conflicting_hooks,
+                )
         if amount_out < token_out_quantity:
             raise IncompleteSwap(
                 amount_in=amount_in,
                 amount_out=amount_out,
             )
-
         return amount_in
 
     def calculate_tokens_out_from_tokens_in(
@@ -455,90 +416,45 @@ class UniswapV4Pool(
             DegenbotValueError: If token_in is not held by this pool.
             HookedPoolResult: If the pool has active hooks that affect the swap.
             IncompleteSwap: If the swap cannot fulfill the full input amount.
-            LiquidityPoolError: If the simulated execution reverts.
+            LiquidityPoolError: If the simulated execution cannot compute.
 
         """
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not found!")
-
         zero_for_one = token_in == self._token0
-
-        # ADR-005 slice 3b: mainline exact-input swap (no override, no custom
-        # price limit) delegates to the Rust fetch+retry seam. The sparse-path
-        # crossing-swap divergence (ELSE-branch miss check in `v4_simulate_swap`)
-        # is fixed — `test_cached_calculations` was RED on seed 2, now GREEN
-        # across seeds. The override path routes to the Rust override seam
-        # (``simulate_swap_with_override`` — see below); a custom limit threads
-        # through both paths (the seam honours it).
-        if override_state is None:
-            outcome = self._py_pool.simulate_swap_with_fetch(
-                zero_for_one=zero_for_one,
-                amount_in=token_in_quantity,
-                block=self.update_block,
-            )
-            if outcome is None:
-                raise LiquidityPoolError(
-                    message=(
-                        f"Simulated execution could not compute. "
-                        f"pool={self.address} zfo={zero_for_one} "
-                        f"amount_in={token_in_quantity}"
-                    ),
-                )
-            rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
-            return rust_amount1 if zero_for_one else rust_amount0
-
-        # ADR-005 slice 4: exact-input swap over an override (arbitrage
-        # hypothetical) delegates to the Rust fetch-enhanced override seam.
-        # HookedPoolResult / IncompleteSwap stay in Python.
-        outcome = self._py_pool.simulate_swap_with_override(
+        read = self._py_pool.simulate(
             zero_for_one=zero_for_one,
-            amount_in=token_in_quantity,
+            amount_specified=-token_in_quantity,
             block=self.update_block,
-            override_sqrt_price_x96=override_state.sqrt_price_x96,
-            override_liquidity=override_state.liquidity,
-            override_tick=override_state.tick,
-            override_tick_data={
-                tick: (la.liquidity_gross, la.liquidity_net, la.block)
-                for tick, la in override_state.tick_data.items()
-            },
-            sqrt_price_limit_x96=None,
+            override_state=override_state,
         )
-        if outcome is None:
+        if read.get("status") != "computed":
             raise LiquidityPoolError(
                 message=(
                     f"Simulated execution could not compute. "
                     f"pool={self.address} zfo={zero_for_one} "
-                    f"amount_in={token_in_quantity} override"
+                    f"amount_in={token_in_quantity}"
                 ),
             )
-        rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
-        # ofz (zfo=False): token1 in / token0 out. zfo: token0 in / token1 out.
-        amount_in = rust_amount0 if zero_for_one else rust_amount1
-        amount_out = rust_amount1 if zero_for_one else rust_amount0
-
-        assert amount_in <= token_in_quantity
-
-        if conflicting_hooks := (
-            {
+        amount_in, amount_out = _signed_amounts(read, zero_for_one=zero_for_one)
+        if override_state is not None:
+            conflicting_hooks = {
                 Hooks.AFTER_SWAP,
                 Hooks.AFTER_SWAP_RETURNS_DELTA,
                 Hooks.BEFORE_SWAP,
                 Hooks.BEFORE_SWAP_RETURNS_DELTA,
-            }
-            & self.active_hooks
-        ):
-            raise HookedPoolResult(
-                amount_in=amount_in,
-                amount_out=amount_out,
-                hooks=conflicting_hooks,
-            )
-
-        if amount_in < token_in_quantity:
-            raise IncompleteSwap(
-                amount_in=amount_in,
-                amount_out=amount_out,
-            )
-
+            } & self.active_hooks
+            if conflicting_hooks:
+                raise HookedPoolResult(
+                    amount_in=amount_in,
+                    amount_out=amount_out,
+                    hooks=conflicting_hooks,
+                )
+            if amount_in < token_in_quantity:
+                raise IncompleteSwap(
+                    amount_in=amount_in,
+                    amount_out=amount_out,
+                )
         return amount_out
 
     @property

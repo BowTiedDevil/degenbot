@@ -22,11 +22,11 @@ use crate::bot::errmap::{
     override_family_gap, pool_unregistered, swap_family_gap, swap_math_in_overflow,
     swap_math_overflow, swap_unknown_pool,
 };
-use degenbot_bot::bot_core::pool_ops::{self, StagedSwapOutcome, SwapOpError};
+use degenbot_bot::bot_core::pool_ops::{self, SwapOpError};
 use degenbot_bot::bot_core::refresh::{RefreshError, RefreshOutcome};
 use degenbot_bot::bot_core::TickInfo;
 use degenbot_substrate::state_lock::StateLock;
-use degenbot_substrate::swap_simulation::SwapRequest;
+use degenbot_substrate::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
 use degenbot_substrate::{BotState, CurveInputsError};
 
 /// `PyO3` adapter wrapping a Python fetch-word callable as a
@@ -557,37 +557,37 @@ impl PyLiquidityPool {
         }
     }
 
-    /// Shared override-sim inner: extracts Python args and calls the gate's
-    /// `simulate_override` (transient-state fetch+retry policy).
-    #[expect(clippy::too_many_arguments)]
+    /// Shared override-sim inner: reads the hypothetical scalars off a CL
+    /// pool-state object and drives the gate's transient-state fetch+retry.
     fn sim_override_inner(
         &self,
         py: Python<'_>,
         zero_for_one: bool,
-        amount: alloy::primitives::U256,
-        exact_output: bool,
+        amount_specified: I256,
         block: u64,
-        override_sqrt_price_x96: &Bound<'_, PyAny>,
-        override_liquidity: &Bound<'_, PyAny>,
-        override_tick: &Bound<'_, PyAny>,
-        override_tick_data: &Bound<'_, PyAny>,
+        override_state: &Bound<'_, PyAny>,
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<degenbot_bot::bot_core::V3SwapOutcome>> {
-        let override_sqrt = crate::conversion::alloy::extract_python_u256(override_sqrt_price_x96)?;
+        let override_sqrt = crate::conversion::alloy::extract_python_u256(
+            &override_state.getattr("sqrt_price_x96")?,
+        )?;
         let override_liquidity = u128::try_from(crate::conversion::alloy::extract_python_u256(
-            override_liquidity,
+            &override_state.getattr("liquidity")?,
         )?)
         .map_err(|_| {
             pyo3::exceptions::PyOverflowError::new_err("override_liquidity must fit in u128")
         })?;
-        let override_tick =
-            i32::try_from(override_tick.extract::<i64>().map_err(|_| {
-                pyo3::exceptions::PyTypeError::new_err("override_tick must be an int")
-            })?)
-            .map_err(|_| {
-                pyo3::exceptions::PyOverflowError::new_err("override_tick must fit in i32")
-            })?;
-        let rust_tick_data = TickData::from_py(override_tick_data)?;
+        let override_tick = i32::try_from(
+            override_state
+                .getattr("tick")?
+                .extract::<i64>()
+                .map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("override_tick must be an int")
+                })?,
+        )
+        .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("override_tick must fit in i32"))?;
+        let rust_tick_data =
+            TickData::from_py_liquidity_rows(&override_state.getattr("tick_data")?)?;
         let sqrt_price_limit = match sqrt_price_limit_x96 {
             Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
             _ => None,
@@ -596,21 +596,7 @@ impl PyLiquidityPool {
             pool_id: self.pool_id,
             request: SwapRequest {
                 zero_for_one,
-                // User perspective: positive = exact-output (pool delivers),
-                // negative = exact-input. Engine conventions handled in-gate.
-                amount_specified: if exact_output {
-                    I256::try_from(amount).map_err(|_| {
-                        pyo3::exceptions::PyValueError::new_err(
-                            "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                        )
-                    })?
-                } else {
-                    -I256::try_from(amount).map_err(|_| {
-                        pyo3::exceptions::PyValueError::new_err(
-                            "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                        )
-                    })?
-                },
+                amount_specified,
                 sqrt_price_limit,
             },
             sqrt_price_x96: override_sqrt,
@@ -952,173 +938,83 @@ impl PyLiquidityPool {
         }
     }
 
-    /// Fetch+retry full-outcome exact-input swap for sparse V3/V4 pools
-    /// (ADR-005 slice 3b). Like [`calculate_tokens_out_with_fetch`][Self::calculate_tokens_out_with_fetch]
-    /// but returns the full swap outcome tuple so the companion can build
-    /// `final_state`.
-    /// Returns `(amount0, amount1, sqrt_price_x96, liquidity, tick)` or `None`
-    /// (pool not V3/V4, zero amount, fetch failed, or not computable).
-    #[pyo3(signature = (zero_for_one, amount_in, block, sqrt_price_limit_x96=None))]
-    fn simulate_swap_with_fetch(
+    /// THE swap-simulation seam (ADR-037): one verb behind every "what would
+    /// this swap do against current pool state" read. `amount_specified` is
+    /// signed user-perspective (negative = exact input, positive = exact
+    /// output). Returns a typed read dict — `status` is `computed` (with
+    /// signed per-token deltas in the deposited-`+`/sent-`-` convention, the
+    /// end state, and `specified_met`), `not_computable`, `fetch_failed`, or
+    /// `fetch_exhausted`. Pass `override_state` (a CL pool-state object) to
+    /// simulate against a hypothetical.
+    #[pyo3(signature = (zero_for_one, amount_specified, block, sqrt_price_limit_x96=None, override_state=None))]
+    fn simulate(
         &self,
         py: Python<'_>,
         zero_for_one: bool,
-        amount_in: &Bound<'_, PyAny>,
+        amount_specified: &Bound<'_, PyAny>,
         block: u64,
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let amount_specified = -I256::try_from(amount)
-            .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("amount does not fit I256"))?;
-        let sqrt_price_limit = match sqrt_price_limit_x96 {
-            Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
-            _ => None,
-        };
-        let request = degenbot_substrate::swap_simulation::SwapRequest {
+        override_state: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount_specified = extract_signed_amount(amount_specified)?;
+        if let Some(state) = override_state.filter(|s| !s.is_none()) {
+            let outcome = self.sim_override_inner(
+                py,
+                zero_for_one,
+                amount_specified,
+                block,
+                state,
+                sqrt_price_limit_x96,
+            )?;
+            return match outcome {
+                Some(o) => build_simulate_read(
+                    py,
+                    zero_for_one,
+                    amount_specified,
+                    o.amount0,
+                    o.amount1,
+                    (o.sqrt_price_x96, o.liquidity, o.tick),
+                ),
+                None => not_computable_read(py),
+            };
+        }
+        let request = SwapRequest {
             zero_for_one,
             amount_specified,
-            sqrt_price_limit,
+            sqrt_price_limit: match sqrt_price_limit_x96 {
+                Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
+                _ => None,
+            },
         };
         let core = self.core.clone();
-        let outcome = py.detach(move || {
-            pool_ops::simulate_swap_with_fetch(&core, self.pool_id, &request, block)
-        });
-        match outcome {
-            StagedSwapOutcome::Computed(payload) => Ok(Some(build_cl_payload_tuple(py, &payload)?)),
-            StagedSwapOutcome::HookedPool {
-                consumed,
-                delivered,
-            } => Err(hooked_pool_approximation(-consumed, delivered)),
-            // Legacy bare-`None`: staging failure, not computable, and the
-            // exact-input seam's non-CL collapse.
-            _ => Ok(None),
+        let read =
+            py.detach(move || pool_ops::simulate_mainline(&core, self.pool_id, &request, block));
+        match read {
+            SwapRead::Computed(SwapOutcome::V3(o) | SwapOutcome::V4(o)) => {
+                if o.caveats.contains(Caveats::HOOKED_POOL) {
+                    return Err(hooked_pool_approximation(
+                        o.consumed,
+                        o.delivered.into_raw(),
+                    ));
+                }
+                let (amount0, amount1) = o.raw_token_amounts(zero_for_one);
+                build_simulate_read(
+                    py,
+                    zero_for_one,
+                    amount_specified,
+                    amount0,
+                    amount1,
+                    (o.end_sqrt_price_x96, o.end_liquidity, o.end_tick),
+                )
+            }
+            SwapRead::Computed(_) | SwapRead::NotComputable => not_computable_read(py),
+            SwapRead::FetchFailed { word } => status_word_read(py, "fetch_failed", word),
+            SwapRead::FetchExhausted { word } => status_word_read(py, "fetch_exhausted", word),
+            SwapRead::UnsupportedFamily { pool_id, family } => {
+                Err(swap_family_gap(pool_id, family))
+            }
+            SwapRead::UnknownPool { pool_id } => Err(swap_unknown_pool(pool_id)),
         }
-    }
-
-    /// Exact-OUTPUT fetch+retry swap: caller passes the desired `amount_out`,
-    /// the sim derives the required input. Same 5-tuple return shape as
-    /// `simulate_swap_with_fetch` (the caller extracts the opposing amount as
-    /// the required input). Mirrors the Python `calculate_tokens_in_from_
-    /// tokens_out` / `simulate_exact_output_swap` frozen path; the V3/V4
-    /// exact-output sign convention is handled in the core.
-    #[pyo3(signature = (zero_for_one, amount_out, block, sqrt_price_limit_x96=None))]
-    fn simulate_exact_output_swap_with_fetch(
-        &self,
-        py: Python<'_>,
-        zero_for_one: bool,
-        amount_out: &Bound<'_, PyAny>,
-        block: u64,
-        sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        let amount_specified = I256::try_from(amount).map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err(
-                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-            )
-        })?;
-        let sqrt_price_limit = match sqrt_price_limit_x96 {
-            Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
-            _ => None,
-        };
-        let request = degenbot_substrate::swap_simulation::SwapRequest {
-            zero_for_one,
-            // Exact-output request: POSITIVE user-perspective (pool delivers).
-            // The V3/V4 engine sign conventions are handled inside the gate.
-            amount_specified,
-            sqrt_price_limit,
-        };
-        let core = self.core.clone();
-        let outcome = py.detach(move || {
-            pool_ops::simulate_swap_with_fetch(&core, self.pool_id, &request, block)
-        });
-        match outcome {
-            StagedSwapOutcome::Computed(payload) => Ok(Some(build_cl_payload_tuple(py, &payload)?)),
-            StagedSwapOutcome::HookedPool {
-                consumed,
-                delivered,
-            } => Err(hooked_pool_approximation(-consumed, delivered)),
-            // A non-CL family cannot produce the CL 5-tuple this exact-output
-            // seam promises: a typed gap, never a bare `None`.
-            StagedSwapOutcome::UnsupportedFamily { pool_id, family } => Err(
-                exact_output_family_gap("simulate_exact_output_swap_with_fetch", pool_id, family),
-            ),
-            StagedSwapOutcome::NotComputable => Ok(None),
-        }
-    }
-
-    /// Simulate an exact-input swap over a HYPOTHETICAL override pool state,
-    /// with fetch+retry for sparse misses.
-    /// Builds a transient V3/V4 state from `override_sqrt_price_x96`,
-    /// `override_liquidity`, `override_tick` + `override_tick_data`
-    /// (`{tick: (liquidity_gross, liquidity_net, block)}`, same shape as
-    /// `register_*_pool`'s `tick_data`), reusing the registered pool's fee /
-    /// `tick_spacing`. On a sparse miss, the fetcher is called + the word's
-    /// ticks are merged into the TRANSIENT state (NOT registered `BotState`),
-    /// and the sim retries. Returns the same 5-tuple as
-    /// `simulate_swap_with_fetch`, or `None` if not computable.
-    #[pyo3(signature = (zero_for_one, amount_in, block, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
-    #[expect(clippy::too_many_arguments)]
-    fn simulate_swap_with_override(
-        &self,
-        py: Python<'_>,
-        zero_for_one: bool,
-        amount_in: &Bound<'_, PyAny>,
-        block: u64,
-        override_sqrt_price_x96: &Bound<'_, PyAny>,
-        override_liquidity: &Bound<'_, PyAny>,
-        override_tick: &Bound<'_, PyAny>,
-        override_tick_data: &Bound<'_, PyAny>,
-        sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let outcome = self.sim_override_inner(
-            py,
-            zero_for_one,
-            amount,
-            false, // exact_input
-            block,
-            override_sqrt_price_x96,
-            override_liquidity,
-            override_tick,
-            override_tick_data,
-            sqrt_price_limit_x96,
-        )?;
-        outcome.map_or(Ok(None), |o| build_swap_outcome_tuple(py, &o))
-    }
-
-    /// Exact-OUTPUT swap over a HYPOTHETICAL override pool state, with
-    /// fetch+retry for sparse misses. Caller passes the desired `amount_out`,
-    /// the sim derives the required input. Same 5-tuple return shape as
-    /// `simulate_swap_with_override`. Combines the override-state build with
-    /// the V3/V4 exact-output sign convention (handled in the core).
-    #[pyo3(signature = (zero_for_one, amount_out, block, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
-    #[expect(clippy::too_many_arguments)]
-    fn simulate_exact_output_swap_with_override(
-        &self,
-        py: Python<'_>,
-        zero_for_one: bool,
-        amount_out: &Bound<'_, PyAny>,
-        block: u64,
-        override_sqrt_price_x96: &Bound<'_, PyAny>,
-        override_liquidity: &Bound<'_, PyAny>,
-        override_tick: &Bound<'_, PyAny>,
-        override_tick_data: &Bound<'_, PyAny>,
-        sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        let outcome = self.sim_override_inner(
-            py,
-            zero_for_one,
-            amount,
-            true, // exact_output
-            block,
-            override_sqrt_price_x96,
-            override_liquidity,
-            override_tick,
-            override_tick_data,
-            sqrt_price_limit_x96,
-        )?;
-        outcome.map_or(Ok(None), |o| build_swap_outcome_tuple(py, &o))
     }
 
     #[pyo3(signature = (zero_for_one, amount_out, recipient))]
@@ -3009,39 +2905,91 @@ fn cl_snapshot_fields(
     )
 }
 
-/// Build the Python 5-tuple `(amount0, amount1, sqrt_price_x96, liquidity,
-/// tick)` returned by the swap-sim `PyO3` seams.
-fn build_cl_payload_tuple(
-    py: Python<'_>,
-    payload: &degenbot_bot::bot_core::pool_ops::ClSwapPayload,
-) -> PyResult<Py<PyAny>> {
-    let tuple = pyo3::types::PyTuple::new(
-        py,
-        [
-            crate::conversion::alloy::u256_to_py(py, &payload.amount0)?.unbind(),
-            crate::conversion::alloy::u256_to_py(py, &payload.amount1)?.unbind(),
-            crate::conversion::alloy::u256_to_py(py, &payload.sqrt_price_x96)?.unbind(),
-            payload.liquidity.into_pyobject(py)?.into_any().unbind(),
-            payload.tick.into_pyobject(py)?.into_any().unbind(),
-        ],
-    )?;
-    Ok(tuple.into_any().unbind())
+/// Extract a signed user-perspective request amount (negative = exact input).
+/// The magnitude may span the full `uint256` range (a max-int256 probe), so
+/// the sign is read off the integer and the absolute value narrows to `I256`.
+fn extract_signed_amount(obj: &Bound<'_, PyAny>) -> PyResult<I256> {
+    let type_error = || pyo3::exceptions::PyTypeError::new_err("amount_specified must be an int");
+    let negative = obj.lt(0).map_err(|_| type_error())?;
+    let magnitude = if negative {
+        let absolute = obj.call_method0("__abs__").map_err(|_| type_error())?;
+        crate::conversion::alloy::extract_python_u256(&absolute)?
+    } else {
+        crate::conversion::alloy::extract_python_u256(obj)?
+    };
+    let magnitude = I256::try_from(magnitude).map_err(|_| swap_math_overflow())?;
+    Ok(if negative { -magnitude } else { magnitude })
 }
 
-/// Build the Python 5-tuple `(amount0, amount1, sqrt_price_x96, liquidity,
-/// tick)` returned by the swap-sim `PyO3` seams.
-fn build_swap_outcome_tuple(
-    py: Python<'_>,
-    outcome: &degenbot_bot::bot_core::V3SwapOutcome,
-) -> PyResult<Option<Py<PyAny>>> {
-    let payload = pool_ops::ClSwapPayload {
-        amount0: outcome.amount0,
-        amount1: outcome.amount1,
-        sqrt_price_x96: outcome.sqrt_price_x96,
-        liquidity: outcome.liquidity,
-        tick: outcome.tick,
+/// Convert a signed 256-bit delta to a Python `int`.
+fn i256_to_py(py: Python<'_>, value: I256) -> PyResult<Py<PyAny>> {
+    let (sign, magnitude) = value.into_sign_and_abs();
+    let magnitude = u128::try_from(magnitude).unwrap_or(u128::MAX);
+    let signed: i128 = if sign.is_negative() {
+        -i128::try_from(magnitude).unwrap_or(i128::MAX)
+    } else {
+        i128::try_from(magnitude).unwrap_or(i128::MAX)
     };
-    build_cl_payload_tuple(py, &payload).map(Some)
+    Ok(signed.into_pyobject(py)?.into_any().unbind())
+}
+
+/// THE sign-mapping site (ADR-037): an unsigned per-token amount pair becomes
+/// signed deltas in the deposited-`+`/sent-`-` convention — the input side is
+/// positive, the output side negative — plus whether the requested side was
+/// fully met.
+fn build_simulate_read(
+    py: Python<'_>,
+    zero_for_one: bool,
+    amount_specified: I256,
+    amount0: U256,
+    amount1: U256,
+    end: (U256, u128, i32),
+) -> PyResult<Py<PyAny>> {
+    let (sqrt_price_x96, liquidity, tick) = end;
+    let (input, output) = if zero_for_one {
+        (amount0, amount1)
+    } else {
+        (amount1, amount0)
+    };
+    let input_delta = I256::try_from(input).unwrap_or(I256::MAX);
+    let output_delta = -I256::try_from(output).unwrap_or(I256::MAX);
+    let (amount0_delta, amount1_delta) = if zero_for_one {
+        (input_delta, output_delta)
+    } else {
+        (output_delta, input_delta)
+    };
+    let specified_met = if amount_specified.is_negative() {
+        (-amount_specified).into_raw() <= input
+    } else {
+        amount_specified.into_raw() <= output
+    };
+    let read = PyDict::new(py);
+    read.set_item("status", "computed")?;
+    read.set_item("amount0_delta", i256_to_py(py, amount0_delta)?)?;
+    read.set_item("amount1_delta", i256_to_py(py, amount1_delta)?)?;
+    read.set_item(
+        "sqrt_price_x96",
+        crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?,
+    )?;
+    read.set_item("liquidity", liquidity)?;
+    read.set_item("tick", tick)?;
+    read.set_item("specified_met", specified_met)?;
+    Ok(read.into_any().unbind())
+}
+
+/// The `not_computable` typed read (zero amount, miss, or non-CL payload).
+fn not_computable_read(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let read = PyDict::new(py);
+    read.set_item("status", "not_computable")?;
+    Ok(read.into_any().unbind())
+}
+
+/// A typed miss read carrying the bitmap `word` the walk stalled on.
+fn status_word_read(py: Python<'_>, status: &str, word: i32) -> PyResult<Py<PyAny>> {
+    let read = PyDict::new(py);
+    read.set_item("status", status)?;
+    read.set_item("word", word)?;
+    Ok(read.into_any().unbind())
 }
 
 /// The registration-lifecycle tick-data seed boundary: a Python
@@ -3084,6 +3032,34 @@ impl TickData {
             .into_iter()
             .map(|(tick, (gross, net, block))| (tick, Self::info(gross, net, block)))
             .collect())
+    }
+
+    /// Override-state seed form: the Python `{tick: LiquidityAtTick}` mapping
+    /// the CL companions carry, whose rows expose `liquidity_gross` /
+    /// `liquidity_net` / `block` by name. The `TickInfo` translation stays in
+    /// this one boundary, so no Python caller re-flattens the rows.
+    pub(crate) fn from_py_liquidity_rows(
+        container: &Bound<'_, PyAny>,
+    ) -> PyResult<HashMap<i32, TickInfo>> {
+        let dict = container.cast::<PyDict>().map_err(|_| Self::malformed())?;
+        let mut out = HashMap::with_capacity(dict.len());
+        for (key, row) in dict.iter() {
+            let tick: i32 = key.extract().map_err(|_| Self::malformed())?;
+            let gross: u128 = row
+                .getattr("liquidity_gross")
+                .and_then(|v| v.extract())
+                .map_err(|_| Self::malformed())?;
+            let net: i128 = row
+                .getattr("liquidity_net")
+                .and_then(|v| v.extract())
+                .map_err(|_| Self::malformed())?;
+            let block: u64 = row
+                .getattr("block")
+                .and_then(|v| v.extract())
+                .map_err(|_| Self::malformed())?;
+            out.insert(tick, Self::info(gross, net, block));
+        }
+        Ok(out)
     }
 
     /// `register_*_pool(tick_data=...)` convention: `None` -> empty map.

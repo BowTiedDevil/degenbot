@@ -75,32 +75,22 @@ def _make_tokens(py_bot: Bot, tag: str):
 
 
 class _DelegateSpy:
-    """Wraps a ``Pool`` to record V4 swap-seam calls.
+    """Wraps a ``Pool`` to record the V4 swap-simulation seam calls.
 
     Pass-through for all other handle methods via ``__getattr__``. Records
-    ``simulate_swap_with_fetch`` (exact-input) and
-    ``simulate_exact_output_swap_with_fetch`` (exact-output) invocations.
+    ``simulate`` invocations as ``(zero_for_one, amount_specified)``.
     """
 
     def __init__(self, real_pool):
         self._real = real_pool
-        self.swap_with_fetch_calls: list[tuple[bool, int]] = []
-        self.exact_output_with_fetch_calls: list[tuple[bool, int]] = []
+        self.simulate_calls: list[tuple[bool, int]] = []
 
-    def simulate_swap_with_fetch(self, *, zero_for_one, amount_in, **_):
-        self.swap_with_fetch_calls.append((bool(zero_for_one), int(amount_in)))
-        return self._real.simulate_swap_with_fetch(
+    def simulate(self, *, zero_for_one, amount_specified, **kwargs):
+        self.simulate_calls.append((bool(zero_for_one), int(amount_specified)))
+        return self._real.simulate(
             zero_for_one=zero_for_one,
-            amount_in=amount_in,
-            **_,
-        )
-
-    def simulate_exact_output_swap_with_fetch(self, *, zero_for_one, amount_out, **_):
-        self.exact_output_with_fetch_calls.append((bool(zero_for_one), int(amount_out)))
-        return self._real.simulate_exact_output_swap_with_fetch(
-            zero_for_one=zero_for_one,
-            amount_out=amount_out,
-            **_,
+            amount_specified=amount_specified,
+            **kwargs,
         )
 
     def __getattr__(self, name):
@@ -163,8 +153,7 @@ class TestV4CalcDelegation:
             token_in_quantity=1_000,
         )
 
-        assert spy.swap_with_fetch_calls == [(True, 1_000)]
-        assert spy.exact_output_with_fetch_calls == []
+        assert spy.simulate_calls == [(True, -1_000)]
         assert result > 0
 
     def test_calculate_tokens_out_reverse_delegates_to_rust(self) -> None:
@@ -179,7 +168,7 @@ class TestV4CalcDelegation:
             token_in_quantity=1_000,
         )
 
-        assert spy.swap_with_fetch_calls == [(False, 1_000)]
+        assert spy.simulate_calls == [(False, -1_000)]
         assert result > 0
 
     def test_calculate_tokens_in_delegates_to_rust_no_override(self) -> None:
@@ -196,8 +185,7 @@ class TestV4CalcDelegation:
             token_out_quantity=1_000,
         )
 
-        assert spy.exact_output_with_fetch_calls == [(True, 1_000)]
-        assert spy.swap_with_fetch_calls == []
+        assert spy.simulate_calls == [(True, 1_000)]
         assert result > 0
 
     def test_calculate_tokens_in_reverse_delegates_to_rust(self) -> None:
@@ -212,5 +200,5 @@ class TestV4CalcDelegation:
             token_out_quantity=1_000,
         )
 
-        assert spy.exact_output_with_fetch_calls == [(False, 1_000)]
+        assert spy.simulate_calls == [(False, 1_000)]
         assert result > 0

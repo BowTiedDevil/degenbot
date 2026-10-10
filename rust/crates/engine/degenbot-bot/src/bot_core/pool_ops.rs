@@ -380,6 +380,33 @@ pub fn simulate_swap_with_fetch(
     })
 }
 
+/// THE mainline CL swap read (ADR-037): stages the missing bitmap words
+/// (bounded pre-pass) then runs the disarmed sim, surfacing the full typed
+/// [`SwapRead`] so the shell can tell a compute miss from an exhausted fetch.
+/// `request.amount_specified` is signed user-perspective.
+#[must_use]
+pub fn simulate_mainline(
+    state: &StateLock<BotState>,
+    pool_id: u64,
+    request: &SwapRequest,
+    block: u64,
+) -> SwapRead {
+    let Some(missing) = state
+        .read_at(LockSite::Orchestrator)
+        .swap_missing_words(block, pool_id, request)
+    else {
+        return SwapRead::UnknownPool { pool_id };
+    };
+    if !missing.is_empty() && !stage_missing_words(state, pool_id, block, request) {
+        return SwapRead::FetchExhausted {
+            word: missing.first().copied().unwrap_or(0),
+        };
+    }
+    state
+        .write_at(LockSite::Orchestrator)
+        .swap_simulation_disarmed(block, pool_id, request)
+}
+
 /// Staged fetch+retry override (hypothetical CL state) sim — the bounded
 /// 3-pass loop over [`BotState::override_missing_words`] + the stored fetcher
 /// (fetched ticks merge into the caller-owned TRANSIENT map, never

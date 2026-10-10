@@ -3532,80 +3532,24 @@ class Pool:
         Returns `True` on a registered V3/V4 pool; raises `ValueError` for a
         registered non-CL family (no CL journal to seed) or an unregistered id.
         """
-    def simulate_exact_output_swap_with_fetch(
+    def simulate(
         self,
         /,
         zero_for_one: bool,
-        amount_out: Any,
+        amount_specified: Any,
         block: int,
         sqrt_price_limit_x96: Any | None = None,
-    ) -> Any | None:
+        override_state: Any | None = None,
+    ) -> Any:
         """
-        Exact-OUTPUT fetch+retry swap: caller passes the desired `amount_out`,
-        the sim derives the required input. Same 5-tuple return shape as
-        `simulate_swap_with_fetch` (the caller extracts the opposing amount as
-        the required input). Mirrors the Python `calculate_tokens_in_from_
-        tokens_out` / `simulate_exact_output_swap` frozen path; the V3/V4
-        exact-output sign convention is handled in the core.
-        """
-    def simulate_exact_output_swap_with_override(
-        self,
-        /,
-        zero_for_one: bool,
-        amount_out: Any,
-        block: int,
-        override_sqrt_price_x96: Any,
-        override_liquidity: Any,
-        override_tick: Any,
-        override_tick_data: Any,
-        sqrt_price_limit_x96: Any | None = None,
-    ) -> Any | None:
-        """
-        Exact-OUTPUT swap over a HYPOTHETICAL override pool state, with
-        fetch+retry for sparse misses. Caller passes the desired `amount_out`,
-        the sim derives the required input. Same 5-tuple return shape as
-        `simulate_swap_with_override`. Combines the override-state build with
-        the V3/V4 exact-output sign convention (handled in the core).
-        """
-    def simulate_swap_with_fetch(
-        self,
-        /,
-        zero_for_one: bool,
-        amount_in: Any,
-        block: int,
-        sqrt_price_limit_x96: Any | None = None,
-    ) -> Any | None:
-        """
-        Fetch+retry full-outcome exact-input swap for sparse V3/V4 pools
-        (ADR-005 slice 3b). Like [`calculate_tokens_out_with_fetch`][Self::calculate_tokens_out_with_fetch]
-        but returns the full swap outcome tuple so the companion can build
-        `final_state`.
-        Returns `(amount0, amount1, sqrt_price_x96, liquidity, tick)` or `None`
-        (pool not V3/V4, zero amount, fetch failed, or not computable).
-        """
-    def simulate_swap_with_override(
-        self,
-        /,
-        zero_for_one: bool,
-        amount_in: Any,
-        block: int,
-        override_sqrt_price_x96: Any,
-        override_liquidity: Any,
-        override_tick: Any,
-        override_tick_data: Any,
-        sqrt_price_limit_x96: Any | None = None,
-    ) -> Any | None:
-        """
-        Simulate an exact-input swap over a HYPOTHETICAL override pool state,
-        with fetch+retry for sparse misses.
-        Builds a transient V3/V4 state from `override_sqrt_price_x96`,
-        `override_liquidity`, `override_tick` + `override_tick_data`
-        (`{tick: (liquidity_gross, liquidity_net, block)}`, same shape as
-        `register_*_pool`'s `tick_data`), reusing the registered pool's fee /
-        `tick_spacing`. On a sparse miss, the fetcher is called + the word's
-        ticks are merged into the TRANSIENT state (NOT registered `BotState`),
-        and the sim retries. Returns the same 5-tuple as
-        `simulate_swap_with_fetch`, or `None` if not computable.
+        THE swap-simulation seam (ADR-037): one verb behind every "what would
+        this swap do against current pool state" read. `amount_specified` is
+        signed user-perspective (negative = exact input, positive = exact
+        output). Returns a typed read dict — `status` is `computed` (with
+        signed per-token deltas in the deposited-`+`/sent-`-` convention, the
+        end state, and `specified_met`), `not_computable`, `fetch_failed`, or
+        `fetch_exhausted`. Pass `override_state` (a CL pool-state object) to
+        simulate against a hypothetical.
         """
     @property
     def stable_swap(self, /) -> bool:
