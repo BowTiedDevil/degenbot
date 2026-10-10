@@ -119,9 +119,8 @@ def test_admission_errors_catchable_as_value_error(exc_name: str) -> None:
 
 
 class TestV2SeamAdmission:
-    def test_duplicate_address_raises_pool_already_registered(self) -> None:
-        bot = Bot(chain_id=1)
-        bot.register_v2_pool(
+    def _register(self, bot: Bot) -> int:
+        return bot.register_v2_pool(
             address=V2_DAI_WETH_ADDR,
             token0=WETH,
             token1=DAI,
@@ -133,21 +132,31 @@ class TestV2SeamAdmission:
             fee_denom1=1000,
             factory=UNISWAP_V2_FACTORY,
         )
-        # Second registration at the same address: the Rust core's
-        # `AlreadyRegistered` rejection now surfaces (was an `assert!` panic
-        # as the typed `PoolAlreadyRegisteredError`.
+
+    def test_duplicate_address_returns_the_existing_handle(self) -> None:
+        """Get-or-register: a same-address + same-family + same-identity
+        re-registration answers the EXISTING pool id (no raise)."""
+        bot = Bot(chain_id=1)
+        first = self._register(bot)
+        second = self._register(bot)
+        assert second == first
+
+    def test_different_family_collision_still_raises(self) -> None:
+        """A different family at the same address is not an answer — the
+        family-guarded get half does not fire and the typed refusal stands."""
+        bot = Bot(chain_id=1)
+        self._register(bot)
         with pytest.raises(PoolAlreadyRegisteredError) as exc_info:
-            bot.register_v2_pool(
+            bot.register_v3_pool(
                 address=V2_DAI_WETH_ADDR,
                 token0=WETH,
                 token1=DAI,
-                reserve0=1,
-                reserve1=2,
-                gamma_numer0=997,
-                fee_denom0=1000,
-                gamma_numer1=997,
-                fee_denom1=1000,
-                factory=UNISWAP_V2_FACTORY,
+                fee=3000,
+                tick_spacing=60,
+                factory=UNISWAP_V3_FACTORY,
+                sqrt_price_x96=V3_SQRT_1_TO_1,
+                liquidity=0,
+                tick=0,
             )
         assert "already registered" in str(exc_info.value).lower()
         assert str(V2_DAI_WETH_ADDR).lower() in str(exc_info.value).lower()
@@ -176,8 +185,10 @@ class TestV2SeamAdmission:
 
 class TestAerodromeSeamAdmission:
     """The Aerodrome V2 port joins the typed admission contract (the V2/V3
-    twin): a duplicate address surfaces as ``PoolAlreadyRegisteredError``,
-    not the ``PanicException`` a process-killing ``assert!`` used to raise.
+    twin): a duplicate-identity re-registration is get-or-register (answers
+    the EXISTING handle) while a different-family / mismatched-identity
+    conflict surfaces as ``PoolAlreadyRegisteredError``, not the
+    ``PanicException`` a process-killing ``assert!`` used to raise.
 
     Vectors use the real Base Aerodrome volatile factory so the EIP-1167
     verify upstream of ``register_aerodrome_pool`` passes and the Rust
@@ -209,21 +220,34 @@ class TestAerodromeSeamAdmission:
             "update_block": 0,
         }
 
-    def test_duplicate_address_raises_pool_already_registered(self) -> None:
+    def test_duplicate_address_returns_the_existing_handle(self) -> None:
+        """Get-or-register: the same-address + same-family + same-identity
+        re-registration answers the EXISTING Aerodrome handle (no raise)."""
+        bot = Bot(chain_id=8453)
+        first = bot.register_aerodrome_pool(**self._kwargs())
+        second = bot.register_aerodrome_pool(**self._kwargs())
+        assert second == first
+
+    def test_different_family_collision_still_raises(self) -> None:
+        """A different family at the same address is not an answer — the
+        typed refusal stands (and stays catchable as a ``ValueError``)."""
         bot = Bot(chain_id=8453)
         bot.register_aerodrome_pool(**self._kwargs())
         with pytest.raises(PoolAlreadyRegisteredError) as exc_info:
-            bot.register_aerodrome_pool(**self._kwargs())
+            bot.register_v2_pool(
+                address=self.POOL,
+                token0=self.TOKEN0,
+                token1=self.TOKEN1,
+                reserve0=1,
+                reserve1=2,
+                gamma_numer0=997,
+                fee_denom0=1000,
+                gamma_numer1=997,
+                fee_denom1=1000,
+                factory=self.AERO_V2_FACTORY,
+            )
         assert "already registered" in str(exc_info.value).lower()
         assert str(self.POOL).lower() in str(exc_info.value).lower()
-
-    def test_duplicate_is_catchable_as_value_error(self) -> None:
-        """The broad ``except ValueError:`` net in ``build_paths`` still
-        catches the Aerodrome refusal."""
-        bot = Bot(chain_id=8453)
-        bot.register_aerodrome_pool(**self._kwargs())
-        with pytest.raises(ValueError, match="already registered"):
-            bot.register_aerodrome_pool(**self._kwargs())
 
 
 class TestV3SeamAdmission:
@@ -240,11 +264,13 @@ class TestV3SeamAdmission:
             "tick": 0,
         }
 
-    def test_duplicate_address_raises_pool_already_registered(self) -> None:
+    def test_duplicate_address_returns_the_existing_handle(self) -> None:
+        """Get-or-register: a same-identity re-registration answers the
+        EXISTING V3 pool id (no raise)."""
         bot = Bot(chain_id=1)
-        bot.register_v3_pool(**self._in_spec_kwargs())
-        with pytest.raises(PoolAlreadyRegisteredError):
-            bot.register_v3_pool(**self._in_spec_kwargs())
+        first = bot.register_v3_pool(**self._in_spec_kwargs())
+        second = bot.register_v3_pool(**self._in_spec_kwargs())
+        assert second == first
 
     def test_out_of_spec_sqrt_price_raises_spec_violation_error(self) -> None:
         bot = Bot(chain_id=1)
@@ -307,11 +333,23 @@ class TestV4SeamAdmission:
             "block": 0,
         }
 
-    def test_duplicate_raises_pool_already_registered(self) -> None:
+    def test_duplicate_returns_the_existing_handle(self) -> None:
+        """Get-or-register on the `(pool_manager, pool_id)` pair: a matching
+        pool key answers the EXISTING pool id (no raise)."""
+        bot = Bot(chain_id=1)
+        first = bot.register_v4_pool(**self._in_spec_kwargs())
+        second = bot.register_v4_pool(**self._in_spec_kwargs())
+        assert second == first
+
+    def test_different_identity_on_the_same_pair_still_raises(self) -> None:
+        """The same `(pool_manager, pool_id)` with a DIFFERENT pool key is
+        wire drift — the loud typed refusal stands."""
         bot = Bot(chain_id=1)
         bot.register_v4_pool(**self._in_spec_kwargs())
+        other = self._in_spec_kwargs()
+        other["currency0"] = "0x" + "99" * 20
         with pytest.raises(PoolAlreadyRegisteredError):
-            bot.register_v4_pool(**self._in_spec_kwargs())
+            bot.register_v4_pool(**other)
 
     def test_out_of_spec_sqrt_price_raises_spec_violation_error(self) -> None:
         bot = Bot(chain_id=1)

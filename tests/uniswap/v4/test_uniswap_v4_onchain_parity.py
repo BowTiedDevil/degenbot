@@ -151,6 +151,7 @@ def _build_eth_usdc_v4_io_free() -> UniswapV4Pool:
         lp_fee=scalars["lp_fee"],
         tick_data=tick_data,
         state_block=cassette["block"],
+        py_bot=_PYBOT,
     )
 
 

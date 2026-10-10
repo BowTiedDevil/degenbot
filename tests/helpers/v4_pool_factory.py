@@ -12,20 +12,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
+from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
+    from degenbot._ffi import Bot
     from degenbot.erc20 import Erc20Token
 
-# No shared Bot — V4 tests frequently reuse the same pool_id (V4 pool_id is
-# derived from the pool_key, so tests sharing a pool_key collide on a shared
-# bot's `(pool_manager, pool_id)` registry). Each `make_v4_pool` call gets a
-# fresh bot (the token objects are independent Python wrappers; their Rust bot
-# membership doesn't matter for pool registration, which takes addresses).
+# V4 registration is get-or-register on the `(pool_manager, pool_id)` pair: a
+# same-key + same-currencies build answers the EXISTING handle, while a genuine
+# conflict (same pair, different currencies) still refuses loudly. Pools are
+# MUTABLE, so each call mints a FRESH `Bot` (via `new_pool_bot`) by default;
+# a caller that wants to share one bot passes `py_bot=` explicitly.
 
 
 def make_v4_pool(
@@ -63,9 +64,14 @@ def make_v4_pool(
     Rust coverage flag (it is set at registration), so the sparse contract
     must be established at construction.
 
+    Mints a fresh ``Bot`` unless ``py_bot`` is injected, so each pool is
+    isolated; registration is get-or-register (a same-key + same-currency
+    re-build answers the EXISTING handle). A caller that wants to share one
+    bot passes ``py_bot=``.
+
     Returns the V4 companion over the `Pool` handle.
     """
-    bot = py_bot or Bot()
+    bot = py_bot if py_bot is not None else new_pool_bot()
     blk = state_block if state_block is not None else 0
 
     # ADR-006 rolling-start race closure: seed tick_data INLINE in

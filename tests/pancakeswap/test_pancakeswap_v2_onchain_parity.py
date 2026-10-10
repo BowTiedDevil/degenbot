@@ -144,6 +144,7 @@ def _build_pancake_v2_io_free(cassette: dict[str, Any]) -> UniswapV2Pool:
         reserves_token1=cassette["reserves_token1"],
         chain_id=cassette["chain_id"],
         state_block=cassette["block"],
+        py_bot=_PYBOT,
     )
 
 

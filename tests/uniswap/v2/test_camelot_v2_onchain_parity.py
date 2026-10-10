@@ -89,6 +89,7 @@ def _build_camelot_weth_usdc_io_free() -> object:
         reserves_token1=_RESERVES_USDC,
         chain_id=42161,
         state_block=CAMELOT_PARITY_BLOCK,
+        py_bot=_PYBOT,
     )
 
 

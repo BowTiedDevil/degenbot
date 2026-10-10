@@ -327,10 +327,16 @@ def assert_golden_keys_exact(
 ) -> None:
     """The golden file holds exactly the keys the module's replay drives.
 
-    Replay fails loud on a missing key but stays silent on a stale extra one —
-    nothing looks it up. Set-equality against the recorded file closes that
-    drift: a shrunken case list cannot leave orphaned oracle entries behind.
-    Skips in record mode, where the run rewrites the very file being diffed.
+    Order-independence is an explicit property of this gate: it compares two
+    key SETS, so neither the recorded file's entry order nor the replay's own
+    build order (which pool is constructed first) can change the verdict. The
+    parity/keys-diff suites therefore share a bot and build the same pool
+    address in any order — registration is get-or-register, and the key-set
+    comparison is invariant to that ordering. Replay fails loud on a missing
+    key but stays silent on a stale extra one — nothing looks it up.
+    Set-equality against the recorded file closes that drift: a shrunken case
+    list cannot leave orphaned oracle entries behind. Skips in record mode,
+    where the run rewrites the very file being diffed.
     """
     if request.config.getoption("--golden-mode") == "record":
         pytest.skip(RECORD_MODE_KEY_SET_SKIP_REASON)

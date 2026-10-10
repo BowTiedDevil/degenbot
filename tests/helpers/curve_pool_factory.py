@@ -6,22 +6,26 @@ the test suite routes through ``make_curve_pool`` so the ``Pool``
 handle is wired through ``Bot::register_curve_pool`` → ``get_pool`` →
 companion, matching the ``Bot.build_pool()`` flow (ADR-005).
 
-Each call creates its own short-lived ``Bot`` (the returned handle holds an
-``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
-each test pool is fully isolated (no shared mutable state across tests).
+Each call mints a FRESH ``Bot`` (via ``new_pool_bot``) so every built pool is
+isolated. The register entry is get-or-register — a same address + same
+family + same identity build answers the EXISTING handle — while a genuine
+conflict (a different family, or a mismatched identity = wire drift) still
+refuses loudly. Pools are MUTABLE, so isolation is the default; a caller that
+WANTS to share one bot passes ``py_bot=`` explicitly.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.math import derive_rate_and_precision_multipliers
 from degenbot.curve.strategies import PoolStrategies
+from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
+    from degenbot._ffi import Bot
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveDataProvider
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import Pool
@@ -78,12 +82,13 @@ def make_curve_pool(
 ) -> CurveStableswapPool:
     """Construct an I/O-free Curve companion over a fresh ``Pool`` handle.
 
-    Registers the pool in a short-lived ``Bot`` (the returned handle holds an
-    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) —
-    so each test pool is fully isolated (no shared mutable state across tests).
-    The token companions passed in may live in a different ``Bot`` (their own
-    ``make_erc20`` ``Bot``); that's fine — the pool reads balances from its
-    own ``Bot`` and token metadata from the token handle, independently.
+    Mints a fresh ``Bot`` unless ``py_bot`` is injected, so each pool is
+    isolated. Registration is get-or-register (a same-identity re-build
+    answers the EXISTING handle); a caller that wants to share one bot passes
+    ``py_bot=``. The token companions passed in may live in a different
+    ``Bot`` (their own ``make_erc20`` ``Bot``); that's fine — the pool reads
+    balances from its own ``Bot`` and token metadata from the token handle,
+    independently.
 
     ``Bot.build_pool()`` is the production path (registers in the session's
     shared ``_py_bot``); this helper is the test-only equivalent.
@@ -99,7 +104,7 @@ def make_curve_pool(
     address_checksum = get_checksum_address(address)
     state_block_int = state_block if state_block is not None else 0
 
-    bot = py_bot if py_bot is not None else Bot()
+    bot = py_bot if py_bot is not None else new_pool_bot()
 
     rate_multipliers, precision_mults = derive_rate_and_precision_multipliers(
         [token.decimals for token in tokens],

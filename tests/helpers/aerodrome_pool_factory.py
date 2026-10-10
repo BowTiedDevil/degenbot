@@ -10,13 +10,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import Bot
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
+from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
     from fractions import Fraction
 
+    from degenbot._ffi import Bot
     from degenbot.erc20 import Erc20Token
 
 
@@ -37,12 +38,12 @@ def make_aerodrome_v2_pool(
 ) -> AerodromeV2Pool:
     """Construct an I/O-free Aerodrome V2 companion over a fresh Pool handle.
 
-    Registers the pool in a short-lived ``Bot`` (the returned handle holds an
-    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``),
-    then wraps via ``from_handle``. Tokens must be registered in the same
-    ``Bot`` (ADR-006).
+    Mints a fresh ``Bot`` unless ``py_bot`` is injected, so each pool is
+    isolated; registration is get-or-register (a same-identity re-build
+    answers the EXISTING handle). A caller that wants to share one bot passes
+    ``py_bot=``. Tokens must be registered in the same ``Bot`` (ADR-006).
     """
-    bot = py_bot or Bot()
+    bot = py_bot if py_bot is not None else new_pool_bot()
     address = get_checksum_address(address)
 
     # ADR-006: tokens must be in the same Bot as the pool.

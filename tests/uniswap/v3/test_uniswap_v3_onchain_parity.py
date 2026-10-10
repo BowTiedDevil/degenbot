@@ -162,6 +162,7 @@ def _build_wbtc_weth_v3_io_free() -> UniswapV3Pool:
         state_block=cassette["block"],
         tick_data=tick_data,
         pool_class=UniswapV3Pool,
+        py_bot=_PYBOT,
     )
 
 

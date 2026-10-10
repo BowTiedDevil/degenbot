@@ -6,22 +6,25 @@ Mirrors ``tests/helpers/v2_pool_factory.py`` (ADR-005 slice 4): every direct
 ``Bot::register_v3_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow (ADR-005 slice 8b).
 
-Each call creates its own short-lived ``Bot`` (the returned handle holds an
-``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
-each test pool is fully isolated (no shared mutable state across tests, which
-matters because pools are mutable, unlike slice-3's tokens).
+Each call mints a FRESH ``Bot`` (via ``new_pool_bot``) so every built pool is
+isolated. The register entry is get-or-register — a same address + same
+family + same identity build answers the EXISTING handle — while a genuine
+conflict (a different family, or a mismatched identity = wire drift) still
+refuses loudly. Pools are MUTABLE, so isolation is the default; a caller that
+WANTS to share one bot passes ``py_bot=`` explicitly.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
+    from degenbot._ffi import Bot
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
@@ -88,13 +91,13 @@ def make_v3_pool(
 ) -> UniswapV3Pool:
     """Construct an I/O-free V3 companion over a fresh ``Pool`` handle.
 
-    Registers the pool in a short-lived ``Bot`` (the returned handle holds an
-    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) —
-    so each test pool is fully isolated (no shared mutable state across tests,
-    which matters because pools are mutable, unlike slice-3's tokens).
-    The token companions passed in may live in a different ``Bot`` (their own
-    ``make_erc20`` ``Bot``); that's fine — the pool reads scalars from its
-    own ``Bot`` and token metadata from the token's handle, independently.
+    Mints a fresh ``Bot`` unless ``py_bot`` is injected, so each pool is
+    isolated. Registration is get-or-register (a same-identity re-build
+    answers the EXISTING handle); a caller that wants to share one bot passes
+    ``py_bot=``. The token companions passed in may live in a different
+    ``Bot`` (their own ``make_erc20`` ``Bot``); that's fine — the pool reads
+    scalars from its own ``Bot`` and token metadata from the token's handle,
+    independently.
 
     ``Bot.build_pool()`` is the production path (registers in the session's
     shared ``_py_bot``); this helper is the test-only equivalent.
@@ -108,7 +111,7 @@ def make_v3_pool(
     """
     address_checksum = get_checksum_address(address)
 
-    bot = py_bot if py_bot is not None else Bot()
+    bot = py_bot if py_bot is not None else new_pool_bot()
     # ADR-006 rolling-start race closure: seed tick_data INLINE in
     # ``register_v3_pool`` (one BotState write lock) so a pump Mint/Burn
     # landing after registration applies on top of the seed and is never

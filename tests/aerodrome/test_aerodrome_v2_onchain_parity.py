@@ -64,6 +64,11 @@ _CASSETTE_DIR = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "chai
 _VOLATILE_CASSETTE = _CASSETTE_DIR / "aerodrome_v2_tbtc_weth_volatile_block_46875151.json"
 _STABLE_CASSETTE = _CASSETTE_DIR / "aerodrome_v2_dola_usdbc_stable_block_46875151.json"
 
+# ONE shared bot serves both parity tests and the keys-diff test: registration
+# is get-or-register, so a repeated same-address + same-identity build answers
+# the EXISTING handle and the module is order-independent by construction.
+_PYBOT = Bot()
+
 # Same multiplier coverage as the live ``test_calculation_*`` loops.
 _TOKEN_AMOUNT_MULTIPLIERS = (
     0.000000001,
@@ -95,11 +100,13 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
     because its V2 calc rounds differently than Aerodrome's on-chain
     ``getAmountOut``.
 
-    Each call uses a fresh short-lived ``Bot`` (pool registration asserts on a
-    duplicate address) so the keys-diff test and both parity tests can build
-    the same pool address without order-dependent collisions.
+    All three tests (both parity tests + the keys-diff test) build through the
+    ONE shared module-level ``_PYBOT``: registration is get-or-register, so a
+    repeated same-address + same-identity build answers the EXISTING handle —
+    the suite is order-independent, no per-call bot and no duplicate-address
+    collision.
     """
-    bot = Bot()
+    bot = _PYBOT
     t0 = cassette["token0"]
     t1 = cassette["token1"]
     tok0 = make_erc20(

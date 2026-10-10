@@ -6,10 +6,13 @@ through ``make_v2_pool`` so the ``Pool`` handle is wired through
 ``Bot::register_v2_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow.
 
-Each call creates its own short-lived ``Bot`` (the returned handle holds an
-``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
-each test pool is fully isolated (no shared mutable state across tests, which
-matters because pools are mutable, unlike slice-3's tokens).
+Each call mints a FRESH ``Bot`` (via ``new_pool_bot``) so every built pool is
+isolated. The register entry is get-or-register — a same address + same
+family + same identity build answers the EXISTING handle (read-only re-builds
+are idempotent) — while a genuine conflict (a different family, or a
+mismatched identity = wire drift) still refuses loudly. Pools are MUTABLE, so
+isolation is the default; a caller that WANTS to share one bot (a read-only
+parity build, or the engine's shared core) passes ``py_bot=`` explicitly.
 """
 
 from __future__ import annotations
@@ -17,11 +20,12 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
+    from degenbot._ffi import Bot
     from degenbot._ffi.dex_identity import DexIdentity
     from degenbot.erc20 import Erc20Token
     from degenbot.types import Pool
@@ -63,13 +67,13 @@ def make_v2_pool(
 ) -> UniswapV2Pool:
     """Construct an I/O-free V2-style pool companion over a fresh ``Pool`` handle.
 
-    Each call creates its own short-lived ``Bot`` (the returned handle holds
-    an ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``)
-    — so each test pool is fully isolated (no shared mutable state across
-    tests, which matters because pools are mutable, unlike slice-3's tokens).
-    The token companions passed in may live in a different ``Bot`` (their own
-    ``make_erc20`` ``Bot``); that's fine — the pool reads reserves from its
-    own ``Bot`` and token metadata from the token's handle, independently.
+    Mints a fresh ``Bot`` unless ``py_bot`` is injected, so each pool is
+    isolated. Registration is get-or-register (a same-identity re-build
+    answers the EXISTING handle); a caller that wants to share one bot passes
+    ``py_bot=``. The token companions passed in may live in a different
+    ``Bot`` (their own ``make_erc20`` ``Bot``); that's fine — the pool reads
+    reserves from its own ``Bot`` and token metadata from the token's handle,
+    independently.
 
     ``Bot.build_pool()`` is the production path (registers in the session's
     shared ``_py_bot``); this helper is the test-only equivalent.
@@ -116,7 +120,7 @@ def make_v2_pool(
         gamma_numer0, fee_denom0 = _gamma_complement(fee_token0)
         gamma_numer1, fee_denom1 = _gamma_complement(fee_token1)
 
-    py_bot = py_bot if py_bot is not None else Bot()
+    py_bot = py_bot if py_bot is not None else new_pool_bot()
 
     # Descriptor params (ADR-005): ``variant`` defaults from the dex
     # preset (if provided) or "uniswap-v2". ``stable_swap``/``fee_denominator``
