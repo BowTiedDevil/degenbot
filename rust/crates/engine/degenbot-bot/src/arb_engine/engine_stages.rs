@@ -381,7 +381,7 @@ impl EngineStages {
     /// activity (disabled memos and quiet epochs emit nothing); observation
     /// only, never fails the stop.
     pub(crate) fn drain_walk_memo_final(&self) {
-        walk_telemetry::final_drain(&self.engine.lock().cycle.walk_memo);
+        walk_telemetry::final_drain(self.engine.lock().cycle.scope.walk_memo());
     }
 
     /// The engine's solve cycle — the behavior port of the dissolved

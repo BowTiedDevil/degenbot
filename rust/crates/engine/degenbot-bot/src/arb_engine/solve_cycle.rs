@@ -101,6 +101,62 @@ struct ResolveChunkOut {
     invalid_reasons: HashMap<String, u64>,
     deferred: Vec<u64>,
 }
+
+/// The solve-cycle block scope: the ONE owner of the block boundary.
+///
+/// It holds the engine-owned walk-composition memo and prefix-composition
+/// cache handles and owns [`advance`](Self::advance) — the memo's
+/// drain-and-advance in ONE call, returning the epoch that just ended — plus
+/// the block number every per-path `GateDeps::per_block` is built from. Both
+/// epoch notions deliberately share ONE block number: the memo's census epoch
+/// and the prefix cache's generation are the same solved block, so a block's
+/// deps can never disagree with the memo's epoch.
+#[derive(Clone)]
+pub(crate) struct BlockScope {
+    walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>,
+    prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
+    epoch: u64,
+}
+
+impl BlockScope {
+    /// A fresh scope at epoch 0 over the given walk-composition memo handle.
+    pub(crate) fn new(walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>) -> Self {
+        Self {
+            walk_memo,
+            prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
+            epoch: 0,
+        }
+    }
+
+    /// Advance the scope to `block`: drain the memo's epoch that just ended
+    /// (returning its stats) and move the memo's census forward by ONE
+    /// boundary. The scope's epoch — read by every per-path
+    /// `GateDeps::per_block` — is the same `block`.
+    #[must_use]
+    pub(crate) fn advance(&mut self, block: u64) -> ::degenbot_solvers::cl::WalkMemoStats {
+        self.epoch = block;
+        self.walk_memo.begin_block(block)
+    }
+
+    /// The block every per-path gate deps value is built from.
+    #[must_use]
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// The engine-owned walk-composition memo handle.
+    #[must_use]
+    pub(crate) fn walk_memo(&self) -> &Arc<::degenbot_solvers::cl::WalkMemo> {
+        &self.walk_memo
+    }
+
+    /// The engine-owned prefix-composition cache handle.
+    #[must_use]
+    pub(crate) fn prefix_cache(&self) -> &Arc<::degenbot_solvers::profit_envelope::PrefixCache> {
+        &self.prefix_cache
+    }
+}
+
 /// `DEGENBOT_SOLVE_INLINE_SIM` —
 /// stance semantics unchanged; it is the `SolveCycle` instance
 /// value `inline_sim_enabled`, never a process static.
@@ -110,12 +166,10 @@ struct ResolveChunkOut {
 /// arm; the caller retains its own Arc for the drain + tail telemetry.
 pub(crate) struct SolveCycleShared {
     pub(crate) solve_block: u64,
-    pub(crate) epoch: u64,
     pub(crate) gate_capture: Option<DegeneratePathFileSink>,
-    pub(crate) walk_memo: std::sync::Arc<::degenbot_solvers::cl::WalkMemo>,
-    /// The engine-owned prefix-composition cache; epoch-generationed, so
-    /// entries never survive a block boundary.
-    pub(crate) prefix_cache: std::sync::Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
+    /// The block scope the per-path gate deps are built from: its epoch IS
+    /// the memo's epoch, so a path's deps can never disagree with the memo.
+    pub(crate) scope: BlockScope,
     /// The pre-solve profitability floor as an instance value, set at
     /// construction from `cfg.solve.min_profit_wei`.
     pub(crate) min_profit: U256,
@@ -177,13 +231,11 @@ impl SolveCycleShared {
     ) -> Self {
         Self {
             solve_block,
-            epoch: 0,
             metadata,
             gate_capture: None,
-            walk_memo: std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
-            prefix_cache: std::sync::Arc::new(
-                ::degenbot_solvers::profit_envelope::PrefixCache::new(),
-            ),
+            scope: BlockScope::new(std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(
+                false, false,
+            ))),
             min_profit: U256::ZERO,
             clamp_margin: U256::from(1u128),
             runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
@@ -290,12 +342,11 @@ pub(crate) struct SolveCycle {
     /// pipe, the gauge pair, the seq counters, the ledger door, and the
     /// disposition counters. See [`DetachedCycle`].
     pub(crate) detached_cycle: DetachedCycle,
-    /// The engine-owned cross-block walk-composition memo:
-    /// passed into the solve entries by handle; epoch advances at the
-    /// block-lifecycle start.
-    pub(crate) walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>,
-    /// The engine-owned prefix-composition cache.
-    pub(crate) prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
+    /// The block scope: the ONE owner of the block boundary. Holds the
+    /// engine-owned walk-composition memo and prefix-composition cache and
+    /// owns `advance(block)` — the memo's drain-and-advance plus the epoch
+    /// every per-path gate deps value is built from.
+    pub(crate) scope: BlockScope,
     /// The pre-solve profitability floor. A packed instance
     /// value, never a process static.
     pub(crate) min_profit_floor: U256,
@@ -1197,17 +1248,16 @@ impl SolveCycle {
                 .read_at(degenbot_substrate::state_lock::LockSite::Solver),
         );
         let solve_block = anchor.block();
-        // Cross-block walk-composition census: advance the epoch BEFORE the
-        // per-path probes so a path solved both this block and the previous
-        // one reports a hit (the engine-owned WalkMemo handle.
-        // DRAIN-THEN-ADVANCE (observation only, zero solve-behavior change):
-        // the epoch that just ended is tapped to the stats sink BEFORE
-        // `begin_block` advances — `take_stats` resets the counters it
-        // returns, so this call site is the ONE drain per boundary. The tap
-        // is inert on the first boundary of a run and on a disabled memo
-        // (the zero-activity gate — see `super::walk_telemetry`).
-        super::walk_telemetry::drain_epoch_boundary(&self.walk_memo, solve_block);
-        self.walk_memo.begin_block(solve_block);
+        // Cross-block walk-composition census, in ONE scope call: `advance`
+        // drains the epoch that just ended (the memo owns drain-then-advance
+        // by signature) and moves the scope's epoch to `solve_block` — the
+        // same block every per-path gate deps value reads, so a block's deps
+        // can never disagree with the memo's epoch. The returned stats go
+        // straight to the telemetry renderer. The tap is inert on the first
+        // boundary of a run and on a disabled memo (the zero-activity gate —
+        // see `super::walk_telemetry`).
+        let stats = self.scope.advance(solve_block);
+        super::walk_telemetry::emit_epoch_boundary(&stats, solve_block);
         // -----------------------------------------------------------------
         // ADMISSION DRAW: the DRAW already made the SINGLE
         // consumption decision in `on_resolve`. Consume and clear its verdict
@@ -1752,11 +1802,9 @@ impl SolveCycle {
             .collect();
         let shared = std::sync::Arc::new(SolveCycleShared {
             solve_block,
-            epoch: solve_block,
             metadata: *metadata,
             gate_capture,
-            walk_memo: std::sync::Arc::clone(&self.walk_memo),
-            prefix_cache: std::sync::Arc::clone(&self.prefix_cache),
+            scope: self.scope.clone(),
             runtime: self.runtime_cfg,
             path_cost_ledger: super::path_cost_ledger::PathCostLedger::new(
                 solve_block,
@@ -2073,8 +2121,8 @@ impl SolveCycle {
         // Bin jobs are 'static over Arc-cloned state: walk memo, core and
         // the pool-ref map for the empty-march clamp. No engine state is touched
         // (engine-then-core invariant intact; the mixer only reads core).
-        let memo = std::sync::Arc::clone(&self.walk_memo);
-        let prefix_store_out = std::sync::Arc::clone(&self.prefix_cache);
+        let memo = std::sync::Arc::clone(self.scope.walk_memo());
+        let prefix_store_out = std::sync::Arc::clone(self.scope.prefix_cache());
         let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> = registry.path_pools().clone();
         let core = std::sync::Arc::clone(&self.core);
         let results_block = self.cursor.results_block();

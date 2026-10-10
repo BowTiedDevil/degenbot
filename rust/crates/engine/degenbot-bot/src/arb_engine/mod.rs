@@ -44,7 +44,7 @@ use self::block_cursor::BlockCursor;
 use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
-use self::solve_cycle::SolveCycle;
+use self::solve_cycle::{BlockScope, SolveCycle};
 use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
@@ -544,13 +544,10 @@ impl ArbitrageEngine {
                 // the machine's pre-cycle init lives on the machine
                 // (dormant Unopened, pipe closed, counters at 0).
                 detached_cycle: detached_cycle::DetachedCycle::new(),
-                walk_memo: std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(
+                scope: BlockScope::new(std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(
                     cfg.solve.solver_walk_memo,
                     cfg.solve.solver_walk_memo_stats,
-                )),
-                prefix_cache: std::sync::Arc::new(
-                    ::degenbot_solvers::profit_envelope::PrefixCache::new(),
-                ),
+                ))),
                 min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),
                 clamp_margin: retune.clamp_margin,
                 inline_sim_enabled: cfg.solve.solve_inline_sim,

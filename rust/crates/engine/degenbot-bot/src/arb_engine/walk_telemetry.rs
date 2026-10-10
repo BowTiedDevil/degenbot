@@ -5,11 +5,11 @@
 //! per-probe/per-hit sims), but nothing in the engine drained it: `take_stats`
 //! existed with no engine-side caller. This module is the drain. It owns:
 //!
-//! * the **boundary drain** — one `take_stats()` per `begin_block` call site
-//!   (the engine has exactly one: `SolveCycle::run_epoch`), issued BEFORE the
-//!   memo advances. `take_stats` resets the counters it returns, so
-//!   drain-then-advance is the only order that captures the epoch that just
-//!   ended, and one drain per boundary is the whole contract — never more.
+//! * the **boundary emission** — the stats the memo's `begin_block` returns
+//!   for the epoch it just closed (the engine has exactly one boundary call
+//!   site: the solve-cycle block scope). The memo owns drain-then-advance by
+//!   signature, so this module only renders what it hands back; one line per
+//!   boundary is the whole contract — never more.
 //! * the **final drain** — the same tap at engine teardown
 //!   (`EngineDriver::stop` → [`super::engine_stages::EngineStages`], which
 //!   locks the engine and calls [`final_drain`]), so the LAST epoch's
@@ -176,28 +176,27 @@ fn append_jsonl_line(path: &Path, line: &str) -> std::io::Result<()> {
     file.write_all(b"\n")
 }
 
-/// THE boundary tap (the `run_epoch` one-liner): drain the epoch that just
-/// ended BEFORE `begin_block(incoming_block)` advances it. Call exactly once
-/// per `begin_block` site — `take_stats` resets, so a second call would
-/// split the epoch's counters across two lines.
+/// THE boundary tap (the solve-cycle scope's one-liner): render + emit the
+/// stats the memo's drain-and-advance just returned for the epoch
+/// `incoming_block` closed. The stats are the memo's own — captured before
+/// the census swap — so this call only renders them.
 ///
 /// Emission is gated (see the module docs): a first boundary, a disabled
 /// memo, and quiet epochs emit nothing.
-pub(crate) fn drain_epoch_boundary(memo: &WalkMemo, incoming_block: u64) {
-    drain_epoch_boundary_into(memo, incoming_block, &JsonlSink::production());
+pub(crate) fn emit_epoch_boundary(stats: &WalkMemoStats, incoming_block: u64) {
+    emit_epoch_boundary_into(stats, incoming_block, &JsonlSink::production());
 }
 
-/// Test/injection twin of [`drain_epoch_boundary`]: the same drain against a
+/// Test/injection twin of [`emit_epoch_boundary`]: the same render against a
 /// caller-owned sink (the unit tests capture lines instead of writing the
 /// production `logs/` path).
-pub(crate) fn drain_epoch_boundary_into(
-    memo: &WalkMemo,
+pub(crate) fn emit_epoch_boundary_into(
+    stats: &WalkMemoStats,
     incoming_block: u64,
     sink: &dyn StatsSink,
 ) {
-    let stats = memo.take_stats();
     emit_if_active(
-        &stats,
+        stats,
         DrainReason::EpochBoundary,
         Some(incoming_block),
         sink,
@@ -369,17 +368,18 @@ mod tests {
         // Boot state of an ENABLED memo: epoch 0, all counters zero — the
         // first begin_block has no prior epoch and must emit nothing.
         let memo = WalkMemo::new(true, true);
-        drain_epoch_boundary_into(&memo, 100, &sink);
+        let stats = memo.begin_block(100);
+        emit_epoch_boundary_into(&stats, 100, &sink);
         assert!(sink.lines().is_empty(), "first boundary must stay silent");
 
         // A DISABLED memo (the test scaffolds' constructor) across three
         // boundaries plus a final drain: begin_block still advances its
         // epoch, but no counter ever moves — the tap stays fully inert.
         let off = WalkMemo::new(false, false);
-        off.begin_block(100);
-        drain_epoch_boundary_into(&off, 101, &sink);
-        off.begin_block(101);
-        drain_epoch_boundary_into(&off, 102, &sink);
+        let stats = off.begin_block(100);
+        emit_epoch_boundary_into(&stats, 101, &sink);
+        let stats = off.begin_block(101);
+        emit_epoch_boundary_into(&stats, 102, &sink);
         off.begin_block(102);
         final_drain_into(&off, &sink);
         assert!(
@@ -397,16 +397,16 @@ mod tests {
         let prepared = PreparedClHop::derive(std::sync::Arc::new(seq.clone()));
 
         // --- epoch 100: two solves of the same composition ---------------
-        drain_epoch_boundary_into(&memo, 100, &sink); // boot: silent
-        memo.begin_block(100);
+        let stats = memo.begin_block(100); // boot: silent
+        emit_epoch_boundary_into(&stats, 100, &sink);
         solve_once(&memo, &prepared);
         solve_once(&memo, &prepared);
 
         // Boundary into 101 drains epoch 100: two probes, one distinct
         // fingerprint, two cache consults, no hits (the previous census was
         // empty).
-        drain_epoch_boundary_into(&memo, 101, &sink);
-        memo.begin_block(101);
+        let stats = memo.begin_block(101);
+        emit_epoch_boundary_into(&stats, 101, &sink);
         let first = parse_line(&sink.lines()[0]);
         assert_eq!(first["reason"], "epoch_boundary");
         assert_eq!(first["epoch"], 100);
@@ -424,8 +424,8 @@ mod tests {
         // Boundary into 102 drains epoch 101: the counters RESET between
         // lines (probes 2, not 4) and the cross-block census now reports
         // hits — the exact per-epoch separation this tap exists for.
-        drain_epoch_boundary_into(&memo, 102, &sink);
-        memo.begin_block(102);
+        let stats = memo.begin_block(102);
+        emit_epoch_boundary_into(&stats, 102, &sink);
         let second = parse_line(&sink.lines()[1]);
         assert_eq!(second["epoch"], 101);
         assert_eq!(second["block"], 102);
@@ -477,7 +477,8 @@ mod tests {
 
         memo.begin_block(7);
         solve_once(&memo, &prepared);
-        drain_epoch_boundary_into(&memo, 8, &sink);
+        let stats = memo.begin_block(8);
+        emit_epoch_boundary_into(&stats, 8, &sink);
 
         let value = parse_line(&sink.lines()[0]);
         let object = value.as_object().expect("line is a JSON object");

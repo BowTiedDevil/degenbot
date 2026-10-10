@@ -143,17 +143,17 @@ pub(crate) fn solve_one_path(
     if let Some(panic_pid) = ctx.test_solve_panic.as_ref() {
         panic_pid(pid);
     }
-    // Worker-local view of the cycle gate deps : the Arc-d
-    // memo + owned capture cfg land in the shared ctx per cycle; the
-    // prefix cache is generationed by the block epoch - same semantics
-    // as the old single borrowed GateDeps shared by the scope workers.
+    // Worker-local view of the cycle gate deps: the block scope carries the
+    // memo + prefix-cache handles AND the epoch, so the deps for this block
+    // can never disagree with the memo's epoch. Same semantics as the old
+    // single borrowed GateDeps shared by the scope workers.
     let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
-        ctx.epoch,
-        &ctx.prefix_cache,
+        ctx.scope.epoch(),
+        ctx.scope.prefix_cache(),
         ctx.gate_capture
             .as_ref()
             .map(|s| s as &dyn ::degenbot_solvers::profit_envelope::DegeneratePathSink),
-        Some(&*ctx.walk_memo),
+        Some(&**ctx.scope.walk_memo()),
         ctx.runtime,
     );
     let _solve_ctx = solve_span.enter();

@@ -105,6 +105,31 @@ impl WalkMemoState {
             None => MemoProbe::Miss,
         }
     }
+
+    /// Snapshot the per-epoch counters and reset them. `negative_entries` is
+    /// a running gauge mirroring the live cache: it is reported but never
+    /// reset. The epoch named is the memo's CURRENT epoch — the one that just
+    /// ended at a boundary drain.
+    fn drain_epoch(&mut self) -> WalkMemoStats {
+        let out = WalkMemoStats {
+            epoch: self.epoch,
+            probes: self.probes,
+            hits: self.hits,
+            distinct: self.curr.len() as u64,
+            cache_plays: self.cache_plays,
+            negative_entries: self.negative_entries,
+            negatives_played: self.negatives_played,
+            probes_sims: self.probes_sims,
+            hits_sims: self.hits_sims,
+        };
+        self.probes = 0;
+        self.hits = 0;
+        self.cache_plays = 0;
+        self.negatives_played = 0;
+        self.probes_sims = 0;
+        self.hits_sims = 0;
+        out
+    }
 }
 
 /// The engine's OWNED cross-block walk-composition handle:
@@ -145,8 +170,11 @@ impl WalkMemo {
         self.inner.lock()
     }
 
-    /// Advance the cross-block epoch and swap the composition census (call
-    /// at block-lifecycle start — replaces the global set-epoch accessor).
+    /// Drain-and-advance the block boundary in ONE call: return the accounting
+    /// for the epoch that just ended, then advance per the epoch contract
+    /// below. The memo owns the ordering — the returned stats are captured
+    /// before any census swap, so a caller cannot drain the wrong epoch or
+    /// drain twice.
     ///
     /// # Epoch contract (monotone, forward-only)
     ///
@@ -171,10 +199,14 @@ impl WalkMemo {
     /// requires previous-epoch census membership) — the census IS the reuse
     /// window. An entry stored without a probe never joins the census and
     /// is evicted at the next epoch advance.
-    pub fn begin_block(&self, epoch: u64) {
+    pub fn begin_block(&self, epoch: u64) -> WalkMemoStats {
         let mut st = self.lock();
+        // Drain first: the early returns below leave the census in place, and
+        // the counters captured here are always the epoch that just ended (the
+        // memo's current epoch), reset for the next.
+        let out = st.drain_epoch();
         if epoch == st.epoch {
-            return;
+            return out;
         }
         if epoch < st.epoch {
             // Reorg rewind: the block pump rewound to a lower block
@@ -190,7 +222,7 @@ impl WalkMemo {
                  lower block number): holding the higher epoch's census, \
                  costs, and cache; not swapping backwards"
             );
-            return;
+            return out;
         }
         st.epoch = epoch;
         st.prev = std::mem::take(&mut st.curr);
@@ -219,6 +251,7 @@ impl WalkMemo {
             }
             keep
         });
+        out
     }
 
     /// Take (and reset) the per-epoch accounting counters. `negative_entries`
@@ -228,24 +261,7 @@ impl WalkMemo {
     #[must_use]
     pub fn take_stats(&self) -> WalkMemoStats {
         let mut st = self.lock();
-        let out = WalkMemoStats {
-            epoch: st.epoch,
-            probes: st.probes,
-            hits: st.hits,
-            distinct: st.curr.len() as u64,
-            cache_plays: st.cache_plays,
-            negative_entries: st.negative_entries,
-            negatives_played: st.negatives_played,
-            probes_sims: st.probes_sims,
-            hits_sims: st.hits_sims,
-        };
-        st.probes = 0;
-        st.hits = 0;
-        st.cache_plays = 0;
-        st.negatives_played = 0;
-        st.probes_sims = 0;
-        st.hits_sims = 0;
-        out
+        st.drain_epoch()
     }
 
     /// Three-state composition-cache probe. Census bookkeeping happens
