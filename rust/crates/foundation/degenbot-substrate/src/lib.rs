@@ -49,7 +49,9 @@ pub use ::degenbot_pools::aerodrome_v2_state::{
 pub use ::degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;
 pub use ::degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
 pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
-pub use ::degenbot_pools::curve_dy_io::{resolve_dy_inputs, CurveInputsError};
+pub use ::degenbot_pools::curve_dy_io::{
+    check_metapool_liquidity, resolve_dy_inputs, CurveInputsError,
+};
 pub use ::degenbot_pools::curve_state::{
     CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
 };
@@ -253,6 +255,7 @@ fn curve_error_into_swap(e: CurveInputsError) -> CurveSwapError {
         CurveInputsError::Provider(_) => {
             CurveSwapError::MissingValue("base-pool provider fetch failed")
         }
+        CurveInputsError::NoLiquidity => CurveSwapError::MissingValue("base-pool has no liquidity"),
     }
 }
 

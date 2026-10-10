@@ -17,12 +17,41 @@ Curve StableSwap state is significantly different from V2/V3/V4:
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING
+
+from degenbot.curve.types import (
+    DVariant,
+    LendingRateStyle,
+    MetapoolRateStyle,
+    MetapoolUnderlyingStyle,
+    SwapStyle,
+    YDVariant,
+    YVariant,
+)
 
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-    from degenbot.curve.strategies import PoolStrategies
     from degenbot.erc20 import Erc20Token
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class PoolStrategies:
+    """Resolved calculation strategies for a Curve pool instance.
+
+    Set at construction time by the builder from the pool address. The pool
+    class is address-agnostic — it only reads these strategy values and passes
+    them to the Rust core. The Rust core derives its math axes from the same
+    enum discriminants, so no Python calculator is auto-constructed here.
+    """
+
+    d_variant: DVariant = DVariant.STANDARD
+    y_variant: YVariant = YVariant.STANDARD
+    yd_variant: YDVariant = YDVariant.STANDARD
+    swap_style: SwapStyle = SwapStyle.STANDARD
+    metapool_rate_style: MetapoolRateStyle = MetapoolRateStyle.STANDARD
+    metapool_underlying_style: MetapoolUnderlyingStyle = MetapoolUnderlyingStyle.STANDARD
+    lending_rate_style: LendingRateStyle = LendingRateStyle.NONE
 
 
 class StableswapPoolState:

@@ -295,8 +295,7 @@ def test_metapool_with_valid_base_cache():
 
     At block 25144000 the RAI/3Crv metapool's base_cache_updated is only ~180s old
     (vs the 600s expiry), so the contract uses its cached virtual_price. Our pool
-    must do the same — PerBlockCache.get_cached_virtual_price() resolves this
-    internally without side-effect mirrors.
+    must do the same — `_get_cached_virtual_price()` resolves this internally.
 
     Replayed from the recorded cassette at the pinned block (no fork); the
     get_dy/get_dy_underlying parity at this same block is the golden test
@@ -310,8 +309,9 @@ def test_metapool_with_valid_base_cache():
 
     # Verify the base cache has not expired at this block (recorded values)
     block_timestamp = lp._data_provider.block_timestamp(block)
-    base_cache_updated = lp._cache.get_cached_base_cache_updated(block)
-    assert block_timestamp <= base_cache_updated + lp._cache.BASE_CACHE_EXPIRES
+    base_cache_updated = lp._data_provider.base_cache_updated(block)
+    assert block_timestamp <= base_cache_updated + lp.BASE_CACHE_EXPIRES
+    assert lp._get_cached_virtual_price(block) == lp._data_provider.base_virtual_price(block)
 
 
 @pytest.mark.online_rpc

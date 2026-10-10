@@ -2,7 +2,7 @@
 
 The behavioral companion to the Rust `parity_curve_swap.rs` test. Proves the
 **same** canonical Curve fixture driven through the **Python consumer**
-(`degenbot.curve.dy.calculate_dy`, the PyO3 seam) produces the **same** `dy`
+(`degenbot._ffi.curve_dy.calculate_dy`, the PyO3 seam) produces the **same** `dy`
 as the **Rust consumer** (`degenbot_curve_math::calculate_dy` directly).
 Divergence = a lossy FFI seam on the Curve swap-arg extraction (the
 `DyCalculationInputs` builder).
@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot.curve.dy import DyCalculationInputs, calculate_dy
+from degenbot._ffi.curve_dy import DyCalculationInputs, calculate_dy
 
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "curve_swap.json"
 _FIXTURE = json.loads(_FIXTURE_PATH.read_text())

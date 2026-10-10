@@ -7,7 +7,7 @@
 //! **FFI-seam-lossless claim**: the **same** canonical fixture driven through
 //! the **Rust consumer** (`degenbot_math::curve::calculate_dy`, as a `cargo add
 //! degenbot` user) produces the **same** `dy` as the **Python consumer**
-//! (`degenbot.curve.dy.calculate_dy`, the PyO3 binding). The shared oracle is
+//! (`degenbot._ffi.curve_dy.calculate_dy`, the PyO3 binding). The shared oracle is
 //! the recorded constant in the shared fixture file.
 //!
 //! ## Fixture (single source of truth — HRT356)

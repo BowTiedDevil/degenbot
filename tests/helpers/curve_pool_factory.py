@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.math import derive_rate_and_precision_multipliers
-from degenbot.curve.strategies import PoolStrategies
+from degenbot.curve.stableswap_pool_state import PoolStrategies
 from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:

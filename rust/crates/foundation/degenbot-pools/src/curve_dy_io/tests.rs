@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use alloy::primitives::{Address, U256};
 use degenbot_math::curve::calculate_dy;
 
-use super::resolve_dy_inputs;
+use super::{check_metapool_liquidity, resolve_dy_inputs};
 use crate::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 use crate::curve_state::CurvePoolIdentity;
 
@@ -358,4 +358,29 @@ fn ramping_a_interpolates_with_timestamp() {
     // (the ramping A is already the full amplified A, matching the companion
     // `_a` which returns the interpolated value directly, not x A_PRECISION)
     assert_eq!(inputs.amp, U256::from(150_u64));
+}
+
+#[test]
+fn metapool_liquidity_passes_when_both_sides_have_balances() {
+    assert!(check_metapool_liquidity(&[E21, TWO_E21], &[E21, E21]).is_ok());
+}
+
+#[test]
+fn metapool_liquidity_rejects_a_zero_metapool_balance() {
+    let err = check_metapool_liquidity(&[U256::ZERO, TWO_E21], &[E21, E21])
+        .expect_err("a zero metapool balance must refuse");
+    assert!(matches!(
+        err,
+        crate::curve_dy_io::CurveInputsError::NoLiquidity
+    ));
+}
+
+#[test]
+fn metapool_liquidity_rejects_a_zero_base_balance() {
+    let err = check_metapool_liquidity(&[E21, TWO_E21], &[U256::ZERO, E21])
+        .expect_err("a zero base-pool balance must refuse");
+    assert!(matches!(
+        err,
+        crate::curve_dy_io::CurveInputsError::NoLiquidity
+    ));
 }

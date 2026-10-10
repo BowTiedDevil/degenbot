@@ -125,6 +125,78 @@ fn curve_get_dy_runs_the_rust_owned_swap_path() {
 }
 
 #[test]
+fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
+    // The metapool base-swap's zero-balance refusal is core-owned (the
+    // companion's pre-validation is gone): a zero balance on either the
+    // metapool or its base pool returns the typed `NoLiquidity`, raised where
+    // the balance vectors are read.
+    use crate::RegisterCurvePoolParams;
+
+    const E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+    const E21: U256 = U256::from_limbs([11_627_460_059_052_638_208, 162, 0, 0]);
+
+    let params = |address: Address, base_pool: Option<Address>| RegisterCurvePoolParams {
+        address,
+        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+        a_coefficient: 100,
+        a_precision: 100,
+        fee: 500_000,
+        admin_fee: 0,
+        rate_multipliers: vec![E18, E18],
+        balances: vec![E21, E21],
+        update_block: 1,
+        swap_style: 1,
+        lending_rate_style: 1,
+        d_variant: 1,
+        y_variant: 1,
+        yd_variant: 1,
+        base_pool,
+        initial_a_coefficient: None,
+        future_a_coefficient: None,
+        initial_a_coefficient_time: None,
+        future_a_coefficient_time: None,
+        create_timestamp: None,
+        fee_gamma: None,
+        mid_fee: None,
+        offpeg_fee_multiplier: None,
+        out_fee: None,
+        gamma: None,
+        lp_token: None,
+        use_lending: Vec::new(),
+        precision_multipliers: vec![E18, E18],
+        tokens_underlying: None,
+        metapool_rate_style: 1,
+        metapool_underlying_style: 1,
+        data_provider: None,
+    };
+
+    let mut core = BotState::new();
+
+    // A zero METAPOOL coin balance refuses.
+    let base_addr = Address::from([0xbbu8; 20]);
+    core.register_curve_pool(&params(base_addr, None));
+    let mut meta = params(Address::from([0xccu8; 20]), Some(base_addr));
+    meta.balances = vec![U256::ZERO, E21];
+    let meta_id = core.register_curve_pool(&meta);
+    let err = core
+        .curve_get_dy_underlying(meta_id, 0, 1, E18, 1, None)
+        .expect_err("a zero metapool balance must refuse");
+    assert!(matches!(err, CurveInputsError::NoLiquidity));
+
+    // A zero BASE-pool coin balance refuses too.
+    let base_zero_addr = Address::from([0xbdu8; 20]);
+    let mut base_zero = params(base_zero_addr, None);
+    base_zero.balances = vec![U256::ZERO, E21];
+    core.register_curve_pool(&base_zero);
+    let meta_pool_b_id =
+        core.register_curve_pool(&params(Address::from([0xcdu8; 20]), Some(base_zero_addr)));
+    let err = core
+        .curve_get_dy_underlying(meta_pool_b_id, 0, 1, E18, 1, None)
+        .expect_err("a zero base-pool balance must refuse");
+    assert!(matches!(err, CurveInputsError::NoLiquidity));
+}
+
+#[test]
 #[expect(clippy::too_many_lines)]
 fn pool_family_dispatches_every_registered_family() {
     // Each non-V2 `PoolEntry` variant resolves to its own family tag.

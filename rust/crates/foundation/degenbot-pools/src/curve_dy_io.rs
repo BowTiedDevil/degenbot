@@ -46,6 +46,8 @@ pub enum CurveInputsError {
     UnknownPool(u64),
     /// `get_dy_underlying` on a pool with no base pool (a plain pool).
     NotMetapool,
+    /// A metapool base swap where one side's balance vector has a zero entry.
+    NoLiquidity,
 }
 
 impl From<degenbot_math::curve::CurveSwapError> for CurveInputsError {
@@ -58,6 +60,24 @@ impl From<degenbot_math::curve::CurveMathError> for CurveInputsError {
     fn from(e: degenbot_math::curve::CurveMathError) -> Self {
         Self::Swap(degenbot_math::curve::CurveSwapError::from(e))
     }
+}
+
+/// Reject a metapool base swap when either side has a zero balance — the
+/// contract's `NoLiquidity` refusal, evaluated where the balance vectors are
+/// read (the core-side home the companion's pre-validation used to occupy).
+///
+/// # Errors
+///
+/// Returns [`CurveInputsError::NoLiquidity`] when the base pool or the
+/// metapool carries a zero balance.
+pub fn check_metapool_liquidity(
+    meta_balances: &[U256],
+    base_balances: &[U256],
+) -> Result<(), CurveInputsError> {
+    if base_balances.iter().any(U256::is_zero) || meta_balances.iter().any(U256::is_zero) {
+        return Err(CurveInputsError::NoLiquidity);
+    }
+    Ok(())
 }
 
 /// Compute `xp = rate * balance // PRECISION` (strict-zip, matches the

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING
 
@@ -62,8 +61,10 @@ class CurveStableswapPoolTracker(
         """
         pool_address = get_checksum_address(pool_address)
 
-        with contextlib.suppress(KeyError):
+        try:
             return self._tracked_pools[pool_address]
+        except KeyError:
+            pass
 
         if pool_address in self._untracked_pools:
             raise PoolNotAssociated(pool_address)

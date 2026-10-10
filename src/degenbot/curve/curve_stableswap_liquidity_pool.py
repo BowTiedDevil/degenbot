@@ -6,13 +6,10 @@ plain pools, metapools, lending pools, and crypto pools.
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING, Any, NamedTuple, Self
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve.per_block_cache import PerBlockCache
-from degenbot.curve.stableswap_pool_state import StableswapPoolState
-from degenbot.curve.strategies import PoolStrategies
+from degenbot.curve.stableswap_pool_state import PoolStrategies, StableswapPoolState
 from degenbot.curve.types import (
     BasePoolPort,
     CurveDataProvider,
@@ -32,6 +29,7 @@ from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.concrete import BoundedCache
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -227,11 +225,13 @@ class CurveStableswapPool(
     _future_a_coefficient_time: int | None
     _create_timestamp: int | None
     _data_provider: CurveDataProvider | None
-    _cache: PerBlockCache
+    _cache_block_timestamps: BoundedCache[BlockNumber, int]
+    _cache_virtual_price: BoundedCache[BlockNumber, int]
     _name: str
     FEE_DENOMINATOR: int = 10**10
     A_PRECISION: int = 100
-    # BASE_CACHE_EXPIRES moved to PerBlockCache
+    # The contract's `_vp_rate_ro()` base-cache expiry window (10 minutes).
+    BASE_CACHE_EXPIRES: int = 10 * 60
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
@@ -371,22 +371,29 @@ class CurveStableswapPool(
             _HandleCurveDataProviderAdapter(py_pool) if py_pool.curve_has_data_provider else None
         )
 
-        # Per-block on-chain caches (cache depth is companion-owned mutable
-        # cache config; the always-8 default applies — no caller passes a
-        # non-default value (verified at task time), so this stays companion-side
-        # and single-arg is preserved).
-        self._cache = PerBlockCache(
-            data_provider=self._data_provider,
-            address=self.address,
-            base_pool_is_set=self.base_pool is not None,
-        )
+        # Per-block on-chain caches (companion-owned cache depth; the always-8
+        # default applies — no caller passes a non-default value).
+        self._cache_block_timestamps = BoundedCache(max_items=8)
+        self._cache_virtual_price = BoundedCache(max_items=8)
 
-        # The registration block (genesis journal delta). Used to pre-populate
-        # base-cache virtual-price values for metapools at construction time.
+        # The registration block (genesis journal delta). Metapools warm the
+        # base-cache virtual price here. A pool built without a stored data
+        # provider is legal — the Rust core resolves the virtual price at calc
+        # time — so the typed `MissingCurveData` is a deliberately-ignored fact;
+        # every other failure propagates loudly.
         registration_block = py_pool.balance_vector().update_block
         if self.base_pool is not None and registration_block != 0:
-            with contextlib.suppress(Exception):
-                self._cache.get_cached_virtual_price(block_number=registration_block)
+            try:
+                self._get_cached_virtual_price(block_number=registration_block)
+            except MissingCurveData as exc:
+                # A provider-less pool is legal: the Rust core resolves the
+                # virtual price at calc time. Record the ignored typed fact;
+                # every other failure propagates loudly.
+                logger.debug(
+                    "Curve metapool %s: base-cache virtual price not prefetched: %s",
+                    self.address,
+                    exc,
+                )
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -513,6 +520,59 @@ class CurveStableswapPool(
             "Use Bot.update() or pass an explicit block number.",
         )
 
+    def _get_cached_block_timestamp(self, block_number: BlockNumber) -> int:
+        """Fetch or retrieve the cached block timestamp.
+
+        Returns:
+            The block timestamp as an integer.
+
+        Raises:
+            MissingCurveData: If the value is not cached and no provider is available.
+
+        """
+        cached = self._cache_block_timestamps.get(block_number)
+        if cached is not None:
+            return cached
+        if self._data_provider is None:
+            msg = "block_timestamp requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "block_timestamp", msg)
+        result = self._data_provider.block_timestamp(block_number)
+        self._cache_block_timestamps[block_number] = result
+        return result
+
+    def _get_cached_virtual_price(self, block_number: BlockNumber) -> int:
+        """Resolve the virtual price, applying the metapool base-cache expiry.
+
+        For a metapool, the contract's `_vp_rate_ro()` uses the base pool's
+        cached virtual price while its cache is fresh, and fetches the live
+        virtual price once the base cache has expired; a plain pool fetches
+        directly. The resolved value is cached per block.
+
+        Returns:
+            The virtual price as an integer.
+
+        Raises:
+            MissingCurveData: If the value is not cached and no provider is available.
+
+        """
+        cached = self._cache_virtual_price.get(block_number)
+        if cached is not None:
+            return cached
+        if self._data_provider is None:
+            msg = "virtual_price requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "virtual_price", msg)
+        if self.base_pool is None:
+            value = self._data_provider.virtual_price(block_number)
+        else:
+            base_cache_updated = self._data_provider.base_cache_updated(block_number)
+            block_timestamp = self._get_cached_block_timestamp(block_number)
+            if block_timestamp > base_cache_updated + self.BASE_CACHE_EXPIRES:
+                value = self._data_provider.virtual_price(block_number)
+            else:
+                value = self._data_provider.base_virtual_price(block_number)
+        self._cache_virtual_price[block_number] = value
+        return value
+
     def _a(self, timestamp: int | None = None) -> int:
         """Handle ramping A up or down.
 
@@ -537,7 +597,7 @@ class CurveStableswapPool(
             return self.future_a_coefficient
 
         if timestamp is None:
-            timestamp = self._cache.get_cached_block_timestamp(0)
+            timestamp = self._get_cached_block_timestamp(0)
 
         a_1 = self.future_a_coefficient
         t_1 = self.future_a_coefficient_time
@@ -754,46 +814,19 @@ class CurveStableswapPool(
     ) -> int:
         """Resolve a swap that spans this metapool and its underlying base pool.
 
+        The zero-balance refusal is core-owned (`curve_get_dy_underlying`
+        raises the typed `NoLiquidity` where the balance vectors are read), so
+        this only maps the combined underlying indices and delegates.
+
         Returns:
             The computed integer value.
 
-        Raises:
-            NoLiquidity: If a token required by the swap has a zero balance.
-
         """
         if TYPE_CHECKING:
-            assert self.base_pool is not None
             assert self.tokens_underlying is not None
-
-        # TODO:  # ruff:ignore[line-contains-todo] see if any of these checks are unnecessary (partial zero balance OK?)
-        if any(balance == 0 for balance in self.base_pool.balances):
-            raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
-        if any(balance == 0 for balance in self.balances):
-            raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
         token_in_from_metapool = token_in in self._tokens
         token_out_from_metapool = token_out in self._tokens
-        assert token_in_from_metapool or token_out_from_metapool
-
-        if token_in_from_metapool and self.balances[self._tokens.index(token_in)] == 0:
-            raise NoLiquidity(message=f"{token_in} has a zero balance.")
-        if token_out_from_metapool and self.balances[self._tokens.index(token_out)] == 0:
-            raise NoLiquidity(message=f"{token_out} has a zero balance.")
-
-        token_in_from_basepool = token_in in self.base_pool.tokens
-        token_out_from_basepool = token_out in self.base_pool.tokens
-        assert token_in_from_basepool or token_out_from_basepool
-
-        if (
-            token_in_from_basepool
-            and self.base_pool.balances[self.base_pool.tokens.index(token_in)] == 0
-        ):
-            raise NoLiquidity(message=f"{token_in} has a zero balance.")
-        if (
-            token_out_from_basepool
-            and self.base_pool.balances[self.base_pool.tokens.index(token_out)] == 0
-        ):
-            raise NoLiquidity(message=f"{token_out} has a zero balance.")
 
         return self._get_dy_underlying(
             i=(

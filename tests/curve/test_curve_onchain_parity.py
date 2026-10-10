@@ -46,12 +46,12 @@ from degenbot._ffi import Bot
 from degenbot.abi import decode as abi_decode
 from degenbot.abi import encode as abi_encode
 from degenbot.crypto import function_selector, keccak256
-from degenbot.curve.strategies import (
+from degenbot.curve.stableswap_pool_state import PoolStrategies
+from degenbot.curve.types import (
     DVariant,
     LendingRateStyle,
     MetapoolRateStyle,
     MetapoolUnderlyingStyle,
-    PoolStrategies,
     SwapStyle,
     YDVariant,
     YVariant,

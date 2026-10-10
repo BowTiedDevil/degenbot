@@ -26,7 +26,7 @@ use degenbot_bot::bot_core::pool_ops::{self, StagedSwapOutcome, SwapOpError};
 use degenbot_bot::bot_core::TickInfo;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::swap_simulation::SwapRequest;
-use degenbot_substrate::BotState;
+use degenbot_substrate::{BotState, CurveInputsError};
 
 /// `PyO3` adapter wrapping a Python fetch-word callable as a
 /// [`TickWordFetcher`] (ADR-005 sparse-map parity, slice 3).
@@ -406,6 +406,27 @@ impl PyCurveDataProvider {
                 .collect::<Result<_, _>>()?;
             Ok(rates)
         })
+    }
+}
+
+/// Build a `degenbot.exceptions.arbitrage.NoLiquidity(message=..)` for a
+/// core-reported zero-balance metapool refusal. The class stays owned by the
+/// Python exceptions module; an import failure means a broken install, so it
+/// surfaces directly.
+fn curve_no_liquidity_error(py: Python<'_>, message: &str) -> PyErr {
+    let exc_type = py
+        .import("degenbot.exceptions.arbitrage")
+        .and_then(|module| module.getattr("NoLiquidity"));
+    match exc_type {
+        Ok(exc_type) => {
+            let kwargs = PyDict::new(py);
+            let _ = kwargs.set_item("message", message);
+            match exc_type.call((), Some(&kwargs)) {
+                Ok(exc) => PyErr::from_value(exc),
+                Err(err) => err,
+            }
+        }
+        Err(err) => err,
     }
 }
 
@@ -2261,6 +2282,12 @@ impl PyLiquidityPool {
         });
         let out = match result {
             Ok(v) => v,
+            Err(CurveInputsError::NoLiquidity) => {
+                return Err(curve_no_liquidity_error(
+                    py,
+                    "One or more of the tokens has a zero balance.",
+                ));
+            }
             Err(e) => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "Curve get_dy_underlying failure: {e:?}"
