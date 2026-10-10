@@ -94,23 +94,9 @@ impl degenbot_pools::tick_fetch::TickWordFetcher for PyTickWordFetcher {
                     ticks: HashMap::new(),
                 });
             }
-            // Extract `{tick: (gross, net, block)}` directly into a HashMap.
-            let parsed: std::collections::HashMap<i32, (u128, i128, u64)> = bound
-                .extract()
-                .map_err(|_| FetchTickWordError::FetchFailed)?;
-            let ticks = parsed
-                .into_iter()
-                .map(|(tick, (gross, net, blk))| {
-                    (
-                        tick,
-                        TickInfo {
-                            liquidity_gross: alloy::primitives::U128::from(gross),
-                            liquidity_net: net,
-                            block: blk,
-                        },
-                    )
-                })
-                .collect();
+            // The seed boundary owns the arity, the `U128` narrowing, and the
+            // malformed-container error.
+            let ticks = TickData::from_py(bound).map_err(|_| FetchTickWordError::FetchFailed)?;
             Ok(FetchedTickWord { word, ticks })
         })
     }
@@ -579,7 +565,7 @@ impl PyLiquidityPool {
             .map_err(|_| {
                 pyo3::exceptions::PyOverflowError::new_err("override_tick must fit in i32")
             })?;
-        let rust_tick_data = extract_tick_data(override_tick_data)?;
+        let rust_tick_data = TickData::from_py(override_tick_data)?;
         let sqrt_price_limit = match sqrt_price_limit_x96 {
             Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
             _ => None,
@@ -1825,34 +1811,11 @@ impl PyLiquidityPool {
                 })
             })
             .collect::<Result<_, _>>()?;
-        let mut map: HashMap<i32, TickInfo> = HashMap::with_capacity(tick_data.len());
-        for (key, value) in tick_data.iter() {
-            let tick: i32 = key.extract().map_err(|_| {
-                pyo3::exceptions::PyTypeError::new_err(
-                    "update_tick_data: tick_data keys must be ints",
-                )
-            })?;
-            // Symmetric with `tick_data_snapshot`: a 3-tuple
-            // `(liquidity_gross, liquidity_net, block)` (the block is the
-            // Symmetric with `tick_data_snapshot`: a 3-tuple
-            // `(liquidity_gross, liquidity_net, block)`. The per-tick block is
-            // preserved on the Rust ``TickInfo.block`` field (mirrors the
-            // Python ``LiquidityAtTick.block`` — the snapshot round-trip's
-            // per-tick block contract).
-            let (gross, net, tick_block): (u128, i128, u64) = value.extract().map_err(|_| {
-                pyo3::exceptions::PyTypeError::new_err(
-                    "update_tick_data: tick_data values must be (gross, net, block) tuples",
-                )
-            })?;
-            map.insert(
-                tick,
-                TickInfo {
-                    liquidity_gross: alloy::primitives::U128::from(gross),
-                    liquidity_net: net,
-                    block: tick_block,
-                },
-            );
-        }
+        // The seed boundary owns the wire shape (arity, gross narrowing,
+        // per-tick block) and the one malformed-container error; the per-tick
+        // block it carries is preserved on the Rust ``TickInfo.block`` field
+        // (mirrors the Python ``LiquidityAtTick.block``).
+        let map = TickData::from_py(tick_data.as_any())?;
         // The write guard lives inside py.detach (GIL/BotState inversion fix,
         // 2026-08-21 run-9): GIL released while parked on the BotState lock.
         let applied = self.with_state_mut(py, |core| {
@@ -3002,31 +2965,143 @@ fn build_swap_outcome_tuple(
     build_cl_payload_tuple(py, &payload).map(Some)
 }
 
-/// Convert a Python `{tick: (liquidity_gross, liquidity_net, block)}` dict into
-/// the Rust `HashMap<i32, TickInfo>` (same shape as `register_*_pool`'s
-/// `tick_data`, mirroring `PyLiquidityPool.update_tick_data`).
-fn extract_tick_data(
-    dict: &Bound<'_, PyAny>,
-) -> PyResult<HashMap<i32, degenbot_bot::bot_core::TickInfo>> {
-    let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
-        dict.extract().map_err(|_| {
-            pyo3::exceptions::PyTypeError::new_err(
-                "tick_data must be {tick: (liquidity_gross, liquidity_net, block)}",
-            )
-        })?;
-    Ok(parsed
-        .into_iter()
-        .map(|(tick, (gross, net, blk))| {
-            (
-                tick,
-                degenbot_bot::bot_core::TickInfo {
-                    liquidity_gross: alloy::primitives::U128::from(gross),
-                    liquidity_net: net,
-                    block: blk,
-                },
-            )
-        })
-        .collect())
+/// The registration-lifecycle tick-data seed boundary: a Python
+/// `{tick: (gross, net, block)}` mapping <-> the Rust
+/// `HashMap<i32, TickInfo>`.
+///
+/// One home for the wire contract — the tuple arity, the `U128` gross
+/// narrowing, the per-tick `block`, and the single error raised for a
+/// malformed container, so no two seed sites can disagree about the shape.
+/// The 2-tuple `(gross, net)` backfill form (the engine state-sync seams) is
+/// the same contract with `block` filled from context (`0` — those seams carry
+/// no per-tick block), not a second error vocabulary; `None` is the empty-map
+/// convention on the registration entry points.
+pub(crate) struct TickData;
+
+impl TickData {
+    /// The wire shape a malformed seed container is reported against; sharing
+    /// one string keeps every seed site's failure indistinguishable.
+    const MALFORMED: &str = "tick_data must be {tick: (liquidity_gross, liquidity_net, block)}";
+
+    /// The ONE malformed-container error every seed entry point reports.
+    fn malformed() -> PyErr {
+        pyo3::exceptions::PyTypeError::new_err(Self::MALFORMED)
+    }
+
+    /// Narrow one `(gross, net, block)` triple onto the Rust tick row.
+    fn info(gross: u128, net: i128, block: u64) -> TickInfo {
+        TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(gross),
+            liquidity_net: net,
+            block,
+        }
+    }
+
+    /// 3-tuple seed form: `{tick: (gross, net, block)}` -> `HashMap<i32, TickInfo>`.
+    pub(crate) fn from_py(container: &Bound<'_, PyAny>) -> PyResult<HashMap<i32, TickInfo>> {
+        let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
+            container.extract().map_err(|_| Self::malformed())?;
+        Ok(parsed
+            .into_iter()
+            .map(|(tick, (gross, net, block))| (tick, Self::info(gross, net, block)))
+            .collect())
+    }
+
+    /// `register_*_pool(tick_data=...)` convention: `None` -> empty map.
+    pub(crate) fn from_py_optional(
+        container: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<HashMap<i32, TickInfo>> {
+        match container {
+            Some(dict) => Self::from_py(dict.as_any()),
+            None => Ok(HashMap::new()),
+        }
+    }
+
+    /// 2-tuple backfill form: `{tick: (gross, net)}` -> `HashMap<i32, TickInfo>`
+    /// with `block` filled from context.
+    pub(crate) fn from_py_pairs(container: &Bound<'_, PyAny>) -> PyResult<HashMap<i32, TickInfo>> {
+        let parsed: std::collections::HashMap<i32, (u128, i128)> =
+            container.extract().map_err(|_| Self::malformed())?;
+        Ok(parsed
+            .into_iter()
+            .map(|(tick, (gross, net))| (tick, Self::info(gross, net, 0)))
+            .collect())
+    }
+
+    /// Rust -> Python: serialize `(tick, gross, net, block)` rows into the
+    /// `{tick: (gross, net, block)}` dict [`Self::from_py`] accepts, so a
+    /// snapshot round-trips through one wire shape.
+    pub(crate) fn to_py(
+        py: Python<'_>,
+        rows: impl IntoIterator<Item = (i32, u128, i128, u64)>,
+    ) -> PyResult<Bound<'_, PyDict>> {
+        let dict = PyDict::new(py);
+        for (tick, gross, net, block) in rows {
+            let tuple = PyTuple::new(
+                py,
+                [
+                    gross.into_pyobject(py)?.into_any(),
+                    net.into_pyobject(py)?.into_any(),
+                    block.into_pyobject(py)?.into_any(),
+                ],
+            )?;
+            dict.set_item(tick, tuple)?;
+        }
+        Ok(dict)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    /// The green path: a 3-tuple seed narrows onto the Rust row and serializes
+    /// back through the same wire shape.
+    #[test]
+    fn tick_data_seed_round_trips_through_the_one_wire_shape() {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item(42, (7u128, -3i128, 100u64)).unwrap();
+            let map = TickData::from_py(dict.as_any()).unwrap();
+            let info = map.get(&42).unwrap();
+            assert_eq!(info.liquidity_gross.to::<u128>(), 7);
+            assert_eq!(info.liquidity_net, -3);
+            assert_eq!(info.block, 100);
+
+            let back = TickData::to_py(py, [(42, 7, -3, 100)]).unwrap();
+            let row = back.get_item(42).unwrap().unwrap();
+            assert_eq!(row.extract::<(u128, i128, u64)>().unwrap(), (7, -3, 100));
+        });
+    }
+
+    /// The 2-tuple backfill variant is the same contract with `block` filled
+    /// from context.
+    #[test]
+    fn tick_data_two_tuple_backfill_fills_block_from_context() {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item(42, (7u128, -3i128)).unwrap();
+            let map = TickData::from_py_pairs(dict.as_any()).unwrap();
+            assert_eq!(map.get(&42).unwrap().block, 0);
+        });
+    }
+
+    /// The red path: a wrong-arity container raises the ONE typed error.
+    #[test]
+    fn tick_data_wrong_arity_raises_the_one_error() {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item(42, (7u128, -3i128)).unwrap();
+            let err = TickData::from_py(dict.as_any())
+                .expect_err("a 2-tuple is not the 3-tuple seed shape");
+            assert_eq!(
+                err.to_string(),
+                format!("TypeError: {}", TickData::MALFORMED)
+            );
+        });
+    }
 }
 
 /// Read-only reserve-pair view exposed to Python.

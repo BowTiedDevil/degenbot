@@ -34,7 +34,6 @@ pub use result_channel::BlockStream;
 use crate::prelude::*;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
-pub(crate) use hashbrown::HashMap;
 pub(crate) use std::sync::Arc;
 
 pub(crate) use alloy::primitives::{Address, U256};
@@ -166,18 +165,6 @@ impl PyArbEngine {
         &self,
     ) -> Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>> {
         Arc::clone(&self.warm_code_cache)
-    }
-}
-
-pub(crate) fn make_tick_info(
-    liquidity_gross: u128,
-    liquidity_net: i128,
-) -> degenbot_bot::bot_core::TickInfo {
-    use alloy::primitives::U128;
-    degenbot_bot::bot_core::TickInfo {
-        liquidity_gross: U128::from(liquidity_gross),
-        liquidity_net,
-        block: 0,
     }
 }
 

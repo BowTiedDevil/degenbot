@@ -50,6 +50,7 @@ fn narrow_reserve(
         .map_err(|sv| SpecViolationError::new_err(format!("{sv}")))
 }
 pub use crate::bot::pool::PyLiquidityPool;
+use crate::bot::pool::TickData;
 use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::RegisteredPoolFamily;
@@ -1819,33 +1820,8 @@ impl PyBot {
         // liquidity is uint128 — extracted as U256 then narrowed.
         let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
 
-        // Convert `{tick: (gross, net, block)}` → `HashMap<i32, TickInfo>`
-        // (mirrors `PyLiquidityPool.update_tick_data`'s boundary conversion).
-        let rust_tick_data: hashbrown::HashMap<i32, degenbot_bot::bot_core::TickInfo> =
-            match tick_data {
-                Some(dict) => {
-                    let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
-                        dict.extract().map_err(|_| {
-                            pyo3::exceptions::PyTypeError::new_err(
-                                "register_v3_pool: tick_data must be {tick: (gross, net, block)}",
-                            )
-                        })?;
-                    parsed
-                        .into_iter()
-                        .map(|(tick, (gross, net, blk))| {
-                            (
-                                tick,
-                                degenbot_bot::bot_core::TickInfo {
-                                    liquidity_gross: alloy::primitives::U128::from(gross),
-                                    liquidity_net: net,
-                                    block: blk,
-                                },
-                            )
-                        })
-                        .collect()
-                }
-                None => hashbrown::HashMap::new(),
-            };
+        // The seed boundary owns the wire shape; `None` means no seed.
+        let rust_tick_data = TickData::from_py_optional(tick_data)?;
         let cov = match coverage {
             "tracked" => PoolTickCoverage::Tracked,
             "sparse" => PoolTickCoverage::Sparse,
@@ -1971,35 +1947,9 @@ impl PyBot {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid currency1 address: {e}"))
         })?;
         let sp = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
-        // Convert `{tick: (gross, net, block)}` → `HashMap<i32, TickInfo>` —
-        // mirrors `register_v3_pool` (ADR-006 rolling-start race closure for
-        // V4: seed inline so the pool is never visible to the live pump
-        // unseeded).
-        let rust_tick_data: hashbrown::HashMap<i32, degenbot_bot::bot_core::TickInfo> =
-            match tick_data {
-                Some(dict) => {
-                    let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
-                        dict.extract().map_err(|_| {
-                            pyo3::exceptions::PyTypeError::new_err(
-                                "register_v4_pool: tick_data must be {tick: (gross, net, block)}",
-                            )
-                        })?;
-                    parsed
-                        .into_iter()
-                        .map(|(tick, (gross, net, blk))| {
-                            (
-                                tick,
-                                degenbot_bot::bot_core::TickInfo {
-                                    liquidity_gross: alloy::primitives::U128::from(gross),
-                                    liquidity_net: net,
-                                    block: blk,
-                                },
-                            )
-                        })
-                        .collect()
-                }
-                None => hashbrown::HashMap::new(),
-            };
+        // Seed inline so the pool is never visible to the live pump unseeded
+        // (rolling-start race closure, ADR-006).
+        let rust_tick_data = TickData::from_py_optional(tick_data)?;
         let cov = match coverage {
             "tracked" => PoolTickCoverage::Tracked,
             "sparse" => PoolTickCoverage::Sparse,
@@ -2763,27 +2713,16 @@ fn parse_address(s: &str) -> PyResult<Address> {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
 }
 
-/// Build a Python `{tick: (liquidity_gross, liquidity_net, block)}` dict from
-/// the core-normalized rows
+/// Serialize the core-normalized rows
 /// ([`degenbot_bot::bot_core::registration::tick_rows`] owns the `TickInfo`
-/// narrowing half). Symmetric with the `tick_data` arg shape on
-/// `register_v3_pool` / `register_v4_pool`, so the builder can pass the
-/// returned dict straight back into `register_*_pool(tick_data=..., ...)`
-/// without reshaping. `block` is `u64` (pyo3 maps to a Python int).
+/// narrowing half) to the tick-data wire shape via [`TickData::to_py`], so the
+/// builder can pass the returned dict straight back into
+/// `register_*_pool(tick_data=..., ...)` without reshaping.
 fn build_tick_rows_py<'py>(
     py: Python<'py>,
     rows: &[(i32, u128, i128, u64)],
 ) -> PyResult<Bound<'py, PyDict>> {
-    let dict = PyDict::new(py);
-    for &(tick, gross, net, block) in rows {
-        // `u128` / `u64` → Python int via pyo3 (arbitrary-precision — no overflow).
-        let py_gross: Bound<'py, PyAny> = gross.into_pyobject(py)?.into_any();
-        let py_net: Bound<'py, PyAny> = net.into_pyobject(py)?.into_any();
-        let py_block: Bound<'py, PyAny> = block.into_pyobject(py)?.into_any();
-        let tup = pyo3::types::PyTuple::new(py, [py_gross, py_net, py_block])?;
-        dict.set_item(tick, tup)?;
-    }
-    Ok(dict)
+    TickData::to_py(py, rows.iter().copied())
 }
 
 /// Parse a Python list of address strings into `Vec<Address>`. The per-item

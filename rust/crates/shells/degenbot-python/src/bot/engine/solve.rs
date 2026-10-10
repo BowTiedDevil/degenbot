@@ -5,9 +5,8 @@
 //! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
-use super::{
-    hex_string_to_pool_id, make_tick_info, Address, HashMap, PyArbEngine, PyList, V4StateSync,
-};
+use super::{hex_string_to_pool_id, Address, PyArbEngine, PyList, V4StateSync};
+use crate::bot::pool::TickData;
 use crate::prelude::*;
 use std::sync::Arc;
 
@@ -399,21 +398,7 @@ impl PyArbEngine {
 
             let td_obj = tuple.get_item(4)?;
             let td_dict = td_obj.cast::<pyo3::types::PyDict>()?;
-            let mut rust_tick_data = HashMap::new();
-            for (key, value) in td_dict.iter() {
-                let tick_idx: i32 = key.extract()?;
-                let info_tuple = value.cast::<pyo3::types::PyTuple>()?;
-                if info_tuple.len() != 2 {
-                    let msg = format!(
-                        "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
-                        info_tuple.len()
-                    );
-                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
-                }
-                let liquidity_gross: u128 = info_tuple.get_item(0)?.extract()?;
-                let liquidity_net: i128 = info_tuple.get_item(1)?.extract()?;
-                rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
-            }
+            let rust_tick_data = TickData::from_py_pairs(td_dict.as_any())?;
 
             updates.push((addr, sqrt_price, liquidity, tick, rust_tick_data));
         }
@@ -465,21 +450,7 @@ impl PyArbEngine {
 
             let td_obj = tuple.get_item(5)?;
             let td_dict = td_obj.cast::<pyo3::types::PyDict>()?;
-            let mut rust_tick_data = HashMap::new();
-            for (key, value) in td_dict.iter() {
-                let tick_idx: i32 = key.extract()?;
-                let info_tuple = value.cast::<pyo3::types::PyTuple>()?;
-                if info_tuple.len() != 2 {
-                    let msg = format!(
-                        "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
-                        info_tuple.len()
-                    );
-                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
-                }
-                let liquidity_gross: u128 = info_tuple.get_item(0)?.extract()?;
-                let liquidity_net: i128 = info_tuple.get_item(1)?.extract()?;
-                rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
-            }
+            let rust_tick_data = TickData::from_py_pairs(td_dict.as_any())?;
 
             updates.push((
                 pool_manager,
