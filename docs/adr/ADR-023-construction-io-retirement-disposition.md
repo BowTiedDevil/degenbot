@@ -139,6 +139,10 @@ deepening, ergo epic **`GZPPS3`** (opened 2026-10-10): block-tag support as task
 `YCUSGZ` (PC10), `Py*Row` retirement as task `UWA7ZH` (PC6 — closed 2026-10-10,
 see D2).
 
+**Both closed 2026-10-10** (epic `GZPPS3`, 12/12 done): `UWA7ZH` landed the mirror-retirement
+pin + D2 close-out (commit `c2f35dafd`); `YCUSGZ` landed typed `BlockSelector` at the seam —
+`extract_block_u64` and all 24 silent tag-to-head coercions deleted (commit `37d6d1c2e`).
+
 ### A4 — The Consequences bullet above is superseded.
 
 "`_bot.py` remains a hybrid … until `VK3YDM` lands" is stale twice: the port landed,
