@@ -124,6 +124,18 @@ is also pinned permanently by `the_resolved_row_takes_its_ticket_exactly_once` (
 | C5 | `pub(crate)` fields on the new `CycleTransients` / `CycleTicket` | n/a | **0 / 0** (3 + 2 private fields) |
 | C6 | non-comment CODE reads of the privatized stash fields outside the owning module | 10 | **0** (the one remaining hit is the `test_harness` door call) |
 
+> **Corrected 2026-10-10 (post-epic audit).** C1/C2 above count *module-path mentions* —
+> doc links, imports, and calls to public methods (`solve_all`/`run_epoch`/`cursor`/`results`)
+> — not white-box reads. Verified state at epic close: **0** test reads of `.transients.*`
+> fields (the only 15 refs are `solve_cycle.rs` using its own private struct), **0** reads
+> through the `#[cfg(test)]` doors at `mod.rs:2712/:2717`, **0** remaining `test_net_delta`
+> references (the field itself is gone — `CycleTicket` absorbed it), and **0** test pokes of
+> `SolveCycleShared`'s public internals (`pool_cache`, `wallet_deltas`, `pool_allocations`,
+> `token_read_totals`, `addresses_read_totals`, `admission_targets`). The `arb_engine/tests/*`
+> references drive the sanctioned `drawn.with_ticket(CycleTicket::is_empty)` shape.
+> **The "203-site" test migration this task deliberately left is a phantom — the landed end
+> state is already the clean endpoint. There is no follow-up work.**
+
 Counting definitions (so a later task's numbers are comparable): a "reference occurrence" is one
 `rg -o 'engine\.cycle\.[a-z_0-9]*'` match; a "field" is one `^    (pub(crate) )?name: ` line inside
 the struct's body. The task body's "39 + 28 shared" baseline is a wider count than this one (my
