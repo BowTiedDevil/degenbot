@@ -411,6 +411,13 @@ mod _ffi {
     #[pymodule_export]
     use crate::bot::session_registry::PySessionObject;
 
+    // The registration-lifecycle value: the family, target, snapshot seed,
+    // mode, and retry policy a caller states to run one pool's core-owned
+    // verify choreography (feature = "bot" — it crosses the driver seam).
+    #[cfg(feature = "bot")]
+    #[pymodule_export]
+    use crate::bot::registration_lifecycle::PyRegistrationLifecycle;
+
     // `QuantAMM` closed-form N-token Balancer weighted basket solver
     // (feature = "bot") — `solve_balancer_weighted_basket`.
     #[cfg(feature = "bot")]

@@ -357,62 +357,24 @@ class ArbitrageEngine:
         driver so a self-halt is queryable. A facet name the host does not
         admit fails the call before the pump resumes.
         """
-    def run_v3_registration_lifecycle(self, /, address: str, snapshot_block: int | None) -> Any:
+    def run_registration_lifecycle(self, /, lifecycle: RegistrationLifecycle) -> Any:
         """
-        Run a single V3 pool's registration verify-lifecycle end-to-end
-        (ADR-022 D1) — the core-owned
-        `quarantine → seed-verify → drain+pin → post-drain-verify → set_live`
-        choreography, delegating to the shared `PumpState`. **Sparse** →
-        immediate no-op (`Live`, no RPC); **Tracked** → verified with the
-        mismatch tripwire before `Live`. Uses the bot's single verify provider
-        (D-B).
-        """
-    def run_v3_registration_lifecycle_sync(
-        self, /, address: str, snapshot_block: int | None
-    ) -> None:
-        """
-        Blocking (seat-thread) twin of `run_v3_registration_lifecycle` — the
-        PRG-5 registration-intake units run on fleet `PoolStateUpdater` seats
-        (plain threads, no asyncio loop), so the crawl drives the core-owned
-        choreography parked on the shared tokio runtime via `block_on` inside
-        `py.detach`. Telemetry + typed errors are identical to the async twin;
-        only the park shape differs.
-        """
-    def run_v3_registration_lifecycle_with_retry_sync(
-        self, /, address: str, snapshot_block: int | None, policy: RetryPolicy
-    ) -> None:
-        """
-        Blocking V3 verify-lifecycle under the core-owned bounded retry dance.
+        Run a pool's core-owned registration verify-lifecycle.
 
-        The policy is injected by the driver shell (S8); the retry
-        classification (transient RPC/provider vs fatal mismatch) is core-owned.
-        A transient failure releases the lifecycle claim, so a retry re-runs the
-        whole choreography.
-        """
-    def run_v4_registration_lifecycle(
-        self, /, pool_manager_address: str, pool_id_hex: str, snapshot_block: int | None
-    ) -> Any:
-        """
-        V4 twin of `run_v3_registration_lifecycle`, keyed by
-        (`pool_manager_address`, `pool_id_hex`). A tracked V4 pool with no
-        `verify_state_view` configured fails fast (`PyValueError`, D-C).
-        """
-    def run_v4_registration_lifecycle_sync(
-        self, /, pool_manager_address: str, pool_id_hex: str, snapshot_block: int | None
-    ) -> None:
-        """
-        Blocking (seat-thread) V4 twin of `run_v3_registration_lifecycle_sync`.
-        """
-    def run_v4_registration_lifecycle_with_retry_sync(
-        self,
-        /,
-        pool_manager_address: str,
-        pool_id_hex: str,
-        snapshot_block: int | None,
-        policy: RetryPolicy,
-    ) -> None:
-        """
-        Blocking V4 verify-lifecycle under the core-owned bounded retry dance.
+        The [`RegistrationLifecycle`] value carries the family, target, mode,
+        and retry policy; the choreography itself (quarantine, seed
+        verification against the snapshot block, drain + pin, post-drain
+        verification, `Live`) is the core's, entered at most once per live
+        window regardless of how many callers race for the same identity.
+        `mode="async"` answers a coroutine to await; the blocking modes run to
+        completion and answer `None`.
+
+        # Errors
+
+        `ValueError` on a target the core cannot parse; `VerificationMismatchError`
+        for a fatal on-chain snapshot mismatch; `VerificationRpcError` for a
+        transient transport/provider failure (retryable) or a tracked pool with
+        no verify provider configured.
         """
     def session_end_future(self, /) -> Any:
         """
@@ -1472,22 +1434,17 @@ class Bot:
         `backfill_from_snapshot` method is retired. Delegates to the
         shared `PumpState`.
         """
-    def run_v3_registration_lifecycle(self, /, address: str, snapshot_block: int | None) -> Any:
+    def run_registration_lifecycle(self, /, lifecycle: RegistrationLifecycle) -> Any:
         """
-        Run a single V3 pool's registration verify-lifecycle end-to-end
-        (ADR-022 D1): the core-owned `quarantine → seed-verify → drain+pin →
-        post-drain-verify → set_live` choreography that replaces the Python
-        driver's separate step calls. **Sparse** → immediate no-op (`Live`, no
-        RPC); **Tracked** → verified with the mismatch tripwire before `Live`.
-        Uses the bot's single verify provider + stored verify config (D-B/D-C).
-        """
-    def run_v4_registration_lifecycle(
-        self, /, pool_manager_address: str, pool_id_hex: str, snapshot_block: int | None
-    ) -> Any:
-        """
-        V4 twin of `run_v3_registration_lifecycle`, keyed by
-        (`pool_manager_address`, `pool_id_hex`). A tracked V4 pool with no
-        `verify_state_view` configured fails fast (D-C no-config posture).
+        Run a pool's core-owned registration verify-lifecycle.
+
+        The `Bot`-side twin of the engine's `run_registration_lifecycle`:
+        same value, same choreography, reached through the pump session this
+        bot owns.
+
+        # Errors
+
+        As the engine's twin.
         """
     def session_object_counts(self, /) -> tuple[int, int]:
         """
@@ -3822,6 +3779,79 @@ class RegistrationLedger:
         """
 
 @final
+class RegistrationLifecycle:
+    """
+    One pool's registration verify-lifecycle, as a Python caller states it.
+
+    The value says *what* to run and *how* the caller parks it; the
+    choreography, its at-most-once claim, and its failure classification stay
+    core-owned. `family` is `"v3"` (targeting `address`) or `"v4"` (targeting
+    the `(pool_manager, pool_id_hex)` pair); `mode` is `"async"`, `"blocking"`,
+    or `"blocking_with_retry"`. `snapshot_block` is the seed block the core
+    verifies against, and `policy` carries the retry dance's bounds — required
+    for `"blocking_with_retry"`, refused for the other modes.
+    """
+    def __new__(
+        cls,
+        /,
+        family: str,
+        *,
+        mode: str,
+        address: str | None = None,
+        pool_manager: str | None = None,
+        pool_id_hex: str | None = None,
+        snapshot_block: int | None = None,
+        policy: RetryPolicy | None = None,
+    ) -> RegistrationLifecycle:
+        """
+        State one pool's registration verify-lifecycle.
+
+        The family picks the target's shape, the mode picks how the caller
+        parks the core choreography, and the policy bounds the retry dance that
+        `"blocking_with_retry"` selects.
+
+        # Errors
+
+        `ValueError` on an unknown family or mode, a target that does not match
+        the family, or a `policy` supplied for a mode that does not retry.
+        """
+    @property
+    def address(self, /) -> str | None:
+        """
+        The targeted V3 pool address, or `None` for a V4 lifecycle.
+        """
+    @property
+    def family(self, /) -> str:
+        """
+        The targeted family: `"v3"` or `"v4"`.
+        """
+    @property
+    def mode(self, /) -> str:
+        """
+        How the caller parks the core choreography.
+        """
+    @property
+    def policy(self, /) -> RetryPolicy | None:
+        """
+        The retry dance's bounds, or `None` outside `"blocking_with_retry"`.
+        """
+    @property
+    def pool_id_hex(self, /) -> str | None:
+        """
+        The targeted V4 pool id (hex), or `None` for a V3 lifecycle.
+        """
+    @property
+    def pool_manager(self, /) -> str | None:
+        """
+        The targeted V4 `PoolManager` address, or `None` for a V3 lifecycle.
+        """
+    @property
+    def snapshot_block(self, /) -> int | None:
+        """
+        The snapshot seed block the core verifies against.
+        """
+
+@final
 class ReservePairView:
     """
     Read-only reserve-pair view exposed to Python.
@@ -4843,6 +4873,7 @@ __all__ = [
     "PossibleInaccurateResult",
     "RegistrationFoldDelta",
     "RegistrationLedger",
+    "RegistrationLifecycle",
     "ReservePairView",
     "ResolvedChainId",
     "ResolvedConfig",

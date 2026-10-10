@@ -13,6 +13,7 @@ pub mod intake;
 pub mod pool;
 pub mod pump;
 pub mod py_bot_io;
+pub(crate) mod registration_lifecycle;
 pub mod session_registry;
 #[cfg(feature = "auto-initialize")]
 pub mod test_gil;
@@ -264,7 +265,7 @@ impl PyBot {
 
     /// Borrow the attached `EngineDriver`,
     /// error if no engine was constructed against this bot.
-    fn pump_state(&self) -> PyResult<Arc<degenbot_bot::arb_engine::EngineDriver>> {
+    pub(crate) fn pump_state(&self) -> PyResult<Arc<degenbot_bot::arb_engine::EngineDriver>> {
         self.pump.lock().clone().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
                 "No engine attached to this Bot. Construct an engine against it (py_bot=...) \
@@ -630,47 +631,6 @@ impl PyBot {
         // core `None` arm).
         let pump = self.pump_state().ok();
         Bot::set_verify_state_view(pump.as_deref(), state_view_address);
-    }
-
-    /// Run a single V3 pool's registration verify-lifecycle end-to-end
-    /// (ADR-022 D1): the core-owned `quarantine → seed-verify → drain+pin →
-    /// post-drain-verify → set_live` choreography that replaces the Python
-    /// driver's separate step calls. **Sparse** → immediate no-op (`Live`, no
-    /// RPC); **Tracked** → verified with the mismatch tripwire before `Live`.
-    /// Uses the bot's single verify provider + stored verify config (D-B/D-C).
-    #[pyo3(signature = (address, snapshot_block))]
-    fn run_v3_registration_lifecycle<'py>(
-        &self,
-        py: Python<'py>,
-        address: &str,
-        snapshot_block: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        crate::bot::pump::run_v3_registration_lifecycle(
-            py,
-            &self.pump_state()?,
-            address,
-            snapshot_block,
-        )
-    }
-
-    /// V4 twin of `run_v3_registration_lifecycle`, keyed by
-    /// (`pool_manager_address`, `pool_id_hex`). A tracked V4 pool with no
-    /// `verify_state_view` configured fails fast (D-C no-config posture).
-    #[pyo3(signature = (pool_manager_address, pool_id_hex, snapshot_block))]
-    fn run_v4_registration_lifecycle<'py>(
-        &self,
-        py: Python<'py>,
-        pool_manager_address: &str,
-        pool_id_hex: &str,
-        snapshot_block: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        crate::bot::pump::run_v4_registration_lifecycle(
-            py,
-            &self.pump_state()?,
-            pool_manager_address,
-            pool_id_hex,
-            snapshot_block,
-        )
     }
 
     /// Register a V2 pool by contract address.

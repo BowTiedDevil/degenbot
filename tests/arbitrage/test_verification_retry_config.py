@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from degenbot._ffi import RegistrationLifecycle
 from degenbot.arbitrage import RetryPolicy
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.runner.identity import UNISWAP_V4_POOL_MANAGER_ADDRESS
@@ -39,9 +40,7 @@ class TestVerificationRetryConfig:
         values = probe.config_values(_POLICY_FIELDS)
 
         assert values["verification_retry_policy.max_attempts"] == defaults.max_attempts
-        assert values["verification_retry_policy.base_delay"] == pytest.approx(
-            defaults.base_delay
-        )
+        assert values["verification_retry_policy.base_delay"] == pytest.approx(defaults.base_delay)
         assert values["verification_retry_policy.max_delay"] == pytest.approx(defaults.max_delay)
         assert values["verification_retry_policy.jitter"] == pytest.approx(defaults.jitter)
 
@@ -104,47 +103,37 @@ verify_retry_jitter = 0.2
             probe.build_config(env={"VERIFICATION_RETRY_MAX_ATTEMPTS": "0"})
 
 
-def test_the_engine_registry_injects_the_parsed_policy() -> None:
-    """The registry forwards every resolved knob to the retry-wrapped lifecycle.
+def test_the_engine_registry_carries_the_seed_and_forwards_the_value() -> None:
+    """The registry exposes the stashed seed and forwards the value unchanged.
 
-    The retry dance lives in the core; the driver shell only injects the
-    policy values, so this pins the adapter's forwarding and the stashed
-    snapshot block.
+    The retry dance lives in the core; the driver shell states the resolved
+    policy and the snapshot seed on ONE `RegistrationLifecycle` value and hands
+    it straight over, so this pins the seed the startup ritual stashed and the
+    unmodified forwarding.
     """
+
     class _Recorder:
         def __init__(self) -> None:
-            self.calls: list[dict[str, object]] = []
+            self.calls: list[RegistrationLifecycle] = []
 
-        def run_v4_registration_lifecycle_with_retry_sync(
-            self,
-            pool_manager: str,
-            pool_id_hex: str,
-            snapshot_block: int | None,
-            policy: RetryPolicy,
-        ) -> None:
-            self.calls.append(
-                {
-                    "pool_manager": pool_manager,
-                    "pool_id_hex": pool_id_hex,
-                    "snapshot_block": snapshot_block,
-                    "policy": policy,
-                }
-            )
+        def run_registration_lifecycle(self, lifecycle: RegistrationLifecycle) -> None:
+            self.calls.append(lifecycle)
 
     engine = _Recorder()
     registry = EngineRegistry(engine=engine)  # type: ignore[arg-type]
     registry._verify_snapshot_block = 18_000_050
     policy = RetryPolicy(max_attempts=6, base_delay=0.25, max_delay=8.0, jitter=0.3)
 
-    registry.run_v4_verify_lifecycle_sync_with_retry(
-        UNISWAP_V4_POOL_MANAGER_ADDRESS, "0x" + "ab" * 32, policy
+    value = RegistrationLifecycle(
+        family="v4",
+        mode="blocking_with_retry",
+        pool_manager=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+        pool_id_hex="0x" + "ab" * 32,
+        snapshot_block=registry.verify_snapshot_block,
+        policy=policy,
     )
+    registry.run_registration_lifecycle(value)
 
-    assert engine.calls == [
-        {
-            "pool_manager": UNISWAP_V4_POOL_MANAGER_ADDRESS,
-            "pool_id_hex": "0x" + "ab" * 32,
-            "snapshot_block": 18_000_050,
-            "policy": policy,
-        }
-    ]
+    assert registry.verify_snapshot_block == 18_000_050
+    assert len(engine.calls) == 1, "exactly one core lifecycle entry"
+    assert engine.calls[0] is value

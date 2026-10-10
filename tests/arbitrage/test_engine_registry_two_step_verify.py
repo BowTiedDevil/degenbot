@@ -1,9 +1,8 @@
 """ADR-022: registry delegation + D1 core-owned verify-lifecycle.
 
 `engine_registry.register_v3_pool` / `register_v4_pool` are now THIN
-delegating shells: each makes ONE call to the core-owned
-`run_v3_registration_lifecycle(pool_addr, snapshot_block)` /
-`run_v4_registration_lifecycle(pm, pool_id, snapshot_block)`, which sequences
+delegating shells: each states ONE `RegistrationLifecycle` value
+(`family` + target + `mode="async"` + snapshot block) and the core sequences
 the D4 lifecycle in Rust — quarantine → seed-verify @ snapshot block
 → drain+pin (single core.write() hold) → post-drain-verify @ the
 pin's own block → set_live, with the mismatch tripwire as the final gate.
@@ -91,8 +90,11 @@ def test_register_v3_pool_delegates_to_core_lifecycle() -> None:
     assert len(fake.run_calls) == 1, "exactly one core lifecycle call per register"
     assert fake.run_calls[0] == {
         "family": "v3",
+        "mode": "async",
         "address": "0xV3POOL",
+        "pool_id": None,
         "snapshot_block": 18_000_050,
+        "policy": None,
     }
 
 
@@ -110,9 +112,11 @@ def test_register_v4_pool_delegates_to_core_lifecycle() -> None:
     assert len(fake.run_calls) == 1
     assert fake.run_calls[0] == {
         "family": "v4",
+        "mode": "async",
         "address": "0xV4PM",
         "pool_id": _V4_POOL_ID_HEX,
         "snapshot_block": 18_000_050,
+        "policy": None,
     }
 
 
@@ -148,7 +152,7 @@ def test_register_fail_fast_surfaces_error_to_racing_sibling(
         except BaseException as exc:  # ruff: ignore[blind-except] - record whatever surfaces
             seen["exc"] = exc
 
-    setattr(fake, f"run_{family}_registration_lifecycle", _failing_lifecycle)
+    fake.run_registration_lifecycle = _failing_lifecycle  # type: ignore[method-assign]
 
     async def _go() -> None:
         with pytest.raises(

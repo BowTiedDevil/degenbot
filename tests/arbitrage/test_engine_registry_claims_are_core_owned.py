@@ -22,9 +22,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.utils.bytes import to_0x_hex, to_bytes
+
+if TYPE_CHECKING:
+    from degenbot._ffi import RegistrationLifecycle
 
 V3_ADDR = "0x" + "1" * 40
 V4_MANAGER = "0x" + "2" * 40
@@ -49,15 +53,12 @@ class _CountingFakeEngine:
         # before returning: the overlap is arranged, not scheduled.
         self._lifecycle_gate = lifecycle_gate
 
-    async def run_v3_registration_lifecycle(self, address: str, snapshot_block: object) -> None:
-        self.v3_lifecycle_calls += 1
-        await self._hold_for_overlap()
-
-    async def run_v4_registration_lifecycle(
-        self, address: str, pool_id_hex: str, snapshot_block: object
-    ) -> None:
-        self.v4_lifecycle_calls += 1
-        await self._hold_for_overlap()
+    def run_registration_lifecycle(self, lifecycle: RegistrationLifecycle) -> object:
+        if lifecycle.family == "v3":
+            self.v3_lifecycle_calls += 1
+        else:
+            self.v4_lifecycle_calls += 1
+        return self._hold_for_overlap()
 
     async def _hold_for_overlap(self) -> None:
         if self._lifecycle_gate is not None:
@@ -141,9 +142,7 @@ async def test_concurrent_v3_registrations_dispatch_one_core_lifecycle_each() ->
     assert engine.v3_lifecycle_calls == N_WORKERS, (
         "each registration enters the core claim; the core decides at-most-once"
     )
-    assert set(results) == {V3_POOL_ID}, (
-        "every worker reads the same core-owned pool id"
-    )
+    assert set(results) == {V3_POOL_ID}, "every worker reads the same core-owned pool id"
 
 
 async def test_concurrent_v4_registrations_dispatch_one_core_lifecycle_each() -> None:
@@ -165,14 +164,12 @@ async def test_concurrent_v4_registrations_dispatch_one_core_lifecycle_each() ->
 
 async def test_v4_registration_passes_the_manager_and_pool_id_pair() -> None:
     """The claim key the core builds needs the pair, so the adapter passes both."""
-    seen: list[tuple[str, str]] = []
+    seen: list[tuple[str | None, str | None]] = []
 
     class _Recorder(_CountingFakeEngine):
-        async def run_v4_registration_lifecycle(
-            self, address: str, pool_id_hex: str, snapshot_block: object
-        ) -> None:
-            seen.append((address, pool_id_hex))
-            await super().run_v4_registration_lifecycle(address, pool_id_hex, snapshot_block)
+        def run_registration_lifecycle(self, lifecycle: RegistrationLifecycle) -> object:
+            seen.append((lifecycle.pool_manager, lifecycle.pool_id_hex))
+            return super().run_registration_lifecycle(lifecycle)
 
     registry = EngineRegistry(engine=_Recorder())  # type: ignore[arg-type]
     pool = _fake_v4_pool(V4_POOL_ID)

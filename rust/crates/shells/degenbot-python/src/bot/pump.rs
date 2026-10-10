@@ -12,15 +12,15 @@
 //! → Python-exception maps live in [`crate::bot::errmap`]). The
 //! `subscribe`/`resume`/`stop` `block_on` wrappers moved onto `bot_core::Bot`
 //! (the shells call them directly through the `map_driver_err` seam); `start`
-//! and the registration lifecycles keep their wrappers here.
+//! keeps its wrapper here. The registration lifecycles are one value behind
+//! one pymethod pair in [`crate::bot::registration_lifecycle`].
 
 use degenbot_bot::arb_engine::EngineDriver;
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::Bound;
 use std::sync::Arc;
 
-use crate::bot::errmap::{map_driver_err, map_driver_lifecycle_err, map_verify_lifecycle_error};
+use crate::bot::errmap::map_driver_err;
 
 /// Run the pre-pump startup ritual: `subscribe(ws)` then verify-config
 /// (`http`, optional `view`) — the one-call `EngineDriver::start` detached
@@ -75,166 +75,4 @@ pub(crate) fn session_end_future<'py>(
         py,
         async move { Ok(driver.wait_session_end().await.name()) },
     )
-}
-
-/// Run a V3 pool's core-owned registration verify-lifecycle end-to-end.
-///
-/// # Errors
-///
-/// `ValueError` on a bad address; `VerificationMismatchError` (fatal
-/// tripwire) / `VerificationRpcError` (transient) from the underlying
-/// verify, or `VerificationRpcError` when no verify provider was configured.
-pub(crate) fn run_v3_registration_lifecycle<'py>(
-    py: Python<'py>,
-    driver: &Arc<EngineDriver>,
-    address: &str,
-    snapshot_block: Option<u64>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let pool_addr: alloy::primitives::Address = address
-        .parse()
-        .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))?;
-    let driver = Arc::clone(driver);
-    crate::ambient_runtime::future_into_py(py, async move {
-        driver
-            .run_v3_registration_lifecycle(pool_addr, snapshot_block)
-            .await
-            .map_err(map_driver_lifecycle_err)
-    })
-}
-
-/// V4 twin of [`run_v3_registration_lifecycle`].
-///
-/// # Errors
-///
-/// `ValueError` on a bad address/pool id; otherwise as V3. A tracked V4 pool
-/// with no verification provider surfaces as `VerificationRpcError`.
-pub(crate) fn run_v4_registration_lifecycle<'py>(
-    py: Python<'py>,
-    driver: &Arc<EngineDriver>,
-    pool_manager_address: &str,
-    pool_id_hex: &str,
-    snapshot_block: Option<u64>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let pool_manager: alloy::primitives::Address = pool_manager_address
-        .parse()
-        .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager: {e}")))?;
-    let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)
-        .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
-    let driver = Arc::clone(driver);
-    crate::ambient_runtime::future_into_py(py, async move {
-        driver
-            .run_v4_registration_lifecycle(pool_manager, pool_id, snapshot_block)
-            .await
-            .map_err(map_driver_lifecycle_err)
-    })
-}
-
-/// Blocking (GIL-detached) V3 verify-lifecycle — the seat-thread twin of
-/// [`run_v3_registration_lifecycle`] (PRG-5).
-///
-/// # Errors
-///
-/// As the async twin.
-pub(crate) fn run_v3_registration_lifecycle_blocking(
-    py: Python<'_>,
-    driver: &Arc<EngineDriver>,
-    address: &str,
-    snapshot_block: Option<u64>,
-) -> PyResult<()> {
-    let pool_addr: alloy::primitives::Address = address
-        .parse()
-        .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))?;
-    let driver = Arc::clone(driver);
-    py.detach(move || {
-        driver
-            .run_v3_registration_lifecycle_sync(pool_addr, snapshot_block)
-            .map_err(map_driver_lifecycle_err)
-    })
-}
-
-/// Blocking (GIL-detached) V4 verify-lifecycle — the seat-thread twin of
-/// [`run_v4_registration_lifecycle`].
-///
-/// # Errors
-///
-/// As the async twin.
-pub(crate) fn run_v4_registration_lifecycle_blocking(
-    py: Python<'_>,
-    driver: &Arc<EngineDriver>,
-    pool_manager_address: &str,
-    pool_id_hex: &str,
-    snapshot_block: Option<u64>,
-) -> PyResult<()> {
-    let pool_manager: alloy::primitives::Address = pool_manager_address
-        .parse()
-        .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager: {e}")))?;
-    let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)
-        .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
-    let driver = Arc::clone(driver);
-    py.detach(move || {
-        driver
-            .run_v4_registration_lifecycle_sync(pool_manager, pool_id, snapshot_block)
-            .map_err(map_driver_lifecycle_err)
-    })
-}
-
-/// Blocking (GIL-detached) V3 verify-lifecycle under the bounded retry dance.
-///
-/// The retry classification is core-owned (`VerifyError`); the caller (the
-/// driver shell) resolves the policy and injects it here.
-///
-/// # Errors
-///
-/// `VerificationMismatchError` for a fatal snapshot mismatch,
-/// `VerificationRpcError` for the last transient failure after exhausting the
-/// policy, and `PyRuntimeError` for any other lifecycle failure.
-pub(crate) fn run_v3_registration_lifecycle_with_retry_blocking(
-    py: Python<'_>,
-    driver: &Arc<EngineDriver>,
-    address: &str,
-    snapshot_block: Option<u64>,
-    policy: &crate::config::RetryPolicy,
-) -> PyResult<()> {
-    let pool_addr: alloy::primitives::Address = address
-        .parse()
-        .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))?;
-    let driver = Arc::clone(driver);
-    let policy = policy.to_core();
-    py.detach(move || {
-        driver
-            .run_v3_registration_lifecycle_with_retry_sync(pool_addr, snapshot_block, &policy)
-            .map_err(map_verify_lifecycle_error)
-    })
-}
-
-/// Blocking (GIL-detached) V4 verify-lifecycle under the bounded retry dance.
-///
-/// # Errors
-///
-/// As the V3 twin.
-pub(crate) fn run_v4_registration_lifecycle_with_retry_blocking(
-    py: Python<'_>,
-    driver: &Arc<EngineDriver>,
-    pool_manager_address: &str,
-    pool_id_hex: &str,
-    snapshot_block: Option<u64>,
-    policy: &crate::config::RetryPolicy,
-) -> PyResult<()> {
-    let pool_manager: alloy::primitives::Address = pool_manager_address
-        .parse()
-        .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager: {e}")))?;
-    let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)
-        .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
-    let driver = Arc::clone(driver);
-    let policy = policy.to_core();
-    py.detach(move || {
-        driver
-            .run_v4_registration_lifecycle_with_retry_sync(
-                pool_manager,
-                pool_id,
-                snapshot_block,
-                &policy,
-            )
-            .map_err(map_verify_lifecycle_error)
-    })
 }

@@ -68,7 +68,7 @@ pub struct PyArbEngine {
     /// result/block channel ends) lives in ONE shared `Arc<EngineDriver>`
     /// co-owned with `PyBot`; the `PyO3` layer crosses the driver seam
     /// directly.
-    driver: Arc<degenbot_bot::arb_engine::EngineDriver>,
+    pub(crate) driver: Arc<degenbot_bot::arb_engine::EngineDriver>,
 
     /// The process-wide strategy host this engine booted (hub, route registry,
     /// nonce authority, and the driver FSM records). The shared hub is the one

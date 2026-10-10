@@ -18,6 +18,7 @@ directly from their submodules:
 
 from degenbot._ffi import (
     ArbitrageEngine,
+    RegistrationLifecycle,
     RetryPolicy,
     session_phase_next,
     solve_balancer_weighted_basket,
@@ -25,6 +26,7 @@ from degenbot._ffi import (
 
 __all__ = (
     "ArbitrageEngine",
+    "RegistrationLifecycle",
     "RetryPolicy",
     "session_phase_next",
     "solve_balancer_weighted_basket",

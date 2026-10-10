@@ -52,6 +52,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
+    from degenbot._ffi import RegistrationLifecycle
+
 
 @dataclass
 class _PipelineContext:
@@ -400,18 +402,13 @@ class _RecordingRegistry:
         self.registrations: list[list] = []
         self._next_path_id = 0
         self.path_predicate = _PathPredicate()
+        #: The snapshot seed the real registry stashes at `start()`.
+        self.verify_snapshot_block: int | None = None
 
-    def run_registration_lifecycle(
-        self,
-        *,
-        family: str,
-        mode: str,
-        address: str | None = None,
-        pool_manager: str | None = None,
-        pool_id_hex: str | None = None,
-        policy: object = None,
-    ) -> None:
-        self.verifies.append(address if family == "v3" else pool_manager)
+    def run_registration_lifecycle(self, lifecycle: RegistrationLifecycle) -> None:
+        self.verifies.append(
+            lifecycle.address if lifecycle.family == "v3" else lifecycle.pool_manager
+        )
 
     def register_crawl_path(self, engine_hops: list) -> tuple[int, bool]:
         self.registrations.append(list(engine_hops))
@@ -908,9 +905,7 @@ def test_impostor_class_name_is_never_memoized(tmp_path: Path) -> None:
     assert pipeline._registration_unit(steps).kind == "skip"
     assert builds == [POOL_A, POOL_A], "a name-only match must never be memoized"
     assert (
-        pipeline._ledger.unregistrable_record(
-            pipeline._ledger.pool_memo_key(steps[0], PoolKind.V3)
-        )
+        pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(steps[0], PoolKind.V3))
         is None
     )
 

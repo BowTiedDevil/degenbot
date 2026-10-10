@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from degenbot.exceptions import VerificationMismatchError
 
 if TYPE_CHECKING:
-    from degenbot.arbitrage import RetryPolicy
+    from degenbot._ffi import RegistrationLifecycle
 
 
 #: The engine interface the Python driver shell depends on. The parity test
@@ -39,12 +39,7 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "register_and_solve_path",
     "release_all_v3_v4_quarantined",
     "resume",
-    "run_v3_registration_lifecycle",
-    "run_v3_registration_lifecycle_sync",
-    "run_v3_registration_lifecycle_with_retry_sync",
-    "run_v4_registration_lifecycle",
-    "run_v4_registration_lifecycle_sync",
-    "run_v4_registration_lifecycle_with_retry_sync",
+    "run_registration_lifecycle",
     "set_path_cap",
     "set_verify_rpc_url",
     "set_verify_state_view",
@@ -83,43 +78,17 @@ class EngineSeam(Protocol):
     snapshot_seed_block: int | None
 
     def subscribe(self, rpc_url: str) -> int: ...
-    def start(
-        self, node_http: str, node_ws: str, verify_state_view: str | None = None
-    ) -> int: ...
+    def start(self, node_http: str, node_ws: str, verify_state_view: str | None = None) -> int: ...
     def set_verify_rpc_url(self, rpc_url: str) -> None: ...
     def set_verify_state_view(self, address: str) -> None: ...
-    def run_v3_registration_lifecycle(
-        self, address: str, snapshot_block: int | None
-    ) -> Any: ...
-    def run_v4_registration_lifecycle(
-        self, pool_manager_address: str, pool_id_hex: str, snapshot_block: int | None
-    ) -> Any: ...
-    def run_v3_registration_lifecycle_sync(
-        self, address: str, snapshot_block: int | None
-    ) -> None: ...
-    def run_v4_registration_lifecycle_sync(
-        self, pool_manager_address: str, pool_id_hex: str, snapshot_block: int | None
-    ) -> None: ...
-    def run_v3_registration_lifecycle_with_retry_sync(
-        self,
-        address: str,
-        snapshot_block: int | None,
-        policy: RetryPolicy,
-    ) -> None: ...
-    def run_v4_registration_lifecycle_with_retry_sync(
-        self,
-        pool_manager_address: str,
-        pool_id_hex: str,
-        snapshot_block: int | None,
-        policy: RetryPolicy,
-    ) -> None: ...
-    def register_and_solve_path(
-        self, pool_refs: list[tuple[int, bool]]
-    ) -> tuple[int, bool]: ...
+    def run_registration_lifecycle(self, lifecycle: RegistrationLifecycle) -> Any: ...
+    def register_and_solve_path(self, pool_refs: list[tuple[int, bool]]) -> tuple[int, bool]: ...
     def pool_id_for_pool(self, family_tag: str, address: str) -> int | None: ...
     def pool_id_for_v4_pool(self, pool_manager: str, pool_id_hex: str) -> int | None: ...
     def install_inline_simulator(
-        self, context: object, erc6909_profit: bool  # ruff: ignore[boolean-type-hint-positional-argument]
+        self,
+        context: object,
+        erc6909_profit: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
     ) -> None: ...
     def set_path_cap(self, cap: int | None) -> None: ...
     def release_all_v3_v4_quarantined(self) -> None: ...
@@ -240,18 +209,14 @@ class FakeEngine:
         self.path_cap = cap
         self._record("set_path_cap")
 
-    def register_and_solve_path(
-        self, pool_refs: list[tuple[int, bool]]
-    ) -> tuple[int, bool]:
+    def register_and_solve_path(self, pool_refs: list[tuple[int, bool]]) -> tuple[int, bool]:
         self.register_calls.append(list(pool_refs))
         path_id = len(self.register_calls)
         return path_id, True
 
     # ── core-derived pool identity (S4) ───────────────────────────
 
-    def register_identity(
-        self, family_tag: str, address: str, pool_id: int
-    ) -> None:
+    def register_identity(self, family_tag: str, address: str, pool_id: int) -> None:
         """Declare a pool identity the double answers lookups from.
 
         The double's identity table stands in for the SHARED BotState (the
@@ -317,89 +282,41 @@ class FakeEngine:
         self._record("set_verify_state_view")
 
     def install_inline_simulator(
-        self, context: object, erc6909_profit: bool  # ruff: ignore[boolean-type-hint-positional-argument]
+        self,
+        context: object,
+        erc6909_profit: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
     ) -> None:
-        self.inline_sim_installs.append(
-            {"context": context, "erc6909_profit": erc6909_profit}
-        )
+        self.inline_sim_installs.append({"context": context, "erc6909_profit": erc6909_profit})
 
     # ── core-owned registration lifecycle ──────────────────────────
 
-    async def run_v3_registration_lifecycle(
-        self, address: str, snapshot_block: int | None
-    ) -> None:
-        self.run_calls.append(
-            {"family": "v3", "address": address, "snapshot_block": snapshot_block}
-        )
-        if self.fail_next == "v3":
-            msg = "synthetic V3 seed tick mismatch"
+    def run_registration_lifecycle(self, lifecycle: RegistrationLifecycle) -> Any:
+        """Mirror the seam: `mode="async"` answers an awaitable, the blocking
+        modes run inline and answer `None`."""
+        if lifecycle.mode == "async":
+            return self._run_registration_lifecycle_async(lifecycle)
+        self._record_lifecycle(lifecycle)
+        self._fail_lifecycle_if_armed(lifecycle)
+        return None
+
+    async def _run_registration_lifecycle_async(self, lifecycle: RegistrationLifecycle) -> None:
+        self._record_lifecycle(lifecycle)
+        self._fail_lifecycle_if_armed(lifecycle)
+
+    def _record_lifecycle(self, lifecycle: RegistrationLifecycle) -> None:
+        self.run_calls.append({
+            "family": lifecycle.family,
+            "mode": lifecycle.mode,
+            "address": lifecycle.address if lifecycle.family == "v3" else lifecycle.pool_manager,
+            "pool_id": lifecycle.pool_id_hex,
+            "snapshot_block": lifecycle.snapshot_block,
+            "policy": lifecycle.policy,
+        })
+
+    def _fail_lifecycle_if_armed(self, lifecycle: RegistrationLifecycle) -> None:
+        if self.fail_next == lifecycle.family:
+            msg = f"synthetic {lifecycle.family.upper()} seed tick mismatch"
             raise VerificationMismatchError(msg)
-
-    async def run_v4_registration_lifecycle(
-        self, pool_manager_address: str, pool_id_hex: str, snapshot_block: int | None
-    ) -> None:
-        self.run_calls.append(
-            {
-                "family": "v4",
-                "address": pool_manager_address,
-                "pool_id": pool_id_hex,
-                "snapshot_block": snapshot_block,
-            }
-        )
-        if self.fail_next == "v4":
-            msg = "synthetic V4 seed tick mismatch"
-            raise VerificationMismatchError(msg)
-
-    def run_v3_registration_lifecycle_sync(
-        self, address: str, snapshot_block: int | None
-    ) -> None:
-        self.run_calls.append(
-            {"family": "v3-sync", "address": address, "snapshot_block": snapshot_block}
-        )
-
-    def run_v4_registration_lifecycle_sync(
-        self, pool_manager_address: str, pool_id_hex: str, snapshot_block: int | None
-    ) -> None:
-        self.run_calls.append(
-            {
-                "family": "v4-sync",
-                "address": pool_manager_address,
-                "pool_id": pool_id_hex,
-                "snapshot_block": snapshot_block,
-            }
-        )
-
-    def run_v3_registration_lifecycle_with_retry_sync(
-        self,
-        address: str,
-        snapshot_block: int | None,
-        policy: RetryPolicy,
-    ) -> None:
-        self.run_calls.append(
-            {
-                "family": "v3-sync-with-retry",
-                "address": address,
-                "snapshot_block": snapshot_block,
-                "policy": policy,
-            }
-        )
-
-    def run_v4_registration_lifecycle_with_retry_sync(
-        self,
-        pool_manager_address: str,
-        pool_id_hex: str,
-        snapshot_block: int | None,
-        policy: RetryPolicy,
-    ) -> None:
-        self.run_calls.append(
-            {
-                "family": "v4-sync-with-retry",
-                "address": pool_manager_address,
-                "pool_id": pool_id_hex,
-                "snapshot_block": snapshot_block,
-                "policy": policy,
-            }
-        )
 
     # ── strategy-host operator verbs ───────────────────────────────
 
@@ -434,8 +351,10 @@ class FakeEngineRegistry:
         backfill_target: int = 12_000,
         events: list[str] | None = None,
     ) -> None:
-        self.engine = engine if engine is not None else FakeEngine(
-            backfill_target=backfill_target, events=events
+        self.engine = (
+            engine
+            if engine is not None
+            else FakeEngine(backfill_target=backfill_target, events=events)
         )
         self.start_calls: list[dict[str, Any]] = []
 
@@ -448,13 +367,11 @@ class FakeEngineRegistry:
         v4_snapshot: object,
         verify_state_view: str | None = None,
     ) -> int:
-        self.start_calls.append(
-            {
-                "node_http": node_http,
-                "node_ws": node_ws,
-                "v3_snapshot": v3_snapshot,
-                "v4_snapshot": v4_snapshot,
-                "verify_state_view": verify_state_view,
-            }
-        )
+        self.start_calls.append({
+            "node_http": node_http,
+            "node_ws": node_ws,
+            "v3_snapshot": v3_snapshot,
+            "v4_snapshot": v4_snapshot,
+            "verify_state_view": verify_state_view,
+        })
         return self.engine._backfill_target

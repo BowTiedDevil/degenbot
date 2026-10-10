@@ -19,7 +19,7 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from degenbot.arbitrage import RetryPolicy
+from degenbot.arbitrage import RegistrationLifecycle, RetryPolicy
 from degenbot.builders.request import BuildManagedPoolRequest, ConstructionRoute
 from degenbot.db import db_fetch_graph_edition
 from degenbot.exceptions import (
@@ -738,8 +738,8 @@ class PathRegistrationPipeline:
     ) -> None:
         """Run the per-pool verify choreography before path registration.
 
-        The sync lifecycle twins run parked on the shared tokio runtime; the
-        seat-claims table keeps them at-most-once per live window, and the
+        The blocking lifecycle mode runs parked on the shared tokio runtime;
+        the core's own claim keeps it at-most-once per live window, and the
         verify-once memo makes a completed lifecycle a pool fact for this
         pipeline lifetime.
 
@@ -780,14 +780,22 @@ class PathRegistrationPipeline:
         Two layers, neither of them a claim table: the CORE owns the
         at-most-once window (the driver's session claim table, keyed by pool
         identity — a concurrent seat parks inside
-        `run_v3_verify_lifecycle_sync` and receives the leader's outcome),
-        and this ledger's verify-once memo turns a COMPLETED lifecycle into a
-        pool fact so later units skip the call entirely.
+        `run_registration_lifecycle` and receives the leader's outcome), and
+        this ledger's verify-once memo turns a COMPLETED lifecycle into a pool
+        fact so later units skip the call entirely.
         """
         v3_key = f"v3:{pool.address}"
         if self._ledger.pool_verified(v3_key):
             return
-        reg.run_v3_verify_lifecycle_sync_with_retry(pool.address, self.retry_policy_obj)
+        reg.run_registration_lifecycle(
+            RegistrationLifecycle(
+                family="v3",
+                mode="blocking_with_retry",
+                address=pool.address,
+                snapshot_block=reg.verify_snapshot_block,
+                policy=self.retry_policy_obj,
+            )
+        )
         self._ledger.memoize_verified_pool(v3_key)
 
     def _verify_v4_pool(self, pool: UniswapV4Pool, reg: EngineRegistry) -> None:
@@ -801,10 +809,15 @@ class PathRegistrationPipeline:
         v4_key = f"v4:{to_0x_hex(pool.pool_id)}"
         if self._ledger.pool_verified(v4_key):
             return
-        reg.run_v4_verify_lifecycle_sync_with_retry(
-            UNISWAP_V4_POOL_MANAGER_ADDRESS,
-            to_0x_hex(pool.pool_id),
-            self.retry_policy_obj,
+        reg.run_registration_lifecycle(
+            RegistrationLifecycle(
+                family="v4",
+                mode="blocking_with_retry",
+                pool_manager=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+                pool_id_hex=to_0x_hex(pool.pool_id),
+                snapshot_block=reg.verify_snapshot_block,
+                policy=self.retry_policy_obj,
+            )
         )
         self._ledger.memoize_verified_pool(v4_key)
 

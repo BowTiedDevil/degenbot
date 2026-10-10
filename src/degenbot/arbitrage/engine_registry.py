@@ -12,7 +12,7 @@ Rust core. Pool identity is derived, not mirrored — a pool's engine
 ``ArbitrageEngine.pool_id_for_pool`` / ``pool_id_for_v4_pool`` (or straight
 off the pool's own core handle), so this module holds no address → id map
 that could disagree with the state owner. The at-most-once verify claim is
-likewise core-owned: ``run_v*_registration_lifecycle`` enters the session's
+likewise core-owned: ``run_registration_lifecycle`` enters the session's
 ``VerifyClaims`` table inside the driver (ADR-022), so concurrent
 registration workers share one lifecycle run without a Python claim table.
 
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from degenbot import Bot, UniswapV2Pool
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.arbitrage import ArbitrageEngine
+from degenbot.arbitrage import ArbitrageEngine, RegistrationLifecycle
 from degenbot.logging import logger as bot_logger
 
 # The `load_*_from_py` ingestion surface + `_v3_snapshot_to_py_dict`
@@ -45,8 +45,8 @@ from .policy import NoOpPathPredicate, PathCompositionPredicate
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import Any
 
-    from degenbot.arbitrage import RetryPolicy
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
     from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
@@ -290,9 +290,13 @@ class EngineRegistry:
             The registered pool's engine ``pool_id``.
 
         """
-        await self.engine.run_v3_registration_lifecycle(
-            pool.address,
-            self._verify_snapshot_block,
+        await self.run_registration_lifecycle(
+            RegistrationLifecycle(
+                family="v3",
+                mode="async",
+                address=pool.address,
+                snapshot_block=self._verify_snapshot_block,
+            )
         )
         return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
@@ -325,10 +329,14 @@ class EngineRegistry:
             The registered pool's engine ``pool_id``.
 
         """
-        await self.engine.run_v4_registration_lifecycle(
-            pool.address,
-            to_0x_hex(pool.pool_id),
-            self._verify_snapshot_block,
+        await self.run_registration_lifecycle(
+            RegistrationLifecycle(
+                family="v4",
+                mode="async",
+                pool_manager=pool.address,
+                pool_id_hex=to_0x_hex(pool.pool_id),
+                snapshot_block=self._verify_snapshot_block,
+            )
         )
         return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
@@ -380,38 +388,34 @@ class EngineRegistry:
             or self.engine.pool_id_for_pool(_V3_FAMILY, address) is not None
         )
 
-    def run_v3_verify_lifecycle_sync_with_retry(
-        self,
-        address: str,
-        policy: RetryPolicy,
-    ) -> None:
-        """V3 seat-thread verify under the core-owned bounded retry dance.
+    @property
+    def verify_snapshot_block(self) -> int | None:
+        """The snapshot seed block the startup ritual stashed.
 
-        The retry classification (transient RPC/provider vs fatal mismatch) and
-        the backoff dance are the core's; this adapter injects the driver's
-        resolved policy and passes the stashed snapshot seed block. A transient
+        The per-pool verify lifecycle is seeded at this block; `None` when the
+        start ritual resolved no snapshot.
+        """
+        return self._verify_snapshot_block
+
+    def run_registration_lifecycle(
+        self,
+        lifecycle: RegistrationLifecycle,
+    ) -> Any:  # ruff:ignore[any-type] - the seam answers an awaitable or None
+        """Run one pool's core-owned registration verify-lifecycle.
+
+        The :class:`RegistrationLifecycle` value states the family, the target,
+        the snapshot seed, the mode, and (for ``mode="blocking_with_retry"``)
+        the retry policy. The retry classification (transient RPC/provider vs
+        fatal mismatch) and the backoff dance are the core's, and a transient
         failure releases the lifecycle claim, so a retry re-runs the whole
         choreography.
-        """
-        self.engine.run_v3_registration_lifecycle_with_retry_sync(
-            address,
-            self._verify_snapshot_block,
-            policy,
-        )
 
-    def run_v4_verify_lifecycle_sync_with_retry(
-        self,
-        pool_manager: str,
-        pool_id_hex: str,
-        policy: RetryPolicy,
-    ) -> None:
-        """V4 twin of :meth:`run_v3_verify_lifecycle_sync_with_retry`."""
-        self.engine.run_v4_registration_lifecycle_with_retry_sync(
-            pool_manager,
-            pool_id_hex,
-            self._verify_snapshot_block,
-            policy,
-        )
+        Returns:
+            What the seam answers — the awaitable for ``mode="async"``, ``None``
+            for the blocking modes.
+
+        """
+        return self.engine.run_registration_lifecycle(lifecycle)
 
     def register_crawl_path(
         self,
