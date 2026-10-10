@@ -1,11 +1,12 @@
 # ADR-011: Auto-healed Alembic Retirement (Dump-and-Restore Cutover)
 
-**Status: proposed.** Epic `TGIP5N` filed; implementation gated on tasks
-T2-T5 landing before the 0.7.0 retirement is executed in T6 / the
-`OXKANZ` release checkpoint. ADR-010's retention/cutover path remains in
-force until `heal` ships and is proven.
-
-**Implemented and extended: the heal machinery ships at open via the auto-heal described by [ADR-052](ADR-052-db-auto-upgrade-alembic-retirement.md) (2026-09-15)**
+**Status: implemented — folded into [ADR-052](ADR-052-db-auto-upgrade-alembic-retirement.md).**
+The heal machinery shipped and was extended to heal-at-open (2026-09-15). The
+gating below is moot: the T2–T5 task gates and the T6/`OXKANZ` release
+checkpoint never fired as a separate retirement step, and ADR-010's
+retention/cutover path is retired. Read this file as the design record of the
+`heal` operation (out-of-place rebuild, auto-derived column mapping, atomic
+swap) — not as pending work to schedule. The live schema story is ADR-052.
 
 ## Context
 

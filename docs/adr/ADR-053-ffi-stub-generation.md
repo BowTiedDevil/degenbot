@@ -1,10 +1,13 @@
 # ADR-053: FFI Stub Generation — Retire the Hand-Maintained `.pyi` Set?
 
-**Status: superseded in part by [ADR-066](ADR-066-deterministic-stub-generation.md).**
-Recommendation from spike ergo **BLY6CT** (T6). The
-hand-maintained stub set stays; the bespoke AST drift gate is slimmed to the
-checks a standard tool cannot cover, with `mypy.stubtest` taking over the
-surface-consistency checks. `pyo3-stub-gen` is rejected.
+**Status: superseded by [ADR-066](ADR-066-deterministic-stub-generation.md).**
+The decision below — "the hand-maintained stub set stays" — is void: the stubs
+under `src/degenbot/_ffi/` are generated (`just gen-stubs`, regenerate-and-diff
+gated), `mypy.stubtest` runs as generator verification, and hand edits over the
+generated stubs are forbidden. What survives from this ADR: the `pyo3-stub-gen`
+rejection (it rewrites the seam's source via proc macros — still rejected) and
+the measured survey of the seam's shape, which remains useful evidence. The
+rest is provenance; do not hand-maintain stubs because this file argues for it.
 
 ## Context
 

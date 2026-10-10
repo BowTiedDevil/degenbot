@@ -2,6 +2,13 @@
 
 **Status: accepted.** Recorded during the BotCore/ArbitrageEngine separation-of-concerns grilling, June 2026. Implemented in full by Plan 100 (Slices 1–5): V2/V3/V4 state consolidated into `BotCore`; the `V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine` are dissolved (single live pool-state owner; engine-then-core lock order); the legacy `RustPoolCache`/`ArbPoolCacheAdapter` mirror is deleted (Slice 4 Option D); `PyToken` is completed (Slice 5). Supersedes the implicit arrangement where each block engine owned a private pool-state `HashMap` and `BotCore` sat unused.
 
+> **Names have moved.** The decisions stand; the nouns predate two renamings.
+> `BotCore` → `Bot` → `BotState` (ADR-005/ADR-006); `PyBotCore` → `PyBot` →
+> `Bot` on `degenbot._ffi` (ADR-032); `PyPool`/`PyToken` → `PyLiquidityPool`/
+> `PyErc20Token` → `LiquidityPool`/`Erc20Token` (ADR-032). The
+> `RustPoolCache`/`ArbPoolCacheAdapter` mirror whose deletion this ADR plans is
+> long complete. Map the names before following the pointers.
+
 ## Context
 
 `BotCore` (`rust/src/bot_core/mod.rs`) was designed as the single Rust owner of all runtime pool/token state, with thin `PyPool`/`PyToken` handles over `Arc<Mutex<BotCore>>`. It is the only Rust struct with reorg-rollback journals (`v2/v3_restore_before_block`, scalar + per-tick priors) and the only one that ever returned `PyPool`/`PyToken` handles.

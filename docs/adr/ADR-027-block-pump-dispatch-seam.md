@@ -1,6 +1,7 @@
 # ADR-027: The block-pump dispatch seam — one owner, three application-specific pipes
 
-**Status: accepted.** Codifies the block pump's delivery architecture (ergo epic `5CGU4V`,
+**Status: historical — superseded by [ADR-041](ADR-041-block-epoch-pipeline.md); provenance only.**
+(Original status: accepted.) Codifies the block pump's delivery architecture (ergo epic `5CGU4V`,
 tasks B1–B4): the pump's hand-offs to the sink, the solver-state verifier, and Python's
 block clock are owned by a single **dispatch owner** but delivered over **three
 application-specific pipes**, each with the delivery semantics its task needs. A future

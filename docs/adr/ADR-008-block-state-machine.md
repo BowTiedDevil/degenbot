@@ -1,6 +1,7 @@
 # ADR-008: Per-block state machine for the pump's block clock
 
-**Status: implemented (core).** Recorded during the block-state-machine review, June 2026.
+**Status: historical — superseded as a live design by [ADR-041](ADR-041-block-epoch-pipeline.md); provenance only.**
+Recorded during the block-state-machine review, June 2026.
 Resolves the verify-race class of bugs (V2-V2-V3 crash at block 25397049: a Mint at 25397047
 un-applied when 25397049's `newHeads` advanced the cursor while N's liquidity log was still
 in-flight). Full design note and rationale live in `docs/architecture/block-state-machine.md`;

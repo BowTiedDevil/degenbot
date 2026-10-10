@@ -123,6 +123,15 @@ bindings a sibling crate.
 
 ### Layer naming
 
+> **Superseded by [ADR-032](ADR-032-pyclass-python-naming.md).** The Py-prefix
+> rule below was reversed: Python-visible names on `degenbot._ffi` carry no
+> `Py`/`Rust` prefix of any kind (both sets are gate-asserted empty), and the
+> module path is the disambiguator (`degenbot._ffi.Bot` vs `degenbot.bot.Bot`).
+> The *layer* separation this section describes (core / wrapper / companion)
+> stands; the *names* do not — ADR-032 is canonical for naming. The `PyBot` /
+> `PyLiquidityPool` / `PyErc20Token` names used throughout this ADR are the
+> pre-rename spellings of today's `Bot` / `LiquidityPool` / `Erc20Token`.
+
 Naming follows the Polars rule **unconditionally**: the `Py` prefix is kept on the
 PyO3 wrapper both as the Rust struct name *and* as the Python-exposed name; the bare
 noun is reserved for the Python companion class. No `#[pyclass(name = "...")]`

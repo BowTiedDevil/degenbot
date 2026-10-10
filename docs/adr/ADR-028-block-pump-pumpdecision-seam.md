@@ -1,6 +1,7 @@
 # ADR-028: The block-pump `PumpDecision` seam — pure producer + thin executor
 
-**Status: accepted.** Codifies epic A (ergo tasks A1–A5, `FUE5SP`): the block pump's
+**Status: historical — superseded by [ADR-041](ADR-041-block-epoch-pipeline.md); provenance only.**
+(Original status: accepted.) Codifies epic A (ergo tasks A1–A5, `FUE5SP`): the block pump's
 per-event policy is owned by a pure, I/O-free `PumpFSM` producing a `PumpDecision`
 enum, executed by a thin async driver. This is the next step of the ADR-008 (BlockClock)
 deepening — the same "deep module: pure decision producer + thin I/O driver" family as

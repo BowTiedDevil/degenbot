@@ -1,6 +1,16 @@
 # ADR-021: Solver-state accuracy is a fail-fast tripwire — divergence is a defect, never an input to auto-repair
 
-**Status: accepted (architecture).** Recorded during the architecture review
+**Status: mostly superseded.** The D1 abort-only reaction is superseded by
+[ADR-040](ADR-040-per-bucket-failure-reactions.md) (per-bucket reactions), and the
+in-process tripwire machinery this ADR's D3 built was **deleted** under
+[ADR-041](ADR-041-block-epoch-pipeline.md) §4 — stage-confined writers make in-process
+desync unrepresentable, and `solver_state_tripwire.rs` no longer exists. Do not
+rebuild the in-process tripwire. What survives: the never-heal posture (D4),
+the divergence-class vocabulary (D2), and the upstream RPC-disagreement
+verification at the Published edge (`CompletenessDecision::Verify` →
+`assert_ws_block_complete`). Everything else below is provenance.
+
+(Original status: accepted (architecture).) Recorded during the architecture review
 (2026-08-02) to settle the *posture* of the state-accuracy verification so a
 future review does not re-suggest the auto-repair path. It both records the
 current fail-fast behaviour of the AV42C7 gate and names the forward deepening

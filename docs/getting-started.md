@@ -98,7 +98,7 @@ pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 ## Where to go next
 
 - **Architecture** — {doc}`/architecture/io-free-pools` (the foundation), {doc}`/architecture/block-state-machine`, {doc}`/architecture/rust-owned-bot`
-- **Design rationale** — {doc}`/adr/index` (start with ADR-003 and ADR-005)
+- **Design rationale** — {doc}`/adr/README` (start with ADR-003 and ADR-005)
 - **CLI reference** — {doc}`/cli/pool`, {doc}`/cli/database`, {doc}`/cli/aave`
 - **Rust API** — [docs.rs/degenbot](https://docs.rs/degenbot)
 - **Python docstrings** — every public class/method is documented in the compiled module (`help(degenbot.Bot.build_pool)` in a REPL); the API reference page on this site is a follow-up built from the type stubs

@@ -7,7 +7,7 @@ The Rust core is the engine; Python is a driver shell. Pool/token state, swap ma
 - **Pure-Rust MEV bot** — `cargo add degenbot` and build a fully functional bot in Rust only. API: [docs.rs/degenbot](https://docs.rs/degenbot)
 - **Python-driven MEV bot** — drive the same core through a thin PyO3 layer, `pip install degenbot`. API & docs: this site
 
-Start with {doc}`getting-started` — or open {doc}`adr/index` if you want the design rationale first.
+Start with {doc}`getting-started` — or open {doc}`adr/README` if you want the design rationale first.
 
 ## Where everything lives
 
@@ -22,7 +22,7 @@ Start with {doc}`getting-started` — or open {doc}`adr/index` if you want the d
 
 …plus 14 more in the sidebar: executor grammar usage, CL tickmaps, Curve stableswap, revm diagnostics, storage layouts.
 
-**{doc}`adr/index`** — 40 settled design decisions, indexed by title and status; the "why" behind the code.
+**{doc}`adr/README`** — the settled design decisions, grouped by whether they still bind; the "why" behind the code.
 
 **Command line** — the `degenbot` CLI: {doc}`cli/pool` (pool inspection & management), {doc}`cli/database` (schema, migrations, cutover), {doc}`cli/aave` (Aave V3 tooling).
 
@@ -53,7 +53,7 @@ architecture/*
 :caption: ADRs
 :hidden:
 
-adr/index
+adr/README
 ```
 
 ```{toctree}

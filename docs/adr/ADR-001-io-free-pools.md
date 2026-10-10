@@ -4,6 +4,14 @@
 
 **Implemented** — All pool types are I/O-free at construction time. V2/V3/V4/Aerodrome/Camelot pools are also fully I/O-free at calculation time. Curve pools with non-plain swap styles may call `CurveDataProvider` at calculation time for per-block on-chain data (see I/O Status table below).
 
+> **Mechanism note.** The I/O-free *principle* (pool state owns no I/O;
+> construction injects pre-resolved data) is permanent. The Python-side
+> *mechanism* this document narrates — fetcher callbacks, the builder pattern
+> over `ProviderAdapter` — has since been replaced: I/O callables are stored
+> pyo3-free trait objects on the Rust state, and companions construct only
+> through the sealed `_from_py_pool` handle seam (ADR-005's addenda). Preserve
+> the principle; do not preserve the callback mechanism.
+
 ## Context
 
 Previously, pool classes mixed two concerns:

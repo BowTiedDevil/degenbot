@@ -1,10 +1,17 @@
 # ADR-010: Alembic Retention Through 0.6.x and Rust Schema Cutover
 
-**Status: accepted.** The schema-cutover mechanism is to be built and made
-opt-in during the 0.6.x point releases (epic `2Z3Y46`); retiring the Alembic
-dependency and the legacy conversion is gated to a **0.7** release.
-
-**Partially superseded: the 0.6.x retention posture was retired 2026-09-15 by [ADR-052](ADR-052-db-auto-upgrade-alembic-retirement.md)**
+**Status: superseded — executed ahead of schedule by [ADR-052](ADR-052-db-auto-upgrade-alembic-retirement.md).**
+The retention posture this ADR established (Alembic retained through 0.6.x,
+retirement gated to a 0.7 release) was retired 2026-09-15, and the retirement
+then executed **while the tree was still on 0.6.x**. Every item on the
+"Forbidden-until-0.7 kill list" below has already been deleted:
+`src/degenbot/migrations/`, the `alembic`/`sqlalchemy` dependencies,
+`DatabaseSessionManager`, the SQLAlchemy models package (CPBCNS),
+`ALEMBIC_HEAD`, and the `alembic_version` branch of `ensure_schema`. **The
+kill list is void** — do not preserve, restore, or gate work on anything it
+names. This file is retained as the provenance record of the cutover design;
+the live schema story (heal-at-open, `RUST_SCHEMA_VERSION` forward steps) is
+ADR-052.
 
 ## Context
 
@@ -120,7 +127,11 @@ list (below). The retirement:
 - decides whether `DegenbotDb::open` auto-converts a stale-but-recognized
   legacy shape or refuses (resolved at 0.7 design time).
 
-## Forbidden-until-0.7 kill list
+## Forbidden-until-0.7 kill list — VOID
+
+> **This list is void (see Status above).** Every item below has already been
+> deleted under ADR-052's retirement sweep. It is retained verbatim only as a
+> record of what the retention posture once protected; it constrains nothing.
 
 No change before the 0.7 retirement task (`JFFQV2`) may delete or stub any of:
 

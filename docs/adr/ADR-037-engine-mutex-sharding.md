@@ -1,6 +1,9 @@
 # ADR-037: Engine Mutex sharding (RAYPAR)
 
-**Status: accepted.** Implemented August 2026 (epic C42WKO).
+**Status: historical — superseded by [ADR-041](ADR-041-block-epoch-pipeline.md); provenance only.**
+Implemented August 2026 (epic C42WKO). Note: this ADR shares its number with
+[ADR-037](ADR-037-swap-simulation-gate.md) (the swap-simulation gate, still live) —
+the duplicate was kept as filed; cite by slug, not number.
 
 > **Historical since epic `MROOY7` ([ADR-041](ADR-041-block-epoch-pipeline.md), `SZJUKL`):**
 > the `drain_lock → engine Mutex → BotState RwLock` ordering chain below no longer exists —
