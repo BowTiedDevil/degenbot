@@ -104,10 +104,12 @@ def verify_v3_liquidity_map(
     BEFORE the write commits, while this reads the already-committed state.
     Per-position `eth_call`s are batched via Multicall3.
 
-    The GIL is released across the whole call (`py.detach`); the `AlloyProvider`
-    is owned internally and the call runs on the ambient tokio runtime — a
-    missing runtime is a typed error, never a per-call runtime build
-    ([`no_ambient_runtime_err`]; mirrors the aave verify seam).
+    The GIL is released across the whole call (`py.detach`); the live
+    `AlloyProvider` is built through [`crate::provider_seam`] and the call
+    runs on the ambient tokio runtime — a missing runtime is a typed error,
+    never a per-call runtime build
+    ([`crate::provider_seam::require_ambient_runtime`]; mirrors the aave
+    verify seam).
     """
 
 def verify_v4_liquidity_map(
@@ -129,10 +131,10 @@ def verify_v4_liquidity_map(
     `PoolManager` singleton (the chain has one — it's the V4 exchange's
     `factory`). Returns the divergence list (empty = GREEN).
 
-    The GIL is released across the whole call; the provider is owned
-    internally and the call runs on the ambient tokio runtime (a missing
-    runtime is a typed error, never a per-call runtime build —
-    [`no_ambient_runtime_err`]).
+    The GIL is released across the whole call; the live provider is built
+    through [`crate::provider_seam`] and the call runs on the ambient tokio
+    runtime (a missing runtime is a typed error, never a per-call runtime
+    build — [`crate::provider_seam::require_ambient_runtime`]).
     """
 
 __all__ = [

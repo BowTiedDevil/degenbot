@@ -29,13 +29,13 @@
 //! constraint holds. If a future async-Python driver embeds tokio, wrap the
 //! call in `tokio::task::spawn_blocking`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use degenbot_pool_updater::run::{self, NoProgress, ProgressSink, RunError, UpdateReport};
+use degenbot_pool_updater::run::{self, NoProgress, RunError, UpdateReport};
 
 /// Build the `UpdateReport` return `dict` (matches the `db_heal_database`
 /// `dict`-return idiom from `67691f7c`).
@@ -134,33 +134,26 @@ fn run_pool_update(
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
-    // The core emits its own throttled operator progress lines; the
-    // seam keeps a silent sink for the core's programmatic `ProgressSink`
-    // parameter.
-    let progress: Arc<dyn ProgressSink> = Arc::new(NoProgress);
 
-    // GIL released across the WHOLE run. `tokio::runtime::Runtime` is built
-    // + `block_on`'d inside the core (on this thread, GIL-free); the seam
-    // never re-enters Python.
+    // GIL released across the WHOLE run — including the live transport's
+    // build, which runs on the runtime the seam edge owns. The core only
+    // injects the built provider, and the seam never re-enters Python.
     let report = py
         .detach(move || {
             // The thin live-provider wrapper (ADR-068 D5): the shell builds
-            // the live transport from `rpc_url` on the shared runtime (the
-            // worker thread carries no ambient tokio context, so the
-            // block_on is legal) and the core only injects it.
-            use degenbot_core::runtime::get_runtime;
-            use degenbot_rpc::provider::AlloyProvider;
-            let provider = get_runtime()
-                .block_on(AlloyProvider::new(rpc_url, 5))
-                .map_err(RunError::from)?;
-            run::run_pool_update(
+            // the live transport from `rpc_url` and the core only injects it.
+            let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
+                rpc_url,
+                crate::provider_seam::UPDATER_MAX_RETRIES,
+            ))
+            .map_err(RunError::from)?;
+            run_pool_update_injected(
                 &path,
                 chain_id,
                 to_block,
                 chunk_size,
                 provider,
                 cancel,
-                progress,
                 verify_chunk,
                 verify_all_interval,
                 verify_all_at_completion,
@@ -169,6 +162,42 @@ fn run_pool_update(
         .map_err(run_err_to_py)?;
 
     update_report_to_dict(py, &report)
+}
+
+/// The pool-updater seam's provider-injected entry (ADR-068 D5): drive the
+/// core chunk loop with an ALREADY-BUILT provider.
+///
+/// [`run_pool_update`] is the operator's `rpc_url` adapter — it builds the
+/// live transport through [`crate::provider_seam`] and lands here. A
+/// `CassetteReplayTransport`-backed provider lands here too, which is what
+/// makes the committed capture corpus reachable from this seam at all.
+///
+/// The core emits its own throttled operator progress lines, so the seam
+/// keeps a silent sink for the core's programmatic `ProgressSink`.
+#[expect(clippy::too_many_arguments)]
+fn run_pool_update_injected(
+    database_path: &Path,
+    chain_id: i64,
+    to_block: Option<u64>,
+    chunk_size: u64,
+    provider: degenbot_rpc::provider::AlloyProvider,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+    verify_chunk: bool,
+    verify_all_interval: Option<u64>,
+    verify_all_at_completion: bool,
+) -> Result<UpdateReport, RunError> {
+    run::run_pool_update(
+        database_path,
+        chain_id,
+        to_block,
+        chunk_size,
+        provider,
+        cancel,
+        Arc::new(NoProgress),
+        verify_chunk,
+        verify_all_interval,
+        verify_all_at_completion,
+    )
 }
 
 /// `degenbot._ffi.pool.verify_v3_liquidity_map(database_path, rpc_url, chain_id,
@@ -187,10 +216,12 @@ fn run_pool_update(
 /// BEFORE the write commits, while this reads the already-committed state.
 /// Per-position `eth_call`s are batched via Multicall3.
 ///
-/// The GIL is released across the whole call (`py.detach`); the `AlloyProvider`
-/// is owned internally and the call runs on the ambient tokio runtime — a
-/// missing runtime is a typed error, never a per-call runtime build
-/// ([`no_ambient_runtime_err`]; mirrors the aave verify seam).
+/// The GIL is released across the whole call (`py.detach`); the live
+/// `AlloyProvider` is built through [`crate::provider_seam`] and the call
+/// runs on the ambient tokio runtime — a missing runtime is a typed error,
+/// never a per-call runtime build
+/// ([`crate::provider_seam::require_ambient_runtime`]; mirrors the aave
+/// verify seam).
 #[pyfunction]
 #[pyo3(signature = (database_path, rpc_url, chain_id, pool_address, block_number))]
 fn verify_v3_liquidity_map(
@@ -203,7 +234,6 @@ fn verify_v3_liquidity_map(
 ) -> PyResult<Vec<Py<PyDict>>> {
     use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
     use degenbot_pool_updater::verify_v3_liquidity_map_on_chain;
-    use degenbot_rpc::provider::AlloyProvider;
 
     let path = PathBuf::from(database_path);
     let addr: alloy::primitives::Address = pool_address
@@ -213,16 +243,13 @@ fn verify_v3_liquidity_map(
 
     let divergences = py
         .detach(move || {
-            use tokio::runtime::Handle;
-            // resolve the ambient runtime BEFORE any DB work. With no
-            // ambient runtime we return a typed error instead of building +
-            // dropping a per-call multi-thread runtime (its default
-            // worker count is the raw core count — the dead tokio-rt-worker
-            // churn source in the live process). The ambient fast path below
-            // is unchanged.
-            let Ok(handle) = Handle::try_current() else {
-                return Err(no_ambient_runtime_err());
-            };
+            // The verify seams' runtime policy, spelled once in the seam
+            // module: resolve the ambient runtime BEFORE any DB work, and
+            // refuse a missing one with a typed error instead of building +
+            // dropping a per-call multi-thread runtime (its default worker
+            // count is the raw core count — the dead tokio-rt-worker churn
+            // source in the live process).
+            crate::provider_seam::require_ambient_runtime()?;
             let db = DegenbotDb::open(&path).map_err(RunError::Db)?.0;
             let conn = db.lock();
             let state = DegenbotDb::fetch_v3_pool_update_state_on_conn(&conn, chain_id, &addr_str)
@@ -242,9 +269,13 @@ fn verify_v3_liquidity_map(
                 tick_bitmap,
                 last_event: None,
             };
-            let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+            let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
+                rpc_url,
+                crate::provider_seam::UPDATER_MAX_RETRIES,
+            ))
+            .map_err(RunError::from)?;
             let fut = verify_v3_liquidity_map_on_chain(&provider, addr, &computed, block_number);
-            tokio::task::block_in_place(|| handle.block_on(fut))
+            crate::provider_seam::drive(fut)
         })
         .map_err(run_err_to_py)?;
 
@@ -261,10 +292,10 @@ fn verify_v3_liquidity_map(
 /// `PoolManager` singleton (the chain has one — it's the V4 exchange's
 /// `factory`). Returns the divergence list (empty = GREEN).
 ///
-/// The GIL is released across the whole call; the provider is owned
-/// internally and the call runs on the ambient tokio runtime (a missing
-/// runtime is a typed error, never a per-call runtime build —
-/// [`no_ambient_runtime_err`]).
+/// The GIL is released across the whole call; the live provider is built
+/// through [`crate::provider_seam`] and the call runs on the ambient tokio
+/// runtime (a missing runtime is a typed error, never a per-call runtime
+/// build — [`crate::provider_seam::require_ambient_runtime`]).
 #[pyfunction]
 #[pyo3(signature = (database_path, rpc_url, chain_id, pool_hash, pool_manager_address, block_number))]
 fn verify_v4_liquidity_map(
@@ -278,7 +309,6 @@ fn verify_v4_liquidity_map(
 ) -> PyResult<Vec<Py<PyDict>>> {
     use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
     use degenbot_pool_updater::verify_v4_liquidity_map_on_chain;
-    use degenbot_rpc::provider::AlloyProvider;
     use std::str::FromStr;
 
     let path = PathBuf::from(database_path);
@@ -291,13 +321,10 @@ fn verify_v4_liquidity_map(
 
     let divergences = py
         .detach(move || {
-            use tokio::runtime::Handle;
             // same ambient-runtime policy as the v3 sibling — typed
             // error when no ambient runtime exists; never a per-call
             // multi-thread build.
-            let Ok(handle) = Handle::try_current() else {
-                return Err(no_ambient_runtime_err());
-            };
+            crate::provider_seam::require_ambient_runtime()?;
             let db = DegenbotDb::open(&path).map_err(RunError::Db)?.0;
             let conn = db.lock();
             let state = DegenbotDb::fetch_v4_pool_update_state_on_conn(&conn, pool_hash, chain_id)
@@ -317,7 +344,11 @@ fn verify_v4_liquidity_map(
                 tick_bitmap,
                 last_event: None,
             };
-            let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+            let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
+                rpc_url,
+                crate::provider_seam::UPDATER_MAX_RETRIES,
+            ))
+            .map_err(RunError::from)?;
             let fut = verify_v4_liquidity_map_on_chain(
                 &provider,
                 pool_manager,
@@ -325,7 +356,7 @@ fn verify_v4_liquidity_map(
                 &computed,
                 block_number,
             );
-            tokio::task::block_in_place(|| handle.block_on(fut))
+            crate::provider_seam::drive(fut)
         })
         .map_err(run_err_to_py)?;
 
@@ -396,19 +427,6 @@ fn divergences_to_dicts(
 // &CancelHandle` resolves + existing `pool::CancelHandle` references work.
 pub use crate::cancel::CancelHandle;
 
-/// The typed error for a Python-called verify path with no ambient tokio
-/// runtime: these seams used to build + drop a full
-/// multi-thread runtime per call (default worker count = the raw core
-/// count), churning dead tokio-rt-worker threads in the live process. They
-/// now run only on the caller's ambient runtime and fail loudly here
-/// otherwise. Uses the existing `RunError::Runtime(io::Error)` variant so
-/// `run_err_to_py` maps it to `ValueError` like every other failure.
-fn no_ambient_runtime_err() -> RunError {
-    RunError::Runtime(std::io::Error::other(
-        "no ambient tokio runtime: refusing to build a per-call multi-thread runtime; run under the shared degenbot-core ambient runtime",
-    ))
-}
-
 /// Map a [`RunError`] to a Python exception.
 ///
 /// `RunError::Cancelled` becomes `RuntimeError` ("cancelled by cancel flag")
@@ -443,7 +461,7 @@ pub mod pool {
 }
 
 #[cfg(all(test, feature = "auto-initialize"))]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -546,5 +564,212 @@ mod tests {
                 3
             );
         });
+    }
+
+    /// The committed golden capture: the Uniswap V3 factory's `PoolCreated`
+    /// logs plus the whole-chain V3 `Mint`/`Burn` scan over blocks
+    /// `26_102_622..=26_102_626`, recorded against the live node by the
+    /// recorder example (drift-gated corpus).
+    const CASSETTE_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json"
+    );
+
+    /// The Uniswap V3 factory the capture was recorded against.
+    const V3_FACTORY: &str = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
+
+    /// Independent literal: the exact number of ledger entries the replayed
+    /// chunk serves per run — one `eth_getLogs` for the factory's
+    /// `PoolCreated` pass plus one whole-chain `eth_getLogs` for the V3
+    /// `Mint`/`Burn` scan (the run resolves its tip from the pinned span, so
+    /// no `eth_blockNumber`).
+    const EXPECTED_RPC_ROUND_TRIPS: u64 = 2;
+
+    /// A scratch database under the process temp dir, removed on drop so a
+    /// failing assertion cannot leak it.
+    struct ScratchDb(std::path::PathBuf);
+
+    impl ScratchDb {
+        fn new(tag: &str) -> Self {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("the clock is after the epoch")
+                .as_nanos();
+            Self(std::env::temp_dir().join(format!(
+                "degenbot-provider-seam-{tag}-{}-{stamp}.db",
+                std::process::id()
+            )))
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for ScratchDb {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            for suffix in ["-wal", "-shm"] {
+                let sibling = std::path::PathBuf::from(format!("{}{suffix}", self.0.display()));
+                let _ = std::fs::remove_file(sibling);
+            }
+        }
+    }
+
+    /// Seed one ACTIVE `uniswap_v3` exchange stamped at `from - 1`, so the
+    /// run's fetch window is exactly the cassette's recorded span.
+    fn seeded_db(path: &Path, chain_id: i64, from: u64) {
+        use degenbot_db::DegenbotDb;
+
+        let (db, _schema_state) = DegenbotDb::open_for_writes(path).unwrap();
+        let factory: alloy::primitives::Address = V3_FACTORY.parse().unwrap();
+        let exchange = db
+            .upsert_exchange(chain_id, "uniswap_v3", factory, None)
+            .unwrap();
+        db.set_exchange_active(exchange.id, true).unwrap();
+        db.set_exchange_last_update_block(chain_id, exchange.id, i64::try_from(from - 1).unwrap())
+            .unwrap();
+    }
+
+    /// Read + parse the committed corpus, checking the drift gate on the way.
+    fn committed_cassette() -> (Vec<u8>, degenbot_rpc::cassette::Cassette) {
+        use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette};
+
+        let bytes = std::fs::read(CASSETTE_PATH).expect("the committed cassette must exist");
+        verify_cassette_bytes(&bytes).expect("the committed cassette passes its drift gate");
+        let cassette = Cassette::from_json_bytes(&bytes).expect("a valid cassette");
+        (bytes, cassette)
+    }
+
+    /// A `CassetteReplayTransport`-backed provider drives the SAME entry the
+    /// operator's `rpc_url` call drives (ADR-068 D5: the provider seam is
+    /// injection). No socket exists to dial, so the replayed run's real
+    /// fetch → decode → apply → stamp cycle reads only the recorded ledger.
+    #[test]
+    fn run_pool_update_entry_accepts_a_cassette_backed_provider() {
+        use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+        use std::sync::atomic::AtomicBool;
+
+        let (_bytes, cassette) = committed_cassette();
+        let chain_id = i64::try_from(cassette.chain_id).unwrap();
+        let span = cassette.provenance.span;
+        assert_eq!(span.from_block, 26_102_622);
+        assert_eq!(span.to_block, 26_102_626);
+
+        let transport = CassetteReplayTransport::new(cassette);
+        let provider = transport.as_alloy_provider();
+
+        let scratch = ScratchDb::new("replay");
+        seeded_db(scratch.path(), chain_id, span.from_block);
+
+        let report = run_pool_update_injected(
+            scratch.path(),
+            chain_id,
+            Some(span.to_block),
+            span.to_block - span.from_block + 1,
+            provider,
+            Arc::new(AtomicBool::new(false)),
+            false,
+            None,
+            false,
+        )
+        .expect("the replayed run must commit cleanly");
+
+        assert_eq!(
+            report.from_block, span.from_block,
+            "the run starts at the pin"
+        );
+        assert_eq!(
+            report.to_block, span.to_block,
+            "the run advances to the pin"
+        );
+        assert_eq!(report.chunks_committed, 1, "the whole span is one chunk");
+        assert_eq!(
+            report.total_pools_written, 1,
+            "a 0 here would mean decode/apply never ran over the cassette"
+        );
+
+        let served = transport.served_snapshot();
+        assert_eq!(
+            served.requests, served.served,
+            "every request must be a served ledger entry — a fixture gap is loud, not silent"
+        );
+        assert_eq!(
+            served.served, EXPECTED_RPC_ROUND_TRIPS,
+            "the replayed chunk's fetch surface drifted"
+        );
+    }
+
+    /// The red half of the same seam pin: one ledger key removed in memory —
+    /// the entry must refuse with the typed provider error rather than
+    /// silently miss a fetch. The committed corpus file is never written, so
+    /// it stays byte-identical (asserted through its keccak digest), and the
+    /// refused run leaves the stamp where it started.
+    #[test]
+    fn run_pool_update_entry_refuses_a_cassette_ledger_gap() {
+        use degenbot_db::DegenbotDb;
+        use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+        use std::sync::atomic::AtomicBool;
+
+        let (bytes, mut cassette) = committed_cassette();
+        let before = alloy::primitives::keccak256(&bytes);
+        let chain_id = i64::try_from(cassette.chain_id).unwrap();
+        let span = cassette.provenance.span;
+
+        let missing = cassette
+            .entries
+            .keys()
+            .find(|key| key.contains("eth_getLogs"))
+            .expect("the corpus carries the chunk's getLogs entries")
+            .clone();
+        cassette.entries.remove(&missing);
+
+        let transport = CassetteReplayTransport::new(cassette);
+        let provider = transport.as_alloy_provider();
+
+        let scratch = ScratchDb::new("ledger-gap");
+        seeded_db(scratch.path(), chain_id, span.from_block);
+
+        let err = run_pool_update_injected(
+            scratch.path(),
+            chain_id,
+            Some(span.to_block),
+            span.to_block - span.from_block + 1,
+            provider,
+            Arc::new(AtomicBool::new(false)),
+            false,
+            None,
+            false,
+        )
+        .expect_err("a ledger gap must refuse the run");
+        assert!(
+            matches!(err, RunError::Provider(_)),
+            "expected the typed provider refusal, got {err:?}"
+        );
+
+        // The corpus on disk was never touched: the mutation lived in memory.
+        let after =
+            alloy::primitives::keccak256(std::fs::read(CASSETTE_PATH).expect("cassette read"));
+        assert_eq!(after, before, "the committed cassette must not be mutated");
+
+        // Nothing was written and the restart cursor did not move.
+        let (db, _schema_state) = DegenbotDb::open(scratch.path()).unwrap();
+        let conn = db.lock();
+        let pools: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pools", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pools, 0, "the refused chunk must leave no pool rows");
+        let stamp: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(last_update_block) FROM exchanges WHERE active = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stamp,
+            Some(i64::try_from(span.from_block - 1).unwrap()),
+            "the restart cursor must not advance past the pin"
+        );
     }
 }

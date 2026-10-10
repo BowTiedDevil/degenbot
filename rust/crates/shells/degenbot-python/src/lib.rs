@@ -99,6 +99,12 @@ pub mod pool;
 pub mod prelude;
 #[cfg(feature = "price")]
 pub mod price;
+/// The shell's provider seam edge (ADR-068 D5): the one live-provider
+/// construction site + the one runtime-mode decision every updater and
+/// verify seam shares. Unconditional under `rpc` — every consumer feature
+/// (`pool`, `aave-updater`, `bot`) implies it.
+#[cfg(feature = "rpc")]
+pub mod provider_seam;
 pub mod python_log_layer;
 /// The `PyO3` projection of the core registration outcome ledger (S12).
 pub mod registration;

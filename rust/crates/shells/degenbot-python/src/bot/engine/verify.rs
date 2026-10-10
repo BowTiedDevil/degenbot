@@ -51,13 +51,14 @@ impl PyArbEngine {
         let tick_lens = Address::ZERO;
 
         crate::ambient_runtime::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "verify_v3_pool: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider =
+                crate::provider_seam::live_provider(&rpc_url, crate::provider::DEFAULT_MAX_RETRIES)
+                    .await
+                    .map_err(|e| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "verify_v3_pool: failed to create provider: {e}"
+                        ))
+                    })?;
 
             let v3_result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
                 &provider,
@@ -134,13 +135,14 @@ impl PyArbEngine {
         };
 
         crate::ambient_runtime::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "verify_v4_pool: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider =
+                crate::provider_seam::live_provider(&rpc_url, crate::provider::DEFAULT_MAX_RETRIES)
+                    .await
+                    .map_err(|e| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "verify_v4_pool: failed to create provider: {e}"
+                        ))
+                    })?;
 
             let v4_result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
                 &provider,

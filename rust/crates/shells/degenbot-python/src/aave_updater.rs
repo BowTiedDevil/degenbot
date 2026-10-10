@@ -158,20 +158,18 @@ fn run_aave_update(
     // parameter.
     let progress: Arc<dyn ProgressSink> = Arc::new(NoProgress);
 
-    // GIL released across the WHOLE run. `tokio::runtime::Runtime` is built
-    // + `block_on`'d inside the core (on this thread, GIL-free); the seam
-    // never re-enters Python.
+    // GIL released across the WHOLE run — including the live transport's
+    // build, which runs on the runtime the seam edge owns. The core only
+    // injects the built provider, and the seam never re-enters Python.
     let report = py
         .detach(move || {
             // The thin live-provider wrapper (ADR-068 D5): the shell builds
-            // the live transport from `rpc_url` on the shared runtime (the
-            // worker thread carries no ambient tokio context, so the
-            // block_on is legal) and the core only injects it.
-            use degenbot_core::runtime::get_runtime;
-            use degenbot_rpc::provider::AlloyProvider;
-            let provider = get_runtime()
-                .block_on(AlloyProvider::new(rpc_url, 5))
-                .map_err(RunError::from)?;
+            // the live transport from `rpc_url` and the core only injects it.
+            let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
+                rpc_url,
+                crate::provider_seam::UPDATER_MAX_RETRIES,
+            ))
+            .map_err(RunError::from)?;
             core_run_aave_update(
                 &path,
                 RunSpec {
@@ -194,19 +192,6 @@ fn run_aave_update(
         .map_err(run_err_to_py)?;
 
     aave_report_to_dict(py, &report)
-}
-
-/// The typed error for a Python-called verify path with no ambient tokio
-/// runtime: these seams used to build + drop a full
-/// multi-thread runtime per call (default worker count = the raw core
-/// count), churning dead tokio-rt-worker threads in the live process. They
-/// now run only on the caller's ambient runtime and fail loudly here
-/// otherwise. Uses the existing `RunError::Runtime(io::Error)` variant so
-/// `run_err_to_py` maps it to `ValueError` like every other failure.
-fn no_ambient_runtime_err() -> RunError {
-    RunError::Runtime(std::io::Error::other(
-        "no ambient tokio runtime: refusing to build a per-call multi-thread runtime; run under the shared degenbot-core ambient runtime",
-    ))
 }
 
 /// Map a [`RunError`] to a Python exception. Mirrors the pool seam's
@@ -304,7 +289,6 @@ fn verify_touched_positions_on_chain(
     touched_users: Option<Vec<String>>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     use degenbot_db::DegenbotDb;
-    use degenbot_rpc::provider::AlloyProvider;
 
     let path = PathBuf::from(database_path);
     // Parse the optional touched_users filter into Addresses.
@@ -313,16 +297,13 @@ fn verify_touched_positions_on_chain(
 
     let divergences = py
         .detach(move || {
-            use tokio::runtime::Handle;
-            // resolve the ambient runtime BEFORE any DB work. With no
-            // ambient runtime we return a typed error instead of building +
-            // dropping a per-call multi-thread runtime (its default
-            // worker count is the raw core count — the dead tokio-rt-worker
-            // churn source in the live process). The ambient fast path below
-            // is unchanged.
-            let Ok(handle) = Handle::try_current() else {
-                return Err(no_ambient_runtime_err());
-            };
+            // The verify seams' runtime policy, spelled once in the seam
+            // module: resolve the ambient runtime BEFORE any DB work, and
+            // refuse a missing one with a typed error instead of building +
+            // dropping a per-call multi-thread runtime (its default worker
+            // count is the raw core count — the dead tokio-rt-worker churn
+            // source in the live process).
+            crate::provider_seam::require_ambient_runtime()?;
 
             // Lock the DB handle for a read-only connection (verify uses no
             // SQL writes; the lock guarantees no concurrent mutator inside
@@ -333,14 +314,17 @@ fn verify_touched_positions_on_chain(
             let touched_ref = touched.as_deref();
             // Runtime strategy: the ambient handle is resolved up front (the
             // Policy — a missing runtime errors, never a per-call
-            // build). Invoking from inside an existing runtime (e.g. a
+            // build), and the live provider is constructed inside that
+            // runtime's context to avoid its internals' runtime-handle
+            // binding. Invoking from inside an existing runtime (e.g. a
             // caller driving verification from the updater worker — context
-            // set + multi-thread) uses `block_in_place` + `handle.block_on`
-            // (avoids the "creating runtime within runtime" panic). The
-            // `AlloyProvider` is
-            // constructed inside that runtime's context to avoid its
-            // internals' runtime-handle binding.
-            let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+            // set + multi-thread) parks the thread instead of nesting a
+            // `block_on` inside it.
+            let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
+                rpc_url,
+                crate::provider_seam::UPDATER_MAX_RETRIES,
+            ))
+            .map_err(RunError::from)?;
             let fut = verify_touched_positions_on_conn(
                 &conn,
                 &provider,
@@ -348,7 +332,7 @@ fn verify_touched_positions_on_chain(
                 block_number,
                 touched_ref,
             );
-            tokio::task::block_in_place(|| handle.block_on(fut))
+            crate::provider_seam::drive(fut)
         })
         .map_err(run_err_to_py)?;
 
@@ -421,7 +405,6 @@ fn verify_all_positions_on_chain(
     touched_users: Option<Vec<String>>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     use degenbot_db::DegenbotDb;
-    use degenbot_rpc::provider::AlloyProvider;
 
     let path = PathBuf::from(database_path);
     let touched: Option<Vec<alloy::primitives::Address>> =
@@ -429,24 +412,24 @@ fn verify_all_positions_on_chain(
 
     let divergences = py
         .detach(move || {
-            use tokio::runtime::Handle;
             // same ambient-runtime policy as the touched-positions
             // sibling — typed error when no ambient runtime exists; never a
             // per-call multi-thread build.
-            let Ok(handle) = Handle::try_current() else {
-                return Err(no_ambient_runtime_err());
-            };
+            crate::provider_seam::require_ambient_runtime()?;
 
             let db = DegenbotDb::open(&path)?.0;
             let conn = db.lock();
             let touched_ref = touched.as_deref();
 
-            // Runtime strategy: the ambient handle is resolved up front (the
-            // Policy — a missing runtime errors, never a per-call
-            // build). The `AlloyProvider` is constructed inside that
-            // runtime's context to avoid its internals' runtime-handle
-            // binding.
-            let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+            // Runtime strategy: the live provider is constructed inside the
+            // caller's runtime context (the Policy — a missing runtime
+            // errors, never a per-call build) to avoid its internals'
+            // runtime-handle binding.
+            let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
+                rpc_url,
+                crate::provider_seam::UPDATER_MAX_RETRIES,
+            ))
+            .map_err(RunError::from)?;
             let fut = verify_all_positions_on_conn(
                 &conn,
                 &provider,
@@ -455,7 +438,7 @@ fn verify_all_positions_on_chain(
                 block_number,
                 touched_ref,
             );
-            tokio::task::block_in_place(|| handle.block_on(fut))
+            crate::provider_seam::drive(fut)
         })
         .map_err(run_err_to_py)?;
 
@@ -588,14 +571,12 @@ fn activate_aave_market(
     let result = py
         .detach(move || {
             // The thin live-provider wrapper (ADR-068 D5): the shell builds
-            // the live transport from `rpc_url` on the shared runtime (the
-            // worker thread carries no ambient tokio context, so the
-            // block_on is legal) and the core only injects it.
-            use degenbot_core::runtime::get_runtime;
-            use degenbot_rpc::provider::AlloyProvider;
-            let provider = get_runtime()
-                .block_on(AlloyProvider::new(rpc_url, 5))
-                .map_err(RunError::from)?;
+            // the live transport from `rpc_url` and the core only injects it.
+            let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
+                rpc_url,
+                crate::provider_seam::UPDATER_MAX_RETRIES,
+            ))
+            .map_err(RunError::from)?;
             core_activate_aave_market(
                 &path,
                 chain_id,

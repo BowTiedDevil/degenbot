@@ -6,7 +6,6 @@
 use crate::ambient_runtime::future_into_py;
 use crate::contract::Contract;
 use crate::prelude::*;
-use crate::provider::AlloyProvider;
 use crate::rpc::provider::PyAlloyProvider;
 use std::sync::Arc;
 
@@ -37,7 +36,7 @@ impl PyAsyncContract {
     ) -> PyResult<Bound<'_, PyAny>> {
         let retries = max_retries.unwrap_or(crate::provider::DEFAULT_MAX_RETRIES);
         future_into_py(py, async move {
-            let provider = AlloyProvider::new(&provider_url, retries)
+            let provider = crate::provider_seam::live_provider(&provider_url, retries)
                 .await
                 .map_err(Into::<PyErr>::into)?;
 

@@ -3,7 +3,6 @@
 use crate::abi_types::AbiValue;
 use crate::contract::{encode_arguments, Contract, FunctionSignature};
 use crate::prelude::*;
-use crate::provider::AlloyProvider;
 use crate::rpc::provider::PyAlloyProvider;
 use alloy::hex;
 use pyo3::types::{PyBool, PyBytes, PyList};
@@ -34,12 +33,14 @@ impl PyContract {
         let url = provider_url.unwrap_or_else(|| "http://localhost:8545".to_string());
         let address = address.to_string();
 
-        // Release GIL during provider creation
+        // Release GIL during provider creation; the seam edge owns the
+        // transport build (and the runtime-mode decision behind it).
         let provider = py
             .detach(|| {
-                get_runtime().block_on(async {
-                    AlloyProvider::new(&url, crate::provider::DEFAULT_MAX_RETRIES).await
-                })
+                crate::provider_seam::drive(crate::provider_seam::live_provider(
+                    &url,
+                    crate::provider::DEFAULT_MAX_RETRIES,
+                ))
             })
             .map_err(Into::<PyErr>::into)?;
 
