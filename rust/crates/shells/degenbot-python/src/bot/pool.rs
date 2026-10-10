@@ -23,6 +23,7 @@ use crate::bot::errmap::{
     swap_math_overflow, swap_unknown_pool,
 };
 use degenbot_bot::bot_core::pool_ops::{self, StagedSwapOutcome, SwapOpError};
+use degenbot_bot::bot_core::refresh::{RefreshError, RefreshOutcome};
 use degenbot_bot::bot_core::TickInfo;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::swap_simulation::SwapRequest;
@@ -2882,6 +2883,57 @@ impl PyLiquidityPool {
             core.apply_balance_update_by_pool_id(self.pool_id, values, block_number)
                 .is_some()
         }))
+    }
+
+    /// Fetch this pool's current on-chain state and apply it when it differs —
+    /// the update path's ONE core entry (`refresh_pool`).
+    ///
+    /// `io` is the driver's `BotIo` façade; the family's fetch/compare/apply
+    /// choreography runs core-side against this handle's shared `BotState`.
+    /// `block_number` defaults to the current chain head. Returns `True` when a
+    /// differing state was applied, `False` when the on-chain state already
+    /// matches.
+    ///
+    /// Raises:
+    ///     `ValueError`: The handle's pool id is not registered, or its family
+    ///         has no refresh path.
+    #[pyo3(signature = (io, block_number=None))]
+    fn refresh_via(
+        &self,
+        py: Python<'_>,
+        io: &Bound<'_, crate::bot::py_bot_io::PyBotIo>,
+        block_number: Option<u64>,
+    ) -> PyResult<bool> {
+        let construction_io = io.borrow().required_construction_io()?;
+        let core = self.core.clone();
+        let pool_id = self.pool_id;
+        let outcome = py.detach(move || {
+            runtime::get_runtime().block_on(async move {
+                degenbot_bot::bot_core::refresh::refresh_pool(
+                    &core,
+                    pool_id,
+                    &construction_io,
+                    block_number,
+                )
+                .await
+            })
+        });
+        match outcome {
+            Ok(RefreshOutcome::Changed) => Ok(true),
+            Ok(RefreshOutcome::Unchanged) => Ok(false),
+            Err(RefreshError::UnsupportedFamily { family, .. }) => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "pool {pool_id} family {family:?} has no refresh path"
+                )))
+            }
+            Err(RefreshError::Spec { message, .. }) => {
+                Err(crate::bot::engine::SpecViolationError::new_err(message))
+            }
+            Err(RefreshError::Provider(e)) => Err(e.into()),
+            Err(RefreshError::UnknownPool(_) | RefreshError::MissingIdentity { .. }) => {
+                Err(pool_unregistered(pool_id))
+            }
+        }
     }
 }
 

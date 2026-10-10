@@ -909,7 +909,7 @@ impl PyBot {
     ///
     /// As the dispatched per-family builder; `ValueError` on an unknown family
     /// or a missing required argument (Balancer's `vault`).
-    #[pyo3(signature = (address, family, variant=None, block=None, db=true, tick_data_fetcher=None, factories=None, vault=None, invariant_version=None))]
+    #[pyo3(signature = (address, family, variant=None, block=None, db=true, tick_data_fetcher=None, factories=None, registries=None, vault=None, invariant_version=None))]
     #[expect(clippy::too_many_arguments)] // the family identity + the per-family hints, one flat surface
     fn construct_pool(
         &self,
@@ -921,6 +921,7 @@ impl PyBot {
         db: bool,
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
         factories: Option<Vec<String>>,
+        registries: Option<Vec<String>>,
         vault: Option<&str>,
         invariant_version: Option<u8>,
     ) -> PyResult<(u64, String, String, String, String)> {
@@ -962,18 +963,47 @@ impl PyBot {
                 let pool_id = self.build_balancer_weighted_pool(py, address, vault, block)?;
                 Ok(echo(pool_id, "balancer_weighted"))
             }
-            // Stableswap: Balancer stable. Curve keeps its Python discovery
-            // builder (the one stableswap the core entry does not classify),
-            // so it never reaches this arm.
+            // Stableswap: two arms. Balancer stable builds through the Vault
+            // entry (requires `vault`). Curve — the discovery-only stableswap
+            // family with no `factory()` — builds through the core Curve
+            // detection choreography, so its identity is resolved by the core
+            // builder, never a second Python path. The driver supplies the
+            // Curve registry/factory addresses the LP-token + metapool lookups
+            // consult (driver VALUES, like the V3 route's factory rungs).
             "stableswap" => {
-                let vault = vault.ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "construct_pool: the stableswap family requires `vault`",
-                    )
-                })?;
-                let pool_id =
-                    self.build_balancer_stable_pool(py, address, vault, block, invariant_version)?;
-                Ok(echo(pool_id, "balancer_stable"))
+                if variant == Some("balancer_stable") {
+                    let vault = vault.ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(
+                            "construct_pool: the stableswap family requires `vault`",
+                        )
+                    })?;
+                    let pool_id = self.build_balancer_stable_pool(
+                        py,
+                        address,
+                        vault,
+                        block,
+                        invariant_version,
+                    )?;
+                    Ok(echo(pool_id, "balancer_stable"))
+                } else {
+                    let registries = registries.ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(
+                            "construct_pool: the Curve family requires `registries`",
+                        )
+                    })?;
+                    let addr = parse_address(address)?;
+                    let registry = registries
+                        .iter()
+                        .map(|s| parse_address(s))
+                        .collect::<PyResult<Vec<Address>>>()?;
+                    let pool_id = py
+                        .detach(|| {
+                            self.bot
+                                .build_and_register_curve_pool(addr, &registry, block)
+                        })
+                        .map_err(|e| map_build_err("construct_pool", e))?;
+                    Ok(echo(pool_id, "stableswap"))
+                }
             }
             other => Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "construct_pool: unsupported family {other:?}"

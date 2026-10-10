@@ -25,7 +25,7 @@ use degenbot_pools::state_history::JournalError;
 
 use crate::bot::engine::{
     DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
-    PathRegistryFullError, PoolAlreadyRegisteredError, SpecViolationError,
+    PathRegistryFullError, PoolAlreadyRegisteredError, PoolRegistrationError, SpecViolationError,
     VerificationMismatchError, VerificationRpcError,
 };
 
@@ -276,6 +276,9 @@ pub(crate) fn map_v2_build_err(
         V2BuildError::NoConstructionIo => map_no_construction_io("build_v2_pool"),
         V2BuildError::Builder(e) => map_builder_err(e),
         V2BuildError::Register(e) => map_register_v2_err(e),
+        V2BuildError::IdentityDivergence(e) => {
+            PoolRegistrationError::new_err(format!("build_v2_pool: {e}"))
+        }
     }
 }
 
@@ -288,6 +291,9 @@ pub(crate) fn map_v4_build_err(
         V4BuildError::NoConstructionIo => map_no_construction_io("build_v4_pool"),
         V4BuildError::Builder(e) => map_builder_err(e),
         V4BuildError::Register(e) => map_register_v4_err(e),
+        V4BuildError::IdentityDivergence(e) => {
+            PoolRegistrationError::new_err(format!("build_v4_pool: {e}"))
+        }
     }
 }
 

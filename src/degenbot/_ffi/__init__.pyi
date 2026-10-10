@@ -932,6 +932,7 @@ class Bot:
         db: bool = True,
         tick_data_fetcher: Any | None = None,
         factories: Sequence[str] | None = None,
+        registries: Sequence[str] | None = None,
         vault: str | None = None,
         invariant_version: int | None = None,
     ) -> tuple[int, str, str, str, str]:
@@ -3494,6 +3495,21 @@ class Pool:
         """
         Pool manager contract address (EIP-55 checksummed hex). Empty string if
         not a V4 pool.
+        """
+    def refresh_via(self, /, io: BotIo, block_number: int | None = None) -> bool:
+        """
+        Fetch this pool's current on-chain state and apply it when it differs —
+        the update path's ONE core entry (`refresh_pool`).
+
+        `io` is the driver's `BotIo` façade; the family's fetch/compare/apply
+        choreography runs core-side against this handle's shared `BotState`.
+        `block_number` defaults to the current chain head. Returns `True` when a
+        differing state was applied, `False` when the on-chain state already
+        matches.
+
+        Raises:
+            `ValueError`: The handle's pool id is not registered, or its family
+                has no refresh path.
         """
     def reserve_pair(self, /) -> ReservePairView:
         """

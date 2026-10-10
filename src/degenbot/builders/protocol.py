@@ -1,9 +1,8 @@
-"""Protocol for pool construction and state updates.
+"""Protocol for pool construction.
 
 Each builder owns:
 - The I/O choreography (Rust-backed metadata lookup → RPC fetch → decode → construct)
 - Pool registration in the Pool Registry
-- State updates via pool.external_update()
 
 Builders do NOT own:
 - Pool type resolution (Bot's job)
@@ -22,11 +21,10 @@ if TYPE_CHECKING:
 
 
 class PoolBuilder(Protocol):
-    """Protocol for pool construction and state updates.
+    """Protocol for pool construction.
 
     Builders must accept ``address`` as the first positional-or-keyword
-    parameter in ``build()``, and ``pool`` as the first positional-or-keyword
-    parameter in ``update()``. Optional parameters are forwarded via
+    parameter in ``build()``. Optional parameters are forwarded via
     ``request: BuildPoolRequest`` — builders read the fields they recognize
     and ignore the rest.
 
@@ -44,14 +42,4 @@ class PoolBuilder(Protocol):
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Build a pool from on-chain data."""
-        ...
-
-    @staticmethod
-    def update(
-        pool: AbstractLiquidityPool,
-        *,
-        io: BotIo | None = None,
-        block_number: int | None = None,
-    ) -> bool:
-        """Update the pool state from on-chain data."""
         ...

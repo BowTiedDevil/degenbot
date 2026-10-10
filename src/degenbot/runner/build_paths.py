@@ -33,6 +33,7 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import (
+    FAMILY_TAG_TO_POOL_KIND,
     PathfindingRequest,
     PoolKind,
     find_paths_async,
@@ -69,15 +70,6 @@ if TYPE_CHECKING:
 # ──────────────────────────────────────────────────────────────────
 
 
-# The V2/V3/V4 labels are the public permutation API surface and map directly
-# to the typed Rust-backed pathfinding families.
-_POOL_VERSION_MAP: dict[str, PoolKind] = {
-    "V2": PoolKind.V2,
-    "V3": PoolKind.V3,
-    "V4": PoolKind.V4,
-}
-
-
 def _parse_permutation_filter(
     perms: set[str] | None,
 ) -> list[set[PoolKind] | None] | None:
@@ -100,7 +92,7 @@ def _parse_permutation_filter(
     parsed: list[list[str]] = []
     for perm in perms:
         parts = perm.split("-")
-        if not all(p in _POOL_VERSION_MAP for p in parts):
+        if not all(p in FAMILY_TAG_TO_POOL_KIND for p in parts):
             msg = f"Invalid permutation '{perm}': unknown version tag"
             raise ValueError(msg)
         parsed.append(parts)
@@ -111,7 +103,7 @@ def _parse_permutation_filter(
     result: list[set[PoolKind] | None] = []
     for depth in range(max_depth):
         allowed_this_depth: set[PoolKind] = {
-            _POOL_VERSION_MAP[perm_parts[depth]] for perm_parts in parsed
+            FAMILY_TAG_TO_POOL_KIND[perm_parts[depth]] for perm_parts in parsed
         }
         result.append(allowed_this_depth or None)
     return result
@@ -126,10 +118,10 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[PoolKind]:
 
     """
     if not perms:
-        return list(_POOL_VERSION_MAP.values())
+        return list(FAMILY_TAG_TO_POOL_KIND.values())
 
     versions_needed = {version for perm in perms for version in perm.split("-")}
-    return [_POOL_VERSION_MAP[version] for version in sorted(versions_needed)]
+    return [FAMILY_TAG_TO_POOL_KIND[version] for version in sorted(versions_needed)]
 
 
 # ──────────────────────────────────────────────────────────────────

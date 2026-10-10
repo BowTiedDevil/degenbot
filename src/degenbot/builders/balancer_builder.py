@@ -17,10 +17,6 @@ from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
 from degenbot.balancer.stable_pools import BalancerV2StablePool
-from degenbot.balancer.types import (
-    BalancerV2StablePoolExternalUpdate,
-    BalancerV2WeightedPoolExternalUpdate,
-)
 from degenbot.builders.balancer_builder_base import BalancerBuilderBase, _BalancerPoolType
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
@@ -288,58 +284,3 @@ class BalancerBuilder(BalancerBuilderBase):
 
         self._pools.add(pool, chain_id=ctx.chain_id, pool_address=pool.address)
         return pool
-
-    @staticmethod
-    def update(
-        pool: AbstractLiquidityPool,
-        *,
-        io: BotIo | None = None,
-        block_number: int | None = None,
-    ) -> bool:
-        """Fetch new balances from Vault and update the pool.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            TypeError: If the operation fails.
-
-        """
-        assert io is not None
-
-        if isinstance(pool, BalancerV2Pool):
-            _, new_balances = BalancerBuilderBase._fetch_vault_tokens(  # ruff:ignore[private-member-access]
-                io,
-                pool.pool_id,
-                block_number,
-            )
-
-            if pool.balances == tuple(new_balances):
-                return False
-
-            update = BalancerV2WeightedPoolExternalUpdate(
-                block_number=block_number or 0,
-                balances=tuple(new_balances),
-            )
-            pool.external_update(update)
-            return True
-
-        if isinstance(pool, BalancerV2StablePool):
-            _, new_balances = BalancerBuilderBase._fetch_vault_tokens(  # ruff:ignore[private-member-access]
-                io,
-                pool.pool_id,
-                block_number,
-            )
-
-            if pool.balances == tuple(new_balances):
-                return False
-
-            update = BalancerV2StablePoolExternalUpdate(
-                block_number=block_number or 0,
-                balances=tuple(new_balances),
-            )
-            pool.external_update(update)
-            return True
-
-        msg = f"BalancerBuilder cannot update {type(pool).__name__}"
-        raise TypeError(msg)

@@ -30,6 +30,7 @@ use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 use super::bot::Bot;
 use super::construction_io::ConstructionIo;
 use super::pool_builder::builder::{self, PoolBuilderError};
+use super::pool_builder::parity;
 use super::pool_builder::route::{self, ConstructedPool};
 use super::{
     ClSlotLayout, PoolTickCoverage, RegisterAerodromePoolError, RegisterV2PoolError,
@@ -59,6 +60,9 @@ pub enum V2BuildError {
     Builder(PoolBuilderError),
     /// `BotState::register_v2_pool` refused.
     Register(RegisterV2PoolError),
+    /// The minted construction identity diverged from the registered one —
+    /// the core-side identity-parity guard.
+    IdentityDivergence(parity::IdentityDivergence),
 }
 
 /// The Aerodrome build-and-register refusal: the V2 [`V2BuildError`] twin —
@@ -86,6 +90,9 @@ pub enum V4BuildError {
     /// `BotState::register_v4_pool` refused (admission floor / already
     /// registered / spec violation).
     Register(RegisterV4PoolError),
+    /// The minted construction identity diverged from the registered one —
+    /// the core-side identity-parity guard.
+    IdentityDivergence(parity::IdentityDivergence),
 }
 
 /// The V3 build-and-register refusal: the construction route's typed refusal
@@ -178,6 +185,22 @@ impl Bot {
             .write_at(LockSite::Orchestrator)
             .register_v2_pool(&params)
             .map_err(V2BuildError::Register)?;
+        // Core-side identity-parity guard (at the mint site): the echo minted
+        // from `params` must equal the identity the registry of record now
+        // holds for `pool_id`. A divergence is a core/driver seam bug — refused
+        // here rather than trusted across the FFI seam.
+        if let Some(registered) = parity::registered_address_identity(self, pool_id) {
+            parity::verify_address_identity(
+                parity::AddressIdentity {
+                    token0: params.token0,
+                    token1: params.token1,
+                    address: params.address,
+                },
+                registered,
+            )
+            .map_err(V2BuildError::IdentityDivergence)?;
+        }
+
         // Telemetry: one Jaeger node per pool construction+registration
         // (zero-duration span carrying the full identity).
         let _reg = tracing::info_span!(
@@ -458,6 +481,13 @@ impl Bot {
         let span_pool_id = format!("0x{}", alloy::hex::encode(identity.pool_id));
         let span_fee = identity.fee;
         let span_tick_spacing = identity.tick_spacing;
+        // The minted construction identity (the immutable pool-key fields).
+        let minted_identity = parity::V4Identity {
+            currency0: identity.currency0,
+            currency1: identity.currency1,
+            fee: identity.fee,
+            tick_spacing: identity.tick_spacing,
+        };
         let result = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_v4(identity, db, &io, block))
             .map_err(V4BuildError::Builder)?;
@@ -479,6 +509,25 @@ impl Bot {
             .write_at(LockSite::Orchestrator)
             .register_v4_pool(&params)
             .map_err(V4BuildError::Register)?;
+        // Core-side identity-parity guard (at the mint site): the minted
+        // pool-key identity must equal the registered identity's key. A
+        // divergence is a core/driver seam bug — refused here rather than
+        // trusted across the FFI seam.
+        if let Some(registered_identity) = self
+            .state_arc()
+            .read_at(LockSite::Orchestrator)
+            .get_v4_identity(registered)
+            .map(|i| parity::V4Identity {
+                currency0: i.pool_key.currency0,
+                currency1: i.pool_key.currency1,
+                fee: i.pool_key.fee,
+                tick_spacing: i.pool_key.tick_spacing,
+            })
+        {
+            parity::verify_v4_identity(minted_identity, registered_identity)
+                .map_err(V4BuildError::IdentityDivergence)?;
+        }
+
         // Telemetry: one Jaeger node per V4 registration (pool.manager is
         // the PoolManager; pool.id is the 32-byte id).
         let _reg = tracing::info_span!(

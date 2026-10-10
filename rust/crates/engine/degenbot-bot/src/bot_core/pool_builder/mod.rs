@@ -28,6 +28,7 @@
 pub mod builder;
 pub mod choreography;
 pub mod curve_choreography;
+pub mod parity;
 pub mod route;
 
 #[cfg(test)]

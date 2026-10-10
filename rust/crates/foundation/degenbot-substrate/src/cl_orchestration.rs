@@ -1331,13 +1331,13 @@ impl ClOrchestration {
         self.v4_state_views.insert(pool_manager, state_view);
     }
     /// The canonical V4 `StateView` address for `pool_manager`, if registered.
-    /// `None` when unknown — the solver-state verifier skips a V4 hop whose
-    /// manager's `StateView` has not been seeded (no false alarm on an
-    /// un-verifiable hop). No Rust reader is wired yet; the mapping's write
-    /// path is live via `register_v4_state_view` (the `PyO3` registration
-    /// path), so the read stays in the capability's method set.
+    /// `None` when unknown — a V4 hop whose manager's `StateView` has not been
+    /// seeded is skipped rather than false-alarmed, and a refresh of such a
+    /// pool reports its missing identity instead of guessing a read target.
+    /// The mapping's write path is live via `register_v4_state_view` (the
+    /// `PyO3` registration path); `BotState::v4_state_view_for_pool` is the
+    /// pool-keyed reader the refresh entry uses.
     #[must_use]
-    #[expect(dead_code)]
     pub(crate) fn state_view_for(&self, pool_manager: Address) -> Option<Address> {
         self.v4_state_views.get(&pool_manager).copied()
     }
@@ -2736,6 +2736,20 @@ impl BotState {
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v4_state_view`].
     pub fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
         self.cl.register_v4_state_view(pool_manager, state_view);
+    }
+
+    /// The V4 `StateView` contract registered for the manager of the V4 pool
+    /// `pool_id` — the live-scalar read target a refresh fetches from. `None`
+    /// when the id is not a V4 pool or no state view was registered for its
+    /// manager.
+    ///
+    /// The pool-keyed twin of [`ClOrchestration::state_view_for`] (which is
+    /// manager-keyed and crate-internal): a refresh holds a `pool_id` and needs
+    /// the state view the pool's own manager registered.
+    #[must_use]
+    pub fn v4_state_view_for_pool(&self, pool_id: u64) -> Option<Address> {
+        let manager = self.get_v4_identity(pool_id)?.pool_manager;
+        self.cl.state_view_for(manager)
     }
 
     /// Delegates to the CL orchestration capability - see [`ClOrchestration::register_v4_pool`].

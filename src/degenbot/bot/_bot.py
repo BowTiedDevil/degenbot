@@ -45,6 +45,7 @@ from degenbot.builders.type_resolution import (
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_chain_id, resolve_database_path
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import BrokenPool, TrackerAlreadyInitialized
 from degenbot.logging import logger
@@ -56,12 +57,8 @@ from degenbot.provider.factory import get_provider_from_config
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
-from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 from degenbot.utils.bytes import to_0x_hex, to_bytes
 
 from ._account_queries import AccountQueryMixin
@@ -80,94 +77,10 @@ if TYPE_CHECKING:
 
 from degenbot.types.aliases import ChainId  # ruff:ignore[typing-only-first-party-import]
 
-
-def _update_pool(
-    pool: AbstractLiquidityPool,
-    *,
-    block_number: BlockIdentifier | None,
-    io: BotIo,
-) -> bool:
-    """Fetch the current chain state and push an update to a V2/V3/V4 pool.
-
-    The per-family refresh that
-    previously lived on the `V2PoolBuilder` / `V3PoolBuilder` /
-    `V4PoolBuilder` `update()` methods now lives in this single dispatcher in
-    the `Bot` delegating shell — all I/O flows through the `BotIo` Rust seam
-    (`fetch_v2_reserves` / `fetch_v3_slot0_liquidity` /
-    `fetch_v4_slot0_liquidity`), matching the archival behavior. The builders'
-    `update()` therefore become orphaned and can be retired with the builders.
-
-    Returns:
-        ``True`` if the state changed (an ``external_update`` was applied),
-        ``False`` if the on-chain state matches the pool's current state.
-
-    Raises:
-        TypeError: If ``pool`` is not a V2/V3/V4 pool (callers dispatch only
-            those families here; Aerodrome/Curve/Balancer refresh permanently
-            through their Python builders' `update()` — only the build path
-            was delegated).
-
-    """
-    if not isinstance(pool, (UniswapV2Pool, UniswapV3Pool, UniswapV4Pool)):
-        msg = f"_update_pool cannot update {type(pool).__name__}"
-        raise TypeError(msg)
-    block_number_ = block_number if block_number is not None else io.get_block_number()
-    block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_
-
-    if isinstance(pool, UniswapV2Pool):
-        reserves0, reserves1 = io.fetch_v2_reserves(pool.address, block=block_number_)
-        if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
-            return False
-        pool.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=block_number_,
-                reserves_token0=reserves0,
-                reserves_token1=reserves1,
-            )
-        )
-        return True
-
-    if isinstance(pool, UniswapV4Pool):
-        sqrt_price_x96, tick_raw, _protocol_fee_raw, _lp_fee, liquidity = (
-            io.fetch_v4_slot0_liquidity(
-                pool._state_view_address,  # ruff:ignore[private-member-access]
-                pool.pool_id,
-                block=block_number_,
-            )
-        )
-        tick = int(tick_raw)
-        if (
-            pool.sqrt_price_x96 == int(sqrt_price_x96)
-            and pool.liquidity == liquidity
-            and pool.tick == tick
-        ):
-            return False
-        pool.external_update(
-            UniswapV4PoolExternalUpdate(
-                block_number=block_number_,
-                sqrt_price_x96=int(sqrt_price_x96),
-                tick=tick,
-                liquidity=liquidity,
-            )
-        )
-        return True
-
-    # V3 (last family).
-    sqrt_price_x96, tick, liquidity = io.fetch_v3_slot0_liquidity(
-        pool.address,
-        block=block_number_,
-    )
-    if pool.sqrt_price_x96 == sqrt_price_x96 and pool.liquidity == liquidity and pool.tick == tick:
-        return False
-    pool.external_update(
-        UniswapV3PoolExternalUpdate(
-            block_number=block_number_,
-            sqrt_price_x96=sqrt_price_x96,
-            tick=tick,
-            liquidity=liquidity,
-        )
-    )
-    return True
+# The Curve registry/factory addresses the Curve construction arm's LP-token +
+# metapool lookups consult — the driver-supplied deployment list (like the V3
+# route's factory rungs), never a core-side constant.
+_CURVE_REGISTRIES = (CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS)
 
 
 class Bot(AccountQueryMixin):
@@ -631,56 +544,41 @@ class Bot(AccountQueryMixin):
         if existing is not None:
             return existing
 
-        # Resolve the pool type and dispatch to the appropriate builder
-        #
-        # If type resolution fails (e.g. Curve pools lack a factory() method),
-        # fall back to the Curve builder which handles its own discovery.
+        # Resolve the pool type; every family then builds through the ONE core
+        # construction entry below. A discovery-only pool (Curve exposes no
+        # factory(), so the resolver cannot classify it) resolves to the
+        # generic Curve descriptor and takes the same ONE entry.
         try:
             pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io)
         except DegenbotValueError:
-            # Fallback: try Curve builder as last resort
-            return self._dispatch_build(
-                builder=self._curve_builder,
-                address=address,
-                chain_id=chain_id,
-                io=io,
-                request=request,
-            )
+            # Discovery-only identity: Curve pools expose no `factory()`, so the
+            # type resolver cannot classify them. Route through the ONE core
+            # construction entry's generic Curve arm (never a second path).
+            pool_type = None
 
-        # Look up the concrete pool class from the registry
-        pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
+        # Resolve the concrete pool class + the `(family, variant)` identity.
+        # A discovery-only pool (the resolver raised — Curve exposes no
+        # `factory()`) is the generic Curve descriptor, routed through the ONE
+        # core construction entry below like every other family.
+        if pool_type is not None:
+            pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
+            family = pool_type.family
+            variant = pool_type.variant
+        else:
+            pool_class = CurveStableswapPool
+            family = PoolFamily.STABLESWAP
+            variant = None
 
-        family = pool_type.family
-        variant = pool_type.variant
-
-        # The Curve family is the ONE dispatch the core construction entry does
-        # not classify: Curve pools expose no `factory()`, so their discovery
-        # runs through this Python builder. Every other family builds through
-        # the core's ONE entry below.
-        if family is PoolFamily.STABLESWAP and variant != "balancer_stable":
-            builder = self._builders.get(pool_class)
-            if builder is None:
-                # Fallback: walk MRO of pool_class looking for a registered builder
-                for base in pool_class.__mro__:
-                    builder = self._builders.get(base)
-                    if builder is not None:
-                        break
-
-            if builder is None:
-                raise DegenbotValueError(message=f"No builder for pool class {pool_class.__name__}")
-
-            return self._dispatch_build(
-                builder=builder,
-                address=address,
-                chain_id=chain_id,
-                io=io,
-                request=request,
-            )
+        is_curve = family is PoolFamily.STABLESWAP and variant != "balancer_stable"
 
         # Resolve the snapshot block: when no explicit `state_block` is given,
         # use the current chain head — the core fetches at this block (a `None`
         # would otherwise degrade to `block=0`).
-        block: int | None = (
+        # Resolved to a concrete `int` at this seam: the `else` arm is the
+        # live chain head, so `block` is never `None` in practice — the type is
+        # narrowed here so it can be handed to the `int`-typed sinks
+        # (`construct_pool`, `CurvePoolBuilder.finalize`).
+        block: int = (
             request.state_block if request.state_block is not None else self._io.get_block_number()
         )
 
@@ -707,6 +605,7 @@ class Bot(AccountQueryMixin):
                 self._make_v3_tick_data_fetcher(address, chain_id) if is_cl else None
             ),
             factories=list(route.factories) or None,
+            registries=list(_CURVE_REGISTRIES) if is_curve else None,
             vault=BALANCER_V2_VAULT_ADDRESS,
             invariant_version=request.invariant_version,
         )
@@ -745,13 +644,26 @@ class Bot(AccountQueryMixin):
         if is_cl and block is not None and block > 0:
             py_pool.seed_genesis(block_number=block)
 
-        self._register_delegated_tokens(
-            py_pool,
-            variant=variant,
-            address=address,
-            chain_id=chain_id,
-            request=request,
-        )
+        if is_curve:
+            # The Curve companions (metapool base-pool recursion + coin /
+            # underlying / LP ERC20 builds) — the post-construction choreography
+            # the retired Curve builder drove. Construction itself ran through
+            # the ONE core entry above.
+            self._curve_builder.finalize(
+                py_pool,
+                chain_id=chain_id,
+                state_block=block,
+                silent=request.silent,
+                io=io,
+            )
+        else:
+            self._register_delegated_tokens(
+                py_pool,
+                variant=variant,
+                address=address,
+                chain_id=chain_id,
+                request=request,
+            )
 
         # `from_handle` is a concrete-class classmethod (not on the base); cast
         # to `type[Any]` so the call is type-checkable.
@@ -1112,14 +1024,15 @@ class Bot(AccountQueryMixin):
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
-        """Fetch the current state of a pool from the chain and apply it via.
+        """Fetch the current state of a pool from the chain and apply it.
 
-        ``pool.external_update()``.
-
-        Returns True if the state changed, False if unchanged.
+        Delegates to the pool handle's core-owned refresh entry
+        (``pool.refresh_via`` -> ``refresh_pool``): the per-family
+        fetch/compare/apply choreography lives core-side, so this shell no
+        longer selects a builder or branches on the pool family.
 
         Returns:
-            The computed boolean value.
+            True if the state changed, False if the pool was already current.
 
         """
         resolved_block_number = (
@@ -1127,49 +1040,4 @@ class Bot(AccountQueryMixin):
             if block_number is not None and not isinstance(block_number, int)
             else block_number
         )
-        io = self._io
-        # V2/V3/V4 refresh lives in the delegating shell
-        # (`_update_pool`), no longer on the retired builders. Aerodrome /
-        # Curve / Balancer refresh stays on their Python builders'
-        # `update()` — update() was out of the build-delegation
-        # scope, so this split is the permanent design.
-        if isinstance(pool, (UniswapV2Pool, UniswapV3Pool, UniswapV4Pool)):
-            return _update_pool(
-                pool,
-                block_number=resolved_block_number,
-                io=io,
-            )
-        builder = self._builder_for_pool(pool)
-        return builder.update(pool, block_number=resolved_block_number, io=io)
-
-    def _builder_for_pool(
-        self,
-        pool: AbstractLiquidityPool,
-    ) -> PoolBuilder:
-        """Select the appropriate builder for the pool type.
-
-        Uses the builder registry (dict lookup on type(pool)) first, then
-        falls back to isinstance checks for subclasses not explicitly
-        registered.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            TypeError: See function documentation.
-
-        """
-        # Fast path: exact type match in the registry
-        builder = self._builders.get(type(pool))
-        if builder is not None:
-            return builder
-
-        # Slow path: subclass match (e.g. AerodromeV2Pool subclasses UniswapV2Pool).
-        # Walk the MRO looking for a registered builder.
-        for base in type(pool).__mro__:
-            builder = self._builders.get(base)
-            if builder is not None:
-                return builder
-
-        msg = f"update() not implemented for pool type {type(pool).__name__}"
-        raise TypeError(msg)
+        return pool.refresh_via(self._io, block_number=resolved_block_number)

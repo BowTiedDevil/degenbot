@@ -2063,3 +2063,77 @@ async fn route_matched_rung_builds_and_registers() {
     assert_eq!(again.pool_id, built.pool_id);
     assert!(again.built.is_none(), "the GET half re-derives no identity");
 }
+
+#[tokio::test]
+async fn construction_identity_parity_guard_reads_registered_identity_and_refuses_a_wrong_echo() {
+    // The core-side identity-parity guard against REAL registered state: build
+    // + register a V3 pool, then read the registered identity back and prove
+    // (a) the minted echo matches and (b) a wrong (swapped) echo is refused —
+    // the address-keyed red path, exercised where the identity is minted.
+    use crate::bot_core::pool_builder::parity;
+
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(choreography::selector(b"token0()"), addr_word(tok0));
+    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        choreography::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::encode_slot0()[..4].try_into().unwrap(),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::encode_liquidity()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    f.set(
+        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    let io = io_with(f);
+    let bot = Bot::new(1);
+
+    let built = route::construct_pool(
+        &bot,
+        &route::ConstructionRoute::generic_only(),
+        &route::RequestedPool::V3 { address: pool },
+        &io,
+        v3_route(),
+        Some(9_000_000),
+    )
+    .await
+    .expect("a served factory constructs and registers");
+
+    let registered = parity::registered_address_identity(&bot, built.pool_id)
+        .expect("the registered pool carries its identity");
+
+    // Happy path: the minted echo equals the registered identity.
+    let minted = parity::AddressIdentity {
+        token0: tok0,
+        token1: tok1,
+        address: pool,
+    };
+    assert!(parity::verify_address_identity(minted, registered).is_ok());
+
+    // Fault injection: a swapped minted identity must be refused LOUD.
+    let wrong = parity::AddressIdentity {
+        token0: tok1,
+        token1: tok0,
+        address: pool,
+    };
+    let err = parity::verify_address_identity(wrong, registered)
+        .expect_err("a divergent minted identity is refused core-side");
+    assert_eq!(err.address, pool);
+}

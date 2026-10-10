@@ -31,6 +31,10 @@ pub mod pool_builder;
 /// fetch choreography and typed failure vocabulary the PyO3 shell maps
 /// through `bot::errmap`.
 pub mod pool_ops;
+/// The pool-refresh core entry: the update path's one fetch/compare/apply
+/// dispatcher keyed by `pool_id` (the shell's `Pool.refresh_via` face).
+pub mod refresh;
+
 pub mod pump_control;
 pub mod pump_telemetry;
 /// The registration cluster on the `Bot` facade (moved from the PyO3 shell):

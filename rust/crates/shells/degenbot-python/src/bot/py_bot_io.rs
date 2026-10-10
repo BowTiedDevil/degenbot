@@ -1467,7 +1467,7 @@ impl PyBotIo {
     /// built over the held alloy provider (bare test fixtures that construct
     /// `PyBotIo(provider=…)` directly). Non-alloy Python providers (the legacy
     /// fallback the builder-choreography port retires) error here.
-    fn required_construction_io(
+    pub(crate) fn required_construction_io(
         &self,
     ) -> PyResult<std::sync::Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>> {
         use degenbot_bot::bot_core::construction_io::{AlloyRpcConstruction, ConstructionIo, NoDb};
