@@ -50,7 +50,7 @@ pub use ::degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParam
 pub use ::degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
 pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 pub use ::degenbot_pools::curve_dy_io::{
-    check_metapool_liquidity, resolve_dy_inputs, CurveInputsError,
+    check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, CurveInputsError,
 };
 pub use ::degenbot_pools::curve_state::{
     CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,

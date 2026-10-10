@@ -75,7 +75,9 @@ pub mod balancer_weighted_state;
 pub mod capability;
 pub mod curve_data_provider;
 pub mod curve_dy_io;
-pub use curve_dy_io::{check_metapool_liquidity, resolve_dy_inputs, CurveInputsError};
+pub use curve_dy_io::{
+    check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, CurveInputsError,
+};
 pub mod curve_state;
 pub mod curve_strategies;
 #[expect(clippy::doc_markdown)]
