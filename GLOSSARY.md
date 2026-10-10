@@ -444,6 +444,17 @@ The maximum `update_block` across all registered pools — the state clock. Duri
 backfill/drain desync it can run ahead of the pump's header clock; the solve anchor takes
 the max of the two.
 
+**Species manifest**:
+The single-source record of a pool *species* — a fork or manager deployment that differs
+from its family only in identifiers (factory, init codehash, manager address, chain
+scope, fee denominator, storage-layout id). A species is a manifest entry, never a new
+type; the manifest is single-sourced and consumed by both the Rust core and the Python
+companion (companion class selection, DB subclass tables). Behavior that genuinely
+diverges — different storage slots or event shapes — stays typed code, defaulted by the
+manifest's layout reference (ADR-059 D3).
+_Avoid_: per-language species constants (`V3_FAMILIES`, `_POOL_VERSION_MAP`, dual
+deployments tables); a DEX type per fork.
+
 ## Verification idioms
 
 **Drift gate**:

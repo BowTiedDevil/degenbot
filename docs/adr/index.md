@@ -38,7 +38,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [020](ADR-020-tier3-onchain-accuracy-oracle.md) | Tier-3 On-Chain Accuracy Oracle | accepted |
 | [021](ADR-021-solver-state-accuracy-is-a-fail-fast-tripwire.md) | Solver-state accuracy is a fail-fast tripwire | accepted |
 | [022](ADR-022-registration-verify-lifecycle-core-ownership.md) | Registration verify-lifecycle is core-owned | accepted |
-| [023](ADR-023-construction-io-retirement-disposition.md) | `PyBotIo` end-state disposition | accepted |
+| [023](ADR-023-construction-io-retirement-disposition.md) | `PyBotIo` end-state disposition | accepted; amended 2026-10-10 |
 | [024](ADR-024-net-profit-order-index.md) | Net-profit order index (`degenbot-order-index`) | accepted |
 | [025](ADR-025-execution-strategy-seam.md) | The `ExecutionStrategy` seam | accepted |
 | [026](ADR-026-backrun-to-settlement-arbitrage-terminology.md) | Retire the "backrun" label — "settlement arbitrage" | accepted |

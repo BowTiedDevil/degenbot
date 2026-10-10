@@ -1,6 +1,7 @@
 # ADR-023: `PyBotIo` end-state is a shrunk translator + documented `stays-python` seam; full retirement deferred to the ERC-20/Curve core port (VK3YDM)
 
-**Status: accepted (architecture).** Recorded during the `LWKLMP` grilling
+**Status: accepted (architecture); D0/D1/D2 disposition superseded 2026-10-10 (see
+Post-adoption).** Recorded during the `LWKLMP` grilling
 (2026-08-06), settling decisions D0–D5: the disposition of `PyBotIo` and the
 Python `builders/` tree once the construction choreography moved core-side.
 
@@ -89,5 +90,53 @@ References claim that builders "receive `&ConstructionIo`" (they receive
   live tests already run on offline alloy fixtures (where the transient
   `(NoDb, AlloyRpcConstruction)` handle serves them). D1/D3 remove the path
   those doubles modeled, so no test change was required (S1).
-- `_bot.py` remains a hybrid: a delegating shell for the Rust-built families and
-  a `PyBotIo`-driven host for Curve/ERC-20/Balancer-update until `VK3YDM` lands.
+- ~~`_bot.py` remains a hybrid: a delegating shell for the Rust-built families and
+  a `PyBotIo`-driven host for Curve/ERC-20/Balancer-update until `VK3YDM` lands.~~
+  _Superseded 2026-10-10; see Post-adoption A4._
+
+## Post-adoption (2026-10-10) — the deferral premise is overtaken; disposition upgrades from "scope cut" to "finish the collapse"
+
+Recorded from the 2026-10-10 architecture review (Pool construction deepening), which
+followed this ADR's `VK3YDM` tracking pointer and found it dangling.
+
+### A1 — `VK3YDM` is not a tracking entity; its work landed anyway.
+
+Zero occurrences in `.ergo/plans.jsonl` / `.ergo/backlog.jsonl`. The code work is
+recorded in-tree: D4 (S2/S3), `parity_erc20.rs` (S6), `standalone_consumer.rs` (S2).
+The epic ID survives only as comment provenance — a future reader should not look for
+it in the task tracker.
+
+### A2 — D0's disposition is superseded: the end-state is full `PyBotIo` retirement.
+
+The stated blocker ("full retirement… is blocked behind the live ERC-20/Curve core
+port") does not exist anymore. The core entries shipped; the Python call paths were
+never collapsed onto them:
+
+| Core entry (shipped) | Python residue to collapse |
+| --- | --- |
+| `PyBot.build_curve_pool` | `builders/curve_pool_builder.py`, the `from_handle` prefetch path |
+| `PyBot.build_erc20_token` | `builders/erc20_builder.py` |
+| `PyBot.build_balancer_{weighted,stable}_pool` | `builders/balancer_builder{,_base}.py` (update path) |
+
+Per-field `stays-python` markings (D2) describe residue, not a terminal state.
+
+### A3 — Re-home the orphaned follow-ups.
+
+D1's block-tag support ("tracked in `VK3YDM`") and D2's `Py*Row` retirement ("folds into
+`VK3YDM`") have no tracking home. Both are re-homed under the Pool construction
+deepening, ergo epic **`GZPPS3`** (opened 2026-10-10): block-tag support as task
+`YCUSGZ` (PC10), `Py*Row` retirement as task `UWA7ZH` (PC6).
+
+### A4 — The Consequences bullet above is superseded.
+
+"`_bot.py` remains a hybrid … until `VK3YDM` lands" is stale twice: the port landed,
+and the hybrid persists anyway. Replacement text: *`_bot.py` is a delegating shell for
+the Rust-built families and a `PyBotIo`-hosted residue for Curve/ERC-20/Balancer-update —
+residue because the collapse onto the shipped core entries was never finished, not
+because the entries are missing.*
+
+### A5 — What stands.
+
+D1's fallback deletion, D3's `alloy_provider()` accessor (caution: provider
+*construction* moves to injection as the updater seam deepens; the accessor survives for
+chain-arm wiring), D4 as history, D5's doc-rot fixes.
