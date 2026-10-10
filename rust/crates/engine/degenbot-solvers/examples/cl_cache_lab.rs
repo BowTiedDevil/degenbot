@@ -27,7 +27,7 @@ extern crate degenbot_solvers;
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solvers::cl::solve_cl_piecewise;
+use degenbot_solvers::cl::{solve_cl_piecewise, PreparedClHop, WalkTelemetry};
 use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy};
 use serde_json::Value;
 
@@ -82,13 +82,15 @@ fn parse_hop(v: &Value) -> Result<IntV3TickRangeSequence, String> {
     Ok(IntV3TickRangeSequence { ranges })
 }
 
-/// Solve through a strategy's prepared tables (production walk). Returns
-/// None for the S0 sentinel (drive `solve_cl_piecewise` directly).
+/// Solve through a strategy's prepared tables (production walk), merging the
+/// solve's tally into the engine collector. Returns None for the S0 sentinel
+/// (drive `solve_cl_piecewise` directly).
 fn solve_prepared<S: ClCacheStrategy + ?Sized>(
     strategy: &mut S,
     seqs: &[IntV3TickRangeSequence],
     event: &CacheEvent,
     seq_refs: &[&IntV3TickRangeSequence],
+    tele: &WalkTelemetry,
 ) -> Option<(U256, U256, Vec<U256>)> {
     // The strategy hands back the one intake value directly (the projection's
     // `PreparedClHop`), so no per-solve re-pairing of tables to sequences.
@@ -103,11 +105,26 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
     solve_cl_piecewise(
         &prepared,
         None,
-        None,
+        Some(tele),
         &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         None,
     )
     .result
+}
+
+/// The full-rebuild reference arm: `derive_and_solve_cl_piecewise`'s body with
+/// the engine collector threaded through, so the timing census covers the
+/// rebuild arm the same way it covers every strategy arm.
+fn solve_reference(
+    seq_refs: &[&IntV3TickRangeSequence],
+    cfg: &degenbot_solvers::runtime::SolveRuntimeConfig,
+    tele: &WalkTelemetry,
+) -> Option<(U256, U256, Vec<U256>)> {
+    let prepared: Vec<PreparedClHop> = seq_refs
+        .iter()
+        .map(|s| PreparedClHop::derive(std::sync::Arc::new(IntV3TickRangeSequence::clone(s))))
+        .collect();
+    solve_cl_piecewise(&prepared, None, Some(tele), cfg, None).result
 }
 
 fn main() {
@@ -127,6 +144,9 @@ fn main() {
         .unwrap_or(6);
 
     let content = degenbot_solvers::capture_fixture::read_fixture(&path);
+    // The engine-owned collector every solve merges its tally into; the readout
+    // below drains it once, at the end.
+    let tele = WalkTelemetry::new();
     let mut catalog = strategy_catalog();
     let mut total_mismatches: usize = 0;
     let mut n_paths = 0usize;
@@ -232,11 +252,11 @@ fn main() {
                 catalog.iter().map(|s| s.counters().clone()).collect();
             let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
             let t_ref = std::time::Instant::now();
-            let reference = degenbot_solvers::cl::derive_and_solve_cl_piecewise(
+            let reference = solve_reference(
                 &seq_refs,
                 &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
-            )
-            .result;
+                &tele,
+            );
             reference_ns += t_ref.elapsed().as_nanos();
             total_events += 1;
             if std::env::var("DRCLAB_DIGEST").is_ok() {
@@ -250,7 +270,7 @@ fn main() {
                     let _ = s.refill(&seqs, &event);
                     reference.clone()
                 } else {
-                    solve_prepared(s.as_mut(), &seqs, &event, &seq_refs)
+                    solve_prepared(s.as_mut(), &seqs, &event, &seq_refs, &tele)
                 };
                 class_ns[si][class] += t_strat.elapsed().as_nanos();
                 let name = s.name();
@@ -280,44 +300,35 @@ fn main() {
         n_paths += 1;
     }
 
-    let sim_ns =
-        degenbot_solvers::cl::WALK_SIM_NS_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let anchor_ns =
-        degenbot_solvers::cl::WALK_ANCHOR_NS_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let pred_ns =
-        degenbot_solvers::cl::WALK_PRED_NS_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let solve_ns =
-        degenbot_solvers::cl::WALK_SOLVE_NS_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let edge_ns =
-        degenbot_solvers::cl::WALK_CENSUS_EDGE_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let edge_sims =
-        degenbot_solvers::cl::WALK_CENSUS_EDGE_SIMS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let edge_simns =
-        degenbot_solvers::cl::WALK_CENSUS_EDGE_SIMNS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let redge_ns =
-        degenbot_solvers::cl::WALK_CENSUS_REDGE_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let redge_sims =
-        degenbot_solvers::cl::WALK_CENSUS_REDGE_SIMS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let redge_simns =
-        degenbot_solvers::cl::WALK_CENSUS_REDGE_SIMNS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let dir_ns =
-        degenbot_solvers::cl::WALK_CENSUS_DIR_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let dir_sims =
-        degenbot_solvers::cl::WALK_CENSUS_DIR_SIMS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let dir_simns =
-        degenbot_solvers::cl::WALK_CENSUS_DIR_SIMNS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let refine_ns =
-        degenbot_solvers::cl::WALK_CENSUS_REFINE_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let refine_sims =
-        degenbot_solvers::cl::WALK_CENSUS_REFINE_SIMS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let refine_simns = degenbot_solvers::cl::WALK_CENSUS_REFINE_SIMNS
-        .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let ab_ns =
-        degenbot_solvers::cl::WALK_ANCHOR_BUILD_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let ac_ns =
-        degenbot_solvers::cl::WALK_ANCHOR_COMPOSE_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
-    let am_ns =
-        degenbot_solvers::cl::WALK_ANCHOR_ARGMAX_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    // The ns census lives in the engine-owned collector now, so one drain
+    // replaces the nineteen process-static swaps that used to read it out. The
+    // per-solve census-piece log still rides `WalkOutcome`; the collector-level
+    // `take_census_pieces` drains the merged log when a caller wants it.
+    let ns = tele.drain_ns();
+    #[cfg(feature = "telemetry")]
+    assert!(
+        ns.solve > 0,
+        "collector drain is dark: a telemetry build must merge every solve's tally"
+    );
+    let sim_ns = ns.sim;
+    let anchor_ns = ns.anchor;
+    let pred_ns = ns.pred;
+    let solve_ns = ns.solve;
+    let edge_ns = ns.edge_wall;
+    let edge_sims = ns.edge_sims;
+    let edge_simns = ns.edge_simns;
+    let redge_ns = ns.redge_wall;
+    let redge_sims = ns.redge_sims;
+    let redge_simns = ns.redge_simns;
+    let dir_ns = ns.dir_wall;
+    let dir_sims = ns.dir_sims;
+    let dir_simns = ns.dir_simns;
+    let refine_ns = ns.refine_wall;
+    let refine_sims = ns.refine_sims;
+    let refine_simns = ns.refine_simns;
+    let ab_ns = ns.anchor_build;
+    let ac_ns = ns.anchor_compose;
+    let am_ns = ns.anchor_argmax;
     println!(
         "  anchor split: build {:.1} ms | compose {:.1} ms | argmax {:.1} ms (of anchors total)",
         ab_ns as f64 / 1e6,

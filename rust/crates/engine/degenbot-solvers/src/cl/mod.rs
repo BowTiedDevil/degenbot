@@ -41,7 +41,7 @@
 //! - `tally` — the owned walk-telemetry value: the per-solve [`WalkTally`]
 //!   accumulator and the engine-owned [`WalkTelemetry`] collector it merges
 //!   into.
-//! - `telemetry` — walk counters, census, and process-wide timing statics,
+//! - `telemetry` — the event census and the walk's timed-section helper,
 //!   written only when the crate's default-off `telemetry` feature is enabled.
 
 use std::sync::Arc;
@@ -88,12 +88,5 @@ pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{WalkMemo, WalkMemoStats};
 pub use path_sim::{ClPathOutcome, ClPathSim};
 pub use tally::{WalkNsCensus, WalkSection, WalkTally, WalkTelemetry};
-pub use telemetry::{
-    WalkEventCensus, WALK_ANCHOR_ARGMAX_NS, WALK_ANCHOR_BUILD_NS, WALK_ANCHOR_COMPOSE_NS,
-    WALK_ANCHOR_NS_TOTAL, WALK_CENSUS_DIR_NS, WALK_CENSUS_DIR_SIMNS, WALK_CENSUS_DIR_SIMS,
-    WALK_CENSUS_EDGE_NS, WALK_CENSUS_EDGE_SIMNS, WALK_CENSUS_EDGE_SIMS, WALK_CENSUS_REDGE_NS,
-    WALK_CENSUS_REDGE_SIMNS, WALK_CENSUS_REDGE_SIMS, WALK_CENSUS_REFINE_NS,
-    WALK_CENSUS_REFINE_SIMNS, WALK_CENSUS_REFINE_SIMS, WALK_CENSUS_SIMNS, WALK_PRED_NS_TOTAL,
-    WALK_SIM_NS_TOTAL, WALK_SOLVE_NS_TOTAL,
-};
+pub use telemetry::WalkEventCensus;
 pub use word_profile::ClWordProfile;

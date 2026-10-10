@@ -1,20 +1,19 @@
-//! Ambient walk telemetry: the event census the per-solve tally has not yet
-//! absorbed, plus the process-wide timing statics the cache lab still drains.
+//! Walk telemetry: the event census the per-solve tally carries, plus the
+//! timed-section helper the walk uses to attribute its wall time.
 //!
-//! The active-set walk, the crossing helpers, and the word-profile build all
-//! thread their own owned accumulator (`cl::tally`) now; what remains here is
-//! the event census alone — its increment carries the runtime census gate. The
-//! process-wide timing statics survive for the cache lab's swap-sweep readout
-//! until that reader cuts over to the collector's drain. Compiling
-//! `degenbot-solvers` without its `telemetry` feature (the default) flushes
-//! every writer to a no-op, so the counters read as zero and the release build
-//! pays nothing for them.
+//! Nothing here is ambient any more. The active-set walk, the crossing helpers,
+//! and the word-profile build all thread their own owned accumulator
+//! (`cl::tally`) into every writer, so the event census lives in that
+//! accumulator and its increment still carries the runtime census gate.
+//! Compiling `degenbot-solvers` without its `telemetry` feature (the default)
+//! flushes every writer to a no-op, so the counters read as zero and the release
+//! build pays nothing for them.
 
 use alloy::primitives::U256;
 
+use super::active_set::PieceView;
 #[cfg(feature = "telemetry")]
 use super::active_set::{landed_any_above, simulate_walk_path};
-use super::active_set::{PieceView, WalkStats};
 #[cfg(feature = "telemetry")]
 use super::crossings::walk_event_first_above_predicted;
 use super::tally::{WalkSection, WalkTally};
@@ -51,7 +50,7 @@ pub struct WalkEventCensus {
 }
 
 impl WalkEventCensus {
-    /// `const`-constructible zero tally (thread-local initializer).
+    /// `const`-constructible zero tally.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -66,15 +65,6 @@ impl WalkEventCensus {
             census_sims: 0,
         }
     }
-}
-
-thread_local! {
-    static EVENT_CENSUS: std::cell::Cell<WalkEventCensus> =
-        const { std::cell::Cell::new(WalkEventCensus::new()) };
-    // (ks, right-edge) per bounded piece — the T2 cross-block edge-shift
-    // recorder.
-    pub(super) static EVENT_CENSUS_PIECES: std::cell::RefCell<Vec<(Vec<usize>, U256)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Census gate from the injected runtime config (T4: no env read here —
@@ -126,15 +116,12 @@ fn event_census_record_inner(
         return;
     }
     let pred = walk_event_first_above_predicted(hops, ks, tally);
-    let mut c = EVENT_CENSUS.get();
     match (x_r, pred) {
-        (None, None) => c.terminal_agree += 1,
-        (None, Some(_)) => c.terminal_disagree += 1,
-        (Some(_), None) => c.pred_none += 1,
+        (None, None) => tally.census_mut().terminal_agree += 1,
+        (None, Some(_)) => tally.census_mut().terminal_disagree += 1,
+        (Some(_), None) => tally.census_mut().pred_none += 1,
         (Some(lo), Some(pa)) => {
             if pa > lo && pa <= hi {
-                c.pieces += 1;
-                c.in_bracket += 1;
                 // Verify probes: pa crosses OUT of the tuple, and pa−1 does
                 // not — which proves pa is the exact first-above.
                 let above = landed_any_above(&simulate_walk_path(pa, hops, tally).landed, ks);
@@ -143,24 +130,28 @@ fn event_census_record_inner(
                         &simulate_walk_path(pa - U256::ONE, hops, tally).landed,
                         ks,
                     );
+                let c = tally.census_mut();
+                c.pieces += 1;
+                c.in_bracket += 1;
                 c.census_sims += 2;
                 if above && below_ok {
                     c.exact += 1;
                 }
             } else if pa <= lo {
-                c.pieces += 1;
                 let b = event_census_bucket(lo + U256::ONE - pa);
+                let c = tally.census_mut();
+                c.pieces += 1;
                 c.early[b] += 1;
             } else {
-                c.pieces += 1;
                 let b = event_census_bucket(pa - hi);
+                let c = tally.census_mut();
+                c.pieces += 1;
                 c.late[b] += 1;
             }
         }
     }
-    EVENT_CENSUS.set(c);
     if let Some(lo) = x_r {
-        EVENT_CENSUS_PIECES.with_borrow_mut(|p| p.push((ks.to_vec(), lo)));
+        tally.record_census_pieces(ks, lo);
     }
 }
 
@@ -180,63 +171,6 @@ impl WalkEventCensus {
         self.census_sims += other.census_sims;
     }
 }
-
-/// Largest ending-range index whose crossing is affordable with `available`
-/// gross input.
-///
-/// `crossing_gross_input` is non-decreasing in `k` (it is a prefix sum of
-/// non-negative per-range gross inputs), so the landed index is a partition
-/// point. Ties (zero-liquidity ranges cost nothing to cross) resolve to the
-/// LARGEST index — the swap entered every zero-cost range.
-/// Loop-17 census: total wall time spent inside `simulate_walk_path`
-/// (process-wide atomics — avoids thread-local TLS budget).
-pub static WALK_SIM_NS_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Loop-17 census: total anchor computation wall time (per-piece shifted
-/// Möbius + isqrt).
-pub static WALK_ANCHOR_NS_TOTAL: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
-/// Loop-17 census: event-solver prediction wall time.
-pub static WALK_PRED_NS_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Loop-17 census: whole active-set walk wall time.
-pub static WALK_SOLVE_NS_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Loop-17 census: left-edge determination (wall ns + sims consumed inside).
-pub static WALK_CENSUS_EDGE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static WALK_CENSUS_EDGE_SIMS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
-/// Loop-17 census: per-section walk-sim wall time (ns) — subtract from the
-/// section wall to isolate non-sim machinery.
-pub static WALK_CENSUS_SIMNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static WALK_CENSUS_EDGE_SIMNS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
-/// Loop-17 census: right-edge determination (wall ns + sims consumed inside).
-pub static WALK_CENSUS_REDGE_NS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub static WALK_CENSUS_REDGE_SIMS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub static WALK_CENSUS_REDGE_SIMNS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
-/// Loop-17 census: direction test + advancement (wall ns + sims consumed).
-pub static WALK_CENSUS_DIR_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static WALK_CENSUS_DIR_SIMS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub static WALK_CENSUS_DIR_SIMNS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
-/// Loop-17 census: terminal refine (wall ns + sims consumed). Includes the
-/// anchor-corner probes and the single-piece refine path.
-pub static WALK_CENSUS_REFINE_NS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub static WALK_CENSUS_REFINE_SIMS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub static WALK_CENSUS_REFINE_SIMNS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
 
 /// Loop-17 section census helper: records (wall ns, sims, sim wall ns)
 /// between `Mark::start()` and `commit`, attributing them to a section.
@@ -283,61 +217,5 @@ impl Mark {
             let sim_ns = tally.sim_ns().saturating_sub(self.probe_ns);
             tally.mark_commit(section, wall, sims, sim_ns);
         }
-    }
-}
-
-/// Loop-17 census: anchor-phase wall split — hop construction vs coefficient
-/// compose vs model argmax (all ns, process-wide).
-pub static WALK_ANCHOR_BUILD_NS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub static WALK_ANCHOR_COMPOSE_NS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub static WALK_ANCHOR_ARGMAX_NS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
-/// Drain the ambient per-thread census state on the calling thread.
-/// Drain = read-and-clear; the discarded value is the prior path's.
-pub(crate) fn reset_walk_stats() {
-    #[cfg(feature = "telemetry")]
-    reset_walk_stats_inner();
-}
-
-#[cfg(feature = "telemetry")]
-fn reset_walk_stats_inner() {
-    EVENT_CENSUS.with(|c| c.set(WalkEventCensus::default()));
-}
-
-/// Snapshot (no clearing) of the remaining ambient per-thread walk telemetry:
-/// the event census, which the solve entry folds into its outcome.
-#[must_use]
-pub(super) fn peek_walk_stats() -> WalkStats {
-    #[cfg(feature = "telemetry")]
-    {
-        peek_walk_stats_inner()
-    }
-    #[cfg(not(feature = "telemetry"))]
-    {
-        WalkStats::default()
-    }
-}
-
-#[cfg(feature = "telemetry")]
-fn peek_walk_stats_inner() -> WalkStats {
-    WalkStats {
-        census: EVENT_CENSUS.with(std::cell::Cell::get),
-        ..WalkStats::default()
-    }
-}
-
-/// Drains the thread's census piece recorder (empty without `telemetry`).
-#[inline]
-pub(super) fn take_event_census_pieces() -> Vec<(Vec<usize>, U256)> {
-    #[cfg(feature = "telemetry")]
-    {
-        EVENT_CENSUS_PIECES.with_borrow_mut(std::mem::take)
-    }
-    #[cfg(not(feature = "telemetry"))]
-    {
-        Vec::new()
     }
 }

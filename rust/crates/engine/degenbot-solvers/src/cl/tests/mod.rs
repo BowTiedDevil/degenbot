@@ -2735,14 +2735,13 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
     );
 }
 
-/// Per-path isolation of `WalkStats::max_dense_words`: the walk
-/// drains ALL its counters at solve entry (`reset_walk_stats`), and the
-/// returned outcome carries THIS path's telemetry — the Q3 dense max
-/// included. Two solves on ONE thread: the first exercises a dense range
-/// (a 128-word-boundary profile its table derivation observes), the second
-/// is light; the second outcome must report its own max, never the first
-/// solve's stale thread-lifetime carry. Telemetry-build only — without the
-/// feature every counter reads zero.
+/// Per-path isolation of `WalkStats::max_dense_words`: each solve keeps its
+/// own tally value, so the returned outcome carries THIS path's telemetry —
+/// the Q3 dense max included. Two solves on ONE thread: the first exercises a
+/// dense range (a 128-word-boundary profile its table derivation observes),
+/// the second is light; the second outcome must report its own max, never the
+/// first solve's stale carry. Telemetry-build only — without the feature every
+/// counter reads zero.
 #[test]
 #[cfg(feature = "telemetry")]
 fn walk_outcome_max_dense_words_is_per_path() {
@@ -2790,7 +2789,7 @@ fn walk_outcome_max_dense_words_is_per_path() {
     // thread-lifetime maximum.
     assert_eq!(
         light_out.stats.max_dense_words, 0,
-        "max_dense_words carried a stale thread-lifetime max across solves          (reset_walk_stats must drain it at solve entry)"
+        "max_dense_words carried a stale max across solves          (the per-solve tally must report only its own observations)"
     );
 }
 

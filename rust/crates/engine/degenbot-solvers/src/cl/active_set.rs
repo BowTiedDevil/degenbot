@@ -13,10 +13,7 @@ use super::crossings::{
 };
 use super::hop_sim::simulate_v3_range_swap;
 use super::tally::{WalkSection, WalkTally, WalkTelemetry};
-use super::telemetry::{
-    event_census_record, peek_walk_stats, reset_walk_stats, take_event_census_pieces, Mark,
-    WalkEventCensus,
-};
+use super::telemetry::{event_census_record, Mark, WalkEventCensus};
 use super::{ClCrossingTable, ClProfileTable};
 use crate::profit_envelope::{clamp_window_to_bound, PathBoundLines};
 use crate::runtime::{AnchorSweep, SolveRuntimeConfig};
@@ -572,9 +569,9 @@ pub(super) fn walk_refine_window(
 /// `anchor_sims`, `event_solver_ok`, `event_solver_fallbacks`,
 /// `max_dense_words`) and `census` are produced behind the crate's
 /// `telemetry` feature (default OFF; see `Cargo.toml`). Without it every
-/// writer is compiled to a no-op (the `gated_cell_bump!` /
-/// `gated_atomic_add!` gate in `cl/telemetry.rs`) and `peek_walk_stats`
-/// returns `WalkStats::default()`, so every field reads 0 in default builds.
+/// writer is compiled to a no-op (the per-field gates in `cl/tally.rs`) and
+/// the tally projects `WalkStats::default()`, so every field reads 0 in
+/// default builds.
 /// With the feature on, the `usize` counters are live; `census` additionally
 /// needs the runtime census gate (`SolveRuntimeConfig::walk_event_census`) —
 /// feature on + gate off leaves `census` dark while the `usize` counters
@@ -691,20 +688,17 @@ pub(super) fn solve_active_set_path(
 ) -> WalkOutcome {
     let s_t0 = std::time::Instant::now();
     // The walk keeps a per-solve accumulator on the solving stack and threads
-    // it by `&mut` to every writer it owns — the crossing helpers and the
-    // word-profile build included — so the returned outcome carries THIS
-    // path's counters by construction. The event census is the one writer
-    // still riding the ambient module (its increment carries the runtime
-    // census gate); the entry folds only that drained census in. The one merge
-    // into the engine collector happens here, at exit, under the crate's
-    // telemetry feature.
-    reset_walk_stats();
+    // it by `&mut` to every writer it owns — the crossing helpers, the
+    // word-profile build, and the event-census recorder included — so the
+    // returned outcome carries THIS path's counters by construction, with no
+    // ambient table to drain or to leak across solves. The one merge into the
+    // engine collector happens here, at exit, under the crate's telemetry
+    // feature.
     let mut tally = WalkTally::default();
     let out = solve_active_set_path_inner(hops, cfg, env, &mut tally);
     tally.add_solve_ns(u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX));
-    let mut stats = tally.walk_stats();
-    stats.census = peek_walk_stats().census;
-    let census_pieces = take_event_census_pieces();
+    let stats = tally.walk_stats();
+    let census_pieces = tally.take_census_pieces();
     #[cfg(feature = "telemetry")]
     if let Some(tele) = tele {
         tally.merge_into(tele);
