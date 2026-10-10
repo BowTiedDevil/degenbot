@@ -1,0 +1,14 @@
+{
+  "name": "w5_aave_bootstrap_proxy_created",
+  "cursor": 16291126,
+  "chunk_size": 10,
+  "to_block": 16291135,
+  "substrate_block": 16291200,
+  "pool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+  "configurator": "0x64b761D848206f447Fe2dd461b0c635Ec39EbB27",
+  "price_oracle": "0x54586bE62E3c3580375aE3723C145253060Ca0C2",
+  "data_provider": "0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3",
+  "pool_revision": 1,
+  "configurator_revision": 1,
+  "reserves": []
+}

@@ -1,0 +1,192 @@
+{
+  "schema": "degenbot.db-dump/v1",
+  "tables": [
+    {
+      "columns": [
+        "id",
+        "token_id",
+        "v_token_id",
+        "v_gho_discount_rate_strategy",
+        "v_gho_discount_token"
+      ],
+      "rows": [],
+      "table": "aave_gho_tokens"
+    },
+    {
+      "columns": [
+        "id",
+        "asset_id",
+        "ltv",
+        "liquidation_threshold",
+        "liquidation_bonus",
+        "e_mode_category_id",
+        "borrowing_enabled",
+        "stable_borrowing_enabled",
+        "flash_loan_enabled",
+        "isolation_mode",
+        "borrowable_in_isolation",
+        "debt_ceiling"
+      ],
+      "rows": [],
+      "table": "aave_v3_asset_configs"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "underlying_asset_id",
+        "a_token_id",
+        "a_token_revision",
+        "v_token_id",
+        "v_token_revision",
+        "e_mode_category_id",
+        "price_source",
+        "last_update_block",
+        "liquidity_index",
+        "liquidity_rate",
+        "borrow_index",
+        "borrow_rate"
+      ],
+      "rows": [],
+      "table": "aave_v3_assets"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "balance",
+        "last_index"
+      ],
+      "rows": [],
+      "table": "aave_v3_collateral_positions"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "name",
+        "address",
+        "revision"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "POOL_ADDRESS_PROVIDER",
+          "0x2f39d218133afab8f2b819b1066c7e434ad94e9e",
+          null
+        ],
+        [
+          2,
+          1,
+          "POOL",
+          "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
+          1
+        ],
+        [
+          3,
+          1,
+          "POOL_CONFIGURATOR",
+          "0x64b761d848206f447fe2dd461b0c635ec39ebb27",
+          1
+        ],
+        [
+          4,
+          1,
+          "PRICE_ORACLE",
+          "0x54586be62e3c3580375ae3723c145253060ca0c2",
+          null
+        ],
+        [
+          5,
+          1,
+          "POOL_DATA_PROVIDER",
+          "0x7b4eb56e7cd4b454ba8ff71e4518426369a138a3",
+          null
+        ]
+      ],
+      "table": "aave_v3_contracts"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "balance",
+        "last_index"
+      ],
+      "rows": [],
+      "table": "aave_v3_debt_positions"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "category_id",
+        "label",
+        "ltv",
+        "liquidation_threshold",
+        "liquidation_bonus",
+        "price_source"
+      ],
+      "rows": [],
+      "table": "aave_v3_emode_categories"
+    },
+    {
+      "columns": [
+        "id",
+        "chain_id",
+        "name",
+        "active",
+        "last_update_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "Aave Ethereum Market",
+          1,
+          16291135
+        ]
+      ],
+      "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "id",
+        "user_id",
+        "asset_id",
+        "enabled"
+      ],
+      "rows": [],
+      "table": "aave_v3_user_collateral_configs"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "address",
+        "e_mode",
+        "gho_discount",
+        "stk_aave_balance",
+        "isolation_mode_collateral_asset_id",
+        "isolation_mode_debt"
+      ],
+      "rows": [],
+      "table": "aave_v3_users"
+    },
+    {
+      "columns": [
+        "id",
+        "chain",
+        "address",
+        "name",
+        "symbol",
+        "decimals"
+      ],
+      "rows": [],
+      "table": "erc20_tokens"
+    }
+  ]
+}
