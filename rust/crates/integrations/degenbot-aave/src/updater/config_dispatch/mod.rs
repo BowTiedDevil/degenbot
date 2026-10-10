@@ -591,7 +591,7 @@ mod tests {
     use degenbot_db::connection::DegenbotDb;
     use degenbot_decoders::aave_event_decoder::{
         AaveV3AddressSetEvent, AaveV3DiscountRateStrategyUpdatedEvent,
-        AaveV3DiscountTokenUpdatedEvent, AaveV3ProxyCreatedEvent,
+        AaveV3DiscountTokenUpdatedEvent, AaveV3ProxyCreatedEvent, AaveV3ReserveInitializedEvent,
     };
     use rusqlite::{params, Connection};
     use std::path::Path;
@@ -2068,5 +2068,350 @@ mod tests {
             );
             assert_eq!(snap.served, 2, "both direct entries served");
         });
+    }
+
+    // ── the `ReserveInitialized` token-metadata burst (row 9's erc20 rows) ──
+    //
+    // The metadata step rides the ctx's injected provider (ADR-068 D5): an
+    // in-memory cassette ledger answers the three tokens' name/symbol/decimals
+    // reads, so the resolver runs offline exactly as it does against a live
+    // node. The aggregate3 attempt misses the ledger and degrades to the
+    // direct per-call reads these entries record.
+
+    /// The 3 test tokens in the asset/aToken/vToken order the resolver
+    /// consumes, with the metadata each fetch must land.
+    fn reserve_init_tokens() -> [(Address, &'static str, &'static str, u64); 3] {
+        [
+            (Address::repeat_byte(0xa1), "Wrapped Asset", "WASSET", 18),
+            (
+                Address::repeat_byte(0xa2),
+                "Aave Wrapped Asset",
+                "aWASSET",
+                18,
+            ),
+            (Address::repeat_byte(0xa3), "Aave Debt Asset", "vWASSET", 6),
+        ]
+    }
+
+    /// The decoded `ReserveInitialized` payload over [`reserve_init_tokens`].
+    fn reserve_initialized_event() -> AaveV3ReserveInitializedEvent {
+        let t = reserve_init_tokens();
+        AaveV3ReserveInitializedEvent {
+            pool_configurator_address: Address::ZERO,
+            asset: t[0].0,
+            a_token: t[1].0,
+            stable_debt_token: Address::repeat_byte(0xa4),
+            variable_debt_token: t[2].0,
+            interest_rate_strategy_address: Address::repeat_byte(0xa5),
+        }
+    }
+
+    /// The oracle contract every resolution reads `getSourceOfAsset` through
+    /// (the seed's PRICE_ORACLE address).
+    fn reserve_init_oracle() -> Address {
+        Address::repeat_byte(0x99)
+    }
+
+    /// A 32-byte word with `addr` in its low 20 bytes — the EIP-1967 storage
+    /// read's shape and any address-valued `eth_call` return.
+    fn address_word_hex(addr: &Address) -> String {
+        let mut word = [0u8; 32];
+        word[12..].copy_from_slice(addr.as_slice());
+        format!("0x{}", alloy::hex::encode(word))
+    }
+
+    /// The canonical ledger key for the EIP-1967 `eth_getStorageAt` read: the
+    /// target lowercase, the slot a verbatim 64-digit word, the block tag in
+    /// its canonical decimal-string form.
+    fn storage_key(addr: &Address, block: u64) -> String {
+        let slot = alloy::hex::encode(EIP_1967_IMPLEMENTATION_SLOT.to_be_bytes::<32>());
+        format!(
+            "[\"eth_getStorageAt\",[\"0x{}\",\"0x{slot}\",\"{block}\"]]",
+            alloy::hex::encode(addr)
+        )
+    }
+
+    /// The metadata ledger entries for one token — the three LOWER-spelling
+    /// selector reads only. The sequential fallback order never consults the
+    /// upper spelling once the lower answer decodes.
+    fn metadata_entries(
+        token: &Address,
+        name: &str,
+        symbol: &str,
+        decimals: u64,
+    ) -> Vec<(String, String)> {
+        let to = format!("0x{}", alloy::hex::encode(token));
+        vec![
+            (
+                eth_call_key(&canonical_selector_input("name()"), &to, 100),
+                format!("0x{}", alloy::hex::encode(dynamic_string_return(name))),
+            ),
+            (
+                eth_call_key(&canonical_selector_input("symbol()"), &to, 100),
+                format!("0x{}", alloy::hex::encode(dynamic_string_return(symbol))),
+            ),
+            (
+                eth_call_key(&canonical_selector_input("decimals()"), &to, 100),
+                word_result_hex(decimals),
+            ),
+        ]
+    }
+
+    /// The ledger entries one resolution needs BESIDES the metadata reads: the
+    /// EIP-1967 slot pair, the two implementation revisions, and the source.
+    fn reserve_init_aux_entries(a_token: &Address, v_token: &Address) -> Vec<(String, String)> {
+        let a_impl = Address::repeat_byte(0xb2);
+        let v_impl = Address::repeat_byte(0xb3);
+        let asset = reserve_init_tokens()[0].0;
+        vec![
+            (storage_key(a_token, 100), address_word_hex(&a_impl)),
+            (storage_key(v_token, 100), address_word_hex(&v_impl)),
+            (
+                eth_call_key(
+                    &canonical_selector_input("ATOKEN_REVISION()"),
+                    &format!("0x{}", alloy::hex::encode(a_impl)),
+                    100,
+                ),
+                word_result_hex(3),
+            ),
+            (
+                eth_call_key(
+                    &canonical_selector_input("DEBT_TOKEN_REVISION()"),
+                    &format!("0x{}", alloy::hex::encode(v_impl)),
+                    100,
+                ),
+                word_result_hex(2),
+            ),
+            (
+                eth_call_key(
+                    &address_arg_input("getSourceOfAsset(address)", &asset),
+                    &format!("0x{}", alloy::hex::encode(reserve_init_oracle())),
+                    100,
+                ),
+                address_word_hex(&Address::repeat_byte(0xc1)),
+            ),
+        ]
+    }
+
+    /// One resolution's ledger entries: the three tokens' metadata (the
+    /// `with_metadata` arm) plus the auxiliary reads.
+    fn reserve_init_entries(with_metadata: bool) -> Vec<(String, String)> {
+        let t = reserve_init_tokens();
+        let mut entries = Vec::new();
+        if with_metadata {
+            for (addr, name, symbol, decimals) in t {
+                entries.extend(metadata_entries(&addr, name, symbol, decimals));
+            }
+        }
+        entries.extend(reserve_init_aux_entries(&t[1].0, &t[2].0));
+        entries
+    }
+
+    /// Assert one `erc20_tokens` row's identity + metadata cells.
+    fn assert_erc20_row(
+        conn: &Connection,
+        id: i64,
+        address: &Address,
+        name: Option<&str>,
+        symbol: Option<&str>,
+        decimals: Option<i64>,
+    ) {
+        let (addr, n, s, d): (String, Option<String>, Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT address, name, symbol, decimals FROM erc20_tokens WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(addr, checksum(address));
+        assert_eq!(n.as_deref(), name);
+        assert_eq!(s.as_deref(), symbol);
+        assert_eq!(d, decimals);
+    }
+
+    /// The `(underlying, a_token, v_token)` ids one emitted event carries.
+    fn reserve_init_ids(ev: &AaveChunkEvent) -> (i64, i64, i64) {
+        match ev {
+            AaveChunkEvent::ReserveInitialized {
+                underlying_asset_id,
+                a_token_id,
+                v_token_id,
+                ..
+            } => (*underlying_asset_id, *a_token_id, *v_token_id),
+            other => panic!("expected ReserveInitialized, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reserve_initialized_fetches_the_token_metadata_into_the_erc20_rows() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let t = reserve_init_tokens();
+        let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(true)));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(reserve_init_oracle()),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let ev = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_reserve_initialized(
+                &mut ctx,
+                &reserve_initialized_event(),
+                reserve_init_oracle(),
+            ))
+            .unwrap();
+        match &ev {
+            AaveChunkEvent::ReserveInitialized {
+                underlying_asset_id,
+                a_token_id,
+                a_token_revision,
+                v_token_id,
+                v_token_revision,
+                price_source,
+                ..
+            } => {
+                assert_eq!(*a_token_revision, 3, "ATOKEN_REVISION() on the impl");
+                assert_eq!(*v_token_revision, 2, "DEBT_TOKEN_REVISION() on the impl");
+                assert_eq!(
+                    price_source.as_deref(),
+                    Some(checksum(&Address::repeat_byte(0xc1)).as_str())
+                );
+                assert_erc20_row(
+                    &conn,
+                    *underlying_asset_id,
+                    &t[0].0,
+                    Some(t[0].1),
+                    Some(t[0].2),
+                    Some(t[0].3.cast_signed()),
+                );
+                assert_erc20_row(
+                    &conn,
+                    *a_token_id,
+                    &t[1].0,
+                    Some(t[1].1),
+                    Some(t[1].2),
+                    Some(t[1].3.cast_signed()),
+                );
+                assert_erc20_row(
+                    &conn,
+                    *v_token_id,
+                    &t[2].0,
+                    Some(t[2].1),
+                    Some(t[2].2),
+                    Some(t[2].3.cast_signed()),
+                );
+            }
+            other => panic!("expected ReserveInitialized, got {other:?}"),
+        }
+    }
+
+    /// The idempotency contract: a re-dispatch over rows that already carry
+    /// metadata resolves the SAME rows and leaves every populated cell alone
+    /// (the `get_or_create` null-only backfill), never a duplicate row.
+    #[test]
+    fn reserve_initialized_metadata_second_pass_keeps_the_populated_rows() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let t = reserve_init_tokens();
+        let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(true)));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(reserve_init_oracle()),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let runtime = degenbot_core::runtime::get_runtime();
+        let first = runtime
+            .block_on(resolve_reserve_initialized(
+                &mut ctx,
+                &reserve_initialized_event(),
+                reserve_init_oracle(),
+            ))
+            .unwrap();
+        let ids = reserve_init_ids(&first);
+        let second = runtime
+            .block_on(resolve_reserve_initialized(
+                &mut ctx,
+                &reserve_initialized_event(),
+                reserve_init_oracle(),
+            ))
+            .unwrap();
+        assert_eq!(reserve_init_ids(&second), ids, "the same rows resolve");
+        assert_erc20_row(
+            &conn,
+            ids.0,
+            &t[0].0,
+            Some(t[0].1),
+            Some(t[0].2),
+            Some(t[0].3.cast_signed()),
+        );
+        assert_erc20_row(
+            &conn,
+            ids.1,
+            &t[1].0,
+            Some(t[1].1),
+            Some(t[1].2),
+            Some(t[1].3.cast_signed()),
+        );
+        assert_erc20_row(
+            &conn,
+            ids.2,
+            &t[2].0,
+            Some(t[2].1),
+            Some(t[2].2),
+            Some(t[2].3.cast_signed()),
+        );
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM erc20_tokens", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 6, "the 3 seeded + the 3 resolved, never a duplicate");
+    }
+
+    /// The committed config-era corpus carries NO metadata entries for these
+    /// tokens. The resolver still runs: each field's reads miss the ledger and
+    /// degrade to `None`, so the rows are created with null metadata — the
+    /// state the golden dump pins.
+    #[test]
+    fn reserve_initialized_unrecorded_metadata_reads_leave_the_cells_null() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let t = reserve_init_tokens();
+        let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(false)));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(reserve_init_oracle()),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let ev = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_reserve_initialized(
+                &mut ctx,
+                &reserve_initialized_event(),
+                reserve_init_oracle(),
+            ))
+            .unwrap();
+        let ids = reserve_init_ids(&ev);
+        assert_erc20_row(&conn, ids.0, &t[0].0, None, None, None);
+        assert_erc20_row(&conn, ids.1, &t[1].0, None, None, None);
+        assert_erc20_row(&conn, ids.2, &t[2].0, None, None, None);
     }
 }

@@ -311,17 +311,19 @@ pub(super) async fn resolve_collateral_configuration(
 /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken, …)`
 /// → [`AaveChunkEvent::ReserveInitialized`] with the RPC-resolved revisions +
 /// price source. Mirrors `event_handlers._process_asset_initialization_event`:
-/// per EIP-1967, the aToken/vToken implementation slot → `ATOKEN_REVISION()`
-/// / `DEBT_TOKEN_REVISION()` `eth_call` + `getSourceOfAsset(address)` `eth_call`
-/// on the PRICE_ORACLE contract.
+/// the 3 erc20 tokens (asset/aToken/vToken) are `get_or_create`d with their
+/// RPC-fetched metadata, and per EIP-1967 the aToken/vToken implementation
+/// slot → `ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` `eth_call` +
+/// `getSourceOfAsset(address)` `eth_call` on the PRICE_ORACLE contract.
 ///
-/// NB: the 3 erc20 tokens (asset/aToken/vToken) are `get_or_create`d with
-/// `None` metadata (name/symbol/decimals) — the Python RPC-fetches these via
-/// `_fetch_erc20_token_metadata`, which is a parity-gate gap flagged for -2b / a
-/// follow-up (the standalone Rust consumer needs the metadata fetch too; the
-/// substrate `get_or_create_erc20_token_on_conn` takes metadata as a caller
-/// param, so this is consistent with the existing contract — the gap is
-/// isolated to this fn's token resolution).
+/// The metadata step ports `erc20_utils._fetch_erc20_token_metadata`: the
+/// name/symbol/decimals tuple rides the ctx's injected provider (ADR-068 D5 —
+/// the core never builds a transport), ONE Multicall3 pass for the three
+/// tokens, and each field is `None` when its reads fail (the reference's
+/// per-field tolerance — an unrecorded or reverting read is not a chunk
+/// fault). The `get_or_create_erc20_token_on_conn` contract carries the
+/// idempotency: a row that already holds metadata keeps it — only its null
+/// cells are backfilled — so a re-dispatch never overwrites a resolved value.
 pub(super) async fn resolve_reserve_initialized(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
