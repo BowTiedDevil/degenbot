@@ -46,11 +46,22 @@ route through the `ConstructionIo` handle as the single path (with the transient
 support. Tag support is a core-trait change tracked in `VK3YDM`, not a LWKLMP
 blocker. Legacy Mock/MagicMock test doubles move onto alloy fixtures.
 
-### D2 — `Py*Row` mirrors are `stays-python` for this epic.
+### D2 — `Py*Row` mirrors are retired with their consumers (closed 2026-10-10).
 
-`Erc20TokenRow` + the six `db/pool_read.py` classes are live (Python builders
-read `.id/.address/.decimals/.kind/.token0`). They stay; their retirement folds
-into `VK3YDM` with their consumers.
+`Erc20TokenRow` + the six `db/pool_read.py` classes (`LiquidityPoolRow`,
+`PoolKindRow`, `ExchangeRow`, `PoolManagerRow`, `LiquidityPositionRow`,
+`InitializationMapRow`) were the Python mirror of `degenbot-db`'s row records,
+read by the Python pool builders (`.id/.address/.decimals/.kind/.token0`).
+**Closed under `UWA7ZH` (PC6): no Python mirror class remains.** As the builders'
+DB reads moved behind the `PyBotIo` seam, each mirror became a thin `#[pyclass]`
+over the `degenbot-db` typed record, so `degenbot-db` owns the record in both
+directions. The three records no remaining consumer needed (`PoolKindRow`,
+`LiquidityPositionRow`, `InitializationMapRow`) were deleted with their `PyBotIo`
+methods. The four that are still the DB read shape (`LiquidityPoolRow`,
+`ExchangeRow`, `PoolManagerRow`, `Erc20TokenRow`) stay as the FFI face of the
+core-owned records, because live Python consumers (`builders/type_resolution.py`,
+`builders/erc20_builder.py`, `updater/pool_updater_configs.py`) read their
+fields — deleting them would change DB read behaviour, not retire a mirror.
 
 ### D3 — Delete the inlined `self.alloy` RPC duplication; keep the `alloy_provider()` accessor.
 
@@ -125,7 +136,8 @@ Per-field `stays-python` markings (D2) describe residue, not a terminal state.
 D1's block-tag support ("tracked in `VK3YDM`") and D2's `Py*Row` retirement ("folds into
 `VK3YDM`") have no tracking home. Both are re-homed under the Pool construction
 deepening, ergo epic **`GZPPS3`** (opened 2026-10-10): block-tag support as task
-`YCUSGZ` (PC10), `Py*Row` retirement as task `UWA7ZH` (PC6).
+`YCUSGZ` (PC10), `Py*Row` retirement as task `UWA7ZH` (PC6 — closed 2026-10-10,
+see D2).
 
 ### A4 — The Consequences bullet above is superseded.
 
