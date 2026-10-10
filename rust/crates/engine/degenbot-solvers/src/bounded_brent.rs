@@ -16,7 +16,7 @@
 //!   failed [`BrentMinimize`] (`nfev == 0`) carrying SciPy's exact message
 //!   text; the caller decides whether that is an error.
 //! - `np.maximum` propagates NaN (NaN if either operand is NaN) while Rust's
-//!   `f64::max` returns the non-NaN operand. [`numpy_maximum`] reproduces the
+//!   `f64::max` returns the non-NaN operand. `numpy_maximum` reproduces the
 //!   NumPy behavior so a NaN `xatol` follows the same path.
 //!
 //! # Non-finite objective returns

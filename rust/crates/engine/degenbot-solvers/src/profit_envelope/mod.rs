@@ -29,7 +29,7 @@
 //! # Module layout
 //!
 //! - `kernel` — the `Line`/I512 numeric kernel, the exact concave-envelope
-//!   composition ([`compose_envelopes_exact`]), the discrete concave max, and
+//!   composition (`compose_envelopes_exact`), the discrete concave max, and
 //!   the walk-refine window clamp.
 //! - `derive` — per-hop line derivation (Möbius rises, CL tangent fans,
 //!   `hop_lines_and_cap[_cached]`) plus the engine-owned prefix / fan cache.

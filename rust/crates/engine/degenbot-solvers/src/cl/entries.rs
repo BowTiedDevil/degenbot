@@ -14,7 +14,7 @@ use crate::runtime::SolveRuntimeConfig;
 /// paired with the crossing table + word profiles built from that sequence,
 /// built ONCE per (pool, direction) by the projection.
 ///
-/// This is the projection-carried shape [`ResolvedHop::V3`/`V4`] carries (see
+/// This is the projection-carried shape `ResolvedHop::V3`/`V4` carries (see
 /// `mixed::ResolvedHop`) AND the solve entries' intake: the sequence and its
 /// tables travel as one value, so the pairing the deleted gate defended is
 /// structural — and that structural pairing is this value's whole point.
@@ -214,7 +214,7 @@ fn solve_cl_piecewise_inner(
 ///
 /// THE mixed V2+CL solve entry. `memo` (mirroring [`solve_cl_piecewise`]
 /// position-for-position) is the caller's engine-owned cross-block
-/// composition memo: the entry probes by [`walk_mixed_path_fingerprint`]
+/// composition memo: the entry probes by `walk_mixed_path_fingerprint`
 /// BEFORE hop assembly — the key needs only the hop states, sequences, and
 /// order, so a cached `Hit` replays the solution and a cached `Negative`
 /// skips the walk, `note_cost`, and store without paying for assembly; a

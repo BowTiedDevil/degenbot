@@ -631,8 +631,8 @@ impl<'a> GateDeps<'a> {
 
 /// The ONE gate entry: a rigorous upper bound on
 /// `max_x [path_output(x) − x]`, or a typed [`GateSkipCause`]. Crossings ride
-/// each CL hop's [`ClHop`] descriptor; the prefix-composition cache is keyed
-/// on full hop content and generationed by [`GateDeps::epoch`].
+/// each CL hop's `ClHop` descriptor; the prefix-composition cache is keyed
+/// on full hop content and generationed by `GateDeps::epoch`.
 #[must_use]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>], deps: &GateDeps<'_>) -> Envelope {
     path_profit_bound_impl(hops, deps, None).0
@@ -929,7 +929,7 @@ fn finalize_bound(
     Err(GateSkipCause::DomainOverflow)
 }
 
-/// The gate entry: one query against [`compose_path_bound`] (the SAME path
+/// The gate entry: one query against `compose_path_bound` (the SAME path
 /// the walk-side bound uses), with the degenerate-hop diagnostic + capture on
 /// the error exit, then the verdict max.
 fn path_profit_bound_inner(
@@ -1058,7 +1058,7 @@ pub fn path_output_bound_at(
 
 /// Walk-side composed envelope (Loop-21 `envelope_pruned_refine`): the line
 /// set the active-set walk intersects its refine windows against. A second
-/// query against the same [`compose_path_bound`] chain-composition path the
+/// query against the same `compose_path_bound` chain-composition path the
 /// gate verdict uses — with the owner's cache threaded in, the walk-side
 /// bound reuses the tangent fans and composed prefixes the gate already
 /// derived instead of re-deriving them. Soundness contract identical to the
