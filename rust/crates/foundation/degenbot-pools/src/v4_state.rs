@@ -786,28 +786,22 @@ impl ReorgPoolState for V4PoolState {
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
 
-        // The rewind above already reset the liquidity clock to its pre-target
-        // value (`tick_data_block_before`); that is the block the restored map
-        // is exact at — its bulk-sync block. The journal's per-tick priors
-        // capture the prior gross/net but NOT the prior block, so a tick's
-        // exact last-mutation block is unrecoverable; the pool-level liquidity
-        // clock is the real value in scope (and equals the per-tick block for
-        // any tick mutated by the newest surviving event). The rewind TARGET is
-        // deliberately NOT used: it names a mutation this rollback undid. `0`
-        // is a legal stamp, never a sentinel.
-        let restored_block = self.tick_data_block;
-
-        // Reverse-apply tick priors accumulated across all popped deltas.
+        // Reverse-apply tick priors accumulated across all popped deltas. Each
+        // prior carries the tick's FULL pre-range row, its `block` stamp
+        // included, so the restored map is bit-identical to a fresh replay of
+        // every event before the target — a tick last mutated at 97 says 97
+        // again even when a sibling tick moved the liquidity clock to 99 in
+        // between.
         for (tick_idx, tick_before) in &result.tick_priors {
             match tick_before.liquidity_gross_before {
                 Some(gross_before) => {
-                    // Tick existed before — restore its prior values.
+                    // Tick existed before — restore its prior row.
                     self.tick_data.insert(
                         *tick_idx,
                         TickInfo {
                             liquidity_gross: gross_before,
                             liquidity_net: tick_before.liquidity_net_before,
-                            block: restored_block,
+                            block: tick_before.block_before,
                         },
                     );
                 }
@@ -1606,5 +1600,685 @@ mod apply_inherent_tests {
         assert_eq!(state.journal_len(), 0);
         state.apply_swap(U256::from(2u128) << 96, liq + 1, 1, 7, &[]);
         assert_eq!(state.journal_len(), 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Exact rewind — the product: `restore_before_block(target)` leaves the state
+// bit-identical to a fresh replay of every event strictly before `target`
+// (tick rows INCLUDING their `block` stamps, the scalars, and both clocks).
+// The battery below pins each way a rewind can go wrong.
+// ---------------------------------------------------------------------------
+
+#[expect(clippy::expect_used, clippy::panic)]
+#[cfg(test)]
+mod exact_rewind_tests {
+    use super::*;
+    use crate::registry::ConcentratedLiquidityPoolMut;
+    use crate::state_history::{ReorgJournal, ReorgPoolState, V3BlockDelta};
+    use crate::v3_state::CachedTickRanges;
+    use alloy::primitives::U128;
+    use proptest::prelude::*;
+
+    /// Registration block of the seeded pool: the genesis anchor lands here and
+    /// every scripted event lands strictly after it.
+    const REG: u64 = 50;
+    const LIQ: u128 = 1_000_000;
+
+    /// A minimal V4 pool at tick 0 (1:1 price, liquidity `LIQ`) holding one
+    /// [-60, +60) position. The journal starts empty.
+    fn pool_state() -> V4PoolState {
+        let sp_0 = U256::from(1u128) << 96;
+        let liq_u128 = U256::from(LIQ).to::<U128>();
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: i128::try_from(LIQ).unwrap_or(0),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: -i128::try_from(LIQ).unwrap_or(0),
+                block: 0,
+            },
+        );
+        V4PoolState {
+            sqrt_price_x96: sp_0,
+            liquidity: LIQ,
+            tick: 0,
+            update_block: 0,
+            tick_data_block: 0,
+            initial_state_block: 0,
+            state_nonce: 0,
+            registration_lifecycle: RegistrationLifecycle::default(),
+            protocol_fee: 0,
+            tick_data,
+            coverage: PoolTickCoverage::Tracked,
+            known_bitmap_words: HashSet::new(),
+            fetcher: None,
+            journal: ReorgJournal::<V3BlockDelta>::new(16),
+            snapshot_seed: None,
+            post_drain_snapshot: None,
+            cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+        }
+    }
+
+    /// `pool_state` plus the registration anchor at `REG` (`seed_genesis`
+    /// pushes a `before == after` delta and advances no clock).
+    fn seeded_state() -> V4PoolState {
+        let mut state = pool_state();
+        state.seed_genesis(REG);
+        state
+    }
+
+    /// One event of a scripted sequence.
+    #[derive(Clone, Debug)]
+    enum Ev {
+        /// Slot0 head rewrite; advances BOTH clocks. `new_tick` seeds
+        /// `tick_priors` (a tick mutation — a creation when the tick is absent
+        /// from the map).
+        Swap {
+            sqrt: u128,
+            liq: u128,
+            tick: i32,
+            new_tick: Option<(i32, i128)>,
+        },
+        /// Mint/Burn over `[lower, upper)`.
+        Liq { lower: i32, upper: i32, delta: i128 },
+    }
+
+    /// Zip a kind sequence into a script on strictly-increasing blocks
+    /// (`REG + 1`, `REG + 2`, ...) so a live apply never trips the monotonic
+    /// clock guard.
+    fn script_from_kinds(kinds: &[u8]) -> Vec<(u64, Ev)> {
+        kinds
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                let block = REG + 1 + i as u64;
+                let ev = match k % 6 {
+                    0 => Ev::Swap {
+                        sqrt: 1u128 << 96,
+                        liq: LIQ,
+                        tick: 0,
+                        new_tick: None,
+                    },
+                    1 => Ev::Swap {
+                        sqrt: (1u128 << 96) + 1,
+                        liq: LIQ + 1,
+                        tick: 60,
+                        new_tick: Some((120, 500)),
+                    },
+                    2 => Ev::Swap {
+                        sqrt: (1u128 << 96) - 1,
+                        liq: LIQ - 2,
+                        tick: 500,
+                        new_tick: Some((180, 250)),
+                    },
+                    3 => Ev::Liq {
+                        lower: -60,
+                        upper: 60,
+                        delta: 7_000,
+                    },
+                    4 => Ev::Liq {
+                        lower: 120,
+                        upper: 240,
+                        delta: 3_000,
+                    },
+                    _ => Ev::Liq {
+                        lower: 120,
+                        upper: 240,
+                        delta: -3_000,
+                    },
+                };
+                (block, ev)
+            })
+            .collect()
+    }
+
+    /// Apply one script entry the way an event replay would.
+    fn apply_ev(state: &mut V4PoolState, block: u64, ev: &Ev) {
+        match ev {
+            Ev::Swap {
+                sqrt,
+                liq,
+                tick,
+                new_tick,
+            } => {
+                let priors: Vec<(i32, TickInfo)> = new_tick
+                    .iter()
+                    .map(|(t, net)| {
+                        (
+                            *t,
+                            TickInfo {
+                                liquidity_gross: U128::from(u128::try_from(*net).unwrap_or(0)),
+                                liquidity_net: *net,
+                                block,
+                            },
+                        )
+                    })
+                    .collect();
+                state.apply_swap(U256::from(*sqrt), *liq, *tick, block, &priors);
+            }
+            Ev::Liq {
+                lower,
+                upper,
+                delta,
+            } => {
+                state.apply_liquidity_update(*lower, *upper, *delta, block);
+            }
+        }
+    }
+
+    fn apply_script(state: &mut V4PoolState, script: &[(u64, Ev)]) {
+        for (block, ev) in script {
+            apply_ev(state, *block, ev);
+        }
+    }
+
+    /// Replay only the events strictly before `target` onto a fresh seed — the
+    /// oracle `restore_before_block(target)` must reproduce exactly.
+    fn replay_before(script: &[(u64, Ev)], target: u64) -> V4PoolState {
+        let mut state = seeded_state();
+        for (block, ev) in script {
+            if *block < target {
+                apply_ev(&mut state, *block, ev);
+            }
+        }
+        state
+    }
+
+    /// Field-by-field comparison that names the FIRST divergence — stamps
+    /// first, since a stamp is what an approximated rewind gets wrong while its
+    /// values still match.
+    fn assert_same_state(tag: &str, got: &V4PoolState, want: &V4PoolState, detail: &str) {
+        let mut keys: Vec<i32> = got
+            .tick_data
+            .keys()
+            .chain(want.tick_data.keys())
+            .copied()
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        for t in keys {
+            match (got.tick_data.get(&t), want.tick_data.get(&t)) {
+                (Some(a), Some(b)) => {
+                    assert!(
+                        a.block == b.block,
+                        "{tag}: tick {t} STAMP mismatch - rewind says {} but replay says {} ({detail})",
+                        a.block,
+                        b.block
+                    );
+                    assert!(
+                        a.liquidity_gross == b.liquidity_gross
+                            && a.liquidity_net == b.liquidity_net,
+                        "{tag}: tick {t} VALUE mismatch - rewind {a:?} vs replay {b:?} ({detail})"
+                    );
+                }
+                (Some(a), None) => panic!(
+                    "{tag}: tick {t} present after rewind ({a:?}) but absent in replay ({detail})"
+                ),
+                (None, Some(b)) => panic!(
+                    "{tag}: tick {t} absent after rewind but present in replay ({b:?}) ({detail})"
+                ),
+                (None, None) => {}
+            }
+        }
+        assert_eq!(
+            got.sqrt_price_x96, want.sqrt_price_x96,
+            "{tag}: sqrt_price_x96 ({detail})"
+        );
+        assert_eq!(
+            got.liquidity, want.liquidity,
+            "{tag}: active liquidity scalar ({detail})"
+        );
+        assert_eq!(got.tick, want.tick, "{tag}: current tick ({detail})");
+        assert_eq!(
+            got.update_block, want.update_block,
+            "{tag}: price clock ({detail})"
+        );
+        assert_eq!(
+            got.tick_data_block, want.tick_data_block,
+            "{tag}: liquidity clock ({detail})"
+        );
+    }
+
+    /// Rewind a fully-applied pool to `target` and compare against a fresh
+    /// replay of the events before it.
+    fn probe_rewind(script: &[(u64, Ev)], target: u64) {
+        let mut live = seeded_state();
+        apply_script(&mut live, script);
+        live.restore_before_block(target).expect("rewind is legal");
+        assert_same_state(
+            "rewind==replay",
+            &live,
+            &replay_before(script, target),
+            &format!("target={target} script={script:?}"),
+        );
+    }
+
+    /// (a) A popped range spanning several blocks (events at 97..100, rewind to
+    /// 98) lands exactly on the block-97 state.
+    #[test]
+    fn multi_block_popped_range_rewinds_to_the_pre_target_state() {
+        let script = vec![
+            (
+                97,
+                Ev::Liq {
+                    lower: -60,
+                    upper: 60,
+                    delta: 7_000,
+                },
+            ),
+            (
+                98,
+                Ev::Swap {
+                    sqrt: 1u128 << 96,
+                    liq: LIQ + 5,
+                    tick: 0,
+                    new_tick: None,
+                },
+            ),
+            (
+                99,
+                Ev::Liq {
+                    lower: -60,
+                    upper: 60,
+                    delta: 9_000,
+                },
+            ),
+            (
+                100,
+                Ev::Swap {
+                    sqrt: 1u128 << 96,
+                    liq: LIQ + 7,
+                    tick: 0,
+                    new_tick: None,
+                },
+            ),
+        ];
+        let mut state = seeded_state();
+        apply_script(&mut state, &script);
+        state.restore_before_block(98).expect("legal");
+        assert_same_state(
+            "multi-block",
+            &state,
+            &replay_before(&script, 98),
+            "target=98",
+        );
+        assert_eq!(
+            state.tick_data[&-60].block, 97,
+            "the restored row carries its own last-mutation stamp"
+        );
+        assert_eq!(state.tick_data[&60].block, 97);
+        assert_eq!(state.tick_data_block, 97);
+        assert_eq!(state.update_block, 97);
+    }
+
+    /// (b) A tick created inside the popped range records a `None` prior and is
+    /// removed on rollback.
+    #[test]
+    fn tick_created_inside_the_popped_range_is_removed_on_rollback() {
+        let script = vec![(
+            97,
+            Ev::Swap {
+                sqrt: 1u128 << 96,
+                liq: LIQ + 1,
+                tick: 60,
+                new_tick: Some((120, 500)),
+            },
+        )];
+        let mut state = seeded_state();
+        apply_script(&mut state, &script);
+        assert!(
+            state.tick_data.contains_key(&120),
+            "tick seeded by the swap"
+        );
+        state.restore_before_block(97).expect("legal");
+        assert!(
+            !state.tick_data.contains_key(&120),
+            "a tick created inside the popped range has no prior row - it is removed"
+        );
+        assert_same_state(
+            "created-tick",
+            &state,
+            &replay_before(&script, 97),
+            "target=97",
+        );
+    }
+
+    /// (c) A tick touched in several popped blocks comes back as its exact
+    /// pre-range row (values AND stamp), not as the mid-range row the later
+    /// delta saw.
+    #[test]
+    fn tick_touched_in_multiple_popped_blocks_restores_the_exact_pre_range_row() {
+        let script = vec![
+            (
+                97,
+                Ev::Liq {
+                    lower: -60,
+                    upper: 60,
+                    delta: 7_000,
+                },
+            ),
+            (
+                98,
+                Ev::Liq {
+                    lower: -60,
+                    upper: 60,
+                    delta: 9_000,
+                },
+            ),
+        ];
+        let mut state = seeded_state();
+        apply_script(&mut state, &script);
+        state.restore_before_block(97).expect("legal");
+        assert_eq!(
+            state.tick_data[&-60],
+            TickInfo {
+                liquidity_gross: U256::from(LIQ).to::<U128>(),
+                liquidity_net: i128::try_from(LIQ).unwrap_or(0),
+                block: 0,
+            },
+            "the oldest popped prior wins: the seed row, seed stamp included"
+        );
+        assert_same_state(
+            "same-tick-twice",
+            &state,
+            &replay_before(&script, 97),
+            "target=97",
+        );
+    }
+
+    /// (d)+(e) A popped range holding only an out-of-range Mint/Burn is
+    /// tick-only: the scalar write-back is skipped (ADR-004) and the price
+    /// clock's prior is `None` (it never moved), so only the liquidity clock
+    /// rewinds.
+    #[test]
+    fn tick_only_popped_range_skips_the_scalar_write_back_and_keeps_the_price_clock() {
+        let script = vec![
+            (
+                97,
+                Ev::Swap {
+                    sqrt: (1u128 << 96) + 3,
+                    liq: LIQ + 11,
+                    tick: 500,
+                    new_tick: None,
+                },
+            ),
+            (
+                98,
+                Ev::Liq {
+                    lower: 120,
+                    upper: 240,
+                    delta: 3_000,
+                },
+            ),
+        ];
+        let mut state = seeded_state();
+        apply_script(&mut state, &script);
+        assert_eq!(state.update_block, 97);
+        state.restore_before_block(98).expect("legal");
+        assert_same_state(
+            "tick-only",
+            &state,
+            &replay_before(&script, 98),
+            "target=98",
+        );
+        assert!(
+            !state.tick_data.contains_key(&120),
+            "the tick created by the popped event is removed"
+        );
+        assert_eq!(
+            state.sqrt_price_x96,
+            U256::from((1u128 << 96) + 3),
+            "tick-only rollback leaves the slot0 head untouched"
+        );
+        assert_eq!(state.liquidity, LIQ + 11);
+        assert_eq!(state.tick, 500);
+        assert_eq!(
+            state.update_block, 97,
+            "the price clock's prior is None - it keeps its post-97 value"
+        );
+        assert_eq!(
+            state.tick_data_block, 97,
+            "the liquidity clock rewinds to its pre-target value"
+        );
+    }
+
+    /// (f) After a rollback the chain keeps moving: new events at 99/100 apply
+    /// cleanly and move the stamps forward again.
+    #[test]
+    fn rollback_then_new_events_apply_cleanly_and_move_stamps_forward() {
+        let original = vec![
+            (
+                97,
+                Ev::Liq {
+                    lower: -60,
+                    upper: 60,
+                    delta: 7_000,
+                },
+            ),
+            (
+                98,
+                Ev::Liq {
+                    lower: -60,
+                    upper: 60,
+                    delta: 9_000,
+                },
+            ),
+        ];
+        let mut state = seeded_state();
+        apply_script(&mut state, &original);
+        state.restore_before_block(98).expect("legal");
+
+        let replacement = vec![
+            (
+                99,
+                Ev::Liq {
+                    lower: -60,
+                    upper: 60,
+                    delta: 4_000,
+                },
+            ),
+            (
+                100,
+                Ev::Swap {
+                    sqrt: (1u128 << 96) + 9,
+                    liq: LIQ + 3,
+                    tick: 60,
+                    new_tick: Some((120, 700)),
+                },
+            ),
+        ];
+        apply_script(&mut state, &replacement);
+        assert_eq!(state.tick_data[&-60].block, 99);
+        assert_eq!(state.tick_data[&120].block, 100);
+        assert_eq!(state.tick_data_block, 100);
+        assert_eq!(state.update_block, 100);
+
+        let mut oracle = replay_before(&original, 98);
+        apply_script(&mut oracle, &replacement);
+        assert_same_state("rollback-then-apply", &state, &oracle, "98 then 99/100");
+    }
+
+    /// (g) Rewinding twice (99 then 97) equals a single rewind to the earlier
+    /// target (97).
+    #[test]
+    fn double_rollback_equals_a_single_rollback_to_the_earlier_target() {
+        let script = vec![
+            (
+                97,
+                Ev::Liq {
+                    lower: -60,
+                    upper: 60,
+                    delta: 7_000,
+                },
+            ),
+            (
+                98,
+                Ev::Swap {
+                    sqrt: (1u128 << 96) + 3,
+                    liq: LIQ + 11,
+                    tick: 500,
+                    new_tick: Some((120, 500)),
+                },
+            ),
+            (
+                99,
+                Ev::Liq {
+                    lower: 120,
+                    upper: 240,
+                    delta: 3_000,
+                },
+            ),
+        ];
+        let mut twice = seeded_state();
+        apply_script(&mut twice, &script);
+        twice.restore_before_block(99).expect("legal");
+        twice.restore_before_block(97).expect("legal");
+
+        let mut once = seeded_state();
+        apply_script(&mut once, &script);
+        once.restore_before_block(97).expect("legal");
+
+        assert_same_state("double-rollback", &twice, &once, "99 then 97 vs 97");
+        assert_same_state(
+            "double-rollback-oracle",
+            &once,
+            &replay_before(&script, 97),
+            "target=97",
+        );
+    }
+
+    /// (h) An empty journal is the registration boundary: the coordinator's
+    /// `has_state_prior_to` predicate is false there and the rewind maps to
+    /// `NoStatePriorToBlock` (the pool-level surface is the journal's
+    /// empty-journal refusal below).
+    #[test]
+    #[should_panic(expected = "No pool state known prior to block")]
+    fn rewind_below_the_registration_boundary_is_a_hard_error() {
+        let mut state = pool_state();
+        assert!(state.journal.is_empty(), "no anchor - nothing to rewind to");
+        state
+            .restore_before_block(REG)
+            .expect("unreachable: refuses");
+    }
+
+    /// (h) The legal half: with the registration anchor in place, a rewind to
+    /// the first event's block lands on the registration state (stamps
+    /// included), and a rewind AT the boundary pops the anchor and lands there
+    /// too.
+    #[test]
+    fn rewind_at_registration_and_one_past_it_are_legal() {
+        let script = vec![(
+            REG + 1,
+            Ev::Swap {
+                sqrt: (1u128 << 96) + 1,
+                liq: LIQ + 1,
+                tick: 60,
+                new_tick: Some((120, 500)),
+            },
+        )];
+        let mut boundary = seeded_state();
+        apply_script(&mut boundary, &script);
+        boundary.restore_before_block(REG + 1).expect("legal");
+        assert_same_state(
+            "registration+1",
+            &boundary,
+            &replay_before(&script, REG + 1),
+            "target=REG+1",
+        );
+        assert_eq!(
+            boundary.tick_data[&-60].block, 0,
+            "registration rows keep the seed stamp"
+        );
+        assert_eq!(boundary.update_block, 0);
+        assert_eq!(boundary.tick_data_block, 0);
+        assert_eq!(
+            boundary.journal_len(),
+            1,
+            "the anchor survives; only the event delta was popped"
+        );
+
+        boundary
+            .restore_before_block(REG)
+            .expect("legal at the boundary");
+        assert_eq!(boundary.journal_len(), 0, "the anchor is popped");
+        assert_eq!(boundary.update_block, 0);
+        assert_eq!(boundary.tick_data_block, 0);
+    }
+
+    /// (i) The rollback is the ONLY sanctioned rewind: a backward stamp applied
+    /// outside a reorg still panics on both clocks.
+    #[test]
+    #[should_panic(expected = "monotonicity violated: update_block")]
+    fn backward_price_clock_stamp_outside_reorg_still_panics() {
+        let mut state = seeded_state();
+        state.update_block = 10;
+        state.apply_swap(U256::from(1u128) << 96, LIQ, 0, 5, &[]);
+    }
+
+    /// (i) Tick-map twin of the above.
+    #[test]
+    #[should_panic(expected = "monotonicity violated: tick_data_block")]
+    fn backward_liquidity_clock_stamp_outside_reorg_still_panics() {
+        let mut state = seeded_state();
+        state.tick_data_block = 10;
+        state.apply_liquidity_update(-60, 60, 1_000, 5);
+    }
+
+    /// (j) A rollback still bumps `state_nonce` exactly once and invalidates
+    /// both directions of the tick-range cache.
+    #[test]
+    fn rollback_bumps_nonce_and_invalidates_the_tick_range_cache() {
+        let mut state = seeded_state();
+        state.apply_liquidity_update(-60, 60, 7_000, 97);
+        let _ = state.get_cached_tick_ranges(60, true);
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(
+                matches!(cache.zfo, CachedTickRanges::Hit(_)),
+                "cache warm before the rollback"
+            );
+        }
+        let nonce_before = state.state_nonce;
+        state.restore_before_block(97).expect("legal");
+        assert_eq!(
+            state.state_nonce,
+            nonce_before.wrapping_add(1),
+            "exactly one nonce bump per rollback"
+        );
+        let cache = state.cached_tick_ranges.lock();
+        assert!(matches!(cache.zfo, CachedTickRanges::StillEmpty));
+        assert!(matches!(cache.ofz, CachedTickRanges::StillEmpty));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 128, ..ProptestConfig::default() })]
+
+        /// The product: for EVERY legal rewind target, the rolled-back state is
+        /// bit-identical to a fresh replay of the events strictly before it.
+        #[test]
+        fn rewind_equals_replay_v4(kinds in prop::collection::vec(0u8..6, 1..6)) {
+            let script = script_from_kinds(&kinds);
+            let newest = script.last().map_or(REG, |(block, _)| *block);
+            let mut targets: Vec<u64> = vec![REG, REG + 1];
+            for (block, _) in &script {
+                targets.push(*block);
+                targets.push(*block + 1);
+            }
+            targets.push(newest + 1);
+            targets.sort_unstable();
+            targets.dedup();
+            for target in targets {
+                probe_rewind(&script, target);
+            }
+        }
     }
 }

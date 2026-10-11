@@ -239,8 +239,9 @@ pub struct V3BlockDelta {
     /// clock (two-stamp pool state).
     pub tick_data_block_before: Option<u64>,
     /// Per-tick priors for ticks modified during this block.
-    /// Each entry is `(tick_index, TickBefore)` storing the `liquidity_gross`
-    /// and `liquidity_net` values **before** the modification.
+    /// Each entry is `(tick_index, TickBefore)` storing the tick's **full**
+    /// prior row (`liquidity_gross`, `liquidity_net`, `block`) *before* the
+    /// modification.
     pub tick_priors: Vec<(i32, TickBefore)>,
 }
 
@@ -299,11 +300,14 @@ impl BlockDelta for V3BlockDelta {
     }
 }
 
-/// "Before" values for a single tick that was modified during a block.
+/// The full prior row of a single tick that was modified during a block.
 ///
-/// On reorg, these values are reverse-applied to the current `tick_data` map.
-/// A `None` `liquidity_gross` means the tick did not exist before this block
-/// (it was newly initialized) and should be removed on rollback.
+/// On reorg, these values are reverse-applied to the current `tick_data` map so
+/// the restored map is bit-identical to a fresh replay of every event before
+/// the reorg target — values AND the `block` stamp. A `None`
+/// `liquidity_gross_before` means the tick did not exist before this block (it
+/// was newly initialized) and should be removed on rollback; `block_before` is
+/// then meaningless.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TickBefore {
     /// Liquidity gross at this tick *before* the modification.
@@ -313,6 +317,14 @@ pub struct TickBefore {
     /// Stored at the on-chain int128 width; the DB TEXT
     /// codec round-trips signed-decimal byte-identically at this width.
     pub liquidity_net_before: i128,
+    /// The prior row's `block` stamp — the block at which this tick was last
+    /// mutated/confirmed *before* the modification being recorded. Rolling it
+    /// back (instead of re-stamping the restored row with the pool's
+    /// liquidity clock) is what makes a rollback exact: a tick last mutated
+    /// at 97 says 97 again, even when a sibling tick moved the liquidity
+    /// clock to 99 in between. Only read when `liquidity_gross_before` is
+    /// `Some`; `0` otherwise (`0` is a legal stamp, never a sentinel).
+    pub block_before: u64,
 }
 
 /// Result of restoring a V3 journal to before a target block.
@@ -1194,6 +1206,7 @@ mod v3_delta_priors_tests {
         TickBefore {
             liquidity_gross_before: None,
             liquidity_net_before: 0,
+            block_before: 0,
         }
     }
 
@@ -1550,6 +1563,7 @@ mod v3_delta_priors_tests {
                 TickBefore {
                     liquidity_gross_before: Some(U128::from(100)),
                     liquidity_net_before: 100,
+                    block_before: 5,
                 },
             )],
         };
@@ -1570,6 +1584,7 @@ mod v3_delta_priors_tests {
                     TickBefore {
                         liquidity_gross_before: Some(U128::from(500)),
                         liquidity_net_before: 500,
+                        block_before: 9,
                     },
                 ),
                 (
@@ -1577,6 +1592,7 @@ mod v3_delta_priors_tests {
                     TickBefore {
                         liquidity_gross_before: None,
                         liquidity_net_before: 0,
+                        block_before: 0,
                     },
                 ),
             ],
@@ -1596,6 +1612,10 @@ mod v3_delta_priors_tests {
             by_tick[&60].liquidity_gross_before,
             Some(U128::from(100)),
             "tick 60 prior is the earliest (pre-block) value, oldest-wins"
+        );
+        assert_eq!(
+            by_tick[&60].block_before, 5,
+            "tick 60 prior carries the earliest row's stamp, oldest-wins"
         );
         assert!(
             by_tick.contains_key(&120),

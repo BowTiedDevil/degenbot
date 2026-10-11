@@ -95,6 +95,7 @@ fn jade_journal(k: usize) -> ReorgJournal<V3BlockDelta> {
                         TickBefore {
                             liquidity_gross_before: Some(U128::from(t as u64)),
                             liquidity_net_before: 1,
+                            block_before: block,
                         },
                     )
                 })
@@ -117,7 +118,7 @@ fn apply_v3(
                 target.entry(*tick).or_insert(TickInfo {
                     liquidity_gross: lg,
                     liquidity_net: before.liquidity_net_before,
-                    block: 0,
+                    block: before.block_before,
                 });
             }
             None => {
