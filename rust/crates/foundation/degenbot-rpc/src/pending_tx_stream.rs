@@ -10,6 +10,11 @@
 //! (feed telemetry, shutdown), [`PendingTxStream`] is the driver-side typed
 //! drain. The pump's own ring view is never drained, so the driver's stream
 //! sees every frame.
+//!
+//! Provisioning and starting are split: [`PendingTxPump::provision_on_ring`]
+//! registers the ring and subscribes the views but spawns nothing, and
+//! [`PendingTxPump::start`] launches the feed loop — the first dial — later.
+//! A host that mints pumps and never starts them performs no network I/O.
 
 use degenbot_core::op_warn;
 #[cfg(any(feature = "test-utils", test))]
@@ -60,24 +65,24 @@ pub struct PendingTxStream {
 }
 
 impl PendingTxPump {
-    /// Spawn the pump for `source` over the drop-oldest ring the host
+    /// Provision the pump for `source` over the drop-oldest ring the host
     /// registered for that kind's [`HubClass::PendingTx`] class, and return
     /// the driver-side [`PendingTxStream`] subscribed to the same ring.
+    /// Spawns NOTHING and dials nothing: the feed loop launches later through
+    /// [`Self::start`], so a host can mint a pump without touching the
+    /// network.
     ///
     /// The class must be registered first (`Hub::register_source` with
     /// [`OverflowPolicy::DropOldestCounted`]); the mint fails closed on a
     /// mismatch so a miswired host cannot attach a feed to another kind's
     /// ring.
     ///
-    /// Must be called within a tokio runtime context, or the crate-global
-    /// `degenbot_core::runtime::get_runtime()` is used.
-    ///
     /// # Errors
     ///
     /// Propagates [`HubError`] when `cfg` does not match `source`, when the
     /// declared policy handle mismatches, or when the class is not
     /// registered.
-    pub fn spawn_on_ring(
+    pub fn provision_on_ring(
         hub: &Hub,
         source: PendingTxSource,
         cfg: PendingTxFeedConfig,
@@ -147,6 +152,16 @@ impl PendingTxPump {
     #[must_use]
     pub fn source(&self) -> PendingTxSource {
         self.source
+    }
+
+    /// Launch this pump's feed loop — its first dial — exactly once. The ring
+    /// and the driver's stream were provisioned at [`Self::provision_on_ring`]
+    /// and are already readable; only the reconnect loop starts here.
+    pub fn start(&self) {
+        match &self.inner {
+            PumpInner::Mevblocker(feed) => feed.start(),
+            PumpInner::Txpool(feed) => feed.start(),
+        }
     }
 
     /// The sampler snapshot (the `BackrunFeedStatus` field set both pumps
@@ -271,13 +286,13 @@ mod tests {
     #[test]
     fn both_kinds_mint_on_one_hub_and_drain_their_own_corpus() {
         let hub = Hub::new();
-        let (mev_pump, mev_stream) = PendingTxPump::spawn_on_ring(
+        let (mev_pump, mev_stream) = PendingTxPump::provision_on_ring(
             &hub,
             PendingTxSource::Mevblocker,
             PendingTxFeedConfig::Mevblocker(BackrunFeedConfig::for_mainnet()),
         )
         .expect("the mevblocker kind registers");
-        let (tx_pump, tx_stream) = PendingTxPump::spawn_on_ring(
+        let (tx_pump, tx_stream) = PendingTxPump::provision_on_ring(
             &hub,
             PendingTxSource::Txpool,
             PendingTxFeedConfig::Txpool(TxpoolFeedConfig::defaults()),
@@ -315,7 +330,7 @@ mod tests {
     fn a_mismatched_config_fails_closed() {
         let hub = Hub::new();
         assert!(matches!(
-            PendingTxPump::spawn_on_ring(
+            PendingTxPump::provision_on_ring(
                 &hub,
                 PendingTxSource::Mevblocker,
                 PendingTxFeedConfig::Txpool(TxpoolFeedConfig::defaults()),

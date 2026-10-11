@@ -86,11 +86,23 @@ impl TxpoolFeedConfig {
     }
 }
 
-/// Handle over a spawned txpool feed pump.
+/// Handle over a txpool feed pump.
+///
+/// [`Self::build`] provisions the pump (the ring ends, the shared counters,
+/// the stop channel) and spawns NOTHING; [`Self::start`] launches the
+/// reconnect loop, which is the first dial. This split is what lets a host
+/// mint a feed without touching the network — the deferred-I/O discipline the
+/// engine's start boundary relies on.
 pub struct TxpoolFeed {
     shared: Arc<Shared>,
     ring: DropOldestReceiver,
     stop_tx: watch::Sender<bool>,
+    /// The provisioning config [`Self::start`] consumes to spawn the loop.
+    /// Held (not consumed at build) so provisioning stays dial-free.
+    cfg: TxpoolFeedConfig,
+    /// The one-shot start latch: [`Self::start`] launches the loop exactly
+    /// once.
+    started: AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -154,26 +166,31 @@ fn now_unix_ms() -> u64 {
 
 impl TxpoolFeed {
     /// Spawn the pump on a private, unattached drop-oldest ring (the
-    /// Python-exposed single-feed path). Must be called within a tokio
+    /// Python-exposed single-feed path). The loop starts immediately (this is
+    /// the eager path); a host that defers the dial calls [`Self::build`] then
+    /// [`Self::start`] at its own start boundary. Must be called within a tokio
     /// runtime context, or the crate-global runtime is used.
     #[must_use]
     pub fn spawn(cfg: TxpoolFeedConfig) -> Self {
         let hub = Hub::new();
         let (source, ring) =
             hub.detached_drop_oldest(TXPOOL_DROPPED_RING_METRIC, cfg.ring_capacity);
-        Self::build(cfg, source, ring)
+        let feed = Self::build(cfg, source, ring);
+        feed.start();
+        feed
     }
 
-    /// Shared pump construction over a hub-registered ring's two ends. The
-    /// host registers the class and subscribes the consumer views
+    /// Provision the pump over a hub-registered ring's two ends, spawning
+    /// nothing. The host registers the class and subscribes the consumer views
     /// (`degenbot_rpc::pending_tx_stream` owns that provisioning); the feed
-    /// only owns the pump over the source end.
+    /// only owns the pump over the source end. [`Self::start`] launches the
+    /// reconnect loop later.
     pub(crate) fn build(
         cfg: TxpoolFeedConfig,
         source: DropOldestSender,
         ring: DropOldestReceiver,
     ) -> Self {
-        let (stop_tx, stop_rx) = watch::channel(false);
+        let (stop_tx, _stop_rx) = watch::channel(false);
         let shared = Arc::new(Shared {
             cfg_backoff: (cfg.reconnect_backoff, cfg.max_backoff),
             source,
@@ -185,17 +202,32 @@ impl TxpoolFeed {
             reconnects: AtomicU64::new(0),
             last_event_unix_ms: AtomicU64::new(0),
         });
-        let sh = shared.clone();
+        Self {
+            shared,
+            ring,
+            stop_tx,
+            cfg,
+            started: AtomicBool::new(false),
+        }
+    }
+
+    /// Launch the reconnect loop — the pump's first dial — exactly once. The
+    /// loop's stop receiver is subscribed from the stop channel here, so a
+    /// [`Self::stop`] before or after the start is honored. Spawns on the
+    /// current tokio runtime when one is entered, else the crate-global
+    /// runtime.
+    pub(crate) fn start(&self) {
+        if self.started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let cfg = self.cfg.clone();
+        let sh = Arc::clone(&self.shared);
+        let stop_rx = self.stop_tx.subscribe();
         let fut = async move { run_loop(cfg, sh, stop_rx).await };
         if let Ok(h) = tokio::runtime::Handle::try_current() {
             h.spawn(fut);
         } else {
             degenbot_core::runtime::get_runtime().spawn(fut);
-        }
-        Self {
-            shared,
-            ring,
-            stop_tx,
         }
     }
 

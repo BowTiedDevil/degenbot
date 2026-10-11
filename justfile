@@ -436,8 +436,9 @@ test-python:
 #
 # CI: armed as the python job's "Run Tests" step in .github/workflows/ci.yml
 # (it replaced the bare `just test-python` call; that recipe is untouched). The
-# pre-push hook in prek.toml still calls `just test-python` and can be swapped
-# the same way to arm the tripwire locally.
+# pre-push hook in prek.toml also arms it (`python-test` -> this recipe), so a
+# local push runs the same tripwire; the bare `just test-python` recipe stays
+# for callers that only want the suite's exit code.
 test-python-noise-gate kw="" *args:
     #!/usr/bin/env bash
     set -euo pipefail

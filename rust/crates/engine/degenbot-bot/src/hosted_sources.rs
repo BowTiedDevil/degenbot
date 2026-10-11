@@ -11,6 +11,15 @@
 //! heads, or scrape status; they drain their arm's typed stream and read the
 //! hub's latest head ([`Hub::subscribe_head`] is multi-subscriber).
 //!
+//! # Deferred start
+//!
+//! [`HostedSources::mint`] PROVISIONS (the hub rings, the driver streams, the
+//! dedicated head-watch runtime, the clock and trigger) and dials nothing;
+//! [`HostedSources::start`] launches the live I/O at the engine's start
+//! boundary — each arm's feed pump, the feed-telemetry sampler, and the
+//! head-watch WS connect. A process that mints an engine without resuming
+//! performs ZERO network dials.
+//!
 //! The head edge drives the once-per-head reconciliation through an injected
 //! trigger: this crate cannot depend on `degenbot-submission` (the
 //! composition root owns `HeadReconciliation`), so the boot wires
@@ -95,13 +104,17 @@ pub enum HostedHeadClock {
 
 /// The engine-lifetime pending-tx pumps and head clock.
 ///
-/// Constructed once at the boot ([`Self::mint`]); each arm's driver stream is
-/// handed out once via [`Self::take_stream`]. The boot hands the owner to the
-/// engine, which holds it for its whole life, so [`Drop`] runs when the ENGINE
-/// drops: it stops the pumps' transports, fires the shutdown signal the head
-/// edge and the feed sampler exit on, and tears down the dedicated head-watch
-/// runtime (so its pubsub service + driving task are cancelled). The hub rings
-/// outlive the handles.
+/// Constructed once at the boot ([`Self::mint`]), which PROVISIONS everything
+/// (the hub rings, the driver streams, the dedicated head-watch runtime, the
+/// clock and trigger) but starts nothing and dials nothing. [`Self::start`] —
+/// the engine's start boundary — launches the deferred I/O: each arm's feed
+/// pump, the feed-telemetry sampler, and the head-watch WS connect. Each arm's
+/// driver stream is handed out once via [`Self::take_stream`]. The boot hands
+/// the owner to the engine, which holds it for its whole life, so [`Drop`] runs
+/// when the ENGINE drops: it stops the pumps' transports, fires the shutdown
+/// signal the head edge and the feed sampler exit on, and tears down the
+/// dedicated head-watch runtime (so its pubsub service + driving task are
+/// cancelled). The hub rings outlive the handles.
 pub struct HostedSources {
     hub: Arc<Hub>,
     pumps: Arc<parking_lot::Mutex<Vec<PendingTxPump>>>,
@@ -109,36 +122,52 @@ pub struct HostedSources {
     /// The shutdown signal fired by [`Drop`]: `true` stops the head edge and
     /// the feed sampler (the graceful stop for the plain loops on the shared
     /// runtime; the dedicated runtime teardown is the deterministic cancel).
+    /// [`Self::start`] subscribes the receivers; a never-started owner has
+    /// none, so its drop send is a plain no-op.
     shutdown: watch::Sender<bool>,
     /// Set by the head edge task just before it exits, after it drops its WS
     /// transport. Read through [`Self::head_edge_stopped`]; a test waits on a
     /// clone for the positive half of the clean-shutdown guard.
     head_edge_stopped: Arc<AtomicBool>,
-    /// The head-watch WS transport Arc the boot created, held for the owner's
-    /// life so it is never moved away unaccounted: when [`Drop`] tears the
-    /// dedicated runtime down, no frontend clone keeps the pubsub request
-    /// channel open.
-    head_ws_provider: Option<Arc<dyn Provider<Ethereum>>>,
+    /// The head-watch WS transport Arc [`Self::start`] created, held for the
+    /// owner's life so it is never moved away unaccounted: when [`Drop`] tears
+    /// the dedicated runtime down, no frontend clone keeps the pubsub request
+    /// channel open. `None` until [`Self::start`] connects (a never-started
+    /// owner never dials).
+    head_ws_provider: parking_lot::Mutex<Option<Arc<dyn Provider<Ethereum>>>>,
     /// Dedicated single-worker runtime the head-watch WS transport (and the
     /// alloy pubsub service it spawns) live on — the shared
     /// [`OwnedPubsubRuntime`] discipline (the same type `AnvilFork` uses).
     /// [`Drop`] tears it down, so the pubsub service and the head watch's
     /// driving task are CANCELLED deterministically rather than left to a
     /// contended shared-runtime worker. `Option` so [`Drop`] can pull it out
-    /// and control WHERE it is dropped.
+    /// and control WHERE it is dropped. Built at mint (empty); [`Self::start`]
+    /// is the only thing that spawns onto it.
     pubsub_runtime: Option<OwnedPubsubRuntime>,
+    /// The head clock [`Self::start`] hosts. [`Self::mint`] only stores it: the
+    /// WS connect is the deferred dial, so it happens at the start boundary.
+    clock: parking_lot::Mutex<Option<HostedHeadClock>>,
+    /// The per-head trigger [`Self::start`] hands the head edge.
+    trigger: parking_lot::Mutex<Option<HeadTrigger>>,
+    /// The deferred-I/O latch: [`Self::start`] launches the pumps, the feed
+    /// sampler, and the head edge exactly once.
+    started: AtomicBool,
 }
 
 impl HostedSources {
-    /// Mint the hosted sources: one pump per named arm kind, the head watch,
-    /// the fallback poller, and the telemetry sampler.
+    /// Mint the hosted sources: one pump per named arm kind (provisioned, not
+    /// started), the dedicated head-watch runtime, and the deferred head clock.
     ///
     /// `arms` names every ACTIVE arm's kind; an arm whose kind is absent gets
     /// no pump and no stream (its driver halts at its live-mode gate, the
     /// same refusal a boot with no resolvable feed produced).
     ///
-    /// The head watch subscribes synchronously so a failed subscribe is known
-    /// at boot and the clock falls back to the poller immediately.
+    /// Nothing here dials: the feed pumps and the head-watch WS connect are
+    /// launched by [`Self::start`] at the engine's start boundary, so an
+    /// engine that is constructed and never started performs zero network
+    /// I/O. The rings, the driver streams, the dedicated runtime, and the
+    /// clock are all provisioned here, so `take_stream` and the live-gate
+    /// semantics are unchanged.
     ///
     /// # Panics
     ///
@@ -148,10 +177,9 @@ impl HostedSources {
     ///
     /// # Errors
     ///
-    /// [`HubError`] when a head-source registration or a pump provisioning
-    /// fails — a miswired boot (two mints over one hub) fails closed rather
-    /// than half-hosting.
-    pub async fn mint(
+    /// [`HubError`] when a pump provisioning fails — a miswired boot (two
+    /// mints over one hub) fails closed rather than half-hosting.
+    pub fn mint(
         hub: Arc<Hub>,
         arms: impl IntoIterator<Item = (PendingTxSource, PendingTxFeedConfig)>,
         clock: Option<HostedHeadClock>,
@@ -160,21 +188,22 @@ impl HostedSources {
         let mut pumps = Vec::new();
         let mut streams = Vec::new();
         for (source, cfg) in arms {
-            let (pump, stream) = PendingTxPump::spawn_on_ring(&hub, source, cfg)?;
+            let (pump, stream) = PendingTxPump::provision_on_ring(&hub, source, cfg)?;
             pumps.push(pump);
             streams.push((source, stream));
         }
         let pumps = Arc::new(parking_lot::Mutex::new(pumps));
-        // The one shutdown channel the head edge and the feed sampler select on;
-        // `Drop` fires it (dropping the sender also ends both — the early-return
-        // path below relies on that if the head-watch mint fails).
-        let (shutdown, shutdown_rx) = watch::channel(false);
-        spawn_feed_sampler(Arc::clone(&pumps), shutdown_rx.clone());
+        // The one shutdown channel the head edge and the feed sampler select
+        // on; `Drop` fires it and `start` subscribes the receivers. No receiver
+        // exists until `start`, so a never-started owner's drop send is a plain
+        // no-op.
+        let (shutdown, _shutdown_rx) = watch::channel(false);
         let head_edge_stopped = Arc::new(AtomicBool::new(false));
         // A WS watch is hosted on a DEDICATED single-worker runtime, so the
         // alloy pubsub service it spawns (and the head watch's driving task) are
         // cancellable by tearing that runtime down — the deterministic teardown
-        // `Drop` performs (the shared `OwnedPubsubRuntime` discipline).
+        // `Drop` performs (the shared `OwnedPubsubRuntime` discipline). Built
+        // here (empty); `start` is the only thing that spawns onto it.
         let pubsub_runtime = if matches!(&clock, Some(HostedHeadClock::Watch { .. })) {
             #[expect(
                 clippy::expect_used,
@@ -192,28 +221,62 @@ impl HostedSources {
         } else {
             None
         };
-        let head_ws_provider = if let Some(clock) = clock {
-            spawn_head_task(
-                Arc::clone(&hub),
-                clock,
-                trigger,
-                shutdown_rx,
-                Arc::clone(&head_edge_stopped),
-                pubsub_runtime.as_ref(),
-            )
-            .await?
-        } else {
-            None
-        };
         Ok(Self {
             hub,
             pumps,
             streams,
             shutdown,
             head_edge_stopped,
-            head_ws_provider,
+            head_ws_provider: parking_lot::Mutex::new(None),
             pubsub_runtime,
+            clock: parking_lot::Mutex::new(clock),
+            trigger: parking_lot::Mutex::new(trigger),
+            started: AtomicBool::new(false),
         })
+    }
+
+    /// Launch the deferred hosted I/O — the engine's start boundary.
+    ///
+    /// Exactly once: starts every arm's feed pump (its first dial), spawns the
+    /// feed-telemetry sampler, connects the head-watch WS transport on the
+    /// owned runtime (the second dial), registers the hub head source, and
+    /// spawns the head edge. [`Self::mint`] performed none of this, so an
+    /// engine that is minted and never started dials nothing; a started engine
+    /// behaves exactly as before (a failed WS connect still falls back to the
+    /// poller).
+    ///
+    /// # Errors
+    ///
+    /// [`HubError`] when the hub head-source registration fails — a miswired
+    /// boot fails closed rather than hosting a clock with no source.
+    pub async fn start(&self) -> Result<(), HubError> {
+        if self.started.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+        // 1. Each arm's feed pump: the deferred dial.
+        for pump in self.pumps.lock().iter() {
+            pump.start();
+        }
+        // 2. The one feed-telemetry sampler.
+        spawn_feed_sampler(Arc::clone(&self.pumps), self.shutdown.subscribe());
+        // 3. The head edge: connect the WS transport on the owned runtime,
+        //    register the hub head source, and spawn the edge loop. The clock
+        //    and trigger guards are dropped before the await.
+        let clock = self.clock.lock().take();
+        let trigger = self.trigger.lock().take();
+        if let Some(clock) = clock {
+            let transport = spawn_head_task(
+                Arc::clone(&self.hub),
+                clock,
+                trigger,
+                self.shutdown.subscribe(),
+                Arc::clone(&self.head_edge_stopped),
+                self.pubsub_runtime.as_ref(),
+            )
+            .await?;
+            *self.head_ws_provider.lock() = transport;
+        }
+        Ok(())
     }
 
     /// Hand out one arm's typed stream — once. `None` when no pump was
@@ -259,8 +322,9 @@ impl Drop for HostedSources {
         //    dropped sender ends both actors too.
         let _ = self.shutdown.send(true);
         // 3. Drop the WS transport frontend WHILE the endpoint may still be
-        //    alive, closing the pubsub request channel.
-        self.head_ws_provider.take();
+        //    alive, closing the pubsub request channel. `None` on a
+        //    never-started owner, which never dialed.
+        self.head_ws_provider.lock().take();
         // 4. Tear the dedicated runtime down via the shared `OwnedPubsubRuntime`
         //    discipline — the DETERMINISTIC cancellation: the alloy pubsub
         //    service and the head watch's driving task live on it and are
@@ -648,7 +712,6 @@ mod tests {
             None,
             None,
         )
-        .await
         .expect("both kinds mint without a tombstone");
 
         let mev = hosted
@@ -736,14 +799,16 @@ mod tests {
                 fire_tx.send(head).expect("the recorder lives");
             })
         });
-        let _hosted = HostedSources::mint(
+        let hosted = HostedSources::mint(
             Arc::clone(&hub),
             [],
             Some(HostedHeadClock::Hub),
             Some(trigger),
         )
-        .await
         .expect("the hub clock mints");
+        // The head edge is deferred: it must be started before it observes a
+        // head (mint alone spawns nothing).
+        hosted.start().await.expect("the hub clock starts");
 
         let sender = hub.head_sender().expect("the head source is registered");
         sender.publish(HubEvent::NewHead {
@@ -757,17 +822,21 @@ mod tests {
         assert_eq!(fired, 42, "the trigger carries the observed head");
     }
 
-    /// One head registration per process: a second mint reuses the hosted
-    /// head source instead of colliding with it.
+    /// One head registration per process: a second started mint reuses the
+    /// hosted head source instead of colliding with it. The registration is
+    /// deferred to `start`, so both owners must start before the source exists.
     #[tokio::test]
     async fn a_second_mint_reuses_the_head_source() {
         let hub = Arc::new(Hub::new());
-        let _first = HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
-            .await
+        let first = HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
             .expect("first mint");
-        let _second = HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
-            .await
+        first.start().await.expect("first start");
+        let second = HostedSources::mint(Arc::clone(&hub), [], Some(HostedHeadClock::Hub), None)
             .expect("second mint reuses the head source");
+        second
+            .start()
+            .await
+            .expect("second start reuses the head source");
         assert!(hub.head_sender().is_ok(), "exactly one head source");
     }
 
@@ -835,13 +904,156 @@ mod tests {
         )
     }
 
+    /// A connection-recording listener: a blocking `std::net::TcpListener` on
+    /// an ephemeral loopback port plus a thread that accepts and counts. A
+    /// dial that reaches the port increments the counter, so a test can assert
+    /// the counter stayed zero (no dial) or grew (a dial landed). `std`, not
+    /// `tokio::net`, so the probe does not depend on a tokio `net` feature.
+    fn counting_listener() -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicU64>) {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral loopback port");
+        let addr = listener.local_addr().expect("the bound loopback address");
+        let accepted = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = Arc::clone(&accepted);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if stream.is_err() {
+                    break;
+                }
+                counter.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        (addr, accepted)
+    }
+
+    /// The dial-free construction probe: minting with a `Watch` clock AND a
+    /// feed arm performs zero connection attempts. Both the head watch and the
+    /// feed point at a live listener that counts acceptances, so a dial at mint
+    /// would land here — the test is red if either one connects before start.
+    #[tokio::test]
+    async fn minting_performs_zero_connection_attempts() {
+        let (addr, accepted) = counting_listener();
+        let hub = Arc::new(Hub::new());
+        let hosted = HostedSources::mint(
+            Arc::clone(&hub),
+            [(
+                PendingTxSource::Mevblocker,
+                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
+                    url: format!("ws://{addr}"),
+                    ..BackrunFeedConfig::for_mainnet()
+                }),
+            )],
+            Some(HostedHeadClock::Watch {
+                ws_url: format!("ws://{addr}"),
+                provider: dead_loopback_poll_provider().await,
+            }),
+            None,
+        )
+        .expect("the watch clock and the feed arm mint");
+
+        // A window long enough for any (wrong) dial to land.
+        tokio::time::sleep(Duration::from_millis(750)).await;
+        assert_eq!(
+            accepted.load(Ordering::Relaxed),
+            0,
+            "mint must perform zero connection attempts"
+        );
+        drop(hosted);
+    }
+
+    /// The deferred dials launch at the start boundary: after `start`, the
+    /// head-watch WS connect and the feed pump both reach the listener.
+    #[tokio::test]
+    async fn starting_performs_the_deferred_dials() {
+        let (addr, accepted) = counting_listener();
+        let hub = Arc::new(Hub::new());
+        let hosted = HostedSources::mint(
+            Arc::clone(&hub),
+            [(
+                PendingTxSource::Mevblocker,
+                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
+                    url: format!("ws://{addr}"),
+                    ..BackrunFeedConfig::for_mainnet()
+                }),
+            )],
+            Some(HostedHeadClock::Watch {
+                ws_url: format!("ws://{addr}"),
+                provider: dead_loopback_poll_provider().await,
+            }),
+            None,
+        )
+        .expect("the watch clock and the feed arm mint");
+        assert_eq!(
+            accepted.load(Ordering::Relaxed),
+            0,
+            "no dial before the start boundary"
+        );
+
+        hosted.start().await.expect("the deferred I/O starts");
+
+        for _ in 0..500 {
+            if accepted.load(Ordering::Relaxed) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            accepted.load(Ordering::Relaxed) >= 2,
+            "start must dial both the head watch and the feed pump"
+        );
+        drop(hosted);
+    }
+
+    /// Dropping a never-started owner is clean: nothing dialed, no actor ever
+    /// ran on the owned runtime, and the head edge's completion flag never
+    /// flips (there was no edge to stop).
+    #[tokio::test]
+    async fn dropping_a_never_started_owner_tears_down_cleanly() {
+        let (addr, accepted) = counting_listener();
+        let hub = Arc::new(Hub::new());
+        let hosted = HostedSources::mint(
+            Arc::clone(&hub),
+            [(
+                PendingTxSource::Mevblocker,
+                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
+                    url: format!("ws://{addr}"),
+                    ..BackrunFeedConfig::for_mainnet()
+                }),
+            )],
+            Some(HostedHeadClock::Watch {
+                ws_url: format!("ws://{addr}"),
+                provider: dead_loopback_poll_provider().await,
+            }),
+            None,
+        )
+        .expect("the watch clock and the feed arm mint");
+        let stopped = hosted.head_edge_stopped();
+
+        drop(hosted);
+
+        // The owned runtime dropped empty: no pump, sampler, or head edge ever
+        // spawned, so nothing dials after the drop either.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(
+            accepted.load(Ordering::Relaxed),
+            0,
+            "a never-started owner must dial nothing, before or after its drop"
+        );
+        assert!(
+            !stopped.load(Ordering::Relaxed),
+            "the head edge never ran, so its completion flag must not flip"
+        );
+    }
+
     /// Dropping the owner stops the head edge: the edge's completion flag
     /// flips, proving the clean-shutdown path ran (the edge dropped its WS
     /// transport and recorded the fact) rather than merely being unscheduled.
     ///
     /// The WS endpoint is the suite's dead loopback: the WS connect fails at
-    /// mint, the watch falls back to the poller, and the guard asserts the
+    /// start, the watch falls back to the poller, and the guard asserts the
     /// shutdown path itself — the dead endpoint is never required to connect.
+    /// The head edge is deferred to `start`, so the guard starts the owner
+    /// before it drops it.
     #[tokio::test]
     async fn dropping_the_owner_stops_the_head_edge() {
         let hub = Arc::new(Hub::new());
@@ -854,8 +1066,11 @@ mod tests {
             }),
             None,
         )
-        .await
         .expect("the watch clock mints (the dead WS falls back to the poller)");
+        hosted
+            .start()
+            .await
+            .expect("the deferred head edge starts (the dead WS falls back to the poller)");
 
         let stopped = hosted.head_edge_stopped();
         assert!(
@@ -898,8 +1113,11 @@ mod tests {
             }),
             None,
         )
-        .await
         .expect("the watch clock mints (the dead WS falls back to the poller)");
+        hosted
+            .start()
+            .await
+            .expect("the deferred head edge starts (the dead WS falls back to the poller)");
         let stopped = hosted.head_edge_stopped();
         capture::clear();
         drop(hosted);

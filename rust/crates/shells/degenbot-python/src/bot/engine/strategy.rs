@@ -480,14 +480,17 @@ fn boot_hosted_arms(
     // lock guard is alive while the factory argument evaluates, so a
     // nested `host.lock()` there would deadlock the non-reentrant mutex.
     let hub = Arc::clone(host.lock().hub());
-    let mut hosted = degenbot_core::runtime::get_runtime()
-        .block_on(degenbot_bot::hosted_sources::HostedSources::mint(
-            Arc::clone(&hub),
-            arms,
-            clock,
-            head_trigger,
-        ))
-        .expect("a fresh hub hosts the process sources");
+    // Provisioning is dial-free: `mint` registers the rings, builds the
+    // dedicated runtime, and stores the clock, but starts nothing. The
+    // deferred I/O launches at the engine's start boundary (`resume`), so an
+    // engine constructed and never resumed performs zero network dials.
+    let mut hosted = degenbot_bot::hosted_sources::HostedSources::mint(
+        Arc::clone(&hub),
+        arms,
+        clock,
+        head_trigger,
+    )
+    .expect("a fresh hub hosts the process sources");
     for (id, ecosystem, lane, _boot) in arm_boots {
         let kind = match ecosystem {
             BackrunEcosystem::Mevblocker => PendingTxSource::Mevblocker,
@@ -537,6 +540,32 @@ impl PyArbEngine {
         let count = tasks.len();
         self.supervisor.supervise(tasks);
         Ok(count)
+    }
+
+    /// Launch the engine's deferred hosted I/O — the START boundary.
+    ///
+    /// [`degenbot_bot::hosted_sources::HostedSources::mint`] provisions the
+    /// pumps, the dedicated head-watch runtime, and the head clock but dials
+    /// nothing; this is the only place their live I/O starts. The head-watch
+    /// WS connect and each active arm's feed pump are launched here, so an
+    /// engine that is constructed and never resumed performs zero network
+    /// dials. The GIL is released across the start so a slow WS connect never
+    /// parks the interpreter.
+    ///
+    /// # Errors
+    ///
+    /// `RuntimeError` when the hosted head source cannot be registered — a
+    /// miswired boot fails closed rather than driving a clockless fleet.
+    pub(crate) fn start_hosted_sources(&self, py: Python<'_>) -> PyResult<()> {
+        let Some(hosted) = self.hosted.as_ref() else {
+            return Ok(());
+        };
+        py.detach(|| degenbot_core::runtime::get_runtime().block_on(hosted.start()))
+            .map_err(|error| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "hosted sources failed to start: {error}"
+                ))
+            })
     }
 
     /// Enable each named facet through the host's admission gate.

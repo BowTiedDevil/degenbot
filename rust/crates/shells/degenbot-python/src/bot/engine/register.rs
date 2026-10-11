@@ -296,6 +296,11 @@ impl PyArbEngine {
         self.enable_facets(py, &facets)?;
         py.detach(|| degenbot_bot::bot_core::Bot::resume(&self.driver))
             .map_err(map_driver_err)?;
+        // The start boundary for the deferred hosted I/O: the head-watch WS
+        // connect and each active arm's feed pump launch here, BEFORE the
+        // drivers, because each driver's loop subscribes the hub head source
+        // the head edge registers as it starts. Construction dials nothing.
+        self.start_hosted_sources(py)?;
         self.start_hosted_strategies()
             .map_err(super::strategy::map_host_error)?;
         Ok(())
