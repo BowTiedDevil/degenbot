@@ -1,0 +1,93 @@
+# Config-derived-static census — the ratchet for process-once statics whose
+# initialization path reads the config holder.
+#
+# Holder: rust/crates/foundation/degenbot-config/src/holder.rs
+#   (`install`/`config`/`config_arc`; the `reinstall_for_tests` seam).
+#
+# Gate body: rust/crates/facade/degenbot/tests/architecture_gates.rs::
+#   config_derived_statics_are_classified
+# Recipe:    just check-config-derived-statics
+# Wiring:    a dependency of `lint-rust-check` (so `just lint`, the pre-push
+#            `rust-clippy` hook, and CI all run it) plus the pre-push
+#            `rust-config-derived-statics` hook.
+#
+# WHY THIS EXISTS
+# Chunk SERRGX made the config-holder test seam safe by auditing every
+# process-once static derived from the holder. That audit is a SNAPSHOT in
+# docs/ergo-results/serrgx-result.md; the next OnceLock initialized from the
+# holder lands silently stale-able — the exact bug class the seam fixed. This
+# census makes the audit durable.
+#
+# WHAT THE DETECTOR SEES
+# A `static NAME: OnceLock|LazyLock|OnceCell|Once<...> = <init>;` item is a
+# candidate; it is a HIT when the text of its initialization path reads a
+# config-holder accessor. The initialization path is the declaration's own
+# `= <init>;` PLUS the argument of every name-associated
+# `NAME.get_or_init(..)` / `NAME.set(..)` / `NAME.lazy(..)` call in the same
+# file (this is how a `OnceLock::new()` declaration whose `get_or_init`
+# closure reads the holder is caught). Accessor spellings:
+#   holder::config( | holder::config_arc(  — every direct path
+#   stance::config(                        — the degenbot-substrate delegate
+#                                            that forwards to holder::config()
+#                                            (ONE transitive hop, deliberately
+#                                            followed)
+# Strings and comments are masked before scanning, so a holder mention in a
+# doc comment cannot forge a hit; `#[cfg(test)]` items and `tests/`,
+# `benches/`, `examples/` files are skipped (test-only statics are not
+# production process-once state).
+#
+# CLASSES
+#   per-read         re-reads the holder on each use (not actually frozen)
+#   republishable    refreshed by the test seam (leak-on-publish slot)
+#   process-lifetime frozen at first init by design; the seam deliberately
+#                    does NOT re-size/re-read it (the same boundary the io
+#                    runtime has always had). A reinstall leaves it as-is;
+#                    this is accepted, not a bug.
+#
+# FORMAT
+#   <repo-relative-path>:<STATIC_NAME>  <class>  — <one-line justification>
+# One entry per detected hit. The gate is BIDIRECTIONAL: an unlisted hit FAILS
+# (a new stale-able static landed) and a listed-but-absent hit FAILS (a stale
+# census entry — shrink it in the same change).
+#
+# ---- Detected hits (the census proper) ----
+
+rust/crates/foundation/degenbot-core/src/cpu_budget.rs:SOLVE_WORKERS  process-lifetime  — solve worker count frozen at boot from the cgroup/affinity budget + `solve.solve_cpus`/`solve.solve_headroom`; the seam does not re-size the solve pool.
+rust/crates/foundation/degenbot-core/src/cpu_budget.rs:AMBIENT_WORKERS  process-lifetime  — ambient io worker count frozen at boot from `runtime.io_workers` + the leftover budget; sized once with the io runtime, never re-sized.
+rust/crates/foundation/degenbot-substrate/src/state_lock.rs:THRESHOLD_INIT  process-lifetime  — read-hold warn threshold resolved once from `state_lock.warn_ms` (via `stance::config()`) on first consultation; later installs do not re-resolve it.
+rust/crates/foundation/degenbot-substrate/src/state_lock.rs:TRACE_BACKTRACES  process-lifetime  — backtrace-capture flag resolved once from `state_lock.trace` (via `stance::config()`) on first use.
+rust/crates/foundation/degenbot-substrate/src/state_lock.rs:DIAG_INIT  process-lifetime  — diagnostics flag resolved once from `state_lock.diag` (via `stance::config()`) on first use.
+rust/crates/shells/degenbot-python/src/python_log_layer.rs:INIT_DONE  process-lifetime  — boot-once logging-subscriber wiring; its `get_or_init` closure reads `telemetry.otel`/`telemetry.metrics_addr` once and (inside) sets the process-lifetime OTEL_PROVIDER / GLOBAL_LAYER_STATE slots.
+rust/crates/shells/degenbot-python/src/simulation/inline_hook.rs:PERMYRIAD  process-lifetime  — verify spotcheck permyriad (`verify.verify_spotcheck_permyriad`) cached once at the first armed probe.
+
+# ---- Documented blind spots (deliberately NOT detected; no entry required) ----
+#
+# This is a lexical DIRECT-SCAN. Per the task brief, a simple direct-scan with
+# a stated blind spot is preferred over fragile call-graph cleverness. It does
+# NOT follow:
+#
+#   * transitive init through helper fns — the canonical example is
+#     degenbot-core/src/runtime.rs::RUNTIME (`OnceLock<Runtime>`), whose
+#     `get_or_init` calls `build_runtime()` ->
+#     `cpu_budget::ambient_io_worker_count()` -> the holder. This IS a real
+#     config-derived process-once static (class: process-lifetime — the ambient
+#     io runtime is sized once and the seam never re-sizes it, exactly like
+#     AMBIENT_WORKERS above), but no holder token appears in its own
+#     initializer text, so the direct scan cannot see it.
+#
+#   * non-OnceLock derived slots whose shape is a leak-on-publish
+#     `RwLock<Option<&'static T>>` rather than a once-guard. These are the
+#     SERRGX-audited shell slots; they are already republishable (the seam
+#     fixes them), so the once-guard shape does not apply:
+#       degenbot-python/src/config.rs:LOADED   republishable   (republish_loaded)
+#       degenbot-python/src/config.rs:VERDICT  republishable   (rebuilt on republish)
+#       degenbot-config/src/holder.rs:DEFAULT  process-lifetime (schema-default
+#                                              fallback, built once on first read;
+#                                              held apart from CFG so a read
+#                                              never makes `installed` report a boot)
+#
+#   * a holder read performed in the ENCLOSING function of a `.set(..)` call
+#     rather than inside its argument. The telemetry wiring reads holder fields
+#     to DECIDE whether to set OTEL_PROVIDER/GLOBAL_LAYER_STATE; those reads sit
+#     in INIT_DONE's `get_or_init` closure, which IS caught (see the INIT_DONE
+#     entry), so the wiring is ratcheted through its guard.

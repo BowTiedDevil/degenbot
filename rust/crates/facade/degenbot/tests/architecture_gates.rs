@@ -1586,3 +1586,268 @@ fn no_timeout_wrapped_value_sends_or_write_all() {
         "a timeout may not wrap a data-carrying send or a non-resumable write (RFD 400 select-loops case study; see the note on this gate): {violations:?}"
     );
 }
+
+/// Config-holder accessor spellings a static initializer may read.
+///
+/// `holder::config(` / `holder::config_arc(` match every DIRECT path
+/// (`::degenbot_config::holder::config(`, `degenbot_config::holder::config_arc(`,
+/// or a `use degenbot_config::holder;` alias). `stance::config(` is the
+/// degenbot-substrate delegate that forwards to `holder::config()` — the ONE
+/// transitive accessor deliberately followed (documented in the census).
+const CONFIG_HOLDER_READ_TOKENS: [&str; 3] =
+    ["holder::config(", "holder::config_arc(", "stance::config("];
+
+/// Process-once guard type names. A `static` declared with one of these is a
+/// candidate; only the ones whose initialization path reads the holder are hits.
+const PROCESS_ONCE_GUARD_TYPES: [&str; 4] = ["OnceLock", "LazyLock", "OnceCell", "Once"];
+
+/// One candidate `static` item: its name, its 1-based declaration line, and the
+/// concatenated text of every initializer reachable by name in its file — the
+/// declaration's own `= <init>;` plus the argument of any
+/// `<name>.get_or_init(..)` / `.set(..)` / `.lazy(..)` call.
+struct StaticCandidate {
+    name: String,
+    line: usize,
+    init: String,
+}
+
+/// The first index at or after `from` where `needle` appears at top-level
+/// nesting (outside any `()`/`[]`/`{}`). `masked` must already be
+/// string/comment-blanked (see [`mask_strings_and_comments`]) so no literal can
+/// forge a delimiter.
+fn top_level_byte(masked: &str, from: usize, needle: u8) -> Option<usize> {
+    let bytes = masked.as_bytes();
+    let mut depth = 0_i64;
+    let mut i = from;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            byte if byte == needle && depth == 0 => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Advance `j` past ASCII whitespace.
+fn skip_ws(bytes: &[u8], mut j: usize) -> usize {
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    j
+}
+
+/// Every `static NAME: <once-guard-type> = <init>;` candidate in `masked`, with
+/// the name-associated initializer text gathered as described on
+/// [`StaticCandidate`].
+fn process_once_static_candidates(masked: &str) -> Vec<StaticCandidate> {
+    let bytes = masked.as_bytes();
+    let needle = b"static";
+    let mut candidates = Vec::new();
+    let mut i = 0;
+    while i + needle.len() <= bytes.len() {
+        if &bytes[i..i + needle.len()] != needle {
+            i += 1;
+            continue;
+        }
+        // `&'static` is a lifetime reference, not a static item, and the
+        // keyword must not be the tail of a longer identifier.
+        if i > 0 && (is_ident_byte(bytes[i - 1]) || bytes[i - 1] == b'\'') {
+            i += needle.len();
+            continue;
+        }
+        let mut j = skip_ws(bytes, i + needle.len());
+        // `static mut NAME` — skip the mutability keyword.
+        if masked[j..].starts_with("mut")
+            && !bytes.get(j + 3).is_some_and(|byte| is_ident_byte(*byte))
+        {
+            j = skip_ws(bytes, j + 3);
+        }
+        let name_start = j;
+        while j < bytes.len() && is_ident_byte(bytes[j]) {
+            j += 1;
+        }
+        if name_start == j {
+            i += needle.len();
+            continue;
+        }
+        let name = masked[name_start..j].to_owned();
+        j = skip_ws(bytes, j);
+        if bytes.get(j) != Some(&b':') {
+            i += needle.len();
+            continue;
+        }
+        let colon = j;
+        let Some(eq) = top_level_byte(masked, colon + 1, b'=') else {
+            i += needle.len();
+            continue;
+        };
+        let type_text = &masked[colon + 1..eq];
+        if !PROCESS_ONCE_GUARD_TYPES
+            .iter()
+            .any(|guard| type_text.contains(guard))
+        {
+            i += needle.len();
+            continue;
+        }
+
+        let mut init = String::new();
+        let decl_end = top_level_byte(masked, eq + 1, b';').unwrap_or(bytes.len());
+        init.push_str(&masked[eq + 1..decl_end]);
+        for call in ["get_or_init(", "set(", "lazy("] {
+            let mut k = 0;
+            while let Some(rel) = masked[k..].find(&name) {
+                let at = k + rel;
+                k = at + name.len();
+                // `name` must be a whole identifier, not a prefix/suffix of a
+                // longer one, and the method call may be split across lines
+                // (`NAME\n    .get_or_init(..)`), so whitespace around the
+                // `.` is allowed.
+                if at > 0 && is_ident_byte(bytes[at - 1]) {
+                    continue;
+                }
+                let after = at + name.len();
+                if bytes.get(after).is_some_and(|byte| is_ident_byte(*byte)) {
+                    continue;
+                }
+                let dot = skip_ws(bytes, after);
+                if bytes.get(dot) != Some(&b'.') {
+                    continue;
+                }
+                let call_start = skip_ws(bytes, dot + 1);
+                if !masked[call_start..].starts_with(call) {
+                    continue;
+                }
+                let open = call_start + call.len() - 1;
+                if let Some(close) = matching_paren(bytes, open) {
+                    init.push('\n');
+                    init.push_str(&masked[open + 1..close]);
+                    k = close + 1;
+                }
+            }
+        }
+
+        let line = masked[..i].matches('\n').count() + 1;
+        candidates.push(StaticCandidate { name, line, init });
+        i += needle.len();
+    }
+    candidates
+}
+
+/// Ratchet for the config-holder test seam (chunk SERRGX): every process-once
+/// static whose initialization path reads the config holder must be classified
+/// in `tests/config_derived_statics_census.txt`.
+///
+/// The SERRGX call-site audit made the seam safe but lives only in a result
+/// doc — a SNAPSHOT, not a ratchet. A `OnceLock`/`LazyLock` initialized from
+/// the holder freezes a snapshot; a `reinstall_for_tests` leaves it
+/// stale-able. This gate makes the audit durable: a NEW config-derived
+/// process-once static fails until it is classified (per-read | republishable |
+/// process-lifetime) with a justification.
+///
+/// KNOWN LIMIT, stated rather than papered over: this is a lexical DIRECT-SCAN.
+/// It follows the direct holder accessors plus the one `stance::config()`
+/// delegate hop, and the name-associated `get_or_init`/`set`/`lazy` argument,
+/// but it does NOT follow a helper fn (e.g. `runtime::RUNTIME` ->
+/// `build_runtime()` -> `ambient_io_worker_count()`) nor the leak-on-publish
+/// `RwLock` slots. The census records those blind spots by name. It is a
+/// tripwire for the reintroduction of the direct form, not a proof of absence
+/// for the whole class.
+#[test]
+fn config_derived_statics_are_classified() {
+    use std::collections::BTreeMap;
+
+    let census_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/config_derived_statics_census.txt");
+    let census_text = std::fs::read_to_string(&census_path)
+        .unwrap_or_else(|err| panic!("read census {}: {err}", census_path.display()));
+    let mut census: BTreeMap<String, String> = BTreeMap::new();
+    for (index, raw) in census_text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let key = fields.next().unwrap_or_default().to_owned();
+        let class = fields.next().unwrap_or_default();
+        assert!(
+            key.contains(':'),
+            "census {}:{}: key {key:?} must be `<repo-relative-path>:<STATIC_NAME>`",
+            census_path.display(),
+            index + 1
+        );
+        assert!(
+            matches!(class, "per-read" | "republishable" | "process-lifetime"),
+            "census {}:{}: class {class:?} must be one of per-read | republishable | process-lifetime",
+            census_path.display(),
+            index + 1
+        );
+        census.insert(key, class.to_owned());
+    }
+
+    let root = repo_root();
+    let crates_root = workspace_root().join("crates");
+    let mut hits: BTreeMap<String, usize> = BTreeMap::new();
+    for_each_rust_source(&crates_root, &mut |path, text| {
+        let clean = path.display().to_string().replace('\\', "/");
+        // Production source only: a test, bench, or example may legitimately
+        // hold a test-scoped once-static.
+        if clean.contains("/tests/") || clean.contains("/benches/") || clean.contains("/examples/")
+        {
+            return;
+        }
+        let rel = path
+            .strip_prefix(&root)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+            .replace('\\', "/");
+        let masked = mask_strings_and_comments(text);
+        let test_regions = cfg_test_regions(text);
+        for candidate in process_once_static_candidates(&masked) {
+            if test_regions
+                .iter()
+                .any(|(start, end)| candidate.line >= *start && candidate.line < *end)
+            {
+                continue;
+            }
+            if CONFIG_HOLDER_READ_TOKENS
+                .iter()
+                .any(|token| candidate.init.contains(token))
+            {
+                hits.insert(format!("{rel}:{}", candidate.name), candidate.line);
+            }
+        }
+    });
+
+    let unclassified: Vec<String> = hits
+        .keys()
+        .filter(|key| !census.contains_key(*key))
+        .cloned()
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "config-derived process-once static(s) not classified in {}:\n  {}\n\
+         A process-once static initialized from the config holder freezes a \
+         snapshot, so a `reinstall_for_tests` leaves it stale-able. Classify it \
+         (per-read | republishable | process-lifetime) with a one-line \
+         justification, or stop deriving it from the holder.",
+        census_path.display(),
+        unclassified.join("\n  ")
+    );
+
+    let stale: Vec<String> = census
+        .keys()
+        .filter(|key| !hits.contains_key(*key))
+        .cloned()
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "stale config-derived-static census entr(ies) in {} (no matching hit; \
+         shrink the census in the same change):\n  {}",
+        census_path.display(),
+        stale.join("\n  ")
+    );
+}

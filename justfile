@@ -212,7 +212,7 @@ publish-dry-run:
 # variants cannot hide a default regression; it runs the architecture subset
 # first, matching CI exactly, and never edits the tree.
 # Run the non-mutating Rust Clippy check (CI-identical gate).
-lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity
+lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics
     cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Default Rust lint lane: a CI-identical, non-mutating alias of
@@ -323,6 +323,22 @@ check-engine-impl-blocks:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- one_engine_impl_block --exact --nocapture
+
+
+# Structural ratchet for the config-holder test seam (chunk SERRGX): every
+# process-once static (`OnceLock`/`LazyLock`/`OnceCell`/`Once`) whose
+# initialization path reads `degenbot_config::holder::config()`/`config_arc()`
+# (or the substrate `stance::config()` delegate) must be classified in
+# rust/crates/facade/degenbot/tests/config_derived_statics_census.txt as
+# per-read | republishable | process-lifetime. The SERRGX call-site audit is a
+# snapshot in a result doc; this gate makes it durable, so the next
+# holder-derived once-static cannot land silently stale-able. Wired into
+# `lint-rust-check` (hence `just lint` / CI / the pre-push `rust-clippy` hook)
+# plus the pre-push `rust-config-derived-statics` hook.
+check-config-derived-statics:
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- config_derived_statics_are_classified --exact --nocapture
 
 # Build Rust extension module in the release-equivalent feature set. This uses
 # the workspace development profile (opt-level = 1, no LTO or stripping) for

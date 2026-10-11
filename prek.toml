@@ -173,6 +173,13 @@ hooks = [
   { id = "rust-no-pyo3", name = "Rust no-pyo3 cores", language = "system", entry = "just check-no-pyo3-in-cores",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "rust-engine-impl-blocks", name = "Rust engine impl-block gate", language = "system", entry = "just check-engine-impl-blocks", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
+  # Config-derived-static ratchet (chunk SERRGX): a process-once static
+  # initialized from the config holder must be classified in the census, so a
+  # new one cannot land silently stale-able. A whole-tree cargo-test invariant
+  # with no per-file slice, so it lives at pre-push with the other compiled
+  # architecture gates (and in `lint-rust-check`, hence `just lint` / CI).
+  { id = "rust-config-derived-statics", name = "Rust config-derived-static gate", language = "system", entry = "just check-config-derived-statics", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+
   # Rust track (mirrors ci.yml: rust-build, rust-test).
   { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "rust-test",  name = "Rust tests", language = "system", entry = "just test-rust",             stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
