@@ -138,7 +138,14 @@ rusqlite = { version = "^0.40", features = ["bundled"] }
 
 # `start_paused` runtime for the early-slice gap-stream tests
 # (virtual-time determinism). Version pinned to the normal dep's spec above.
-tokio = { version = "^1.53", features = ["test-util"] }
+tokio = { version = "^1.53", features = ["test-util", "net"] }
+# Minimal WS test server for the non-vacuous storm guard (hosted_sources.rs):
+# it completes the handshake then closes, so the head-watch connect SUCCEEDS and
+# its alloy pubsub service spawns -- the only way the reconnect-storm teardown
+# guard can observe a storm to cancel. Version tracks the graph
+# (alloy-transport-ws / degenbot-rpc pull 0.30); only the server handshake is
+# needed here.
+tokio-tungstenite = { version = "^0.30", default-features = false, features = ["handshake"] }
 proptest = "^1.11"
 # Test-only constructors (e.g. AlloyProvider::from_provider) used by the
 # bot_core block-pump tests.

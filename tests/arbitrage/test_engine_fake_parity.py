@@ -34,8 +34,9 @@ _STUB = _REPO_ROOT / "src/degenbot/_ffi/__init__.pyi"
 
 
 @pytest.fixture(autouse=True)
-def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    rpc_env(monkeypatch)
+def _rpc_env():
+    with rpc_env():
+        yield
 
 
 def _cfg() -> ArbitrageConfig:

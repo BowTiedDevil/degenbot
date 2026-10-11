@@ -19,8 +19,9 @@ _V3_ADDRESS = "0x" + "11" * 20
 
 
 @pytest.fixture(autouse=True)
-def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    rpc_env(monkeypatch)
+def _rpc_env():
+    with rpc_env():
+        yield
 
 
 def _engine() -> ArbitrageEngine:

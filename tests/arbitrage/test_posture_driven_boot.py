@@ -22,8 +22,9 @@ from tests.helpers.rpc_env import rpc_env
 
 
 @pytest.fixture(autouse=True)
-def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    rpc_env(monkeypatch)
+def _rpc_env():
+    with rpc_env():
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -39,13 +40,11 @@ def _runner(
     readiness=None,
     settlement_endpoints=None,
 ) -> BotRunner:
-    with identity_env(
-        {
-            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-            "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-        }
-    ):
+    with identity_env({
+        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+        "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
+        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+    }):
         cfg = ArbitrageConfig.build(live=True, permutation=None)
     return boot_runner(
         cfg,
@@ -94,7 +93,9 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
     assert session.engine_registry.engine.resume_facets == expected_facets, (
         "resume() must receive the active hosted arms"
     )
-    records = dict((name, state) for name, state, _halt in session.engine_registry.engine.strategies())
+    records = dict(
+        (name, state) for name, state, _halt in session.engine_registry.engine.strategies()
+    )
     active_facets = set(expected_facets)
     for facet in ("mevblocker_backrun", "txpool_backrun"):
         assert records[facet] == ("enabled" if facet in active_facets else "registered"), (
@@ -121,6 +122,8 @@ async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
     assert session.engine_registry.engine.resume_facets == [], (
         "a settlement-active boot must not host backrun lanes"
     )
-    records = dict((name, state) for name, state, _halt in session.engine_registry.engine.strategies())
+    records = dict(
+        (name, state) for name, state, _halt in session.engine_registry.engine.strategies()
+    )
     assert records["mevblocker_backrun"] == "registered"
     assert records["txpool_backrun"] == "registered"

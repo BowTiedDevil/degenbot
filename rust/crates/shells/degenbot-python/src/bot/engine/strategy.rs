@@ -556,6 +556,15 @@ impl PyArbEngine {
     ///
     /// `RuntimeError` when the hosted head source cannot be registered — a
     /// miswired boot fails closed rather than driving a clockless fleet.
+    ///
+    /// # Half-failure contract
+    ///
+    /// `HostedSources::start` consumes its deferred-I/O latch BEFORE launching
+    /// anything, so a failure here is terminal: the engine is left
+    /// HALF-STARTED (fail-closed) and a retry would be a no-op. The caller
+    /// MUST drop the engine on this error — dropping it stops the pumps and
+    /// tears the dedicated head-watch runtime down. There is no retry path by
+    /// design.
     pub(crate) fn start_hosted_sources(&self, py: Python<'_>) -> PyResult<()> {
         let Some(hosted) = self.hosted.as_ref() else {
             return Ok(());

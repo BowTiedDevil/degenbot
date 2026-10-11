@@ -249,6 +249,18 @@ impl HostedSources {
     ///
     /// [`HubError`] when the hub head-source registration fails — a miswired
     /// boot fails closed rather than hosting a clock with no source.
+    ///
+    /// # Half-failure contract
+    ///
+    /// The deferred-I/O latch is consumed BEFORE any pump launches, so a
+    /// `start` that returns an error is NOT retryable: a second call is a
+    /// no-op (the latch is already taken) and cannot re-attempt the failed
+    /// registration. When the head-source registration fails AFTER the pumps
+    /// launched, the owner is left HALF-STARTED — the pumps are live but the
+    /// clock has no source. The boot is fail-closed: the caller MUST drop the
+    /// engine (which drops this owner, stopping the pumps and tearing the
+    /// dedicated head-watch runtime down). There is deliberately no retry
+    /// path.
     pub async fn start(&self) -> Result<(), HubError> {
         if self.started.swap(true, Ordering::SeqCst) {
             return Ok(());
@@ -690,6 +702,9 @@ mod tests {
     use super::*;
     use degenbot_rpc::backrun_feed::BackrunFeedConfig;
     use degenbot_rpc::txpool_feed::TxpoolFeedConfig;
+    use futures_util::SinkExt as _;
+    use futures_util::StreamExt as _;
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
 
     /// Both arms' kinds mint on ONE hub, and each arm's stream is handed out
     /// exactly its own feed's frames: no second-arm tombstone, per-kind
@@ -909,7 +924,7 @@ mod tests {
     /// dial that reaches the port increments the counter, so a test can assert
     /// the counter stayed zero (no dial) or grew (a dial landed). `std`, not
     /// `tokio::net`, so the probe does not depend on a tokio `net` feature.
-    fn counting_listener() -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicU64>) {
+    pub(crate) fn counting_listener() -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicU64>) {
         let listener =
             std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral loopback port");
         let addr = listener.local_addr().expect("the bound loopback address");
@@ -924,6 +939,105 @@ mod tests {
             }
         });
         (addr, accepted)
+    }
+
+    /// A minimal WS server that serves the head watch's INITIAL connect
+    /// (handshake + `eth_subscribe` reply) and then FAILS every later
+    /// connection, so the alloy pubsub service spawns, the watch goes live, and
+    /// the backend death drives the service's reconnect loop (the storm). This is
+    /// the non-vacuous counterpart to [`counting_listener`]: a dead endpoint
+    /// (`ws://127.0.0.1:9`) fails the eager connect BEFORE the service spawns
+    /// (`alloy-pubsub service.rs`: `connector.connect()?` runs before
+    /// `this.spawn()`), so no service -- and no storm -- can exist to observe.
+    ///
+    /// The accepted-connection COUNT is the observable. The first connection
+    /// completes the handshake and answers the `eth_subscribe` (so
+    /// `HeadWatch::subscribe` resolves and the watch goes live); every later
+    /// connection is accepted then dropped WITHOUT a handshake, so the service's
+    /// reconnect attempt errors and it stays in `reconnect_with_retries` (never
+    /// returning to the request-channel `select!` arm). Counting accepts is
+    /// independent of the best-effort global tracing subscriber (see the sibling
+    /// `dropping_the_owner_leaves_no_pubsub_reconnect_storm` note), so the guard
+    /// built on this server is non-vacuous even when another test owns the
+    /// process-wide subscriber slot.
+    ///
+    /// Returns the `ws://host:port` URL, the accepted-connection counter, and the
+    /// accept task's handle. Promoted `pub(crate)` beside [`counting_listener`]
+    /// (the crate-local test-helper convention; see `arb_engine::tests::test_keys`).
+    pub(crate) async fn accept_then_die_ws_server() -> (
+        String,
+        Arc<std::sync::atomic::AtomicU64>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind an ephemeral loopback port");
+        let addr = listener.local_addr().expect("the bound loopback address");
+        let connections = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = Arc::clone(&connections);
+        let handle = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let attempt = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if attempt == 1 {
+                    // The head watch's initial connect: complete the handshake,
+                    // answer the `eth_subscribe` so the watch goes live, then die.
+                    tokio::spawn(serve_initial_connect(stream));
+                } else {
+                    // A reconnect attempt: fail the handshake so the service's
+                    // `reconnect()` errors and it re-enters the retry loop.
+                    drop(stream);
+                }
+            }
+        });
+        (format!("ws://{addr}"), connections, handle)
+    }
+
+    /// Serve the head watch's initial WS connect, then close so the backend dies.
+    async fn serve_initial_connect(stream: tokio::net::TcpStream) {
+        let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
+            return;
+        };
+        // Answer every request the client sends until the `eth_subscribe`
+        // (provider construction may issue a preliminary request first), then
+        // give the client time to process the subscription-id reply BEFORE the
+        // backend dies -- otherwise `connect_head_watch` falls back to the poller
+        // and no storm exists to observe.
+        while let Some(Ok(frame)) = ws.next().await {
+            let Ok(text) = frame.to_text() else {
+                continue;
+            };
+            let Ok(request) = serde_json::from_str::<serde_json::Value>(text) else {
+                continue;
+            };
+            let id = request
+                .get("id")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let method = request
+                .get("method")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let result = if method == "eth_subscribe" {
+                serde_json::Value::String("0x1".to_string())
+            } else {
+                serde_json::Value::Null
+            };
+            let reply = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result,
+            })
+            .to_string();
+            let _ = ws.send(WsMessage::Text(reply.into())).await;
+            if method == "eth_subscribe" {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                break;
+            }
+        }
+        drop(ws);
     }
 
     /// The dial-free construction probe: minting with a `Watch` clock AND a
@@ -1139,6 +1253,99 @@ mod tests {
             bad.is_empty(),
             "dropping the owner left a pubsub reconnect storm: {bad:?}"
         );
+    }
+
+    /// Bounded poll for the accepted-connection counter to reach `want`.
+    /// `false` on timeout: the caller's non-vacuity assertion then trips instead
+    /// of the guard passing vacuously.
+    async fn wait_for_connections(
+        connections: &Arc<std::sync::atomic::AtomicU64>,
+        want: u64,
+        window: Duration,
+    ) -> bool {
+        let deadline = tokio::time::Instant::now() + window;
+        while tokio::time::Instant::now() < deadline {
+            if connections.load(Ordering::Relaxed) >= want {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        connections.load(Ordering::Relaxed) >= want
+    }
+
+    /// The NON-VACUOUS teardown guard. Its sibling
+    /// `dropping_the_owner_leaves_no_pubsub_reconnect_storm` runs against a dead
+    /// endpoint (`ws://127.0.0.1:9`), so the eager WS connect FAILS before
+    /// `PubSubService::connect` spawns its service (`alloy-pubsub service.rs`:
+    /// `connector.connect()?` runs first, then `this.spawn()`) -- no service
+    /// exists and the no-storm half is vacuously true. This guard points the
+    /// head watch at `accept_then_die_ws_server`: the initial connect +
+    /// `eth_subscribe` SUCCEED (the service spawns on the owner's dedicated
+    /// runtime and the watch goes live), the backend dies, and the service's
+    /// reconnect loop is OBSERVED RUNNING before the drop (the non-vacuity
+    /// assertion: a SECOND accepted connection proves a reconnect attempt). The
+    /// owner is then dropped mid-storm and the guard asserts NO further accepted
+    /// connection lands.
+    ///
+    /// The storm is observed through the server's accepted-connection COUNT, not
+    /// the process-wide tracing subscriber: that slot is best-effort (the sibling
+    /// guard documents the same), so a capture-based assertion would be silently
+    /// vacuous whenever another test in the binary owns the subscriber -- exactly
+    /// the defect this guard exists to remove.
+    ///
+    /// RED-capability: neutralizing the `OwnedPubsubRuntime` teardown in
+    /// `Drop for HostedSources` (leaking the runtime instead of dropping it)
+    /// leaves the service's reconnect loop alive past the drop, so another
+    /// reconnect attempt lands on the server and the connection count grows.
+    #[tokio::test]
+    async fn dropping_the_owner_mid_storm_leaves_no_new_pubsub_reconnect() {
+        let (ws_url, connections, server) = accept_then_die_ws_server().await;
+        let hub = Arc::new(Hub::new());
+        let hosted = HostedSources::mint(
+            Arc::clone(&hub),
+            [],
+            Some(HostedHeadClock::Watch {
+                ws_url,
+                provider: dead_loopback_poll_provider().await,
+            }),
+            None,
+        )
+        .expect("the watch clock mints");
+        hosted
+            .start()
+            .await
+            .expect("the head watch connects and subscribes (the server accepts then dies)");
+
+        // Non-vacuity: the initial backend died, so the pubsub service's
+        // reconnect loop must land a SECOND connection before the drop.
+        let reconnected = wait_for_connections(&connections, 2, Duration::from_secs(10)).await;
+        assert!(
+            reconnected,
+            "vacuous guard: the service never reconnected before the drop (it never spawned, or its backend never died)"
+        );
+
+        let stopped = hosted.head_edge_stopped();
+        drop(hosted);
+        assert!(
+            await_head_edge_stopped(&stopped).await,
+            "the clean-shutdown path must run"
+        );
+        // Let any reconnect accepted at the drop instant land and the dedicated
+        // runtime teardown settle, then take the baseline.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let before = connections.load(Ordering::Relaxed);
+        // A live reconnect loop (3s base backoff, then exponential) lands
+        // another accepted connection inside this window; a torn-down one lands
+        // none.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let after = connections.load(Ordering::Relaxed);
+        assert_eq!(
+            after,
+            before,
+            "dropping the owner mid-storm left {} new reconnect connections",
+            after.saturating_sub(before)
+        );
+        server.abort();
     }
 
     /// Criterion 2e: the JOIN provider (`AnyRequestTransport::request_provider`
