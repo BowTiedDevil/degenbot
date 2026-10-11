@@ -578,9 +578,19 @@ class Bot(AccountQueryMixin):
         # live chain head, so `block` is never `None` in practice — the type is
         # narrowed here so it can be handed to the `int`-typed sinks
         # (`construct_pool`, `CurvePoolBuilder.finalize`).
-        block: int = (
-            request.state_block if request.state_block is not None else self._io.get_block_number()
-        )
+        head = self._io.get_block_number()
+        block: int = request.state_block if request.state_block is not None else head
+
+        # DB-arm eligibility: the DB liquidity map is a CURRENT-state cache (no
+        # per-block history), so it can only seed a HEAD construction. A pinned
+        # `state_block` behind the current head is a HISTORICAL construction —
+        # the head-stamped rows would fail the core's chain-truth intake gate
+        # (any position minted or burned since the pinned block), and before
+        # that gate existed they silently produced a mixed-state pool (head
+        # tick map under historical scalars). `db=False` forces the core's
+        # Chain-arm Sparse path, which assembles the tick map from the chain
+        # at the pinned block.
+        db_seed = block >= head
 
         # The construction route: the cockpit's resolved policy value — the core
         # route entry walks it (route order + get-or-register + build +
@@ -601,6 +611,7 @@ class Bot(AccountQueryMixin):
             family=family.value,
             variant=variant,
             block=block,
+            db=db_seed,
             tick_data_fetcher=(
                 self._make_v3_tick_data_fetcher(address, chain_id) if is_cl else None
             ),
@@ -871,9 +882,16 @@ class Bot(AccountQueryMixin):
         pool_id_bytes = to_bytes(request.pool_id)
         pool_manager_address = get_checksum_address(address)
 
-        state_block = (
-            request.state_block if request.state_block is not None else self._io.get_block_number()
-        )
+        head = self._io.get_block_number()
+        state_block = request.state_block if request.state_block is not None else head
+
+        # DB-arm eligibility (the `build_pool` V3 twin): the DB liquidity map
+        # is a CURRENT-state cache, so a pinned `state_block` behind the
+        # current head is a HISTORICAL construction and must skip the DB arm —
+        # `db=False` forces the core's Chain-arm Sparse path at the pinned
+        # block instead of failing the chain-truth intake gate on head-stamped
+        # rows.
+        db_seed = state_block >= head
         # The FRESH PRICE read block (two-stamp): the cheap slot0/price
         # read stamps `update_block` at the live head, while the liquidity
         # clock + assembled tick map anchor at `state_block`. When the request
@@ -949,7 +967,7 @@ class Bot(AccountQueryMixin):
             hook_address=hook_address,
             state_view_address=state_view_address,
             block=int(state_block) if state_block is not None else None,
-            db=True,
+            db=db_seed,
             tick_data_fetcher=self._make_v4_tick_data_fetcher(
                 pool_id_bytes,
                 pool_manager_address,

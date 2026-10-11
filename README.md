@@ -457,7 +457,7 @@ import json
 from pathlib import Path
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 
 _wbtc = make_erc20(_BOT,
     address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
@@ -477,9 +477,7 @@ _data_file = Path('tests/fixtures/chain_data/1/block_24947230.json')
 with _data_file.open() as _f:
     _data = json.load(_f)
 _pk = 'v3_0xcbcdf9626bc03e24f779434178a73a0b4bad62ed'
-_tbm_raw = _data.get(f'{_pk}_tick_bitmap', {})
 _td_raw = _data.get(f'{_pk}_tick_data', {})
-_tick_bitmap = {int(k): BitmapAtWord(bitmap=int(v['bitmap']), block=v['block']) for k, v in _tbm_raw.items()}
 _tick_data = {int(k): LiquidityAtTick(liquidity_gross=int(v['liquidity_gross']), liquidity_net=int(v['liquidity_net']), block=v['block']) for k, v in _td_raw.items()}
 from tests.helpers.v3_pool_factory import make_v3_pool
 lp = make_v3_pool(
@@ -493,7 +491,6 @@ lp = make_v3_pool(
     tick=259432,
     liquidity=544425151051415575,
     state_block=24947230,
-    tick_bitmap=_tick_bitmap,
     tick_data=_tick_data,
 )
 -->

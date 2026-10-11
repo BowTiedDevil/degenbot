@@ -394,3 +394,137 @@ class TestBuildManagedPoolResolveErrorMapping:
                     # No state_view / fee / tick_spacing / tokens -> core rejects.
                 ),
             )
+
+
+class _SeamCaptured(Exception):
+    """Halts a build right after the captured FFI call records its kwargs."""
+
+
+class TestBuildPoolDbArmEligibility:
+    """``build_pool`` forwards the DB-arm eligibility flag to the ONE core
+    construction entry.
+
+    The DB liquidity map is a CURRENT-state cache (no per-block history), so it
+    can only seed a HEAD construction. A pinned ``state_block`` behind the
+    current head is a HISTORICAL construction and must skip the DB arm
+    (``db=False`` — the core's Chain-arm Sparse path assembles the tick map
+    from the chain at the pinned block); otherwise the core's chain-truth
+    intake gate refuses the head-stamped rows (any position minted or burned
+    since the pinned block), and before that gate existed they silently
+    produced a mixed-state pool (head tick map under historical scalars).
+
+    The engine double records the ``construct_pool`` kwargs and halts the
+    build at the seam — the decision under test is made before any
+    post-construction choreography.
+    """
+
+    _POOL = "0x" + "e" * 40
+
+    @staticmethod
+    def _capturing_engine(captured: dict[str, object]) -> _ScriptedEngine:
+        def construct_pool(address: str, family: str, **kwargs: object) -> object:
+            captured.update(kwargs)
+            raise _SeamCaptured
+
+        return _ScriptedEngine(construct_pool=construct_pool)
+
+    def _bot(self, tmp_path: pathlib.Path, captured: dict[str, object]) -> Bot:
+        io = _ScriptedIo(
+            fetch_factory_address=lambda address: _UNREGISTERED_FACTORY,
+            probe_pool_type=lambda address: int(PoolProbe.V3),
+        )
+        return Bot(
+            **_test_session(tmp_path),
+            provider=_fake_provider(1),
+            py_bot=self._capturing_engine(captured),
+            io=io,
+        )
+
+    def test_head_default_keeps_db_arm(self, tmp_path: pathlib.Path) -> None:
+        captured: dict[str, object] = {}
+        with pytest.raises(_SeamCaptured):
+            self._bot(tmp_path, captured).build_pool(self._POOL)
+        assert captured["db"] is True
+        assert captured["block"] == 100  # the io double's head
+
+    def test_pinned_head_state_block_keeps_db_arm(self, tmp_path: pathlib.Path) -> None:
+        captured: dict[str, object] = {}
+        with pytest.raises(_SeamCaptured):
+            self._bot(tmp_path, captured).build_pool(self._POOL, state_block=100)
+        assert captured["db"] is True
+        assert captured["block"] == 100
+
+    def test_historical_state_block_skips_db_arm(self, tmp_path: pathlib.Path) -> None:
+        captured: dict[str, object] = {}
+        with pytest.raises(_SeamCaptured):
+            self._bot(tmp_path, captured).build_pool(self._POOL, state_block=50)
+        assert captured["db"] is False
+        assert captured["block"] == 50
+
+
+class TestBuildManagedPoolDbArmEligibility:
+    """The V4 twin of ``TestBuildPoolDbArmEligibility``: a pinned historical
+    ``state_block`` forwards ``db=False`` to ``build_v4_pool`` (Chain-arm
+    Sparse tick map at the pinned block); a head build keeps ``db=True``."""
+
+    @staticmethod
+    def _bot(tmp_path: pathlib.Path, captured: dict[str, object]) -> Bot:
+        token = FakeToken(address="0x" + "cc" * 20)
+        erc20_builder = _ScriptedErc20Builder(
+            build=lambda *a, **k: token,
+            build_many=lambda *a, **k: [token, token],
+        )
+
+        def build_v4_pool(**kwargs: object) -> object:
+            captured.update(kwargs)
+            raise _SeamCaptured
+
+        py_bot = _ScriptedEngine(
+            resolve_v4_identity=lambda **k: (
+                "0x" + "cc" * 20,
+                "0x" + "dd" * 20,
+                5000,
+                1,
+                0,
+                "0x" + "00" * 20,
+                "0x" + "bb" * 20,
+            ),
+            build_v4_pool=build_v4_pool,
+        )
+        return Bot(
+            **_test_session(tmp_path),
+            provider=_fake_provider(1),
+            py_bot=py_bot,
+            io=_ScriptedIo(),
+            erc20_builder=erc20_builder,
+        )
+
+    def _request(self, state_block: int | None) -> BuildManagedPoolRequest:
+        return BuildManagedPoolRequest(
+            pool_id="0x" + "11" * 32,
+            state_block=state_block,
+            state_view_address="0x" + "bb" * 20,
+            tokens=["0x" + "cc" * 20, "0x" + "dd" * 20],
+            fee=5000,
+            tick_spacing=1,
+        )
+
+    def test_head_default_keeps_db_arm(self, tmp_path: pathlib.Path) -> None:
+        captured: dict[str, object] = {}
+        with pytest.raises(_SeamCaptured):
+            self._bot(tmp_path, captured).build_managed_pool(
+                "0x" + "aa" * 20,
+                self._request(None),
+            )
+        assert captured["db"] is True
+        assert captured["block"] == 100  # the io double's head
+
+    def test_historical_state_block_skips_db_arm(self, tmp_path: pathlib.Path) -> None:
+        captured: dict[str, object] = {}
+        with pytest.raises(_SeamCaptured):
+            self._bot(tmp_path, captured).build_managed_pool(
+                "0x" + "aa" * 20,
+                self._request(50),
+            )
+        assert captured["db"] is False
+        assert captured["block"] == 50
