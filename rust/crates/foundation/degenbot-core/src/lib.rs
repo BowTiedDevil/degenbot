@@ -20,6 +20,10 @@
 //! - [`cpu_budget`] — cgroup-aware CPU budget detection and the two-runtime
 //!   (solve bins / ambient I/O) sizing policy.
 //! - [`runtime`] — shared Tokio runtime singleton, sized by [`cpu_budget`].
+//! - [`pubsub_runtime`] — the owned dedicated-pubsub-runtime type: the one
+//!   home of the deterministic teardown discipline (build a named single-worker
+//!   runtime, register it, drive it across a grace on drop) plus live-instance
+//!   census counting.
 //! - [`worker_census`] — boot-time registry of every execution resource
 //!   (name/kind/count/thread-name/sizing) exported as the
 //!   `degenbot_worker_census` gauge ; NEW SPAWN SITES MUST
@@ -40,6 +44,7 @@ pub mod errors;
 pub mod fee_percentiles;
 pub mod hex_utils;
 pub mod libzip;
+pub mod pubsub_runtime;
 pub mod retry;
 pub mod runtime;
 pub mod session_positions;

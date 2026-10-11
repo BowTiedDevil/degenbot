@@ -39,7 +39,10 @@
 //! `fleet_resolve_slots`, `fleet_merge_slots`,
 //! `fleet_pool_state_updater_slots`,
 //! `detached_solve_bins`, `metrics_scrape`,
-//! `rust_log_drainer`, `gil_probe`.
+//! `rust_log_drainer`, `gil_probe`, `fork_pubsub_workers`,
+//! `hosted_pubsub_workers` (the last two via
+//! [`crate::pubsub_runtime::OwnedPubsubRuntime`], which publishes the LIVE
+//! instance count).
 //!
 //! # Future fleet crate
 //!

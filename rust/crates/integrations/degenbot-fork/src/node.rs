@@ -284,11 +284,18 @@ impl AnvilForkBuilder {
         // must be able to drive that service deterministically (see
         // `Drop`), and only the fork knows which runtime the service is
         // on.
-        let pubsub_runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .map_err(|e| ForkError::Spawn(e.to_string()))?;
+        let pubsub_runtime = degenbot_core::pubsub_runtime::OwnedPubsubRuntime::build(
+            degenbot_core::pubsub_runtime::OwnedPubsubRuntimeSpec {
+                resource: "fork_pubsub_workers",
+                kind:
+                    "tokio single-worker runtime (Anvil fork IPC pubsub — deterministic teardown)",
+                thread_name: "degenbot-fork-pubsub",
+                sizing:
+                    "exactly one per AnvilFork (fork-scoped IPC transport); fixed single worker",
+                binding: "pinned",
+            },
+        )
+        .map_err(|e| ForkError::Spawn(e.to_string()))?;
         // Connect INSIDE the dedicated runtime via spawn + oneshot: a
         // nested `block_on` here would panic (tokio forbids blocking from
         // within any async execution environment, `try_spawn` being one).
@@ -418,11 +425,14 @@ pub struct AnvilFork {
     provider: Option<DynProvider>,
     /// Dedicated single-worker runtime that owns the IPC provider's alloy
     /// pubsub service + backend tasks (spawned ambient-at-connect, i.e. the
-    /// connect inside [`AnvilForkBuilder::try_spawn`] runs on THIS runtime).
-    /// Steady state: one parked OS thread (~0 CPU); RPC round-trips and
-    /// teardown wake it on demand. [`Drop`] drives it across
-    /// `PUBSUB_SHUTDOWN_GRACE` so the pubsub service exits via the clean
-    /// "request channel closed" path before the anvil child can die —
+    /// connect inside [`AnvilForkBuilder::try_spawn`] runs on THIS runtime) —
+    /// the shared
+    /// [`degenbot_core::pubsub_runtime::OwnedPubsubRuntime`] type, which also
+    /// registers the worker in the worker census and keeps a live-instance
+    /// count. Steady state: one parked OS thread (~0 CPU); RPC round-trips
+    /// and teardown wake it on demand. Its [`Drop`] drives the runtime across
+    /// a short grace so the pubsub service exits via the clean "request
+    /// channel closed" path before the anvil child can die —
     /// deterministically, without depending on which shared-runtime worker
     /// gets to poll a woken task first. Dropping this runtime is
     /// non-blocking, so even a leaked `DynProvider` clone (caller contract
@@ -437,18 +447,16 @@ pub struct AnvilFork {
     /// cancelled while the backend is still alive — the backend-death
     /// path (and its reconnect storm) is never observed at all.
     ///
-    /// `Option` so [`Drop`] can pull it out and control WHERE it is
-    /// dropped: tokio forbids both driving (`block_on`) and dropping a
-    /// multi-thread runtime from within an async execution environment,
-    /// and a pure-Rust consumer can legitimately drop the fork from a task.
-    pubsub_runtime: Option<tokio::runtime::Runtime>,
+    /// `Option` so [`Drop`] can pull it out and control WHERE it is dropped:
+    /// tokio forbids both driving (`block_on`) and dropping a multi-thread
+    /// runtime from within an async execution environment, and a pure-Rust
+    /// consumer can legitimately drop the fork from a task. The shared type's
+    /// own [`Drop`] already splits those two cases; the fork pulls it out only
+    /// to drop it BEFORE the subprocess is killed.
+    pubsub_runtime: Option<degenbot_core::pubsub_runtime::OwnedPubsubRuntime>,
     /// Owns the anvil subprocess lifecycle (drop = kill).
     instance: alloy::node_bindings::AnvilInstance,
 }
-
-/// Short grace the `Drop` impl drives the fork's dedicated transport
-/// runtime for, after dropping the IPC provider (see below).
-const PUBSUB_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_millis(2);
 
 impl Drop for AnvilFork {
     fn drop(&mut self) {
@@ -460,39 +468,20 @@ impl Drop for AnvilFork {
         //    synchronously wakes the pubsub service task on
         //    `pubsub_runtime`.
         self.provider.take();
-        // 2. Bounded grace for the service to take the clean exit path.
-        //    Step 1 synchronously WOKEN the pubsub service task, parked in
-        //    the local queue of the `pubsub_runtime`'s DEDICATED worker —
-        //    an OS thread that has nothing else to do. Driving it matters
-        //    because the alternative (the old design, service on the SHARED
-        //    runtime) made clean shutdown depend on some contended shared
-        //    worker getting a CPU slice before anvil could die — a race the
-        //    CI flake lost: `WARN alloy_pubsub::service: Reconnection
-        //    attempt N/10 failed: No such file or directory …`.
-        //
-        //    Off an async context (the Python path: CPython refcounting
-        //    drops this handle on the main thread), `block_on` the
-        //    dedicated runtime across the grace: that single worker polls
-        //    the already-READY service task first, then the pending sleep
-        //    future. Inside an async execution environment a nested
-        //    `block_on` would PANIC — and so would dropping the runtime —
-        //    so there we sleep the same bound on this thread (the
-        //    dedicated worker is an independent OS thread woken by its
-        //    waker) and drop the runtime detached, where blocking (the
-        //    worker join) is allowed.
-        if let Some(rt) = self.pubsub_runtime.take() {
-            if tokio::runtime::Handle::try_current().is_ok() {
-                std::thread::sleep(PUBSUB_SHUTDOWN_GRACE);
-                std::thread::spawn(move || drop(rt));
-            } else {
-                rt.block_on(async { tokio::time::sleep(PUBSUB_SHUTDOWN_GRACE).await });
-            }
-        }
+        // 2. Tear the dedicated transport runtime down via the shared
+        //    `OwnedPubsubRuntime` discipline: it drives the pubsub service
+        //    across its grace (the split between off-async `block_on` and the
+        //    detached inside-async drop lives in that type) so the service
+        //    takes the clean "request channel closed" exit path before the
+        //    anvil child can die. Dropping the value HERE, before the socket
+        //    unlink and the anvil-child kill below, preserves the
+        //    load-bearing teardown order.
+        drop(self.pubsub_runtime.take());
         // 3. Unlink the IPC socket file (safe while the fd is open), then
-        //    the field drops kill the anvil child (`instance`) and tear
-        //    down the transport runtime (`pubsub_runtime` — a non-blocking
-        //    drop that discards any residual reconnect task, bounding the
-        //    damage of a leaked provider clone).
+        //    the field drop kills the anvil child (`instance`). A leaked
+        //    `DynProvider` clone cannot outlive this: the dedicated runtime
+        //    was already discarded in step 2, so any residual reconnect task
+        //    went with it.
         let _ = std::fs::remove_file(self.instance.ipc_path());
     }
 }

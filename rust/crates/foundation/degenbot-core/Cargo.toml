@@ -17,7 +17,7 @@ alloy = { version = "^2.5" }
 degenbot-config.workspace = true
 tracing = { version = "^0.1" }
 thiserror = { version = "^2.0" }
-tokio = { version = "^1.53", features = ["rt-multi-thread", "sync"] }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "sync"] }
 parking_lot = { version = "^0.12" }
 
 # Optional: enables `From<*> for PyErr` conversions in `errors`.
@@ -38,6 +38,8 @@ strict-engine-spans = []
 
 [dev-dependencies]
 proptest = "^1.11"
+# Test-only: the `#[tokio::test]` macro for the pubsub-runtime teardown pins.
+tokio = { version = "^1.53", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = "^0.3"
 # Test-only: a minimal recording Subscriber for the [cpu-budget] boot-log
 # probe (tracing's trait methods take tracing-core types by name).

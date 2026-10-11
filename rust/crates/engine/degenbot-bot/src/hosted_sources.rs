@@ -25,7 +25,8 @@
 //! life, so `Drop for HostedSources` runs when the ENGINE drops — not at
 //! boot-host end. Drop stops every pump's transport, fires a `watch` shutdown
 //! signal the head edge and the feed sampler select on, and tears down a
-//! DEDICATED single-worker runtime (mirroring `AnvilFork::pubsub_runtime`) that
+//! DEDICATED single-worker runtime (the shared `OwnedPubsubRuntime`), the same
+//! type `AnvilFork` uses, that
 //! hosts the head-watch WS transport and its alloy pubsub service. Tearing that
 //! runtime down CANCELS the pubsub service and the head watch's driving task
 //! deterministically, with no dependence on a contended shared-runtime worker —
@@ -38,13 +39,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alloy::network::Ethereum;
 use alloy::providers::Provider;
+use degenbot_core::pubsub_runtime::{OwnedPubsubRuntime, OwnedPubsubRuntimeSpec};
 use degenbot_eventhub::{HeadSubscription, Hub, HubError, HubEvent, PendingTxSource};
 use degenbot_rpc::backrun_feed::BackrunFeedStatus;
 use degenbot_rpc::head_watch::{HeadWatch, HeadWatchConfig};
 use degenbot_rpc::pending_tx_stream::{PendingTxFeedConfig, PendingTxPump, PendingTxStream};
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use futures_util::future::BoxFuture;
-use tokio::runtime::Runtime;
 use tokio::sync::watch;
 
 /// How long a head await may run before the edge re-checks staleness. The
@@ -66,11 +67,6 @@ const HEAD_POLL_TICK: Duration = Duration::from_millis(200);
 /// The feed-telemetry sample cadence (the per-driver `<=2s` scrape it
 /// replaces).
 const FEED_SAMPLE_TICK: Duration = Duration::from_secs(2);
-
-/// Short grace the [`Drop`] impl drives the dedicated head-watch runtime for,
-/// after dropping the WS transport (see [`Drop`]); mirrors
-/// `AnvilFork::PUBSUB_SHUTDOWN_GRACE`.
-const PUBSUB_SHUTDOWN_GRACE: Duration = Duration::from_millis(2);
 
 /// The per-head trigger the source head edge fires. The composition root
 /// wires `HeadReconciliation::reconcile_head` in here; the module never
@@ -124,12 +120,13 @@ pub struct HostedSources {
     /// channel open.
     head_ws_provider: Option<Arc<dyn Provider<Ethereum>>>,
     /// Dedicated single-worker runtime the head-watch WS transport (and the
-    /// alloy pubsub service it spawns) live on, mirroring
-    /// `AnvilFork::pubsub_runtime`. [`Drop`] tears it down, so the pubsub
-    /// service and the head watch's driving task are CANCELLED
-    /// deterministically rather than left to a contended shared-runtime worker.
-    /// `Option` so [`Drop`] can pull it out and control WHERE it is dropped.
-    pubsub_runtime: Option<Runtime>,
+    /// alloy pubsub service it spawns) live on — the shared
+    /// [`OwnedPubsubRuntime`] discipline (the same type `AnvilFork` uses).
+    /// [`Drop`] tears it down, so the pubsub service and the head watch's
+    /// driving task are CANCELLED deterministically rather than left to a
+    /// contended shared-runtime worker. `Option` so [`Drop`] can pull it out
+    /// and control WHERE it is dropped.
+    pubsub_runtime: Option<OwnedPubsubRuntime>,
 }
 
 impl HostedSources {
@@ -177,14 +174,20 @@ impl HostedSources {
         // A WS watch is hosted on a DEDICATED single-worker runtime, so the
         // alloy pubsub service it spawns (and the head watch's driving task) are
         // cancellable by tearing that runtime down — the deterministic teardown
-        // `Drop` performs (mirroring `AnvilFork::pubsub_runtime`).
+        // `Drop` performs (the shared `OwnedPubsubRuntime` discipline).
         let pubsub_runtime = if matches!(&clock, Some(HostedHeadClock::Watch { .. })) {
             #[expect(
                 clippy::expect_used,
                 reason = "a fresh single-worker runtime build fails only on OS resource exhaustion; the boot fails closed rather than hosting a half-live head watch"
             )]
-            let runtime =
-                build_pubsub_runtime().expect("build the hosted head-watch pubsub runtime");
+            let runtime = OwnedPubsubRuntime::build(OwnedPubsubRuntimeSpec {
+                resource: "hosted_pubsub_workers",
+                kind: "tokio single-worker runtime (hosted head-watch WS pubsub — deterministic teardown)",
+                thread_name: "degenbot-hosted-pubsub",
+                sizing: "exactly one per HostedSources owner (one hosted owner per engine); fixed single worker",
+                binding: "pinned",
+            })
+            .expect("build the hosted head-watch pubsub runtime");
             Some(runtime)
         } else {
             None
@@ -258,48 +261,14 @@ impl Drop for HostedSources {
         // 3. Drop the WS transport frontend WHILE the endpoint may still be
         //    alive, closing the pubsub request channel.
         self.head_ws_provider.take();
-        // 4. Tear the dedicated runtime down — the DETERMINISTIC cancellation:
-        //    the alloy pubsub service and the head watch's driving task live on
-        //    it and are discarded with it, with no dependence on a contended
-        //    shared-runtime worker. Off an async context, `block_on` the runtime
-        //    across a short grace so the service takes the clean exit path;
-        //    inside an async context a nested `block_on` would PANIC (and so
-        //    would the runtime drop), so sleep the same bound on this thread and
-        //    drop the runtime detached, where the worker join is allowed.
-        if let Some(runtime) = self.pubsub_runtime.take() {
-            if tokio::runtime::Handle::try_current().is_ok() {
-                std::thread::sleep(PUBSUB_SHUTDOWN_GRACE);
-                std::thread::spawn(move || drop(runtime));
-            } else {
-                runtime.block_on(async { tokio::time::sleep(PUBSUB_SHUTDOWN_GRACE).await });
-            }
-        }
+        // 4. Tear the dedicated runtime down via the shared `OwnedPubsubRuntime`
+        //    discipline — the DETERMINISTIC cancellation: the alloy pubsub
+        //    service and the head watch's driving task live on it and are
+        //    discarded with it, with no dependence on a contended shared-runtime
+        //    worker. The off-async `block_on` / detached inside-async drop split
+        //    lives in that type.
+        drop(self.pubsub_runtime.take());
     }
-}
-
-/// Build the dedicated single-worker runtime the head-watch WS transport and its
-/// alloy pubsub service live on (mirroring `AnvilFork::pubsub_runtime`), and
-/// register its worker thread in the worker census — the repo convention for a
-/// new spawn site (see `python_log_layer.rs`'s `rust-log-drainer`).
-///
-/// # Errors
-///
-/// The OS refused to spawn the worker thread (resource exhaustion).
-fn build_pubsub_runtime() -> std::io::Result<Runtime> {
-    degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {
-        resource: "hosted_pubsub_workers",
-        kind: "tokio single-worker runtime (hosted head-watch WS pubsub — deterministic teardown)",
-        count: 1,
-        thread_name: "degenbot-hosted-pubsub",
-        sizing:
-            "exactly one per HostedSources owner (one hosted owner per engine); fixed single worker",
-        binding: "pinned",
-    });
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .thread_name("degenbot-hosted-pubsub")
-        .enable_all()
-        .build()
 }
 
 /// Subscribe the transport and spawn the head edge task.
@@ -329,9 +298,9 @@ fn build_pubsub_runtime() -> std::io::Result<Runtime> {
 async fn connect_head_watch(
     hub: &Arc<Hub>,
     ws_url: &str,
-    runtime: &Runtime,
+    runtime: &OwnedPubsubRuntime,
 ) -> Option<Arc<dyn Provider<Ethereum>>> {
-    let handle = runtime.handle().clone();
+    let handle = runtime.handle();
     let hub_for_connect = Arc::clone(hub);
     let ws_url = ws_url.to_string();
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
@@ -379,7 +348,7 @@ async fn spawn_head_task(
     trigger: Option<HeadTrigger>,
     mut shutdown: watch::Receiver<bool>,
     head_edge_stopped: Arc<AtomicBool>,
-    pubsub_runtime: Option<&Runtime>,
+    pubsub_runtime: Option<&OwnedPubsubRuntime>,
 ) -> Result<Option<Arc<dyn Provider<Ethereum>>>, HubError> {
     let mut watch_live = false;
     // The WS transport the edge owns for its lifetime; the owner keeps its own
