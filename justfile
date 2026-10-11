@@ -396,6 +396,40 @@ rebuild-if-stale:
 test-python:
     uv run --no-sync pytest -x -q --no-header
 
+# Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
+# pytest with the whole child-process output captured to a log file, then scans
+# the capture for the two signatures of the historical "exception spray" class:
+# `--- Logging error ---` blocks and raw `Reconnection attempt` lines. Those
+# printed to the real stdout/stderr AFTER the pytest session ended and left the
+# exit code at 0, which is why post-session output is invisible to pytest
+# plugins and the scan has to live at the process/recipe level.
+#
+# The suite's own exit code is captured separately from the signature scan and
+# propagated unchanged, so a genuine test failure is never masked by a clean
+# signature scan; a spray signature instead yields its own distinct nonzero
+# exit. The single positional argument is the pytest keyword filter, quoted as
+# one argument so `just`'s unquoted variadic splicing cannot shred it; the
+# default is empty (full suite). Trailing tokens forward verbatim:
+#   just test-python-noise-gate                  # full suite
+#   just test-python-noise-gate 'not readme'     # skip the README sybil items
+#   just test-python-noise-gate '' tests/golden  # full suite plus a path arg
+#
+# Negative probe (the red path, demonstrable without re-running the suite):
+#   printf '%s\n' 'Reconnection attempt' > /tmp/spray.log
+#   bash scripts/pytest_noise_gate.sh scan /tmp/spray.log   # exits 3, prints it
+#
+# CI: armed as the python job's "Run Tests" step in .github/workflows/ci.yml
+# (it replaced the bare `just test-python` call; that recipe is untouched). The
+# pre-push hook in prek.toml still calls `just test-python` and can be swapped
+# the same way to arm the tripwire locally.
+test-python-noise-gate kw="" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{ kw }}" ]; then
+        exec bash scripts/pytest_noise_gate.sh run -k "{{ kw }}" {{ args }}
+    fi
+    exec bash scripts/pytest_noise_gate.sh run {{ args }}
+
 # Flake probe for the ordering-sensitive suites (session/operator-channel
 # state machines, where inter-test order leaks surface): run both suites
 # three consecutive times with the cache provider off; ANY failing run fails

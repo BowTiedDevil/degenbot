@@ -452,7 +452,11 @@ jobs:
         run: just lint-python
 
       - name: Run Tests
-        run: just test-python
+        # Spray tripwire: `just test-python-noise-gate` runs the same suite but
+        # captures the whole process output and fails on the logging-error /
+        # reconnect spray signatures that historically printed post-session
+        # while the exit code stayed 0.
+        run: just test-python-noise-gate
         env:
           # FF-T5: the profile leg force (auto is the enum default - same
           # behavior as unset; pinned is the forced-override leg).
