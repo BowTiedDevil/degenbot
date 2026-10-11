@@ -38,13 +38,10 @@
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256, U128, U256};
-use degenbot_db::snapshot::{
-    BitmapAtWord as DbBitmapAtWord, LiquidityAtTick as DbLiquidityAtTick, LiquidityMap, TickMapDb,
-};
+use degenbot_db::snapshot::{LiquidityAtTick as DbLiquidityAtTick, LiquidityMap, TickMapDb};
 use degenbot_db::LiquidityUpdateEvent;
 use degenbot_math::cl::liquidity_mapping::{
-    apply_liquidity_mapping_update, BitmapAtWord as ApplyBitmapAtWord,
-    LiquidityAtTick as ApplyLiquidityAtTick,
+    apply_liquidity_mapping_update, LiquidityAtTick as ApplyLiquidityAtTick,
 };
 pub use degenbot_pool_updater::fetch::{AlloyLiquidityLogSource, LiquidityLogSource};
 use degenbot_pools::tick_fetch::TickBootstrapRpc;
@@ -459,11 +456,11 @@ impl PoolIngress {
             Some(chain) => chain
                 .bootstrap_v3_tick_word(&address.to_checksum(None), tick, tick_spacing, block)
                 .map_err(TickMapAssemblyError::Chain)?
-                .map(|word| (word.ticks, HashMap::from([(word.word, word.bitmap)]))),
+                .map(|word| word.ticks),
             None => None,
         };
-        let (ticks, bitmaps) = chain_hit.unwrap_or((HashMap::new(), HashMap::new()));
-        Ok(chain_arm(Some(ticks), bitmaps).into_seed(block, identity))
+        let ticks = chain_hit.unwrap_or_default();
+        Ok(chain_arm(Some(ticks)).into_seed(block, identity))
     }
 
     /// Stage a V4 `(PoolManager, PoolId)` map with `Db → Chain` precedence.
@@ -512,11 +509,11 @@ impl PoolIngress {
                     block,
                 )
                 .map_err(TickMapAssemblyError::Chain)?
-                .map(|word| (word.ticks, HashMap::from([(word.word, word.bitmap)]))),
+                .map(|word| word.ticks),
             _ => None,
         };
-        let (ticks, bitmaps) = chain_hit.unwrap_or((HashMap::new(), HashMap::new()));
-        Ok(chain_arm(Some(ticks), bitmaps).into_seed(block, identity))
+        let ticks = chain_hit.unwrap_or_default();
+        Ok(chain_arm(Some(ticks)).into_seed(block, identity))
     }
 
     /// Stage, chain-sample-verify (per [`VerifyLevel`]), then register a V3
@@ -632,7 +629,7 @@ impl PoolIngress {
         };
         let map = RpcLiquidityMap::tracked_with_spacing(
             seed.ticks.clone(),
-            seed.bitmaps.clone(),
+            derive_verifier_bitmaps(&seed.ticks, tick_spacing),
             tick_spacing,
         );
         verifier
@@ -853,18 +850,37 @@ fn merge_replay_overlay(
     family: &str,
 ) -> Result<(), IngressDecline> {
     for &tick in overlay.keys() {
-        let compressed = tick.div_euclid(tick_spacing);
-        let word = compressed >> 8;
-        let bit = usize::try_from(compressed.rem_euclid(256)).map_err(|_| {
-            IngressDecline::Db(format!("tick {tick} has an invalid {family} bitmap bit"))
-        })?;
-        seed.bitmaps
-            .entry(word)
-            .or_insert(U256::ZERO)
-            .set_bit(bit, true);
+        if tick_spacing > 0 && tick.rem_euclid(tick_spacing) != 0 {
+            return Err(IngressDecline::Db(format!(
+                "tick {tick} is not aligned to the {family} tick spacing {tick_spacing}"
+            )));
+        }
     }
     seed.ticks.extend(overlay);
     Ok(())
+}
+
+/// Derive the tick-bitmap words the chain-sample verifier reads from the seed's
+/// LOCAL tick rows: every initialized tick sets its bit in its word. This is the
+/// derive-at-call-site posture the live pool verifier already runs with
+/// (`bot_core::liquidity_verifier::map_from_ticks`); the persisted word map is
+/// no longer read, so the verifier can only discover on-chain-only ticks inside
+/// words the local rows already imply.
+fn derive_verifier_bitmaps(
+    ticks: &HashMap<i32, TickInfo>,
+    tick_spacing: i32,
+) -> HashMap<i32, U256> {
+    let mut bitmaps: HashMap<i32, U256> = HashMap::new();
+    if (1..=32_767).contains(&tick_spacing) {
+        for &tick in ticks.keys() {
+            let compressed = tick.div_euclid(tick_spacing);
+            let word = compressed >> 8;
+            let bit = compressed.rem_euclid(256) as u32;
+            let entry = bitmaps.entry(word).or_insert(U256::ZERO);
+            *entry |= U256::from(1u8) << bit;
+        }
+    }
+    bitmaps
 }
 
 /// Apply decoded liquidity events to a Db-staged map, sharing the updater's
@@ -881,7 +897,6 @@ fn backfill_liquidity_map(
     if events.is_empty() {
         return Ok(map);
     }
-    let mut bitmap = db_bitmap_to_apply(map.tick_bitmap);
     let mut tick_data = db_ticks_to_apply(map.tick_data)?;
     for event in events {
         // Passing the event block as both `initial_state_block` and
@@ -889,7 +904,6 @@ fn backfill_liquidity_map(
         // seed's scalars are the caller's, read from slot0); only the tick map
         // matters here.
         let result = apply_liquidity_mapping_update(
-            bitmap,
             tick_data,
             tick_spacing,
             0,
@@ -900,33 +914,11 @@ fn backfill_liquidity_map(
             event.tick_upper,
             event.liquidity_delta,
         );
-        bitmap = result.tick_bitmap;
         tick_data = result.tick_data;
     }
     Ok(LiquidityMap {
-        tick_bitmap: apply_bitmap_to_db(bitmap),
         tick_data: apply_ticks_to_db(tick_data)?,
     })
-}
-
-/// Widen the Db snapshot bitmap (word-keyed `i64`, no block stamp) into the
-/// updater math's word-keyed `i32` form.
-fn db_bitmap_to_apply(bitmap: HashMap<i64, DbBitmapAtWord>) -> HashMap<i32, ApplyBitmapAtWord> {
-    bitmap
-        .into_iter()
-        .map(|(word, entry)| {
-            // A tick-bitmap word is an int16 on-chain; the `i64` Db key always
-            // fits `i32`.
-            let word = i32::try_from(word).unwrap_or(i32::MAX);
-            (
-                word,
-                ApplyBitmapAtWord {
-                    bitmap: entry.bitmap,
-                    block: 0,
-                },
-            )
-        })
-        .collect()
 }
 
 /// Widen the Db snapshot tick rows into the updater math's `I256`/`U128` form.
@@ -946,21 +938,6 @@ fn db_ticks_to_apply(
                     block: 0,
                 },
             ))
-        })
-        .collect()
-}
-
-/// Narrow the updater math bitmap back into the Db snapshot shape.
-fn apply_bitmap_to_db(bitmap: HashMap<i32, ApplyBitmapAtWord>) -> HashMap<i64, DbBitmapAtWord> {
-    bitmap
-        .into_iter()
-        .map(|(word, entry)| {
-            (
-                i64::from(word),
-                DbBitmapAtWord {
-                    bitmap: entry.bitmap,
-                },
-            )
         })
         .collect()
 }
@@ -1002,8 +979,8 @@ mod tests {
     use alloy::primitives::{aliases::U128, B256};
     use degenbot_db::connection::DegenbotDb;
     use degenbot_db::error::DbError;
-    use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick};
-    use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick, ExchangeFamily};
+    use degenbot_db::snapshot::LiquidityAtTick;
+    use degenbot_db::{ApplyLiquidityAtTick, ExchangeFamily};
     use degenbot_pools::tick_fetch::{BootstrapTickError, BootstrapTickWord};
     use degenbot_pools::v3_state::PoolTickCoverage;
 
@@ -1102,15 +1079,8 @@ mod tests {
         }
     }
 
-    /// A consistent map: one initialized tick `120` in word 0 at spacing 60.
-    fn map_with_tick(tick: i32, spacing: i32) -> LiquidityMap {
-        let compressed = tick.div_euclid(spacing);
-        let word = i64::from(compressed >> 8);
-        let bit = u32::try_from(compressed.rem_euclid(256)).unwrap();
-        let mut bitmap = U256::ZERO;
-        bitmap.set_bit(bit as usize, true);
-        let mut tick_bitmap = HashMap::new();
-        tick_bitmap.insert(word, BitmapAtWord { bitmap });
+    /// A consistent map: one initialized tick at `spacing`, in word 0.
+    fn map_with_tick(tick: i32, _spacing: i32) -> LiquidityMap {
         let mut tick_data = HashMap::new();
         tick_data.insert(
             tick,
@@ -1119,10 +1089,7 @@ mod tests {
                 liquidity_net: 500,
             },
         );
-        LiquidityMap {
-            tick_bitmap,
-            tick_data,
-        }
+        LiquidityMap { tick_data }
     }
 
     /// An empty backfill transport for tests that never stage a window.
@@ -1310,27 +1277,6 @@ mod tests {
         }
     }
 
-    /// A self-contradictory Tracked map: a bitmap bit set at compressed tick 2
-    /// (tick 120) with no gross-positive row there (the row sits at tick 180).
-    fn contradictory_map() -> LiquidityMap {
-        let mut bitmap = U256::ZERO;
-        bitmap.set_bit(2, true);
-        let mut tick_bitmap = HashMap::new();
-        tick_bitmap.insert(0i64, BitmapAtWord { bitmap });
-        let mut tick_data = HashMap::new();
-        tick_data.insert(
-            180,
-            LiquidityAtTick {
-                liquidity_gross: U256::from(1u64),
-                liquidity_net: 0,
-            },
-        );
-        LiquidityMap {
-            tick_bitmap,
-            tick_data,
-        }
-    }
-
     /// An empty Db arm: an empty snapshot paired with its never-invoked
     /// backfill transport.
     fn empty_db() -> (DbArm, Arc<AtomicUsize>) {
@@ -1377,12 +1323,8 @@ mod tests {
                 Ok(())
             }
         }
-        let mut base_map = map_with_tick(120, 60);
-        base_map
-            .tick_bitmap
-            .insert(7, BitmapAtWord { bitmap: U256::ZERO });
         let mut maps = HashMap::new();
-        maps.insert(POOL, base_map);
+        maps.insert(POOL, map_with_tick(120, 60));
         let db = Arc::new(FakeDb {
             maps,
             fetches: Arc::new(AtomicUsize::new(0)),
@@ -1423,11 +1365,6 @@ mod tests {
             bitmaps.get(&-1),
             Some(&(U256::from(1u8) << 255usize)),
             "negative compressed ticks use the signed word and non-negative bit"
-        );
-        assert_eq!(
-            bitmaps.get(&7),
-            Some(&U256::ZERO),
-            "overlay projection preserves checked-empty words"
         );
         assert_eq!(spacing, 60);
         assert_eq!(block, 100);
@@ -1555,7 +1492,7 @@ mod tests {
         // is the on-chain verifier ([`VerifyLevel`] sample), not this path.
         let fetches = Arc::new(AtomicUsize::new(0));
         let mut maps = HashMap::new();
-        maps.insert(POOL, contradictory_map());
+        maps.insert(POOL, map_with_tick(120, 60));
         let db = Arc::new(FakeDb {
             maps,
             fetches: Arc::clone(&fetches),
@@ -1892,13 +1829,7 @@ mod tests {
     }
 
     fn tracked_v4_map() -> LiquidityMap {
-        let mut bitmap = U256::ZERO;
-        bitmap.set_bit(12, true);
         LiquidityMap {
-            tick_bitmap: HashMap::from([
-                (0, BitmapAtWord { bitmap }),
-                (7, BitmapAtWord { bitmap: U256::ZERO }),
-            ]),
             tick_data: HashMap::from([(
                 120,
                 LiquidityAtTick {
@@ -1911,16 +1842,9 @@ mod tests {
 
     #[tokio::test]
     async fn v4_backfill_and_verifier_failures_are_typed_refusals() {
-        let base_bitmap = U256::from(1_u8) << 255;
         let stale_db = || {
             Arc::new(FakeV4Db {
                 map: Some(LiquidityMap {
-                    tick_bitmap: HashMap::from([(
-                        -1,
-                        BitmapAtWord {
-                            bitmap: base_bitmap,
-                        },
-                    )]),
                     tick_data: HashMap::from([(
                         -10,
                         LiquidityAtTick {
@@ -2039,7 +1963,6 @@ mod tests {
             (U256::from(1_u8) << 12) | (U256::from(1_u8) << 13)
         );
         assert_eq!(map.bitmaps[&-1], U256::from(1_u8) << 255);
-        assert_eq!(map.bitmaps[&7], U256::ZERO);
         assert!(map.ticks.contains_key(&-10));
         assert!(map.ticks.contains_key(&130));
     }
@@ -2182,16 +2105,7 @@ mod tests {
                 block: 0,
             },
         );
-        let mut bitmaps = HashMap::new();
-        bitmaps.insert(
-            -1,
-            ApplyBitmapAtWord {
-                bitmap: U256::from(1_u8) << 255,
-                block: 0,
-            },
-        );
         db.upsert_v4_liquidity_positions(902, &ticks).unwrap();
-        db.upsert_v4_initialization_maps(902, &bitmaps).unwrap();
         let events = vec![
             LiquidityUpdateEvent {
                 block_number: 201,
@@ -2242,24 +2156,12 @@ mod tests {
                 i128::try_from(expected_tick.liquidity_net).unwrap()
             );
         }
-        assert_eq!(actual.bitmaps.len(), expected.tick_bitmap.len());
-        for (word, expected_word) in expected.tick_bitmap {
-            assert_eq!(actual.bitmaps[&word], expected_word.bitmap);
-        }
     }
 
     #[test]
     fn v4_db_to_head_seed_matches_existing_updater_math_with_full_provenance() {
-        let mut base_bitmap = U256::ZERO;
-        base_bitmap.set_bit(255, true);
         let db = Arc::new(FakeV4Db {
             map: Some(LiquidityMap {
-                tick_bitmap: HashMap::from([(
-                    -1,
-                    BitmapAtWord {
-                        bitmap: base_bitmap,
-                    },
-                )]),
                 tick_data: HashMap::from([(
                     -10,
                     LiquidityAtTick {
@@ -2300,8 +2202,6 @@ mod tests {
         assert_eq!(seed.ticks[&-10].liquidity_net, 1_300);
         assert_eq!(seed.ticks[&10].liquidity_gross, U128::from(300_u64));
         assert_eq!(seed.ticks[&10].liquidity_net, -300);
-        assert_eq!(seed.bitmaps[&0], U256::from(2_u8));
-        assert_eq!(seed.bitmaps[&-1], U256::from(1_u8) << 255usize);
         assert_eq!(
             calls.lock().as_slice(),
             &[(V4_MANAGER, V4_POOL_ID, 201, 202)]

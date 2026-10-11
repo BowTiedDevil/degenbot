@@ -12,9 +12,8 @@ use crate::connection::DegenbotDb;
 use crate::error::DbError;
 use crate::rows::decode::decode_address;
 use crate::rows::{
-    InitializationMapRow, LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow,
-    ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow, PoolKindRow, V2PoolRow,
-    V3PoolRow, V4PoolRow,
+    LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow, ManagedPoolLiquidityPositionRow,
+    PoolKindRow, V2PoolRow, V3PoolRow, V4PoolRow,
 };
 use crate::schema::table::{
     is_lfj_kind, is_v2_kind, is_v3_kind, is_v4_kind, v2_v3_subclass_table, EXCHANGES, LFJ_POOLS,
@@ -421,26 +420,6 @@ impl DegenbotDb {
         Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
     }
 
-    /// All `initialization_maps` for a V3 pool (ordered by word).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
-    pub fn fetch_initialization_map(
-        &self,
-        pool_id: i64,
-    ) -> Result<Vec<InitializationMapRow>, DbError> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, pool_id, word, bitmap \
-             FROM initialization_maps WHERE pool_id = ?1 ORDER BY word",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![pool_id], |r| {
-            InitializationMapRow::from_row(r).map_err(rusqlite::Error::from)
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
-    }
-
     /// All `managed_pool_liquidity_positions` for a V4 managed pool (by tick).
     ///
     /// # Errors
@@ -457,26 +436,6 @@ impl DegenbotDb {
         )?;
         let rows = stmt.query_map(rusqlite::params![managed_pool_id], |r| {
             ManagedPoolLiquidityPositionRow::from_row(r).map_err(rusqlite::Error::from)
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
-    }
-
-    /// All `managed_pool_initialization_maps` for a V4 managed pool (by word).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
-    pub fn fetch_managed_initialization_map(
-        &self,
-        managed_pool_id: i64,
-    ) -> Result<Vec<ManagedPoolInitializationMapRow>, DbError> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, managed_pool_id, word, bitmap \
-             FROM managed_pool_initialization_maps WHERE managed_pool_id = ?1 ORDER BY word",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![managed_pool_id], |r| {
-            ManagedPoolInitializationMapRow::from_row(r).map_err(rusqlite::Error::from)
         })?;
         Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
     }

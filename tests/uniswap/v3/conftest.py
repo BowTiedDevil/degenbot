@@ -12,7 +12,7 @@ from degenbot._ffi import Bot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import AlloyProvider, OfflineProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.constants import (
     UNISWAP_V3_FACTORY_ETH,
@@ -34,7 +34,7 @@ UNISWAP_V3_WBTC_WETH_BLOCK = 24947230
 
 
 def load_v3_liquidity_data(data_file: Path, pool_address: str) -> dict | None:
-    """Load V3 liquidity data (tick_bitmap, tick_data) from recorded single-block data file."""
+    """Load V3 liquidity data (tick_data) from a recorded single-block data file."""
     if not data_file.exists():
         return None
 
@@ -78,13 +78,9 @@ def offline_wbtc_weth_v3_pool(offline_adapter: AlloyProvider) -> UniswapV3Pool:
     data_file = CHAIN_DATA_PATH / "1" / f"block_{UNISWAP_V3_WBTC_WETH_BLOCK}.json"
     liquidity_data = load_v3_liquidity_data(data_file, UNISWAP_V3_WBTC_WETH_POOL)
 
-    tick_bitmap = liquidity_data.get("tick_bitmap", {})
     tick_data = liquidity_data.get("tick_data", {})
 
     # Convert string keys back to integers
-    tick_bitmap_int = {
-        int(k): {"bitmap": int(v["bitmap"]), "block": v["block"]} for k, v in tick_bitmap.items()
-    }
     tick_data_int = {
         int(k): {
             "liquidity_gross": int(v["liquidity_gross"]),
@@ -95,9 +91,6 @@ def offline_wbtc_weth_v3_pool(offline_adapter: AlloyProvider) -> UniswapV3Pool:
     }
 
     # Convert to the format expected by UniswapV3Pool
-    tick_bitmap_for_pool = {
-        k: BitmapAtWord(bitmap=v["bitmap"], block=v["block"]) for k, v in tick_bitmap_int.items()
-    }
     tick_data_for_pool = {
         k: LiquidityAtTick(
             liquidity_gross=v["liquidity_gross"],
@@ -160,7 +153,6 @@ def offline_wbtc_weth_v3_pool(offline_adapter: AlloyProvider) -> UniswapV3Pool:
         sqrt_price_x96=sqrt_price_x96,
         tick=tick,
         liquidity=liquidity,
-        tick_bitmap=tick_bitmap_for_pool,
         tick_data=tick_data_for_pool,
     )
 

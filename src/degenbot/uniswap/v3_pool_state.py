@@ -6,7 +6,7 @@ UniswapV3PoolCalc.
 
 V3 state is significantly different from V2:
 - Concentrated liquidity: tick-based, not reserves-based
-- Has tick_bitmap and tick_data for the liquidity distribution
+- Has tick_bitmap (known word positions) and tick_data for the liquidity distribution
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class V3PoolState(ConcentratedLiquidityPoolState):
     - _tick_spacing: granularity of the tick bitmap
 
     Mutable state (CL scalars + liquidity distribution):
-    - liquidity, sqrt_price_x96, tick, tick_bitmap, tick_data
+    - liquidity, sqrt_price_x96, tick, tick_bitmap (word keys), tick_data
     """
 
     # Immutable — set once at construction

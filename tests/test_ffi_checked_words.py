@@ -3,8 +3,8 @@
 ``Pool.update_tick_data`` (the FFI boundary) must record the checked
 bitmap words the caller passes into Rust ``known_bitmap_words`` (Sparse pools
 only — a Tracked pool's bitmap is complete, so nothing is recorded) and
-tick_bitmap_snapshot() must surface a known-but-empty word as a ``(0, block)``
-entry (Sparse only). That is the contract that retires the companion's
+the ``tick_bitmap`` getter must surface a known-but-empty word as a known WORD
+(Sparse only). That is the contract that retires the companion's
 ``_bitmap_override`` shadow: a caller-checked word is never re-fetched.
 
 Offline (no anvil, no live RPC): pools register directly in an in-memory
@@ -35,22 +35,19 @@ def _register_sparse_v3(bot: Bot, *, tick_data_fetcher=None) -> int:
     )
 
 
-def _snapshot(pool: object) -> dict[int, tuple[int, int]]:
-    """Normalize a `tick_bitmap_snapshot()` dict to plain python ints."""
-    return {
-        int(word): (int(row[0]), int(row[1]))
-        for word, row in pool.concentrated_liquidity().tick_bitmap.items()
-    }
+def _snapshot(pool: object) -> set[int]:
+    """The `tick_bitmap` getter's known-WORD set, normalized to plain ints."""
+    return {int(word) for word in pool.concentrated_liquidity().tick_bitmap}
 
 
 def test_sparse_checked_zero_word_survives_in_snapshot() -> None:
     bot = Bot(chain_id=1)
     pool = bot.get_pool(_register_sparse_v3(bot))
     # Words 0 and 1 were each checked on-chain and came back empty.
-    pool.update_tick_data({1: (0, 100), 0: (0, 100)}, {}, 100)
+    pool.update_tick_data({1, 0}, {}, 100)
     snap = _snapshot(pool)
-    assert snap.get(1) == (0, 100), f"checked-empty word 1 must survive: {snap}"
-    assert snap.get(0) == (0, 100), f"checked-empty word 0 must survive: {snap}"
+    assert 1 in snap, f"checked-empty word 1 must survive: {snap}"
+    assert 0 in snap, f"checked-empty word 0 must survive: {snap}"
 
 
 def test_sparse_checked_zero_word_prevents_refetch() -> None:
@@ -62,9 +59,9 @@ def test_sparse_checked_zero_word_prevents_refetch() -> None:
         return {}
 
     pool = bot.get_pool(_register_sparse_v3(bot, tick_data_fetcher=fake_fetcher))
-    pool.update_tick_data({0: (0, 100)}, {}, 100)
+    pool.update_tick_data({0}, {}, 100)
     snap = _snapshot(pool)
-    assert snap.get(0) == (0, 100), f"checked word must appear present-but-zero: {snap}"
+    assert 0 in snap, f"checked word must appear present: {snap}"
     # The swap starts in word 0: without the check it would fetch once
     # (baseline in test_v3_sparse_fetch_seam); with it, never.
     amount = int(
@@ -101,9 +98,9 @@ def test_tracked_update_tick_data_adds_no_bitmap_entries() -> None:
         coverage="tracked",
     )
     pool = bot.get_pool(pool_id)
-    pool.update_tick_data({3: (0, 50)}, dict(rows), 50)
-    words = set(_snapshot(pool))
-    assert words == {0}, f"Tracked bitmap is derived from tick rows only: {words}"
+    pool.update_tick_data({3}, dict(rows), 50)
+    words = _snapshot(pool)
+    assert words == {0}, f"Tracked bitmap words derive from tick rows only: {words}"
 
 
 def test_v4_sparse_checked_zero_word_survives_in_snapshot() -> None:
@@ -142,9 +139,9 @@ def test_v4_sparse_checked_zero_word_survives_in_snapshot() -> None:
         coverage="sparse",
     )
     handle = pool._py_pool
-    handle.update_tick_data({1: (0, 100)}, {}, 100)
+    handle.update_tick_data({1}, {}, 100)
     snap = _snapshot(handle)
-    assert snap.get(1) == (0, 100), f"V4 checked-empty word must survive: {snap}"
+    assert 1 in snap, f"V4 checked-empty word must survive: {snap}"
 
 
 # ── T3 — Tracked intake gate (chain truth) ────────────────────────────
@@ -191,15 +188,13 @@ def test_assemble_v3_tracked_snapshot_without_chain_transport_refused(tmp_path):
             "(pool_id, tick_spacing, liquidity_update_block, liquidity_update_log_index, fee_token0, fee_token1, fee_denominator) "
             "VALUES (1, 10, NULL, NULL, 0, 0, 1)",
         )
-        # The row is at tick 20 (compressed position 2 at spacing 10) but the
-        # bitmap word 0 has bit 1 set (tick 10) — the two contradict.
+        # A live row at tick 20 (compressed position 2 at spacing 10). The
+        # retired `initialization_maps` word-VALUE rows are gone with the
+        # tables — only the tick rows remain.
         conn.execute(
             "INSERT INTO liquidity_positions "
             "(id, pool_id, tick, liquidity_net, liquidity_gross) "
             "VALUES (1, 1, 20, '100', '100')",
-        )
-        conn.execute(
-            "INSERT INTO initialization_maps (id, pool_id, word, bitmap) VALUES (1, 1, 0, '2')",
         )
         conn.commit()
     finally:
@@ -208,27 +203,13 @@ def test_assemble_v3_tracked_snapshot_without_chain_transport_refused(tmp_path):
     bot = Bot(1)
     bot.load_snapshot_from_db(db_path, 1)
 
-    # The snapshot's bitmap (bit 1) contradicts its own row (tick 20) — that is
-    # NO LONGER an intake gate. What refuses is the MISSING CHAIN TRANSPORT: a
-    # typed RuntimeError, never a silent pass and never a ValueError naming a
+    # The snapshot-internal bit<->row tautology is retired as an intake gate
+    # (schema/decode validation owns it now), and the word-VALUE tables are
+    # dropped. What refuses is the MISSING CHAIN TRANSPORT: a typed
+    # RuntimeError, never a silent pass and never a ValueError naming a
     # snapshot conflict.
     with pytest.raises(RuntimeError, match=r"chain transport"):
         bot.assemble_v3_tick_map(pool_addr, tick_spacing=10)
-
-    # A snapshot whose bitmap and rows agree cannot be reconciled without chain
-    # truth either: the gate still refuses, loudly and typed.
-    # Fresh Bot: the first bot's held read transaction predates the UPDATE
-    # (WAL snapshot isolation) and would keep seeing the old bitmap.
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute("UPDATE initialization_maps SET bitmap = '4' WHERE id = 1")
-        conn.commit()
-    finally:
-        conn.close()
-    bot2 = Bot(1)
-    bot2.load_snapshot_from_db(db_path, 1)
-    with pytest.raises(RuntimeError, match=r"chain transport"):
-        bot2.assemble_v3_tick_map(pool_addr, tick_spacing=10)
 
 
 if __name__ == "__main__":

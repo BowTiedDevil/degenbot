@@ -74,7 +74,7 @@ use hashbrown::HashMap;
 use alloy::primitives::{Address, U256};
 
 use degenbot_db::error::DbError;
-use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
+use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 // `PoolTickCoverage` + `TickInfo` live in `degenbot_pools` but aren't at its
 // crate root; `bot_core::mod` re-exports them via `pub use v3_state::…` +
@@ -169,10 +169,10 @@ pub(crate) fn dump_tick_map_seed(
 /// the seed vocabulary stamps provenance.
 pub enum TickMapArm {
     /// A Db hit: the complete map, or a legitimately-empty `Tracked` pool.
-    Db(HashMap<i32, TickInfo>, HashMap<i32, U256>, PoolTickCoverage),
-    /// A Chain hit: the single bitmap word the transport returned, always
+    Db(HashMap<i32, TickInfo>, PoolTickCoverage),
+    /// A Chain hit: the single tick word the transport returned, always
     /// `Sparse`.
-    Chain(HashMap<i32, TickInfo>, HashMap<i32, U256>),
+    Chain(HashMap<i32, TickInfo>),
     /// The Chain transport ran and returned no word (all-zero bitmap), or no
     /// Chain transport is wired.
     ChainMiss,
@@ -185,19 +185,15 @@ impl TickMapArm {
     #[must_use]
     pub fn into_seed(self, block: u64, identity: TickMapPoolIdentity) -> TickMapSeed {
         match self {
-            Self::Db(ticks, bitmaps, coverage) => {
-                TickMapSeed::db(ticks, bitmaps, coverage, block, Some(block), identity)
+            Self::Db(ticks, coverage) => {
+                TickMapSeed::db(ticks, coverage, block, Some(block), identity)
             }
-            Self::Chain(ticks, bitmaps) => {
-                TickMapSeed::chain(ticks, bitmaps, PoolTickCoverage::Sparse, block, identity)
+            Self::Chain(ticks) => {
+                TickMapSeed::chain(ticks, PoolTickCoverage::Sparse, block, identity)
             }
-            Self::ChainMiss => TickMapSeed::chain(
-                HashMap::new(),
-                HashMap::new(),
-                PoolTickCoverage::Sparse,
-                block,
-                identity,
-            ),
+            Self::ChainMiss => {
+                TickMapSeed::chain(HashMap::new(), PoolTickCoverage::Sparse, block, identity)
+            }
         }
     }
 
@@ -206,8 +202,8 @@ impl TickMapArm {
     #[must_use]
     fn into_sync_hit(self) -> Option<(HashMap<i32, TickInfo>, PoolTickCoverage)> {
         match self {
-            Self::Db(ticks, _, coverage) => Some((ticks, coverage)),
-            Self::Chain(ticks, _) => Some((ticks, PoolTickCoverage::Sparse)),
+            Self::Db(ticks, coverage) => Some((ticks, coverage)),
+            Self::Chain(ticks) => Some((ticks, PoolTickCoverage::Sparse)),
             Self::ChainMiss => None,
         }
     }
@@ -254,13 +250,12 @@ where
     };
     // Pool IS in the Db: a non-empty map -> Tracked + populated; an empty map
     // -> legitimately-empty Tracked (authoritative — it came from the Db).
-    let bitmaps = bitmaps_from_db(&map.tick_bitmap);
     let arm = match liquidity_map_to_tick_info(map, block) {
         Some(hit) => {
             dump_tick_map_seed(pool_ident, &hit);
-            TickMapArm::Db(hit.0, bitmaps, hit.1)
+            TickMapArm::Db(hit.0, hit.1)
         }
-        None => TickMapArm::Db(HashMap::new(), bitmaps, PoolTickCoverage::Tracked),
+        None => TickMapArm::Db(HashMap::new(), PoolTickCoverage::Tracked),
     };
     Ok(Some(arm.into_seed(block, identity)))
 }
@@ -269,18 +264,11 @@ where
 /// word, `None` is a miss (all-zero bitmap, or no transport wired). The shared
 /// chain-side mint for both transports.
 #[must_use]
-pub fn chain_arm(ticks: Option<HashMap<i32, TickInfo>>, bitmaps: HashMap<i32, U256>) -> TickMapArm {
+pub fn chain_arm(ticks: Option<HashMap<i32, TickInfo>>) -> TickMapArm {
     match ticks {
-        Some(ticks) => TickMapArm::Chain(ticks, bitmaps),
+        Some(ticks) => TickMapArm::Chain(ticks),
         None => TickMapArm::ChainMiss,
     }
-}
-
-fn bitmaps_from_db(bitmaps: &HashMap<i64, BitmapAtWord>) -> HashMap<i32, U256> {
-    bitmaps
-        .iter()
-        .map(|(&word, entry)| (i32::try_from(word).unwrap_or(i32::MAX), entry.bitmap))
-        .collect()
 }
 
 /// Assemble a V3 pool's tick map with `Db → Chain` precedence.
@@ -325,11 +313,11 @@ pub fn assemble_v3_tick_map(
         Some(chain) => chain
             .bootstrap_v3_tick_word(&address.to_checksum(None), tick, tick_spacing, block)
             .map_err(TickMapAssemblyError::Chain)?
-            .map(|word| (word.ticks, HashMap::from([(word.word, word.bitmap)]))),
+            .map(|word| word.ticks),
         None => None,
     };
     Ok(match chain_hit {
-        Some((ticks, bitmaps)) => chain_arm(Some(ticks), bitmaps).into_sync_hit(),
+        Some(ticks) => chain_arm(Some(ticks)).into_sync_hit(),
         None => None,
     })
 }
@@ -396,11 +384,11 @@ pub fn assemble_v4_tick_map(
                 block,
             )
             .map_err(TickMapAssemblyError::Chain)?
-            .map(|word| (word.ticks, HashMap::from([(word.word, word.bitmap)]))),
+            .map(|word| word.ticks),
         None => None,
     };
     Ok(match chain_hit {
-        Some((ticks, bitmaps)) => chain_arm(Some(ticks), bitmaps).into_sync_hit(),
+        Some(ticks) => chain_arm(Some(ticks)).into_sync_hit(),
         None => None,
     })
 }
@@ -466,12 +454,10 @@ fn reconcile_db_seed_v4(
 
 /// Convert a Db `LiquidityMap` into the helper's hit/miss shape.
 ///
-/// Mirrors Python's `if not init_maps or not liq_positions: return ..., False`
-/// heuristic: a map with EITHER `tick_bitmap` OR `tick_data` empty is treated
-/// as a miss (`None`). In a healthy Db the two are 1:1 (a liquidity position
-/// creates its own initialization-map bit), so this is purely defensive — but
-/// matching Python preserves the existing degrade-to-RPC behavior on partial
-/// rows. A non-empty map converts to `Tracked` coverage; the per-tick `block`
+/// Mirrors Python's `if not liq_positions: return ..., False` heuristic: a map
+/// with empty `tick_data` is treated as a miss (`None`) — the historical
+/// `init_maps` half of that guard is retired with the dropped word-value table.
+/// A non-empty map converts to `Tracked` coverage; the per-tick `block`
 /// is the Db arm's sync block `S` — the bulk-sync block. The Db stores no
 /// per-tick block, so the bulk-sync block is the real value in scope; `0` is a
 /// legal stamp and is never used as a sentinel.
@@ -479,7 +465,7 @@ pub(crate) fn liquidity_map_to_tick_info(
     map: LiquidityMap,
     block: u64,
 ) -> Option<(HashMap<i32, TickInfo>, PoolTickCoverage)> {
-    if map.tick_bitmap.is_empty() || map.tick_data.is_empty() {
+    if map.tick_data.is_empty() {
         return None;
     }
     let ticks = convert_liquidity_at_tick(map.tick_data, block);

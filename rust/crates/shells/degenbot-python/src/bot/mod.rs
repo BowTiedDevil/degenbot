@@ -3186,7 +3186,7 @@ mod tests {
     fn assemble_v3_tick_map_returns_tracked_after_snapshot_load() {
         use alloy::primitives::{address, aliases::U128, Address, I256, U256};
         use degenbot_db::discovery::V3PoolRowInput;
-        use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
+        use degenbot_db::ApplyLiquidityAtTick;
         use hashbrown::HashMap;
 
         // Create a temp-file path for the test DB (unique via PID + counter).
@@ -3230,7 +3230,6 @@ mod tests {
                 )
                 .unwrap();
             let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
-            let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
             tick_data.insert(
                 10,
                 ApplyLiquidityAtTick {
@@ -3239,18 +3238,7 @@ mod tests {
                     block: 0,
                 },
             );
-            // bit 1 = tick 10 at spacing 10 (intake reconciliation
-            // requires the bit to match the row position).
-            tick_bitmap.insert(
-                0,
-                ApplyBitmapAtWord {
-                    bitmap: U256::from(1u64) << 1,
-                    block: 0,
-                },
-            );
             db.upsert_v3_liquidity_positions(pool_id, &tick_data)
-                .unwrap();
-            db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
                 .unwrap();
         }
         // The writable connection is dropped here; the file persists.
@@ -3303,15 +3291,16 @@ mod tests {
     /// against the word bitmaps read from chain. With no chain transport the
     /// gate refuses with a typed `RuntimeError` (never a silent pass); a chain
     /// transport that disagrees refuses with a typed `ValueError`; and a chain
-    /// word that agrees with the rows is admitted even when the snapshot's own
-    /// bitmap contradicts its rows — the snapshot-internal bit<->row tautology
-    /// is retired (schema/decode validation owns it now).
+    /// word that agrees with the rows is admitted. The DB stores no word
+    /// bitmap (BW3 dropped the value tables), so the retired snapshot-internal
+    /// bit<->row check would be a tautology over rows alone — chain truth owns
+    /// the reconciliation.
     #[expect(clippy::too_many_lines)]
     #[test]
     fn assemble_v3_tick_map_chain_truth_gate() {
         use alloy::primitives::{address, aliases::U128, Address, I256, U256};
         use degenbot_db::discovery::V3PoolRowInput;
-        use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
+        use degenbot_db::ApplyLiquidityAtTick;
         use hashbrown::HashMap;
 
         let temp_path = std::env::temp_dir().join(format!(
@@ -3350,7 +3339,6 @@ mod tests {
                     |r| r.get(0),
                 )
                 .unwrap();
-            // Inconsistent: word 0 bit 2 (tick 20) set; the only row is tick 10.
             let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
             tick_data.insert(
                 10,
@@ -3360,17 +3348,7 @@ mod tests {
                     block: 0,
                 },
             );
-            let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
-            tick_bitmap.insert(
-                0,
-                ApplyBitmapAtWord {
-                    bitmap: U256::from(1u64) << 2,
-                    block: 0,
-                },
-            );
             db.upsert_v3_liquidity_positions(pool_id, &tick_data)
-                .unwrap();
-            db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
                 .unwrap();
         }
         pyo3::Python::attach(|py| {
@@ -3429,8 +3407,8 @@ mod tests {
             );
 
             // (3) A chain word that agrees with the rows (bit 1 = tick 10) is
-            //     admitted even though the snapshot's own bitmap says bit 2 —
-            //     the retired tautology no longer rejects it.
+            //     admitted — the retired snapshot-internal bit<->row tautology
+            //     no longer rejects it.
             let agreeing = offline_v3_tick_word_io(
                 py,
                 Address::from([0xaa; 20]),

@@ -37,8 +37,6 @@ struct Expected {
     pool_manager_chain: i64,
     /// `(tick, liquidity_net, liquidity_gross)` — sorted by tick.
     positions: Vec<PositionRow>,
-    /// `(word, bitmap)` — sorted by word.
-    initialization_maps: Vec<InitMapRow>,
     liquidity_update_block: Option<i64>,
     liquidity_update_log_index: Option<i64>,
 }
@@ -48,12 +46,6 @@ struct PositionRow {
     tick: i32,
     liquidity_net: String,
     liquidity_gross: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct InitMapRow {
-    word: i64,
-    bitmap: String,
 }
 
 /// A `(block_number, log_index, tick_lower, tick_upper, liquidity_delta)` event
@@ -119,14 +111,8 @@ fn to_event(packed: (u64, u64, i32, i32, I256)) -> degenbot_db::LiquidityUpdateE
     }
 }
 
-/// The post-apply dump: `(pool_id, positions, init_maps, marker_block, marker_log_idx)`.
-type Dbdump = (
-    i64,
-    Vec<(i32, String, String)>,
-    Vec<(i64, String)>,
-    Option<i64>,
-    Option<i64>,
-);
+/// The post-apply dump: `(pool_id, positions, marker_block, marker_log_idx)`.
+type Dbdump = (i64, Vec<(i32, String, String)>, Option<i64>, Option<i64>);
 
 /// Dump the actual post-apply rows from the DB (mirrors the Python generator's
 /// `_dump_v3_state` / `_dump_v4_state` shape so the comparison is like-for-like).
@@ -151,15 +137,7 @@ fn dump_v3(db: &DegenbotDb) -> Dbdump {
         .map(|r| r.unwrap())
         .collect();
     positions.sort_by_key(|p| p.0);
-    let mut init_maps: Vec<(i64, String)> = conn
-        .prepare("SELECT word, bitmap FROM initialization_maps WHERE pool_id = ?1")
-        .unwrap()
-        .query_map(rusqlite::params![pool_id], |r| Ok((r.get(0)?, r.get(1)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-    init_maps.sort_by_key(|p| p.0);
-    (pool_id, positions, init_maps, row.1, row.2)
+    (pool_id, positions, row.1, row.2)
 }
 
 fn dump_v4(db: &DegenbotDb) -> Dbdump {
@@ -186,19 +164,7 @@ fn dump_v4(db: &DegenbotDb) -> Dbdump {
         .map(|r| r.unwrap())
         .collect();
     positions.sort_by_key(|p| p.0);
-    let mut init_maps: Vec<(i64, String)> = conn
-        .prepare(
-            "SELECT word, bitmap FROM managed_pool_initialization_maps WHERE managed_pool_id = ?1",
-        )
-        .unwrap()
-        .query_map(rusqlite::params![managed_pool_id], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-    init_maps.sort_by_key(|p| p.0);
-    (managed_pool_id, positions, init_maps, row.1, row.2)
+    (managed_pool_id, positions, row.1, row.2)
 }
 
 fn expected_for(name: &str) -> Expected {
@@ -239,16 +205,11 @@ fn v3_apply_matches_python_oracle() {
     )
     .unwrap();
 
-    let (_pool_id, positions, init_maps, block, log_idx) = dump_v3(&db);
+    let (_pool_id, positions, block, log_idx) = dump_v3(&db);
     assert_eq!(
         positions,
         to_position_tuple(&exp.positions),
         "V3 positions must match the Python oracle"
-    );
-    assert_eq!(
-        init_maps,
-        to_initmap_tuple(&exp.initialization_maps),
-        "V3 init maps must match the Python oracle"
     );
     assert_eq!(
         block, exp.liquidity_update_block,
@@ -290,16 +251,11 @@ fn v4_apply_matches_python_oracle() {
     )
     .unwrap();
 
-    let (_managed_pool_id, positions, init_maps, block, log_idx) = dump_v4(&db);
+    let (_managed_pool_id, positions, block, log_idx) = dump_v4(&db);
     assert_eq!(
         positions,
         to_position_tuple(&exp.positions),
         "V4 positions must match the Python oracle"
-    );
-    assert_eq!(
-        init_maps,
-        to_initmap_tuple(&exp.initialization_maps),
-        "V4 init maps must match the Python oracle"
     );
     assert_eq!(
         block, exp.liquidity_update_block,
@@ -313,8 +269,8 @@ fn v4_apply_matches_python_oracle() {
 
 /// Convert a Uniswap V3 fixture pool to a `PancakeSwap` V3 fork: move the
 /// subclass row from `uniswap_v3_pools` to `pancakeswap_v3_pools` and flip
-/// `pools.kind`. The `liquidity_positions` / `initialization_maps` rows stay
-/// (they're keyed by `pool_id`, kind-agnostic). This isolates the bug: the Rust
+/// `pools.kind`. The `liquidity_positions` rows stay (they're keyed by
+/// `pool_id`, kind-agnostic). This isolates the bug: the Rust
 /// updater must resolve the subclass-table at runtime, not hardcode
 /// `uniswap_v3_pools`.
 fn relabel_pool_as_pancakeswap_v3(conn: &rusqlite::Connection) -> i64 {
@@ -443,24 +399,11 @@ fn v3_fork_pool_apply_matches_oracle() {
         .map(|r| r.unwrap())
         .collect();
     positions.sort_by_key(|p| p.0);
-    let mut init_maps: Vec<(i64, String)> = conn
-        .prepare("SELECT word, bitmap FROM initialization_maps WHERE pool_id = ?1")
-        .unwrap()
-        .query_map(rusqlite::params![pool_id], |r| Ok((r.get(0)?, r.get(1)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-    init_maps.sort_by_key(|p| p.0);
 
     assert_eq!(
         positions,
         to_position_tuple(&exp.positions),
         "fork V3 positions must match oracle"
-    );
-    assert_eq!(
-        init_maps,
-        to_initmap_tuple(&exp.initialization_maps),
-        "fork V3 init-maps must match oracle"
     );
 
     // The marker must be on pancakeswap_v3_pools — NOT on uniswap_v3_pools.
@@ -488,12 +431,6 @@ fn to_position_tuple(rows: &[PositionRow]) -> Vec<(i32, String, String)> {
         .iter()
         .map(|r| (r.tick, r.liquidity_net.clone(), r.liquidity_gross.clone()))
         .collect();
-    out.sort_by_key(|p| p.0);
-    out
-}
-
-fn to_initmap_tuple(rows: &[InitMapRow]) -> Vec<(i64, String)> {
-    let mut out: Vec<(i64, String)> = rows.iter().map(|r| (r.word, r.bitmap.clone())).collect();
     out.sort_by_key(|p| p.0);
     out
 }

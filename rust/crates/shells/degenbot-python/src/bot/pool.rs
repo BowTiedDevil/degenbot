@@ -15,7 +15,7 @@ use degenbot_substrate::InstallWordOutcome;
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyDict, PyList, PySet, PyTuple};
 
 use crate::bot::errmap::{
     encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, journal_err_to_py,
@@ -1692,12 +1692,14 @@ impl PyLiquidityPool {
     /// `LiquidityAtTick` objects to this tuple shape at the boundary (matching
     /// how V2 converts its Python `Fraction` fees to the Rust `gamma_numer` at
     /// the boundary).
-    /// `tick_bitmap`: the KEYS are the checked bitmap words. For Sparse pools
-    /// the FFI records them in the Rust `known_bitmap_words` (a checked word
-    /// is never re-fetched — the contract that retires the companion's
-    /// `_bitmap_override` shadow); the VALUES are NOT stored (the bitmap is
-    /// derived from the `tick_data` rows — see `tick_bitmap_snapshot`).
-    /// Tracked pools never record (their bitmap is complete).
+    /// `tick_bitmap`: the checked bitmap WORD positions — any iterable of word
+    /// ints (a `set`/`list`/`tuple`, or a `dict` whose keys are the words). For
+    /// Sparse pools the FFI records them in the Rust `known_bitmap_words` (a
+    /// checked word is never re-fetched — the contract that retires the
+    /// companion's `_bitmap_override` shadow); no bitmap VALUE crosses the
+    /// boundary (the bitmap derives from the `tick_data` rows — see the
+    /// `tick_bitmap` getter). Tracked pools never record (their bitmap is
+    /// complete).
     /// Scalars (`sqrt_price_x96`/`liquidity`/`tick`) are UNCHANGED — this is
     /// tick-only. `update_block` advances to `block` if newer (monotonic).
     /// Returns `True` if the replace applied to a registered V3/V4 pool,
@@ -1711,24 +1713,23 @@ impl PyLiquidityPool {
         tick_data: &Bound<'_, PyDict>,
         block: u64,
     ) -> PyResult<bool> {
-        // Checked-word extraction (arch-review cand 4, T1): the bitmap KEYS
-        // are words the caller has checked on-chain; Sparse pools record them
-        // in `known_bitmap_words`, Tracked never do (the gate is in core —
-        // `mark_bitmap_words_known` no-ops there). Values are not stored —
-        // derivation from the `tick_data` rows is the bit source.
-        let dict = tick_bitmap.cast::<PyDict>().map_err(|_| {
-            pyo3::exceptions::PyTypeError::new_err("update_tick_data: tick_bitmap must be a dict")
-        })?;
-        let words: Vec<i32> = dict
-            .iter()
-            .map(|(key, _)| {
-                key.extract::<i32>().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "update_tick_data: tick_bitmap keys must be ints",
-                    )
-                })
-            })
-            .collect::<Result<_, _>>()?;
+        // Checked-word extraction (arch-review cand 4, T1): the entries are the
+        // words the caller has checked on-chain; Sparse pools record them in
+        // `known_bitmap_words`, Tracked never do (the gate is in core —
+        // `mark_bitmap_words_known` no-ops there). No bitmap value crosses the
+        // boundary — derivation from the `tick_data` rows is the bit source.
+        let mut words: Vec<i32> = Vec::new();
+        for item in tick_bitmap.try_iter().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(
+                "update_tick_data: tick_bitmap must be an iterable of word ints",
+            )
+        })? {
+            words.push(item?.extract::<i32>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "update_tick_data: tick_bitmap entries must be ints",
+                )
+            })?);
+        }
         // The seed boundary owns the wire shape (arity, gross narrowing,
         // per-tick block) and the one malformed-container error; the per-tick
         // block it carries is preserved on the Rust ``TickInfo.block`` field
@@ -2628,7 +2629,7 @@ impl PyLiquidityPool {
             tick,
             update_block,
             tick_data,
-            tick_bitmap,
+            tick_bitmap_words,
             tick_data_block,
             coverage,
         )) = values
@@ -2647,7 +2648,7 @@ impl PyLiquidityPool {
             tick,
             update_block,
             tick_data,
-            tick_bitmap,
+            tick_bitmap_words,
             tick_data_block,
             coverage,
         })
@@ -2855,7 +2856,7 @@ type ClSnapshotFields = (
     i32,
     u64,
     Vec<(i32, (u128, i128, u64))>,
-    Vec<(i32, (U256, u64))>,
+    Vec<i32>,
     u64,
     PyPoolTickCoverage,
 );
@@ -2882,22 +2883,18 @@ fn cl_snapshot_fields(
             )
         })
         .collect();
-    let mut words: std::collections::BTreeMap<i32, (U256, u64)> = std::collections::BTreeMap::new();
-    let one = U256::from(1u64);
+    // The bitmap WORD positions the pool knows — the load-bearing key set.
+    // The per-word bitmap VALUE is derived (dead); only which words are known
+    // matters (Tracked words from the tick rows, Sparse words also from the
+    // Rust `known_bitmap_words`). A `BTreeSet` keeps the emitted order stable.
+    let mut words: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
     for tick in state.tick_data().keys() {
         let compressed = *tick / tick_spacing;
-        let word = compressed >> 8;
-        let bit = compressed.rem_euclid(256) as u32;
-        words
-            .entry(word)
-            .and_modify(|(bitmap, _)| *bitmap |= one << bit)
-            .or_insert((one << bit, state.update_block()));
+        words.insert(compressed >> 8);
     }
     if state.coverage() == PoolTickCoverage::Sparse {
         for word in state.known_bitmap_words() {
-            words
-                .entry(*word)
-                .or_insert((U256::ZERO, state.tick_data_block()));
+            words.insert(*word);
         }
     }
     let coverage = PyPoolTickCoverage::from_core(state.coverage());
@@ -3265,7 +3262,7 @@ pub struct PyConcentratedLiquidityView {
     tick: i32,
     update_block: u64,
     tick_data: Vec<(i32, (u128, i128, u64))>,
-    tick_bitmap: Vec<(i32, (U256, u64))>,
+    tick_bitmap_words: Vec<i32>,
     tick_data_block: u64,
     coverage: PyPoolTickCoverage,
 }
@@ -3341,20 +3338,15 @@ impl PyConcentratedLiquidityView {
         Ok(dict.into_any().unbind())
     }
 
+    /// The bitmap WORD positions the pool knows (the load-bearing key set).
+    /// The per-word bitmap VALUE is retired — it derives from `tick_data`.
     #[getter]
-    fn tick_bitmap(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let dict = PyDict::new(py);
-        for (word, (bitmap, block)) in &self.tick_bitmap {
-            let value = crate::conversion::alloy::u256_to_py(py, bitmap)?;
-            dict.set_item(
-                word,
-                PyTuple::new(
-                    py,
-                    [value.unbind(), block.into_pyobject(py)?.into_any().unbind()],
-                )?,
-            )?;
+    fn tick_bitmap<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PySet>> {
+        let set = PySet::empty(py)?;
+        for word in &self.tick_bitmap_words {
+            set.add(*word)?;
         }
-        Ok(dict.into_any().unbind())
+        Ok(set)
     }
 }
 

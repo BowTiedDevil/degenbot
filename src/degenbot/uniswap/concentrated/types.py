@@ -5,7 +5,7 @@ import dataclasses
 import pydantic
 
 from degenbot.types.aliases import BlockNumber
-from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
+from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -21,18 +21,6 @@ class SwapResult:
     sqrt_price_x96: int
     liquidity: int
     tick: int
-
-
-class BitmapAtWord(pydantic.BaseModel, frozen=True):
-    """Bitmap value at a tick bitmap word position.
-
-    ``block`` is the block at which this word was last mutated/confirmed: the
-    event block, the registration seed block, or the bulk-sync block. ``0`` is
-    a legal stamp (a chain can launch at genesis), never a sentinel.
-    """
-
-    bitmap: ValidatedUint256
-    block: BlockNumber
 
 
 class LiquidityAtTick(pydantic.BaseModel, frozen=True):

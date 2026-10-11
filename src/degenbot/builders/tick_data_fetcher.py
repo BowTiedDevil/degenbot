@@ -21,11 +21,12 @@ class TickDataTypes:
     """Type-params that differ between V3 and V4 tick data fetchers.
 
     V3 and V4 use the same algorithm but different concrete types for
-    the bitmap-at-word and liquidity-at-tick values. This dataclass
-    captures those differences so the algorithm can be written once.
+    the liquidity-at-tick values. This dataclass captures those differences so
+    the algorithm can be written once. (The retired bitmap-at-word value type
+    is gone — the fetcher derives the active ticks straight off the on-chain
+    word bitmap it reads.)
     """
 
-    bitmap_at_word: type  # BitmapAtWord
     liquidity_at_tick: type  # LiquidityAtTick
     tick_struct_types: tuple[str, ...]  # ABI types for decoding tick data
 

@@ -86,9 +86,7 @@ const V3_FACTORY: &str = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 const DUMP_TABLES: &[&str] = &[
     "erc20_tokens",
     "exchanges",
-    "initialization_maps",
     "liquidity_positions",
-    "managed_pool_initialization_maps",
     "managed_pool_liquidity_positions",
     "managed_pools",
     "pools",

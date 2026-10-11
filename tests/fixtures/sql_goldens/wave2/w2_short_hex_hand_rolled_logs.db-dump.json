@@ -40,32 +40,12 @@
       "columns": [
         "id",
         "pool_id",
-        "word",
-        "bitmap"
-      ],
-      "rows": [],
-      "table": "initialization_maps"
-    },
-    {
-      "columns": [
-        "id",
-        "pool_id",
         "tick",
         "liquidity_net",
         "liquidity_gross"
       ],
       "rows": [],
       "table": "liquidity_positions"
-    },
-    {
-      "columns": [
-        "id",
-        "managed_pool_id",
-        "word",
-        "bitmap"
-      ],
-      "rows": [],
-      "table": "managed_pool_initialization_maps"
     },
     {
       "columns": [

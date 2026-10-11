@@ -66,14 +66,11 @@ pub use aave::{
     AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveGhoAsset, AaveUserRecord,
 };
 pub use connection::DegenbotDb;
-/// Re-export the concentrated-liquidity-math in-memory liquidity types (`liquidity_gross: U128`,
-/// `liquidity_net: I256`, plus `bitmap: U256`) the liquidity updater applies
-/// against — aliased so they don't collide with the snapshot batch-read `U256`
-/// flavor above. These are the field types of `ComputedLiquidityUpdate` + the
-/// on-chain verifier's comparison inputs.
-pub use degenbot_math::cl::liquidity_mapping::{
-    BitmapAtWord as ApplyBitmapAtWord, LiquidityAtTick as ApplyLiquidityAtTick,
-};
+/// Re-export the concentrated-liquidity-math in-memory tick type
+/// (`liquidity_gross: U128`, `liquidity_net: I256`) the liquidity updater
+/// applies against — aliased so it doesn't collide with the snapshot batch-read
+/// `U256` flavor above. This is the field type of `ComputedLiquidityUpdate`.
+pub use degenbot_math::cl::liquidity_mapping::LiquidityAtTick as ApplyLiquidityAtTick;
 /// The canonical pool-family taxonomy (`degenbot-pathfinding`'s graph
 /// discriminant), re-exported because this crate's schema gate, species
 /// manifest, and row types all project through it: a DB consumer resolves the
@@ -104,11 +101,10 @@ pub use ops::{
 pub use pathfinding::{PathEdge, PathGraphData};
 pub use read::{ExchangeFamily, GraphEdition};
 pub use rows::{
-    InitializationMapRow, LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow,
-    ManagedLiquidityPoolRow, ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow,
-    PoolKindRow, PoolManagerRow, V2PoolRow, V3PoolRow, V4PoolRow,
+    LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow, ManagedLiquidityPoolRow,
+    ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow, V2PoolRow, V3PoolRow, V4PoolRow,
 };
-pub use snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap, PoolKey};
+pub use snapshot::{LiquidityAtTick, LiquidityMap, PoolKey};
 pub use species::{ChainIdentifiers, Family, Manifest, ManifestError, SlotLayout, Species};
 pub use write::{
     decode_reserve_configuration_bitmap, AssetRow, ReserveConfiguration, ScaledTokenPosition,

@@ -11,8 +11,8 @@
 //!   normalized (whitespace collapsed, literals → `?`), with arg count and
 //!   rows changed.
 //! - **DB-dump golden** — the touched tables (pools + the v2/v3/v4 subclass
-//!   tables + liquidity positions + initialization maps + the token rows the
-//!   pool apply creates + the exchange rows carrying the chunk stamp), rows
+//!   tables + liquidity positions + the token rows the pool apply creates +
+//!   the exchange rows carrying the chunk stamp), rows
 //!   sorted, hex identifiers lowercased.
 //!
 //! **Drift gate (machine-emitted discipline, GLOSSARY "Verification idioms"):**
@@ -85,7 +85,11 @@ const DUMP_GOLDEN_PATH: &str = concat!(
 /// count: the full-map SELECTs became the dirty-key IN-form
 /// (`… WHERE pool_id = ? AND tick IN (?, ?)` — the Perf B read surface).
 /// Classified in the task sign-off; the DB dump golden is byte-identical.
-const EXPECTED_LEDGER_STATEMENTS: usize = 21;
+///
+/// BW3 (21 → 19): the word-bitmap VALUE retirement removed the last two
+/// `initialization_maps` statements this corpus ran — its full-map SELECT and
+/// its upsert. The word-KEY read surface is unchanged.
+const EXPECTED_LEDGER_STATEMENTS: usize = 19;
 
 /// The tables one pool-chunk apply touches, in the dump's fixed (alphabetical)
 /// order. `exchanges` is the chunk's commit stamp; `erc20_tokens` the token
@@ -95,9 +99,7 @@ const EXPECTED_LEDGER_STATEMENTS: usize = 21;
 const DUMP_TABLES: &[&str] = &[
     "erc20_tokens",
     "exchanges",
-    "initialization_maps",
     "liquidity_positions",
-    "managed_pool_initialization_maps",
     "managed_pool_liquidity_positions",
     "managed_pools",
     "pools",

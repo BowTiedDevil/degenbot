@@ -19,7 +19,7 @@ from degenbot.exceptions.pool import (
 )
 from degenbot.fork import AnvilFork
 from degenbot.types.chain import ChainId
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
@@ -247,7 +247,7 @@ def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
 def test_external_update_with_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     bot = make_bot_with_provider(fork_mainnet_full.provider)
     lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
-    print(f"{lp.tick_bitmap.keys()=}")
+    print(f"{lp.tick_bitmap=}")
     current_word, _ = cl_get_tick_word_and_bit_position(
         tick=MIN_TICK,
         tick_spacing=lp.tick_spacing,
@@ -393,15 +393,6 @@ def test_discard_after_last_update(wbtc_weth_v3_lp_at_historical_block: UniswapV
         match=f"No pool state known prior to block {lp.update_block + 1}",
     ):
         wbtc_weth_v3_lp_at_historical_block.discard_states_before_block(lp.update_block + 1)
-
-
-def test_tick_bitmap_equality() -> None:
-    with pytest.raises(AssertionError):
-        assert BitmapAtWord(bitmap=1, block=0) == BitmapAtWord(bitmap=2, block=0)
-    with pytest.raises(AssertionError):
-        assert BitmapAtWord(bitmap=2, block=0) == BitmapAtWord(bitmap=4, block=0)
-
-    assert BitmapAtWord(bitmap=1, block=1) == BitmapAtWord(bitmap=1, block=1)
 
 
 def test_tick_data_equality() -> None:

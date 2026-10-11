@@ -4,7 +4,7 @@ ADR-005 slice 8b — the V3 companion rewritten over the same `Pool`
 handle topology as the V2 `UniswapV2Pool`. Rust `BotState` is the single
 source of truth for V3 mutable state (scalars, tick data, reorg journal);
 this companion reads it through `self._py_pool` (the atomic `snapshot_v3()`
-for scalars + `tick_data_snapshot()`/`tick_bitmap_snapshot()` for the tick maps)
+for scalars + `tick_data()`/`tick_bitmap` for the tick maps)
 and delegates `external_update` (Swap) / `update_liquidity_map` (Mint/Burn) /
 `update_tick_data` (sparse-map backfill) / discard / restore to the handle.
 Immutable identity (tokens, factory, fee, tick_spacing) stays Python-side —
@@ -15,14 +15,15 @@ matches V2 (calc lives in the `UniswapV3PoolCalc` mixin).
 discard/restore). V2 already has none; V3 follows.
 
 Sparse-map bitmap note: Rust's tick bitmap is DERIVED from `tick_data` keys
-(no separate bitmap store), and the CHECKED words are tracked in Rust
+(no separate bitmap store, and no stored bitmap VALUE — the word-value
+machinery is retired), and the CHECKED words are tracked in Rust
 (`known_bitmap_words` — seeded at Sparse registration, grown by fetch-merge /
 full-sync, and grown by the `update_tick_data` FFI seam from the caller's
-tick_bitmap KEYS — Sparse only, never Tracked). `tick_bitmap_snapshot()`
-surfaces a known-but-empty word as `(0, block)`, so the simulator sees it as
-present-but-zero (not missing) and the fetch loop breaks with no client-side
-shadow. A word ABSENT from the snapshot is indeterminate on a Sparse pool
-(fetch it) and known-empty on a Tracked pool (complete map).
+checked-word set — Sparse only, never Tracked). `tick_bitmap` surfaces the
+known WORD positions as a `set[int]`, so a checked-but-empty word reads as
+present (not missing) and the fetch loop breaks with no client-side shadow. A
+word ABSENT from the set is indeterminate on a Sparse pool (fetch it) and
+known-empty on a Tracked pool (complete map).
 """
 
 from __future__ import annotations
@@ -58,13 +59,6 @@ class LiquidityAtTickAsDict(TypedDict):
     block: BlockNumber
 
 
-class BitmapAtWordAsDict(TypedDict):
-    """Serialized form of ``BitmapAtWord`` for tick bitmap interchange."""
-
-    bitmap: int
-    block: BlockNumber
-
-
 class UniswapV3Pool(
     V3PoolState,
     UniswapV3PoolCalc,
@@ -75,7 +69,7 @@ class UniswapV3Pool(
     Rust owns the mutable state (scalars + tick data + reorg journal) as
     ``V3PoolState``; this companion reads it through ``self._py_pool`` (one
     atomic ``snapshot_v3()`` for scalars + ``tick_data_snapshot()`` /
-    ``tick_bitmap_snapshot()`` for the tick maps) and delegates
+    ``tick_data()``/``tick_bitmap`` for the tick maps) and delegates
     ``external_update`` (Swap) / ``update_liquidity_map`` (Mint/Burn) /
     ``update_tick_data`` (sparse-map backfill) / discard / restore to the
     handle. Immutable identity (tokens, factory, fee, tick_spacing) stays
@@ -166,8 +160,8 @@ class UniswapV3Pool(
         The sparse-tick fetcher is stored Rust-side on ``V3PoolState``
         (ADR-006 I/O trait object) — not a constructor arg.
         Checked words (bitmap words the caller has verified) live in Rust
-        ``known_bitmap_words``; ``tick_bitmap_snapshot()`` surfaces them, so
-        there is no client-side bitmap shadow.
+        ``known_bitmap_words``; ``tick_bitmap`` surfaces them (word positions
+        only), so there is no client-side bitmap shadow.
 
         Returns:
             A ``cls`` instance wrapping ``py_pool``.

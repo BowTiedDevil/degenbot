@@ -164,14 +164,6 @@ CREATE TABLE IF NOT EXISTS exchanges (
 	deployer VARCHAR(42), 
 	PRIMARY KEY (id)
 );
-CREATE TABLE IF NOT EXISTS initialization_maps (
-	id INTEGER NOT NULL, 
-	pool_id INTEGER NOT NULL, 
-	word INTEGER NOT NULL, 
-	bitmap VARCHAR(78) NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(pool_id) REFERENCES pools (id)
-);
 CREATE TABLE IF NOT EXISTS lfj_pools (
 	pool_id INTEGER NOT NULL, 
 	bin_step INTEGER NOT NULL, 
@@ -187,14 +179,6 @@ CREATE TABLE IF NOT EXISTS liquidity_positions (
 	liquidity_gross VARCHAR(78) NOT NULL, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(pool_id) REFERENCES pools (id)
-);
-CREATE TABLE IF NOT EXISTS managed_pool_initialization_maps (
-	id INTEGER NOT NULL, 
-	managed_pool_id INTEGER NOT NULL, 
-	word INTEGER NOT NULL, 
-	bitmap VARCHAR(78) NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(managed_pool_id) REFERENCES managed_pools (id)
 );
 CREATE TABLE IF NOT EXISTS managed_pool_liquidity_positions (
 	id INTEGER NOT NULL, 
@@ -346,12 +330,9 @@ CREATE INDEX IF NOT EXISTS ix_aave_v3_users_isolation_mode_collateral_asset_id O
 CREATE INDEX IF NOT EXISTS ix_aave_v3_users_market_id ON aave_v3_users (market_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_erc20_tokens_address_chain ON erc20_tokens (address, chain);
 CREATE INDEX IF NOT EXISTS ix_erc20_tokens_chain ON erc20_tokens (chain);
-CREATE UNIQUE INDEX IF NOT EXISTS ix_initialization_maps_pool_id_word ON initialization_maps (pool_id, word);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_liquidity_pool_address_chain ON pools (address, chain);
 CREATE INDEX IF NOT EXISTS ix_liquidity_pools_token_ids ON pools (token0_id, token1_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_liquidity_positions_pool_id_tick ON liquidity_positions (pool_id, tick);
-CREATE INDEX IF NOT EXISTS ix_managed_pool_initialization_maps_managed_pool_id ON managed_pool_initialization_maps (managed_pool_id);
-CREATE UNIQUE INDEX IF NOT EXISTS ix_managed_pool_initialization_maps_pool_id_word ON managed_pool_initialization_maps (managed_pool_id, word);
 CREATE INDEX IF NOT EXISTS ix_managed_pool_liquidity_positions_managed_pool_id ON managed_pool_liquidity_positions (managed_pool_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_managed_pool_liquidity_positions_pool_id_tick ON managed_pool_liquidity_positions (managed_pool_id, tick);
 CREATE INDEX IF NOT EXISTS ix_managed_pools_manager_id ON managed_pools (manager_id);

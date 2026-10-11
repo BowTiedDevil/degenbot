@@ -34,7 +34,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.db import db_upgrade_database
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -416,9 +416,7 @@ class TestV3PoolIOFreeConstructor:
             -76080: LiquidityAtTick(liquidity_gross=1000, liquidity_net=-500, block=18_000_000),
             -75960: LiquidityAtTick(liquidity_gross=2000, liquidity_net=300, block=18_000_000),
         }
-        tick_bitmap = {-297: BitmapAtWord(bitmap=3, block=18_000_000)}
-
-        pool = _v3_injected(tick_bitmap=tick_bitmap, tick_data=tick_data)
+        pool = _v3_injected(tick_data=tick_data)
 
         assert pool.sparse_liquidity_map is False
         assert -76080 in pool.tick_data
@@ -525,8 +523,9 @@ class TestV4PoolIOFreeConstructor:
         pool = _v4_injected(tick_data=tick_data)
 
         assert pool.sparse_liquidity_map is False
-        assert pool.tick_bitmap[0].bitmap == (1 << 12)
-        assert pool.tick_bitmap[-1].bitmap == (1 << 255)
+        # Keys only: the words the tick rows land in (bit 12 → word 0, bit 255
+        # → word -1). The per-word bitmap VALUE is retired.
+        assert pool.tick_bitmap == {0, -1}
         assert pool.tick_data[120].liquidity_net == 100
         assert pool.tick_data[-10].liquidity_net == 100
 

@@ -6,7 +6,7 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from degenbot.types.abstract import AbstractPoolState
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     BitmapWord,
     Liquidity,
@@ -27,7 +27,7 @@ class UniswapV4PoolState(AbstractPoolState):
     liquidity: Liquidity
     sqrt_price_x96: SqrtPriceX96
     tick: Tick
-    tick_bitmap: dict[BitmapWord, BitmapAtWord]
+    tick_bitmap: set[BitmapWord]
     tick_data: dict[Tick, LiquidityAtTick]
     id: bytes
     block: BlockNumber | None
@@ -76,5 +76,5 @@ class UniswapV4PoolLiquidityMappingUpdate:
     tick_upper: Tick
 
 
-type InitializedTickMap = dict[BitmapWord, BitmapAtWord]
+type InitializedTickMap = set[BitmapWord]
 type LiquidityMap = dict[Tick, LiquidityAtTick]

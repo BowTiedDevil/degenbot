@@ -1,15 +1,4 @@
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-
-
-def test_tick_bitmap() -> None:
-    # Test equality
-    assert BitmapAtWord(bitmap=0, block=0) == BitmapAtWord(bitmap=0, block=0)
-
-    # Test uniqueness
-    assert BitmapAtWord(bitmap=0, block=0) is not BitmapAtWord(bitmap=0, block=0)
-
-    # Test dict export method
-    assert BitmapAtWord(bitmap=0, block=0).model_dump() == {"bitmap": 0, "block": 0}
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 
 
 def test_liquidity_data() -> None:

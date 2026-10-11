@@ -1,4 +1,4 @@
-//! Snapshot-shaped read fns — [`LiquidityMap`] / [`BitmapAtWord`] /
+//! Snapshot-shaped read fns — [`LiquidityMap`] /
 //! [`LiquidityAtTick`] + [`fetch_liquidity_map`] / [`fetch_liquidity_map_v4`] /
 //! [`fetch_all_liquidity_maps`]. These mirror Python `DatabaseSnapshot`
 //! (`src/degenbot/uniswap/{v3,v4}_snapshot.py`) so the cross-implementation
@@ -28,13 +28,6 @@ use crate::schema::table::is_v3_kind;
 /// `-` for upper ticks), which round-trips byte-identically at this width.
 pub type TickMap = HashMap<i32, (U256, i128)>;
 
-/// The tick-initialization bitmap entry at one word (mirrors Python
-/// `BitmapAtWord`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BitmapAtWord {
-    pub bitmap: U256,
-}
-
 /// The liquidity state at one tick (mirrors Python `LiquidityAtTick`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiquidityAtTick {
@@ -43,11 +36,10 @@ pub struct LiquidityAtTick {
     pub liquidity_net: i128,
 }
 
-/// The liquidity map for one pool — `tick_bitmap` + `tick_data` (mirrors
+/// The liquidity map for one pool — its initialized tick rows (mirrors
 /// Python `LiquidityMap` `TypedDict`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LiquidityMap {
-    pub tick_bitmap: HashMap<i64, BitmapAtWord>,
     pub tick_data: HashMap<i32, LiquidityAtTick>,
 }
 
@@ -407,24 +399,6 @@ pub fn fetch_liquidity_map_on_conn(
         return Ok(None);
     }
 
-    let mut tick_bitmap: HashMap<i64, BitmapAtWord> = HashMap::new();
-    {
-        let mut stmt =
-            conn.prepare("SELECT word, bitmap FROM initialization_maps WHERE pool_id = ?1")?;
-        let rows = stmt.query_map(rusqlite::params![pool_id], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-        })?;
-        for r in rows {
-            let (word, bitmap_str) = r?;
-            tick_bitmap.insert(
-                word,
-                BitmapAtWord {
-                    bitmap: decode_u256(&bitmap_str)?,
-                },
-            );
-        }
-    }
-
     let mut tick_data: HashMap<i32, LiquidityAtTick> = HashMap::new();
     {
         let mut stmt = conn.prepare(
@@ -450,10 +424,7 @@ pub fn fetch_liquidity_map_on_conn(
         }
     }
 
-    Ok(Some(LiquidityMap {
-        tick_bitmap,
-        tick_data,
-    }))
+    Ok(Some(LiquidityMap { tick_data }))
 }
 
 /// `fetch_liquidity_map_v4` body taking a borrowed `&Connection`.
@@ -487,26 +458,6 @@ pub fn fetch_liquidity_map_v4_on_conn(
         return Ok(None);
     };
 
-    let mut tick_bitmap: HashMap<i64, BitmapAtWord> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT word, bitmap FROM managed_pool_initialization_maps \
-             WHERE managed_pool_id = ?1",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![managed_pool_id], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-        })?;
-        for r in rows {
-            let (word, bitmap_str) = r?;
-            tick_bitmap.insert(
-                word,
-                BitmapAtWord {
-                    bitmap: decode_u256(&bitmap_str)?,
-                },
-            );
-        }
-    }
-
     let mut tick_data: HashMap<i32, LiquidityAtTick> = HashMap::new();
     {
         let mut stmt = conn.prepare(
@@ -532,10 +483,7 @@ pub fn fetch_liquidity_map_v4_on_conn(
         }
     }
 
-    Ok(Some(LiquidityMap {
-        tick_bitmap,
-        tick_data,
-    }))
+    Ok(Some(LiquidityMap { tick_data }))
 }
 
 /// The `uniswap_v3_pools.liquidity_update_block` for a pool, by address — the

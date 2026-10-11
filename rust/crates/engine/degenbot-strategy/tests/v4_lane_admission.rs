@@ -17,7 +17,7 @@
 use alloy::primitives::{address, aliases::U112, Address, B256, I256, U256};
 
 use degenbot_db::connection::DegenbotDb;
-use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
+use degenbot_db::ApplyLiquidityAtTick;
 use degenbot_pools::slot_layout::V2ReservesParts;
 use degenbot_rpc::liquidity_verifier::LiquidityMap as RpcLiquidityMap;
 use degenbot_simulation::sim::evm::journal_pools::{
@@ -164,24 +164,7 @@ fn runtime_fixture_with(
             block: 0,
         },
     );
-    let mut bitmaps = HbMap::new();
-    bitmaps.insert(
-        -1,
-        ApplyBitmapAtWord {
-            bitmap: U256::from(1_u8) << 244,
-            block: 0,
-        },
-    );
-    bitmaps.insert(
-        0,
-        ApplyBitmapAtWord {
-            bitmap: U256::from(1_u8) << 12,
-            block: 0,
-        },
-    );
     db.upsert_v4_liquidity_positions(i64::try_from(V4_DB_POOL_ID).unwrap(), &ticks)
-        .unwrap();
-    db.upsert_v4_initialization_maps(i64::try_from(V4_DB_POOL_ID).unwrap(), &bitmaps)
         .unwrap();
     market_context(
         Some(std::sync::Arc::new(degenbot_substrate::RouteRegistry::new(

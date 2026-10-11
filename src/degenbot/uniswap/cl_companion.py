@@ -22,7 +22,7 @@ from degenbot.exceptions import ExternalUpdateError
 from degenbot.exceptions.pool import LiquidityMapWordMissing, NoPoolStateAvailable
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap import PoolTickCoverage
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
 )
@@ -85,25 +85,18 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         return self._py_pool.concentrated_liquidity().tick
 
     @property
-    def tick_bitmap(self) -> dict[int, BitmapAtWord]:
-        """Tick bitmap.
+    def tick_bitmap(self) -> set[int]:
+        """Tick bitmap WORD positions known for the pool.
 
-        A deep-copy snapshot of the Rust-side tick bitmap: derived from
-        ``tick_data`` keys, + for Sparse pools the checked-but-empty words
-        from Rust ``known_bitmap_words`` as ``(0, block)`` entries (a word
-        checked via ``update_tick_data``/fetch-merge survives as
-        present-but-zero — the fetch loop breaks). Tracked pools return the
-        pure derivation (absent word = known-empty; the map is complete).
+        The load-bearing key set only — the per-word bitmap VALUE is retired
+        (it derives from the ``tick_data`` rows). Rust surfaces the words the
+        pool knows: every word its ``tick_data`` keys land in, plus (Sparse
+        only) the Rust ``known_bitmap_words`` recorded by
+        ``update_tick_data``/fetch-merge, so a checked-but-empty word survives
+        as a known word (the fetch loop breaks). Tracked pools know exactly
+        their tick rows' words.
         """
-        raw = self._py_pool.concentrated_liquidity().tick_bitmap
-        return {
-            int(word): (
-                BitmapAtWord(bitmap=int(row[0]), block=int(row[1]))
-                if not isinstance(row, BitmapAtWord)
-                else row
-            )
-            for word, row in raw.items()
-        }
+        return {int(word) for word in self._py_pool.concentrated_liquidity().tick_bitmap}
 
     @property
     def tick_data(self) -> dict[int, LiquidityAtTick]:
@@ -161,7 +154,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
 
     def update_tick_data(
         self,
-        tick_bitmap: dict[int, Any],
+        tick_bitmap: set[int] | dict[int, Any],
         tick_data: dict[int, Any],
         block: int,
     ) -> None:
@@ -169,13 +162,15 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
 
         Delegates to ``Pool.update_tick_data`` (replaces the
         Rust-side ``tick_data`` HashMap; scalars unchanged). The
-        ``tick_bitmap`` KEYS are the checked words: for Sparse pools the FFI
-        records them in Rust ``known_bitmap_words`` (a checked word is never
-        re-fetched); the VALUES are NOT stored (the bitmap derives from the
-        tick rows). Tracked pools record nothing (their bitmap is complete).
+        ``tick_bitmap`` is the set of checked words (any iterable of word
+        ints — a ``dict`` iterates its keys): for Sparse pools the FFI records
+        them in Rust ``known_bitmap_words`` (a checked word is never
+        re-fetched); no bitmap VALUE crosses the boundary (the bitmap derives
+        from the tick rows). Tracked pools record nothing (their bitmap is
+        complete).
         """
-        # Normalize LiquidityAtTick/BitmapAtWord inputs into the tuple shape
-        # the Rust write path expects: {tick: (gross, net, block)}.
+        # Normalize LiquidityAtTick inputs into the tuple shape the Rust write
+        # path expects: {tick: (gross, net, block)}.
         normalized: dict[int, tuple[int, int, int]] = {}
         for tick, info in tick_data.items():
             if isinstance(info, LiquidityAtTick):

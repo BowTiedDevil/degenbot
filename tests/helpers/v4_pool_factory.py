@@ -46,7 +46,6 @@ def make_v4_pool(
     protocol_fee_one_for_zero: int,
     lp_fee: int,
     tick_data: dict[int, Any] | None = None,
-    tick_bitmap: dict[int, Any] | None = None,
     state_block: int | None = None,
     py_bot: Bot | None = None,
     coverage: str | None = None,
@@ -134,9 +133,9 @@ def make_v4_pool(
         one_for_zero=protocol_fee_one_for_zero,
     )
     pool.lp_fee = lp_fee
-    # ``tick_bitmap`` keys are recorded Rust-side as checked words at the
-    # construction seed (the companion override is retired);
-    # nothing to overlay here.
+    # The retired ``tick_bitmap`` value arg is gone; the checked words are
+    # recorded Rust-side from the seeded tick rows (the companion override is
+    # retired) — nothing to overlay here.
     return pool
 
 

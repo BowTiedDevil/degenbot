@@ -126,15 +126,34 @@ fn shared_map(computed: &ComputedLiquidityUpdate) -> Result<LiquidityMap, RunErr
             },
         );
     }
-    let mut bitmaps = HashMap::with_capacity(computed.tick_bitmap.len());
-    for (&word, value) in &computed.tick_bitmap {
-        bitmaps.insert(word, value.bitmap);
-    }
     Ok(LiquidityMap::tracked_with_spacing(
         ticks,
-        bitmaps,
+        derive_bitmaps(&computed.tick_data, computed.tick_spacing),
         computed.tick_spacing,
     ))
+}
+
+/// Derive the tick-bitmap words the chain verifier reads from the LOCAL tick
+/// rows: every initialized tick sets its bit in its word. This is the
+/// derive-at-call-site posture the live pool verifier already runs with
+/// (`bot_core::liquidity_verifier::map_from_ticks`) — the persisted word map is
+/// no longer read, so the verifier can only discover on-chain-only ticks inside
+/// words the local rows already imply.
+fn derive_bitmaps(
+    tick_data: &HashMap<i32, degenbot_db::ApplyLiquidityAtTick>,
+    tick_spacing: i32,
+) -> HashMap<i32, U256> {
+    let mut bitmaps: HashMap<i32, U256> = HashMap::new();
+    if (1..=32_767).contains(&tick_spacing) {
+        for &tick in tick_data.keys() {
+            let compressed = tick.div_euclid(tick_spacing);
+            let word = compressed >> 8;
+            let bit = compressed.rem_euclid(256) as u32;
+            let entry = bitmaps.entry(word).or_insert(U256::ZERO);
+            *entry |= U256::from(1u8) << bit;
+        }
+    }
+    bitmaps
 }
 
 fn map_error(error: &LiquidityMapVerifyError) -> RunError {
@@ -243,7 +262,7 @@ pub fn verify_all_pools_committed_on_conn(
         else {
             continue;
         };
-        let (tick_bitmap, tick_data) = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+        let tick_data = DegenbotDb::fetch_v3_liquidity_map_on_conn(
             conn,
             state.pool_id,
             state.snapshot_block(),
@@ -252,7 +271,6 @@ pub fn verify_all_pools_committed_on_conn(
             pool_id: state.pool_id,
             tick_spacing: state.tick_spacing,
             tick_data,
-            tick_bitmap,
             last_event: None,
         };
         let divergences = ctx.rt.block_on(verify_v3_liquidity_map_on_chain(
@@ -280,7 +298,7 @@ pub fn verify_all_pools_committed_on_conn(
         else {
             continue;
         };
-        let (tick_bitmap, tick_data) = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+        let tick_data = DegenbotDb::fetch_v4_liquidity_map_on_conn(
             conn,
             state.pool_id,
             state.snapshot_block(),
@@ -289,7 +307,6 @@ pub fn verify_all_pools_committed_on_conn(
             pool_id: state.pool_id,
             tick_spacing: state.tick_spacing,
             tick_data,
-            tick_bitmap,
             last_event: None,
         };
         let pool_id =
@@ -364,7 +381,7 @@ fn collect_pre_commit_checks(
         else {
             continue;
         };
-        let (tick_bitmap, tick_data) = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+        let tick_data = DegenbotDb::fetch_v3_liquidity_map_on_conn(
             &conn,
             state.pool_id,
             state.snapshot_block(),
@@ -376,7 +393,6 @@ fn collect_pre_commit_checks(
                 pool_id: state.pool_id,
                 tick_spacing: state.tick_spacing,
                 tick_data,
-                tick_bitmap,
                 last_event: None,
             },
         ));
@@ -404,7 +420,7 @@ fn collect_pre_commit_checks(
         else {
             continue;
         };
-        let (tick_bitmap, tick_data) = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+        let tick_data = DegenbotDb::fetch_v4_liquidity_map_on_conn(
             &conn,
             state.pool_id,
             state.snapshot_block(),
@@ -416,7 +432,6 @@ fn collect_pre_commit_checks(
                 pool_id: state.pool_id,
                 tick_spacing: state.tick_spacing,
                 tick_data,
-                tick_bitmap,
                 last_event: None,
             },
         ));
@@ -517,7 +532,7 @@ pub(crate) fn should_run_full_verify_at_interval(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
+    use degenbot_db::ApplyLiquidityAtTick;
     use hashbrown::HashMap;
 
     fn computed() -> ComputedLiquidityUpdate {
@@ -530,19 +545,10 @@ mod tests {
                 block: 0,
             },
         );
-        let mut tick_bitmap = HashMap::new();
-        tick_bitmap.insert(
-            0,
-            ApplyBitmapAtWord {
-                bitmap: U256::from(1),
-                block: 0,
-            },
-        );
         ComputedLiquidityUpdate {
             pool_id: 1,
             tick_spacing: 1,
             tick_data,
-            tick_bitmap,
             last_event: None,
         }
     }
@@ -587,7 +593,6 @@ mod tests {
     fn empty_computed_map_is_a_tracked_full_map() {
         let map = shared_map(&ComputedLiquidityUpdate {
             tick_data: HashMap::new(),
-            tick_bitmap: HashMap::new(),
             ..computed()
         })
         .unwrap();

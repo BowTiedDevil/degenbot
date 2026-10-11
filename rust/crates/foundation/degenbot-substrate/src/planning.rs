@@ -107,10 +107,6 @@ impl TickMapSource {
 pub struct TickMapSeed {
     /// The per-tick liquidity cells (raw values; layout-agnostic).
     pub ticks: hashbrown::HashMap<i32, TickInfo>,
-    /// Bitmap words fetched with the tick rows. These are provenance, not a
-    /// value derived from rows: a tracked map must carry the exact words that
-    /// established its completeness.
-    pub bitmaps: hashbrown::HashMap<i32, U256>,
     /// The coverage tag the workspace registers with.
     pub coverage: PoolTickCoverage,
     /// The block the map is exact at (the liquidity clock).
@@ -129,7 +125,6 @@ impl TickMapSeed {
     #[must_use]
     pub(crate) fn db(
         ticks: hashbrown::HashMap<i32, TickInfo>,
-        bitmaps: hashbrown::HashMap<i32, U256>,
         coverage: PoolTickCoverage,
         block: u64,
         source_block: Option<u64>,
@@ -137,7 +132,6 @@ impl TickMapSeed {
     ) -> Self {
         Self {
             ticks,
-            bitmaps,
             coverage,
             seed_block: block,
             source_block,
@@ -151,14 +145,12 @@ impl TickMapSeed {
     #[must_use]
     pub(crate) fn chain(
         ticks: hashbrown::HashMap<i32, TickInfo>,
-        bitmaps: hashbrown::HashMap<i32, U256>,
         coverage: PoolTickCoverage,
         block: u64,
         identity: TickMapPoolIdentity,
     ) -> Self {
         Self {
             ticks,
-            bitmaps,
             coverage,
             seed_block: block,
             source_block: None,
@@ -174,13 +166,11 @@ impl TickMapSeed {
     pub(crate) fn journal(
         identity: TickMapPoolIdentity,
         ticks: hashbrown::HashMap<i32, TickInfo>,
-        bitmaps: hashbrown::HashMap<i32, U256>,
         coverage: PoolTickCoverage,
         block: u64,
     ) -> Self {
         Self {
             ticks,
-            bitmaps,
             coverage,
             seed_block: block,
             source_block: None,
@@ -708,7 +698,6 @@ mod tests {
                         pool_id: B256::from(V4_POOL_ID),
                     },
                     v4_ticks(),
-                    hashbrown::HashMap::new(),
                     PoolTickCoverage::Sparse,
                     SEED,
                 ),

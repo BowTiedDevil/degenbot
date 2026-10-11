@@ -23,9 +23,8 @@ use degenbot_core::errors::ProviderError;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::error::DbError;
 use degenbot_db::rows::{
-    Erc20TokenRow, ExchangeRow, InitializationMapRow, LiquidityPoolRow, LiquidityPositionRow,
-    ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow,
-    V4PoolRow,
+    Erc20TokenRow, ExchangeRow, LiquidityPoolRow, LiquidityPositionRow,
+    ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow, V4PoolRow,
 };
 use degenbot_rpc::provider::{AlloyProvider, EthBlock};
 
@@ -81,13 +80,6 @@ impl DbConstruction for NoDb {
         Ok(Vec::new())
     }
 
-    async fn fetch_initialization_map(
-        &self,
-        _pool_id: i64,
-    ) -> Result<Vec<InitializationMapRow>, DbError> {
-        Ok(Vec::new())
-    }
-
     async fn fetch_pool_manager(
         &self,
         _chain_id: i64,
@@ -107,13 +99,6 @@ impl DbConstruction for NoDb {
         &self,
         _managed_pool_id: i64,
     ) -> Result<Vec<ManagedPoolLiquidityPositionRow>, DbError> {
-        Ok(Vec::new())
-    }
-
-    async fn fetch_managed_initialization_map(
-        &self,
-        _managed_pool_id: i64,
-    ) -> Result<Vec<ManagedPoolInitializationMapRow>, DbError> {
         Ok(Vec::new())
     }
 
@@ -199,13 +184,6 @@ impl DbConstruction for DegenbotDbConstruction {
         self.db.fetch_liquidity_positions(pool_id)
     }
 
-    async fn fetch_initialization_map(
-        &self,
-        pool_id: i64,
-    ) -> Result<Vec<InitializationMapRow>, DbError> {
-        self.db.fetch_initialization_map(pool_id)
-    }
-
     async fn fetch_pool_manager(
         &self,
         chain_id: i64,
@@ -226,13 +204,6 @@ impl DbConstruction for DegenbotDbConstruction {
         managed_pool_id: i64,
     ) -> Result<Vec<ManagedPoolLiquidityPositionRow>, DbError> {
         self.db.fetch_managed_liquidity_positions(managed_pool_id)
-    }
-
-    async fn fetch_managed_initialization_map(
-        &self,
-        managed_pool_id: i64,
-    ) -> Result<Vec<ManagedPoolInitializationMapRow>, DbError> {
-        self.db.fetch_managed_initialization_map(managed_pool_id)
     }
 
     async fn update_erc20_token_metadata(

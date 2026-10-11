@@ -44,10 +44,6 @@ def _seed_v3_pool(database_path: str) -> int:
             "fee_denominator) VALUES (10, 60, 3, 3, 1000)"
         )
         connection.execute(
-            "INSERT INTO initialization_maps (id, pool_id, word, bitmap) VALUES (1, 10, -3, ?)",
-            (str(2**128 + 7),),
-        )
-        connection.execute(
             "INSERT INTO liquidity_positions (id, pool_id, tick, liquidity_net, liquidity_gross) "
             "VALUES (1, 10, -100, ?, ?)",
             (str(2**128 - 1), "123456"),

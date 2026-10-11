@@ -53,9 +53,8 @@ use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
 use degenbot_db::error::DbError;
 use degenbot_db::rows::{
-    Erc20TokenRow, ExchangeRow, InitializationMapRow, LiquidityPoolRow, LiquidityPositionRow,
-    ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow,
-    V4PoolRow,
+    Erc20TokenRow, ExchangeRow, LiquidityPoolRow, LiquidityPositionRow,
+    ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow, V4PoolRow,
 };
 use degenbot_rpc::provider::EthBlock;
 
@@ -77,10 +76,7 @@ pub use self::handle::ConstructionIo;
 /// `DegenbotDb` (held connection, not per-call `DegenbotDb::open`); the no-DB
 /// path is the [`NoDb`] adapter, so `ConstructionIo.db` is always `Some`.
 ///
-/// Method names mirror `DegenbotDb::fetch_*` where possible; the singular
-/// `fetch_initialization_map` / `fetch_managed_initialization_map` match the
-/// `DegenbotDb` inherent-method names (`PyBotIo`'s plural Python-visible
-/// names are a choreography-level alias, not a trait concern).
+/// Method names mirror `DegenbotDb::fetch_*` where possible.
 #[async_trait]
 pub trait DbConstruction: Send + Sync {
     async fn fetch_erc20_token(
@@ -110,11 +106,6 @@ pub trait DbConstruction: Send + Sync {
         pool_id: i64,
     ) -> Result<Vec<LiquidityPositionRow>, DbError>;
 
-    async fn fetch_initialization_map(
-        &self,
-        pool_id: i64,
-    ) -> Result<Vec<InitializationMapRow>, DbError>;
-
     async fn fetch_pool_manager(
         &self,
         chain_id: i64,
@@ -130,11 +121,6 @@ pub trait DbConstruction: Send + Sync {
         &self,
         managed_pool_id: i64,
     ) -> Result<Vec<ManagedPoolLiquidityPositionRow>, DbError>;
-
-    async fn fetch_managed_initialization_map(
-        &self,
-        managed_pool_id: i64,
-    ) -> Result<Vec<ManagedPoolInitializationMapRow>, DbError>;
 
     /// Write back an ERC-20 token row's metadata (`name` / `symbol` /
     /// `decimals`) by `(chain_id, address)`. Each `None` field writes `NULL`

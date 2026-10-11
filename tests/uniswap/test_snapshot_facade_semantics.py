@@ -1,8 +1,9 @@
 """Characterization tests for the shared V3/V4 liquidity-snapshot facade semantics.
 
 Pins the behavior the snapshot->pool update flow depends on: lazy per-pool
-liquidity-map loading, drain-on-read for tick_bitmap/tick_data/pending_updates,
-and the update() merge. Fake in-memory sources keep these hermetic (no RPC/DB).
+liquidity-map loading, drain-on-read for tick_bitmap (word KEYS only — the
+per-word bitmap VALUE is retired)/tick_data/pending_updates, and the update()
+merge. Fake in-memory sources keep these hermetic (no RPC/DB).
 """
 
 import pytest
@@ -10,7 +11,7 @@ import pytest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.pool import UnknownPool, UnknownPoolId
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_snapshot import LiquidityMap, UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent
 from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
@@ -25,7 +26,7 @@ V4_POOL_KEY = (V4_POOL_MANAGER, V4_POOL_ID)
 
 def _map(bitmap_word: int, tick: int) -> LiquidityMap:
     return LiquidityMap(
-        tick_bitmap={bitmap_word: BitmapAtWord(bitmap=7, block=100)},
+        tick_bitmap={bitmap_word},
         tick_data={tick: LiquidityAtTick(liquidity_net=5, liquidity_gross=5, block=100)},
     )
 
@@ -86,7 +87,7 @@ class TestV3FacadeSemantics:
     def test_tick_bitmap_and_tick_data_drain_on_read(self) -> None:
         snapshot = UniswapV3LiquiditySnapshot(source=_FakeV3Source())
         assert snapshot.tick_bitmap(V3_POOL) == _map(1, 10)["tick_bitmap"]
-        assert snapshot.tick_bitmap(V3_POOL) == {}
+        assert snapshot.tick_bitmap(V3_POOL) == set()
         assert snapshot.tick_data(V3_POOL) == _map(1, 10)["tick_data"]
         assert snapshot.tick_data(V3_POOL) == {}
 
@@ -95,13 +96,10 @@ class TestV3FacadeSemantics:
         snapshot.update(
             pool=V3_POOL,
             tick_data={99: LiquidityAtTick(liquidity_net=1, liquidity_gross=1, block=101)},
-            tick_bitmap={3: BitmapAtWord(bitmap=9, block=101)},
+            tick_bitmap={3},
         )
-        assert snapshot.tick_bitmap(V3_POOL) == {
-            1: BitmapAtWord(bitmap=7, block=100),
-            3: BitmapAtWord(bitmap=9, block=101),
-        }
-        assert snapshot.tick_bitmap(V3_POOL) == {}
+        assert snapshot.tick_bitmap(V3_POOL) == {1, 3}
+        assert snapshot.tick_bitmap(V3_POOL) == set()
         assert snapshot.tick_data(V3_POOL) == {
             10: LiquidityAtTick(liquidity_net=5, liquidity_gross=5, block=100),
             99: LiquidityAtTick(liquidity_net=1, liquidity_gross=1, block=101),
@@ -148,7 +146,7 @@ class TestV4FacadeSemantics:
     def test_tick_bitmap_and_tick_data_drain_on_read(self) -> None:
         snapshot = UniswapV4LiquiditySnapshot(source=_FakeV4Source())
         assert snapshot.tick_bitmap(*V4_POOL_KEY) == _map(2, 20)["tick_bitmap"]
-        assert snapshot.tick_bitmap(*V4_POOL_KEY) == {}
+        assert snapshot.tick_bitmap(*V4_POOL_KEY) == set()
         assert snapshot.tick_data(*V4_POOL_KEY) == _map(2, 20)["tick_data"]
         assert snapshot.tick_data(*V4_POOL_KEY) == {}
 
@@ -157,12 +155,9 @@ class TestV4FacadeSemantics:
         snapshot.update(
             *V4_POOL_KEY,
             tick_data={99: LiquidityAtTick(liquidity_net=1, liquidity_gross=1, block=101)},
-            tick_bitmap={3: BitmapAtWord(bitmap=9, block=101)},
+            tick_bitmap={3},
         )
-        assert snapshot.tick_bitmap(*V4_POOL_KEY) == {
-            2: BitmapAtWord(bitmap=7, block=100),
-            3: BitmapAtWord(bitmap=9, block=101),
-        }
+        assert snapshot.tick_bitmap(*V4_POOL_KEY) == {2, 3}
         assert snapshot.tick_data(*V4_POOL_KEY) == {
             20: LiquidityAtTick(liquidity_net=5, liquidity_gross=5, block=100),
             99: LiquidityAtTick(liquidity_net=1, liquidity_gross=1, block=101),

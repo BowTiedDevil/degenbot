@@ -12,7 +12,7 @@ use alloy::primitives::aliases::U128;
 use alloy::primitives::{address, Address, I256, U256};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
-use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
+use degenbot_db::ApplyLiquidityAtTick;
 use degenbot_pools::v3_state::ClSlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
@@ -75,7 +75,6 @@ fn seed_anchor(db: &DegenbotDb, ticks: &[i32]) {
         )
         .unwrap()
     };
-    let mut tick_bitmap: HbMap<i32, ApplyBitmapAtWord> = HbMap::new();
     let mut tick_data: HbMap<i32, ApplyLiquidityAtTick> = HbMap::new();
     for &tick in ticks {
         tick_data.insert(
@@ -87,20 +86,8 @@ fn seed_anchor(db: &DegenbotDb, ticks: &[i32]) {
                 block: 0,
             },
         );
-        let compressed = tick.div_euclid(ANCHOR_SPACING);
-        let word = compressed >> 8;
-        let bit = compressed.rem_euclid(256) as u64;
-        tick_bitmap
-            .entry(word)
-            .or_insert_with(|| ApplyBitmapAtWord {
-                bitmap: U256::ZERO,
-                block: 0,
-            });
-        tick_bitmap.get_mut(&word).unwrap().bitmap |= U256::from(1u64) << bit;
     }
     db.upsert_v3_liquidity_positions(pool_id, &tick_data)
-        .unwrap();
-    db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
         .unwrap();
 }
 

@@ -56,7 +56,7 @@ from degenbot.provider import (
 from degenbot.provider.factory import get_provider_from_config
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.pool_type import PoolFamily
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 from degenbot.utils.bytes import to_0x_hex, to_bytes
@@ -706,7 +706,6 @@ class Bot(AccountQueryMixin):
             ),
             io=self._io,
             types=TickDataTypes(
-                bitmap_at_word=BitmapAtWord,
                 liquidity_at_tick=LiquidityAtTick,
                 tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
             ),
@@ -746,7 +745,6 @@ class Bot(AccountQueryMixin):
             ),
             io=self._io,
             types=TickDataTypes(
-                bitmap_at_word=BitmapAtWord,
                 liquidity_at_tick=LiquidityAtTick,
                 tick_struct_types=("uint128", "int128"),
             ),

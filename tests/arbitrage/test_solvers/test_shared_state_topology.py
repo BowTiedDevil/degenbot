@@ -453,9 +453,10 @@ class TestSharedStateTopologyV3:
         tick_data, block)``. In the post-8b topology the companion delegates
         here; this pins the Rust write path the delegation targets. Symmetric
         with ``tick_data_snapshot``: the dict shape written in is the shape read
-        back out. The ``tick_bitmap`` arg is redundant in Rust (the bitmap is
-        derived from ``tick_data`` keys — see ``tick_bitmap_snapshot``);
-        accepted for API parity with the Python caller signature, ignored.
+        back out. The ``tick_bitmap`` arg carries the checked WORD set only
+        (the bitmap itself — and its VALUE — is derived from ``tick_data``
+        keys); here it is empty, accepted for API parity with the Python caller
+        signature.
         Scalars (sqrt_price/liquidity/tick) are UNCHANGED — ``update_tick_data``
         is tick-only (a wholesale replace from a fetched snapshot, not a
         journalled event delta).
@@ -495,7 +496,7 @@ class TestSharedStateTopologyV3:
             new_tick_b: (12_000, -12_000, 9),
         }
         applied = handle.update_tick_data(
-            tick_bitmap={},  # redundant in Rust (derived from tick_data keys)
+            tick_bitmap=set(),  # no checked words (words derive from tick_data keys)
             tick_data=new_tick_data,
             block=9,
         )
@@ -524,12 +525,12 @@ class TestSharedStateTopologyV3:
         assert handle.concentrated_liquidity().tick_data_block == 9
         assert _update_block(handle) == 3
 
-        # tick_bitmap_snapshot reflects the new tick keys (derived from keys).
+        # `tick_bitmap` reflects the new tick keys (the word positions only).
         def word_of(tick: int) -> int:
             return (tick // V3_TICK_SPACING) >> 8
 
         bitmap = handle.concentrated_liquidity().tick_bitmap
-        assert set(bitmap.keys()) == {word_of(new_tick_a), word_of(new_tick_b)}
+        assert bitmap == {word_of(new_tick_a), word_of(new_tick_b)}
 
         # NOTE: a backward-block full-sync (sync block < current tick_data_block)
         # is deliberately NOT exercised here — it is a hard panic on the
@@ -608,14 +609,13 @@ class TestSharedStateTopologyV3:
         assert net_upper == -delta
         assert block_lower == 7
 
-    def test_v3_handle_tick_bitmap_snapshot_pairs_with_tick_data(self) -> None:
-        """tick_bitmap_snapshot() mirrors tick_data keys per word.
+    def test_v3_handle_tick_bitmap_reports_words_paired_with_tick_data(self) -> None:
+        """`tick_bitmap` reports the WORDS its tick_data rows land in.
 
-        Rust's V3PoolState doesn't store a separate tick bitmap — the bitmap is
-        derivable from tick_data keys (which ticks are initialized). The handle
-        returns a `{word_position: (bitmap_int, block)}` dict whose bitmap int
-        has a bit set for each tick (within the 256-tick word) initialized at
-        that word. Uninitialized words are absent.
+        Rust's V3PoolState stores neither a separate tick bitmap nor a bitmap
+        VALUE (retired — the bitmap is derivable from tick_data keys). The
+        handle returns the set of bitmap word positions that carry initialized
+        ticks; uninitialized words are absent.
         """
         core = Bot()
         pool_id = core.register_v3_pool(
@@ -632,7 +632,7 @@ class TestSharedStateTopologyV3:
         handle = core.get_pool(pool_id)
         assert handle is not None
 
-        assert handle.concentrated_liquidity().tick_bitmap == {}
+        assert handle.concentrated_liquidity().tick_bitmap == set()
 
         tick_lower = V3_TICK - V3_TICK_SPACING
         tick_upper = V3_TICK + V3_TICK_SPACING
@@ -651,13 +651,7 @@ class TestSharedStateTopologyV3:
         assert word_lower != word_upper or bit_lower != bit_upper
         assert word_lower in bitmap, "tick_lower word missing"
         assert word_upper in bitmap, "tick_upper word missing"
-        gross_lower_word_bits, _block = bitmap[word_lower]
-        gross_upper_word_bits, _block = bitmap[word_upper]
-        assert gross_lower_word_bits & (1 << bit_lower), "lower bit not set"
-        assert gross_upper_word_bits & (1 << bit_upper), "upper bit not set"
-        if word_lower == word_upper:
-            expected_bits = (1 << bit_lower) | (1 << bit_upper)
-            assert gross_lower_word_bits == expected_bits
+        assert bitmap == {word_lower, word_upper}
 
 
 class TestSharedStateTopologyV4:
@@ -812,7 +806,7 @@ class TestSharedStateTopologyV4:
             new_tick_b: (12_000, -12_000, 9),
         }
         applied = handle.update_tick_data(
-            tick_bitmap={},
+            tick_bitmap=set(),
             tick_data=new_tick_data,
             block=9,
         )

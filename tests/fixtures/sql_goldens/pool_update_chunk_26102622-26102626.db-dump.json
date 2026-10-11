@@ -57,29 +57,6 @@
       "columns": [
         "id",
         "pool_id",
-        "word",
-        "bitmap"
-      ],
-      "rows": [
-        [
-          1,
-          1,
-          -58,
-          "2305843009213693952"
-        ],
-        [
-          2,
-          1,
-          57,
-          "50216813883093446110686315385661331328818843555712276103168"
-        ]
-      ],
-      "table": "initialization_maps"
-    },
-    {
-      "columns": [
-        "id",
-        "pool_id",
         "tick",
         "liquidity_net",
         "liquidity_gross"
@@ -101,16 +78,6 @@
         ]
       ],
       "table": "liquidity_positions"
-    },
-    {
-      "columns": [
-        "id",
-        "managed_pool_id",
-        "word",
-        "bitmap"
-      ],
-      "rows": [],
-      "table": "managed_pool_initialization_maps"
     },
     {
       "columns": [

@@ -4,7 +4,7 @@ import dataclasses
 
 from degenbot.types.abstract import AbstractPoolState, AbstractSimulationResult
 from degenbot.types.aliases import BlockNumber
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 
 type BitmapWord = int
 type Pip = int  # V3 pool fees are expressed in pips equaling one hundredth of 1%
@@ -58,7 +58,7 @@ class UniswapV3PoolState(AbstractPoolState):
     liquidity: Liquidity
     sqrt_price_x96: SqrtPriceX96
     tick: Tick
-    tick_bitmap: dict[BitmapWord, BitmapAtWord]
+    tick_bitmap: set[BitmapWord]
     tick_data: dict[Tick, LiquidityAtTick]
 
 
@@ -70,5 +70,5 @@ class UniswapV3PoolSimulationResult(UniswapSimulationResult):
     final_state: UniswapV3PoolState
 
 
-type InitializedTickMap = dict[BitmapWord, BitmapAtWord]
+type InitializedTickMap = set[BitmapWord]
 type LiquidityMap = dict[Tick, LiquidityAtTick]

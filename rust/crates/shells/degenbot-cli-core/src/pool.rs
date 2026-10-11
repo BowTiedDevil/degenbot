@@ -423,7 +423,7 @@ fn fetch_verify_state(
                         "v3 pool {key} not found on chain {chain_id}"
                     ))
                 })?;
-            let (tick_bitmap, tick_data) = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+            let tick_data = DegenbotDb::fetch_v3_liquidity_map_on_conn(
                 conn,
                 state.pool_id,
                 state.snapshot_block(),
@@ -433,7 +433,6 @@ fn fetch_verify_state(
                     pool_id: state.pool_id,
                     tick_spacing: state.tick_spacing,
                     tick_data,
-                    tick_bitmap,
                     last_event: None,
                 },
                 VerifyTarget::V3(address),
@@ -457,7 +456,7 @@ fn fetch_verify_state(
                         "v4 pool {pool} not found on chain {chain_id}"
                     ))
                 })?;
-            let (tick_bitmap, tick_data) = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+            let tick_data = DegenbotDb::fetch_v4_liquidity_map_on_conn(
                 conn,
                 state.pool_id,
                 state.snapshot_block(),
@@ -467,7 +466,6 @@ fn fetch_verify_state(
                     pool_id: state.pool_id,
                     tick_spacing: state.tick_spacing,
                     tick_data,
-                    tick_bitmap,
                     last_event: None,
                 },
                 VerifyTarget::V4 { manager, pool_id },

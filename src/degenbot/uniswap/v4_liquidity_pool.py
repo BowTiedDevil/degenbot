@@ -4,8 +4,8 @@ ADR-005 slice 9b — the V4 companion rewritten over the same `Pool`
 handle topology as the V3 companion. Rust `BotState` is the single source of
 truth for V4 mutable state (scalars, tick data, reorg journal); this companion
 reads it through `self._py_pool` (atomic `snapshot_v3()` for scalars — already
-V3/V4-generic via `get_v3_or_v4_pool` — + `tick_data_snapshot()`/
-`tick_bitmap_snapshot()` for the tick maps) and delegates
+V3/V4-generic via `get_v3_or_v4_pool` — + `tick_data()`/`tick_bitmap` for the
+ tick maps) and delegates
 `external_update` (Swap) / `update_liquidity_map` (ModifyLiquidity) /
 `update_tick_data` (sparse-map backfill) / discard / restore to the handle.
 
@@ -22,9 +22,9 @@ slice 9a) so the companion never holds a hooked pool.
 
 Checked words (a tick-data fetcher probed `tickBitmap(word)` and the on-chain
 bitmap was zero) are tracked in Rust `known_bitmap_words` (Sparse only — see
-the V3 companion's sparse-map note); `tick_bitmap_snapshot()` surfaces a
-checked-but-empty word as `(0, block)` so the fetch loop breaks with no
-client-side bitmap shadow.
+the V3 companion's sparse-map note); `tick_bitmap` surfaces the known word
+positions as a `set[int]` so the fetch loop breaks with no client-side bitmap
+shadow.
 """
 
 from __future__ import annotations
@@ -154,7 +154,7 @@ class UniswapV4Pool(
     ``V4PoolState``; this companion reads it through ``self._py_pool`` (one
     atomic ``snapshot_v3()`` for scalars — already V3/V4-generic via
     ``get_v3_or_v4_pool`` — + ``tick_data_snapshot()`` /
-    ``tick_bitmap_snapshot()`` for the tick maps) and delegates
+    ``tick_data()``/``tick_bitmap`` for the tick maps) and delegates
     ``external_update`` (Swap) / ``update_liquidity_map`` (ModifyLiquidity) /
     ``update_tick_data`` (sparse-map backfill) / discard / restore to the
     handle. V4-specific identity (pool_id, pool_manager, pool_key, hooks,

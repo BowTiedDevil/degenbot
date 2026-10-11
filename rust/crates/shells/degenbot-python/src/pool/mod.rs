@@ -205,8 +205,8 @@ fn run_pool_update_injected(
 ///
 /// Standalone on-chain-truth verification of a V3 pool's COMMITTED liquidity
 /// map (read-only — no SQL writes, no event apply). Opens the DB, fetches the
-/// pool's `liquidity_positions` + `initialization_maps` rows, builds the
-/// in-memory map, + compares EVERY tick + bitmap word against on-chain
+/// pool's `liquidity_positions` rows, builds the in-memory map, + compares
+/// EVERY tick + (derived) bitmap word against on-chain
 /// `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` at `block_number`, all
 /// batched through Multicall3. Returns the divergence list (empty = GREEN —
 /// the DB matches the chain at `block_number`).
@@ -259,7 +259,7 @@ fn verify_v3_liquidity_map(
                         "v3 pool {addr_str} not found on chain {chain_id}"
                     )))
                 })?;
-            let (tick_bitmap, tick_data) = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+            let tick_data = DegenbotDb::fetch_v3_liquidity_map_on_conn(
                 &conn,
                 state.pool_id,
                 state.snapshot_block(),
@@ -269,7 +269,6 @@ fn verify_v3_liquidity_map(
                 pool_id: state.pool_id,
                 tick_spacing: state.tick_spacing,
                 tick_data,
-                tick_bitmap,
                 last_event: None,
             };
             let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
@@ -337,7 +336,7 @@ fn verify_v4_liquidity_map(
                         "v4 pool {pool_hash} not found on chain {chain_id}"
                     )))
                 })?;
-            let (tick_bitmap, tick_data) = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+            let tick_data = DegenbotDb::fetch_v4_liquidity_map_on_conn(
                 &conn,
                 state.pool_id,
                 state.snapshot_block(),
@@ -347,7 +346,6 @@ fn verify_v4_liquidity_map(
                 pool_id: state.pool_id,
                 tick_spacing: state.tick_spacing,
                 tick_data,
-                tick_bitmap,
                 last_event: None,
             };
             let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(

@@ -933,7 +933,6 @@ fn compute_preverified_liquidity(
                 pool_id: delta.pool_id,
                 tick_spacing: delta.tick_spacing,
                 tick_data: delta.tick_data.clone(),
-                tick_bitmap: delta.tick_bitmap.clone(),
                 last_event: delta.last_event,
             };
             PlannedLiquidityMap {
@@ -1002,7 +1001,6 @@ fn compute_preverified_liquidity(
                 pool_id: delta.pool_id,
                 tick_spacing: delta.tick_spacing,
                 tick_data: delta.tick_data.clone(),
-                tick_bitmap: delta.tick_bitmap.clone(),
                 last_event: delta.last_event,
             };
             PlannedLiquidityMap {

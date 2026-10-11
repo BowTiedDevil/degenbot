@@ -6,10 +6,12 @@
 //!
 //! The core owns the reads; these extract args, release the GIL via
 //! `py.detach()` for the `SQLite` I/O, call core, then wrap results into Python
-//! `LiquidityMap` / `BitmapAtWord` / `LiquidityAtTick` shaped dicts + flat
+//! `LiquidityMap` / `LiquidityAtTick` shaped dicts + flat
 //! `get_all_liquidity_maps` dicts + `get_pools` sets, matching the existing
-//! return shapes so the Python `DatabaseSnapshot` callers are unchanged. No
-//! business logic (three-layer architecture, ADR-005).
+//! return shapes so the Python `DatabaseSnapshot` callers are unchanged. The
+//! DB stores no per-word bitmap (the `initialization_maps` tables are dropped),
+//! so no `tick_bitmap` key is emitted. No business logic (three-layer
+//! architecture, ADR-005).
 //!
 //! The Python `src/degenbot/uniswap/{v3,v4}_snapshot.py::DatabaseSnapshot`
 //! classes are converted to delegating shells over this seam.
@@ -54,8 +56,9 @@ impl PyDatabaseSnapshot {
     }
 
     /// V3 `get_liquidity_map(pool_address)` → `LiquidityMap`-shaped dict or
-    /// `None`. Returns `{"tick_bitmap": {word: {"bitmap": int}},
-    /// "tick_data": {tick: {"liquidity_gross": int, "liquidity_net": int}}}`.
+    /// `None`. Returns `{"tick_data": {tick: {"liquidity_gross": int,
+    /// "liquidity_net": int}}}` — no `tick_bitmap` key (the DB knows no words;
+    /// the retired word-VALUE tables are gone).
     fn get_liquidity_map_v3<'py>(
         &self,
         py: Python<'py>,
@@ -179,14 +182,6 @@ fn build_liquidity_map_py<'py>(
     map: &LiquidityMap,
 ) -> PyResult<Bound<'py, PyDict>> {
     let out = PyDict::new(py);
-
-    let bitmap = PyDict::new(py);
-    for (word, entry) in &map.tick_bitmap {
-        let inner = PyDict::new(py);
-        inner.set_item("bitmap", u256_to_py(py, &entry.bitmap)?)?;
-        bitmap.set_item(*word, inner)?;
-    }
-    out.set_item("tick_bitmap", bitmap)?;
 
     let data = PyDict::new(py);
     for (tick, entry) in &map.tick_data {

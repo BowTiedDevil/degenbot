@@ -75,13 +75,7 @@ struct Expected {
 
 #[derive(Debug, Deserialize)]
 struct LiquidityMapJson {
-    tick_bitmap: HashMap<String, BitmapJson>,
     tick_data: HashMap<String, LiquidityAtTickJson>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BitmapJson {
-    bitmap: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,20 +187,6 @@ fn fetch_liquidity_map_v3_matches_python_oracle() {
         .expect("V3 liquidity map should exist");
     let expected = exp.v3_liquidity_map.expect("expected V3 map present");
 
-    // tick_bitmap
-    let mut rb: HashMap<i64, U256> = HashMap::new();
-    for (ws, b) in &expected.tick_bitmap {
-        rb.insert(ws.parse().unwrap(), parse_u256(&b.bitmap));
-    }
-    assert_eq!(map.tick_bitmap.len(), rb.len(), "tick_bitmap lengths");
-    for (word, bm) in &map.tick_bitmap {
-        assert_eq!(
-            bm.bitmap,
-            rb.get(word).copied().unwrap(),
-            "tick_bitmap word {word}"
-        );
-    }
-
     // tick_data
     let mut rd: HashMap<i32, (U256, i128)> = HashMap::new();
     for (ts, v) in &expected.tick_data {
@@ -234,19 +214,6 @@ fn fetch_liquidity_map_v4_matches_python_oracle() {
         .unwrap()
         .expect("V4 liquidity map should exist");
     let expected = exp.v4_liquidity_map.expect("expected V4 map present");
-
-    let mut rb: HashMap<i64, U256> = HashMap::new();
-    for (ws, b) in &expected.tick_bitmap {
-        rb.insert(ws.parse().unwrap(), parse_u256(&b.bitmap));
-    }
-    assert_eq!(map.tick_bitmap.len(), rb.len(), "V4 bitmap lengths");
-    for (word, bm) in &map.tick_bitmap {
-        assert_eq!(
-            bm.bitmap,
-            rb.get(word).copied().unwrap(),
-            "V4 bitmap word {word}"
-        );
-    }
 
     let mut rd: HashMap<i32, (U256, i128)> = HashMap::new();
     for (ts, v) in &expected.tick_data {

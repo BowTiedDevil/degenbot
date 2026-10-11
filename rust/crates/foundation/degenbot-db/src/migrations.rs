@@ -102,6 +102,11 @@ pub const RUST_MIGRATIONS: &[MigrationStep] = &[
         name: "lfj_pools",
         sql: "CREATE TABLE IF NOT EXISTS lfj_pools (\n\tpool_id INTEGER NOT NULL, \n\tbin_step INTEGER NOT NULL, \n\tPRIMARY KEY (pool_id), \n\tFOREIGN KEY(pool_id) REFERENCES pools (id)\n);",
     },
+    MigrationStep {
+        version: 3,
+        name: "drop_word_bitmap_tables",
+        sql: "DROP TABLE IF EXISTS initialization_maps;\nDROP TABLE IF EXISTS managed_pool_initialization_maps;",
+    },
 ];
 
 /// What [`apply_forward_migrations`] did.

@@ -1,50 +1,40 @@
-//! Liquidity-mapping + tick-bitmap mutation math.
+//! Liquidity-mapping tick-data mutation math.
 //!
-//! Canonical Rust home for `apply_liquidity_mapping_update`, `flip_tick`,
-//! + `get_tick_word_and_bit_position`.
+//! Canonical Rust home for `apply_liquidity_mapping_update` +
+//! `get_tick_word_and_bit_position`.
 //!
-//! These are the pure computation core of the DB-aware pool updater: given the
-//! current tick bitmap / tick-data maps and a single liquidity event (mint or
-//! burn with `tick_lower` / `tick_upper`), they produce the next bitmap / data
-//! state and the updated active `liquidity`. No I/O, no allocation beyond the
-//! map copies — the caller owns the dicts.
+//! This is the pure computation core of the DB-aware pool updater: given the
+//! current tick-data map and a single liquidity event (mint or burn with
+//! `tick_lower` / `tick_upper`), it produces the next tick-data state and the
+//! updated active `liquidity`. No I/O, no allocation beyond the map copy — the
+//! caller owns the map.
 //!
-//! The typed structs [`BitmapAtWord`], [`LiquidityAtTick`] mirror the Python
+//! The typed struct [`LiquidityAtTick`] mirrors the Python
 //! `concentrated/types.py` models and `degenbot-bot`'s `TickInfo`:
 //! `liquidity_gross: U128`, `liquidity_net: I256`, `block: u64`. `liquidity_net`
 //! uses `I256` (not `I128`) so the intermediate `current_net + delta` never
 //! overflows for valid inputs — arbitrary-precision arithmetic; the Solidity
 //! `int128` bound is the caller's concern.
 //!
+//! The word-position helper [`get_tick_word_and_bit_position`] survives the
+//! word-*value* retirement as load-bearing word-**key** math: it computes the
+//! mapping key for the on-chain staged word fetch and the sparse known-word set.
+//!
 //! # Parity
 //!
 //! `#[cfg(test)]` parity fixtures (see `tests/liquidity_mapping_fixtures.json`
 //! and the `apply_liquidity_mapping_update` step-chains) assert byte-identical
-//! `tick_bitmap` / `tick_data` / `liquidity` output across in-range
-//! adjustments, out-of-range events,
-//! tick initialization (flip on), gross-to-zero deletion (flip off), net-sign
-//! handling at the upper tick, large deltas, and the
+//! `tick_data` / `liquidity` output across in-range adjustments, out-of-range
+//! events, tick initialization, gross-to-zero deletion, net-sign handling at
+//! the upper tick, large deltas, and the
 //! `update_block == initial_state_block` no-op path.
 
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 
-use alloy::primitives::{I256, U128, U256};
+use alloy::primitives::{I256, U128};
 
 use crate::cl::functions::tick_position;
-
-/// Bitmap value at a tick-bitmap word position.
-///
-/// Mirrors the Python `BitmapAtWord` (`degenbot/uniswap/concentrated/types.py`)
-/// and the `bitmap` / `block` pair carried by `degenbot-bot`'s tick state.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BitmapAtWord {
-    /// The 256-bit bitmap word. Bit `bit_pos` is set when the tick at
-    /// `word_pos * 256 + bit_pos` (scaled by spacing) is initialized.
-    pub bitmap: U256,
-    /// Block at which this word was last mutated.
-    pub block: u64,
-}
 
 /// Liquidity data at an initialized tick.
 ///
@@ -63,12 +53,9 @@ pub struct LiquidityAtTick {
     pub block: u64,
 }
 
-/// Result of applying a liquidity-mapping update to the tick bitmap and tick
-/// data.
+/// Result of applying a liquidity update to the tick data.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LiquidityMapUpdateResult {
-    /// The updated tick bitmap (word → bitmap word).
-    pub tick_bitmap: HashMap<i32, BitmapAtWord>,
+pub struct LiquidityUpdateResult {
     /// The updated tick data (tick → liquidity info).
     pub tick_data: HashMap<i32, LiquidityAtTick>,
     /// The updated active (in-range) liquidity.
@@ -91,41 +78,6 @@ pub fn get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8)
     let compressed = tick / tick_spacing;
     let (word, bit) = tick_position(compressed);
     (i32::from(word), bit)
-}
-
-/// Flip the initialized state for a tick in the bitmap (non-sparse path).
-///
-/// Mirrors the Python `flip_tick` with `sparse=False`: if the word is absent it
-/// is created empty, then the tick's bit is XOR-toggled and the word's `block`
-/// is stamped to `update_block`.
-///
-/// # Panics
-///
-/// Panics if `tick` is not a multiple of `tick_spacing`, matching the Python
-/// `ValueError("Invalid tick or spacing")`.
-pub fn flip_tick(
-    tick_bitmap: &mut HashMap<i32, BitmapAtWord>,
-    tick: i32,
-    tick_spacing: i32,
-    update_block: u64,
-) {
-    // Python's `%` is non-negative for a positive divisor — `rem_euclid` matches.
-    assert!(
-        tick.rem_euclid(tick_spacing) == 0,
-        "Invalid tick or spacing"
-    );
-    let (word_pos, bit_pos) = get_tick_word_and_bit_position(tick, tick_spacing);
-    let bit_mask = U256::from(1u64) << bit_pos;
-    tick_bitmap
-        .entry(word_pos)
-        .and_modify(|entry| {
-            entry.bitmap ^= bit_mask;
-            entry.block = update_block;
-        })
-        .or_insert(BitmapAtWord {
-            bitmap: bit_mask,
-            block: update_block,
-        });
 }
 
 /// Widen a `U128` to `I256` (zero-extends; always fits since `U128` ≤ 2^128-1
@@ -163,18 +115,19 @@ fn narrow_to_u128(v: I256) -> U128 {
     U128::from_be_bytes(low)
 }
 
-/// Apply a liquidity-mapping update to the tick bitmap and tick data maps.
+/// Apply a liquidity-mapping update to the tick-data map.
 ///
 /// This is the canonical Rust computation core for
 /// `UniswapV3Pool.update_liquidity_map` / `UniswapV4Pool.update_liquidity_map`.
-/// The input maps are consumed
-/// (moved) — the caller passes clones if it needs to retain the prior state.
+/// The input map is consumed
+/// (moved) — the caller passes a clone if it needs to retain the prior state.
 ///
 /// # Invariants (debug-checked, mirroring the Python `assert`s)
 ///
 /// - `liquidity` starts non-negative (always true for `U128`).
 /// - The in-range `liquidity + liquidity_delta` stays non-negative.
 /// - `liquidity_gross + liquidity_delta` stays non-negative (and fits `uint128`).
+/// - Both boundary ticks are grid-aligned (`tick % tick_spacing == 0`).
 ///
 /// # Panics
 ///
@@ -184,7 +137,6 @@ fn narrow_to_u128(v: I256) -> U128 {
 #[must_use = "the updated state must be used"]
 #[expect(clippy::too_many_arguments)]
 pub fn apply_liquidity_mapping_update(
-    mut tick_bitmap: HashMap<i32, BitmapAtWord>,
     mut tick_data: HashMap<i32, LiquidityAtTick>,
     tick_spacing: i32,
     tick: i32,
@@ -194,9 +146,17 @@ pub fn apply_liquidity_mapping_update(
     tick_lower: i32,
     tick_upper: i32,
     liquidity_delta: I256,
-) -> LiquidityMapUpdateResult {
+) -> LiquidityUpdateResult {
     let state_block = update_block;
     let mut working_liquidity = liquidity;
+
+    // Both boundary ticks must be grid-aligned, mirroring the Python
+    // `ValueError("Invalid tick or spacing")` guard the retired bitmap path
+    // enforced.
+    debug_assert!(
+        tick_lower.rem_euclid(tick_spacing) == 0 && tick_upper.rem_euclid(tick_spacing) == 0,
+        "Invalid tick or spacing"
+    );
 
     // Adjust in-range liquidity if the modified region includes the active tick.
     if tick_lower <= tick && tick < tick_upper && state_block > initial_state_block {
@@ -209,22 +169,13 @@ pub fn apply_liquidity_mapping_update(
     }
 
     for current_tick in [tick_lower, tick_upper] {
-        let tick_word = get_tick_word_and_bit_position(current_tick, tick_spacing).0;
-
-        // Ensure the word exists so flip_tick's non-sparse create-and-toggle works.
-        tick_bitmap.entry(tick_word).or_insert(BitmapAtWord {
-            bitmap: U256::ZERO,
-            block: state_block,
-        });
-
-        // If the tick is uninitialized, seed it empty and flip the bitmap bit on.
+        // If the tick is uninitialized, seed it empty.
         if let Entry::Vacant(slot) = tick_data.entry(current_tick) {
             slot.insert(LiquidityAtTick {
                 liquidity_net: I256::ZERO,
                 liquidity_gross: U128::ZERO,
                 block: state_block,
             });
-            flip_tick(&mut tick_bitmap, current_tick, tick_spacing, state_block);
         }
 
         let (current_liquidity_net, current_liquidity_gross) = {
@@ -247,10 +198,8 @@ pub fn apply_liquidity_mapping_update(
         let new_liquidity_gross = narrow_to_u128(new_liquidity_gross_signed);
 
         if new_liquidity_gross == U128::ZERO {
-            // No remaining liquidity references this tick — drop it and flip the
-            // bitmap bit back off.
+            // No remaining liquidity references this tick — drop it.
             tick_data.remove(&current_tick);
-            flip_tick(&mut tick_bitmap, current_tick, tick_spacing, state_block);
             continue;
         }
 
@@ -272,20 +221,14 @@ pub fn apply_liquidity_mapping_update(
         );
     }
 
-    LiquidityMapUpdateResult {
-        tick_bitmap,
+    LiquidityUpdateResult {
         tick_data,
         liquidity: working_liquidity,
     }
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::cast_possible_truncation
-)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
 
     use super::*;
@@ -315,6 +258,20 @@ mod tests {
                 .expect("fits I256")
         } else {
             I256::try_from(U256::from_str_radix(s, 10).expect("valid decimal")).expect("fits I256")
+        }
+    }
+
+    /// Assert a tick-data map equals the fixture's `tick_data` object, per tick.
+    fn assert_tick_data(data: &HashMap<i32, LiquidityAtTick>, expected: &serde_json::Value) {
+        assert_eq!(data.len(), expected.as_object().unwrap().len());
+        for (t_str, tv) in expected.as_object().unwrap() {
+            let t: i32 = t_str.parse().unwrap();
+            assert_eq!(data[&t].liquidity_net, i256_from_json(&tv["liquidity_net"]));
+            assert_eq!(
+                data[&t].liquidity_gross,
+                u128_from_json(&tv["liquidity_gross"])
+            );
+            assert_eq!(data[&t].block, tv["block"].as_u64().unwrap());
         }
     }
 
@@ -349,66 +306,16 @@ mod tests {
         assert_eq!(get_tick_word_and_bit_position(0, 60), (0, 0));
     }
 
-    // ─── flip_tick parity ─────────────────────────────────────────────
-
-    #[test]
-    fn flip_tick_parity_vs_python_oracle() {
-        let fix = fixtures();
-        for case in fix["flip"].as_array().expect("flip array") {
-            let ticks: Vec<i32> = case["ticks"]
-                .as_array()
-                .expect("ticks array")
-                .iter()
-                .map(|v| v.as_i64().expect("i32 tick") as i32)
-                .collect();
-            let spacing = case["spacing"].as_i64().expect("spacing") as i32;
-
-            let mut bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
-            for (i, &t) in ticks.iter().enumerate() {
-                flip_tick(&mut bitmap, t, spacing, i as u64);
-            }
-
-            let expected = case["result"].as_object().expect("result object");
-            assert_eq!(
-                bitmap.len(),
-                expected.len(),
-                "word count mismatch for ticks={ticks:?} spacing={spacing}"
-            );
-            for (word_str, bitmap_val) in expected {
-                let word: i32 = word_str.parse().expect("word key");
-                let expected_bitmap = u256_from_json(bitmap_val);
-                let got = bitmap
-                    .get(&word)
-                    .unwrap_or_else(|| panic!("missing word {word} for ticks={ticks:?}"));
-                assert_eq!(
-                    got.bitmap, expected_bitmap,
-                    "bitmap mismatch at word {word} for ticks={ticks:?} spacing={spacing}"
-                );
-            }
-        }
-    }
-
-    // ─── flip_tick error path ─────────────────────────────────────────
-
-    #[test]
-    #[should_panic(expected = "Invalid tick or spacing")]
-    fn flip_tick_rejects_non_multiple_tick() {
-        let mut bmp = HashMap::new();
-        // tick=2 is not a multiple of spacing=3
-        flip_tick(&mut bmp, 2, 3, 0);
-    }
-
     // ─── apply_liquidity_mapping_update parity ─────────────────────────
 
     #[test]
     fn apply_chain_a_in_range_burn_to_zero() {
         // tick=0 active, ticks [-1000, 1000], spacing 10, init_block 10.
-        // Steps: +1M, +250K, -750K, -500K → burns both ticks to zero (deleted,
-        // flipped off), active liquidity back to 0.
+        // Steps: +1M, +250K, -750K, -500K → burns both ticks to zero (deleted),
+        // active liquidity back to 0.
         let fix = fixtures();
         let expected = &fix["apply"]["A"];
 
-        let mut bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
         let mut data: HashMap<i32, LiquidityAtTick> = HashMap::new();
         let mut liq = U128::ZERO;
         let deltas = [
@@ -419,7 +326,6 @@ mod tests {
         ];
         for (delta, update_block, init_block) in deltas {
             let r = apply_liquidity_mapping_update(
-                std::mem::take(&mut bitmap),
                 std::mem::take(&mut data),
                 10,
                 0,
@@ -430,7 +336,6 @@ mod tests {
                 1000,
                 delta,
             );
-            bitmap = r.tick_bitmap;
             data = r.tick_data;
             liq = r.liquidity;
         }
@@ -443,16 +348,6 @@ mod tests {
             data.is_empty(),
             "chain A tick_data should be empty (burned to zero)"
         );
-        assert_eq!(
-            bitmap.len(),
-            expected["tick_bitmap"].as_object().unwrap().len(),
-            "chain A word count"
-        );
-        for (word_str, wv) in expected["tick_bitmap"].as_object().unwrap() {
-            let word: i32 = word_str.parse().unwrap();
-            assert_eq!(bitmap[&word].bitmap, u256_from_json(&wv["bitmap"]));
-            assert_eq!(bitmap[&word].block, wv["block"].as_u64().unwrap());
-        }
     }
 
     #[test]
@@ -463,7 +358,6 @@ mod tests {
         let fix = fixtures();
         let expected = &fix["apply"]["B"];
 
-        let mut bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
         let mut data: HashMap<i32, LiquidityAtTick> = HashMap::new();
         let mut liq = U128::try_from(5_000_000u64).unwrap();
         // (delta, tick_lower, tick_upper, update_block, init_block)
@@ -487,7 +381,6 @@ mod tests {
         ];
         for (delta, tl, tu, update_block, init_block) in steps {
             let r = apply_liquidity_mapping_update(
-                std::mem::take(&mut bitmap),
                 std::mem::take(&mut data),
                 60,
                 5000,
@@ -498,7 +391,6 @@ mod tests {
                 tu,
                 delta,
             );
-            bitmap = r.tick_bitmap;
             data = r.tick_data;
             liq = r.liquidity;
         }
@@ -507,49 +399,16 @@ mod tests {
             u128_from_json(&expected["liquidity"]),
             "chain B active liquidity (out-of-range, unchanged)"
         );
-        assert_eq!(data.len(), expected["tick_data"].as_object().unwrap().len());
-        assert_eq!(
-            bitmap.len(),
-            expected["tick_bitmap"].as_object().unwrap().len()
-        );
-        // Verify each tick_data entry
-        for (t_str, tv) in expected["tick_data"].as_object().unwrap() {
-            let t: i32 = t_str.parse().unwrap();
-            assert_eq!(
-                data[&t].liquidity_net,
-                i256_from_json(&tv["liquidity_net"]),
-                "chain B net at {t}"
-            );
-            assert_eq!(
-                data[&t].liquidity_gross,
-                u128_from_json(&tv["liquidity_gross"]),
-                "chain B gross at {t}"
-            );
-            assert_eq!(
-                data[&t].block,
-                tv["block"].as_u64().unwrap(),
-                "chain B block at {t}"
-            );
-        }
-        for (w_str, wv) in expected["tick_bitmap"].as_object().unwrap() {
-            let w: i32 = w_str.parse().unwrap();
-            assert_eq!(
-                bitmap[&w].bitmap,
-                u256_from_json(&wv["bitmap"]),
-                "chain B bitmap at {w}"
-            );
-            assert_eq!(bitmap[&w].block, wv["block"].as_u64().unwrap());
-        }
+        assert_tick_data(&data, &expected["tick_data"]);
     }
 
     #[test]
     fn apply_chain_c_net_signs_and_reinit_delete() {
         // ticks [10,20], tick=0 (out of range: 10<=0 is false) → active stays 0.
-        // Steps: +1000, +1000, -1000, +500 (new tick 5), -500 (tick 5 deleted+flipped).
+        // Steps: +1000, +1000, -1000, +500 (new tick 5), -500 (tick 5 deleted).
         let fix = fixtures();
         let expected = &fix["apply"]["C"];
 
-        let mut bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
         let mut data: HashMap<i32, LiquidityAtTick> = HashMap::new();
         let mut liq = U128::ZERO;
         let steps: [(I256, i32, i32, u64, u64); 5] = [
@@ -561,7 +420,6 @@ mod tests {
         ];
         for (delta, tl, tu, update_block, init_block) in steps {
             let r = apply_liquidity_mapping_update(
-                std::mem::take(&mut bitmap),
                 std::mem::take(&mut data),
                 1,
                 0,
@@ -572,30 +430,11 @@ mod tests {
                 tu,
                 delta,
             );
-            bitmap = r.tick_bitmap;
             data = r.tick_data;
             liq = r.liquidity;
         }
         assert_eq!(liq, u128_from_json(&expected["liquidity"]));
-        assert_eq!(data.len(), expected["tick_data"].as_object().unwrap().len());
-        assert_eq!(
-            bitmap.len(),
-            expected["tick_bitmap"].as_object().unwrap().len()
-        );
-        for (t_str, tv) in expected["tick_data"].as_object().unwrap() {
-            let t: i32 = t_str.parse().unwrap();
-            assert_eq!(data[&t].liquidity_net, i256_from_json(&tv["liquidity_net"]));
-            assert_eq!(
-                data[&t].liquidity_gross,
-                u128_from_json(&tv["liquidity_gross"])
-            );
-            assert_eq!(data[&t].block, tv["block"].as_u64().unwrap());
-        }
-        for (w_str, wv) in expected["tick_bitmap"].as_object().unwrap() {
-            let w: i32 = w_str.parse().unwrap();
-            assert_eq!(bitmap[&w].bitmap, u256_from_json(&wv["bitmap"]));
-            assert_eq!(bitmap[&w].block, wv["block"].as_u64().unwrap());
-        }
+        assert_tick_data(&data, &expected["tick_data"]);
     }
 
     #[test]
@@ -605,10 +444,8 @@ mod tests {
         let fix = fixtures();
         let expected = &fix["apply"]["D"];
 
-        let bitmap_in: HashMap<i32, BitmapAtWord> = HashMap::new();
         let data_in: HashMap<i32, LiquidityAtTick> = HashMap::new();
         let r = apply_liquidity_mapping_update(
-            bitmap_in,
             data_in,
             10,
             0,
@@ -624,31 +461,7 @@ mod tests {
             u128_from_json(&expected["liquidity"]),
             "chain D liquidity (no in-range change)"
         );
-        assert_eq!(
-            r.tick_data.len(),
-            expected["tick_data"].as_object().unwrap().len()
-        );
-        assert_eq!(
-            r.tick_bitmap.len(),
-            expected["tick_bitmap"].as_object().unwrap().len()
-        );
-        for (t_str, tv) in expected["tick_data"].as_object().unwrap() {
-            let t: i32 = t_str.parse().unwrap();
-            assert_eq!(
-                r.tick_data[&t].liquidity_net,
-                i256_from_json(&tv["liquidity_net"])
-            );
-            assert_eq!(
-                r.tick_data[&t].liquidity_gross,
-                u128_from_json(&tv["liquidity_gross"])
-            );
-            assert_eq!(r.tick_data[&t].block, tv["block"].as_u64().unwrap());
-        }
-        for (w_str, wv) in expected["tick_bitmap"].as_object().unwrap() {
-            let w: i32 = w_str.parse().unwrap();
-            assert_eq!(r.tick_bitmap[&w].bitmap, u256_from_json(&wv["bitmap"]));
-            assert_eq!(r.tick_bitmap[&w].block, wv["block"].as_u64().unwrap());
-        }
+        assert_tick_data(&r.tick_data, &expected["tick_data"]);
     }
 
     #[test]
@@ -658,7 +471,6 @@ mod tests {
         let fix = fixtures();
         let expected = &fix["apply"]["E"];
 
-        let mut bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
         let mut data: HashMap<i32, LiquidityAtTick> = HashMap::new();
         let mut liq = U128::ZERO;
         let steps: [(I256, u64); 3] = [
@@ -668,7 +480,6 @@ mod tests {
         ];
         for (delta, update_block) in steps {
             let r = apply_liquidity_mapping_update(
-                std::mem::take(&mut bitmap),
                 std::mem::take(&mut data),
                 10,
                 0,
@@ -679,7 +490,6 @@ mod tests {
                 100,
                 delta,
             );
-            bitmap = r.tick_bitmap;
             data = r.tick_data;
             liq = r.liquidity;
         }
@@ -688,41 +498,14 @@ mod tests {
             u128_from_json(&expected["liquidity"]),
             "chain E active liquidity (in-range residual)"
         );
-        assert_eq!(data.len(), expected["tick_data"].as_object().unwrap().len());
-        assert_eq!(
-            bitmap.len(),
-            expected["tick_bitmap"].as_object().unwrap().len()
-        );
-        for (t_str, tv) in expected["tick_data"].as_object().unwrap() {
-            let t: i32 = t_str.parse().unwrap();
-            assert_eq!(data[&t].liquidity_net, i256_from_json(&tv["liquidity_net"]));
-            assert_eq!(
-                data[&t].liquidity_gross,
-                u128_from_json(&tv["liquidity_gross"])
-            );
-            assert_eq!(data[&t].block, tv["block"].as_u64().unwrap());
-        }
-        for (w_str, wv) in expected["tick_bitmap"].as_object().unwrap() {
-            let w: i32 = w_str.parse().unwrap();
-            assert_eq!(bitmap[&w].bitmap, u256_from_json(&wv["bitmap"]));
-            assert_eq!(bitmap[&w].block, wv["block"].as_u64().unwrap());
-        }
+        assert_tick_data(&data, &expected["tick_data"]);
     }
 
     #[test]
     fn apply_does_not_mutate_inputs() {
-        // The fn consumes (moves) its inputs; passing a clone leaves the original intact.
-        let mut bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
-        bitmap.insert(
-            0,
-            BitmapAtWord {
-                bitmap: U256::ZERO,
-                block: 0,
-            },
-        );
+        // The fn consumes (moves) its input; passing a clone leaves the original intact.
         let data: HashMap<i32, LiquidityAtTick> = HashMap::new();
         let r = apply_liquidity_mapping_update(
-            bitmap.clone(),
             data.clone(),
             10,
             0,
@@ -733,11 +516,8 @@ mod tests {
             100,
             I256::try_from(500u64).unwrap(),
         );
-        // original untouched (still has the seeded word 0)
-        assert!(bitmap.contains_key(&0));
-        assert_eq!(bitmap[&0].bitmap, U256::ZERO);
         assert!(data.is_empty());
         // the result mutated its own copy
-        assert!(!r.tick_bitmap.is_empty());
+        assert!(!r.tick_data.is_empty());
     }
 }

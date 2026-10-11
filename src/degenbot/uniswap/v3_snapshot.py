@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import HexAddress
-    from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+    from degenbot.uniswap.concentrated.types import LiquidityAtTick
 
 
 class UniswapV3LiquiditySnapshotSource(LiquiditySnapshotSource, Protocol):
@@ -113,11 +113,11 @@ class UniswapV3LiquiditySnapshot(
         """
         return self._pending_updates(get_checksum_address(pool_address))
 
-    def tick_bitmap(self, pool_address: str | bytes) -> dict[int, BitmapAtWord] | None:
-        """Consume the tick initialization bitmaps for the pool.
+    def tick_bitmap(self, pool_address: str | bytes) -> set[int] | None:
+        """Consume the tick bitmap WORD positions known for the pool.
 
         Returns:
-            The tick bitmap dict, or None if no snapshot exists.
+            The set of known bitmap word indices, or None if no snapshot exists.
 
         """
         return self._drain_tick_bitmap(get_checksum_address(pool_address))
@@ -135,7 +135,7 @@ class UniswapV3LiquiditySnapshot(
         self,
         pool: HexAddress,
         tick_data: dict[int, LiquidityAtTick],
-        tick_bitmap: dict[int, BitmapAtWord],
+        tick_bitmap: set[int],
     ) -> None:
         """Update the liquidity mapping for the pool.
 

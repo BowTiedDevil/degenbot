@@ -128,8 +128,9 @@ class DatabaseSnapshot:
     def get_liquidity_map_v3(self, /, pool_address: str) -> dict | None:
         """
         V3 `get_liquidity_map(pool_address)` → `LiquidityMap`-shaped dict or
-        `None`. Returns `{"tick_bitmap": {word: {"bitmap": int}},
-        "tick_data": {tick: {"liquidity_gross": int, "liquidity_net": int}}}`.
+        `None`. Returns `{"tick_data": {tick: {"liquidity_gross": int,
+        "liquidity_net": int}}}` — no `tick_bitmap` key (the DB knows no words;
+        the retired word-VALUE tables are gone).
         """
     def get_liquidity_map_v4(self, /, pool_manager: str, pool_id: Any) -> dict | None:
         """

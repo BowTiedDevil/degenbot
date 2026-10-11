@@ -594,9 +594,7 @@ fn provenance(scenario: &Scenario) -> CassetteProvenance {
 const DUMP_TABLES: &[&str] = &[
     "erc20_tokens",
     "exchanges",
-    "initialization_maps",
     "liquidity_positions",
-    "managed_pool_initialization_maps",
     "managed_pool_liquidity_positions",
     "managed_pools",
     "pools",

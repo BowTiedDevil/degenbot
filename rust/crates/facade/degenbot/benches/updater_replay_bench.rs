@@ -225,21 +225,17 @@ fn seed_pool_db(dir: &Path, chain_id: i64, from: u64) -> std::path::PathBuf {
 }
 
 /// The DENSE pool harness DB: the seed rows above PLUS the USDC/WETH 0.05%
-/// pool row and its deep synthetic base map (2048 in-range positions across
-/// their bitmap words + the two full-range extreme ticks). Seeding rides a
-/// plain handle BEFORE the ledger arms, so the run's statement ledger holds
-/// only the chunk loop's SQL (the seed is harness input, not workload).
+/// pool row and its synthetic base map (2048 in-range positions + the two
+/// full-range extreme ticks). Seeding rides a plain handle BEFORE the ledger
+/// arms, so the run's statement ledger holds only the chunk loop's SQL (the
+/// seed is harness input, not workload).
 ///
 /// The seeded values are deterministic and burn-safe: gross is `2^100` (any
 /// recorded burn keeps `gross + delta >= 0`), net alternates sign so both
-/// tick orientations exist. The bitmap words are computed with the canonical
-/// EVM formula (`compressed = tick / spacing; word = compressed >> 8; bit =
-/// compressed.rem_euclid(256)` — `degenbot-math`'s
-/// `get_tick_word_and_bit_position`), so the apply's bit flips land on real
-/// base words rather than seeding fresh ones.
+/// tick orientations exist. The word-bitmap words are derived from the tick
+/// rows on read (the retired `initialization_maps` seed is gone).
 fn seed_dense_pool_db(dir: &Path, chain_id: i64, from: u64) -> std::path::PathBuf {
     use alloy::primitives::U256;
-    use degenbot::math::cl::liquidity_mapping::get_tick_word_and_bit_position;
 
     let path = dir.join("bench-dense.db");
     let (db, _state) = DegenbotDb::open_for_writes(&path).unwrap();
@@ -282,10 +278,7 @@ fn seed_dense_pool_db(dir: &Path, chain_id: i64, from: u64) -> std::path::PathBu
     ticks.dedup();
 
     // The deterministic base values (burn-safe gross, alternating net sign).
-    // Each seeded tick sets its bit in the accumulated word bitmap — the same
-    // flip the apply's `flip_tick` would produce — so the base words are real.
     let gross: U256 = U256::from(1u8) << 100;
-    let mut word_bits: std::collections::BTreeMap<i32, U256> = std::collections::BTreeMap::new();
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute("BEGIN", []).unwrap();
     {
@@ -308,18 +301,6 @@ fn seed_dense_pool_db(dir: &Path, chain_id: i64, from: u64) -> std::path::PathBu
                 gross.to_string()
             ])
             .unwrap();
-            let (word, bit) = get_tick_word_and_bit_position(i32::try_from(tick).unwrap(), 10);
-            let bit_mask = U256::from(1u8) << u64::from(bit);
-            *word_bits.entry(word).or_insert(U256::ZERO) |= bit_mask;
-        }
-    }
-    {
-        let mut stmt = conn
-            .prepare("INSERT INTO initialization_maps (pool_id, word, bitmap) VALUES (?1, ?2, ?3)")
-            .unwrap();
-        for (word, bitmap) in &word_bits {
-            stmt.execute(rusqlite::params![pool_id, *word, bitmap.to_string()])
-                .unwrap();
         }
     }
     conn.execute("COMMIT", []).unwrap();

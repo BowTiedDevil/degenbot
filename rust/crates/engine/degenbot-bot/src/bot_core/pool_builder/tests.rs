@@ -322,12 +322,6 @@ impl crate::bot_core::construction_io::DbConstruction for FakeDb {
     ) -> Result<Vec<degenbot_db::rows::LiquidityPositionRow>, degenbot_db::error::DbError> {
         Ok(Vec::new())
     }
-    async fn fetch_initialization_map(
-        &self,
-        _pool_id: i64,
-    ) -> Result<Vec<degenbot_db::rows::InitializationMapRow>, degenbot_db::error::DbError> {
-        Ok(Vec::new())
-    }
     async fn fetch_pool_manager(
         &self,
         _chain_id: i64,
@@ -345,13 +339,6 @@ impl crate::bot_core::construction_io::DbConstruction for FakeDb {
         &self,
         _managed_pool_id: i64,
     ) -> Result<Vec<degenbot_db::rows::ManagedPoolLiquidityPositionRow>, degenbot_db::error::DbError>
-    {
-        Ok(Vec::new())
-    }
-    async fn fetch_managed_initialization_map(
-        &self,
-        _managed_pool_id: i64,
-    ) -> Result<Vec<degenbot_db::rows::ManagedPoolInitializationMapRow>, degenbot_db::error::DbError>
     {
         Ok(Vec::new())
     }
@@ -927,7 +914,7 @@ impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
 #[tokio::test]
 async fn build_v3_db_hit_yields_tracked() {
     use crate::bot_core::PoolTickCoverage;
-    use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
+    use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
     use hashbrown::HashMap;
 
     let factory: Address =
@@ -966,14 +953,6 @@ async fn build_v3_db_hit_yields_tracked() {
 
     let db = FakeTickMapDb(
         LiquidityMap {
-            tick_bitmap: HashMap::from([(
-                0i64,
-                // bit 1 = tick 60 at spacing 60 (intake
-                // reconciliation: bit position = tick / spacing).
-                BitmapAtWord {
-                    bitmap: U256::from(1u128) << 1,
-                },
-            )]),
             tick_data: HashMap::from([(
                 60,
                 LiquidityAtTick {
@@ -1003,7 +982,7 @@ async fn build_v3_db_hit_yields_tracked() {
 #[tokio::test]
 async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     use crate::bot_core::PoolTickCoverage;
-    use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
+    use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
     use hashbrown::HashMap;
 
     let factory: Address =
@@ -1043,14 +1022,6 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     // DB-seeded pool whose liquidity map is exact at block 123.
     let db = FakeTickMapDb(
         LiquidityMap {
-            tick_bitmap: HashMap::from([(
-                0i64,
-                // bit 1 = tick 60 at spacing 60 (intake
-                // reconciliation: bit position = tick / spacing).
-                BitmapAtWord {
-                    bitmap: U256::from(1u128) << 1,
-                },
-            )]),
             tick_data: HashMap::from([(
                 60,
                 LiquidityAtTick {

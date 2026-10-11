@@ -16,10 +16,7 @@ pub mod pool;
 pub use aave::*;
 pub use erc20::Erc20TokenRow;
 pub use exchange::ExchangeRow;
-pub use liquidity::{
-    InitializationMapRow, LiquidityPositionRow, ManagedPoolInitializationMapRow,
-    ManagedPoolLiquidityPositionRow,
-};
+pub use liquidity::{LiquidityPositionRow, ManagedPoolLiquidityPositionRow};
 pub use pool::{
     LfjPoolRow, LiquidityPoolRow, ManagedLiquidityPoolRow, PoolKindRow, PoolManagerRow, V2PoolRow,
     V3PoolRow, V4PoolRow,

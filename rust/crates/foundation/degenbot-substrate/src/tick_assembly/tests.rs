@@ -22,7 +22,7 @@ use hashbrown::HashMap;
 use alloy::primitives::{aliases::U128, Address, I256, U256};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::{V3PoolRowInput, V4PoolRowInput};
-use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
+use degenbot_db::ApplyLiquidityAtTick;
 
 use super::{assemble_v3_tick_map, assemble_v4_tick_map, TickMapAssemblyError};
 use crate::{PoolTickCoverage, TickInfo};
@@ -139,11 +139,8 @@ fn v4_db_with_pool() -> (DegenbotDb, i64, [u8; 32]) {
     (db, managed_pool_id, pool_id)
 }
 
-/// Seed V3 ticks (both the init map + the liquidity position) — the 1:1 shape
-/// a healthy DB carries. Bitmap bits are derived from each tick at `spacing`
-/// (the snapshot must pass the intake reconciliation).
-fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32], spacing: i32) {
-    let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
+/// Seed V3 tick ROWS (the liquidity positions).
+fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32], _spacing: i32) {
     let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
     for &tick in ticks {
         let info = sample_tick_info(tick);
@@ -155,27 +152,13 @@ fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32], spacing: i32) {
                 block: 0,
             },
         );
-        let compressed = tick.div_euclid(spacing);
-        let word = compressed >> 8;
-        let bit = compressed.rem_euclid(256) as u64;
-        tick_bitmap
-            .entry(word)
-            .or_insert_with(|| ApplyBitmapAtWord {
-                bitmap: U256::from(0u64),
-                block: 0,
-            });
-        tick_bitmap.get_mut(&word).unwrap().bitmap |= U256::from(1u64) << bit;
     }
     db.upsert_v3_liquidity_positions(pool_id, &tick_data)
         .unwrap();
-    db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
-        .unwrap();
 }
 
-/// Seed V4 ticks (`managed_pool_id` version of `seed_v3_ticks`). Bitmap bits
-/// are derived from each tick at `spacing` (intake reconciliation).
-fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32], spacing: i32) {
-    let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
+/// Seed V4 tick ROWS (`managed_pool_id` version of `seed_v3_ticks`).
+fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32], _spacing: i32) {
     let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
     for &tick in ticks {
         let info = sample_tick_info(tick);
@@ -187,20 +170,8 @@ fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32], spacing: 
                 block: 0,
             },
         );
-        let compressed = tick.div_euclid(spacing);
-        let word = compressed >> 8;
-        let bit = compressed.rem_euclid(256) as u64;
-        tick_bitmap
-            .entry(word)
-            .or_insert_with(|| ApplyBitmapAtWord {
-                bitmap: U256::from(0u64),
-                block: 0,
-            });
-        tick_bitmap.get_mut(&word).unwrap().bitmap |= U256::from(1u64) << bit;
     }
     db.upsert_v4_liquidity_positions(managed_pool_id, &tick_data)
-        .unwrap();
-    db.upsert_v4_initialization_maps(managed_pool_id, &tick_bitmap)
         .unwrap();
 }
 
@@ -692,13 +663,10 @@ fn chain_word_rpc(bitmap: U256) -> FakeChainRpc {
     }
 }
 
-/// Seed a V3 pool with tick ROWS (and a non-empty initialization word so the
-/// Db arm yields a non-empty Tracked map). `rows`: (tick, `liquidity_gross`);
-/// gross 0 = a de-initialized tick row still present in the table. The seeded
-/// snapshot bitmap is not consulted by the chain-truth reconciliation.
-fn seed_v3_divergent(db: &DegenbotDb, pool_id: i64, bitmap: U256, rows: &[(i32, u128)]) {
-    let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
-    tick_bitmap.insert(0, ApplyBitmapAtWord { bitmap, block: 0 });
+/// Seed a V3 pool with tick ROWS. `rows`: (tick, `liquidity_gross`); gross 0 =
+/// a de-initialized tick row still present in the table. The retired word-value
+/// map is no longer seeded — the chain-truth reconciliation reads CHAIN words.
+fn seed_v3_divergent(db: &DegenbotDb, pool_id: i64, _bitmap: U256, rows: &[(i32, u128)]) {
     let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
     for (tick, gross) in rows {
         tick_data.insert(
@@ -712,13 +680,9 @@ fn seed_v3_divergent(db: &DegenbotDb, pool_id: i64, bitmap: U256, rows: &[(i32, 
     }
     db.upsert_v3_liquidity_positions(pool_id, &tick_data)
         .unwrap();
-    db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
-        .unwrap();
 }
 
-fn seed_v4_divergent(db: &DegenbotDb, managed_pool_id: i64, bitmap: U256, rows: &[(i32, u128)]) {
-    let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
-    tick_bitmap.insert(0, ApplyBitmapAtWord { bitmap, block: 0 });
+fn seed_v4_divergent(db: &DegenbotDb, managed_pool_id: i64, _bitmap: U256, rows: &[(i32, u128)]) {
     let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
     for (tick, gross) in rows {
         tick_data.insert(
@@ -731,8 +695,6 @@ fn seed_v4_divergent(db: &DegenbotDb, managed_pool_id: i64, bitmap: U256, rows: 
         );
     }
     db.upsert_v4_liquidity_positions(managed_pool_id, &tick_data)
-        .unwrap();
-    db.upsert_v4_initialization_maps(managed_pool_id, &tick_bitmap)
         .unwrap();
 }
 

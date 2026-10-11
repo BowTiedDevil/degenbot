@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Protocol, TypedDict
 from degenbot.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.logging import logger
 from degenbot.types.concrete import KeyedDefaultDict
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 
 if TYPE_CHECKING:
     import pathlib
@@ -23,9 +23,14 @@ if TYPE_CHECKING:
 
 
 class LiquidityMap(TypedDict):
-    """LiquidityMap class."""
+    """LiquidityMap class.
 
-    tick_bitmap: dict[int, BitmapAtWord]
+    ``tick_bitmap`` carries only the bitmap WORD positions the snapshot knows
+    (the load-bearing key set); the per-word bitmap value is retired (the
+    bitmap derives from ``tick_data``).
+    """
+
+    tick_bitmap: set[int]
     tick_data: dict[int, LiquidityAtTick]
 
 
@@ -69,9 +74,7 @@ class LiquiditySnapshotSource(Protocol):
 
 def _liquidity_map_from_raw(raw: dict[str, Any]) -> LiquidityMap:
     return LiquidityMap(
-        tick_bitmap={
-            int(word): BitmapAtWord(**entry) for word, entry in raw["tick_bitmap"].items()
-        },
+        tick_bitmap={int(word) for word in raw.get("tick_bitmap", ())},
         tick_data={int(tick): LiquidityAtTick(**entry) for tick, entry in raw["tick_data"].items()},
     )
 
@@ -158,12 +161,11 @@ class DatabaseSnapshotBase[K]:
         raw = self._seam_liquidity_map(pool_key)
         if raw is None:
             return None
-        # The Db stores no per-tick/per-word block, so stamp the snapshot's
-        # bulk-sync block onto every row that does not carry one. ``0`` is a
-        # legal stamp, never a sentinel.
+        # The Db stores no per-tick block, so stamp the snapshot's bulk-sync
+        # block onto every row that does not carry one. ``0`` is a legal
+        # stamp, never a sentinel. The Db carries no per-word bitmap value, so
+        # there is nothing to stamp for ``tick_bitmap`` (keys only).
         source_block = self._seam_newest_block()
-        for entry in raw["tick_bitmap"].values():
-            entry.setdefault("block", source_block)
         for entry in raw["tick_data"].values():
             entry.setdefault("block", source_block)
         return _liquidity_map_from_raw(raw)
@@ -260,12 +262,12 @@ class LiquiditySnapshotBase[K, U, E: LiquidityEvent, S: LiquiditySnapshotSource]
         finally:
             self._liquidity_events[pool_key].clear()
 
-    def _drain_tick_bitmap(self, pool_key: K) -> dict[int, BitmapAtWord] | None:
+    def _drain_tick_bitmap(self, pool_key: K) -> set[int] | None:
         pool_snapshot = self._liquidity_snapshot[pool_key]
         if pool_snapshot is None:
             return None
-        tick_bitmap = pool_snapshot["tick_bitmap"].copy()
-        pool_snapshot["tick_bitmap"] = {}
+        tick_bitmap = set(pool_snapshot["tick_bitmap"])
+        pool_snapshot["tick_bitmap"] = set()
         return tick_bitmap
 
     def _drain_tick_data(self, pool_key: K) -> dict[int, LiquidityAtTick] | None:

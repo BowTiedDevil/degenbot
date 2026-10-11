@@ -99,10 +99,8 @@ const HEAD_TABLES: &[&str] = &[
     "camelot_v2_pools",
     "erc20_tokens",
     "exchanges",
-    "initialization_maps",
     "lfj_pools",
     "liquidity_positions",
-    "managed_pool_initialization_maps",
     "managed_pool_liquidity_positions",
     "managed_pools",
     "pancakeswap_v2_pools",
@@ -120,11 +118,13 @@ const HEAD_TABLES: &[&str] = &[
 /// The synthetic seed every fixture carries (table, row count). These are
 /// tables whose head shape is unchanged from the initial revision, so the row
 /// transport is the thing under test, not a column-mapping edge.
-const SEEDED: &[(&str, i64)] = &[
-    ("erc20_tokens", 2),
-    ("initialization_maps", 1),
-    ("liquidity_positions", 2),
-];
+const SEEDED: &[(&str, i64)] = &[("erc20_tokens", 2), ("liquidity_positions", 2)];
+
+/// The word-bitmap value tables retired by the RW3 deletion wave: a pre-existing
+/// fixture still carries them (seeded), and the healed DB must NOT — the head
+/// schema no longer defines them and the out-of-place heal rebuilds to head,
+/// dropping them without a panic.
+const RETIRED_TABLES: &[&str] = &["initialization_maps", "managed_pool_initialization_maps"];
 
 fn fixture_path(rev: &str) -> PathBuf {
     Path::new(FIXTURE_DIR).join(format!("{rev}.db"))
@@ -222,6 +222,16 @@ fn run_fixture(rev: &str) {
             }
             for (t, n) in SEEDED {
                 assert_eq!(count(&conn, t), *n, "{rev}: seeded row count for {t}");
+            }
+
+            // An old DB still carrying the retired word-value tables heals
+            // cleanly: the tables are gone, and NO panic fired merely because
+            // they existed (the heal copies only head-schema tables).
+            for t in RETIRED_TABLES {
+                assert!(
+                    !has_table(&conn, t),
+                    "{rev}: healed DB must not carry the retired table {t}",
+                );
             }
         }
 

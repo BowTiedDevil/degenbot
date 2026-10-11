@@ -504,12 +504,10 @@ mod tests {
             table::ERC20_TOKENS,
             table::POOLS,
             table::LIQUIDITY_POSITIONS,
-            table::INITIALIZATION_MAPS,
             table::POOL_MANAGERS,
             table::MANAGED_POOLS,
             table::UNISWAP_V4_POOLS,
             table::MANAGED_POOL_LIQUIDITY_POSITIONS,
-            table::MANAGED_POOL_INITIALIZATION_MAPS,
         ] {
             assert!(
                 table_exists(&conn, t).unwrap(),

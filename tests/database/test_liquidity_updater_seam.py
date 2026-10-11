@@ -4,7 +4,7 @@ Loads the parity fixture DBs (committed by
 `rust/crates/foundation/degenbot-db/tests/fixtures/generate_liquidity_updater_parity.py`),
 applies the SAME event sequence through the Python `updater/pool_updater_configs.py` apply shells
 (now delegating to the Rust seam), + asserts the resulting
-`liquidity_positions` / `initialization_maps` rows + the
+`liquidity_positions` rows + the
 `liquidity_update_block`/`log_index` marker match the committed
 `*_expected.json` oracle.
 
@@ -159,10 +159,6 @@ def _dump_v3(db_path: pathlib.Path, pool_id: int) -> dict[str, object]:
             "WHERE pool_id = ? ORDER BY tick",
             (pool_id,),
         ).fetchall()
-        init_maps = connection.execute(
-            "SELECT word, bitmap FROM initialization_maps WHERE pool_id = ? ORDER BY word",
-            (pool_id,),
-        ).fetchall()
         pool = connection.execute(
             "SELECT liquidity_update_block, liquidity_update_log_index "
             "FROM uniswap_v3_pools WHERE pool_id = ?",
@@ -178,7 +174,6 @@ def _dump_v3(db_path: pathlib.Path, pool_id: int) -> dict[str, object]:
                 }
                 for row in positions
             ],
-            "initialization_maps": [{"word": row[0], "bitmap": str(row[1])} for row in init_maps],
             "liquidity_update_block": pool[0],
             "liquidity_update_log_index": pool[1],
         }
@@ -189,11 +184,6 @@ def _dump_v4(db_path: pathlib.Path, managed_pool_id: int) -> dict[str, object]:
         positions = connection.execute(
             "SELECT tick, liquidity_net, liquidity_gross "
             "FROM managed_pool_liquidity_positions WHERE managed_pool_id = ? ORDER BY tick",
-            (managed_pool_id,),
-        ).fetchall()
-        init_maps = connection.execute(
-            "SELECT word, bitmap FROM managed_pool_initialization_maps "
-            "WHERE managed_pool_id = ? ORDER BY word",
             (managed_pool_id,),
         ).fetchall()
         pool = connection.execute(
@@ -211,7 +201,6 @@ def _dump_v4(db_path: pathlib.Path, managed_pool_id: int) -> dict[str, object]:
                 }
                 for row in positions
             ],
-            "initialization_maps": [{"word": row[0], "bitmap": str(row[1])} for row in init_maps],
             "liquidity_update_block": pool[0],
             "liquidity_update_log_index": pool[1],
         }
@@ -271,7 +260,6 @@ def test_apply_v3_seam_matches_expected_oracle(v3_apply_copy: pathlib.Path) -> N
     actual = _dump_v3(v3_apply_copy, pool_id)
     assert actual == {
         "positions": expected["positions"],
-        "initialization_maps": expected["initialization_maps"],
         "liquidity_update_block": expected["liquidity_update_block"],
         "liquidity_update_log_index": expected["liquidity_update_log_index"],
     }
@@ -319,7 +307,6 @@ def test_apply_v4_seam_matches_expected_oracle(v4_apply_copy: pathlib.Path) -> N
     actual = _dump_v4(v4_apply_copy, managed_pool_id)
     assert actual == {
         "positions": expected["positions"],
-        "initialization_maps": expected["initialization_maps"],
         "liquidity_update_block": expected["liquidity_update_block"],
         "liquidity_update_log_index": expected["liquidity_update_log_index"],
     }

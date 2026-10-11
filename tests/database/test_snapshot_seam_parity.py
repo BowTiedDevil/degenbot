@@ -68,17 +68,19 @@ class TestV3SnapshotParity:
             assert {int(t): tuple(map(int, v)) for t, v in ticks.items()} == rust[addr]
 
     def test_get_liquidity_map_match_oracle(self, v3_snapshot: V3DatabaseSnapshot) -> None:
-        """get_liquidity_map returns pydantic BitmapAtWord/LiquidityAtTick matching the oracle."""
+        """get_liquidity_map returns pydantic LiquidityAtTick rows matching the oracle."""
         oracle = _expected()["v3_liquidity_map"]
         if oracle is None:
             pytest.skip("oracle has no V3 liquidity map")
         addr = _expected()["v3_pool_address"]
         result = v3_snapshot.get_liquidity_map(addr)
         assert result is not None
+        # The word-VALUE machinery is retired: the DB stores no per-word bitmap
+        # (the `initialization_maps` tables are dropped), so the seam emits a
+        # WORD-KEY set that is empty for every DB-backed pool.
+        assert result["tick_bitmap"] == set()
         # The tick values are pydantic models (attribute access) — proves the
-        # seam wraps into BitmapAtWord(**entry) / LiquidityAtTick(**entry).
-        for word, entry in result["tick_bitmap"].items():
-            assert int(entry.bitmap) == int(oracle["tick_bitmap"][str(word)]["bitmap"])
+        # seam wraps into LiquidityAtTick(**entry).
         for tick, entry in result["tick_data"].items():
             exp = oracle["tick_data"][str(tick)]
             assert int(entry.liquidity_gross) == int(exp["liquidity_gross"])

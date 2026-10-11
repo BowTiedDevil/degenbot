@@ -860,13 +860,10 @@ async fn assemble_db_or_chain_v3(
         return Ok(seed);
     }
     // DB miss -> Chain arm (Sparse).
-    let (ticks, bitmap) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block)
+    let (ticks, _bitmap) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block)
         .await
         .map_err(PoolBuilderError::Rpc)?;
-    let (word, _) =
-        degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
-    Ok(chain_arm(Some(ticks), HashMap::from([(word, bitmap)]))
-        .into_seed(block, TickMapPoolIdentity::V3(address)))
+    Ok(chain_arm(Some(ticks)).into_seed(block, TickMapPoolIdentity::V3(address)))
 }
 
 /// V4 twin of [`assemble_db_or_chain_v3`]: the shared Db arm over
@@ -903,20 +900,17 @@ async fn assemble_db_or_chain_v4(
         return Ok(seed);
     }
     // DB miss -> Chain arm (Sparse).
-    let (ticks, bitmap) = bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block)
-        .await
-        .map_err(PoolBuilderError::Rpc)?;
-    let (word, _) =
-        degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
-    Ok(
-        chain_arm(Some(ticks), HashMap::from([(word, bitmap)])).into_seed(
-            block,
-            TickMapPoolIdentity::V4 {
-                manager: pool_manager,
-                pool_id: B256::from(pool_id),
-            },
-        ),
-    )
+    let (ticks, _bitmap) =
+        bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block)
+            .await
+            .map_err(PoolBuilderError::Rpc)?;
+    Ok(chain_arm(Some(ticks)).into_seed(
+        block,
+        TickMapPoolIdentity::V4 {
+            manager: pool_manager,
+            pool_id: B256::from(pool_id),
+        },
+    ))
 }
 
 /// Reconcile a V3 Db (`Tracked`) seed against the chain word bitmaps read

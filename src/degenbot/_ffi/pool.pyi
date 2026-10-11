@@ -93,8 +93,8 @@ def verify_v3_liquidity_map(
 
     Standalone on-chain-truth verification of a V3 pool's COMMITTED liquidity
     map (read-only — no SQL writes, no event apply). Opens the DB, fetches the
-    pool's `liquidity_positions` + `initialization_maps` rows, builds the
-    in-memory map, + compares EVERY tick + bitmap word against on-chain
+    pool's `liquidity_positions` rows, builds the in-memory map, + compares
+    EVERY tick + (derived) bitmap word against on-chain
     `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` at `block_number`, all
     batched through Multicall3. Returns the divergence list (empty = GREEN —
     the DB matches the chain at `block_number`).

@@ -10,9 +10,8 @@ use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::rows::{
-    Erc20TokenRow, ExchangeRow, InitializationMapRow, LiquidityPoolRow, LiquidityPositionRow,
-    ManagedPoolInitializationMapRow, ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow,
-    V4PoolRow,
+    Erc20TokenRow, ExchangeRow, LiquidityPoolRow, LiquidityPositionRow,
+    ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow, V4PoolRow,
 };
 
 use super::adapters::{AlloyRpcConstruction, DegenbotDbConstruction, NoDb};
@@ -78,13 +77,6 @@ impl DbConstruction for FakeDb {
         Ok(Vec::new())
     }
 
-    async fn fetch_initialization_map(
-        &self,
-        _pool_id: i64,
-    ) -> Result<Vec<InitializationMapRow>, degenbot_db::error::DbError> {
-        Ok(Vec::new())
-    }
-
     async fn fetch_pool_manager(
         &self,
         _chain_id: i64,
@@ -104,13 +96,6 @@ impl DbConstruction for FakeDb {
         &self,
         _managed_pool_id: i64,
     ) -> Result<Vec<ManagedPoolLiquidityPositionRow>, degenbot_db::error::DbError> {
-        Ok(Vec::new())
-    }
-
-    async fn fetch_managed_initialization_map(
-        &self,
-        _managed_pool_id: i64,
-    ) -> Result<Vec<ManagedPoolInitializationMapRow>, degenbot_db::error::DbError> {
         Ok(Vec::new())
     }
 
@@ -265,7 +250,6 @@ async fn no_db_returns_none_and_empty_everywhere() {
     assert!(no_db.fetch_token_by_id(1).await.unwrap().is_none());
     assert!(no_db.fetch_exchange(1).await.unwrap().is_none());
     assert!(no_db.fetch_liquidity_positions(1).await.unwrap().is_empty());
-    assert!(no_db.fetch_initialization_map(1).await.unwrap().is_empty());
     assert!(no_db
         .fetch_pool_manager(1, Address::ZERO)
         .await
@@ -278,11 +262,6 @@ async fn no_db_returns_none_and_empty_everywhere() {
         .is_none());
     assert!(no_db
         .fetch_managed_liquidity_positions(1)
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(no_db
-        .fetch_managed_initialization_map(1)
         .await
         .unwrap()
         .is_empty());

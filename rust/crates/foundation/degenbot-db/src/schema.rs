@@ -33,7 +33,7 @@ pub const SCHEMA_HEAD: &str = include_str!("schema_head.sql");
 /// The open path applies pending steps automatically (ADR-052 D2), so no
 /// consumer calls a migration verb; a binary older than the DB refuses with
 /// [`crate::error::DbError::SchemaAhead`] and never writes ahead.
-pub const RUST_SCHEMA_VERSION: u32 = 2;
+pub const RUST_SCHEMA_VERSION: u32 = 3;
 
 /// Name of the private Rust-owned schema stamp table.
 pub const SCHEMA_VERSION_TABLE: &str = "_degenbot_db_schema_version";
@@ -52,12 +52,10 @@ pub mod table {
     pub const ERC20_TOKENS: &str = "erc20_tokens";
     pub const POOLS: &str = "pools";
     pub const LIQUIDITY_POSITIONS: &str = "liquidity_positions";
-    pub const INITIALIZATION_MAPS: &str = "initialization_maps";
     pub const POOL_MANAGERS: &str = "pool_managers";
     pub const MANAGED_POOLS: &str = "managed_pools";
     pub const UNISWAP_V4_POOLS: &str = "uniswap_v4_pools";
     pub const MANAGED_POOL_LIQUIDITY_POSITIONS: &str = "managed_pool_liquidity_positions";
-    pub const MANAGED_POOL_INITIALIZATION_MAPS: &str = "managed_pool_initialization_maps";
     pub const UNISWAP_V3_POOLS: &str = "uniswap_v3_pools";
 
     /// The LFJ (Trader Joe Liquidity Book) binned-pair subclass table. LFJ is

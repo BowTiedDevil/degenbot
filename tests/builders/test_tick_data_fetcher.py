@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
@@ -72,13 +72,11 @@ def _make_fake_pool(tick_spacing: int = 60) -> Any:
 
 
 V3_TYPES = TickDataTypes(
-    bitmap_at_word=BitmapAtWord,
     liquidity_at_tick=LiquidityAtTick,
     tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
 )
 
 V4_TYPES = TickDataTypes(
-    bitmap_at_word=BitmapAtWord,
     liquidity_at_tick=LiquidityAtTick,
     tick_struct_types=("uint128", "int128"),
 )

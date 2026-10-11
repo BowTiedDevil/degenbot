@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.pool_bot import new_pool_bot
 
@@ -83,7 +83,6 @@ def make_v3_pool(
     deployer_address: str | None = None,
     init_hash: str | None = None,
     state_block: BlockNumber | None = None,
-    tick_bitmap: dict[int, Any] | None = None,
     tick_data: dict[int, Any] | None = None,
     tick_data_fetcher: Any = None,
     py_bot: Bot | None = None,
@@ -102,12 +101,13 @@ def make_v3_pool(
     ``Bot.build_pool()`` is the production path (registers in the session's
     shared ``_py_bot``); this helper is the test-only equivalent.
 
-    Sparseness: when both ``tick_bitmap`` and ``tick_data`` are ``None`` (the
-    common test case for the I/O-free scalar-only construction), the companion
-    is built sparse (the fetcher backfills on demand, mirroring the engine's
-    authority over tick data per plan-101). When ``tick_data`` is provided it
-    is seeded into Rust via ``Pool.update_tick_data`` and the
-    companion is built non-sparse.
+    Sparseness: when ``tick_data`` is ``None`` (the common test case for the
+    I/O-free scalar-only construction), the companion is built sparse (the
+    fetcher backfills on demand, mirroring the engine's authority over tick
+    data per plan-101). When ``tick_data`` is provided it is seeded into Rust
+    via ``Pool.update_tick_data`` and the companion is built non-sparse. The
+    retired ``tick_bitmap`` value arg is gone (Rust derives the words from the
+    seeded tick rows).
     """
     address_checksum = get_checksum_address(address)
 
@@ -161,7 +161,6 @@ def make_v3_pool(
 
 
 __all__ = [
-    "BitmapAtWord",
     "LiquidityAtTick",
     "UniswapV3Pool",
     "make_v3_pool",

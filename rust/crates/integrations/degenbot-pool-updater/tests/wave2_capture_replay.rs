@@ -104,9 +104,7 @@ fn dump_golden_path(name: &str) -> String {
 const DUMP_TABLES: &[&str] = &[
     "erc20_tokens",
     "exchanges",
-    "initialization_maps",
     "liquidity_positions",
-    "managed_pool_initialization_maps",
     "managed_pool_liquidity_positions",
     "managed_pools",
     "pools",
@@ -218,11 +216,6 @@ fn wave2_generated_captures_replay_to_the_committed_goldens() {
                     4,
                     "ticks 100, 200, 300, 400 (all p = k*100 in word 0) must all be tracked"
                 );
-                assert_eq!(
-                    row_count(&kept, "initialization_maps"),
-                    1,
-                    "the whole OR-set lives in bitmap word 0"
-                );
             }
             // (d) the delta-persist branches: the drained pool's live sets are
             // EMPTY (the complement-delete fired over a NON-empty drained set
@@ -233,11 +226,6 @@ fn wave2_generated_captures_replay_to_the_committed_goldens() {
                     row_count(&kept, "liquidity_positions"),
                     0,
                     "the full burn drained the position — the delete-all branch ran"
-                );
-                assert_eq!(
-                    row_count(&kept, "initialization_maps"),
-                    0,
-                    "the flip and its complement cancel — the map rows deleted"
                 );
                 assert_eq!(row_count(&kept, "pools"), 1, "the pool row itself persists");
             }

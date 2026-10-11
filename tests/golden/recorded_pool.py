@@ -77,19 +77,11 @@ def _tick_data_dict(tick_data: dict[int, Any] | None) -> dict[str, Any]:
     return out
 
 
-def _tick_bitmap_dict(tick_bitmap: dict[int, Any] | None) -> dict[str, Any]:
-    out: dict[str, Any] = {}
+def _tick_bitmap_words(tick_bitmap: object | None) -> list[str]:
+    """Serialize the known bitmap WORD positions (keys only — no VALUES)."""
     if not tick_bitmap:
-        return out
-    for word, info in tick_bitmap.items():
-        if isinstance(info, dict):
-            out[str(int(word))] = {
-                "bitmap": int(info["bitmap"]),
-                "block": int(info.get("block", 0)),
-            }
-        else:
-            out[str(int(word))] = {"bitmap": int(info.bitmap), "block": int(info.block)}
-    return out
+        return []
+    return sorted(str(int(word)) for word in tick_bitmap)  # type: ignore[union-attr]
 
 
 def _family_of(pool: Any) -> str:
@@ -135,7 +127,7 @@ def extract_pool_state(pool: Any, *, block: int) -> dict[str, Any]:
             "tick": int(pool.tick),
             "liquidity": int(pool.liquidity),
             "tick_data": _tick_data_dict(getattr(pool, "tick_data", None)),
-            "tick_bitmap": _tick_bitmap_dict(getattr(pool, "tick_bitmap", None)),
+            "tick_bitmap": _tick_bitmap_words(getattr(pool, "tick_bitmap", None)),
         }
 
     # v4
@@ -155,7 +147,7 @@ def extract_pool_state(pool: Any, *, block: int) -> dict[str, Any]:
         "protocol_fee_one_for_zero": int(getattr(pool, "protocol_fee_one_for_zero", 0)),
         "lp_fee": int(getattr(pool, "lp_fee", 0)),
         "tick_data": _tick_data_dict(getattr(pool, "tick_data", None)),
-        "tick_bitmap": _tick_bitmap_dict(getattr(pool, "tick_bitmap", None)),
+        "tick_bitmap": _tick_bitmap_words(getattr(pool, "tick_bitmap", None)),
     }
 
 
@@ -220,7 +212,7 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
         tick_bitmap = state.get("tick_bitmap")
         if tick_bitmap or tick_data:
             pool.update_tick_data(
-                tick_bitmap={int(word): info for word, info in (tick_bitmap or {}).items()},
+                tick_bitmap={int(word) for word in (tick_bitmap or [])},
                 tick_data=({int(t): v for t, v in tick_data.items()} if tick_data else {}),
                 block=block,
             )
@@ -255,7 +247,6 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
             protocol_fee_one_for_zero=state.get("protocol_fee_one_for_zero", 0),
             lp_fee=state.get("lp_fee", 0),
             tick_data=v4_tick_data,
-            tick_bitmap=state.get("tick_bitmap"),
             state_block=block,
         )
 
