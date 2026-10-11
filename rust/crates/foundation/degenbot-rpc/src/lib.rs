@@ -24,6 +24,7 @@ pub mod backrun_feed;
 pub mod cassette;
 pub mod cassette_replay;
 pub mod contract;
+mod feed_shell;
 pub mod fees;
 pub mod head_watch;
 pub mod liquidity_verifier;

@@ -45,6 +45,8 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use degenbot_core::{op_info, op_warn};
 use degenbot_eventhub::{DropOldestReceiver, DropOldestSender, Hub, HubEvent};
 
+use crate::feed_shell::{spawn_feed_loop, DeferredFeedShell};
+
 /// The hub `DropOldestCounted` counter label this feed registers under; the
 /// same string is exposed as `TxpoolFeedStatus::dropped_ring`.
 pub const TXPOOL_DROPPED_RING_METRIC: &str = "dropped_ring";
@@ -94,15 +96,15 @@ impl TxpoolFeedConfig {
 /// mint a feed without touching the network — the deferred-I/O discipline the
 /// engine's start boundary relies on.
 pub struct TxpoolFeed {
+    /// The shared lifecycle shell (the one-shot latch, the stop channel, the
+    /// launch dispatch); declared first so its `Drop` — the stop send — runs
+    /// before the pump's other fields tear down.
+    shell: DeferredFeedShell,
     shared: Arc<Shared>,
     ring: DropOldestReceiver,
-    stop_tx: watch::Sender<bool>,
     /// The provisioning config [`Self::start`] consumes to spawn the loop.
     /// Held (not consumed at build) so provisioning stays dial-free.
     cfg: TxpoolFeedConfig,
-    /// The one-shot start latch: [`Self::start`] launches the loop exactly
-    /// once.
-    started: AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -170,6 +172,10 @@ impl TxpoolFeed {
     /// the eager path); a host that defers the dial calls [`Self::build`] then
     /// [`Self::start`] at its own start boundary. Must be called within a tokio
     /// runtime context, or the crate-global runtime is used.
+    ///
+    /// Kept as the eager path's exact [`Self::build`] + [`Self::start`] so the
+    /// Python single-feed path stays behavior-identical: no extra dial, no
+    /// extra registration, no deferred boundary.
     #[must_use]
     pub fn spawn(cfg: TxpoolFeedConfig) -> Self {
         let hub = Hub::new();
@@ -190,7 +196,6 @@ impl TxpoolFeed {
         source: DropOldestSender,
         ring: DropOldestReceiver,
     ) -> Self {
-        let (stop_tx, _stop_rx) = watch::channel(false);
         let shared = Arc::new(Shared {
             cfg_backoff: (cfg.reconnect_backoff, cfg.max_backoff),
             source,
@@ -203,11 +208,10 @@ impl TxpoolFeed {
             last_event_unix_ms: AtomicU64::new(0),
         });
         Self {
+            shell: DeferredFeedShell::new(),
             shared,
             ring,
-            stop_tx,
             cfg,
-            started: AtomicBool::new(false),
         }
     }
 
@@ -217,18 +221,11 @@ impl TxpoolFeed {
     /// current tokio runtime when one is entered, else the crate-global
     /// runtime.
     pub(crate) fn start(&self) {
-        if self.started.swap(true, Ordering::SeqCst) {
-            return;
-        }
         let cfg = self.cfg.clone();
         let sh = Arc::clone(&self.shared);
-        let stop_rx = self.stop_tx.subscribe();
-        let fut = async move { run_loop(cfg, sh, stop_rx).await };
-        if let Ok(h) = tokio::runtime::Handle::try_current() {
-            h.spawn(fut);
-        } else {
-            degenbot_core::runtime::get_runtime().spawn(fut);
-        }
+        self.shell.start_once(move |stop_rx| {
+            spawn_feed_loop(async move { run_loop(cfg, sh, stop_rx).await });
+        });
     }
 
     /// All buffered events, ordered, atomically.
@@ -268,13 +265,7 @@ impl TxpoolFeed {
 
     /// Politely stop the pump (idempotent).
     pub fn stop(&self) {
-        let _ = self.stop_tx.send(true);
-    }
-}
-
-impl Drop for TxpoolFeed {
-    fn drop(&mut self) {
-        let _ = self.stop_tx.send(true);
+        self.shell.stop();
     }
 }
 

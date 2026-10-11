@@ -36,6 +36,8 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use degenbot_core::{op_info, op_warn};
 use degenbot_eventhub::{DropOldestReceiver, DropOldestSender, Hub, HubEvent};
 
+use crate::feed_shell::{spawn_feed_loop, DeferredFeedShell};
+
 /// The default searcher WS; re-exported so the readiness resolution and
 /// this crate share one constant.
 pub use degenbot_config::DEFAULT_BACKRUN_STREAM_URL as DEFAULT_STREAM_URL;
@@ -149,16 +151,16 @@ fn now_unix_ms() -> u64 {
 /// mint a feed without touching the network — the deferred-I/O discipline the
 /// engine's start boundary relies on.
 pub struct BackrunFeed {
+    /// The shared lifecycle shell (the one-shot latch, the stop channel, the
+    /// launch dispatch); declared first so its `Drop` — the stop send — runs
+    /// before the pump's other fields tear down.
+    shell: DeferredFeedShell,
     shared: Arc<Shared>,
     /// The hub-owned ring's consumer side.
     ring: DropOldestReceiver,
-    stop_tx: watch::Sender<bool>,
     /// The provisioning config [`Self::start`] consumes to spawn the loop.
     /// Held (not consumed at build) so provisioning stays dial-free.
     cfg: BackrunFeedConfig,
-    /// The one-shot start latch: [`Self::start`] launches the loop exactly
-    /// once.
-    started: AtomicBool,
 }
 
 impl BackrunFeed {
@@ -173,6 +175,10 @@ impl BackrunFeed {
     /// [`Self::build`] then [`Self::start`] at its own start boundary. Must be
     /// called within a tokio runtime context, or the crate-global
     /// `degenbot_core::runtime::get_runtime()` is used.
+    ///
+    /// Kept as the eager path's exact [`Self::build`] + [`Self::start`] so the
+    /// Python single-feed path stays behavior-identical: no extra dial, no
+    /// extra registration, no deferred boundary.
     #[must_use]
     pub fn spawn(cfg: BackrunFeedConfig) -> Self {
         let hub = Hub::new();
@@ -192,7 +198,6 @@ impl BackrunFeed {
         source: DropOldestSender,
         ring: DropOldestReceiver,
     ) -> Self {
-        let (stop_tx, _stop_rx) = watch::channel(false);
         let shared = Arc::new(Shared {
             cfg_backoff: (cfg.reconnect_backoff, cfg.max_backoff),
             source,
@@ -204,11 +209,10 @@ impl BackrunFeed {
             last_event_unix_ms: AtomicU64::new(0),
         });
         Self {
+            shell: DeferredFeedShell::new(),
             shared,
             ring,
-            stop_tx,
             cfg,
-            started: AtomicBool::new(false),
         }
     }
 
@@ -218,18 +222,11 @@ impl BackrunFeed {
     /// current tokio runtime when one is entered, else the crate-global
     /// runtime.
     pub(crate) fn start(&self) {
-        if self.started.swap(true, Ordering::SeqCst) {
-            return;
-        }
         let cfg = self.cfg.clone();
         let sh = Arc::clone(&self.shared);
-        let stop_rx = self.stop_tx.subscribe();
-        let fut = async move { run_loop(cfg, sh, stop_rx).await };
-        if let Ok(h) = tokio::runtime::Handle::try_current() {
-            h.spawn(fut);
-        } else {
-            degenbot_core::runtime::get_runtime().spawn(fut);
-        }
+        self.shell.start_once(move |stop_rx| {
+            spawn_feed_loop(async move { run_loop(cfg, sh, stop_rx).await });
+        });
     }
 
     /// All buffered events, ordered, atomically (rings swap; concurrent drains
@@ -272,13 +269,7 @@ impl BackrunFeed {
 
     /// Politely stop the pump (idempotent).
     pub fn stop(&self) {
-        let _ = self.stop_tx.send(true);
-    }
-}
-
-impl Drop for BackrunFeed {
-    fn drop(&mut self) {
-        let _ = self.stop_tx.send(true);
+        self.shell.stop();
     }
 }
 
