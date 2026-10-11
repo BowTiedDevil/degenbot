@@ -146,9 +146,14 @@ bare_fail="$(awk -v CENSUS="$census" '
 ' "$tmp")" || true
 if [ -n "$bare_fail" ]; then
   echo "comment-hygiene: bare six-char tracker token is not in the census" >&2
-  echo "  (scripts/hooks/comment-hygiene-census.txt; docs/comments.md). Strip the" >&2
-  echo "  citation, or — only for a real word/identifier — add it to the census" >&2
-  echo "  lexicon section:" >&2
+  echo "  (scripts/hooks/comment-hygiene-census.txt; docs/comments.md)." >&2
+  echo "  Line-start-deref false positive? A Rust line whose first non-space char is" >&2
+  echo "  '*' (a deref, e.g. '    *LOADED') is read as a block-comment continuation," >&2
+  echo "  so a six-char UPPERCASE static name on it trips this ratchet with no" >&2
+  echo "  comment involved; that name is a real identifier — add it to the census" >&2
+  echo "  lexicon (see the census header's line-start-deref note)." >&2
+  echo "  Otherwise strip the citation, or — only for a real word/identifier — add it" >&2
+  echo "  to the census lexicon section:" >&2
   printf '%s\n' "$bare_fail" >&2
   fail=1
 fi

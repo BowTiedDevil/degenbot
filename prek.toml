@@ -92,6 +92,18 @@ hooks = [
   { id = "python-fmt-staged", name = "Python fmt (staged)", language = "system", entry = "scripts/hooks/python-fmt-staged.sh", types = ["python"], stages = ["pre-commit"], exclude = "^executor/" },
   { id = "rust-fmt-staged", name = "Rust fmt (staged)", language = "system", entry = "scripts/hooks/rust-fmt-staged.sh", types = ["rust"], stages = ["pre-commit"] },
 
+  # Stub drift at commit time (ADR-066): the committed src/degenbot/_ffi/ stubs
+  # are GENERATOR OUTPUT over the binding layer's PyO3 surface, so a seam change
+  # can leave them stale until `just gen-stubs` is re-run. This entry fires only
+  # when a staged file touches that surface — the binding crate's src and
+  # Cargo.toml, or the stub generator itself — then regenerates into a temp tree
+  # with `just gen-stubs --check` and FAILS if the committed stubs would change.
+  # `--check` never writes (REGEN_STUBS is unset), so it is non-mutating like the
+  # other pre-commit checks; it does build the cdylib with the temporary
+  # experimental-inspect feature, which is why the trigger is scoped to the rare
+  # FFI-surface change rather than run on every commit.
+  { id = "stub-drift-staged", name = "Stub drift (staged FFI)", language = "system", entry = "just gen-stubs --check", files = "^rust/crates/shells/degenbot-python/(src/|Cargo\\.toml)|^rust/tools/stubgen/(src/|Cargo\\.toml)", stages = ["pre-commit"], pass_filenames = false },
+
   # --- commit-msg -----------------------------------------------------------
   # Validate the commit message against the relaxed .commitlintrc.yml. Runs at
   # commit time so a bad message is caught the moment it is written — NOT at
@@ -186,5 +198,11 @@ hooks = [
 
   # Python track: build (maturin develop) then test.
   { id = "python-build", name = "Python build (maturin)", language = "system", entry = "just dev",         stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-  { id = "python-test",  name = "Python tests",            language = "system", entry = "just test-python", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  # python-test runs the spray tripwire (scripts/pytest_noise_gate.sh via
+  # `just test-python-noise-gate`): the same suite plus a post-session scan of
+  # the captured child output for the `--- Logging error ---` / `Reconnection
+  # attempt` signatures the historical exception-spray defect left behind
+  # stdout with exit 0. CI arms the same recipe; `just test-python` stays as
+  # the bare suite for callers that only want the exit code.
+  { id = "python-test",  name = "Python tests",            language = "system", entry = "just test-python-noise-gate", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 ]

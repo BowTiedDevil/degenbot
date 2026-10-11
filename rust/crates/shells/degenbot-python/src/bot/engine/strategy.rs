@@ -120,10 +120,12 @@ pub(crate) struct BootedHost {
     pub(crate) hosted: Option<degenbot_bot::hosted_sources::HostedSources>,
 }
 
-/// Resolve the strategy-owned boot product once for the hosted process.
+/// Resolve the strategy-owned boot product for one engine construction.
 ///
-/// This Rust binding only routes the resolved product into the generic host;
-/// it does not choose a registry, reopen a DB, or author a boot policy.
+/// `boot_host` calls this once per engine, so each engine's hosted fleet gets
+/// its own DB-backed registry and node join rather than sharing one resolution
+/// across the process. This binding only resolves and routes the product — it
+/// does not choose a registry, reopen a DB, or author a boot policy.
 #[cfg(feature = "submission")]
 fn backrun_boot_resources(
     config: Arc<degenbot_config::schema::BotConfig>,
@@ -197,6 +199,12 @@ fn facet_status(
     }
 }
 
+/// Mint a fresh `BootedHost` for one engine construction.
+///
+/// The host is not a process-once singleton: every engine mints its own host,
+/// hub attachment, and (under the submission feature) hosted sources, so
+/// per-engine fleets stay isolated. The process-once parts are the
+/// async-runtime bind below and the config holder.
 #[expect(
     clippy::expect_used,
     reason = "a freshly minted host has no registered strategies, so both registers are infallible"

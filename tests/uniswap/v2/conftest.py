@@ -22,8 +22,6 @@ from tests.constants import (
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-_PY_BOT = Bot()
-
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"
 
@@ -32,6 +30,17 @@ UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
 )
 
 V2_BLOCK_NUMBER = 24945920
+
+
+@pytest.fixture(scope="session")
+def py_bot() -> Bot:
+    """Provide the session's Python ``Bot``, constructed lazily on first use.
+
+    Built on first request instead of at import/collection time: a module-level
+    ``Bot()`` minted a live, I/O-owning engine in every xdist worker before any
+    test ran. Session-scoped, so the whole subdirectory shares one engine.
+    """
+    return Bot()
 
 
 @pytest.fixture
@@ -61,11 +70,11 @@ def offline_weth(offline_wbtc_weth_v2_pool: UniswapV2Pool) -> Erc20Token:
 
 
 @pytest.fixture
-def offline_wbtc_weth_v2_pool(offline_adapter: AlloyProvider) -> UniswapV2Pool:
+def offline_wbtc_weth_v2_pool(offline_adapter: AlloyProvider, py_bot: Bot) -> UniswapV2Pool:
     """Provide WBTC-WETH V2 pool using offline provider."""
     # Construct I/O-free tokens
     wbtc = make_erc20(
-        _PY_BOT,
+        py_bot,
         WBTC_ETH,
         name="Wrapped BTC",
         symbol="WBTC",
@@ -73,7 +82,7 @@ def offline_wbtc_weth_v2_pool(offline_adapter: AlloyProvider) -> UniswapV2Pool:
         chain_id=1,
     )
     weth = make_erc20(
-        _PY_BOT,
+        py_bot,
         WETH_ETH,
         name="Wrapped Ether",
         symbol="WETH",

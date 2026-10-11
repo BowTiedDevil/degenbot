@@ -40,3 +40,19 @@ Other workers may share this workspace. Before editing:
 ## Sign-off shape
 
 End with a compact statement of: what changed (files + intent), which gates you ran and their results, anything marked PENDING, and any foreign tree activity you noticed. The manager reviews your **diff**, not your story — never summarize around a failure.
+
+## Closing the task: ergo `set` takes a JSON argument, not piped stdin
+
+To mark your task done, pass FIELD updates (`state`, `result`) as a quoted JSON
+**argument**. `result` must be a FILE PATH, not prose:
+
+```sh
+ergo --json set <ID> '{"state":"done","result":"<path/to/result-file>"}'
+```
+
+Piped stdin is a DIFFERENT interface: `ergo set` reads stdin as a REPLACEMENT
+BODY. Mixing the two — `ergo set <ID> '{...}' < some-file`, or a JSON argument
+while stdin is a pipe/here-doc — feeds the JSON in as the new body and drops the
+fields, silently clobbering the task contract you were dispatched with. This
+has happened. Use the JSON-argument form for `state`/`result`; use piped stdin
+only when you deliberately mean to rewrite the body.

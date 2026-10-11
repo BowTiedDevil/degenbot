@@ -20,6 +20,18 @@
 # ([0-9A-F]{6} selector/byte data) are matcher exclusions in the hook, not
 # census entries.
 #
+# Known false-positive shape — the line-start deref. The rust/crates slice of
+# Detector 2 scans comment lines only, and its block-comment-continuation test
+# treats any line whose first non-space character is "*" as a continuation (a
+# Rust block comment's " * ..." body). A Rust statement that BEGINS with a
+# deref — e.g. "    *LOADED" or "*STATUS = value" — therefore slips past that
+# filter and is scanned as though it were a comment. A six-char UPPERCASE static
+# name on such a line (LOADED, STATUS, ...) then trips the bare-token ratchet
+# with no comment involved. The remedy is the ordinary one: the name is a real
+# identifier, so add it to the lexicon below, or restructure the line so it no
+# longer starts with "*". This is a documentation note only — the hook's
+# detection semantics are deliberately unchanged.
+#
 # ---- Lexicon (bare legit identifiers, sorted) ----
 
 ABORTS

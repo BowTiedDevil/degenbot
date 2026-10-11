@@ -75,6 +75,13 @@ run_suite() {
 
     if scan_log "$log"; then
         printf 'noise-gate: clean capture (suite exit %s)\n' "$run_rc" >&2
+        # Remove the capture on the SUCCESS path only. A spray failure keeps
+        # the log because the FAIL message below prints its path for
+        # debugging, and a nonzero suite exit keeps it too: both are failure
+        # outcomes whose captured output is worth inspecting.
+        if [ "$run_rc" -eq 0 ]; then
+            rm -f "$log"
+        fi
     else
         printf 'noise-gate: FAIL - spray signatures in %s (suite exit was %s)\n' \
             "$log" "$run_rc" >&2
