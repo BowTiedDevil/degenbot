@@ -24,15 +24,25 @@ class SwapResult:
 
 
 class BitmapAtWord(pydantic.BaseModel, frozen=True):
-    """Bitmap value at a tick bitmap word position."""
+    """Bitmap value at a tick bitmap word position.
+
+    ``block`` is the block at which this word was last mutated/confirmed: the
+    event block, the registration seed block, or the bulk-sync block. ``0`` is
+    a legal stamp (a chain can launch at genesis), never a sentinel.
+    """
 
     bitmap: ValidatedUint256
-    block: BlockNumber = 0
+    block: BlockNumber
 
 
 class LiquidityAtTick(pydantic.BaseModel, frozen=True):
-    """Liquidity data at an initialized tick."""
+    """Liquidity data at an initialized tick.
+
+    ``block`` is the block at which this tick was last mutated/confirmed: the
+    event block, the registration seed block, or the bulk-sync block. ``0`` is
+    a legal stamp (a chain can launch at genesis), never a sentinel.
+    """
 
     liquidity_net: ValidatedInt128
     liquidity_gross: ValidatedUint128
-    block: BlockNumber = 0
+    block: BlockNumber

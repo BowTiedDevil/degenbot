@@ -53,9 +53,10 @@ from degenbot.build_info import verify_build_fresh
 
 verify_build_fresh()
 
+from degenbot._ffi import shutdown_log_drainer
 from degenbot.bot import Bot
 from degenbot.fork import AnvilFork, ForkLaunchConfig
-from degenbot.logging import _QUEUED_HANDLER, set_log_level
+from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, set_log_level
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.golden.recorded_pool import RecordedPool
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -254,6 +255,24 @@ def pytest_collection_modifyitems(config: Config, items: list[Item]):
     if deselected_items:
         items[:] = remaining_items
         config.hook.pytest_deselected(items=deselected_items)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Stop the degenbot log pipeline while the capture streams are still open.
+
+    The queue listener and the Rust log drainer are process-global threads that
+    outlive the pytest session: pytest closes its capture streams at
+    unconfigure, and any record they forward afterwards dies in the closed
+    stream — the historical ``--- Logging error ---`` spray at the tail of
+    ``just test-python``. The leaking records come from the ambient fleet
+    boot's feed/head-clock tasks, which outlive the test (and the session)
+    that booted them. Stopping the listener FIRST drains everything already
+    queued into the still-open capture; shutting the Rust drainer down second
+    means any late Rust record only lands in the now-inert queue. Idempotent;
+    a no-op in the xdist controller (its listener owns no pending records).
+    """
+    _LOG_LISTENER.stop()
+    shutdown_log_drainer()
 
 
 @pytest.fixture(scope="session", autouse=True)

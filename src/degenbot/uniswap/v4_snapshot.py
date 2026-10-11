@@ -12,7 +12,6 @@ from degenbot.uniswap.concentrated.snapshot_readers import (
     LiquidityMap,
     LiquiditySnapshotBase,
     LiquiditySnapshotSource,
-    MonolithicJsonFileSnapshotBase,
 )
 from degenbot.uniswap.v4_types import (
     UniswapV4LiquidityEvent,
@@ -49,23 +48,6 @@ class UniswapV4LiquiditySnapshotSource(LiquiditySnapshotSource, Protocol):
     def get_pools(self) -> set[PoolId]:
         """Return pools."""
         ...
-
-
-class MonolithicJsonFileSnapshot(MonolithicJsonFileSnapshotBase):
-    """A pool liquidity source backed by a single JSON file."""
-
-    def get_liquidity_map(
-        self,
-        pool_manager: ChecksummedAddress,  # ruff:ignore[unused-method-argument]
-        pool_id: bytes | str,
-    ) -> LiquidityMap | None:
-        """Return liquidity map.
-
-        Returns:
-            The liquidity map for the pool, or None if the pool is not found.
-
-        """
-        return self._liquidity_map_for(to_0x_hex(pool_id))
 
 
 class DatabaseSnapshot(DatabaseSnapshotBase[ManagedPoolIdentifier]):

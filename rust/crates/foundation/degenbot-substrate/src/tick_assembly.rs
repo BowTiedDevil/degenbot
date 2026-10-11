@@ -248,7 +248,7 @@ where
     // Pool IS in the Db: a non-empty map -> Tracked + populated; an empty map
     // -> legitimately-empty Tracked (authoritative — it came from the Db).
     let bitmaps = bitmaps_from_db(&map.tick_bitmap);
-    let arm = match liquidity_map_to_tick_info(map, tick_spacing).map_err(E::from)? {
+    let arm = match liquidity_map_to_tick_info(map, tick_spacing, block).map_err(E::from)? {
         Some(hit) => {
             dump_tick_map_seed(pool_ident, &hit);
             TickMapArm::Db(hit.0, bitmaps, hit.1)
@@ -403,13 +403,14 @@ pub fn assemble_v4_tick_map(
 /// as a miss (`None`). In a healthy Db the two are 1:1 (a liquidity position
 /// creates its own initialization-map bit), so this is purely defensive — but
 /// matching Python preserves the existing degrade-to-RPC behavior on partial
-/// rows. A non-empty map converts to `Tracked` coverage; per-tick `block` is
-/// pinned to `0` (the Db snapshot is state at block `S`; per-tick block is
-/// diagnostic only — the solver math doesn't read it — matching
-/// `convert_tick_map` in `bot_core::mod.rs`).
+/// rows. A non-empty map converts to `Tracked` coverage; the per-tick `block`
+/// is the Db arm's sync block `S` — the bulk-sync block. The Db stores no
+/// per-tick block, so the bulk-sync block is the real value in scope; `0` is a
+/// legal stamp and is never used as a sentinel.
 pub(crate) fn liquidity_map_to_tick_info(
     map: LiquidityMap,
     tick_spacing: i32,
+    block: u64,
 ) -> TickMapAssemblyResult {
     if map.tick_bitmap.is_empty() || map.tick_data.is_empty() {
         return Ok(None);
@@ -417,7 +418,7 @@ pub(crate) fn liquidity_map_to_tick_info(
     // Tracked intake reconciliation — a self-contradictory
     // snapshot is rejected before registration, not discovered mid-solve.
     verify_tracked_tick_map(&map.tick_bitmap, &map.tick_data, tick_spacing)?;
-    let ticks = convert_liquidity_at_tick(map.tick_data);
+    let ticks = convert_liquidity_at_tick(map.tick_data, block);
     Ok(Some((ticks, PoolTickCoverage::Tracked)))
 }
 
@@ -500,7 +501,10 @@ pub(crate) fn verify_tracked_tick_map(
 /// `U256::to::<U128>()` which silently truncates out-of-range values —
 /// identical to `convert_tick_map` in `bot_core::mod.rs`; a `gross > U128::MAX`
 /// row would be corrupt on-chain data, not a parse failure.
-fn convert_liquidity_at_tick(tick_data: HashMap<i32, LiquidityAtTick>) -> HashMap<i32, TickInfo> {
+fn convert_liquidity_at_tick(
+    tick_data: HashMap<i32, LiquidityAtTick>,
+    block: u64,
+) -> HashMap<i32, TickInfo> {
     tick_data
         .into_iter()
         .map(|(tick, lat)| {
@@ -509,7 +513,7 @@ fn convert_liquidity_at_tick(tick_data: HashMap<i32, LiquidityAtTick>) -> HashMa
                 TickInfo {
                     liquidity_gross: lat.liquidity_gross.to::<alloy::primitives::U128>(),
                     liquidity_net: lat.liquidity_net,
-                    block: 0,
+                    block,
                 },
             )
         })

@@ -259,9 +259,12 @@ fn verify_v3_liquidity_map(
                         "v3 pool {addr_str} not found on chain {chain_id}"
                     )))
                 })?;
-            let (tick_bitmap, tick_data) =
-                DegenbotDb::fetch_v3_liquidity_map_on_conn(&conn, state.pool_id)
-                    .map_err(RunError::Db)?;
+            let (tick_bitmap, tick_data) = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+                &conn,
+                state.pool_id,
+                state.snapshot_block(),
+            )
+            .map_err(RunError::Db)?;
             let computed = ComputedLiquidityUpdate {
                 pool_id: state.pool_id,
                 tick_spacing: state.tick_spacing,
@@ -334,9 +337,12 @@ fn verify_v4_liquidity_map(
                         "v4 pool {pool_hash} not found on chain {chain_id}"
                     )))
                 })?;
-            let (tick_bitmap, tick_data) =
-                DegenbotDb::fetch_v4_liquidity_map_on_conn(&conn, state.pool_id)
-                    .map_err(RunError::Db)?;
+            let (tick_bitmap, tick_data) = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+                &conn,
+                state.pool_id,
+                state.snapshot_block(),
+            )
+            .map_err(RunError::Db)?;
             let computed = ComputedLiquidityUpdate {
                 pool_id: state.pool_id,
                 tick_spacing: state.tick_spacing,

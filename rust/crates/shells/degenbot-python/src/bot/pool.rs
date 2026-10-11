@@ -3012,8 +3012,10 @@ fn status_word_read(py: Python<'_>, status: &str, word: i32) -> PyResult<Py<PyAn
 /// narrowing, the per-tick `block`, and the single error raised for a
 /// malformed container, so no two seed sites can disagree about the shape.
 /// The 2-tuple `(gross, net)` backfill form (the engine state-sync seams) is
-/// the same contract with `block` filled from context (`0` — those seams carry
-/// no per-tick block), not a second error vocabulary; `None` is the empty-map
+/// the same contract with `block` filled from the caller's sync block — the
+/// block at which each tick was last mutated/confirmed (the event block, the
+/// registration seed block, or the bulk-sync block) — not a second error
+/// vocabulary; `0` is a legal stamp, never a sentinel. `None` is the empty-map
 /// convention on the registration entry points.
 pub(crate) struct TickData;
 
@@ -3085,13 +3087,18 @@ impl TickData {
     }
 
     /// 2-tuple backfill form: `{tick: (gross, net)}` -> `HashMap<i32, TickInfo>`
-    /// with `block` filled from context.
-    pub(crate) fn from_py_pairs(container: &Bound<'_, PyAny>) -> PyResult<HashMap<i32, TickInfo>> {
+    /// with `block` filled from the caller's sync block (the block at which
+    /// each tick was last mutated/confirmed — event block, registration seed,
+    /// or bulk-sync block). `0` is a legal stamp, never a sentinel.
+    pub(crate) fn from_py_pairs(
+        container: &Bound<'_, PyAny>,
+        block: u64,
+    ) -> PyResult<HashMap<i32, TickInfo>> {
         let parsed: std::collections::HashMap<i32, (u128, i128)> =
             container.extract().map_err(|_| Self::malformed())?;
         Ok(parsed
             .into_iter()
-            .map(|(tick, (gross, net))| (tick, Self::info(gross, net, 0)))
+            .map(|(tick, (gross, net))| (tick, Self::info(gross, net, block)))
             .collect())
     }
 
@@ -3143,15 +3150,15 @@ mod tests {
         });
     }
 
-    /// The 2-tuple backfill variant is the same contract with `block` filled
-    /// from context.
+    /// The 2-tuple backfill variant fills the caller's REAL sync block onto
+    /// every row (a real block, never a hardcoded `0`).
     #[test]
-    fn tick_data_two_tuple_backfill_fills_block_from_context() {
+    fn tick_data_two_tuple_backfill_fills_the_real_sync_block() {
         Python::attach(|py| {
             let dict = PyDict::new(py);
             dict.set_item(42, (7u128, -3i128)).unwrap();
-            let map = TickData::from_py_pairs(dict.as_any()).unwrap();
-            assert_eq!(map.get(&42).unwrap().block, 0);
+            let map = TickData::from_py_pairs(dict.as_any(), 21_000_000).unwrap();
+            assert_eq!(map.get(&42).unwrap().block, 21_000_000);
         });
     }
 

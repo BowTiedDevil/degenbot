@@ -1,20 +1,21 @@
-"""Generic snapshot readers and liquidity-snapshot facade shared by Uniswap V3/V4."""
+"""Database-backed snapshot readers and the liquidity-snapshot facade shared by Uniswap V3/V4.
+
+Snapshot sources route through the Rust ``degenbot-db`` core crate (ADR-005
+three-layer architecture); file-based snapshot sources are not supported.
+"""
 
 from __future__ import annotations
 
-import pathlib
 from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
-import pydantic_core
-
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.logging import logger
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 if TYPE_CHECKING:
+    import pathlib
     from collections.abc import Callable
     from typing import Any, ClassVar, Self
 
@@ -73,134 +74,6 @@ def _liquidity_map_from_raw(raw: dict[str, Any]) -> LiquidityMap:
         },
         tick_data={int(tick): LiquidityAtTick(**entry) for tick, entry in raw["tick_data"].items()},
     )
-
-
-class MonolithicJsonFileSnapshotBase:
-    """A pool liquidity source backed by a single JSON file.
-
-    {
-        "snapshot_block": int,
-        "chain_id": int,
-        "0xPoolKey1": {
-            "tick_bitmap": {
-                <word>: {
-                    'bitmap': <value>,
-                    'block': <value>,
-                },
-                ...
-            },
-            "tick_data": {
-                <tick>: {
-                    'liquidity_gross: <value>,
-                    'liquidity_net': <value>,
-                    'block: <value>,
-                }
-            }
-        },
-        "0xPoolKey2": { ... },
-        "0xPoolKey3": { ... },
-        ...
-    }.
-    """
-
-    storage_kind = "file"
-
-    def __init__(self, path: pathlib.Path | str) -> None:
-        """Initialize the instance."""
-        path = pathlib.Path(path).expanduser().absolute()
-        self._path = path
-        self._file_snapshot: dict[str, Any] = pydantic_core.from_json(path.read_bytes())
-        self.chain_id: int = self._file_snapshot["chain_id"]
-
-    def _liquidity_map_for(self, pool_key: str) -> LiquidityMap | None:
-        if pool_key not in self._file_snapshot:
-            return None
-        return _liquidity_map_from_raw(self._file_snapshot[pool_key])
-
-    def get_newest_block(self) -> BlockNumber | None:
-        """Return newest block.
-
-        Returns:
-            The snapshot block number, or None if unavailable.
-
-        """
-        newest_block = self._file_snapshot.get("snapshot_block")
-        if newest_block is None:
-            return None
-        return int(newest_block)
-
-    def get_pools(self) -> set[str]:
-        """Return pools.
-
-        Returns:
-            The set of pool keys from the snapshot.
-
-        """
-        # all top-level keys except metadata entries
-        return {
-            get_checksum_address(key)
-            for key in self._file_snapshot
-            if key not in {"chain_id", "snapshot_block"}
-        }
-
-
-class IndividualJsonFileSnapshotBase:
-    """Snapshot source backed by a directory of JSON files with this tree structure.
-
-        /path/to/snapshots/
-        |-- _metadata.json              -> { "block": int, "chain_id": int }
-        |-- 0xPoolKey1.json             -> { "tick_bitmap": {...}, "tick_data": {...} }
-        |-- 0xPoolKey2.json             -> { "tick_bitmap": {...}, "tick_data": {...} }
-        |-- 0xPoolKey3.json             -> { "tick_bitmap": {...}, "tick_data": {...} }
-
-    Each pool file contains the same structure as the monolithic snapshot's per-pool entries.
-    """
-
-    storage_kind = "dir"
-
-    def __init__(self, path: pathlib.Path | str) -> None:
-        """Initialize the instance."""
-        dir_path = pathlib.Path(path).expanduser().absolute()
-        assert dir_path.exists()
-        assert dir_path.is_dir()
-        self._dir = dir_path
-
-        metadata_path = self._dir / "_metadata.json"
-        self._metadata: dict[str, Any] = pydantic_core.from_json(metadata_path.read_bytes())
-        self.chain_id: int = self._metadata["chain_id"]
-
-    def get_newest_block(self) -> BlockNumber | None:
-        """Return newest block.
-
-        Returns:
-            The block number from metadata, or None if unavailable.
-
-        """
-        newest_block = self._metadata.get("block")
-        if newest_block is None:
-            return None
-        return int(newest_block)
-
-    def get_pools(self) -> set[str]:
-        """Return pools.
-
-        Returns:
-            The set of pool keys from file stems.
-
-        """
-        return {get_checksum_address(pool_file.stem) for pool_file in self._dir.glob("0x*.json")}
-
-    def get_liquidity_map(self, pool_address: str) -> LiquidityMap | None:
-        """Return liquidity map.
-
-        Returns:
-            The liquidity map for the pool, or None if not found.
-
-        """
-        pool_path = self._dir / f"{pool_address}.json"
-        if not pool_path.exists():
-            return None
-        return _liquidity_map_from_raw(pydantic_core.from_json(pool_path.read_bytes()))
 
 
 class DatabaseSnapshotBase[K]:
@@ -285,6 +158,14 @@ class DatabaseSnapshotBase[K]:
         raw = self._seam_liquidity_map(pool_key)
         if raw is None:
             return None
+        # The Db stores no per-tick/per-word block, so stamp the snapshot's
+        # bulk-sync block onto every row that does not carry one. ``0`` is a
+        # legal stamp, never a sentinel.
+        source_block = self._seam_newest_block()
+        for entry in raw["tick_bitmap"].values():
+            entry.setdefault("block", source_block)
+        for entry in raw["tick_data"].values():
+            entry.setdefault("block", source_block)
         return _liquidity_map_from_raw(raw)
 
     def get_all_liquidity_maps(self) -> dict[K, dict[int, tuple[int, int]]]:

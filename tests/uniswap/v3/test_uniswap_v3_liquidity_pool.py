@@ -397,28 +397,31 @@ def test_discard_after_last_update(wbtc_weth_v3_lp_at_historical_block: UniswapV
 
 def test_tick_bitmap_equality() -> None:
     with pytest.raises(AssertionError):
-        assert BitmapAtWord(bitmap=1) == BitmapAtWord(bitmap=2)
+        assert BitmapAtWord(bitmap=1, block=0) == BitmapAtWord(bitmap=2, block=0)
     with pytest.raises(AssertionError):
-        assert BitmapAtWord(bitmap=2) == BitmapAtWord(bitmap=4)
+        assert BitmapAtWord(bitmap=2, block=0) == BitmapAtWord(bitmap=4, block=0)
 
     assert BitmapAtWord(bitmap=1, block=1) == BitmapAtWord(bitmap=1, block=1)
 
 
 def test_tick_data_equality() -> None:
     with pytest.raises(AssertionError):
-        assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
+        assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2, block=0) == LiquidityAtTick(
             liquidity_net=1,
             liquidity_gross=4,
+            block=0,
         )
     with pytest.raises(AssertionError):
-        assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
+        assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2, block=0) == LiquidityAtTick(
             liquidity_net=4,
             liquidity_gross=2,
+            block=0,
         )
 
-    assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
+    assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2, block=0) == LiquidityAtTick(
         liquidity_net=1,
         liquidity_gross=2,
+        block=0,
     )
 
 

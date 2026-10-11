@@ -786,6 +786,17 @@ impl ReorgPoolState for V4PoolState {
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
 
+        // The rewind above already reset the liquidity clock to its pre-target
+        // value (`tick_data_block_before`); that is the block the restored map
+        // is exact at — its bulk-sync block. The journal's per-tick priors
+        // capture the prior gross/net but NOT the prior block, so a tick's
+        // exact last-mutation block is unrecoverable; the pool-level liquidity
+        // clock is the real value in scope (and equals the per-tick block for
+        // any tick mutated by the newest surviving event). The rewind TARGET is
+        // deliberately NOT used: it names a mutation this rollback undid. `0`
+        // is a legal stamp, never a sentinel.
+        let restored_block = self.tick_data_block;
+
         // Reverse-apply tick priors accumulated across all popped deltas.
         for (tick_idx, tick_before) in &result.tick_priors {
             match tick_before.liquidity_gross_before {
@@ -796,7 +807,7 @@ impl ReorgPoolState for V4PoolState {
                         TickInfo {
                             liquidity_gross: gross_before,
                             liquidity_net: tick_before.liquidity_net_before,
-                            block: 0,
+                            block: restored_block,
                         },
                     );
                 }
@@ -1536,6 +1547,31 @@ mod apply_inherent_tests {
             !state.tick_data.contains_key(&100),
             "newly-initialized tick removed on rollback"
         );
+    }
+
+    #[test]
+    fn restore_before_block_stamps_restored_ticks_with_the_liquidity_clock() {
+        // V4 twin of the V3 test: two liquidity events (blocks 5 then 9);
+        // restoring before block 9 pops only the block-9 delta, so the restored
+        // map is exact at the block-5 clock. The restored rows must carry that
+        // block — not the rolled-back event's block (9) and not a hardcoded 0.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        state.apply_liquidity_update(-60, 60, 100, 5);
+        state.apply_liquidity_update(-60, 60, 200, 9);
+        assert_eq!(state.tick_data_block, 9);
+
+        let result: Result<(), JournalError> = state.restore_before_block(9);
+        assert!(result.is_ok());
+        assert_eq!(
+            state.tick_data_block, 5,
+            "the liquidity clock rewinds to its pre-target value"
+        );
+        assert_eq!(
+            state.tick_data[&-60].block, 5,
+            "restored tick carries the restored liquidity clock, not a hardcoded 0"
+        );
+        assert_eq!(state.tick_data[&60].block, 5);
     }
 
     #[test]

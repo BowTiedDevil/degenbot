@@ -122,7 +122,7 @@ fn shared_map(computed: &ComputedLiquidityUpdate) -> Result<LiquidityMap, RunErr
             degenbot_pools::TickInfo {
                 liquidity_gross: gross,
                 liquidity_net: net,
-                block: 0,
+                block: value.block,
             },
         );
     }
@@ -243,8 +243,11 @@ pub fn verify_all_pools_committed_on_conn(
         else {
             continue;
         };
-        let (tick_bitmap, tick_data) =
-            DegenbotDb::fetch_v3_liquidity_map_on_conn(conn, state.pool_id)?;
+        let (tick_bitmap, tick_data) = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+            conn,
+            state.pool_id,
+            state.snapshot_block(),
+        )?;
         let computed = ComputedLiquidityUpdate {
             pool_id: state.pool_id,
             tick_spacing: state.tick_spacing,
@@ -277,8 +280,11 @@ pub fn verify_all_pools_committed_on_conn(
         else {
             continue;
         };
-        let (tick_bitmap, tick_data) =
-            DegenbotDb::fetch_v4_liquidity_map_on_conn(conn, state.pool_id)?;
+        let (tick_bitmap, tick_data) = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+            conn,
+            state.pool_id,
+            state.snapshot_block(),
+        )?;
         let computed = ComputedLiquidityUpdate {
             pool_id: state.pool_id,
             tick_spacing: state.tick_spacing,
@@ -358,8 +364,11 @@ fn collect_pre_commit_checks(
         else {
             continue;
         };
-        let (tick_bitmap, tick_data) =
-            DegenbotDb::fetch_v3_liquidity_map_on_conn(&conn, state.pool_id)?;
+        let (tick_bitmap, tick_data) = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+            &conn,
+            state.pool_id,
+            state.snapshot_block(),
+        )?;
         v3_checks.push((
             addr_str,
             *addr,
@@ -395,8 +404,11 @@ fn collect_pre_commit_checks(
         else {
             continue;
         };
-        let (tick_bitmap, tick_data) =
-            DegenbotDb::fetch_v4_liquidity_map_on_conn(&conn, state.pool_id)?;
+        let (tick_bitmap, tick_data) = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+            &conn,
+            state.pool_id,
+            state.snapshot_block(),
+        )?;
         v4_checks.push((
             pool_hash.clone(),
             *manager,

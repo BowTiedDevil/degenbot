@@ -160,11 +160,12 @@ pub struct TickInfo {
     /// on-chain width (`ticks(tick).liquidityNet` is `int128`) — the
     /// int128 narrowing from the previous `alloy::primitives::I256`.
     pub liquidity_net: i128,
-    /// The block at which this tick was last mutated (Mint/Burn event block,
-    /// or the pool's registration block for genesis-seeded ticks). Mirrors the
+    /// The block at which this tick was last mutated/confirmed — the event
+    /// block, the registration seed block, or the bulk-sync block. Mirrors the
     /// Python ``LiquidityAtTick.block`` field; preserved through the FFI
     /// round-trip (``update_tick_data`` writes it, ``tick_data_snapshot``
-    /// reads it). The simulation math does NOT read this — it's diagnostic
+    /// reads it). ``0`` is a legal stamp (a chain can launch at genesis), never
+    /// a sentinel. The simulation math does NOT read this — it's diagnostic
     /// metadata + the snapshot round-trip's per-tick block contract.
     pub block: u64,
 }

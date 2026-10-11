@@ -21,7 +21,7 @@ use super::fixture::{PoolData, TickJson};
 
 /// Convert a fixture's captured tick map (string keys, `liquidity_net/gross`)
 /// into the `TickInfo` map the pool states need.
-pub fn tick_map(data: &HashMap<String, TickJson>) -> HashMap<i32, TickInfo> {
+pub fn tick_map(data: &HashMap<String, TickJson>, block: u64) -> HashMap<i32, TickInfo> {
     data.iter()
         .map(|(t, v)| {
             (
@@ -31,7 +31,7 @@ pub fn tick_map(data: &HashMap<String, TickJson>) -> HashMap<i32, TickInfo> {
                         v.liquidity_gross.parse::<u128>().unwrap(),
                     ),
                     liquidity_net: v.liquidity_net.parse::<i128>().unwrap(),
-                    block: 0,
+                    block,
                 },
             )
         })
@@ -109,7 +109,10 @@ pub fn register_v3_with(
         sqrt_price_x96,
         liquidity: u128::try_from(p.liquidity.expect("v3 liquidity").0).unwrap(),
         tick,
-        tick_data: tick_map(&p.tick_data),
+        tick_data: tick_map(
+            &p.tick_data,
+            p.liquidity_update_block.expect("v3 update_block"),
+        ),
         update_block: p.liquidity_update_block.expect("v3 update_block"),
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
@@ -153,7 +156,10 @@ pub fn register_v4_with(
         sqrt_price_x96: p.sqrt_price_x96.expect("v4 sqrt_price_x96").0,
         liquidity: u128::try_from(p.liquidity.expect("v4 liquidity").0).unwrap(),
         tick: p.tick.expect("v4 tick"),
-        tick_data: tick_map(&p.tick_data),
+        tick_data: tick_map(
+            &p.tick_data,
+            p.liquidity_update_block.expect("v4 update_block"),
+        ),
         update_block: p.liquidity_update_block.expect("v4 update_block"),
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
@@ -176,7 +182,10 @@ pub fn build_v3_state(p: &PoolData) -> V3PoolState {
             sqrt_price_x96: p.sqrt_price_x96.expect("v3 sqrt_price_x96").0,
             liquidity: u128::try_from(p.liquidity.expect("v3 liquidity").0).unwrap(),
             tick: p.tick.expect("v3 tick"),
-            tick_data: tick_map(&p.tick_data),
+            tick_data: tick_map(
+                &p.tick_data,
+                p.liquidity_update_block.expect("v3 update_block"),
+            ),
             update_block: p.liquidity_update_block.expect("v3 update_block"),
             tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
@@ -210,7 +219,10 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
         sqrt_price_x96: p.sqrt_price_x96.expect("v4 sqrt_price_x96").0,
         liquidity: u128::try_from(p.liquidity.expect("v4 liquidity").0).unwrap(),
         tick: p.tick.expect("v4 tick"),
-        tick_data: tick_map(&p.tick_data),
+        tick_data: tick_map(
+            &p.tick_data,
+            p.liquidity_update_block.expect("v4 update_block"),
+        ),
         update_block: p.liquidity_update_block.expect("v4 update_block"),
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,

@@ -9,11 +9,9 @@ from degenbot.exceptions.pool import UnknownPool
 from degenbot.types.chain import ChecksummedAddress
 from degenbot.uniswap.concentrated.snapshot_readers import (
     DatabaseSnapshotBase,
-    IndividualJsonFileSnapshotBase,
     LiquidityMap,
     LiquiditySnapshotBase,
     LiquiditySnapshotSource,
-    MonolithicJsonFileSnapshotBase,
 )
 from degenbot.uniswap.v3_types import (
     UniswapV3LiquidityEvent,
@@ -52,23 +50,6 @@ class UniswapV3LiquiditySnapshotSource(LiquiditySnapshotSource, Protocol):
 
         """
         ...
-
-
-class MonolithicJsonFileSnapshot(MonolithicJsonFileSnapshotBase):
-    """A pool liquidity source backed by a single JSON file."""
-
-    def get_liquidity_map(self, pool_address: ChecksummedAddress) -> LiquidityMap | None:
-        """Return liquidity map.
-
-        Returns:
-            The liquidity map for the pool, or None if not found.
-
-        """
-        return self._liquidity_map_for(pool_address)
-
-
-class IndividualJsonFileSnapshot(IndividualJsonFileSnapshotBase):
-    """Snapshot source backed by a directory of JSON files."""
 
 
 class DatabaseSnapshot(DatabaseSnapshotBase[ChecksummedAddress]):

@@ -423,8 +423,11 @@ fn fetch_verify_state(
                         "v3 pool {key} not found on chain {chain_id}"
                     ))
                 })?;
-            let (tick_bitmap, tick_data) =
-                DegenbotDb::fetch_v3_liquidity_map_on_conn(conn, state.pool_id)?;
+            let (tick_bitmap, tick_data) = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+                conn,
+                state.pool_id,
+                state.snapshot_block(),
+            )?;
             Ok((
                 ComputedLiquidityUpdate {
                     pool_id: state.pool_id,
@@ -454,8 +457,11 @@ fn fetch_verify_state(
                         "v4 pool {pool} not found on chain {chain_id}"
                     ))
                 })?;
-            let (tick_bitmap, tick_data) =
-                DegenbotDb::fetch_v4_liquidity_map_on_conn(conn, state.pool_id)?;
+            let (tick_bitmap, tick_data) = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+                conn,
+                state.pool_id,
+                state.snapshot_block(),
+            )?;
             Ok((
                 ComputedLiquidityUpdate {
                     pool_id: state.pool_id,

@@ -91,6 +91,23 @@ pub struct PoolUpdateState {
     pub last_update: Option<BlockLog>,
 }
 
+impl PoolUpdateState {
+    /// The block the pool's committed DB liquidity map is exact at — its
+    /// `liquidity_update_block` (the last-applied event's block), which the
+    /// stamp contract names the **bulk-sync block**. Reconstituted per-tick /
+    /// per-word rows carry it as their `block`; the DB schema stores no
+    /// per-tick block, so this snapshot block is the real value in scope.
+    ///
+    /// `0` here means no liquidity has ever been persisted for the pool: the
+    /// marker and the row writes share the persist transaction, so a state
+    /// with no marker has no committed rows to stamp. `0` is a legal stamp
+    /// (a chain can launch at genesis), never a sentinel.
+    #[must_use]
+    pub fn snapshot_block(&self) -> u64 {
+        self.last_update.map_or(0, |last| last.block)
+    }
+}
+
 /// A `(block_number, log_index)` pair — the per-pool apply-progress marker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BlockLog {
@@ -359,13 +376,23 @@ impl DegenbotDb {
     /// round-trip — `liquidity_net` is decoded as `I256`, `liquidity_gross` as
     /// low-128 `U128`).
     ///
+    /// `block` is the snapshot's bulk-sync block — the block the committed
+    /// map is exact at (the caller's [`PoolUpdateState::snapshot_block`]). The
+    /// DB schema stores no per-tick/per-word block, so every reconstituted row
+    /// is stamped with it: the stamp contract's "bulk-sync block". `0` is a
+    /// legal stamp, never a sentinel.
+    ///
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on
     /// a malformed column.
-    pub fn fetch_v3_liquidity_map(&self, pool_id: i64) -> Result<LiquidityMap, DbError> {
+    pub fn fetch_v3_liquidity_map(
+        &self,
+        pool_id: i64,
+        block: u64,
+    ) -> Result<LiquidityMap, DbError> {
         let conn = self.lock();
-        Self::fetch_v3_liquidity_map_on_conn(&conn, pool_id)
+        Self::fetch_v3_liquidity_map_on_conn(&conn, pool_id, block)
     }
 
     /// The single-transaction-bound variant of [`Self::fetch_v3_liquidity_map`]
@@ -375,6 +402,7 @@ impl DegenbotDb {
     pub fn fetch_v3_liquidity_map_on_conn(
         conn: &rusqlite::Connection,
         pool_id: i64,
+        block: u64,
     ) -> Result<LiquidityMap, DbError> {
         let mut tick_bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
         {
@@ -392,7 +420,7 @@ impl DegenbotDb {
                     word,
                     BitmapAtWord {
                         bitmap: decode_u256(&bitmap_str)?,
-                        block: 0,
+                        block,
                     },
                 );
             }
@@ -418,7 +446,7 @@ impl DegenbotDb {
                         liquidity_gross: u256_to_u128(&decode_u256(&gross_str)?),
                         liquidity_net: I256::try_from(decode_i128_net(&net_str)?)
                             .map_err(|e| DbError::Decode(format!("net decode: {e}")))?,
-                        block: 0,
+                        block,
                     },
                 );
             }
@@ -430,13 +458,20 @@ impl DegenbotDb {
     /// `managed_pool_liquidity_positions` + `managed_pool_initialization_maps`
     /// rows for `managed_pool_id`. Mirrors the Python V4 reconstitution.
     ///
+    /// `block` is the snapshot's bulk-sync block, stamped onto every
+    /// reconstituted row (see [`Self::fetch_v3_liquidity_map`]).
+    ///
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on
     /// a malformed column.
-    pub fn fetch_v4_liquidity_map(&self, managed_pool_id: i64) -> Result<LiquidityMap, DbError> {
+    pub fn fetch_v4_liquidity_map(
+        &self,
+        managed_pool_id: i64,
+        block: u64,
+    ) -> Result<LiquidityMap, DbError> {
         let conn = self.lock();
-        Self::fetch_v4_liquidity_map_on_conn(&conn, managed_pool_id)
+        Self::fetch_v4_liquidity_map_on_conn(&conn, managed_pool_id, block)
     }
 
     /// The single-transaction-bound variant of [`Self::fetch_v4_liquidity_map`]
@@ -446,6 +481,7 @@ impl DegenbotDb {
     pub fn fetch_v4_liquidity_map_on_conn(
         conn: &rusqlite::Connection,
         managed_pool_id: i64,
+        block: u64,
     ) -> Result<LiquidityMap, DbError> {
         let mut tick_bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
         {
@@ -464,7 +500,7 @@ impl DegenbotDb {
                     word,
                     BitmapAtWord {
                         bitmap: decode_u256(&bitmap_str)?,
-                        block: 0,
+                        block,
                     },
                 );
             }
@@ -490,7 +526,7 @@ impl DegenbotDb {
                         liquidity_gross: u256_to_u128(&decode_u256(&gross_str)?),
                         liquidity_net: I256::try_from(decode_i128_net(&net_str)?)
                             .map_err(|e| DbError::Decode(format!("net decode: {e}")))?,
-                        block: 0,
+                        block,
                     },
                 );
             }
@@ -558,7 +594,8 @@ impl DegenbotDb {
         };
         let tick_spacing = state.tick_spacing;
         let pool_id = state.pool_id;
-        let (mut tick_bitmap, mut tick_data) = Self::fetch_v3_liquidity_map_on_conn(conn, pool_id)?;
+        let (mut tick_bitmap, mut tick_data) =
+            Self::fetch_v3_liquidity_map_on_conn(conn, pool_id, state.snapshot_block())?;
 
         let mut current_liquidity = U128::ZERO;
         let last_event = apply_event_loop(
@@ -670,7 +707,8 @@ impl DegenbotDb {
         };
         let tick_spacing = state.tick_spacing;
         let pool_id = state.pool_id;
-        let (mut tick_bitmap, mut tick_data) = Self::fetch_v4_liquidity_map_on_conn(conn, pool_id)?;
+        let (mut tick_bitmap, mut tick_data) =
+            Self::fetch_v4_liquidity_map_on_conn(conn, pool_id, state.snapshot_block())?;
 
         let mut current_liquidity = U128::ZERO;
         let last_event = apply_event_loop(
@@ -1633,6 +1671,10 @@ fn compute_liquidity_delta_on_tables(
 ) -> Result<LiquidityDelta, DbError> {
     let (dirty_ticks, dirty_words) = event_dirty_keys(events, state.tick_spacing);
 
+    // The dirty rows are the pool's committed map's rows (its bulk-sync block
+    // is the stamp); a touched row is re-stamped by `apply_event_loop` below.
+    let snapshot_block = state.snapshot_block();
+
     let mut tick_bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
     for (word, rest) in fetch_rows_for_keys(
         conn,
@@ -1651,7 +1693,7 @@ fn compute_liquidity_delta_on_tables(
             word,
             BitmapAtWord {
                 bitmap: decode_u256(&bitmap_str)?,
-                block: 0,
+                block: snapshot_block,
             },
         );
     }
@@ -1677,7 +1719,7 @@ fn compute_liquidity_delta_on_tables(
                 liquidity_gross: u256_to_u128(&decode_u256(&gross_str)?),
                 liquidity_net: I256::try_from(decode_i128_net(&net_str)?)
                     .map_err(|e| DbError::Decode(format!("net decode: {e}")))?,
-                block: 0,
+                block: snapshot_block,
             },
         );
     }
@@ -2284,6 +2326,107 @@ mod tests {
             rusqlite::params![managed_pool_id, word, encode_u256(&bitmap)],
         )
         .unwrap();
+    }
+
+    // ── the DB map fetch stamps the snapshot block ──────────────────────
+    //
+    // The DB schema stores no per-tick/per-word block, so the reconstitution
+    // stamps every row with the caller's snapshot block (the pool's
+    // `liquidity_update_block` — the stamp contract's "bulk-sync block"). The
+    // pre-fix code hardcoded `0` there, silently falsifying every row.
+
+    #[test]
+    fn fetch_v3_liquidity_map_stamps_rows_with_the_snapshot_block() {
+        let (db, pool_id, _addr) = v3_db_with_pool();
+        seed_v3_position(
+            &db,
+            pool_id,
+            -10,
+            I256::try_from(5).unwrap(),
+            U128::from(5u64),
+        );
+        seed_v3_init_map(&db, pool_id, 0, U256::from(1u64) << 1);
+
+        let snapshot_block = 21_000_000u64;
+        let conn = db.lock();
+        let (tick_bitmap, tick_data) =
+            DegenbotDb::fetch_v3_liquidity_map_on_conn(&conn, pool_id, snapshot_block).unwrap();
+
+        assert_eq!(
+            tick_data[&-10].block, snapshot_block,
+            "reconstituted tick row must carry the snapshot block, not 0"
+        );
+        assert_eq!(
+            tick_bitmap[&0].block, snapshot_block,
+            "reconstituted word row must carry the snapshot block, not 0"
+        );
+    }
+
+    #[test]
+    fn fetch_v4_liquidity_map_stamps_rows_with_the_snapshot_block() {
+        let (db, managed_pool_id, _hash) = v4_db_with_pool();
+        seed_v4_position(
+            &db,
+            managed_pool_id,
+            -10,
+            I256::try_from(5).unwrap(),
+            U128::from(5u64),
+        );
+        seed_v4_init_map(&db, managed_pool_id, 0, U256::from(1u64) << 1);
+
+        let snapshot_block = 21_000_000u64;
+        let conn = db.lock();
+        let (tick_bitmap, tick_data) =
+            DegenbotDb::fetch_v4_liquidity_map_on_conn(&conn, managed_pool_id, snapshot_block)
+                .unwrap();
+
+        assert_eq!(
+            tick_data[&-10].block, snapshot_block,
+            "reconstituted tick row must carry the snapshot block, not 0"
+        );
+        assert_eq!(
+            tick_bitmap[&0].block, snapshot_block,
+            "reconstituted word row must carry the snapshot block, not 0"
+        );
+    }
+
+    /// The internal compute path derives that block from the pool's committed
+    /// marker: an untouched base row keeps the pool's `liquidity_update_block`,
+    /// while an event-touched row is re-stamped with the event's block.
+    #[test]
+    fn compute_v3_liquidity_update_stamps_untouched_rows_with_the_committed_block() {
+        let (db, pool_id, addr) = v3_db_with_pool();
+        seed_v3_position(
+            &db,
+            pool_id,
+            100,
+            I256::try_from(5).unwrap(),
+            U128::from(5u64),
+        );
+        let events = [LiquidityUpdateEvent {
+            block_number: 600,
+            log_index: 0,
+            tick_lower: -10,
+            tick_upper: 10,
+            liquidity_delta: I256::try_from(1_000).unwrap(),
+        }];
+
+        let conn = db.lock();
+        // The pool's committed liquidity clock — the snapshot block its base
+        // rows are exact at.
+        DegenbotDb::set_v3_liquidity_update_marker_on_conn(&conn, pool_id, 555, 0).unwrap();
+        let c = DegenbotDb::compute_v3_liquidity_update_on_conn(&conn, 1, &addr, &events)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            c.tick_data[&100].block, 555,
+            "untouched base row keeps the committed snapshot block, not 0"
+        );
+        assert_eq!(
+            c.tick_data[&-10].block, 600,
+            "event-touched row is re-stamped with the event block"
+        );
     }
 
     #[test]

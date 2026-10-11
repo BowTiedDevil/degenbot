@@ -239,6 +239,13 @@
     // outranks them both.
     "DEGENBOT_RPC_HTTP_CHAINID_1": "http://host.containers.internal:8545",
     "DEGENBOT_RPC_WS_CHAINID_1": "ws://host.containers.internal:8546",
+    // The backrun facet's searcher-feed endpoint — the one dial the ambient
+    // fleet boot makes that the node-RPC names above cannot redirect. The
+    // suite default (tests/ambient_config.toml) is a dead loopback so the
+    // default run never touches the internet; the schema only validates the
+    // ws:// scheme. Re-point here (or export it in a shell) for an on-demand
+    // live lane, e.g. "wss://searchers.mevblocker.io".
+    "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ENDPOINTS": "ws://127.0.0.1:9",
     // Session chain id, as the container-local override of the host file's
     // `[session] chain_id`. It feeds the env layer of both cascades (the
     // Python `degenbot.config._env_default_chain_id` and the typed Rust boot),

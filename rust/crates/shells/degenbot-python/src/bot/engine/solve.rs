@@ -398,7 +398,7 @@ impl PyArbEngine {
 
             let td_obj = tuple.get_item(4)?;
             let td_dict = td_obj.cast::<pyo3::types::PyDict>()?;
-            let rust_tick_data = TickData::from_py_pairs(td_dict.as_any())?;
+            let rust_tick_data = TickData::from_py_pairs(td_dict.as_any(), block_number)?;
 
             updates.push((addr, sqrt_price, liquidity, tick, rust_tick_data));
         }
@@ -450,7 +450,7 @@ impl PyArbEngine {
 
             let td_obj = tuple.get_item(5)?;
             let td_dict = td_obj.cast::<pyo3::types::PyDict>()?;
-            let rust_tick_data = TickData::from_py_pairs(td_dict.as_any())?;
+            let rust_tick_data = TickData::from_py_pairs(td_dict.as_any(), block_number)?;
 
             updates.push((
                 pool_manager,
