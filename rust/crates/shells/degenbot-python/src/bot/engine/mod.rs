@@ -75,6 +75,12 @@ pub struct PyArbEngine {
     /// `driver` attached to; the operator strategy verbs cross this host.
     pub(crate) host: Arc<parking_lot::Mutex<degenbot_bot::strategy_host::StrategyHost>>,
 
+    /// The engine's process-lifetime hosted sources (the pending-tx pumps and
+    /// the head clock minted at boot). The engine owns them so
+    /// `Drop for HostedSources` runs when the ENGINE drops — not at boot-host
+    /// end; `None` on a build with no submission feature (no hosted arms).
+    pub(crate) hosted: Option<degenbot_bot::hosted_sources::HostedSources>,
+
     /// The host-owned supervisor for the drivers this engine started at its
     /// start flow. It owns each driver's `DriverTask` lane boundary and folds
     /// the terminal exit through the host FSM (a self-halt becomes a tombstone)
@@ -98,6 +104,16 @@ pub struct PyArbEngine {
     /// `parking_lot::RwLock`, written only by the warm cache's own TTL
     /// re-fetch path).
     warm_code_cache: Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>>,
+}
+
+impl Drop for PyArbEngine {
+    fn drop(&mut self) {
+        // Explicit teardown order: take the hosted sources FIRST so their drop
+        // (pump stop, head-edge + sampler shutdown, the head edge's WS
+        // transport drop) runs before the host and driver fields drop, rather
+        // than being left to field-declaration order.
+        drop(self.hosted.take());
+    }
 }
 
 impl PyArbEngine {

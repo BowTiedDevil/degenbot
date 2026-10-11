@@ -113,6 +113,11 @@ pub(crate) use degenbot_submission::head_reconciliation::HeadLanes;
 pub(crate) struct BootedHost {
     pub(crate) host: Arc<parking_lot::Mutex<StrategyHost>>,
     pub(crate) attached: HostHub<EngineChannelHandles>,
+    /// The engine's process-lifetime hosted sources: the pending-tx pumps and
+    /// the head clock `boot_hosted_arms` mints. The engine stores this so
+    /// `Drop for HostedSources` runs when the ENGINE drops — not at boot-host
+    /// end. `None` on a build without the submission feature (no hosted arms).
+    pub(crate) hosted: Option<degenbot_bot::hosted_sources::HostedSources>,
 }
 
 /// Resolve the strategy-owned boot product once for the hosted process.
@@ -235,10 +240,18 @@ pub(crate) fn boot_host() -> BootedHost {
             .expect("a freshly minted host registers every strategy");
     }
 
+    // The hosted sources' owner is handed to the engine so their teardown is
+    // the engine's drop, not this boot's return.
     #[cfg(feature = "submission")]
-    boot_hosted_head_feed(&host, cfg, &backrun_resources);
+    let hosted = Some(boot_hosted_head_feed(&host, cfg, &backrun_resources));
+    #[cfg(not(feature = "submission"))]
+    let hosted: Option<degenbot_bot::hosted_sources::HostedSources> = None;
 
-    BootedHost { host, attached }
+    BootedHost {
+        host,
+        attached,
+        hosted,
+    }
 }
 
 /// The hosted head feed's boot: the per-strategy submission lanes, the
@@ -250,10 +263,10 @@ fn boot_hosted_head_feed(
     host: &Arc<parking_lot::Mutex<StrategyHost>>,
     cfg: &degenbot_config::schema::BotConfig,
     backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
-) {
+) -> degenbot_bot::hosted_sources::HostedSources {
     let (lanes, backruns) = boot_head_lanes(host);
     let head_trigger = boot_head_reconciliation(host, lanes, cfg, backrun_resources);
-    boot_hosted_arms(host, backruns, cfg, backrun_resources, head_trigger);
+    boot_hosted_arms(host, backruns, cfg, backrun_resources, head_trigger)
 }
 
 /// The per-strategy submission lanes the head reconciliation folds notices
@@ -397,7 +410,7 @@ fn boot_hosted_arms(
     cfg: &degenbot_config::schema::BotConfig,
     backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
     head_trigger: Option<degenbot_bot::hosted_sources::HeadTrigger>,
-) {
+) -> degenbot_bot::hosted_sources::HostedSources {
     use degenbot_bot::hosted_sources::HostedHeadClock;
     use degenbot_eventhub::PendingTxSource;
     use degenbot_rpc::backrun_feed::BackrunFeedConfig;
@@ -485,6 +498,9 @@ fn boot_hosted_arms(
             )
             .expect("fresh host registers the backrun spawn");
     }
+    // Hand the owner back: the engine holds it for its lifetime. Streams were
+    // taken above, so ownership needs no `&mut`.
+    hosted
 }
 
 impl PyArbEngine {

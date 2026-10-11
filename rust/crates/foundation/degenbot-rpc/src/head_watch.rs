@@ -19,7 +19,6 @@ use crate::subscription::{
 };
 use alloy::network::Ethereum;
 use alloy::providers::Provider;
-use degenbot_core::runtime::get_runtime;
 use degenbot_eventhub::head::HeadSender;
 use degenbot_eventhub::{Hub, HubEvent};
 use futures_util::StreamExt;
@@ -74,6 +73,13 @@ impl HeadWatch {
     /// is registered only after that subscribe succeeds. Once complete, the
     /// driving task reconnects in the background on the shared curve.
     ///
+    /// `spawn_on` is the runtime the driving task is spawned on. It MUST be the
+    /// runtime the provider's pubsub service lives on, so a teardown that
+    /// discards that runtime also cancels the driving task deterministically
+    /// (the `AnvilFork::pubsub_runtime` discipline). A caller hosting the
+    /// provider on the ambient shared runtime passes
+    /// `degenbot_core::runtime::get_runtime().handle().clone()`.
+    ///
     /// # Errors
     ///
     /// [`HeadWatchError::Subscribe`] if the initial `subscribe_blocks` fails
@@ -83,6 +89,7 @@ impl HeadWatch {
         hub: &Hub,
         provider: Arc<dyn Provider<Ethereum>>,
         config: HeadWatchConfig,
+        spawn_on: tokio::runtime::Handle,
     ) -> Result<Self, HeadWatchError> {
         let watchdog = config.watchdog;
         let stream: HeaderStream =
@@ -104,7 +111,7 @@ impl HeadWatch {
         let stall_attempt = Arc::clone(&attempt);
         let end_attempt = Arc::clone(&attempt);
 
-        get_runtime().spawn(async move {
+        spawn_on.spawn(async move {
             let reconnect = move || {
                 let provider = Arc::clone(&provider_for_reconnect);
                 async move { reconnect_new_heads_stream(provider).await }

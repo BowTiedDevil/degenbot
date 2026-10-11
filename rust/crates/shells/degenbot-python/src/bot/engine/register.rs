@@ -68,6 +68,9 @@ impl PyArbEngine {
         let booted = super::strategy::boot_host();
         let host = booted.host;
         let attached = booted.attached;
+        // The engine holds the hosted sources for its life: their drop (and the
+        // head-edge/sampler shutdown) is the engine's drop, not this boot's end.
+        let hosted = booted.hosted;
         let driver = Arc::new(
             degenbot_bot::arb_engine::EngineDriver::from_stages_with_hub(
                 Arc::clone(&bot),
@@ -90,6 +93,7 @@ impl PyArbEngine {
             stages,
             driver,
             host,
+            hosted,
             supervisor,
             result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),
             warm_code_cache,
