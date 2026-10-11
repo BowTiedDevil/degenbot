@@ -338,3 +338,23 @@ is a `pub(crate)` internal).
    task body's preferred fix, and no in-repo caller relied on the default except the two tests
    updated here — flagging in case a deprecation decision is wanted.
 4. Manager whole-tree ladder (the fix round re-ran it — see the gate table).
+
+## Commit attribution note (manager, 2026-10-10)
+
+Commit `0c09b1aa3` ("refactor(ticks): kill hardcoded block stamps...") contains THREE
+independently-authored streams — a manager staging error swept in two foreign lanes' uncommitted
+work alongside this task's diff. The tree stayed coherent (battery green: pre-push 0, 302 passed,
+stubs 0, fmt both 0; the tree-wide comment-hygiene red is from a third foreign lane's in-flight
+comment sweep in `src/degenbot/logging.py` / `tests/test_rust_logging_bridge.py`, left dirty).
+
+1. **This task (PC12/WOXT5Z)** — the tick-stamp work recorded above (fills, defaults, contract docs).
+2. **Foreign: DB-only snapshot enforcement (ADR-005)** — file-based snapshot sources deleted
+   (`MonolithicJsonFileSnapshotBase` et al. in `snapshot_readers.py`, `v3_snapshot.py`,
+   `v4_snapshot.py`), 8 fixture JSONs under `tests/uniswap/v3/snapshot/` retired,
+   `test_uniswap_v3_snapshot.py` reshaped. Not authored by this task's workers.
+3. **Foreign: ambient-config + logging lanes** — `.devcontainer/devcontainer.json`
+   (MEVBLOCKER backrun endpoint env) and `tests/conftest.py` (log-listener drain-order fixture).
+   Not authored by this task's workers.
+
+If your lane authored (2) or (3): your work is committed at `0c09b1aa3`, unmodified. History is
+not rewritten (house rule). The three still-dirty foreign files were left untouched.
