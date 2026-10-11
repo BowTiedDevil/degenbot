@@ -44,7 +44,9 @@ use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
 use crate::bot_core::{PoolTickCoverage, TickInfo};
 use degenbot_substrate::planning::{TickMapPoolIdentity, TickMapSeed};
-use degenbot_substrate::tick_assembly::{chain_arm, resolve_tick_map_arm};
+use degenbot_substrate::tick_assembly::{
+    chain_arm, reconcile_tracked_rows, resolve_tick_map_arm, seed_row_words, TickMapAssemblyError,
+};
 
 /// The on-chain family a `probe` resolves to (V4 is a separate
 /// `(PoolManager, pool_id)` path, not a single-address probe).
@@ -110,9 +112,10 @@ pub enum PoolBuilderError {
     Db(#[from] DbError),
     #[error("V4 identity incomplete: {message}")]
     MissingIdentity { message: String },
-    /// A Tracked Db snapshot failed the intake reconciliation:
-    /// the bitmap and tick rows contradict each other. Registration is
-    /// rejected with a typed error; the message names the conflict.
+    /// A Tracked Db snapshot failed the intake reconciliation against CHAIN
+    /// truth: its tick rows disagree with the word bitmaps read from chain.
+    /// Registration is rejected with a typed error; the message names the
+    /// conflict.
     #[error("tick map assembly failure: {0}")]
     TickAssembly(#[from] degenbot_substrate::tick_assembly::TickMapAssemblyError),
 }
@@ -830,7 +833,7 @@ pub async fn build_balancer_stable(
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::Db`] on a DB read failure,
-/// [`PoolBuilderError::TickAssembly`] on a self-contradictory Tracked map, or
+/// [`PoolBuilderError::TickAssembly`] on a chain/snapshot disagreement, or
 /// [`PoolBuilderError::Rpc`] on a Chain-arm failure.
 async fn assemble_db_or_chain_v3(
     db: Option<&dyn TickMapDb>,
@@ -853,6 +856,7 @@ async fn assemble_db_or_chain_v3(
         },
     )?;
     if let Some(seed) = db_arm {
+        reconcile_db_seed_v3(io, address, tick_spacing, block, &seed).await?;
         return Ok(seed);
     }
     // DB miss -> Chain arm (Sparse).
@@ -895,6 +899,7 @@ async fn assemble_db_or_chain_v4(
         },
     )?;
     if let Some(seed) = db_arm {
+        reconcile_db_seed_v4(io, state_view, pool_id, tick_spacing, block, &seed).await?;
         return Ok(seed);
     }
     // DB miss -> Chain arm (Sparse).
@@ -912,6 +917,83 @@ async fn assemble_db_or_chain_v4(
             },
         ),
     )
+}
+
+/// Reconcile a V3 Db (`Tracked`) seed against the chain word bitmaps read
+/// through [`ConstructionIo`] at `block`. Every word the seed's rows occupy is
+/// fetched from chain and compared: a `liquidity_gross > 0` row must have its
+/// chain bit, and every chain bit needs a gross>0 row. `Sparse`/empty seeds
+/// carry no complete-map claim and are returned untouched.
+///
+/// # Errors
+///
+/// [`PoolBuilderError::TickAssembly`] on a row/word disagreement, or
+/// [`PoolBuilderError::Rpc`] when a word read fails.
+async fn reconcile_db_seed_v3(
+    io: &ConstructionIo,
+    address: Address,
+    tick_spacing: i32,
+    block: u64,
+    seed: &TickMapSeed,
+) -> Result<(), PoolBuilderError> {
+    if seed.coverage != PoolTickCoverage::Tracked || seed.ticks.is_empty() {
+        return Ok(());
+    }
+    let mut chain_words = HashMap::new();
+    for word in seed_row_words(seed, tick_spacing) {
+        let bitmap =
+            choreography::fetch_tick_bitmap(io, address, tick_word_i16(word)?, Some(block)).await?;
+        chain_words.insert(word, bitmap);
+    }
+    reconcile_tracked_rows(&chain_words, &seed.ticks, tick_spacing)?;
+    Ok(())
+}
+
+/// V4 twin of [`reconcile_db_seed_v3`], keyed by the `StateView` contract.
+///
+/// # Errors
+///
+/// [`PoolBuilderError::TickAssembly`] on a row/word disagreement, or
+/// [`PoolBuilderError::Rpc`] when a word read fails.
+async fn reconcile_db_seed_v4(
+    io: &ConstructionIo,
+    state_view: Address,
+    pool_id: [u8; 32],
+    tick_spacing: i32,
+    block: u64,
+    seed: &TickMapSeed,
+) -> Result<(), PoolBuilderError> {
+    if seed.coverage != PoolTickCoverage::Tracked || seed.ticks.is_empty() {
+        return Ok(());
+    }
+    let mut chain_words = HashMap::new();
+    for word in seed_row_words(seed, tick_spacing) {
+        let bitmap = choreography::fetch_v4_tick_bitmap(
+            io,
+            state_view,
+            pool_id,
+            tick_word_i16(word)?,
+            Some(block),
+        )
+        .await?;
+        chain_words.insert(word, bitmap);
+    }
+    reconcile_tracked_rows(&chain_words, &seed.ticks, tick_spacing)?;
+    Ok(())
+}
+
+/// Narrow a word position to the `int16` the bitmap ABIs take. Valid V3/V4
+/// words fit; the failure arm is defensive.
+fn tick_word_i16(word: i64) -> Result<i16, PoolBuilderError> {
+    i16::try_from(word).map_err(|_| {
+        PoolBuilderError::TickAssembly(TickMapAssemblyError::InconsistentTickMap {
+            word,
+            bit: 0,
+            tick: i32::MIN,
+            bitmap_bit: true,
+            row_gross_positive: false,
+        })
+    })
 }
 
 /// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3

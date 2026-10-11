@@ -213,7 +213,10 @@ fn v3_store_miss_db_hit_non_empty_returns_tracked_ticks() {
     seed_v3_ticks(&db, pool_id, &[10, 20], 10);
     let addr = make_pool_addr();
 
-    let result = assemble_v3_tick_map(Some(&db), addr, 0, 10, 0, None).unwrap();
+    // The Db arm's non-empty Tracked map is reconciled against CHAIN truth, so
+    // the chain word 0 (bits 1,2 = the two seeded rows at spacing 10) is wired.
+    let rpc = chain_word_rpc((U256::from(1u64) << 1) | (U256::from(1u64) << 2));
+    let result = assemble_v3_tick_map(Some(&db), addr, 0, 10, 0, Some(&rpc)).unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("Db hit should return Some");
     };
@@ -294,8 +297,24 @@ fn v4_store_miss_db_hit_non_empty_returns_tracked_ticks() {
     seed_v4_ticks(&db, managed_id, &[-10, 10], 10);
     let mgr = make_manager();
 
-    let result =
-        assemble_v4_tick_map(Some(&db), mgr, make_state_view(), pool_id, 0, 10, 0, None).unwrap();
+    // Rows at ticks -10 (word -1, bit 255) and 10 (word 0, bit 1) span two
+    // words, so the chain fake is word-aware; both chain words must agree.
+    let rpc = WordMapChainRpc {
+        words: [(-1, U256::from(1u64) << 255), (0, U256::from(1u64) << 1)]
+            .into_iter()
+            .collect(),
+    };
+    let result = assemble_v4_tick_map(
+        Some(&db),
+        mgr,
+        make_state_view(),
+        pool_id,
+        0,
+        10,
+        0,
+        Some(&rpc),
+    )
+    .unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("Db hit should return Some");
     };
@@ -450,6 +469,53 @@ impl TickBootstrapRpc for FakeChainRpc {
     }
 }
 
+/// A word-aware chain fake: each requested word's bitmap is returned, so a row
+/// set spanning several words (a negative tick's word included) reconciles.
+/// The requested representative tick (`word * 256 * spacing`) fixes the word.
+#[derive(Debug)]
+struct WordMapChainRpc {
+    words: HashMap<i32, U256>,
+}
+
+impl WordMapChainRpc {
+    fn word_for(tick: i32, tick_spacing: i32) -> i32 {
+        tick.div_euclid(tick_spacing.max(1)) >> 8
+    }
+
+    fn fetch(&self, tick: i32, tick_spacing: i32) -> BootstrapTickWord {
+        let word = Self::word_for(tick, tick_spacing);
+        let bitmap = self.words.get(&word).copied().unwrap_or(U256::ZERO);
+        BootstrapTickWord {
+            bitmap,
+            word,
+            ticks: HashMap::new(),
+        }
+    }
+}
+
+impl TickBootstrapRpc for WordMapChainRpc {
+    fn bootstrap_v3_tick_word(
+        &self,
+        _pool_address: &str,
+        tick: i32,
+        tick_spacing: i32,
+        _block: u64,
+    ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
+        Ok(Some(self.fetch(tick, tick_spacing)))
+    }
+
+    fn bootstrap_v4_tick_word(
+        &self,
+        _state_view: &str,
+        _pool_id: &[u8; 32],
+        tick: i32,
+        tick_spacing: i32,
+        _block: u64,
+    ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
+        Ok(Some(self.fetch(tick, tick_spacing)))
+    }
+}
+
 fn chain_tick_info(tick: i32) -> TickInfo {
     TickInfo {
         liquidity_gross: U128::from(7_000u64 * u64::from(tick.unsigned_abs()) + 1),
@@ -601,19 +667,35 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
     );
 }
 
-// ── Tracked intake reconciliation  ─────────────────
+// ── Tracked intake reconciliation (chain truth)  ─────────────────
 //
-//  A Tracked Db snapshot must be self-consistent: for every word the
-//  snapshot supplied, the on-chain invariant must hold — bit set ⟺ a tick
-//  row with liquidity_gross > 0 at that position. A corrupted snapshot is
-//  REJECTED at intake with a typed InconsistentTickMap error (the two-step
-//  verify is the on-chain oracle; this is the cheap intake-time
-//  self-check). Sparse / Chain-arm data is indeterminate by construction and
-//  is never checked.
+//  A Tracked Db snapshot's tick rows are reconciled against the word bitmaps
+//  READ FROM CHAIN at the snapshot block: a liquidity_gross > 0 row must have
+//  its bit set in the chain word that holds it, and every set bit of a chain
+//  word must have a gross>0 row at that grid tick. A snapshot that disagrees
+//  with the chain is REJECTED at intake with a typed InconsistentTickMap
+//  error; a Tracked snapshot with no chain transport is a typed
+//  ChainUnavailable refusal (never a silent pass). Sparse / Chain-arm data is
+//  indeterminate by construction and is never checked. Snapshot-internal
+//  consistency is not an intake gate — it is schema/decode validation.
 
-/// Seed a V3 pool with a DIVERGENT (bitmap, rows) pair — the corruption
-/// shapes the reconciliation must reject. `rows`: (tick, `liquidity_gross`);
-/// gross 0 = a de-initialized tick row still present in the table.
+/// The chain word (word 0) a `FakeChainRpc` reports: the bitmap fetched from
+/// chain at the snapshot block drives the whole reconciliation.
+fn chain_word_rpc(bitmap: U256) -> FakeChainRpc {
+    FakeChainRpc {
+        hit: Some(BootstrapTickWord {
+            bitmap,
+            word: 0,
+            ticks: HashMap::new(),
+        }),
+        fail_rpc: false,
+    }
+}
+
+/// Seed a V3 pool with tick ROWS (and a non-empty initialization word so the
+/// Db arm yields a non-empty Tracked map). `rows`: (tick, `liquidity_gross`);
+/// gross 0 = a de-initialized tick row still present in the table. The seeded
+/// snapshot bitmap is not consulted by the chain-truth reconciliation.
 fn seed_v3_divergent(db: &DegenbotDb, pool_id: i64, bitmap: U256, rows: &[(i32, u128)]) {
     let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
     tick_bitmap.insert(0, ApplyBitmapAtWord { bitmap, block: 0 });
@@ -655,13 +737,14 @@ fn seed_v4_divergent(db: &DegenbotDb, managed_pool_id: i64, bitmap: U256, rows: 
 }
 
 #[test]
-fn v3_tracked_db_bit_without_row_rejected_at_intake() {
-    // word 0 bit 2 (tick 20 @ spacing 10) is set, but the only row is tick 10
-    // (bit 1). Corrupted: a set bit must imply a gross>0 row at that position.
+fn v3_tracked_chain_bit_without_row_rejected_at_intake() {
+    // The snapshot has one row at tick 20 (word 0 bit 2), but the CHAIN word 0
+    // reports bits 2 AND 3 — bit 3 (tick 30) has no gross>0 snapshot row.
     let (db, pool_id) = v3_db_with_pool();
-    seed_v3_divergent(&db, pool_id, U256::from(1u64) << 2, &[(10, 1_000_000)]);
-    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None)
-        .expect_err("a bit without a row must be rejected at intake");
+    seed_v3_divergent(&db, pool_id, U256::from(1u64) << 2, &[(20, 1_000_000)]);
+    let rpc = chain_word_rpc((U256::from(1u64) << 2) | (U256::from(1u64) << 3));
+    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, Some(&rpc))
+        .expect_err("a chain bit without a row must be rejected at intake");
     assert!(
         matches!(err, TickMapAssemblyError::InconsistentTickMap { .. }),
         "expected InconsistentTickMap, got {err:?}"
@@ -669,18 +752,14 @@ fn v3_tracked_db_bit_without_row_rejected_at_intake() {
 }
 
 #[test]
-fn v3_tracked_db_row_without_bit_rejected_at_intake() {
-    // word 0 bit 1 (tick 10) is set; rows at 10 (bit ok) AND 20 (no bit).
-    // Corrupted: a gross>0 row in a supplied word must have its bit set.
+fn v3_tracked_row_without_chain_bit_rejected_at_intake() {
+    // The snapshot has a gross>0 row at tick 10 (bit 1), but the CHAIN word 0
+    // reports only bit 2 — the row has no chain bit.
     let (db, pool_id) = v3_db_with_pool();
-    seed_v3_divergent(
-        &db,
-        pool_id,
-        U256::from(1u64) << 1,
-        &[(10, 1_000_000), (20, 2_000_000)],
-    );
-    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None)
-        .expect_err("a gross>0 row without its bit must be rejected at intake");
+    seed_v3_divergent(&db, pool_id, U256::from(1u64) << 1, &[(10, 1_000_000)]);
+    let rpc = chain_word_rpc(U256::from(1u64) << 2);
+    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, Some(&rpc))
+        .expect_err("a gross>0 row without its chain bit must be rejected at intake");
     assert!(
         matches!(err, TickMapAssemblyError::InconsistentTickMap { .. }),
         "expected InconsistentTickMap, got {err:?}"
@@ -688,8 +767,8 @@ fn v3_tracked_db_row_without_bit_rejected_at_intake() {
 }
 
 #[test]
-fn v3_tracked_db_consistent_snapshot_accepted() {
-    // word 0 bits 1+2 (ticks 10, 20) ↔ rows at 10, 20 (gross>0).
+fn v3_tracked_consistent_snapshot_accepted() {
+    // Snapshot rows at 10, 20 ⇔ the CHAIN word 0 bits 1, 2.
     let (db, pool_id) = v3_db_with_pool();
     seed_v3_divergent(
         &db,
@@ -697,7 +776,8 @@ fn v3_tracked_db_consistent_snapshot_accepted() {
         (U256::from(1u64) << 1) | (U256::from(1u64) << 2),
         &[(10, 1_000_000), (20, 2_000_000)],
     );
-    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
+    let rpc = chain_word_rpc((U256::from(1u64) << 1) | (U256::from(1u64) << 2));
+    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, Some(&rpc)).unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("a consistent snapshot must return Some");
     };
@@ -714,9 +794,9 @@ fn v3_tracked_db_consistent_snapshot_accepted() {
 }
 
 #[test]
-fn v3_tracked_db_gross_zero_row_matches_clear_bit() {
-    // bit 1 set (tick 10, gross>0); the tick 20 row has gross == 0 (fully
-    // de-initialized) and its bit (2) is clear — on-chain consistent.
+fn v3_tracked_gross_zero_row_is_ignored_by_chain_truth() {
+    // CHAIN word 0 bit 1 (tick 10). The tick 20 row has gross == 0 (fully
+    // de-initialized) — the row side skips it, so the map is consistent.
     let (db, pool_id) = v3_db_with_pool();
     seed_v3_divergent(
         &db,
@@ -724,22 +804,25 @@ fn v3_tracked_db_gross_zero_row_matches_clear_bit() {
         U256::from(1u64) << 1,
         &[(10, 1_000_000), (20, 0)],
     );
-    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
+    let rpc = chain_word_rpc(U256::from(1u64) << 1);
+    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, Some(&rpc)).unwrap();
     let Some((ticks, coverage)) = result else {
-        panic!("a gross=0 row with a clear bit is consistent");
+        panic!("a gross=0 row with no chain bit is consistent");
     };
     assert_eq!(coverage, PoolTickCoverage::Tracked);
     assert_eq!(ticks.len(), 2);
 }
 
 #[test]
-fn v3_tracked_db_bit_set_with_gross_zero_row_rejected() {
-    // bit 2 set, but the tick 20 row has gross == 0 — on-chain the bit would
-    // be clear; the snapshot contradicts itself.
+fn v3_tracked_chain_bit_over_gross_zero_row_rejected() {
+    // CHAIN word 0 bit 2 (tick 20) is set, but the snapshot's only tick-20 row
+    // has gross == 0 — on the chain the bit means a live position the snapshot
+    // does not carry.
     let (db, pool_id) = v3_db_with_pool();
     seed_v3_divergent(&db, pool_id, U256::from(1u64) << 2, &[(20, 0)]);
-    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None)
-        .expect_err("a set bit over a gross=0 row must be rejected at intake");
+    let rpc = chain_word_rpc(U256::from(1u64) << 2);
+    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, Some(&rpc))
+        .expect_err("a chain bit over a gross=0 row must be rejected at intake");
     assert!(
         matches!(err, TickMapAssemblyError::InconsistentTickMap { .. }),
         "expected InconsistentTickMap, got {err:?}"
@@ -747,15 +830,49 @@ fn v3_tracked_db_bit_set_with_gross_zero_row_rejected() {
 }
 
 #[test]
-fn v4_tracked_db_bit_without_row_rejected_at_intake() {
-    // V4 twin: word 0 bit 2 set, only tick 10 has a row.
+fn v3_tracked_chain_unavailable_is_a_typed_failure() {
+    // A non-empty Tracked snapshot with no chain transport cannot be
+    // reconciled — the gate refuses rather than registering unverified.
+    let (db, pool_id) = v3_db_with_pool();
+    seed_v3_divergent(&db, pool_id, U256::from(1u64) << 2, &[(20, 1_000_000)]);
+    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None)
+        .expect_err("no chain transport → typed failure, never a silent pass");
+    assert!(
+        matches!(err, TickMapAssemblyError::ChainUnavailable),
+        "expected ChainUnavailable, got {err:?}"
+    );
+}
+
+#[test]
+fn v3_tracked_chain_fetch_error_is_a_typed_failure() {
+    // The chain transport is wired but the word fetch fails — a loud typed
+    // refusal, not a silent pass.
+    let (db, pool_id) = v3_db_with_pool();
+    seed_v3_divergent(&db, pool_id, U256::from(1u64) << 2, &[(20, 1_000_000)]);
+    let rpc = FakeChainRpc {
+        hit: None,
+        fail_rpc: true,
+    };
+    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, Some(&rpc))
+        .expect_err("a chain fetch failure must be a typed refusal");
+    assert!(
+        matches!(err, TickMapAssemblyError::Chain(BootstrapTickError::Rpc)),
+        "expected Chain(Rpc), got {err:?}"
+    );
+}
+
+#[test]
+fn v4_tracked_chain_bit_without_row_rejected_at_intake() {
+    // V4 twin: the snapshot has a row at tick 10 (bit 1); the CHAIN word 0
+    // reports bits 1 AND 2 — bit 2 has no row.
     let (db, managed_pool_id, pool_id) = v4_db_with_pool();
     seed_v4_divergent(
         &db,
         managed_pool_id,
-        U256::from(1u64) << 2,
+        U256::from(1u64) << 1,
         &[(10, 1_000_000)],
     );
+    let rpc = chain_word_rpc((U256::from(1u64) << 1) | (U256::from(1u64) << 2));
     let err = assemble_v4_tick_map(
         Some(&db),
         make_manager(),
@@ -764,9 +881,9 @@ fn v4_tracked_db_bit_without_row_rejected_at_intake() {
         0,
         10,
         0,
-        None,
+        Some(&rpc),
     )
-    .expect_err("V4: a bit without a row must be rejected at intake");
+    .expect_err("V4: a chain bit without a row must be rejected at intake");
     assert!(
         matches!(err, TickMapAssemblyError::InconsistentTickMap { .. }),
         "expected InconsistentTickMap, got {err:?}"
@@ -774,7 +891,7 @@ fn v4_tracked_db_bit_without_row_rejected_at_intake() {
 }
 
 #[test]
-fn v4_tracked_db_consistent_snapshot_accepted() {
+fn v4_tracked_consistent_snapshot_accepted() {
     let (db, managed_pool_id, pool_id) = v4_db_with_pool();
     seed_v4_divergent(
         &db,
@@ -782,6 +899,7 @@ fn v4_tracked_db_consistent_snapshot_accepted() {
         (U256::from(1u64) << 1) | (U256::from(1u64) << 2),
         &[(10, 1_000_000), (20, 2_000_000)],
     );
+    let rpc = chain_word_rpc((U256::from(1u64) << 1) | (U256::from(1u64) << 2));
     let result = assemble_v4_tick_map(
         Some(&db),
         make_manager(),
@@ -790,7 +908,7 @@ fn v4_tracked_db_consistent_snapshot_accepted() {
         0,
         10,
         0,
-        None,
+        Some(&rpc),
     )
     .unwrap();
     let Some((ticks, coverage)) = result else {

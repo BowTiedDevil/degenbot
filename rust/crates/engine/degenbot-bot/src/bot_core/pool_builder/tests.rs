@@ -920,12 +920,12 @@ impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
     }
 }
 
-/// A DB hit gives a TRACKED pool : the builder
-/// favors the `TickMapDb` full tick map (Tracked → feeds the verify lifecycle)
-/// over the chain-arm single-word bootstrap, and must NOT consult the chain
-/// (no `tick_bitmap` response is seeded, so a chain probe would error).
+/// A DB hit gives a TRACKED pool: the builder favors the `TickMapDb` full tick
+/// map (Tracked → feeds the verify lifecycle) over the chain-arm single-word
+/// bootstrap, and ADMITS it only after the chain-truth intake gate reads the
+/// pool's word 0 from chain and finds it agrees with the DB rows.
 #[tokio::test]
-async fn build_v3_db_hit_yields_tracked_without_chain() {
+async fn build_v3_db_hit_yields_tracked() {
     use crate::bot_core::PoolTickCoverage;
     use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
     use hashbrown::HashMap;
@@ -956,7 +956,12 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
         abi::encode_liquidity()[..4].try_into().unwrap(),
         enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
     );
-    // NOTE: no tick_bitmap response — if the chain arm were reached it would error.
+    // The chain-truth intake gate reads the pool's word 0 from chain: bit 1
+    // (tick 60 at spacing 60) must match the DB row below.
+    f.set(
+        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(1u64) << 1, 256)),
+    );
     let io = io_with(f);
 
     let db = FakeTickMapDb(
@@ -1026,6 +1031,12 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     f.set(
         abi::encode_liquidity()[..4].try_into().unwrap(),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 128)),
+    );
+    // The chain-truth intake gate reads word 0 from chain: bit 1 (tick 60 at
+    // spacing 60) must match the DB row below.
+    f.set(
+        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(1u64) << 1, 256)),
     );
     let io = io_with(f);
 

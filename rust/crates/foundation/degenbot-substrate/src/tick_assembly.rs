@@ -4,9 +4,9 @@
 //! first, then (on a Db miss) the Chain transport — shared by every caller:
 //! the sync `assemble_v3_tick_map` / `assemble_v4_tick_map` wrappers, the
 //! async-native `pool_builder` registration arms, and the per-frame
-//! `pool_ingress`. Db conversion via [`liquidity_map_to_tick_info`], the
-//! Tracked intake reconciliation, Tracked-empty handling, coverage tagging,
-//! and the forensic dump live only here, and both arms mint their
+//! `pool_ingress`. Db conversion via [`liquidity_map_to_tick_info`],
+//! Tracked-empty handling, coverage tagging, and the forensic dump live only
+//! here, and both arms mint their
 //! [`TickMapSeed`] through [`TickMapArm::into_seed`], so no transport can
 //! drift the semantics.
 //!
@@ -101,12 +101,19 @@ pub enum TickMapAssemblyError {
     /// typed exception rather than silently degrading.
     #[error(transparent)]
     Chain(#[from] BootstrapTickError),
-    /// A Tracked Db snapshot that contradicts itself: a bitmap bit and the
-    /// liquidity rows disagree about an initialization
-    /// Registration is rejected AT INTAKE — the two-step verify
-    /// is the on-chain oracle, but a corrupted snapshot must never
-    /// register. `tick` is the conflicting position (`i32::MIN` marks an
-    /// out-of-range corrupted word position).
+    /// A Tracked snapshot reached the registration gate with no chain transport
+    /// wired, so the on-chain word reconciliation could not run. The gate fails
+    /// loudly rather than registering an unverified complete map — a silent
+    /// pass would claim chain truth it never established.
+    #[error(
+        "Tracked tick map intake requires a chain transport for on-chain word reconciliation, but none is wired"
+    )]
+    ChainUnavailable,
+    /// The snapshot's tick rows disagree with the word bitmaps FETCHED FROM
+    /// CHAIN at the snapshot block: a `liquidity_gross > 0` row has no chain
+    /// bit, or a chain bit has no `liquidity_gross > 0` row. Registration is
+    /// rejected AT INTAKE. `tick` is the conflicting position (`i32::MIN`
+    /// marks an out-of-range corrupted word position).
     #[error(
         "Tracked tick map inconsistent at intake: word {word} bit {bit} (tick {tick}) — bitmap_bit = {bitmap_bit}, row_gross_positive = {row_gross_positive}"
     )]
@@ -215,9 +222,9 @@ impl TickMapArm {
 /// `Ok(None)` means the pool is absent from the Db, so the caller runs its
 /// Chain transport and mints through [`TickMapArm::into_seed`].
 ///
-/// Db conversion ([`liquidity_map_to_tick_info`]), the Tracked intake
-/// reconciliation, coverage tagging, the forensic dump, and the loud error
-/// posture all live here, so every transport shares identical semantics. The
+/// Db conversion ([`liquidity_map_to_tick_info`]), coverage tagging, the
+/// forensic dump, and the loud error posture all live here, so every
+/// transport shares identical semantics. The
 /// Chain transport stays outside because it keeps two adapters — the sync
 /// [`TickBootstrapRpc`] trait object and the builder's async-native
 /// `ConstructionIo`, which cannot `block_on` the sync helper (the
@@ -226,13 +233,13 @@ impl TickMapArm {
 ///
 /// # Errors
 ///
-/// Propagates the caller's Db read error and
-/// [`TickMapAssemblyError::InconsistentTickMap`] from the Tracked intake
-/// reconciliation, mapped through `E`.
+/// Propagates the caller's Db read error, mapped through `E`. The on-chain
+/// reconciliation that replaces the retired snapshot-internal check runs at
+/// the registration wrappers, not here (the shared arm is transport-free).
 pub fn resolve_tick_map_arm<E, FDb>(
     pool_ident: &str,
     identity: TickMapPoolIdentity,
-    tick_spacing: i32,
+    _tick_spacing: i32,
     block: u64,
     db_read: FDb,
 ) -> Result<Option<TickMapSeed>, E>
@@ -248,7 +255,7 @@ where
     // Pool IS in the Db: a non-empty map -> Tracked + populated; an empty map
     // -> legitimately-empty Tracked (authoritative — it came from the Db).
     let bitmaps = bitmaps_from_db(&map.tick_bitmap);
-    let arm = match liquidity_map_to_tick_info(map, tick_spacing, block).map_err(E::from)? {
+    let arm = match liquidity_map_to_tick_info(map, block) {
         Some(hit) => {
             dump_tick_map_seed(pool_ident, &hit);
             TickMapArm::Db(hit.0, bitmaps, hit.1)
@@ -309,6 +316,7 @@ pub fn assemble_v3_tick_map(
         },
     )?;
     if let Some(seed) = db_arm {
+        reconcile_db_seed_v3(&seed, address, tick_spacing, block, chain)?;
         return Ok(Some((seed.ticks, seed.coverage)));
     }
     // 2. Chain arm — RPC trait object, no BotState guard. `chain=None`
@@ -374,6 +382,7 @@ pub fn assemble_v4_tick_map(
         },
     )?;
     if let Some(seed) = db_arm {
+        reconcile_db_seed_v4(&seed, state_view, pool_id, tick_spacing, block, chain)?;
         return Ok(Some((seed.ticks, seed.coverage)));
     }
     // 2. Chain arm.
@@ -396,6 +405,65 @@ pub fn assemble_v4_tick_map(
     })
 }
 
+/// Reconcile a V3 Db seed against the chain word bitmaps read at `block`.
+///
+/// A `Tracked`, non-empty seed without a chain transport is refused
+/// ([`TickMapAssemblyError::ChainUnavailable`]) rather than registered
+/// unverified; `Sparse`/empty seeds carry no complete-map claim to reconcile.
+fn reconcile_db_seed_v3(
+    seed: &TickMapSeed,
+    address: Address,
+    tick_spacing: i32,
+    block: u64,
+    chain: Option<&dyn TickBootstrapRpc>,
+) -> Result<(), TickMapAssemblyError> {
+    if seed.coverage != PoolTickCoverage::Tracked || seed.ticks.is_empty() {
+        return Ok(());
+    }
+    let Some(chain) = chain else {
+        return Err(TickMapAssemblyError::ChainUnavailable);
+    };
+    let address_str = address.to_checksum(None);
+    reconcile_tracked_seed_with_chain(seed, tick_spacing, |word| {
+        let representative = word_representative_tick(word, tick_spacing)?;
+        chain
+            .bootstrap_v3_tick_word(&address_str, representative, tick_spacing, block)
+            .map_err(TickMapAssemblyError::Chain)
+            .map(|hit| hit.map_or(U256::ZERO, |word| word.bitmap))
+    })
+}
+
+/// V4 twin of [`reconcile_db_seed_v3`], keyed by the `StateView` contract.
+fn reconcile_db_seed_v4(
+    seed: &TickMapSeed,
+    state_view: Address,
+    pool_id: V4PoolId,
+    tick_spacing: i32,
+    block: u64,
+    chain: Option<&dyn TickBootstrapRpc>,
+) -> Result<(), TickMapAssemblyError> {
+    if seed.coverage != PoolTickCoverage::Tracked || seed.ticks.is_empty() {
+        return Ok(());
+    }
+    let Some(chain) = chain else {
+        return Err(TickMapAssemblyError::ChainUnavailable);
+    };
+    let state_view_str = state_view.to_checksum(None);
+    reconcile_tracked_seed_with_chain(seed, tick_spacing, |word| {
+        let representative = word_representative_tick(word, tick_spacing)?;
+        chain
+            .bootstrap_v4_tick_word(
+                &state_view_str,
+                &pool_id,
+                representative,
+                tick_spacing,
+                block,
+            )
+            .map_err(TickMapAssemblyError::Chain)
+            .map(|hit| hit.map_or(U256::ZERO, |word| word.bitmap))
+    })
+}
+
 /// Convert a Db `LiquidityMap` into the helper's hit/miss shape.
 ///
 /// Mirrors Python's `if not init_maps or not liq_positions: return ..., False`
@@ -409,47 +477,41 @@ pub fn assemble_v4_tick_map(
 /// legal stamp and is never used as a sentinel.
 pub(crate) fn liquidity_map_to_tick_info(
     map: LiquidityMap,
-    tick_spacing: i32,
     block: u64,
-) -> TickMapAssemblyResult {
+) -> Option<(HashMap<i32, TickInfo>, PoolTickCoverage)> {
     if map.tick_bitmap.is_empty() || map.tick_data.is_empty() {
-        return Ok(None);
+        return None;
     }
-    // Tracked intake reconciliation — a self-contradictory
-    // snapshot is rejected before registration, not discovered mid-solve.
-    verify_tracked_tick_map(&map.tick_bitmap, &map.tick_data, tick_spacing)?;
     let ticks = convert_liquidity_at_tick(map.tick_data, block);
-    Ok(Some((ticks, PoolTickCoverage::Tracked)))
+    Some((ticks, PoolTickCoverage::Tracked))
 }
 
-/// Tracked intake reconciliation : the on-chain
-/// invariant, checked per word the snapshot supplied — a bit is set iff a
-/// tick row with `liquidity_gross > 0` exists at that position. The row side
-/// checks every gross>0 row whose word the snapshot carries (the bit must be
-/// set); the bitmap side checks every set bit of a supplied word (a gross>0
-/// row must exist at that position's grid tick). Rows in words the snapshot
-/// did NOT supply are skipped (an incremental snapshot may carry a word
-/// subset). A fully-zero word is legal (a checked-empty word — T1) so long
-/// as no gross>0 row sits in it.
+/// Chain-truth intake reconciliation: the snapshot's tick rows are compared
+/// against the word bitmaps READ FROM CHAIN at the snapshot block. A row with
+/// `liquidity_gross > 0` must have its bit set in the chain word that holds
+/// it (row side); every set bit of a chain word must have a gross>0 row at
+/// that position's grid tick (bitmap side). A row whose word was not fetched
+/// is skipped. `chain_words` carries one entry per word the snapshot's rows
+/// occupy; a chain word absent from the map was not fetched.
 #[expect(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 pub(crate) fn verify_tracked_tick_map(
-    tick_bitmap: &HashMap<i64, BitmapAtWord>,
-    tick_data: &HashMap<i32, LiquidityAtTick>,
+    chain_words: &HashMap<i64, U256>,
+    tick_data: &HashMap<i32, TickInfo>,
     tick_spacing: i32,
 ) -> Result<(), TickMapAssemblyError> {
     let spacing = tick_spacing.max(1);
-    // Row side: a gross>0 row in a supplied word must have its bit set.
+    // Row side: a gross>0 snapshot row must have its bit set in the CHAIN word.
     for (&tick, row) in tick_data {
         if row.liquidity_gross.is_zero() {
             continue;
         }
         let compressed = tick.div_euclid(spacing);
         let word = i64::from(compressed >> 8);
-        let Some(entry) = tick_bitmap.get(&word) else {
+        let Some(bitmap) = chain_words.get(&word) else {
             continue;
         };
         let bit = compressed.rem_euclid(256) as usize;
-        if !entry.bitmap.bit(bit) {
+        if !bitmap.bit(bit) {
             return Err(TickMapAssemblyError::InconsistentTickMap {
                 word,
                 bit: bit as u32,
@@ -459,11 +521,11 @@ pub(crate) fn verify_tracked_tick_map(
             });
         }
     }
-    // Bitmap side: every set bit of a supplied word needs a gross>0 row at
-    // that position's grid tick.
-    for (&word, entry) in tick_bitmap {
+    // Bitmap side: every set bit of a CHAIN word needs a gross>0 snapshot row
+    // at that position's grid tick.
+    for (&word, bitmap) in chain_words {
         for bit in 0..256usize {
-            if !entry.bitmap.bit(bit) {
+            if !bitmap.bit(bit) {
                 continue;
             }
             let compressed = word * 256 + bit as i64; // bit < 256 (covered by fn-level expect)
@@ -491,6 +553,88 @@ pub(crate) fn verify_tracked_tick_map(
         }
     }
     Ok(())
+}
+
+/// The words the snapshot's rows occupy, ascending and de-duplicated.
+fn row_words(rows: &HashMap<i32, TickInfo>, tick_spacing: i32) -> Vec<i64> {
+    let spacing = tick_spacing.max(1);
+    let mut words: Vec<i64> = rows
+        .keys()
+        .map(|&tick| i64::from(tick.div_euclid(spacing) >> 8))
+        .collect();
+    words.sort_unstable();
+    words.dedup();
+    words
+}
+
+/// Fetch the CHAIN word bitmap for every word the snapshot's rows occupy,
+/// through `fetch`. The transport drives `fetch`; its errors propagate.
+fn fetch_chain_words_for_rows(
+    rows: &HashMap<i32, TickInfo>,
+    tick_spacing: i32,
+    mut fetch: impl FnMut(i64) -> Result<U256, TickMapAssemblyError>,
+) -> Result<HashMap<i64, U256>, TickMapAssemblyError> {
+    let words = row_words(rows, tick_spacing);
+    let mut chain_words = HashMap::with_capacity(words.len());
+    for word in words {
+        chain_words.insert(word, fetch(word)?);
+    }
+    Ok(chain_words)
+}
+
+/// Reconcile a `Tracked` seed's rows against the chain words obtained through
+/// `fetch`. Non-`Tracked` seeds are indeterminate by construction and never
+/// checked; an empty `Tracked` seed has no word to reconcile.
+fn reconcile_tracked_seed_with_chain(
+    seed: &TickMapSeed,
+    tick_spacing: i32,
+    fetch: impl FnMut(i64) -> Result<U256, TickMapAssemblyError>,
+) -> Result<(), TickMapAssemblyError> {
+    if seed.coverage != PoolTickCoverage::Tracked || seed.ticks.is_empty() {
+        return Ok(());
+    }
+    let chain_words = fetch_chain_words_for_rows(&seed.ticks, tick_spacing, fetch)?;
+    verify_tracked_tick_map(&chain_words, &seed.ticks, tick_spacing)
+}
+
+/// The word-key set a `Tracked` seed's rows occupy (ascending, de-duplicated).
+/// Exposed for registration gates that fetch each word through their own
+/// transport before reconciling.
+#[must_use]
+pub fn seed_row_words(seed: &TickMapSeed, tick_spacing: i32) -> Vec<i64> {
+    row_words(&seed.ticks, tick_spacing)
+}
+
+/// Chain-truth reconciliation over caller-fetched chain words (the snapshot's
+/// rows must agree with the word bitmaps read from chain). Public entry for
+/// registration gates that own their transport.
+///
+/// # Errors
+///
+/// [`TickMapAssemblyError::InconsistentTickMap`] on a row/word disagreement.
+pub fn reconcile_tracked_rows(
+    chain_words: &HashMap<i64, U256>,
+    rows: &HashMap<i32, TickInfo>,
+    tick_spacing: i32,
+) -> Result<(), TickMapAssemblyError> {
+    verify_tracked_tick_map(chain_words, rows, tick_spacing)
+}
+
+/// A tick inside `word`, used to key a single-word chain fetch by position.
+/// Valid V3/V4 ticks keep the product within `i32`, so the failure arm is
+/// defensive.
+fn word_representative_tick(word: i64, tick_spacing: i32) -> Result<i32, TickMapAssemblyError> {
+    let spacing = i64::from(tick_spacing.max(1));
+    word.checked_mul(256)
+        .and_then(|v| v.checked_mul(spacing))
+        .and_then(|v| i32::try_from(v).ok())
+        .ok_or(TickMapAssemblyError::InconsistentTickMap {
+            word,
+            bit: 0,
+            tick: i32::MIN,
+            bitmap_bit: true,
+            row_gross_positive: false,
+        })
 }
 
 /// Convert `HashMap<i32, LiquidityAtTick>` → `HashMap<i32, TickInfo>`.

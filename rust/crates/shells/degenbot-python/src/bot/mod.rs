@@ -2952,6 +2952,64 @@ mod tests {
         hex_encode(&buf)
     }
 
+    /// Build an `io`-bound offline V3 chain transport: `tickBitmap(0)` answers
+    /// `bitmap`, and each set bit's `ticks(tick)` call answers the matching
+    /// `rows` entry. Lets a shell test drive the chain-truth intake gate.
+    fn offline_v3_tick_word_io<'py>(
+        py: pyo3::Python<'py>,
+        pool: alloy::primitives::Address,
+        bitmap: alloy::primitives::U256,
+        rows: &[(i32, u128, i128)],
+    ) -> pyo3::Bound<'py, crate::bot::py_bot_io::PyBotIo> {
+        use degenbot_rpc::offline::OfflineProvider;
+        use serde_json::json;
+        use std::sync::Arc;
+
+        let addr_lower = pool.to_checksum(None).to_lowercase();
+        let mut calls: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        let bitmap_calldata = degenbot_rpc::abi::encode_tick_bitmap(0);
+        calls.insert(
+            format!("{}:0x{}", addr_lower, hex_encode(&bitmap_calldata)),
+            Some(word_u256(&bitmap)),
+        );
+        for &(tick, gross, net) in rows {
+            let td_calldata = degenbot_rpc::abi::encode_tick_data(tick);
+            let mut response = String::new();
+            response.push_str(&word_u128(gross));
+            response.push_str(&word_i128(net));
+            calls.insert(
+                format!("{}:0x{}", addr_lower, hex_encode(&td_calldata)),
+                Some(response),
+            );
+        }
+
+        // The recorded block must be the block the intake gate calls at
+        // (`assemble_*`'s `block` arg = 0 in these tests).
+        let json_str = json!({
+            "chain_id": 1u64,
+            "block_number": 0u64,
+            "timestamp": 0u64,
+            "calls": calls,
+            "code": {},
+        })
+        .to_string();
+        let alloy = OfflineProvider::from_json_str(&json_str)
+            .expect("valid offline JSON")
+            .as_alloy_provider();
+        let pyalloy = pyo3::Bound::new(
+            py,
+            crate::rpc::provider::PyAlloyProvider {
+                provider: Arc::new(alloy),
+                max_blocks_per_request: 5000,
+            },
+        )
+        .expect("PyAlloyProvider construction");
+        let provider_any: pyo3::Py<pyo3::PyAny> = pyalloy.into_any().unbind();
+        let io_struct = crate::bot::py_bot_io::PyBotIo::new(py, provider_any, None);
+        pyo3::Bound::new(py, io_struct).expect("wrap PyBotIo as Bound")
+    }
+
     /// The parity fixture DB (shared with `degenbot-bot`'s
     /// `load_snapshot_from_db_populates_store_and_seed_block` test).
     fn parity_fixture() -> Option<std::path::PathBuf> {
@@ -3204,7 +3262,16 @@ mod tests {
                 .load_snapshot_from_db(py, &temp_path.to_string_lossy(), 1)
                 .expect("snapshot load must succeed against the seeded temp DB");
 
-            // 3. assemble against the seeded pool — expect a hit.
+            // 3. assemble against the seeded pool — expect a hit. The Db arm's
+            //    non-empty Tracked map reconciles against CHAIN truth (word 0
+            //    bit 1 = the seeded row at tick 10), so an `io` is required;
+            //    without one the intake gate refuses (never a silent pass).
+            let io_bound = offline_v3_tick_word_io(
+                py,
+                Address::from([0xaa; 20]),
+                U256::from(1u64) << 1,
+                &[(10, 1_000_000, 500)],
+            );
             let (ticks, coverage) = py_bot
                 .assemble_v3_tick_map(
                     py,
@@ -3212,7 +3279,7 @@ mod tests {
                     0,
                     10,
                     0,
-                    None,
+                    Some(io_bound),
                 )
                 .expect("assemble hit must not error")
                 .expect("store hit against the seeded V3 pool must return Some");
@@ -3232,13 +3299,16 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
     }
 
-    /// T3: a Tracked snapshot whose bitmap and tick
-    /// rows disagree (bit 2 set, row only at tick 10 / bit 1) must be
-    /// REJECTED at intake with a typed error (Python `ValueError`), not
-    /// registered. Sparse / Chain-arm data is indeterminate and never
-    /// reconciled.
+    /// T3, rewired to CHAIN truth: a Tracked snapshot's rows are reconciled
+    /// against the word bitmaps read from chain. With no chain transport the
+    /// gate refuses with a typed `RuntimeError` (never a silent pass); a chain
+    /// transport that disagrees refuses with a typed `ValueError`; and a chain
+    /// word that agrees with the rows is admitted even when the snapshot's own
+    /// bitmap contradicts its rows — the snapshot-internal bit<->row tautology
+    /// is retired (schema/decode validation owns it now).
+    #[expect(clippy::too_many_lines)]
     #[test]
-    fn assemble_v3_tick_map_inconsistent_tracked_snapshot_rejected() {
+    fn assemble_v3_tick_map_chain_truth_gate() {
         use alloy::primitives::{address, aliases::U128, Address, I256, U256};
         use degenbot_db::discovery::V3PoolRowInput;
         use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
@@ -3308,28 +3378,80 @@ mod tests {
             py_bot
                 .load_snapshot_from_db(py, &temp_path.to_string_lossy(), 1)
                 .expect("snapshot load must succeed against the seeded temp DB");
-            let result = py_bot.assemble_v3_tick_map(
-                py,
-                "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
-                0,
-                10,
-                0,
-                None,
+            // (1) No chain transport wired → typed RuntimeError, never a
+            //     silent pass and never a ValueError claiming a snapshot
+            //     contradiction.
+            let err = py_bot
+                .assemble_v3_tick_map(
+                    py,
+                    "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+                    0,
+                    10,
+                    0,
+                    None,
+                )
+                .expect_err("a Tracked snapshot with no chain transport must be refused");
+            assert!(
+                err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py),
+                "a missing chain transport surfaces as a RuntimeError: {err}"
             );
-            let err =
-                result.expect_err("an inconsistent Tracked snapshot must be rejected at intake");
+            assert!(
+                err.to_string().contains("chain transport"),
+                "the refusal must name the missing chain transport: {err}"
+            );
+
+            // (2) A chain word that disagrees (empty word 0 vs the gross>0 row
+            //     at tick 10) → typed ValueError naming the conflicting tick.
+            let disagreeing =
+                offline_v3_tick_word_io(py, Address::from([0xaa; 20]), U256::ZERO, &[]);
+            let err = py_bot
+                .assemble_v3_tick_map(
+                    py,
+                    "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+                    0,
+                    10,
+                    0,
+                    Some(disagreeing),
+                )
+                .expect_err("a chain/snapshot disagreement must be refused at intake");
             assert!(
                 err.is_instance_of::<pyo3::exceptions::PyValueError>(py),
-                "the intake rejection surfaces as a ValueError"
+                "the chain-truth rejection surfaces as a ValueError: {err}"
             );
             let message = err.to_string();
-            // Either conflicting position may be reported first (bitmap-side:
-            // tick 10 has a bit without a row; row-side: tick 20 has a row
-            // without a bit) — require a named conflict, not a specific side.
             assert!(
-                message.contains("(tick 10)") || message.contains("(tick 20)"),
-                "the error must name the conflicting tick: {message}"
+                message.contains("Tracked tick map inconsistent at intake"),
+                "the refusal must carry the intake message: {message}"
             );
+            assert!(
+                message.contains("(tick 10)"),
+                "the row without a chain bit must be named: {message}"
+            );
+
+            // (3) A chain word that agrees with the rows (bit 1 = tick 10) is
+            //     admitted even though the snapshot's own bitmap says bit 2 —
+            //     the retired tautology no longer rejects it.
+            let agreeing = offline_v3_tick_word_io(
+                py,
+                Address::from([0xaa; 20]),
+                U256::from(1u64) << 1,
+                &[(10, 1_000_000, 500)],
+            );
+            let (tick_data, coverage) = py_bot
+                .assemble_v3_tick_map(
+                    py,
+                    "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+                    0,
+                    10,
+                    0,
+                    Some(agreeing),
+                )
+                .expect("a chain-agreeing snapshot must not error")
+                .expect("a chain-agreeing Tracked snapshot must return Some");
+            assert_eq!(coverage, "tracked");
+            assert_eq!(tick_data.len(), 1);
+            let row = tick_data.get_item(10).expect("get_item must not error");
+            assert!(row.is_some(), "the row at tick 10 survives admission");
         });
         let _ = std::fs::remove_file(&temp_path);
     }

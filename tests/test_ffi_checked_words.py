@@ -38,7 +38,8 @@ def _register_sparse_v3(bot: Bot, *, tick_data_fetcher=None) -> int:
 def _snapshot(pool: object) -> dict[int, tuple[int, int]]:
     """Normalize a `tick_bitmap_snapshot()` dict to plain python ints."""
     return {
-        int(word): (int(row[0]), int(row[1])) for word, row in pool.concentrated_liquidity().tick_bitmap.items()
+        int(word): (int(row[0]), int(row[1]))
+        for word, row in pool.concentrated_liquidity().tick_bitmap.items()
     }
 
 
@@ -146,14 +147,15 @@ def test_v4_sparse_checked_zero_word_survives_in_snapshot() -> None:
     assert snap.get(1) == (0, 100), f"V4 checked-empty word must survive: {snap}"
 
 
-# ── T3 — Tracked intake consistency rejection ────────────────────────────
-# A Db snapshot whose bitmap and tick rows contradict each other must be
-# rejected AT INTAKE with a ValueError that names the conflict — never
-# registered as Tracked (Q3': Tracked pools carry no bitmap in memory, so
-# there is no later cross-check; intake is the only gate).
+# ── T3 — Tracked intake gate (chain truth) ────────────────────────────
+# The snapshot-internal bit<->row tautology is RETIRED as an intake gate
+# (schema/decode validation owns it now): a Tracked snapshot's rows are now
+# reconciled against the word bitmaps READ FROM CHAIN at the snapshot block.
+# With no chain transport wired the gate refuses with a typed RuntimeError —
+# never a silent pass, and never a ValueError claiming a snapshot conflict.
 
 
-def test_assemble_v3_inconsistent_tracked_snapshot_rejected_at_intake(tmp_path):
+def test_assemble_v3_tracked_snapshot_without_chain_transport_refused(tmp_path):
     import sqlite3
 
     import pytest
@@ -206,17 +208,15 @@ def test_assemble_v3_inconsistent_tracked_snapshot_rejected_at_intake(tmp_path):
     bot = Bot(1)
     bot.load_snapshot_from_db(db_path, 1)
 
-    with pytest.raises(ValueError, match=r"Tracked tick map inconsistent at intake") as excinfo:
+    # The snapshot's bitmap (bit 1) contradicts its own row (tick 20) — that is
+    # NO LONGER an intake gate. What refuses is the MISSING CHAIN TRANSPORT: a
+    # typed RuntimeError, never a silent pass and never a ValueError naming a
+    # snapshot conflict.
+    with pytest.raises(RuntimeError, match=r"chain transport"):
         bot.assemble_v3_tick_map(pool_addr, tick_spacing=10)
-    message = str(excinfo.value)
-    # The error must name the conflicting position and show both sides of
-    # the contradiction (the side reported may vary by HashMap order).
-    assert "word 0" in message
-    assert "(tick 10)" in message or "(tick 20)" in message
-    assert "bitmap_bit" in message
-    assert "row_gross_positive" in message
 
-    # A consistent snapshot (bit 2 ↔ row tick 20) is accepted as Tracked.
+    # A snapshot whose bitmap and rows agree cannot be reconciled without chain
+    # truth either: the gate still refuses, loudly and typed.
     # Fresh Bot: the first bot's held read transaction predates the UPDATE
     # (WAL snapshot isolation) and would keep seeing the old bitmap.
     conn = sqlite3.connect(db_path)
@@ -227,11 +227,8 @@ def test_assemble_v3_inconsistent_tracked_snapshot_rejected_at_intake(tmp_path):
         conn.close()
     bot2 = Bot(1)
     bot2.load_snapshot_from_db(db_path, 1)
-    result = bot2.assemble_v3_tick_map(pool_addr, tick_spacing=10)
-    assert result is not None
-    tick_data, coverage = result
-    assert coverage == "tracked"
-    assert set(tick_data) == {20}
+    with pytest.raises(RuntimeError, match=r"chain transport"):
+        bot2.assemble_v3_tick_map(pool_addr, tick_spacing=10)
 
 
 if __name__ == "__main__":

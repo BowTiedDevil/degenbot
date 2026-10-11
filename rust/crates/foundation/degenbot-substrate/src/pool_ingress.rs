@@ -13,9 +13,9 @@
 //!
 //! This facade composes the existing internals behind one `Db → Chain`
 //! interface: the Db arm is `TickMapDb::fetch_liquidity_map` converted by
-//! [`tick_assembly::liquidity_map_to_tick_info`] (with its Tracked intake
-//! reconciliation), the Chain arm is `tick_assembly`'s sparse single-word
-//! bootstrap. Callers never read tick words.
+//! [`tick_assembly::liquidity_map_to_tick_info`], the Chain arm is
+//! `tick_assembly`'s sparse single-word bootstrap. Callers never read tick
+//! words; the chain-truth gate is the policy-sampled on-chain verifier.
 //!
 //! # Layout honesty
 //!
@@ -217,7 +217,7 @@ pub enum IngressDecline {
     /// The Chain-arm tick-map bootstrap failed (transport/revert or a
     /// malformed return).
     TickMapFetch(String),
-    /// The Db arm failed (a read error or a self-contradictory Tracked map).
+    /// The Db arm failed (a read error, or an intake reconciliation refusal).
     Db(String),
     /// The workspace refused the fetched state (spec violation,
     /// `AlreadyRegistered`, ...).
@@ -261,7 +261,8 @@ impl From<TickMapAssemblyError> for IngressDecline {
         match e {
             TickMapAssemblyError::Db(inner) => Self::Db(inner.to_string()),
             TickMapAssemblyError::Chain(inner) => Self::TickMapFetch(inner.to_string()),
-            other @ TickMapAssemblyError::InconsistentTickMap { .. } => Self::Db(other.to_string()),
+            other @ (TickMapAssemblyError::InconsistentTickMap { .. }
+            | TickMapAssemblyError::ChainUnavailable) => Self::Db(other.to_string()),
         }
     }
 }
@@ -381,11 +382,11 @@ impl PoolIngress {
 
     /// Set the chain-sample verification policy. Setting [`VerifyLevel::Off`]
     /// emits one loud journal entry: the operator has declared confidence, and
-    /// the unconditional integrity checks still run.
+    /// the two-stamp clock check still runs.
     pub fn set_verify_level(&mut self, level: VerifyLevel) {
         if level == VerifyLevel::Off {
             tracing::warn!(
-                "pool ingress verify_level=off: chain-sample verification of staged V3 tick maps is disabled by operator declaration; self-contradictory Tracked maps and the two-stamp clock still abort"
+                "pool ingress verify_level=off: chain-sample verification of staged V3 tick maps is disabled by operator declaration; the two-stamp clock still aborts (snapshot-internal consistency is schema/decode validation, not an intake gate)"
             );
         }
         self.verify_level = level;
@@ -427,8 +428,8 @@ impl PoolIngress {
     ///
     /// # Errors
     ///
-    /// [`IngressDecline::Db`] on a Db read failure or a self-contradictory
-    /// Tracked map; [`IngressDecline::TickMapFetch`] on a Chain-arm failure.
+    /// [`IngressDecline::Db`] on a Db read failure or an intake reconciliation
+    /// refusal; [`IngressDecline::TickMapFetch`] on a Chain-arm failure.
     fn stage_v3_tick_map(
         &self,
         address: Address,
@@ -1547,7 +1548,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn off_never_proceeds_past_a_self_contradictory_tracked_map() {
+    async fn internal_inconsistency_is_no_longer_an_intake_gate() {
+        // The snapshot-internal bit<->row tautology is retired: an internally
+        // inconsistent Tracked snapshot is no longer rejected at intake (its
+        // consistency is schema/decode validation's job). The chain-truth gate
+        // is the on-chain verifier ([`VerifyLevel`] sample), not this path.
         let fetches = Arc::new(AtomicUsize::new(0));
         let mut maps = HashMap::new();
         maps.insert(POOL, contradictory_map());
@@ -1559,11 +1564,10 @@ mod tests {
         let mut ingress = PoolIngress::new(Some(arm(db)), None);
         ingress.set_verify_level(VerifyLevel::Off);
         let mut ws = a_new_workspace();
-        let err = ingress
+        ingress
             .admit_v3_verified(&mut ws, params(POOL), 100)
             .await
-            .expect_err("integrity abort is unconditional");
-        assert_eq!(err.stage(), "admit-v3-db");
+            .expect("an internally inconsistent snapshot stages without a chain-truth refusal");
     }
 
     #[tokio::test]
