@@ -3,12 +3,20 @@
 # -- the FFI module init installs this file's value as the process-wide holder
 # config, first-wins, so nothing later can change it.
 #
-# Exactly one facet is activated: the mevblocker backrun arm with its default
-# searcher channel. The posture-driven boot gate refuses an empty fleet, so
-# boot-path tests need a deterministic non-empty fleet; settlement stays
-# inactive so the suite exercises the backrun-only boot. Apart from the
-# [session] chain id pinned below, every other schema key is absent and keeps
-# its default (the posture CI already runs with).
+# Exactly one facet is activated: the mevblocker backrun arm with a HERMETIC
+# endpoint. The posture-driven boot gate refuses an empty fleet, so boot-path
+# tests need a deterministic non-empty fleet; settlement stays inactive so the
+# suite exercises the backrun-only boot. The endpoint is a dead loopback
+# (reserved discard port) rather than a live searcher relay: the ambient fleet
+# boot spawns the facet's feed pump in EVERY process that constructs an engine,
+# and a live URL here dialled the real internet from the default (offline)
+# suite. The schema only validates the ws:// scheme and the readiness view
+# settles on a non-None value, so reachability is never asserted. An operator
+# who wants a live lane in an on-demand run re-points it via the env override
+# DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ENDPOINTS (declared in the typed schema;
+# also surfaced in .devcontainer/devcontainer.json). Apart from the [session]
+# chain id pinned below, every other schema key is absent and keeps its default
+# (the posture CI already runs with).
 #
 # The chain id is pinned here rather than left to DEGENBOT_DEFAULT_CHAIN_ID:
 # a developer's devcontainer exports that env name (one machine resolves, CI
@@ -21,7 +29,7 @@
 
 [strategy.mevblocker_backrun]
 active = true
-endpoints = "wss://searchers.mevblocker.io"
+endpoints = "ws://127.0.0.1:9"
 
 [session]
 chain_id = 1

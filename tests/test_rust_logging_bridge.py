@@ -44,6 +44,10 @@ RUST_BRIDGE_LOGGER_NAMES = (
     # and the connector-index boot line dropped here until the crate root was
     # configured.
     "degenbot_strategy",
+    # The third-party alloy umbrella: its WARN/ERROR records (pubsub reconnect
+    # attempts, transport failures) otherwise escape via stdlib ``lastResort``
+    # as raw unformatted stderr lines that pytest cannot capture or attribute.
+    "alloy",
 )
 
 #: The same contract is exported by ``degenbot.logging`` so other code (e.g. the
@@ -285,3 +289,65 @@ def test_rust_info_record_still_reaches_handler_via_queue() -> None:
         raise AssertionError(msg)
     finally:
         listener.handlers = tuple(h for h in listener.handlers if h is not capture)
+
+
+def test_stdout_handler_resolves_stream_at_emit_time() -> None:
+    """The console handler must late-bind ``sys.stdout``, never pin it.
+
+    ``degenbot.logging`` is imported while pytest's global capture owns
+    ``sys.stdout``, and pytest closes that capture object at session teardown.
+    A handler that pins the import-time stream then sprays
+    ``--- Logging error ---`` (``ValueError: I/O operation on closed file``)
+    for every record flushed after teardown — swallowed by
+    ``Handler.handleError``, so the suite stays green while logging is broken.
+    Late binding lands each record in the CURRENT stdout: the active capture
+    during the session, the real stdout after it.
+    """
+    import io
+    import sys
+
+    import degenbot.logging as dl
+
+    handler = dl._STDOUT_HANDLER
+    probe = io.StringIO()
+    original = sys.stdout
+    sys.stdout = probe
+    try:
+        assert handler.stream is probe, (
+            "_STDOUT_HANDLER must resolve the CURRENT sys.stdout at emit time, "
+            "not pin the import-time object"
+        )
+        record = logging.LogRecord(
+            "degenbot.test", logging.INFO, __file__, 1, "late-bound emit", (), None
+        )
+        handler.emit(record)
+        assert "late-bound emit" in probe.getvalue(), (
+            "the record must land in the stream that is current at emit time"
+        )
+    finally:
+        sys.stdout = original
+
+
+def test_stdout_handler_never_targets_a_closed_stream() -> None:
+    """A closed active stdout (post-teardown race) falls back, never raises.
+
+    Between the handler resolving the stream and the listener's write, pytest
+    can close the active capture; the property must then return an OPEN stream
+    (the process original) instead of the closed object.
+    """
+    import io
+    import sys
+
+    import degenbot.logging as dl
+
+    handler = dl._STDOUT_HANDLER
+    closed = io.StringIO()
+    closed.close()
+    original = sys.stdout
+    sys.stdout = closed
+    try:
+        stream = handler.stream
+        assert stream is not closed, "_STDOUT_HANDLER must not return a closed stream to emit()"
+        assert not stream.closed
+    finally:
+        sys.stdout = original

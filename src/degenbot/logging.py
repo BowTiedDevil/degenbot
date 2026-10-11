@@ -36,11 +36,16 @@ a later caller can install another.
 """
 
 import atexit
+import io
 import logging
 import logging.handlers
 import os
 import queue
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import TextIO
 
 """
 Create a global logger instance.
@@ -48,6 +53,7 @@ Create a global logger instance.
 
 logger = logging.getLogger(__name__)
 logger.propagate = False
+
 
 # The real stdout writer — owned SOLELY by the ``QueueListener`` thread below
 # (never attached directly to any logger). When stdout is piped (e.g. the
@@ -66,7 +72,48 @@ logger.propagate = False
 # slow ``os.write`` blocks only the listener thread whose sole job is
 # writing). See ``tests/test_rust_logging_bridge.py`` (the
 # ``QueueHandler-not-StreamHandler`` + listener-drains guards).
-_STDOUT_HANDLER = logging.StreamHandler(sys.stdout)
+class _LiveStdoutStreamHandler(logging.StreamHandler):
+    """The console writer — resolves ``sys.stdout`` at emit time, never pins it.
+
+    A pinned stream is a pytest-teardown hazard: this module is imported while
+    pytest's global capture owns ``sys.stdout`` (an ``EncodedFile`` over a temp
+    file), and pytest closes that object when the capture tears down (each
+    xdist worker's session end). Any record the ``QueueListener`` flushes after
+    that dies in ``StreamHandler.emit`` with ``ValueError: I/O operation on
+    closed file`` — ``Handler.handleError`` prints the ``--- Logging error ---``
+    block straight to the real stderr and swallows it, so the suite stays green
+    while the console pipeline is broken (observed at the tail of ``just
+    test-python``). Resolving at emit time lands each record in whatever stream
+    is CURRENT: pytest's open capture during the session (visible in a failing
+    test's captured output), the real stdout after teardown.
+
+    The single-writer/GIL rationale of the queue pair below is unchanged: this
+    remains the one stream writer, owned by the listener thread.
+    """
+
+    def __init__(self) -> None:
+        # ``StreamHandler.__init__`` assigns ``self.stream``, which a
+        # property-only subclass cannot accept — ``logging._StderrHandler`` is
+        # the stdlib precedent for exactly this shape.
+        logging.Handler.__init__(self)
+
+    @property
+    def stream(self) -> "TextIO":
+        current = sys.stdout
+        if current is not None and not current.closed:
+            return current
+        # The active stdout is closed (post-teardown) or None (pythonw /
+        # interpreter shutdown): fall back to the process original so the
+        # record stays visible rather than erroring. When even that is gone,
+        # hand back a throwaway sink — a dropped tail record beats a
+        # ``--- Logging error ---`` spray from a dying interpreter.
+        for candidate in (sys.__stdout__, sys.stderr):
+            if candidate is not None and not candidate.closed:
+                return candidate
+        return io.StringIO()
+
+
+_STDOUT_HANDLER = _LiveStdoutStreamHandler()
 
 #: The closed target domains (ADR-043 §3). A Rust record's logger name is its
 #: target with `::` dotted (`degenbot::solver` → `degenbot.solver`), so the
@@ -177,6 +224,16 @@ RUST_BRIDGE_LOGGER_NAMES = (
     # and the connector-index boot line dropped at this gate before the
     # crate root was configured here.
     "degenbot_strategy",
+    # The third-party alloy umbrella (alloy_pubsub::service reconnect WARNs,
+    # alloy-provider transport ERRORs). The console EnvFilter already caps
+    # alloy at WARN (its INFO/DEBUG are throttled — see the Rust
+    # logging_parity pins), so only genuine failures cross here. Without this
+    # root the records fall through to stdlib ``lastResort`` and print RAW on
+    # stderr with no format and no capture safety — the vector behind the
+    # raw ``Reconnection attempt …`` lines at the tail of a pytest run whose
+    # leaked pubsub task outlived the session. Queueing them gives the same
+    # single-writer capture-safe path every other bridged record takes.
+    "alloy",
 )
 
 #: The Python package-tree root whose descendants include Python-side modules
