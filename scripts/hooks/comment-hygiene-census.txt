@@ -1,4 +1,5 @@
 # Comment-hygiene census — the bare-ID ratchet (scripts/hooks/comment-hygiene.sh)
+# Index: docs/gates.md §1 "Comment hygiene".
 #
 # The anchored detector (ergo/epic/task/slice + RED/GREEN narration) cannot see
 # bare six-char tracker tokens with no anchor word. Detector 2 of the hook

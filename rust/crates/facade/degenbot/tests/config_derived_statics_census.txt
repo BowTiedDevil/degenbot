@@ -1,5 +1,6 @@
 # Config-derived-static census — the ratchet for process-once statics whose
 # initialization path reads the config holder.
+# Index: docs/gates.md §2 "Config-derived statics".
 #
 # Holder: rust/crates/foundation/degenbot-config/src/holder.rs
 #   (`install`/`config`/`config_arc`; the `reinstall_for_tests` seam).

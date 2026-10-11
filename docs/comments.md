@@ -59,7 +59,11 @@ existing conventions.
 
 ## Mechanical check
 
-Optional grep gate for the worst offender (tracker IDs):
+The enforced gate is `just lint-comment-hygiene` — Detector 1 (anchored
+citations + gate narration) plus Detector 2 (the bare-token census ratchet).
+See [gate ratchets](gates.md) for the census, the waiver file, and the entry
+recipe. The optional grep below is a quick manual check for the worst
+offender (tracker IDs):
 
 ```bash
 git grep -nE '\berg(o)?[ :]*[A-Z0-9]{6}\b|-- .*\b[A-Z0-9]{6}\b' -- src rust/crates tests
