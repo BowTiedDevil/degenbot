@@ -162,8 +162,8 @@ impl StrategyReadinessView {
 /// Published at module init from the SAME load the typed-config holder
 /// received, so the typed getters above and the resolvers below cannot
 /// disagree about what this process configured.
-static LOADED: ::std::sync::OnceLock<::degenbot_config::LoadedConfig> =
-    ::std::sync::OnceLock::new();
+static LOADED: ::std::sync::RwLock<Option<&'static ::degenbot_config::LoadedConfig>> =
+    ::std::sync::RwLock::new(None);
 
 /// The layers [`publish_loaded`] recorded.
 ///
@@ -172,7 +172,26 @@ static LOADED: ::std::sync::OnceLock<::degenbot_config::LoadedConfig> =
 /// every value reports the file layer — the bottom of the cascade — rather
 /// than inventing a winner.
 pub(crate) fn loaded() -> &'static ::degenbot_config::LoadedConfig {
-    LOADED.get_or_init(floor_loaded)
+    if let Some(loaded) = read_layers() {
+        return loaded;
+    }
+    let mut slot = LOADED
+        .write()
+        .unwrap_or_else(::std::sync::PoisonError::into_inner);
+    if let Some(loaded) = *slot {
+        return loaded;
+    }
+    let leaked: &'static ::degenbot_config::LoadedConfig = Box::leak(Box::new(floor_loaded()));
+    *slot = Some(leaked);
+    leaked
+}
+
+/// Read the published layers, ignoring a poisoned writer.
+fn read_layers() -> Option<&'static ::degenbot_config::LoadedConfig> {
+    let guard = LOADED
+        .read()
+        .unwrap_or_else(::std::sync::PoisonError::into_inner);
+    *guard
 }
 
 /// The installed typed config carrying no provenance: the shape a config
@@ -193,7 +212,33 @@ fn floor_loaded() -> ::degenbot_config::LoadedConfig {
 /// THAT config, so the published layers carry it — with no provenance, which
 /// the resolvers already read as the floor layer.
 pub(crate) fn publish_loaded(loaded: ::degenbot_config::LoadedConfig, installed: bool) {
-    let _ = LOADED.set(if installed { loaded } else { floor_loaded() });
+    let mut slot = LOADED
+        .write()
+        .unwrap_or_else(::std::sync::PoisonError::into_inner);
+    if (*slot).is_none() {
+        *slot = Some(Box::leak(Box::new(if installed {
+            loaded
+        } else {
+            floor_loaded()
+        })));
+    }
+}
+
+/// TEST SEAM: force-replace the published layers with a fresh load and rebuild
+/// the verdict, so the Python-facing verdict follows a holder reinstall.
+///
+/// Unlike [`publish_loaded`] (first-wins), this OVERWRITES — it is the other
+/// half of `degenbot_config::holder::reinstall_for_tests`, and only the
+/// sanctioned test seam calls it.
+pub(crate) fn republish_loaded(loaded: ::degenbot_config::LoadedConfig) {
+    {
+        let mut slot = LOADED
+            .write()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner);
+        *slot = Some(Box::leak(Box::new(loaded)));
+    }
+    reset_verdict();
+    install_verdict();
 }
 
 /// A node endpoint with the layer that supplied it, as the Python driver reads
@@ -240,19 +285,47 @@ struct Verdict {
     file: Option<String>,
 }
 
-static VERDICT: ::std::sync::OnceLock<Verdict> = ::std::sync::OnceLock::new();
+static VERDICT: ::std::sync::RwLock<Option<&'static Verdict>> = ::std::sync::RwLock::new(None);
 
 /// The installed verdict, built from the layers [`publish_loaded`] recorded.
 ///
-/// Both `OnceLock`s resolve to the same load whichever is read first, so the
-/// verdict is a value rather than a race: the eager install only makes the
-/// module-init ordering a property instead of a coincidence.
+/// Both slots resolve to the same load whichever is read first, so the verdict
+/// is a value rather than a race: the eager install only makes the module-init
+/// ordering a property instead of a coincidence. [`republish_loaded`] drops
+/// and rebuilds it alongside a holder reinstall, so the two never disagree.
 fn verdict() -> &'static Verdict {
-    VERDICT.get_or_init(|| Verdict {
-        layers: loaded(),
-        file: ::degenbot_config::standard_file_path()
-            .map(|path| path.to_string_lossy().into_owned()),
-    })
+    if let Some(verdict) = read_verdict() {
+        return verdict;
+    }
+    let layers = loaded();
+    let file =
+        ::degenbot_config::standard_file_path().map(|path| path.to_string_lossy().into_owned());
+    let mut slot = VERDICT
+        .write()
+        .unwrap_or_else(::std::sync::PoisonError::into_inner);
+    if let Some(verdict) = *slot {
+        return verdict;
+    }
+    let leaked: &'static Verdict = Box::leak(Box::new(Verdict { layers, file }));
+    *slot = Some(leaked);
+    leaked
+}
+
+/// Read the installed verdict, ignoring a poisoned writer.
+fn read_verdict() -> Option<&'static Verdict> {
+    let guard = VERDICT
+        .read()
+        .unwrap_or_else(::std::sync::PoisonError::into_inner);
+    *guard
+}
+
+/// Drop the installed verdict so the next [`verdict`] rebuilds from the
+/// current layers. [`republish_loaded`] calls this after replacing them.
+fn reset_verdict() {
+    let mut slot = VERDICT
+        .write()
+        .unwrap_or_else(::std::sync::PoisonError::into_inner);
+    *slot = None;
 }
 
 /// Build and install the verdict. Module init calls this right after

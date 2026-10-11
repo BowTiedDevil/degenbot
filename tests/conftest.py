@@ -3,7 +3,7 @@ import logging
 import os
 import shutil
 import tempfile
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
 import dotenv
@@ -53,7 +53,7 @@ from degenbot.build_info import verify_build_fresh
 
 verify_build_fresh()
 
-from degenbot._ffi import shutdown_log_drainer
+from degenbot._ffi import reinstall_config_holder_for_tests, shutdown_log_drainer
 from degenbot.bot import Bot
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, set_log_level
@@ -467,6 +467,42 @@ def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Generator[Bot, None, None]
     bot = make_bot_with_provider(provider)
     yield bot
     bot.close()
+
+
+@pytest.fixture
+def governed_holder() -> Iterator[Callable[[dict[str, str]], None]]:
+    """Per-test ``DEGENBOT_*`` override that re-governs the process config holder.
+
+    ``govern({name: value})`` sets the env names, re-loads env+file, and
+    reinstalls the process-wide typed-config holder (and the shell's published
+    verdict). Teardown restores the process environment EXACTLY and re-governs
+    the holder back to the ambient snapshot, so tests that do not opt in keep
+    the ``tests/ambient_config.toml`` behavior unchanged.
+
+    This is the config-holder test seam: production first-wins is untouched; the seam
+    exists so per-test ``DEGENBOT_RPC_*`` overrides govern the NEXT
+    construction instead of being silently pinned to the process's first
+    resolution.
+
+    Yields:
+        ``govern(env)``, which applies the env override and re-governs the
+        holder.
+    """
+    saved = dict(os.environ)
+
+    def govern(env: dict[str, str]) -> None:
+        for name, value in env.items():
+            os.environ[name] = value
+        reinstall_config_holder_for_tests()
+
+    try:
+        yield govern
+    finally:
+        for name in list(os.environ):
+            if name not in saved:
+                del os.environ[name]
+        os.environ.update(saved)
+        reinstall_config_holder_for_tests()
 
 
 @pytest.fixture

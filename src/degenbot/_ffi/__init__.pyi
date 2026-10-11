@@ -2111,7 +2111,11 @@ class ConcentratedLiquidityView:
     @property
     def tick(self, /) -> int: ...
     @property
-    def tick_bitmap(self, /) -> Any: ...
+    def tick_bitmap(self, /) -> set:
+        """
+        The bitmap WORD positions the pool knows (the load-bearing key set).
+        The per-word bitmap VALUE is retired — it derives from `tick_data`.
+        """
     @property
     def tick_data(self, /) -> Any: ...
     @property
@@ -3594,12 +3598,14 @@ class Pool:
         `LiquidityAtTick` objects to this tuple shape at the boundary (matching
         how V2 converts its Python `Fraction` fees to the Rust `gamma_numer` at
         the boundary).
-        `tick_bitmap`: the KEYS are the checked bitmap words. For Sparse pools
-        the FFI records them in the Rust `known_bitmap_words` (a checked word
-        is never re-fetched — the contract that retires the companion's
-        `_bitmap_override` shadow); the VALUES are NOT stored (the bitmap is
-        derived from the `tick_data` rows — see `tick_bitmap_snapshot`).
-        Tracked pools never record (their bitmap is complete).
+        `tick_bitmap`: the checked bitmap WORD positions — any iterable of word
+        ints (a `set`/`list`/`tuple`, or a `dict` whose keys are the words). For
+        Sparse pools the FFI records them in the Rust `known_bitmap_words` (a
+        checked word is never re-fetched — the contract that retires the
+        companion's `_bitmap_override` shadow); no bitmap VALUE crosses the
+        boundary (the bitmap derives from the `tick_data` rows — see the
+        `tick_bitmap` getter). Tracked pools never record (their bitmap is
+        complete).
         Scalars (`sqrt_price_x96`/`liquidity`/`tick`) are UNCHANGED — this is
         tick-only. `update_block` advances to `block` if newer (monotonic).
         Returns `True` if the replace applied to a registered V3/V4 pool,
@@ -4643,6 +4649,22 @@ def registration_unit_kinds() -> list[str]:
     kind labels from, so a kind cannot drift between the core and a driver.
     """
 
+def reinstall_config_holder_for_tests() -> None:
+    """
+    TEST-ONLY: re-load the process env + operator file and reinstall that
+    snapshot into the typed-config holder (and the shell's published verdict).
+
+    Call this after mutating `DEGENBOT_*` between constructions; the NEXT
+    resolution observes the fresh env+file, while engines already built keep
+    their minted snapshots. See the module docs for the safety contract.
+
+    # Errors
+
+    `ValueError` carrying the loader's fail-closed refusal when the current
+    env+file do not load (an unparsable value, an unknown key, an unreadable
+    named file).
+    """
+
 def resolve_directions(
     hops: Sequence[tuple[str, str, str]], input_token: str, weth: str
 ) -> list[bool]:
@@ -4724,6 +4746,24 @@ def resolved_config() -> ResolvedConfig:
     `PyErr` when the interpreter refuses the allocation. The verdict itself
     cannot fail: a process that named no chain or refused an endpoint still has
     a configuration to report.
+    """
+
+def resolved_node_uri_for_tests(chain_id: int, scope: str) -> str:
+    """
+    TEST-ONLY read-only view: the node endpoint the CURRENT holder snapshot
+    resolves for `chain_id` and `scope` (`"request"` or `"subscription"`).
+
+    Reads `degenbot_config::holder::config()` — the SAME snapshot
+    `boot_host` reads at construction — so an assertion tracks what a fresh
+    engine would observe, not the module-init verdict. The endpoint is resolved
+    through the core resolver (`resolve_node_uri`) over that snapshot's node
+    tables, with no explicit override and no provenance (the holder carries the
+    typed value, not the layers).
+
+    # Errors
+
+    `ValueError` when `scope` names no capability, or when no layer in the
+    snapshot supplied an endpoint for `chain_id`.
     """
 
 def runtime_status() -> dict:
@@ -4913,12 +4953,14 @@ __all__ = [
     "registration_outcome_tags",
     "registration_pool_memo_key",
     "registration_unit_kinds",
+    "reinstall_config_holder_for_tests",
     "resolve_directions",
     "resolve_hypothetical",
     "resolve_hypothetical_chain_id",
     "resolve_hypothetical_database_path",
     "resolve_hypothetical_node_uri",
     "resolved_config",
+    "resolved_node_uri_for_tests",
     "runtime_status",
     "session_phase_next",
     "shutdown_log_drainer",

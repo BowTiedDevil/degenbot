@@ -71,6 +71,11 @@ pub mod concentrated_liquidity_math;
 /// getters expose its typed fields to Python without a second declaration
 /// site. Unconditional — degenbot-config is always a dependency.
 pub mod config;
+/// TEST-ONLY configuration seam: re-govern the typed-config holder
+/// snapshot per test so a per-test `DEGENBOT_RPC_*` override governs the NEXT
+/// construction. Unconditional (the holder is); reachable only from the raw
+/// `_ffi` and deliberately not re-exported into `degenbot`.
+pub mod config_seam;
 pub mod conversion;
 pub mod crypto;
 #[cfg(feature = "curve-math")]
@@ -328,6 +333,12 @@ mod _ffi {
         HypotheticalConfig, ResolvedChainId, ResolvedConfig, ResolvedDatabasePath, ResolvedNodeUri,
         RetryPolicy, StrategyReadinessView,
     };
+
+    // TEST-ONLY: re-govern the typed-config holder snapshot per test.
+    // Not a production boot path and not re-exported into `degenbot`; see
+    // `crate::config_seam` for the safety contract.
+    #[pymodule_export]
+    use crate::config_seam::{reinstall_config_holder_for_tests, resolved_node_uri_for_tests};
 
     // Ambient-runtime driver seam: lets a Python driver satisfy the
     // ambient-runtime-only policy on the verify seams. Unconditional —
