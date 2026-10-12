@@ -77,7 +77,7 @@ UNISWAP_V3_QUOTER_ABI = pydantic_core.from_json(
 )
 
 
-_V3_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v3/wbtc_weth/17600000.json")
+_V3_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v3/wbtc_weth/17600000.json.gz")
 _PY_BOT = _Engine()
 
 
@@ -236,10 +236,13 @@ def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     assert current_word + 1 not in lp.tick_bitmap
 
     # Pools built without tick data can still perform swaps
-    # The tick data fetcher will fetch missing data on-demand
+    # The tick data fetcher will fetch missing data on-demand.
+    # 10 WBTC crosses several bitmap words, exercising the on-demand fetch,
+    # while staying within the pool's range liquidity (a 100k-WBTC swap
+    # outruns the pool's entire range and cannot be served at any depth).
     lp.calculate_tokens_out_from_tokens_in(
         token_in=lp.token0,
-        token_in_quantity=100000 * 10**lp.token0.decimals,
+        token_in_quantity=10 * 10**lp.token0.decimals,
     )
 
 
@@ -703,24 +706,24 @@ def test_zero_swaps(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:
 
 @pytest.mark.online_rpc
 def test_swap_for_all(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:
-    # Requires the pool's full fetched tick range: the recorded-pool golden
-    # captures the in-range tick window, but the IncompleteSwap exhaustion
-    # threshold here depends on deeper-away ticks the fetcher only pulls on the
-    # live fork. Kept as a live test (deselected from default CI) rather than
-    # mis-goldened through a partial range.
-    # Both calculations should raise an exception, since the reserves are insufficient to satisfy
-    # the requested swap
+    # Runs against the full-range recorded golden (the tick map carries the
+    # pool's walk to MIN/MAX_TICK), fully offline. The pool's range
+    # capacities at block 17,600,000 (L = 1.6e18, the walk to the protocol
+    # tick bounds): ~41k WBTC out on the token0 side, ~630k WETH out on the
+    # token1 side. These requests exceed both, so the walk exhausts the
+    # range and the pool raises its revert-analog (the real pool reverts the
+    # same swap at the TickMath bound).
 
     with pytest.raises(IncompleteSwap):
         wbtc_weth_v3_lp_at_historical_block.calculate_tokens_in_from_tokens_out(
             token_out=wbtc_weth_v3_lp_at_historical_block.token0,
-            token_out_quantity=2500 * 10**wbtc_weth_v3_lp_at_historical_block.token0.decimals,
+            token_out_quantity=100_000 * 10**wbtc_weth_v3_lp_at_historical_block.token0.decimals,
         )
 
     with pytest.raises(IncompleteSwap):
         wbtc_weth_v3_lp_at_historical_block.calculate_tokens_in_from_tokens_out(
             token_out=wbtc_weth_v3_lp_at_historical_block.token1,
-            token_out_quantity=150_000 * 10**wbtc_weth_v3_lp_at_historical_block.token1.decimals,
+            token_out_quantity=1_000_000 * 10**wbtc_weth_v3_lp_at_historical_block.token1.decimals,
         )
 
 
@@ -746,9 +749,10 @@ def test_external_update(
     )
     assert wbtc_weth_v3_lp_at_historical_block.update_block == start_block
 
-    assert -887160 not in wbtc_weth_v3_lp_at_historical_block.tick_data
-    assert -887220 not in wbtc_weth_v3_lp_at_historical_block.tick_data
-
+    # The full-range golden carries the pool's min-tick region: -887160 and
+    # -887220 are present with their on-chain liquidity (80_064_092_962_998 /
+    # 82_174_936_226_787 at block 17_600_000), so the update below applies its
+    # delta against REAL values rather than a sparse absence.
     new_liquidity = 100_000
     wbtc_weth_v3_lp_at_historical_block.update_liquidity_map(
         update=UniswapV3PoolLiquidityMappingUpdate(

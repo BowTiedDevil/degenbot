@@ -18,7 +18,7 @@ from tests.uniswap.v4.test_uniswap_v4_liquidity_pool import (
 )
 
 V2_WBTC_WETH = Path("tests/golden/data/uniswap/v2/wbtc_weth/17600000.json")
-V3_WBTC_WETH = Path("tests/golden/data/uniswap/v3/wbtc_weth/17600000.json")
+V3_WBTC_WETH = Path("tests/golden/data/uniswap/v3/wbtc_weth/17600000.json.gz")
 V4_ETH_USDC = Path("tests/golden/data/uniswap/v4/eth_usdc/25706703.json")
 
 BLOCK = 17_600_000
