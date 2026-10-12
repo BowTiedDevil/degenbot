@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import threading
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,10 +19,30 @@ if TYPE_CHECKING:
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 
-# Operational pacing between tick RPC calls, for constrained fork sources
-# (rate-limited archive endpoints). Read once at import; 0 (default) disables
-# pacing entirely.
-_PACE_SECONDS = float(os.environ.get("DEGENBOT_TICK_FETCH_PACE_MS", "0") or 0) / 1000
+# Operational rate clamp for constrained fork sources: dRPC's free plan
+# advertises 100 req/s — the governor clamps the tick RPC calls to at most
+# one per DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS (e.g. 20 => 50 req/s), leaving
+# headroom for the anvil fork's own background fetching. Read once at
+# import; 0 (default) disables the clamp entirely.
+_MIN_INTERVAL_SECONDS = (
+    float(os.environ.get("DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS", "0") or 0) / 1000
+)
+_pace_lock = threading.Lock()
+_pace_next_free = 0.0
+
+
+def _pace() -> None:
+    """Clamp outgoing tick RPCs to at most one call per the configured interval."""
+    global _pace_next_free
+    if _MIN_INTERVAL_SECONDS <= 0:
+        return
+    with _pace_lock:
+        now = time.monotonic()
+        scheduled = max(now, _pace_next_free)
+        _pace_next_free = scheduled + _MIN_INTERVAL_SECONDS
+    wait = scheduled - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -172,8 +193,7 @@ def _fetch_v3(*, ctx: _FetchContext) -> bool:
     # ADR-005 slice 14j: when io is a BotIo, delegate tick RPC calls to Rust.
     # ADR-005 slice 14j: delegate tick RPC calls to Rust (BotIo is the only
     # executor; the Python parity-gate fallback is retired).
-    if _PACE_SECONDS:
-        time.sleep(_PACE_SECONDS)
+    _pace()
     try:
         bitmap_value = ctx.io.fetch_tick_bitmap(
             ctx.pool_ref.address, ctx.word_position, block=ctx.block_number
@@ -196,8 +216,7 @@ def _fetch_v3(*, ctx: _FetchContext) -> bool:
         ]
 
         for active_tick in active_ticks:
-            if _PACE_SECONDS:
-                time.sleep(_PACE_SECONDS)
+            _pace()
             try:
                 liquidity_gross, liquidity_net = ctx.io.fetch_tick_data(
                     ctx.pool_ref.address,
@@ -234,8 +253,7 @@ def _fetch_v4(*, ctx: _FetchContext, state_view_address: str, pool_id: bytes) ->
     """
     # ADR-005 slice 14k: delegate V4 tick RPCs to Rust (BotIo is the only
     # executor; the Python parity-gate fallback is retired).
-    if _PACE_SECONDS:
-        time.sleep(_PACE_SECONDS)
+    _pace()
     try:
         bitmap_value = ctx.io.fetch_v4_tick_bitmap(
             state_view_address,
@@ -254,8 +272,7 @@ def _fetch_v4(*, ctx: _FetchContext, state_view_address: str, pool_id: bytes) ->
         ]
 
         for active_tick in active_ticks:
-            if _PACE_SECONDS:
-                time.sleep(_PACE_SECONDS)
+            _pace()
             try:
                 liquidity_gross, liquidity_net = ctx.io.fetch_v4_tick_data(
                     state_view_address,
