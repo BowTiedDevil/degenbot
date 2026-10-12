@@ -52,6 +52,16 @@
 pub const ONE: alloy::primitives::U256 =
     alloy::primitives::U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
+/// The minimum scaled reserve below which the leaf's [`ONE`] divisions lose
+/// faithfulness.
+///
+/// The invariant helpers (`calc_f` / `calc_k` / `calc_d`) divide by [`ONE`]
+/// twice and multiply the floored quotients, so a scaled reserve under `2^60`
+/// carries too little precision for the returned root to be trusted. A
+/// consumer that bounds this leaf's output treats a hop below this floor as
+/// outside the faithful domain and falls back to a precision-agnostic bound.
+pub const SOLIDLY_MIN_SCALED_RESERVE: u128 = 1 << 60;
+
 /// Maximum value of a Solidity `uint256`.
 pub const MAX_UINT256: alloy::primitives::U256 = alloy::primitives::U256::MAX;
 

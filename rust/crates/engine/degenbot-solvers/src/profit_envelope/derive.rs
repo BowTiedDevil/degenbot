@@ -2,6 +2,7 @@ use crate::cl::{build_cl_crossing_table, ClCrossingTable};
 use crate::runtime::SolveRuntimeConfig;
 use alloy::primitives::{aliases::I512, U256, U512};
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
+use degenbot_math::solidly::SOLIDLY_MIN_SCALED_RESERVE;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 use std::sync::Arc;
@@ -288,11 +289,6 @@ fn mobius_lines(
     Some((lines, r_out))
 }
 
-/// Scaled reserves below this carry too little precision for the invariant
-/// helpers' `ONE` divisions to be faithful, so the tangent rise is dropped
-/// (the reserve cap still bounds).
-const SOLIDLY_MIN_SCALED_RESERVE: u64 = 1 << 60;
-
 /// Build the line set for a Solidly/Aerodrome/Camelot STABLE hop:
 /// `[rise, flat]`.
 ///
@@ -338,11 +334,13 @@ const SOLIDLY_MIN_SCALED_RESERVE: u64 = 1 << 60;
 /// the pre-trade `Ra` by `reserve_out·ONE/decimals_in` scaled units; there the
 /// leaf's `calc_d` products wrap `u256` and a wrapped Newton denominator
 /// returns a garbage root that can inflate the leaf's output ABOVE the tangent.
-/// So the rise is kept only where the scaled reserves are large enough for the
-/// `ONE` divisions to be faithful, the pre-trade `calc_k` product cannot wrap,
-/// the leaf's input upscaling `reserve_out·ONE` fits `u256`, and every
-/// post-trade `calc_d` term at `x0_max = Ra + reserve_out·ONE/decimals_in`,
-/// `y ≤ Rb` stays inside `u256`. Returns `None` only for a zero output reserve —
+/// So the rise is kept only where the scaled reserves clear the leaf's own
+/// precision floor [`SOLIDLY_MIN_SCALED_RESERVE`] (defined in the leaf's crate
+/// beside `ONE`, because it is the leaf's arithmetic limit), the pre-trade
+/// `calc_k` product cannot wrap, the leaf's input upscaling `reserve_out·ONE`
+/// fits `u256`, and every post-trade `calc_d` term at
+/// `x0_max = Ra + reserve_out·ONE/decimals_in`, `y ≤ Rb` stays inside `u256`.
+/// Returns `None` only for a zero output reserve —
 /// the degenerate exit the flat cap always took.
 fn solidly_stable_lines(
     reserves_0: U256,
@@ -418,13 +416,15 @@ fn solidly_stable_rise(
 
     // Faithful-arithmetic gate. The leaf's invariant helpers divide by `ONE`
     // twice and multiply the quotients, so the rise is only trustworthy where
-    // the scaled reserves carry enough precision, the pre-trade `calc_k`
-    // product cannot wrap `u256`, AND the whole evaluation window stays
-    // non-wrapping. The gate sweeps the hop's lines over `x in
-    // [0, reserve_out]`, but the leaf's Newton runs at the POST-trade scale
-    // `x0 = Ra + x·ONE/decimals_in`, which exceeds the pre-trade `Ra` by up to
-    // `reserve_out·ONE/decimals_in` scaled units. In that regime the leaf's
-    // `calc_d` products wrap `u256` — `(x0·x0/ONE)·x0` once `x0³ >
+    // the scaled reserves clear the leaf's own precision floor
+    // (`SOLIDLY_MIN_SCALED_RESERVE`, defined in the leaf's crate beside `ONE`),
+    // the pre-trade `calc_k` product cannot wrap `u256`, AND the whole
+    // evaluation window stays non-wrapping. The gate sweeps the hop's lines
+    // over `x in [0, reserve_out]`, but the leaf's Newton runs at the
+    // POST-trade scale `x0 = Ra + x·ONE/decimals_in`, which exceeds the
+    // pre-trade `Ra` by up to `reserve_out·ONE/decimals_in` scaled units. In
+    // that regime the leaf's `calc_d` products wrap `u256` — `(x0·x0/ONE)·x0`
+    // once `x0³ >
     // ONE·u256::MAX`, `y·y` once `y > 2¹²⁸`, and `3·x0·(y·y/ONE)` past
     // `u256::MAX` — and a wrapped Newton denominator yields a garbage root
     // that can inflate the leaf's output ABOVE the tangent. The rise is

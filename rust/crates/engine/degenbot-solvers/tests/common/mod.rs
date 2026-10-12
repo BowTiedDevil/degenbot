@@ -12,6 +12,7 @@
 use alloy::primitives::U256;
 use degenbot_math::balancer::constants::PowVersion;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
+use degenbot_math::solidly::SOLIDLY_MIN_SCALED_RESERVE;
 use degenbot_math::v2::IntHopState;
 use degenbot_solvers::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, ResolvedHop,
@@ -159,8 +160,13 @@ pub fn curve_hop(base: u128, fee: u128, reverse: bool) -> ResolvedHop {
 /// a native reserve of `floor * scale / ONE` yields a scaled reserve at the
 /// floor — below it the leaf's integer `get_y` degrades and the corpus would
 /// measure arithmetic noise instead of the solver's optimality.
+///
+/// The floor is the leaf's own [`SOLIDLY_MIN_SCALED_RESERVE`], taken four times
+/// over (`4 * floor`) so the corpus sits comfortably inside the faithful domain
+/// rather than on its boundary. The coupling is textual, so the corpus follows
+/// the leaf if the leaf's floor ever moves.
 #[must_use]
 pub fn faithful_base(scale: u128) -> u128 {
-    let scaled_floor = 4u128 << 60;
+    let scaled_floor = 4 * SOLIDLY_MIN_SCALED_RESERVE;
     (scaled_floor.saturating_mul(scale) / ONE_E18).max(2)
 }
