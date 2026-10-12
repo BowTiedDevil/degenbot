@@ -57,6 +57,10 @@ POOL_TYPE_MAP: dict[str, type[AbstractLiquidityPool]] = {
     "uniswap-v2": UniswapV2Pool,
     "uniswap-v3": UniswapV3Pool,
     "pancakeswap-v3": PancakeswapV3Pool,
+    # SushiSwap V3 (C8b): the hollow ``SushiswapV3Pool`` is collapsed — the
+    # SushiSwap V3 fork is byte-identical to Uniswap V3 in its slot0/tick
+    # layout, so the canonical ``UniswapV3Pool`` is registered for this factory
+    # and the ``sushiswap`` variant is carried purely as deployment data.
     "sushiswap-v3": UniswapV3Pool,
     "aerodrome-v2": AerodromeV2Pool,
     "aerodrome-v3": AerodromeV3Pool,

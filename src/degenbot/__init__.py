@@ -19,6 +19,7 @@ from .abi import decode_single as abi_decode_single
 from .abi import encode as abi_encode
 from .bot import Bot
 from .checksum_cache import get_checksum_address
+from .discovery import PoolRef
 from .runtime_status import runtime_status
 from .version import __version__
 
@@ -97,6 +98,7 @@ __all__ = (
     "EtherPlaceholder",
     "ManagedPoolRegistry",
     "PancakeswapV3Pool",
+    "PoolRef",
     "PoolRegistry",
     "PoolTypeRegistry",
     "TokenRegistry",

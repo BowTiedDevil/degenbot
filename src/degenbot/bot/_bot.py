@@ -45,6 +45,8 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_chain_id, resolve_database_path
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
+from degenbot.discovery import PoolRef
+from degenbot.discovery import pools_for_tokens as _pools_for_tokens
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
@@ -63,11 +65,12 @@ from degenbot.utils.bytes import to_0x_hex, to_bytes
 from ._account_queries import AccountQueryMixin
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from degenbot._ffi import BlockStream, IntakeReceipt
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.pathfinding import PoolKind
     from degenbot.types import Pool
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.chain import ChecksummedAddress
@@ -646,6 +649,47 @@ class Bot(AccountQueryMixin):
         return cast(
             "AbstractLiquidityPool",
             self.pools.get_or_add(pool_address=pool.address, chain_id=chain_id, pool=pool),
+        )
+
+    def pools_for_tokens(
+        self,
+        token_a: str,
+        token_b: str,
+        *,
+        pool_kinds: Sequence[PoolKind] | None = None,
+    ) -> list[PoolRef]:
+        """Discover the pools that trade a token pair, as inert identity refs.
+
+        Discovery is a *database* question, not a derivation: a token pair is not
+        a pool identity (a V2 pool, a PancakeSwap V3 pool, and a V4-managed pool
+        can all trade the same pair, and V4 hashes its hooks into the PoolId). One
+        graph read over this Bot's database answers it; nothing is constructed.
+
+        The three-layer ladder:
+
+        - **discovery finds** — this method returns ``list[PoolRef]`` (identity
+          views: address/manager+pool_hash, family, tokens — no state, no handle);
+        - **the registry remembers** — ``self.pools.get(...)`` returns an already
+          built instance, or ``None``;
+        - **construction commits** — ``self.build_pool(ref.address)`` materializes
+          the pool (memoized: a registry hit is free, a miss is one loud build).
+
+        Args:
+            token_a: One token's checksummed (or lower/upper) address.
+            token_b: The other token's address.
+            pool_kinds: Optional family filter; defaults to every family.
+
+        Returns:
+            The pools trading the pair, each an identity ref. Empty when either
+            token is unknown to the database or no pool trades the pair.
+
+        """
+        return _pools_for_tokens(
+            self.database_path,
+            self.chain_id,
+            token_a,
+            token_b,
+            pool_kinds=pool_kinds,
         )
 
     def _make_v3_tick_data_fetcher(
