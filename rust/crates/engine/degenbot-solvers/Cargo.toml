@@ -70,3 +70,7 @@ harness = false
 [[bench]]
 name = "walkmemo_contention"
 harness = false
+
+[[bench]]
+name = "stable_arms"
+harness = false
