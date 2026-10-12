@@ -122,6 +122,7 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] if the connection/PRAGMA/DDL setup fails, or
     /// [`DbError::UnrecognizedSchema`] for unrecognized files.
+    #[cfg(any(test, feature = "writer"))]
     pub fn open_for_writes(path: &Path) -> Result<(Self, SchemaState), DbError> {
         Self::open_with(path, auto_heal_enabled(), false)
     }
@@ -132,6 +133,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a connection/PRAGMA/DDL failure.
+    #[cfg(any(test, feature = "writer"))]
     pub fn open_in_memory_for_writes() -> Result<(Self, SchemaState), DbError> {
         Self::open_with(Path::new(":memory:"), auto_heal_enabled(), false)
     }

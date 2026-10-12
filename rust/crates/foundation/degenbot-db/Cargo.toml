@@ -56,10 +56,20 @@ thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 
 [features]
+# The write substrate (ADR-070): the `write/` module fns plus the
+# write-capable constructors (`open_for_writes` / `open_in_memory_for_writes`).
+# Default OFF — a bot/engine crate opens the DB read-only, so the write fns do
+# not exist in its build. ONLY the updater shells (degenbot-aave,
+# degenbot-pool-updater, degenbot-cli-core, degenbot-python) enable this.
+# `cfg(any(test, feature = "writer"))` at the gate keeps this crate's own unit
+# tests exercising the writer without forcing the feature on downstream.
+writer = []
+
 # Test/bench-only SQL statement ledger + canonical DB dump (ADR-068 D3).
 # Default OFF — production paths compile none of `src/sql_ledger.rs` and
-# install no trace hooks (zero-overhead when the wrapper is absent).
-sql-ledger = ["dep:serde_json", "rusqlite/trace"]
+# install no trace hooks (zero-overhead when the wrapper is absent). The
+# ledger writes through the writer substrate, so it implies `writer`.
+sql-ledger = ["dep:serde_json", "rusqlite/trace", "writer"]
 
 [dev-dependencies]
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }

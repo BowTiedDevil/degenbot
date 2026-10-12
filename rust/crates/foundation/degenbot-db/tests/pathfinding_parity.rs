@@ -1,3 +1,4 @@
+#![cfg(feature = "writer")]
 //! Parity gate (`docs/architecture/parity-gate.md`) for the pathfinding
 //! graph-construction read fns.
 //!

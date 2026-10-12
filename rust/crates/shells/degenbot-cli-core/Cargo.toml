@@ -28,7 +28,8 @@ degenbot-config.workspace = true
 # chain-verified provider on — the same runtime the updater cores own, so no
 # ad-hoc runtime (and its freshly-built transport) is created per call.
 degenbot-core.workspace = true
-degenbot-db.workspace = true
+# ADR-070: updater shell — owns DB writes; enables the writer substrate.
+degenbot-db = { workspace = true, features = ["writer"] }
 degenbot-pool-updater.workspace = true
 degenbot-rpc.workspace = true
 degenbot-uniswap.workspace = true

@@ -191,9 +191,10 @@ class Bot(AccountQueryMixin):
             # the Bot is born with its snapshot or born cold-start, nothing in
             # between. The core ``Bot::load_snapshot_from_db`` streams V3+V4 into
             # the core ``SnapshotStore`` + records ``S = min(newest_update_block)``.
-            # ``None``/cold-start (no pools) is NOT an error. The file/memory
-            # snapshot path stays non-DB-only (loaded at ``engine_registry.start``
-            # via ``load_*_from_py``).
+            # ``None``/cold-start (no pools) is NOT an error. The DB snapshot is
+            # the sole S source on both real paths: the injected
+            # ``load_*_from_py`` seam is retired (P2b), so no separate
+            # file/memory snapshot path remains to load.
             # The DB file may not exist yet (the Rust database owner creates it on first
             # write). A missing file is a cold-start: no snapshot pools to load,
             # `S = None`. The store stays empty; pool registration falls back to

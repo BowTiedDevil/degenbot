@@ -1,3 +1,4 @@
+#![cfg(feature = "writer")]
 //! Parity gate (`docs/architecture/parity-gate.md`) for the V3/V4 DB-aware
 //! liquidity updater.
 //!

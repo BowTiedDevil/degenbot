@@ -32,9 +32,15 @@
 //!
 //! # Design references
 //!
-//! Non-goal: writes (`write.rs` + `upsert_*`) are deferred to the writer-orchestration plan
-//! (Phase 3) until the Rust writer is parity-tested; this crate ships read
-//! fns only.
+//! # The writer fence (ADR-070)
+//!
+//! The write substrate (the `write` module + the write-capable constructors
+//! `open_for_writes` / `open_in_memory_for_writes`) is
+//! compiled ONLY under the `writer` feature. A bot/engine crate opens the DB
+//! read-only ([`connection::DegenbotDb::open`], `PRAGMA query_only=on`) and
+//! never enables the feature, so the write fns do not exist in its build; the
+//! updater shells are the sole writers. `cfg(any(test, feature = "writer"))`
+//! keeps this crate's own unit tests exercising the writer.
 
 pub mod aave;
 pub mod connection;
@@ -60,6 +66,10 @@ pub mod species;
 /// OFF) — see [`sql_ledger`] for the structural zero-overhead argument.
 #[cfg(feature = "sql-ledger")]
 pub mod sql_ledger;
+/// The write substrate (ADR-070): compiled only when the `writer` feature is
+/// enabled (the updater shells) or for this crate's own tests. Bot/engine
+/// crates never enable it, so the write fns are absent from their builds.
+#[cfg(any(test, feature = "writer"))]
 pub mod write;
 
 pub use aave::{
@@ -106,7 +116,9 @@ pub use rows::{
 };
 pub use snapshot::{LiquidityAtTick, LiquidityMap, PoolKey};
 pub use species::{ChainIdentifiers, Family, Manifest, ManifestError, SlotLayout, Species};
+#[cfg(any(test, feature = "writer"))]
 pub use write::{
     decode_reserve_configuration_bitmap, AssetRow, ReserveConfiguration, ScaledTokenPosition,
 };
+#[cfg(any(test, feature = "writer"))]
 pub use write::{AaveMarketPurgeCount, DebtPositionRefreshContext};

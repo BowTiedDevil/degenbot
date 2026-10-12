@@ -63,6 +63,33 @@ use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
 
+/// Open the construction DB half for `attach_construction_io` (ADR-070: the
+/// write open lives in the shell, a writer-enabled crate — the engine crate
+/// never touches `open_for_writes`). `None` for the no-DB path, a write-capable
+/// held connection otherwise (the construction executor does reads AND the
+/// `update_erc20_token_metadata` write-back). A missing file (`SQLAlchemy`
+/// creates the DB lazily on first write) surfaces as `None` after the
+/// diagnostic — the DB methods then return the no-DB shape (matching the
+/// original `database_path` cold-start skip); a `Bot` restart after the file
+/// exists picks it up.
+fn open_construction_db(
+    database_path: Option<&str>,
+) -> Option<std::sync::Arc<degenbot_db::DegenbotDb>> {
+    let path = database_path?;
+    match degenbot_db::DegenbotDb::open_for_writes(std::path::Path::new(path)) {
+        Ok((db, _state)) => Some(std::sync::Arc::new(db)),
+        Err(e) => {
+            degenbot_core::diag!(
+                domain = state,
+                path = %path,
+                %e,
+                "Construction-I/O DB open failed; falling back to NoDb"
+            );
+            None
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PyBot — owns the Bot orchestrator; hands out shared BotState Arcs
 // ---------------------------------------------------------------------------
@@ -497,13 +524,11 @@ impl PyBot {
         // missing-file cold-start fallback to `NoDb` so the DB methods
         // return the no-DB shape (matching the original `database_path`
         // cold-start skip; a `Bot` restart after the file exists picks it
-        // up) — is core-owned ([`Bot::open_construction_db`], run under this
+        // up) — is shell-owned ([`open_construction_db`], run under this
         // py.detach).
         let db: std::sync::Arc<
             dyn degenbot_bot::bot_core::construction_io::DbConstruction + Send + Sync,
-        > = match py
-            .detach(|| degenbot_bot::bot_core::bot::Bot::open_construction_db(database_path))
-        {
+        > = match py.detach(|| open_construction_db(database_path)) {
             Some(db) => {
                 // Bind the session's position reader HERE, and only
                 // here: this is the one point in a bot boot where the

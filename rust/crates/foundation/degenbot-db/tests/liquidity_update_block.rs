@@ -1,3 +1,4 @@
+#![cfg(feature = "writer")]
 //! Integration test for the per-pool DB liquidity clock (`fetch_liquidity_update_block`
 //! / `fetch_liquidity_update_block_v4`).
 //!

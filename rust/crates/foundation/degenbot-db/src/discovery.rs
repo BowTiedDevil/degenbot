@@ -39,7 +39,9 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
+#[cfg(any(test, feature = "writer"))]
 use crate::rows::{ExchangeRow, PoolManagerRow};
+#[cfg(any(test, feature = "writer"))]
 use crate::schema::table;
 
 // ── row-input structs (the PyO3 seam extracts Python args into these) ──────
@@ -149,6 +151,7 @@ impl DegenbotDb {
     /// `(address, chain)` raising `SQLITE_CONSTRAINT` — matching the Python
     /// `session.add` trajectory's `IntegrityError`), or
     /// [`DbError::Decode`] if `kind` is not a known V2 family discriminator.
+    #[cfg(any(test, feature = "writer"))]
     pub fn upsert_v2_pools(
         &self,
         chain: i64,
@@ -171,6 +174,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Same error conditions as the `&self` wrapper variant.
+    #[cfg(any(test, feature = "writer"))]
     pub fn upsert_v2_pools_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -254,6 +258,7 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on an insert failure or
     /// [`DbError::Decode`] if `kind` is not a V3 family discriminator.
+    #[cfg(any(test, feature = "writer"))]
     pub fn upsert_v3_pools(
         &self,
         chain: i64,
@@ -271,6 +276,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Same error conditions as the `&self` wrapper variant.
+    #[cfg(any(test, feature = "writer"))]
     pub fn upsert_v3_pools_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -341,6 +347,7 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on an insert failure or
     /// [`DbError::Decode`] if the manager is not found.
+    #[cfg(any(test, feature = "writer"))]
     pub fn upsert_v4_pools(
         &self,
         chain: i64,
@@ -357,6 +364,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Same error conditions as the `&self` wrapper variant.
+    #[cfg(any(test, feature = "writer"))]
     pub fn upsert_v4_pools_on_conn(
         conn: &rusqlite::Connection,
         chain: i64,
@@ -420,6 +428,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure.
+    #[cfg(any(test, feature = "writer"))]
     pub fn set_exchange_last_update_block(
         &self,
         chain_id: i64,
@@ -438,6 +447,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Same error conditions as the `&self` wrapper variant.
+    #[cfg(any(test, feature = "writer"))]
     pub fn set_exchange_last_update_block_on_conn(
         conn: &rusqlite::Connection,
         chain_id: i64,
@@ -465,6 +475,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on an UPDATE failure.
+    #[cfg(any(test, feature = "writer"))]
     pub fn set_exchange_last_update_block_if_unchanged_on_conn(
         conn: &rusqlite::Connection,
         chain_id: i64,
@@ -524,6 +535,7 @@ impl DegenbotDb {
     /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] if
     /// the inserted/selected row fails to decode (the `factory`/`deployer`
     /// checksum round-trip is round-trip-safe by construction).
+    #[cfg(any(test, feature = "writer"))]
     pub fn upsert_exchange(
         &self,
         chain_id: i64,
@@ -583,6 +595,7 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::MissingRow`]
     /// when no `exchanges` row matches `exchange_id`.
+    #[cfg(any(test, feature = "writer"))]
     pub fn set_exchange_active(&self, exchange_id: i64, active: bool) -> Result<(), DbError> {
         let conn = self.lock();
         let n = conn.execute(
@@ -621,6 +634,7 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] if
     /// the returned row fails to decode.
+    #[cfg(any(test, feature = "writer"))]
     pub fn upsert_pool_manager(
         &self,
         address: Address,

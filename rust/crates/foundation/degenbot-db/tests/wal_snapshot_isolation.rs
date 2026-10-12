@@ -1,3 +1,4 @@
+#![cfg(feature = "writer")]
 //! Regression test for the WAL held-read-tx concurrency model (spike):
 //! `DegenbotDb::open_snapshot_tx()` acquires one
 //! deferred read transaction at bot startup and holds it across `build_paths`

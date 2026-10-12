@@ -1851,3 +1851,116 @@ fn config_derived_statics_are_classified() {
         stale.join("\n  ")
     );
 }
+
+/// ADR-070: the writer fence. `degenbot-db`'s write substrate (the `writer`
+/// feature: the `write/` module, `open_for_writes`, `open_in_memory_for_writes`)
+/// is enabled ONLY by the updater shells; every other crate opens the DB
+/// read-only. A production `src` source in any other crate that names a
+/// write-capable constructor is a fence breach — the source-level gate the
+/// cargo feature alone cannot enforce, because workspace feature unification
+/// re-enables `writer` through a shared updater dependency.
+#[test]
+fn only_the_updater_shells_open_the_db_for_writes() {
+    const WRITER_OWNERS: [&str; 5] = [
+        "degenbot-db",
+        "degenbot-aave",
+        "degenbot-pool-updater",
+        "degenbot-cli-core",
+        "degenbot_rs",
+    ];
+    let forbidden = ["open_for_writes", "open_in_memory_for_writes"];
+    let mut violations = Vec::new();
+    for (name, manifest_path) in workspace_packages() {
+        if !name.starts_with("degenbot") || WRITER_OWNERS.contains(&name.as_str()) {
+            continue;
+        }
+        let Some(crate_dir) = Path::new(&manifest_path).parent() else {
+            continue;
+        };
+        let src = crate_dir.join("src");
+        if !src.exists() {
+            continue;
+        }
+        for_each_rust_source(&src, &mut |path, text| {
+            let clean = path.display().to_string().replace('\\', "/");
+            // Test modules (a `tests.rs` file or a `src/**/tests/` directory)
+            // may exercise the writer; the fence is on production sources.
+            if clean.ends_with("/tests.rs") || clean.contains("/tests/") {
+                return;
+            }
+            let test_regions = cfg_test_regions(text);
+            for (index, line) in text.lines().enumerate() {
+                let line_number = index + 1;
+                if test_regions
+                    .iter()
+                    .any(|(start, end)| line_number >= *start && line_number < *end)
+                {
+                    continue;
+                }
+                for symbol in forbidden {
+                    if line.contains(symbol) {
+                        violations.push(format!("{}:{line_number}: {symbol}", path.display()));
+                    }
+                }
+            }
+        });
+    }
+    assert!(
+        violations.is_empty(),
+        "ADR-070 writer fence breach: a non-updater crate's production source \
+         references a write-capable constructor: {violations:?}"
+    );
+}
+
+/// ADR-070 binding #2b: schema init accepts only (path, flags) — no
+/// data-bearing parameter. `ensure_schema_at_open` and `heal_database` are the
+/// two entry points that build/repair the schema; the DDL is the embedded
+/// constant and the heal reads the file it is handed, so neither may grow a
+/// bytes/rows/schema-content argument. A TEXT gate on the parameter types.
+#[test]
+fn schema_init_functions_accept_only_path_and_flags() {
+    let db_src = workspace_root().join("crates/foundation/degenbot-db/src");
+    let cases = [
+        ("migrate.rs", "ensure_schema_at_open"),
+        ("heal.rs", "heal_database"),
+    ];
+    let allowed = ["&Path", "bool", "F"];
+    let mut violations = Vec::new();
+    for (file, function) in cases {
+        let path = db_src.join(file);
+        let text = std::fs::read_to_string(&path).expect("read schema-init source");
+        for ty in param_types_of(&text, function) {
+            if !allowed.contains(&ty.as_str()) {
+                violations.push(format!("{file}: {function} parameter type {ty:?}"));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "ADR-070 binding #2b breach: schema init grew a data-bearing parameter: {violations:?}"
+    );
+}
+
+/// The declared parameter types of `fn <name>` in `text` (masked, so a
+/// parenthesized default or a comment cannot confuse the scan).
+fn param_types_of(text: &str, function: &str) -> Vec<String> {
+    let masked = mask_strings_and_comments(text);
+    let bytes = masked.as_bytes();
+    let needle = format!("fn {function}");
+    let start = masked.find(&needle).expect("function present");
+    let open = start + masked[start..].find('(').expect("parameter list");
+    let close = matching_paren(bytes, open).expect("matching paren");
+    let inner = &masked[open + 1..close];
+    split_top_level(inner)
+        .into_iter()
+        .filter(|param| !param.trim().is_empty())
+        .map(|param| {
+            param
+                .split_once(':')
+                .expect("parameter has a type")
+                .1
+                .trim()
+                .to_owned()
+        })
+        .collect()
+}

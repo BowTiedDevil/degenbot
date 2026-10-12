@@ -41,7 +41,9 @@ degenbot-decoders = { workspace = true, optional = true }
 degenbot-uniswap = { workspace = true, optional = true }
 degenbot-abi = { workspace = true, optional = true }
 degenbot-math = { workspace = true, optional = true }
-degenbot-db = { workspace = true, optional = true }
+# ADR-070: the shell's write seams serve the updater shells, so it enables the
+# writer substrate; bot/engine crates never do.
+degenbot-db = { workspace = true, optional = true, features = ["writer"] }
 degenbot-pathfinding = { workspace = true, optional = true }
 degenbot-price = { workspace = true, optional = true, features = ["pyo3"] }
 degenbot-submission = { workspace = true, optional = true, features = ["pyo3"] }
@@ -131,7 +133,9 @@ experimental-inspect = ["pyo3/experimental-inspect"]
 # the workers' typed BootError family onto the BootRefused exception at
 # the pyo3 leaf (the simulation feature already pulled the dep; bot-only
 # builds now name the type too).
-bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "dep:degenbot-solvers", "dep:degenbot-workers", "rpc", "decoders", "uniswap"]
+# ADR-070: `bot` includes `db` — the construction DB half is opened by the
+# shell (a writer-enabled crate), so the shell needs its own `degenbot-db` edge.
+bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "dep:degenbot-solvers", "dep:degenbot-workers", "rpc", "decoders", "uniswap", "db"]
 price = ["dep:degenbot-price", "rpc"]
 submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
 simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "rpc", "executor", "submission"]

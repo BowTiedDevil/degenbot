@@ -14,7 +14,8 @@ workspace = true
 
 [dependencies]
 alloy = { version = "^2.5" }
-degenbot-db.workspace = true
+# ADR-070: updater shell — owns DB writes; enables the writer substrate.
+degenbot-db = { workspace = true, features = ["writer"] }
 # Tick-map types from degenbot-db are hashbrown maps.
 hashbrown.workspace = true
 degenbot-decoders.workspace = true

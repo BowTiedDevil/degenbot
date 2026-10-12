@@ -16,7 +16,10 @@ workspace = true
 alloy = { version = "^2.5" }
 degenbot-core.workspace = true
 degenbot-config.workspace = true
-degenbot-db.workspace = true
+# ADR-070: this crate is an updater shell — it owns DB writes, so it is one of
+# the four crates allowed to enable the writer substrate. Bot/engine crates
+# never do.
+degenbot-db = { workspace = true, features = ["writer"] }
 degenbot-decoders.workspace = true
 degenbot-rpc.workspace = true
 rusqlite = { version = "^0.40" }

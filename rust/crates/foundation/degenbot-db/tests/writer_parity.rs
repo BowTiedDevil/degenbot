@@ -1,3 +1,4 @@
+#![cfg(feature = "writer")]
 //! End-to-end writer parity — the parity gate
 //! (`docs/architecture/parity-gate.md`): replay a representative Aave V3 event
 //! sequence through the Rust apply fns (`get_or_create_*` + `apply_*`) into an

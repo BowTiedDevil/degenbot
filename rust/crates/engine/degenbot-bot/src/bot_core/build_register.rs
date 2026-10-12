@@ -691,35 +691,6 @@ impl Bot {
                 vec![],
             );
     }
-
-    /// Open the construction DB half for `attach_construction_io`:
-    /// `None` for the no-DB path, a write-capable held connection otherwise
-    /// (the construction executor does reads AND the
-    /// `update_erc20_token_metadata` write-back). A missing file (`SQLAlchemy`
-    /// creates the DB lazily on first write) surfaces as `None` after the
-    /// diagnostic — the DB methods then return the no-DB shape (matching the
-    /// original `database_path` cold-start skip); a `Bot` restart after the
-    /// file exists picks it up. The aave position-observer install stays at
-    /// the shell (a shell-only optional feature composing the opened handle
-    /// with the session registry at boot).
-    #[must_use]
-    pub fn open_construction_db(
-        database_path: Option<&str>,
-    ) -> Option<Arc<degenbot_db::DegenbotDb>> {
-        let path = database_path?;
-        match degenbot_db::DegenbotDb::open_for_writes(std::path::Path::new(path)) {
-            Ok((db, _state)) => Some(Arc::new(db)),
-            Err(e) => {
-                degenbot_core::diag!(
-                    domain = state,
-                    path = %path,
-                    %e,
-                    "Construction-I/O DB open failed; falling back to NoDb"
-                );
-                None
-            }
-        }
-    }
 }
 
 #[expect(clippy::expect_used)]
@@ -1079,20 +1050,6 @@ mod tests {
             bot.v3_journal_len(pool_id),
             1,
             "the scalar priors journal (reorg-restore discipline)"
-        );
-    }
-
-    /// `open_construction_db`: the no-DB path and the failed open both fall
-    /// back to `None` (the shell wraps the result in `NoDb`).
-    #[test]
-    fn open_construction_db_falls_back_to_none() {
-        assert!(Bot::open_construction_db(None).is_none(), "no path → None");
-        let missing = std::env::temp_dir().join("degenbot-build-register-not-a-dir");
-        std::fs::write(&missing, b"not a directory").expect("test setup: block file");
-        let blocked = missing.join("db.sqlite");
-        assert!(
-            Bot::open_construction_db(Some(blocked.to_str().expect("utf-8 temp path"))).is_none(),
-            "unopenable path → None (NoDb fallback)"
         );
     }
 }

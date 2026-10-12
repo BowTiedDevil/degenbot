@@ -102,6 +102,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [067](ADR-067-strategy-substrate-home.md) | The strategy substrate gets one home | accepted |
 | [068](ADR-068-updater-golden-capture-replay.md) | Golden capture replay is the updater coherence harness | proposed |
 | [069](ADR-069-prepared-hop-entry-surface.md) | The prepared hop becomes one value | accepted |
+| [070](ADR-070-updaters-are-the-sole-db-writers.md) | Updaters are the sole DB writers — the `writer` cargo fence, read-only opens, path-only schema init | accepted |
 
 ## Historical — provenance only
 
