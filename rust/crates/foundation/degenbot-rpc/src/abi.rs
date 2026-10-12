@@ -360,19 +360,34 @@ pub fn encode_slot0() -> Vec<u8> {
 }
 
 /// Decode `slot0()` return data into `(sqrtPriceX96, tick)` — only the first
-/// two packed fields are needed by the builder snapshot; the remaining five
-/// are ignored (mirrors the Python `decode_slot0`).
+/// two static fields are needed by the builder snapshot; the tail is ignored
+/// (mirrors the Python `decode_slot0`).
+///
+/// The v3-family returns differ in tail width — Uniswap/Pancake carry seven
+/// words, the Aerodrome Slipstream pools six — but every variant shares the
+/// same leading `(uint160 sqrtPriceX96, int24 tick)` static prefix, so decode
+/// that prefix directly instead of the full typed return.
 ///
 /// # Errors
 ///
-/// Returns [`ProviderError::DecodingError`] on decode failure.
+/// Returns [`ProviderError::DecodingError`] on a payload shorter than the
+/// two-word prefix.
 pub fn decode_slot0(bytes: &[u8]) -> ProviderResult<(U256, I256)> {
-    let s = IUniswapV3Pool::slot0Call::abi_decode_returns(bytes).map_err(|e| {
-        ProviderError::DecodingError {
-            message: format!("slot0 decode: {e}"),
-        }
-    })?;
-    Ok((U256::from(s.sqrtPriceX96), widen_int24(s.tick.as_i32())))
+    if bytes.len() < 64 {
+        return Err(ProviderError::DecodingError {
+            message: format!(
+                "slot0 decode: expected at least 64 bytes of return data, got {}",
+                bytes.len()
+            ),
+        });
+    }
+    let sqrt_price_x96 = U256::from_be_slice(&bytes[..32]);
+    // int24 is right-aligned in its word and sign-extended by the ABI; taking
+    // the low four bytes as i32 reproduces the sign the encoder wrote.
+    let tick = widen_int24(i32::from_be_bytes([
+        bytes[60], bytes[61], bytes[62], bytes[63],
+    ]));
+    Ok((sqrt_price_x96, tick))
 }
 
 /// Encode the `liquidity()` calldata (no args).
@@ -1124,6 +1139,43 @@ mod tests {
         // keccak256("slot0()")[..4]
         let expected = alloy::primitives::keccak256(b"slot0()");
         assert_eq!(&calldata[0..4], &expected[..4]);
+    }
+
+    /// The builder only reads the leading `(sqrtPriceX96, tick)` pair: the
+    /// 7-word Uniswap return and the 6-word Aerodrome Slipstream return must
+    /// both decode, and a payload shorter than the two-word prefix must fail.
+    #[test]
+    fn decode_slot0_reads_the_shared_prefix() {
+        let mut seven = vec![0u8; 32 * 7];
+        seven[31] = 0x2a; // sqrtPriceX96 = 42
+        seven[63] = 0x10; // tick = 16
+        let (sqrt, tick) = decode_slot0(&seven).unwrap();
+        assert_eq!(sqrt, U256::from(42));
+        assert_eq!(tick, widen_int24(16));
+
+        let mut six = vec![0u8; 32 * 6]; // Aerodrome Slipstream shape
+        six[31] = 0x2a;
+        six[63] = 0x10;
+        let (sqrt, tick) = decode_slot0(&six).unwrap();
+        assert_eq!(sqrt, U256::from(42));
+        assert_eq!(tick, widen_int24(16));
+
+        assert!(decode_slot0(&[0u8; 63]).is_err());
+        assert!(decode_slot0(&[]).is_err());
+    }
+
+    /// A negative tick (sign-extended int24) survives the prefix decode.
+    #[test]
+    fn decode_slot0_preserves_negative_ticks() {
+        let mut words = vec![0u8; 32 * 6];
+        words[31] = 0x2a;
+        // -8 as int24, sign-extended across the word's high bytes.
+        for byte in &mut words[32 + 28..64] {
+            *byte = 0xff;
+        }
+        words[63] = 0xf8;
+        let (_sqrt, tick) = decode_slot0(&words).unwrap();
+        assert_eq!(tick, widen_int24(-8));
     }
 
     /// `keccak256("liquidity()")[..4]`.
