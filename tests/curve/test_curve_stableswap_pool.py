@@ -124,7 +124,7 @@ def _test_calculations(lp: CurveStableswapPool, provider: AlloyProvider):
                         token_in_index,
                         token_out_index,
                         amount,
-                    ).call()
+                    ).call(block_identifier=state_block)
             except (ContractLogicError, AbiDecodeError):
                 # The on-chain contract reverts for broken/unsupported pools
                 continue
@@ -165,7 +165,7 @@ def _test_calculations(lp: CurveStableswapPool, provider: AlloyProvider):
                         token_in_index,
                         token_out_index,
                         amount,
-                    ).call()
+                    ).call(block_identifier=state_block)
                 except (ContractLogicError, AbiDecodeError):
                     continue
 
