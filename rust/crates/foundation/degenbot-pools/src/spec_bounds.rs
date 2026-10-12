@@ -3,7 +3,7 @@
 //! The on-chain Solidity types constrain every field a Uniswap V2 / V3 / V4
 //! pool can hold. `BotState::register_v{2,3,4}_pool` admits pools by
 //! verifying these widths up-front and returning a typed [`SpecViolation`]
-//! on a violation; downstream swap math (`u512_to_u256_internal`, the CL
+//! on a violation; downstream swap math (`narrow_u512_to_u256`, the CL
 //! step math) can then rely on spec-bound admission as an upstream guarantee
 //! (cf. the `# Panics` section on the V2/V3 U512→U256 narrowing helpers
 //! committed in `19218a2c`).

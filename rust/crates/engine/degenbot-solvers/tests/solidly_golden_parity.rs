@@ -19,14 +19,14 @@
 //! rejected t-parametrized arm's test scaffolding. Only the test scaffolding
 //! survived; nothing here depends on that module's production half.
 
+pub mod common;
+
 use alloy::primitives::U256;
-use degenbot_math::v2::IntHopState;
+use common::{faithful_base, path, solidly_hop, v2_hop};
 use degenbot_solvers::mixed::{
-    simulate_solidly_path, solve_path, ResolvedHop, ResolvedMixedPath, SolidlyHopState,
-    SolvePathResult,
+    simulate_solidly_path, solve_path, ResolvedMixedPath, SolvePathResult,
 };
 use degenbot_solvers::profit_envelope::GateDeps;
-use degenbot_uniswap::dex_identity::DexVariant;
 
 /// Sweep half-width, in native input units, around the arm's returned answer.
 /// The arm's own integer verify only scans ±3, so this window is an
@@ -59,65 +59,6 @@ const PROFITABLE_SIZE: usize = 143;
 struct Case {
     tag: String,
     path: ResolvedMixedPath,
-}
-
-/// A constant-product hop: reserves are already oriented (in, out).
-fn v2_hop(reserve_in: u128, reserve_out: u128, gamma_numer: u64, fee_denom: u64) -> ResolvedHop {
-    ResolvedHop::V2 {
-        state: IntHopState::new(
-            U256::from(reserve_in),
-            U256::from(reserve_out),
-            gamma_numer,
-            fee_denom,
-        ),
-    }
-}
-
-/// A Solidly/Aerodrome stable hop. `scale_*` are the token decimal scales
-/// (`10^decimals`), the divisor the leaf normalizes reserves by; `token_in`
-/// is the leaf's un-oriented direction flag.
-fn solidly_hop(
-    reserves_0: u128,
-    reserves_1: u128,
-    scale_0: u128,
-    scale_1: u128,
-    token_in: u8,
-    fee_numer: u64,
-    fee_denom: u64,
-) -> ResolvedHop {
-    ResolvedHop::SolidlyStable {
-        state: SolidlyHopState {
-            reserves_0: U256::from(reserves_0),
-            reserves_1: U256::from(reserves_1),
-            decimals_0: U256::from(scale_0),
-            decimals_1: U256::from(scale_1),
-            token_in,
-            fee_numer: U256::from(fee_numer),
-            fee_denom: U256::from(fee_denom),
-            stable: true,
-            variant: DexVariant::AerodromeV2Stable,
-        },
-    }
-}
-
-fn path(hops: Vec<ResolvedHop>) -> ResolvedMixedPath {
-    let nonces = vec![1u64; hops.len()];
-    ResolvedMixedPath {
-        hops,
-        valid: true,
-        state_nonces: nonces,
-        max_update_block: 0,
-    }
-}
-
-/// The smallest native reserve whose scaled value clears the Solidly leaf's
-/// faithful-arithmetic floor. The leaf normalizes `reserve * ONE / scale`, so
-/// a native reserve of `floor * scale / ONE` yields a scaled reserve at the
-/// floor — below it the leaf's integer `get_y` degrades and the corpus would
-/// measure arithmetic noise instead of the solver's optimality.
-fn faithful_base(scale: u128) -> u128 {
-    let scaled_floor = 4u128 << 60;
-    (scaled_floor.saturating_mul(scale) / 1_000_000_000_000_000_000).max(2)
 }
 
 /// The one-Solidly-hop corpus: four path shapes x three decimal scales x

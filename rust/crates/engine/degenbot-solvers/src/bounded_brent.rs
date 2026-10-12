@@ -3,6 +3,10 @@
 //! golden-section + parabolic-interpolation search over a shrinking bracket
 //! behind `scipy.optimize.minimize_scalar(method='bounded')`.
 //!
+//! Role: a SciPy-1.17-parity REFERENCE, not a production solver — the solve
+//! path never calls it. It serves only as the CL refine-window oracle in
+//! tests (`cl/tests/refine_undersample.rs`, `tests/bounded_brent.rs`).
+//!
 //! Transcribed expression-by-expression from SciPy 1.17
 //! (`scipy/optimize/_optimize.py`, `_minimize_scalar_bounded`). `bracket` is
 //! NOT an input: the bounded method ignores it and derives everything from

@@ -256,7 +256,7 @@ pub fn compute_mobius_model_optimal_input(coeffs: &IntMobiusCoefficients) -> U25
     let x_u2048 = numerator / n;
 
     // Narrow U2048 → U512 → U256, keeping the U512→U256 overflow contract.
-    u512_to_u256_internal(u2048_to_u512(x_u2048))
+    narrow_u512_to_u256(u2048_to_u512(x_u2048))
 }
 
 /// Integer square root of a U512 value.
@@ -402,9 +402,6 @@ fn u512_to_u2048(v: U512) -> U2048 {
     U2048::from_limbs(wide)
 }
 
-/// Convert U512 to U256, returning U256::ZERO if the value overflows.
-///
-/// This is `pub` so that `cl` can use it too.
 /// Narrow a `U512` to a `U256`.
 ///
 /// For pool state sourced from on-chain events (V2 `Sync(uint112,uint112)`,
@@ -423,7 +420,7 @@ fn u512_to_u2048(v: U512) -> U2048 {
 /// The spec widths are enforced at `register_v2_pool` /
 /// `register_v3_pool` / `register_v4_pool` (see `spec_bounds.rs` and
 /// ADR-012), so on-chain-sourced pool state cannot reach this branch.
-pub fn u512_to_u256_internal(v: U512) -> U256 {
+pub fn narrow_u512_to_u256(v: U512) -> U256 {
     // Narrowing U512 → U256. For pool state sourced from on-chain events
     // (V2 `Sync(uint112,uint112)`, V3/V4 `Swap`) the underlying uint112
     // reserves, uint128 liquidity, and TickMath-bounded sqrt prices keep
@@ -644,13 +641,13 @@ mod tests {
     #[test]
     fn test_u512_to_u256_small() {
         let v = U512::from(42u64);
-        assert_eq!(u512_to_u256_internal(v), U256::from(42u64));
+        assert_eq!(narrow_u512_to_u256(v), U256::from(42u64));
     }
 
     #[test]
     fn test_u512_to_u256_max_u256() {
         let v = U512::from(U256::MAX);
-        assert_eq!(u512_to_u256_internal(v), U256::MAX);
+        assert_eq!(narrow_u512_to_u256(v), U256::MAX);
     }
 
     #[test]
@@ -663,7 +660,7 @@ mod tests {
         // `register_v4_pool` (see `bot_core/spec_bounds.rs` and ADR-012);
         // on-chain-sourced pool state cannot reach this panic.
         let v = U512::from(U256::MAX) + U512::from(1u64);
-        let _ = u512_to_u256_internal(v);
+        let _ = narrow_u512_to_u256(v);
     }
 
     // ── Boundary tests ───────────────────────────────────────────

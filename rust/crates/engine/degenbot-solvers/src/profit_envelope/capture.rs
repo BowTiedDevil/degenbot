@@ -22,7 +22,8 @@ use super::derive::HopMath;
 pub struct CapturedHop<'a> {
     pub hop_index: usize,
     /// `"unmapped"`, `"cl"`, or the family name + key scalars
-    /// (e.g. `v2(r_in=..,r_out=..)`) — the row's `family` field.
+    /// (e.g. `v2(r_in=..,r_out=..)`) — the row's `family` field. Produced by
+    /// [`HopMath::family_label`], shared with the gate's diagnostic.
     pub family: String,
     /// The hop's CL tick-range sequence, or `None` for every non-CL family
     /// (serialized as JSON `null`).
@@ -57,62 +58,11 @@ impl<'a> DegeneratePathEvent<'a> {
             .iter()
             .enumerate()
             .map(|(i, slot)| {
+                // One label shape for the row's `family` field and the
+                // gate's degenerate-hop diagnostic ([`HopMath::family_label`]).
                 let family = match slot {
                     None => "unmapped".to_string(),
-                    Some(HopMath::V2(h)) => {
-                        format!("v2(r_in={},r_out={})", h.reserve_in, h.reserve_out)
-                    }
-                    Some(HopMath::Cl(_)) => "cl".to_string(),
-                    Some(HopMath::SolidlyVolatile {
-                        reserve_in,
-                        reserve_out,
-                        ..
-                    }) => {
-                        format!("solidly_volatile(r_in={reserve_in},r_out={reserve_out})")
-                    }
-                    Some(HopMath::Weighted {
-                        balance_in,
-                        balance_out,
-                        weight_in,
-                        weight_out,
-                        ..
-                    }) => {
-                        format!(
-                            "weighted(b_in={balance_in},b_out={balance_out},\
-                             w_in={weight_in},w_out={weight_out})"
-                        )
-                    }
-                    Some(HopMath::ReserveCap { reserve_out }) => {
-                        format!("reserve_cap(r_out={reserve_out})")
-                    }
-                    Some(HopMath::SolidlyStable {
-                        reserves_0,
-                        reserves_1,
-                        token_in,
-                        ..
-                    }) => format!(
-                        "solidly_stable(r0={reserves_0},r1={reserves_1},token_in={token_in})"
-                    ),
-                    Some(HopMath::BalancerStable {
-                        amp,
-                        balances,
-                        token_index_in,
-                        token_index_out,
-                        ..
-                    }) => format!(
-                        "balancer_stable(amp={amp},n={},i={token_index_in},j={token_index_out})",
-                        balances.len()
-                    ),
-                    Some(HopMath::CurveStableswap {
-                        amp,
-                        xp,
-                        token_index_in,
-                        token_index_out,
-                        ..
-                    }) => format!(
-                        "curve_stableswap(amp={amp},n={},i={token_index_in},j={token_index_out})",
-                        xp.len()
-                    ),
+                    Some(hop) => hop.family_label(),
                 };
                 let ranges = match slot {
                     Some(HopMath::Cl(ch)) => Some(ch.seq),

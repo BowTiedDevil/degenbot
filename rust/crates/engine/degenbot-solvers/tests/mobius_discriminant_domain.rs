@@ -22,7 +22,7 @@ use degenbot_math::v2::{int_simulate_path, IntHopState};
 use degenbot_solvers::cl::{solve_mixed_piecewise, MixedHopView};
 use degenbot_solvers::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients};
 use degenbot_solvers::mobius_int_exact::{
-    compute_mobius_model_optimal_input, exact_mobius_solve, isqrt_u512, u512_to_u256_internal,
+    compute_mobius_model_optimal_input, exact_mobius_solve, isqrt_u512, narrow_u512_to_u256,
 };
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 
@@ -47,7 +47,7 @@ fn prefix_model_anchor(coeffs: &IntMobiusCoefficients) -> U256 {
     if coeffs.N.is_zero() {
         return U256::ZERO;
     }
-    u512_to_u256_internal(numerator / coeffs.N)
+    narrow_u512_to_u256(numerator / coeffs.N)
 }
 
 type Solve = Option<(U256, U256, Vec<U256>)>;

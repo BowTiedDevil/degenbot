@@ -377,7 +377,7 @@ fn int_simulate_mixed_path_n(
 /// Convert U512 to U256, capping at U256::MAX on overflow.
 #[cfg(test)]
 fn u512_to_u256(v: U512) -> U256 {
-    crate::mobius_int_exact::u512_to_u256_internal(v)
+    crate::mobius_int_exact::narrow_u512_to_u256(v)
 }
 /// Helper: create an IntV3TickRangeHop at tick 0 (1:1 price), tick spacing 60.
 fn make_v3_hop_at_1to1(liquidity: u128, zfo: bool) -> IntV3TickRangeHop {

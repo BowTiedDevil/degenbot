@@ -178,6 +178,60 @@ impl<'a> HopMath<'a> {
             crossings: std::borrow::Cow::Owned(build_cl_crossing_table(seq)),
         })
     }
+
+    /// The family label for this hop: the degenerate-path capture row's
+    /// `family` field and the gate's degenerate-hop diagnostic share this ONE
+    /// shape, so a new family is labelled in exactly one place and the two
+    /// sites cannot diverge.
+    #[must_use]
+    pub fn family_label(&self) -> String {
+        match self {
+            HopMath::V2(h) => format!("v2(r_in={},r_out={})", h.reserve_in, h.reserve_out),
+            HopMath::Cl(_) => "cl".to_string(),
+            HopMath::SolidlyVolatile {
+                reserve_in,
+                reserve_out,
+                ..
+            } => format!("solidly_volatile(r_in={reserve_in},r_out={reserve_out})"),
+            HopMath::Weighted {
+                balance_in,
+                balance_out,
+                weight_in,
+                weight_out,
+                ..
+            } => format!(
+                "weighted(b_in={balance_in},b_out={balance_out},\
+                 w_in={weight_in},w_out={weight_out})"
+            ),
+            HopMath::ReserveCap { reserve_out } => format!("reserve_cap(r_out={reserve_out})"),
+            HopMath::SolidlyStable {
+                reserves_0,
+                reserves_1,
+                token_in,
+                ..
+            } => format!("solidly_stable(r0={reserves_0},r1={reserves_1},token_in={token_in})"),
+            HopMath::BalancerStable {
+                amp,
+                balances,
+                token_index_in,
+                token_index_out,
+                ..
+            } => format!(
+                "balancer_stable(amp={amp},n={},i={token_index_in},j={token_index_out})",
+                balances.len()
+            ),
+            HopMath::CurveStableswap {
+                amp,
+                xp,
+                token_index_in,
+                token_index_out,
+                ..
+            } => format!(
+                "curve_stableswap(amp={amp},n={},i={token_index_in},j={token_index_out})",
+                xp.len()
+            ),
+        }
+    }
 }
 
 /// Build the line set for a constant-product (Möbius) hop:
@@ -233,10 +287,6 @@ fn mobius_lines(
     lines.push(flat);
     Some((lines, r_out))
 }
-
-/// The Solidly fixed-point unit (`10^18`) in `U512` — the invariant's scaled
-/// domain and the additive-slack divisor.
-const SOLIDLY_ONE: u64 = 1_000_000_000_000_000_000;
 
 /// Scaled reserves below this carry too little precision for the invariant
 /// helpers' `ONE` divisions to be faithful, so the tangent rise is dropped
@@ -353,7 +403,9 @@ fn solidly_stable_rise(
     if decimals_in.is_zero() || decimals_out.is_zero() || fee_denom.is_zero() {
         return None;
     }
-    let one = U512::from(SOLIDLY_ONE);
+    // The Solidly leaf's 18-decimal fixed-point unit — the invariant's scaled
+    // domain and the additive-slack divisor.
+    let one = U512::from(degenbot_math::solidly::ONE);
     let d_in = U512::from(decimals_in);
     let d_out = U512::from(decimals_out);
     let ra = U512::from(reserve_in).checked_mul(one)?.checked_div(d_in)?;
@@ -462,10 +514,6 @@ fn solidly_stable_rise(
 /// (`amp` is stored pre-multiplied by it, and the invariant's `amp_times_total`
 /// term is divided by it).
 const BALANCER_AMP_PRECISION: u64 = 1_000;
-
-/// The Balancer fixed-point `ONE = 10^18` — the `swap_fee` denominator and the
-/// domain the 18-decimal upscaled balances live in.
-const BALANCER_ONE: u64 = 1_000_000_000_000_000_000;
 
 /// Exact closed-form curvature test for a StableSwap out-curve at the ENTRY
 /// point, in the family's scaled domain.
@@ -690,9 +738,10 @@ fn balancer_stable_rise(
         return None;
     }
 
-    // Native slope: `slope·sf_in·(ONE − swap_fee)/(ONE·sf_out)`.
-    let one = U512::from(BALANCER_ONE);
-    if swap_fee >= U256::from(BALANCER_ONE) {
+    // Native slope: `slope·sf_in·(ONE − swap_fee)/(ONE·sf_out)`, with `ONE`
+    // the Balancer leaf's 18-decimal fixed-point unit.
+    let one = U512::from(degenbot_math::balancer::constants::ONE);
+    if swap_fee >= degenbot_math::balancer::constants::ONE {
         return None;
     }
     let retained = one.checked_sub(U512::from(swap_fee))?;

@@ -949,59 +949,18 @@ fn path_profit_bound_inner(
                     // active range / zero reserves) vs a real coverage gap.
                     // Debug-level: opt-in via
                     // `RUST_LOG=degenbot_solvers::profit_envelope=debug`.
-                    let family = match hop {
-                        HopMath::V2(h) => {
-                            let z = h.reserve_in.is_zero() || h.reserve_out.is_zero();
-                            format!("V2(zero_reserve={z})")
-                        }
-                        HopMath::Cl(ch) => {
-                            let empty = ch.seq.ranges.is_empty();
-                            let reason = classify_cl_rejection(ch.seq);
-                            format!(
-                                "Cl(ranges={n},empty={empty},{reason})",
-                                n = ch.seq.ranges.len()
-                            )
-                        }
-                        HopMath::SolidlyVolatile {
-                            reserve_in,
-                            reserve_out,
-                            ..
-                        } => {
-                            format!(
-                                "SolidlyVolatile(zero={})",
-                                reserve_in.is_zero() || reserve_out.is_zero()
-                            )
-                        }
-                        HopMath::Weighted {
-                            balance_in,
-                            balance_out,
-                            ..
-                        } => {
-                            format!(
-                                "Weighted(zero={})",
-                                balance_in.is_zero() || balance_out.is_zero()
-                            )
-                        }
-                        HopMath::ReserveCap { reserve_out } => {
-                            format!("ReserveCap(zero={})", reserve_out.is_zero())
-                        }
-                        HopMath::SolidlyStable {
-                            reserves_0,
-                            reserves_1,
-                            ..
-                        } => format!(
-                            "SolidlyStable(zero={})",
-                            reserves_0.is_zero() || reserves_1.is_zero()
-                        ),
-                        HopMath::BalancerStable { balances, .. } => {
-                            format!("BalancerStable(n={})", balances.len())
-                        }
-                        HopMath::CurveStableswap { xp, .. } => {
-                            format!("CurveStableswap(n={})", xp.len())
-                        }
+                    // One label shape for the diagnostic and the capture row
+                    // ([`HopMath::family_label`]); the CL reason is the
+                    // range-level classification, and every other family's
+                    // reason is its own label.
+                    let family = hop.family_label();
+                    let reason = match hop {
+                        HopMath::Cl(ch) => classify_cl_rejection(ch.seq),
+                        _ => family.clone(),
                     };
                     diag!(domain = solver, hop_index = e.hop_index,
                         family = %family,
+                        reason = %reason,
                         "degenerate hop rejected (impossible to bound — solved unscreened)"
                     );
                     // Golden capture: hand the typed capture EVENT to the
@@ -1011,10 +970,6 @@ fn path_profit_bound_inner(
                     // never builds the (100KB+) event.
                     if let Some(sink) = deps.capture {
                         if sink.try_reserve() {
-                            let reason = match hop {
-                                HopMath::Cl(ch) => classify_cl_rejection(ch.seq),
-                                _ => family.clone(),
-                            };
                             sink.capture(&DegeneratePathEvent::from_hops(
                                 hops,
                                 e.hop_index,

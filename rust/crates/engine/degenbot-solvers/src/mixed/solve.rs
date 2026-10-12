@@ -634,7 +634,7 @@ fn solve_golden_section_path_int(
     let phi_span = |lo: U256, hi: U256| -> U256 {
         let d = U512::from(hi - lo);
         let scaled = d * U512::from(phi_num) / U512::from(phi_den);
-        crate::mobius_int_exact::u512_to_u256_internal(scaled)
+        crate::mobius_int_exact::narrow_u512_to_u256(scaled)
     };
     let mut x1 = x_high - phi_span(x_low, x_high);
     let mut x2 = x_low + phi_span(x_low, x_high);
