@@ -11,7 +11,7 @@ description = "Typed BotConfig schema + 12-factor loader (file + env parity) for
 [dependencies]
 # TOML parsing for the --config file surface. `toml` v1 is already in the
 # workspace lock (degenbot-python uses the same release line).
-toml = "1.1.6"
+toml = "1.1.8"
 # Format-preserving TOML editor for the config-write path: the writer keeps
 # operator comments and unrelated sections intact. Already in the lock via
 # the `toml` release line.

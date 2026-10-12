@@ -22,7 +22,7 @@ envelope = []
 alloy-primitives = { version = "^1.7", default-features = false, features = ["std"] }
 
 [dev-dependencies]
-proptest = "^1.11"
+proptest = "^1.12"
 
 [[example]]
 name = "scale_demo"

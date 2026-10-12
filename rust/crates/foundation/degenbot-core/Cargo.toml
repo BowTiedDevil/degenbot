@@ -37,7 +37,7 @@ pyo3 = ["dep:pyo3"]
 strict-engine-spans = []
 
 [dev-dependencies]
-proptest = "^1.11"
+proptest = "^1.12"
 # Test-only: the `#[tokio::test]` macro for the pubsub-runtime teardown pins.
 tokio = { version = "^1.53", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = "^0.3"

@@ -19,7 +19,7 @@ hashbrown.workspace = true
 degenbot-core.workspace = true
 
 [dev-dependencies]
-proptest = "^1.11"
+proptest = "^1.12"
 serde_json = "^1.0"
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
 # Tier-3a byte-exact oracle (cl module): revm-transacted SwapMath harness;

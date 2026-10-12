@@ -24,7 +24,7 @@ alloy = { version = "^2.5" }
 # species key fails at first use. `toml` already resolves in the workspace
 # graph (degenbot-config / degenbot-python), so this grows no new crate.
 serde = { version = "^1.0", features = ["derive"] }
-toml = "1.1.6"
+toml = "1.1.8"
 # `op_info!` / `op_warn!` telemetry — the ADR-052 D1 heal-at-open report.
 # Pyo3-free and already in this crate's graph via `degenbot-math` (which
 # depends on `degenbot-core`), so this direct edge only names the macros the
@@ -51,7 +51,7 @@ rusqlite = { version = "^0.40", features = ["bundled", "backup"] }
 serde_json = { version = "^1.0", optional = true }
 # The completed-market record's canonical per-table digests (`src/digest.rs`).
 # 0.10 is already resolved in the workspace lock — no new crate in the graph.
-sha2 = { version = "^0.10" }
+sha2 = { version = "^0.11" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 

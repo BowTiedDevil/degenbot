@@ -103,7 +103,7 @@ tempfile = { version = "^3.27" }
 serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
-proptest = "^1.11"
+proptest = "^1.12"
 
 [features]
 default = []

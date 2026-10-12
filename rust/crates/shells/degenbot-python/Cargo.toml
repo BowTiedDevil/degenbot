@@ -89,7 +89,7 @@ serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
-toml = "1.1.6"
+toml = "1.1.8"
 degenbot-eventhub.workspace = true
 
 [features]
@@ -172,7 +172,7 @@ otel = ['bot', 'degenbot-bot/otel']
 # pin the typed `CliError -> ExitCode` mapping directly.
 degenbot-cli-core.workspace = true
 ctor = "^1"
-proptest = "^1.11"
+proptest = "^1.12"
 # Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for
 # the root crate's tests. Production builds pull degenbot-rpc without this
 # feature.
