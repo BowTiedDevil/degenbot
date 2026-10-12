@@ -60,7 +60,7 @@ The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/she
 Update pool metadata and liquidity positions for all activated exchanges.
 
 ```bash
-degenbot pool update [--chunk SIZE] [--to-block BLOCK] [--verify-chunk|--no-verify-chunk] [--verify-all|--no-verify-all] [--verify-all-interval BLOCKS]
+degenbot pool update [--chunk SIZE] [--max-block-range BLOCKS] [--to-block BLOCK] [--verify-chunk|--no-verify-chunk] [--verify-all|--no-verify-all] [--verify-all-interval BLOCKS]
 ```
 
 #### Parameters
@@ -68,6 +68,7 @@ degenbot pool update [--chunk SIZE] [--to-block BLOCK] [--verify-chunk|--no-veri
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--chunk` | 10,000 | Maximum number of blocks to process per database commit |
+| `--max-block-range` | 10,000 | Maximum block range a single `eth_getLogs` request may span, independent of `--chunk`. Lower it for RPC providers that cap the `eth_getLogs` block range |
 | `--to-block` | `latest:-64` | Last block in update range. Format: `TAG[:OFFSET]` |
 
 #### Block Identifiers
@@ -93,6 +94,10 @@ Examples:
 ```bash
 degenbot pool update --to-block "latest:-128"
 degenbot pool update --chunk 5000
+
+# Cap the per-request block range for an RPC whose eth_getLogs
+# range limit is tighter than the commit chunk (e.g. dRPC free)
+degenbot pool update --max-block-range 100
 ```
 
 #### Failure output

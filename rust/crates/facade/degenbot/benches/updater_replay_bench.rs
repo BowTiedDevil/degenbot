@@ -704,6 +704,7 @@ fn pool_iteration(
             chain_id,
             Some(to_block),
             to_block - from_block + 1,
+            10_000,
             provider,
             Arc::new(AtomicBool::new(false)),
             collector.clone(),

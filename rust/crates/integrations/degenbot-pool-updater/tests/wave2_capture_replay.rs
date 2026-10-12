@@ -150,6 +150,7 @@ fn replay_and_gate(scenario: &Scenario, chain_id: i64) -> std::path::PathBuf {
             chain_id,
             Some(*to),
             to - from + 1,
+            10_000,
             provider.clone(),
             Arc::new(AtomicBool::new(false)),
             Arc::new(NoProgress),

@@ -28,6 +28,7 @@ def run_pool_update(
     *,
     verify_all_interval: int | None = None,
     verify_all_at_completion: bool = False,
+    max_block_range: int = 10000,
 ) -> dict:
     """
     `degenbot._ffi.pool.run_pool_update(database_path, chain_id, to_block,
@@ -58,8 +59,11 @@ def run_pool_update(
     - `chain_id` — the chain to advance.
     - `to_block` — `int` to advance to a specific block; `None` to advance to
       the chain tip (resolved via `eth_blockNumber`).
-    - `chunk_size` — blocks per chunk (the `MAX_BLOCKS_PER_REQUEST`-aligned
-      batch the RPC fetch + the chunk's single transaction cover).
+    - `chunk_size` — blocks per chunk (the batch the chunk's single
+      transaction covers).
+    - `max_block_range` — the widest block range a single `eth_getLogs`
+      request may span (the `MAX_BLOCKS_PER_REQUEST` clamp, independent of
+      `chunk_size`); the Python updater's per-request clamp.
     - `rpc_url` — the HTTP RPC endpoint.
     - `cancel_handle` — a [`CancelHandle`] constructed up front; a
       `signal.SIGINT` handler calls `.cancel()` on it to stop the run at the

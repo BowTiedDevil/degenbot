@@ -186,6 +186,7 @@ fn injected_provider_serves_a_multi_chunk_run_and_a_no_work_run() {
         // from 1 → 50 at 10 blocks per chunk = 5 committed chunks.
         Some(50),
         10,
+        10_000,
         provider.clone(),
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
@@ -210,6 +211,7 @@ fn injected_provider_serves_a_multi_chunk_run_and_a_no_work_run() {
         CHAIN,
         Some(50),
         10,
+        10_000,
         provider,
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),

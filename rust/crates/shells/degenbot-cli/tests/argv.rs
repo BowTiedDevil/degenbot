@@ -129,6 +129,7 @@ fn pool_update_defaults_and_gates() {
         resolve(&["degenbot", "pool", "update"]),
         Command::Pool(PoolCommand::Update {
             chunk_size: DEFAULT_CHUNK_SIZE,
+            max_block_range: DEFAULT_MAX_BLOCK_RANGE,
             to_block: DEFAULT_TO_BLOCK.to_string(),
             verify_chunk: true,
             verify_all: false,
@@ -151,10 +152,24 @@ fn pool_update_defaults_and_gates() {
         ]),
         Command::Pool(PoolCommand::Update {
             chunk_size: 5,
+            max_block_range: DEFAULT_MAX_BLOCK_RANGE,
             to_block: "1000".to_string(),
             verify_chunk: false,
             verify_all: true,
             verify_all_interval: 7,
+        })
+    );
+    // `--max-block-range` is the per-request RPC clamp, independent of
+    // `--chunk`.
+    assert_eq!(
+        resolve(&["degenbot", "pool", "update", "--max-block-range", "250"]),
+        Command::Pool(PoolCommand::Update {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            max_block_range: 250,
+            to_block: DEFAULT_TO_BLOCK.to_string(),
+            verify_chunk: true,
+            verify_all: false,
+            verify_all_interval: DEFAULT_VERIFY_ALL_INTERVAL,
         })
     );
 }

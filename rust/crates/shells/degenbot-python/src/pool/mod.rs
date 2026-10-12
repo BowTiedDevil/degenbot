@@ -82,8 +82,11 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
 /// - `chain_id` — the chain to advance.
 /// - `to_block` — `int` to advance to a specific block; `None` to advance to
 ///   the chain tip (resolved via `eth_blockNumber`).
-/// - `chunk_size` — blocks per chunk (the `MAX_BLOCKS_PER_REQUEST`-aligned
-///   batch the RPC fetch + the chunk's single transaction cover).
+/// - `chunk_size` — blocks per chunk (the batch the chunk's single
+///   transaction covers).
+/// - `max_block_range` — the widest block range a single `eth_getLogs`
+///   request may span (the `MAX_BLOCKS_PER_REQUEST` clamp, independent of
+///   `chunk_size`); the Python updater's per-request clamp.
 /// - `rpc_url` — the HTTP RPC endpoint.
 /// - `cancel_handle` — a [`CancelHandle`] constructed up front; a
 ///   `signal.SIGINT` handler calls `.cancel()` on it to stop the run at the
@@ -118,6 +121,7 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
     *,
     verify_all_interval = None,
     verify_all_at_completion = false,
+    max_block_range = 10000,
 ))]
 #[expect(clippy::too_many_arguments)]
 fn run_pool_update(
@@ -131,6 +135,7 @@ fn run_pool_update(
     verify_chunk: bool,
     verify_all_interval: Option<u64>,
     verify_all_at_completion: bool,
+    max_block_range: u64,
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
@@ -152,6 +157,7 @@ fn run_pool_update(
                 chain_id,
                 to_block,
                 chunk_size,
+                max_block_range,
                 provider,
                 cancel,
                 verify_chunk,
@@ -180,6 +186,7 @@ fn run_pool_update_injected(
     chain_id: i64,
     to_block: Option<u64>,
     chunk_size: u64,
+    max_block_range: u64,
     provider: degenbot_rpc::provider::AlloyProvider,
     cancel: Arc<std::sync::atomic::AtomicBool>,
     verify_chunk: bool,
@@ -191,6 +198,7 @@ fn run_pool_update_injected(
         chain_id,
         to_block,
         chunk_size,
+        max_block_range,
         provider,
         cancel,
         Arc::new(NoProgress),

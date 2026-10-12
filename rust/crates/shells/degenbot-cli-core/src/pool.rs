@@ -63,6 +63,9 @@ pub enum PoolCommand {
     Update {
         /// Max blocks per chunk before committing.
         chunk_size: u64,
+        /// The widest block range a single `eth_getLogs` request may
+        /// span (independent of `chunk_size`).
+        max_block_range: u64,
         /// The raw `--to-block` identifier (tag / tag:offset / integer).
         to_block: String,
         /// Run the pre-commit per-chunk on-chain-truth gate.
@@ -122,6 +125,7 @@ pub(crate) fn execute(
     match command {
         PoolCommand::Update {
             chunk_size,
+            max_block_range,
             to_block,
             verify_chunk,
             verify_all,
@@ -130,6 +134,7 @@ pub(crate) fn execute(
             ctx,
             cancel,
             *chunk_size,
+            *max_block_range,
             to_block,
             *verify_chunk,
             *verify_all,
@@ -155,10 +160,12 @@ pub(crate) fn execute(
 }
 
 /// `pool update`.
+#[expect(clippy::too_many_arguments)]
 fn update(
     ctx: &CliContext<'_>,
     cancel: &CancelHandle,
     chunk_size: u64,
+    max_block_range: u64,
     to_block: &str,
     verify_chunk: bool,
     verify_all: bool,
@@ -199,6 +206,7 @@ fn update(
             chain,
             resolved,
             chunk_size,
+            max_block_range,
             provider,
             cancel.flag(),
             Arc::new(NoProgress),

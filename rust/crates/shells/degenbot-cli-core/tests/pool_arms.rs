@@ -128,6 +128,7 @@ fn pool_update_rejects_a_malformed_to_block_before_any_rpc() {
     let outcome = run(
         &Command::Pool(PoolCommand::Update {
             chunk_size: 10_000,
+            max_block_range: 10_000,
             to_block: "bogus".to_string(),
             verify_chunk: true,
             verify_all: false,
@@ -158,6 +159,7 @@ fn pool_update_with_no_active_exchanges_is_a_noop_without_rpc() {
     let outcome = run(
         &Command::Pool(PoolCommand::Update {
             chunk_size: 10_000,
+            max_block_range: 10_000,
             to_block: "latest".to_string(),
             verify_chunk: true,
             verify_all: false,
@@ -187,6 +189,7 @@ fn pool_update_without_a_chain_id_is_a_config_failure() {
     let outcome = run(
         &Command::Pool(PoolCommand::Update {
             chunk_size: 10_000,
+            max_block_range: 10_000,
             to_block: "latest".to_string(),
             verify_chunk: true,
             verify_all: false,
@@ -283,6 +286,7 @@ fn prompt_plans_are_none_for_both_pool_arms() {
     assert_eq!(
         PoolCommand::Update {
             chunk_size: 10_000,
+            max_block_range: 10_000,
             to_block: "latest".to_string(),
             verify_chunk: true,
             verify_all: false,
@@ -367,6 +371,7 @@ fn drop_failure_message(db_path: &Path) -> String {
     let outcome = run(
         &Command::Pool(PoolCommand::Update {
             chunk_size: 100,
+            max_block_range: 10_000,
             to_block: "100".to_string(),
             verify_chunk: false,
             verify_all: false,

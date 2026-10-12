@@ -173,6 +173,7 @@ fn pool_chunk_ledger_and_db_dump_match_the_committed_goldens() {
         chain_id,
         Some(span.to_block),
         span.to_block - span.from_block + 1,
+        10_000,
         provider,
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),

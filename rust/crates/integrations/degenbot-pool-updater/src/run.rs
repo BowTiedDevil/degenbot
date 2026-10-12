@@ -1168,8 +1168,15 @@ pub enum RunError {
 /// - `chain_id` — the chain to advance.
 /// - `to_block` — `Some(n)` to advance to block `n`; `None` to advance to the
 ///   chain tip (resolved via `eth_blockNumber`).
-/// - `chunk_size` — blocks per chunk (the `MAX_BLOCKS_PER_REQUEST`-aligned
-///   batch the RPC fetch + the chunk's single transaction cover).
+/// - `chunk_size` — blocks per chunk (the batch the chunk's single
+///   transaction covers).
+/// - `max_block_range` — the widest block range a single `eth_getLogs`
+///   request may span (the `MAX_BLOCKS_PER_REQUEST` clamp), independent
+///   of `chunk_size`: a chunk wider than this is fetched as several
+///   `max_block_range`-sized requests. Mirrors the Python updater's
+///   per-request clamp (`fetch_logs_retrying`'s `max_blocks_per_request`),
+///   so an operator can point the run at a public RPC with a tighter
+///   `eth_getLogs` range limit without shrinking the commit chunk.
 /// - `provider` — the already-built [`AlloyProvider`] the whole run is
 ///   driven over (ADR-068 D5: injection, not an internal build). The CLI and
 ///   Python shells construct the live transport from their `rpc_url` in a
@@ -1192,6 +1199,7 @@ pub fn run_pool_update(
     chain_id: i64,
     to_block: Option<u64>,
     chunk_size: u64,
+    max_block_range: u64,
     provider: AlloyProvider,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
@@ -1206,7 +1214,7 @@ pub fn run_pool_update(
     // the chunk + does NOT advance `last_update_block`.
     verify_all_at_completion: bool,
 ) -> Result<UpdateReport, RunError> {
-    if chunk_size == 0 {
+    if chunk_size == 0 || max_block_range == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
             from: 1,
             to: 0,
@@ -1222,6 +1230,7 @@ pub fn run_pool_update(
         chain_id,
         to_block,
         chunk_size,
+        max_block_range,
         provider,
         cancel,
         progress,
@@ -1251,6 +1260,7 @@ pub fn run_pool_update_on_db(
     chain_id: i64,
     to_block: Option<u64>,
     chunk_size: u64,
+    max_block_range: u64,
     provider: AlloyProvider,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
@@ -1265,7 +1275,7 @@ pub fn run_pool_update_on_db(
     // the chunk + does NOT advance `last_update_block`.
     verify_all_at_completion: bool,
 ) -> Result<UpdateReport, RunError> {
-    if chunk_size == 0 {
+    if chunk_size == 0 || max_block_range == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
             from: 1,
             to: 0,
@@ -1295,7 +1305,13 @@ pub fn run_pool_update_on_db(
     // the construction (live from its rpc_url, or a cassette replay transport
     // for an offline run).
     let provider = Arc::new(provider);
-    let fetcher = LogFetcher::new(provider.clone(), chunk_size);
+    // The RPC request width is the `max_block_range` clamp, NOT the commit
+    // chunk: a chunk wider than the clamp is fetched as several
+    // `max_block_range`-sized `eth_getLogs` requests, while the commit stays
+    // `chunk_size`-wide. Mirrors the Python updater's per-request clamp
+    // (`fetch_logs_retrying`'s `max_blocks_per_request`) decoupled from its
+    // `--chunk` commit granularity.
+    let fetcher = LogFetcher::new(provider.clone(), max_block_range);
 
     // Resolve the chain tip if `to_block` is None.
     let last_block = match to_block {

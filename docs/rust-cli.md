@@ -86,7 +86,7 @@ one data-driven pair.
 
 | Command | Flags | Behaviour |
 |---|---|---|
-| `pool update` | `--chunk <BLOCKS>` (default `10000`), `--to-block <BLOCK>` (default `latest:-64`), `--verify-chunk` / `--no-verify-chunk` (default: on), `--verify-all` / `--no-verify-all` (default: off), `--verify-all-interval <BLOCKS>` (default `1000000`) | Advance liquidity-pool state for every activated exchange, committing per chunk. |
+| `pool update` | `--chunk <BLOCKS>` (default `10000`), `--max-block-range <BLOCKS>` (default `10000`), `--to-block <BLOCK>` (default `latest:-64`), `--verify-chunk` / `--no-verify-chunk` (default: on), `--verify-all` / `--no-verify-all` (default: off), `--verify-all-interval <BLOCKS>` (default `1000000`) | Advance liquidity-pool state for every activated exchange, committing per chunk. |
 | `pool verify` | `--rpc-url <URL>`, `--chain <CHAIN_ID>`, `--block <BLOCK>`, `--pool <POOL>`, `--family <v3\|v4>` (all required), `--pool-manager <ADDRESS>` (V4 only) | Compare a pool's committed liquidity map against on-chain truth at `--block`; prints GREEN/RED with named divergences. |
 
 `BLOCK` is a block tag (`earliest`, `finalized`, `safe`, `latest`, `pending`,

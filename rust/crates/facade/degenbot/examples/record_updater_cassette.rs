@@ -321,6 +321,7 @@ fn run_pool_update_off_runtime(
             chain_id,
             Some(to_block),
             chunk_size,
+            10_000,
             provider,
             Arc::new(AtomicBool::new(false)),
             Arc::new(PoolNoProgress),
