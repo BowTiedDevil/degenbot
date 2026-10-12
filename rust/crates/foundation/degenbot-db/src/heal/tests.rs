@@ -462,3 +462,87 @@ fn report_bak_exists(db_path: &std::path::Path) -> bool {
     s.push(".bak");
     db_path.with_file_name(s).exists()
 }
+
+// ── 8. concurrent heals: the swap guard serializes them ───────────────────
+
+/// Two healers racing one legacy fixture DB: the guard lets exactly one run the
+/// dump-and-restore; the other blocks on the lock, then re-inspects the swapped
+/// DB and no-ops. Neither corrupts the `.bak`, and both agree on the post-heal
+/// `SchemaState` (ADR-070 D8).
+#[test]
+fn concurrent_heals_serialize_one_heals_one_noops() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("race.db");
+    create_new_database(&db_path).unwrap();
+    {
+        let conn = Connection::open(&db_path).unwrap();
+        populate_head_dataset(&conn);
+    }
+    mark_legacy(&db_path);
+
+    let expected_counts = [
+        ("erc20_tokens", 2),
+        ("exchanges", 1),
+        ("pools", 1),
+        ("uniswap_v2_pools", 1),
+        ("liquidity_positions", 1),
+    ];
+
+    let reports = std::thread::scope(|scope| {
+        // A barrier so both threads contend for the lock at the same moment.
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let path = db_path.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
+                scope.spawn(move || {
+                    barrier.wait();
+                    heal_database(&path).unwrap()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+
+    // Exactly one healer ran the copy; the other saw the swapped DB and no-opped.
+    let healed: Vec<&HealReport> = reports
+        .iter()
+        .filter(|r| matches!(r.old_state, SchemaState::LegacyAlembic))
+        .collect();
+    let noops: Vec<&HealReport> = reports
+        .iter()
+        .filter(|r| matches!(r.old_state, SchemaState::RustOwned { .. }))
+        .collect();
+    assert_eq!(healed.len(), 1, "exactly one heal: {reports:?}");
+    assert_eq!(noops.len(), 1, "exactly one no-op: {reports:?}");
+    assert!(!healed[0].rows_copied.is_empty(), "the healer copied rows");
+    assert!(noops[0].rows_copied.is_empty(), "the no-op copied nothing");
+    assert_eq!(noops[0].bak_path, db_path, "the no-op took no backup");
+
+    // Both return the same post-heal SchemaState.
+    for report in &reports {
+        assert_eq!(
+            report.new_state,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION,
+            }
+        );
+    }
+
+    // No partial temp left behind; the live DB is healed and FK-intact.
+    assert!(!dir.path().join("race.db.heal-tmp").exists());
+    let live = Connection::open(&db_path).unwrap();
+    assert!(!has_table(&live, "alembic_version"));
+    assert!(has_table(&live, "_degenbot_db_schema_version"));
+    assert_row_counts(&live, &expected_counts);
+    assert_fk_intact(&live);
+
+    // The `.bak` is the intact OLD DB (no double-swap corruption).
+    assert!(report_bak_exists(&db_path));
+    let bak = Connection::open(dir.path().join("race.db.bak")).unwrap();
+    assert_row_counts(&bak, &expected_counts);
+    assert!(has_table(&bak, "alembic_version"));
+}

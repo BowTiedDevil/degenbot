@@ -53,6 +53,16 @@
 //!    relocating any `-wal`/`-shm` side-files of the old DB alongside the
 //!    backup so the `.bak` is a complete recoverable snapshot. On any failure
 //!    the live DB is untouched and the partial temp file is cleaned up.
+//!
+//! # Concurrency — the heal-swap guard (ADR-070 D8)
+//!
+//! The whole dump-and-restore is serialized by an exclusive advisory lock on a
+//! sibling `<db>.heal.lock` file. A second process healing the same DB **waits**
+//! for the lock and, on acquiring it, re-inspects the live DB — already swapped
+//! to `RustOwned` by the first — and returns the no-op report, so the two never
+//! race the temp build or the atomic swap. The kernel releases the lock with the
+//! holding process (no stale lock to clean up); the lock file is left in place
+//! so every opener flocks the same inode.
 
 use hashbrown::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -128,6 +138,12 @@ const RENAME_OVERRIDES: &[(&str, &str, &str)] = &[
 /// [`DbError::Sqlite`] on any I/O / SQL failure (mid-heal failure leaves the
 /// live DB untouched and cleans up the partial temp file).
 pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
+    // ── Step 0: take the heal-swap guard (ADR-070 D8). ───────────────────
+    // Serializes the dump-and-restore across processes: a second healer blocks
+    // here until the first finishes, then re-inspects the live DB in step 1 and
+    // — finding it already swapped to `RustOwned` — returns the no-op report.
+    let _guard = HealSwapGuard::acquire(old_path)?;
+
     // ── Step 1: inspect old, read-only. ──────────────────────────────────
     // A read-only open never creates/extends the old DB's `-wal`/`-shm`, so the
     // old file is left byte-identical (THE rugpull-protection guarantee).
@@ -274,6 +290,56 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
         },
         warnings,
     })
+}
+
+/// The heal-swap serialization guard (ADR-070 D8): an exclusive advisory `flock`
+/// on a sibling `<db>.heal.lock` file, held for the whole [`heal_database`]
+/// operation so two processes cannot race the temp build or the atomic swap.
+///
+/// The second healer **waits** on the `flock` (a blocking [`std::fs::File::lock`],
+/// not a fail-fast `try_lock`) and, on acquiring it, re-inspects the live DB —
+/// already swapped to `RustOwned` by the first healer — and returns the no-op
+/// report. The kernel releases the `flock` when the holding process dies, so a
+/// crashed healer cannot wedge a later one: there is no stale-lock window and no
+/// pid bookkeeping to reconcile.
+///
+/// The lock file is **not** unlinked on drop (unlike the reset lock in
+/// `degenbot-cli-core`): unlinking a held `flock` reintroduces the classic race
+/// where a waiter blocked on the unlinked inode and a newcomer that re-creates the
+/// path hold locks on two different inodes and stop excluding each other. A stable
+/// name keeps every opener on the same inode for the DB's lifetime. The file
+/// carries the holder's pid for diagnostics only.
+struct HealSwapGuard {
+    /// Holding the descriptor is what holds the `flock`: dropping it releases the
+    /// lock. Never read; the lifetime IS the lock.
+    _file: std::fs::File,
+}
+
+impl HealSwapGuard {
+    /// Take the DB's heal `flock`, blocking until any in-flight healer finishes.
+    fn acquire(old_path: &Path) -> Result<Self, DbError> {
+        use std::io::Write as _;
+
+        let path = sibling_with_suffix(old_path, ".heal.lock");
+        // Open-or-create, never `create_new`: the file outlives its holder (we do
+        // not unlink it), and the `flock` — not the file's existence — is the
+        // exclusion. `create(true)` + `truncate(false)` so a stale file is reused
+        // rather than raced.
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
+        // Blocking wait, then re-check: the caller re-inspects the live DB and
+        // no-ops if the prior holder already swapped it. The kernel drops the lock
+        // with the holder process, so this cannot block on a dead holder.
+        file.lock()?;
+        // Best-effort diagnostic pid; the lock, not the content, is the guard.
+        let _ = file.set_len(0);
+        let _ = writeln!(file, "{}", std::process::id());
+        Ok(Self { _file: file })
+    }
 }
 
 /// Step 8: atomically swap the freshly-built temp DB into `old_path`, preserving

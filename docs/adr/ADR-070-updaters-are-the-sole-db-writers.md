@@ -1,4 +1,4 @@
-# ADR-070: Updaters are the sole DB writers — the `writer` cargo fence, read-only opens, and path-only schema init
+# ADR-070: Updaters are the sole DB writers — the `writer` cargo fence, read-only opens, path-only schema init, and a serialized heal swap
 
 **Status: accepted (2026-10-12). Predecessors: ADR-052 (heal-at-open + the Alembic retirement), ADR-068 (the updater golden-capture harness), ADR-011 (the atomic heal swap).**
 
@@ -68,6 +68,18 @@ shared updater dependency.
 the write-capable handle for `attach_construction_io`. The engine never touches
 `open_for_writes`.
 
+**D8 — The heal dump-and-restore is serialized by an advisory lock.**
+`heal_database` takes an exclusive advisory `flock` on a sibling `<db>.heal.lock`
+for the whole operation, so two processes cannot race the temp build or the
+atomic swap (ADR-011). The second healer **waits** on the lock (a blocking
+`flock`, not a fail-fast attempt) and, on acquiring it, re-inspects the live DB —
+already swapped to `RustOwned` by the first — and returns the no-op report. The
+kernel releases the lock with the holding process, so a crashed healer leaves no
+stale lock; the lock file is **not** unlinked, so every opener flocks the same
+inode (unlinking a held `flock` would let a waiter and a re-creator hold locks on
+two different inodes). The existing WAL-conversion retry is untouched: this
+guards only the swap.
+
 ## Consequences
 
 - A default `cargo build` of the workspace succeeds: the four updater shells
@@ -83,4 +95,6 @@ the write-capable handle for `attach_construction_io`. The engine never touches
   through the substrate.
 - The three load-bearing bindings — query_only reads (#2), path-only schema init
   (#2b), and the complete-range cursor advance (D5) — are recorded here and, for
-  #2b and the fence, enforced by architecture gates.
+  #2b and the fence, enforced by architecture gates. The serialized heal swap
+  (D8) is covered by a concurrency test (two racing healers: one heals, one
+  no-ops, no `.bak` corruption).
