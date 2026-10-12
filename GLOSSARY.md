@@ -587,7 +587,7 @@ its entry tangent wherever the closed-form curvature test holds (its output curv
 concave there) beside its reserve cap; the Curve stableswap family keeps the reserve cap
 alone, because its leaf's out-curve was measured non-concave (an entry tangent would
 under-cut a real leaf).
-Extending a single piece's validity window is not a sound bound.
+Extending a single piece's validity window is not a sound bound. The stableswap-family bound derivations and the solve-method decision are recorded in [the stableswap gate-bounds evaluation](docs/architecture/stableswap-gate-bounds-and-solve-method-evaluation.md).
 
 **Envelope gate**:
 The pre-solve skip test over the chained path bound: when the bound's best possible gain

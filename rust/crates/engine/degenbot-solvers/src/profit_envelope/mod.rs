@@ -21,6 +21,11 @@
 //! - Every derived coefficient is computed exactly (I512); evaluation applies
 //!   CEIL division so each line can only round UP, never under-cut the curve.
 //!
+//! The derivations and the measured evaluations behind these bounds — the
+//! Solidly/Balancer-stable concavity proofs, the Curve non-concavity
+//! counterexamples, and the rejected simulation-free `t`-search — are recorded
+//! in `docs/architecture/stableswap-gate-bounds-and-solve-method-evaluation.md`.
+//!
 //! **Not** a valid bound: extending the FIRST piece's Möbius map beyond its
 //! validity window (deeper later ranges can beat it). Only the entry-slope
 //! envelope form is sound.
