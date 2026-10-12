@@ -1,7 +1,6 @@
 use crate::cl::{build_cl_crossing_table, ClCrossingTable};
 use crate::runtime::SolveRuntimeConfig;
 use alloy::primitives::{aliases::I512, U256, U512};
-use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::solidly::SOLIDLY_MIN_SCALED_RESERVE;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
@@ -99,12 +98,16 @@ pub enum HopMath<'a> {
         scaling_factor_out: U256,
     },
 
-    /// Curve stableswap hop. Carries the leaf's full resolve-time state (a
-    /// BORROWED view of the rate-adjusted `xp`, the pairwise indices, the
-    /// fee/rate/precision constants and the `DVariant`/`YVariant`
-    /// discriminators) so the family is gated through its own variant rather
-    /// than a bare reserve cap — but the derived line set is the NATIVE reserve
-    /// cap ALONE. `xp` is borrowed for the same hot-loop reason as
+    /// Curve stableswap hop. Carries ONLY the state its derived lines and its
+    /// family label read: a BORROWED view of the rate-adjusted `xp` (the
+    /// native reserve cap is `xp[out]·precision/rate_out`), the pairwise
+    /// indices, the amplification `amp` the label reports, and the output
+    /// token's `precision`/`rate_multiplier_out`. The rest of the leaf's
+    /// resolve-time state — the fee, `A_PRECISION`, the coin count, the input
+    /// rate, and the y/d variant discriminators — is NOT carried: no reader
+    /// consumes it, and the family's entry tangent was measured non-concave
+    /// (see below), so no future tangent work could consume it either. `xp` is
+    /// borrowed for the same hot-loop reason as
     /// [`HopMath::BalancerStable::balances`].
     ///
     /// WHY no tangent: the Curve leaf's out-curve was MEASURED against the real
@@ -121,18 +124,11 @@ pub enum HopMath<'a> {
     /// would be an UNSOUND rise, so the family stays on the cap.
     CurveStableswap {
         amp: U256,
-        a_precision: U256,
         xp: &'a [U256],
         token_index_in: usize,
         token_index_out: usize,
-        n_coins: U256,
-        fee: U256,
-        fee_denom: U256,
         precision: U256,
-        rate_multiplier_in: U256,
         rate_multiplier_out: U256,
-        y_variant: YVariant,
-        d_variant: DVariant,
     },
 
     /// Solidly/Aerodrome/Camelot STABLE pool (the `x0·y·(x0² + y²) = K`
@@ -1180,10 +1176,9 @@ pub(crate) fn hop_lines_and_cap_cached(
             scaling_factor_in,
             scaling_factor_out,
         ),
-        // Curve carries its whole state so the family is gated through its own
-        // variant, but the derived lines are the native reserve cap alone — its
-        // entry tangent was measured non-concave against the real leaf (see
-        // `curve_stableswap_lines`).
+        // Curve is gated through its own variant, but the derived lines are
+        // the native reserve cap alone — its entry tangent was measured
+        // non-concave against the real leaf (see `curve_stableswap_lines`).
         HopMath::CurveStableswap {
             xp,
             token_index_out,
@@ -1541,6 +1536,23 @@ pub(crate) mod tests {
     use crate::profit_envelope::gate::GateStats;
     use crate::profit_envelope::kernel::Line;
     use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
+
+    /// Width ratchet for the gate's per-hop view.
+    ///
+    /// The gate builds a `Vec<Option<HopMath>>` per candidate path per call, so
+    /// the enum's width is a hot-loop cost: a variant that carries state no
+    /// derivation and no label reads widens the whole enum for nothing. The
+    /// Curve view once carried the leaf's full resolve-time state (296 bytes)
+    /// before the unread fields were dropped (200). This pins the trimmed
+    /// width so a future field addition has to justify itself here.
+    #[test]
+    fn hop_math_view_size_stays_trimmed() {
+        let size = std::mem::size_of::<HopMath<'_>>();
+        assert!(
+            size <= 200,
+            "HopMath grew to {size} bytes; it must stay at or below the trimmed width"
+        );
+    }
 
     // Test shims: the production helpers now thread a caller-owned
     // accumulator instead of a thread-local. These tests never read the

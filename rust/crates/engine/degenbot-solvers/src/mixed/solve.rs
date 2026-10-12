@@ -196,20 +196,16 @@ fn hop_math_for(hop: &ResolvedHop) -> Option<crate::profit_envelope::HopMath<'_>
             if state.rate_multiplier_out.is_zero() {
                 return None;
             }
+            // Only the fields the cap derivation and the family label read:
+            // the rest of the resolved state stays on `CurveStableswapHopState`
+            // for `simulate_curve_hop`, but the gate view does not carry it.
             Some(HopMath::CurveStableswap {
                 amp: state.amp,
-                a_precision: state.a_precision,
                 xp: state.xp.as_slice(),
                 token_index_in: state.token_index_in,
                 token_index_out: state.token_index_out,
-                n_coins: state.n_coins,
-                fee: state.fee,
-                fee_denom: state.fee_denom,
                 precision: state.precision,
-                rate_multiplier_in: state.rate_multiplier_in,
                 rate_multiplier_out: state.rate_multiplier_out,
-                y_variant: state.y_variant,
-                d_variant: state.d_variant,
             })
         }
     }
