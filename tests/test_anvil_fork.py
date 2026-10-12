@@ -56,13 +56,13 @@ def test_set_storage():
         launch=ForkLaunchConfig(storage_caching=False),
     )
     assert fork.provider.get_storage_at(
-        account=WETH_ADDRESS,
+        address=WETH_ADDRESS,
         position=storage_position,
     ) != to_bytes(new_storage_value_padded)
     fork.set_storage(WETH_ADDRESS, position=storage_position, value=new_storage_value)
 
     assert fork.provider.get_storage_at(
-        account=WETH_ADDRESS,
+        address=WETH_ADDRESS,
         position=storage_position,
     ) == to_bytes(new_storage_value_padded)
 
@@ -74,7 +74,7 @@ def test_set_storage():
         ),
     )
     assert fork.provider.get_storage_at(
-        account=WETH_ADDRESS,
+        address=WETH_ADDRESS,
         position=storage_position,
     ) == to_bytes(new_storage_value_padded)
 
