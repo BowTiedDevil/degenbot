@@ -1036,3 +1036,409 @@ fn probe_cap_tail_u128_max_liquidity_extreme_price() {
         "u128::MAX liquidity at extreme price should not be rejected"
     );
 }
+
+// ===========================================================================
+// Solidly/Aerodrome/Camelot STABLE entry-tangent soundness.
+//
+// The gate's Solidly-stable rise line is the tangent at zero input on the
+// invariant's CONCAVE output curve, plus an additive allowance for the leaf's
+// integer rounding. The oracle is the REAL leaf
+// (`calc_exact_in_stable_solidly` / `calc_exact_in_stable_camelot`), never a
+// reimplementation: a bound that ever dips below the leaf would skip a
+// profitable path.
+// ===========================================================================
+
+use degenbot_math::solidly::{calc_exact_in_stable_camelot, calc_exact_in_stable_solidly};
+use proptest::prelude::*;
+
+/// One generated Solidly-stable shape (a randomized-matrix row).
+#[derive(Clone, Copy, Debug)]
+struct SolidlyShape {
+    reserves_0: U256,
+    reserves_1: U256,
+    decimals_0: U256,
+    decimals_1: U256,
+    token_in: u8,
+    fee_numer: U256,
+    fee_denom: U256,
+    camelot: bool,
+}
+
+impl SolidlyShape {
+    fn hop(self) -> HopMath<'static> {
+        HopMath::SolidlyStable {
+            reserves_0: self.reserves_0,
+            reserves_1: self.reserves_1,
+            decimals_0: self.decimals_0,
+            decimals_1: self.decimals_1,
+            token_in: self.token_in,
+            fee_numer: self.fee_numer,
+            fee_denom: self.fee_denom,
+        }
+    }
+
+    /// The scaled input-side reserve (`reserve * ONE / decimals`), the leaf's
+    /// own `x0` floor.
+    fn scaled_in_reserve(self) -> U256 {
+        if self.token_in == 0 {
+            self.reserves_0
+                .saturating_mul(U256::from(1_000_000_000_000_000_000u64))
+                / self.decimals_0
+        } else {
+            self.reserves_1
+                .saturating_mul(U256::from(1_000_000_000_000_000_000u64))
+                / self.decimals_1
+        }
+    }
+
+    /// The REAL family leaf — the oracle.
+    fn leaf_output(self, x: U256) -> Option<U256> {
+        let r = if self.camelot {
+            calc_exact_in_stable_camelot(
+                x,
+                self.token_in,
+                self.reserves_0,
+                self.reserves_1,
+                self.decimals_0,
+                self.decimals_1,
+                self.fee_numer,
+                self.fee_denom,
+            )
+        } else {
+            calc_exact_in_stable_solidly(
+                x,
+                self.token_in,
+                self.reserves_0,
+                self.reserves_1,
+                self.decimals_0,
+                self.decimals_1,
+                self.fee_numer,
+                self.fee_denom,
+            )
+        };
+        r.ok()
+    }
+
+    fn native_out_reserve(self) -> U256 {
+        if self.token_in == 0 {
+            self.reserves_1
+        } else {
+            self.reserves_0
+        }
+    }
+}
+
+fn solidly_next(state: &mut u64) -> u64 {
+    *state = state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    *state
+}
+
+fn solidly_pow10(exp: u32) -> U256 {
+    let mut v = U256::ONE;
+    for _ in 0..exp {
+        v = v.saturating_mul(U256::from(10u64));
+    }
+    v
+}
+
+/// Draw one matrix row: reserves log-uniform 1e6..1e30, imbalance ratio up to
+/// 1e12 in either direction, the four decimals pairs, the three fee pairs,
+/// `token_in` in {0, 1}, and the Aerodrome/Camelot leaf choice. The wide ratio
+/// cap (12) is what drives the mixed-decimals post-trade window past the
+/// leaf's `calc_d` wrap threshold, exercising the faithful-arithmetic guard.
+fn solidly_shape(state: &mut u64) -> SolidlyShape {
+    let e0 = 6 + solidly_next(state) % 25;
+    let m0 = 100 + solidly_next(state) % 90_000;
+    let r0 = solidly_pow10(u32::try_from(e0).unwrap_or(6)).saturating_mul(U256::from(m0))
+        / U256::from(100u64);
+    let ratio_exp = solidly_next(state) % 13;
+    let up = solidly_next(state).is_multiple_of(2);
+    let e1 = if up {
+        e0 + ratio_exp
+    } else {
+        e0.saturating_sub(ratio_exp)
+    }
+    .clamp(1, 31);
+    let m1 = 100 + solidly_next(state) % 90_000;
+    let r1 = solidly_pow10(u32::try_from(e1).unwrap_or(1)).saturating_mul(U256::from(m1))
+        / U256::from(100u64);
+    let decs = [
+        (
+            U256::from(1_000_000_000_000_000_000u64),
+            U256::from(1_000_000_000_000_000_000u64),
+        ),
+        (
+            U256::from(1_000_000u64),
+            U256::from(1_000_000_000_000_000_000u64),
+        ),
+        (
+            U256::from(1_000_000_000_000_000_000u64),
+            U256::from(1_000_000u64),
+        ),
+        (U256::from(1_000_000u64), U256::from(1_000_000u64)),
+    ];
+    let (decimals_0, decimals_1) = decs[(solidly_next(state) % 4) as usize];
+    let fees = [
+        (U256::ZERO, U256::ONE),
+        (U256::from(3u64), U256::from(10_000u64)),
+        (U256::from(30u64), U256::from(10_000u64)),
+    ];
+    let (fee_numer, fee_denom) = fees[(solidly_next(state) % 3) as usize];
+    SolidlyShape {
+        reserves_0: r0,
+        reserves_1: r1,
+        decimals_0,
+        decimals_1,
+        token_in: (solidly_next(state) % 2) as u8,
+        fee_numer,
+        fee_denom,
+        camelot: solidly_next(state).is_multiple_of(2),
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    /// Point-wise dominance of the Solidly-stable entry-tangent bound over the
+    /// REAL leaves on a dense log grid up to the reserve cap.
+    #[test]
+    fn solidly_stable_entry_tangent_dominates_real_leaves(seed in any::<u64>()) {
+        let cfg = SolveRuntimeConfig::default();
+        let mut rng = seed | 1;
+        let mut n_shapes = 0u32;
+        let mut n_asserts = 0u32;
+        let mut n_rise_active = 0u32;
+        let mut n_leaf_wrapped = 0u32;
+        let mut n_leaf_undefined = 0u32;
+        let mut n_guard_fired = 0u32;
+
+        for _ in 0..400 {
+            let shape = solidly_shape(&mut rng);
+            let out_reserve = shape.native_out_reserve();
+            if out_reserve.is_zero() {
+                continue;
+            }
+            n_shapes += 1;
+            let views = [Some(shape.hop())];
+
+            // The faithful-arithmetic guard drops the rise on shapes whose
+            // post-trade window would wrap the leaf's `calc_d` products; those
+            // fall back to the flat cap ALONE, so the bound at unit input is
+            // exactly the output reserve. The rise, when kept, anchors at the
+            // tiny additive allowance `a << reserve_out` there.
+            let unit_bound = path_output_bound_at(&views, &U256::ONE, &cfg)
+                .expect("the Solidly-stable bound always derives");
+            if unit_bound >= out_reserve {
+                n_guard_fired += 1;
+                prop_assert_eq!(
+                    unit_bound, out_reserve,
+                    "a guard-fired (cap-only) shape must bound to the flat cap"
+                );
+            }
+
+            // Dense log grid from the reserve cap down ~8 decades.
+            let mut x = out_reserve;
+            for _ in 0..40 {
+                if x.is_zero() {
+                    break;
+                }
+                for probe in [x, x.saturating_add(U256::ONE)] {
+                    // The Solidly leaf's Newton step divides by `calc_d`,
+                    // which floors to zero when the scaled input reserve is
+                    // below `ONE^(2/3)` — the leaf reverts there, so its
+                    // output is undefined (Camelot guards the same division).
+                    if !shape.camelot
+                        && shape.scaled_in_reserve() < U256::from(1_000_000_000_000u64)
+                    {
+                        n_leaf_undefined += 1;
+                        continue;
+                    }
+                    let Some(leaf) = shape.leaf_output(probe) else {
+                        continue;
+                    };
+                    // A leaf reporting more than the pool holds has wrapped its
+                    // own `Rb - y` arithmetic; that is not the invariant curve,
+                    // so no invariant-based bound is defined there.
+                    if leaf > out_reserve {
+                        n_leaf_wrapped += 1;
+                        continue;
+                    }
+                    let bound = path_output_bound_at(&views, &probe, &cfg)
+                        .expect("the Solidly-stable bound always derives");
+                    prop_assert!(
+                        bound >= leaf,
+                        "Solidly-stable bound {bound} < leaf {leaf} at x={probe} \
+                         (r0={}, r1={}, d0={}, d1={}, fee={}/{}, token_in={}, camelot={})",
+                        shape.reserves_0, shape.reserves_1, shape.decimals_0,
+                        shape.decimals_1, shape.fee_numer, shape.fee_denom,
+                        shape.token_in, shape.camelot
+                    );
+                    n_asserts += 1;
+                    if bound < out_reserve {
+                        n_rise_active += 1;
+                    }
+                }
+                x = x.saturating_mul(U256::from(464u64)) / U256::from(1000u64);
+            }
+        }
+
+        eprintln!(
+            "solidly_stable proptest: shapes={n_shapes} asserts={n_asserts} \
+             rise_active={n_rise_active} guard_fired_cap_only={n_guard_fired} \
+             leaf_wrapped={n_leaf_wrapped} leaf_undefined={n_leaf_undefined}"
+        );
+
+        prop_assert!(n_shapes >= 300, "matrix too small: {n_shapes} shapes");
+        prop_assert!(n_asserts >= 2_000, "vacuous matrix: {n_asserts} assertions");
+        prop_assert!(
+            n_rise_active >= 200,
+            "the tangent rise was never the active line: {n_rise_active} probes \
+             ({n_leaf_wrapped} leaf-wrapped and {n_leaf_undefined} \
+             leaf-undefined probes skipped)"
+        );
+        prop_assert!(
+            n_guard_fired > 0,
+            "the wide-ratio matrix never exercised the faithful-arithmetic guard: \
+             {n_guard_fired} cap-only shapes"
+        );
+    }
+}
+
+/// Tightening: on an imbalanced pool the composed bound with the tangent is
+/// strictly BELOW the reserve-cap-only bound.
+#[test]
+fn solidly_stable_tangent_tightens_below_reserve_cap() {
+    let cfg = SolveRuntimeConfig::default();
+    let shape = SolidlyShape {
+        reserves_0: U256::from(1_000_000_000_000_000_000_000_000u128),
+        reserves_1: U256::from(10_000_000_000_000_000_000_000u128),
+        decimals_0: U256::from(1_000_000_000_000_000_000u64),
+        decimals_1: U256::from(1_000_000_000_000_000_000u64),
+        token_in: 0,
+        fee_numer: U256::from(3u64),
+        fee_denom: U256::from(10_000u64),
+        camelot: false,
+    };
+    let out_reserve = shape.native_out_reserve();
+    let x = out_reserve / U256::from(2u64);
+    let tangent = path_output_bound_at(&[Some(shape.hop())], &x, &cfg).expect("derives");
+    let cap_only = path_output_bound_at(
+        &[Some(HopMath::ReserveCap {
+            reserve_out: out_reserve,
+        })],
+        &x,
+        &cfg,
+    )
+    .expect("derives");
+    assert!(
+        tangent < cap_only,
+        "tangent {tangent} must be strictly tighter than the reserve cap {cap_only}"
+    );
+}
+
+/// Before/after skip-count delta on a Solidly-bearing mixed corpus, reported
+/// through the existing `GateStats` counters. Neither committed mixed corpus
+/// carries a Solidly leg (both are V2/CL only), so the Solidly corpus is
+/// synthesized here: healthy pools whose true max profit is far below the
+/// floor while their reserve caps sit far above it.
+#[test]
+fn solidly_stable_tangent_raises_skip_count_on_synthesized_corpus() {
+    use degenbot_solvers::mixed::solve_path_with_min_profit;
+    use degenbot_solvers::mixed::{ResolvedHop, ResolvedMixedPath, SolidlyHopState};
+    use degenbot_solvers::profit_envelope::{path_profit_bound_with_floor, GateDeps};
+    use degenbot_uniswap::dex_identity::DexVariant;
+
+    // The committed mixed corpus has no Solidly leg.
+    let committed = degenbot_solvers::capture_fixture::load_rows(
+        degenbot_solvers::capture_fixture::fixture_path("heavy_mixed_solve_captures.jsonl"),
+    );
+    let solidly_rows = committed
+        .iter()
+        .filter(|row| {
+            row.get("hops")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|hops| {
+                    hops.iter().any(|h| {
+                        h.get("kind")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|k| k.to_ascii_lowercase().contains("solidly"))
+                    })
+                })
+        })
+        .count();
+    assert_eq!(
+        solidly_rows, 0,
+        "the committed mixed corpus unexpectedly carries Solidly legs"
+    );
+
+    let floor = U256::from(1_000_000_000_000_000_000u64);
+    let cfg = SolveRuntimeConfig::default();
+    let mut corpus: Vec<ResolvedMixedPath> = Vec::new();
+    for i in 0..64u64 {
+        // Healthy, slightly imbalanced pools: scaled reserves >= 2^60 and the
+        // leaf's `calc_k` product well inside u256.
+        let r0 =
+            U256::from(1_000_000_000_000_000_000_000_000u128).saturating_mul(U256::from(1 + i % 5));
+        let r1 =
+            U256::from(100_000_000_000_000_000_000_000u128).saturating_mul(U256::from(1 + i % 3));
+        let state = SolidlyHopState {
+            reserves_0: r0,
+            reserves_1: r1,
+            decimals_0: U256::from(1_000_000_000_000_000_000u64),
+            decimals_1: U256::from(1_000_000_000_000_000_000u64),
+            token_in: u8::from(!i.is_multiple_of(2)),
+            fee_numer: U256::from(3u64),
+            fee_denom: U256::from(10_000u64),
+            stable: true,
+            variant: DexVariant::AerodromeV2Stable,
+        };
+        corpus.push(ResolvedMixedPath {
+            hops: vec![ResolvedHop::SolidlyStable { state }],
+            valid: true,
+            state_nonces: vec![i],
+            max_update_block: 0,
+        });
+    }
+
+    let mut old_skips = 0u64;
+    let mut new_skips = 0u64;
+    for path in &corpus {
+        let state = path
+            .hops
+            .first()
+            .and_then(ResolvedHop::as_solidly_state)
+            .expect("solidly hop");
+        let out_reserve = if state.token_in == 0 {
+            state.reserves_1
+        } else {
+            state.reserves_0
+        };
+        // Today's mapping: flat reserve cap only.
+        let (old_env, _) = path_profit_bound_with_floor(
+            &[Some(HopMath::ReserveCap {
+                reserve_out: out_reserve,
+            })],
+            &GateDeps::offline_with_runtime(cfg),
+            floor,
+        );
+        if matches!(old_env, Envelope::Bound(b) if b <= floor) {
+            old_skips += 1;
+        }
+        // The new mapping, through the real entry.
+        new_skips += solve_path_with_min_profit(path, floor, &GateDeps::offline())
+            .gate_stats
+            .skipped;
+    }
+
+    eprintln!(
+        "solidly_stable corpus: {} paths, skip count {old_skips} (reserve cap) -> \
+         {new_skips} (entry tangent + cap)",
+        corpus.len()
+    );
+    assert!(
+        new_skips > old_skips,
+        "the entry tangent must raise the skip count ({old_skips} -> {new_skips})"
+    );
+}

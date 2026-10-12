@@ -85,6 +85,14 @@ impl<'a> DegeneratePathEvent<'a> {
                     Some(HopMath::ReserveCap { reserve_out }) => {
                         format!("reserve_cap(r_out={reserve_out})")
                     }
+                    Some(HopMath::SolidlyStable {
+                        reserves_0,
+                        reserves_1,
+                        token_in,
+                        ..
+                    }) => format!(
+                        "solidly_stable(r0={reserves_0},r1={reserves_1},token_in={token_in})"
+                    ),
                 };
                 let ranges = match slot {
                     Some(HopMath::Cl(ch)) => Some(ch.seq),

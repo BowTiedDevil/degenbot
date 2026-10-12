@@ -78,18 +78,27 @@ pub fn solve_path_with_min_profit(
                 }))
             }
             // Solidly volatile is the constant-product family → the
-            // fee-agnostic V2 lines. Solidly stable is a stableswap whose
-            // marginal rate is non-monotone → sound reserve cap only (loose);
-            // the amplification-bounded peak-rate slope is a follow-up.
+            // fee-agnostic V2 lines. Solidly stable is concave in the input,
+            // so its entry tangent is a sound rise beside the reserve cap.
             ResolvedHop::SolidlyStable { state } => {
-                let (reserve_in, reserve_out) = if state.token_in == 0 {
-                    (state.reserves_0, state.reserves_1)
-                } else {
-                    (state.reserves_1, state.reserves_0)
-                };
                 if state.stable {
-                    Some(HopMath::ReserveCap { reserve_out })
+                    // Reserves stay NATIVE and un-oriented; the arm orients
+                    // them from `token_in` (the leaf's own convention).
+                    Some(HopMath::SolidlyStable {
+                        reserves_0: state.reserves_0,
+                        reserves_1: state.reserves_1,
+                        decimals_0: state.decimals_0,
+                        decimals_1: state.decimals_1,
+                        token_in: state.token_in,
+                        fee_numer: state.fee_numer,
+                        fee_denom: state.fee_denom,
+                    })
                 } else {
+                    let (reserve_in, reserve_out) = if state.token_in == 0 {
+                        (state.reserves_0, state.reserves_1)
+                    } else {
+                        (state.reserves_1, state.reserves_0)
+                    };
                     Some(HopMath::SolidlyVolatile {
                         reserve_in,
                         reserve_out,
@@ -1436,6 +1445,7 @@ fn curve_brute_force_best(hops: &[ResolvedHop], start: U256) -> Option<U256> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[expect(clippy::panic)] // the derivability assertions are the point
 mod gate_tests {
     use super::*;
     use crate::mixed::ResolvedMixedPath;
@@ -1518,6 +1528,87 @@ mod gate_tests {
             bound.is_some_and(|bound| bound >= true_out),
             "Solidly volatile bound must dominate true output"
         );
+    }
+
+    /// RED before the Solidly-stable tangent: the gate cannot prune a
+    /// Solidly-stable path whose reserve cap sits far above the profit floor —
+    /// the reserve-cap-only line makes the bound the pool's entire holding, so
+    /// every unprofitable Solidly candidate still pays a full golden-section
+    /// solve. The entry tangent is far tighter, so the same path (a single
+    /// hop, whose true max profit is zero) is skipped once the hop maps to
+    /// `SolidlyStable`.
+    #[test]
+    fn solidly_stable_tangent_prunes_where_reserve_cap_cannot() {
+        use crate::profit_envelope::path_profit_bound_with_floor;
+
+        let reserve = U256::from(1_000_000_000_000_000_000_000_000u128); // 1e24
+        let floor = U256::from(1_000_000_000_000_000_000u64); // 1e18
+        let cfg = crate::runtime::SolveRuntimeConfig::default();
+
+        // Today's mapping: flat reserve cap only. The bound is the whole
+        // holding, far above the floor, so the gate runs the solve.
+        let (cap_env, _) = path_profit_bound_with_floor(
+            &[Some(HopMath::ReserveCap {
+                reserve_out: reserve,
+            })],
+            &GateDeps::offline_with_runtime(cfg),
+            floor,
+        );
+        let Envelope::Bound(cap_bound) = cap_env else {
+            panic!("the reserve-cap bound must derive");
+        };
+        assert!(
+            cap_bound > floor,
+            "the reserve cap cannot prune at this floor (bound {cap_bound} > floor {floor})"
+        );
+
+        // The new mapping: entry tangent + cap.
+        let state = crate::mixed::SolidlyHopState {
+            reserves_0: reserve,
+            reserves_1: reserve,
+            decimals_0: U256::from(1_000_000_000_000_000_000u64),
+            decimals_1: U256::from(1_000_000_000_000_000_000u64),
+            token_in: 0,
+            fee_numer: U256::from(3u64),
+            fee_denom: U256::from(10_000u64),
+            stable: true,
+            variant: DexVariant::AerodromeV2Stable,
+        };
+        let (tangent_env, _) = path_profit_bound_with_floor(
+            &[Some(HopMath::SolidlyStable {
+                reserves_0: state.reserves_0,
+                reserves_1: state.reserves_1,
+                decimals_0: state.decimals_0,
+                decimals_1: state.decimals_1,
+                token_in: state.token_in,
+                fee_numer: state.fee_numer,
+                fee_denom: state.fee_denom,
+            })],
+            &GateDeps::offline_with_runtime(cfg),
+            floor,
+        );
+        let Envelope::Bound(tangent_bound) = tangent_env else {
+            panic!("the tangent bound must derive");
+        };
+        assert!(
+            tangent_bound <= floor,
+            "the entry tangent must prune (bound {tangent_bound} <= floor {floor})"
+        );
+
+        // Through the real entry: skipped, with no walk simulations.
+        let p = ResolvedMixedPath {
+            hops: vec![ResolvedHop::SolidlyStable { state }],
+            valid: true,
+            state_nonces: vec![1],
+            max_update_block: 0,
+        };
+        let r = solve_path_with_min_profit(&p, floor, &GateDeps::offline());
+        assert!(
+            r.result.is_none(),
+            "the gate must skip the unprofitable Solidly-stable path"
+        );
+        assert_eq!(r.gate_stats.skipped, 1);
+        assert_eq!(r.stats.sims, 0, "a skip carries no walk simulations");
     }
 
     #[test]

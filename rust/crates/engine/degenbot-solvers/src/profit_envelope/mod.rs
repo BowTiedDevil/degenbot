@@ -14,6 +14,9 @@
 //!   `(gross_input, output)` anchor therefore dominates the curve on the whole
 //!   domain (tangent-line property of concave functions; for a piecewise-linear
 //!   concave function each segment's own line dominates globally).
+//! - A Solidly/Aerodrome/Camelot STABLE hop's output curve is concave in the
+//!   input (its marginal rate is non-increasing as the input grows), so its
+//!   entry tangent dominates globally; the reserve cap stays beside it.
 //! - CL swaps are monotone non-decreasing, so bounds chain monotonically.
 //! - Every derived coefficient is computed exactly (I512); evaluation applies
 //!   CEIL division so each line can only round UP, never under-cut the curve.

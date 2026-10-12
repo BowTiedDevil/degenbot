@@ -985,6 +985,14 @@ fn path_profit_bound_inner(
                         HopMath::ReserveCap { reserve_out } => {
                             format!("ReserveCap(zero={})", reserve_out.is_zero())
                         }
+                        HopMath::SolidlyStable {
+                            reserves_0,
+                            reserves_1,
+                            ..
+                        } => format!(
+                            "SolidlyStable(zero={})",
+                            reserves_0.is_zero() || reserves_1.is_zero()
+                        ),
                     };
                     diag!(domain = solver, hop_index = e.hop_index,
                         family = %family,

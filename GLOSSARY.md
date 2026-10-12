@@ -580,7 +580,10 @@ _Avoid_: reading it as a per-solve value; resetting it mid-solve.
 A piecewise-linear concave upper bound on a hop's output curve, derived from projection
 data the solve already builds, and the point-wise minimum of its hop tangent lines and
 per-hop caps. A constant-product-family hop contributes its exact post-fee entry tangent
-beside the fee-agnostic rise; a CL hop contributes its pool-static tangent fan.
+beside the fee-agnostic rise; a CL hop contributes its pool-static tangent fan. A
+Solidly/Aerodrome/Camelot stable hop contributes its entry tangent (its output curve is
+concave in the input) beside its reserve cap; the Curve / Balancer stable families keep
+the reserve cap alone.
 Extending a single piece's validity window is not a sound bound.
 
 **Envelope gate**:
