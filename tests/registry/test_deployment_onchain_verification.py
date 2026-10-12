@@ -201,8 +201,18 @@ _RECORD_IDS = [f"{r.chain_id}-{r.factory[:10]}…-{r.name}" for r in _RECORDS]
 
 @pytest.fixture
 def deployment_capture(request: pytest.FixtureRequest) -> DeploymentGoldenCapture:
-    """The golden capture handle, bound to this run's ``--golden-mode``."""
+    """The golden capture handle, bound to this run's ``--golden-mode``.
+
+    Skips at setup outside ``--golden-mode=record``: only a record run may
+    write capture rows (the class docstring's contract); the hermetic replay
+    module constructs its own replay-mode handle directly.
+
+    """
     mode: str = request.config.getoption("--golden-mode")
+    if mode != "record":
+        pytest.skip(
+            f"golden capture records only under --golden-mode=record (this run: {mode!r})",
+        )
     return DeploymentGoldenCapture(mode=mode)
 
 
