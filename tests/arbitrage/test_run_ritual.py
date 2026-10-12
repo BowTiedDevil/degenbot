@@ -167,8 +167,6 @@ class _StubHost:
             discovery_batch_size=100,
             permutation_filter=None,
         )
-        self.v3_snapshot = None
-        self.v4_snapshot = None
         self.bot = self.session.bot
         self.engine_registry = self.session.engine_registry
 

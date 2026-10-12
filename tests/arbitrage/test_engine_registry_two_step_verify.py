@@ -28,11 +28,6 @@ from tests.fakes.engine import FakeEngine as _RecordingVerifyEngine
 _V4_POOL_ID_HEX = to_0x_hex(b"V4POOLID")
 
 
-class _FakeSnapshot:
-    def __init__(self, newest_block: int) -> None:
-        self.newest_block = newest_block
-
-
 class _FakeV3Pool:
     """Minimal V3 pool double exposing the attributes register_v3_pool reads."""
 
@@ -56,18 +51,16 @@ class _FakeV4Pool:
     _py_pool = _PyPool()
 
 
-def _registry_started_with_snapshots() -> tuple[runner.EngineRegistry, _RecordingVerifyEngine]:
-    fake = _RecordingVerifyEngine()
+def _registry_started_with_seed() -> tuple[runner.EngineRegistry, _RecordingVerifyEngine]:
+    fake = _RecordingVerifyEngine(snapshot_seed_block=18_000_050)
     registry = runner.EngineRegistry(bot=None, engine=fake)
-    # `load_*_from_py` is retired; `start()` sets `snapshot_seed_block`
-    # from `min(newest_block)` directly. `S = min(newest_block)` across the
-    # supplied snapshots is stashed as `_verify_snapshot_block` and passed to
-    # the core lifecycle (step-1 seed verify @ snapshot block).
+    # `load_*_from_py` is retired; the seed `S` is recorded on the shared
+    # `BotState` by the DB load at construction and `start()` reads it back.
+    # It is stashed as `_verify_snapshot_block` and passed to the core
+    # lifecycle (step-1 seed verify @ snapshot block).
     registry.start(
         "http://localhost:8545",
         "ws://localhost:8546",
-        v3_snapshot=_FakeSnapshot(18_000_100),
-        v4_snapshot=_FakeSnapshot(18_000_050),
         verify_state_view="0x0000000000000000000000000000000000000abc",
     )
     assert registry._verify_snapshot_block == 18_000_050
@@ -78,7 +71,7 @@ def test_register_v3_pool_delegates_to_core_lifecycle() -> None:
     """D1: register_v3_pool makes ONE core-owned call, passing the stashed
     snapshot block (step-1 seed-verify target). The drain/pin/step-2/live
     ordering is owned inside the core lifecycle (Rust-tested)."""
-    registry, fake = _registry_started_with_snapshots()
+    registry, fake = _registry_started_with_seed()
     assert inspect.iscoroutinefunction(registry.register_v3_pool)
 
     async def _go() -> int:
@@ -100,7 +93,7 @@ def test_register_v3_pool_delegates_to_core_lifecycle() -> None:
 
 def test_register_v4_pool_delegates_to_core_lifecycle() -> None:
     """D1: register_v4_pool makes ONE core-owned call (pm + pool_id + block)."""
-    registry, fake = _registry_started_with_snapshots()
+    registry, fake = _registry_started_with_seed()
     assert inspect.iscoroutinefunction(registry.register_v4_pool)
 
     async def _go() -> int:
@@ -133,7 +126,7 @@ def test_register_fail_fast_surfaces_error_to_racing_sibling(
     claim state to inspect, so this pins the observable contract — both callers
     fail loudly with the same typed error — rather than a table's internals.
     """
-    registry, fake = _registry_started_with_snapshots()
+    registry, fake = _registry_started_with_seed()
     register = getattr(registry, f"register_{family}_pool")
     pool = _FakeV3Pool() if family == "v3" else _FakeV4Pool()
     seen: dict[str, object] = {}
@@ -172,7 +165,7 @@ def test_register_v3_pool_fail_fast_surfaces_mismatch() -> None:
     """The verification tripwire (D-A) propagates as VerificationMismatchError
     from the core lifecycle, surfacing from build_paths — not 18k pools later.
     No auto-repair: the exception is not caught by the registry."""
-    registry, fake = _registry_started_with_snapshots()
+    registry, fake = _registry_started_with_seed()
     fake.fail_next = "v3"
 
     async def _go() -> int:
@@ -205,7 +198,7 @@ def test_register_always_delegates_even_without_verify_config() -> None:
         "register must always delegate to the core lifecycle — a Python-side "
         "skip would reintroduce a verify-disabled path for tracked pools"
     )
-    # no snapshots supplied → snapshot_block is None (step-1 no-op; step-2 +
+    # no DB seed → snapshot_block is None (step-1 no-op; step-2 +
     # tripwire still run core-side).
     assert fake.run_calls[0]["snapshot_block"] is None
 
@@ -219,7 +212,7 @@ def test_repeat_registration_delegates_and_reads_the_same_core_id() -> None:
     verify of an already-live pool a no-op (ADR-022 D1) rather than a Python
     guess about what the core would have done.
     """
-    registry, fake = _registry_started_with_snapshots()
+    registry, fake = _registry_started_with_seed()
 
     async def _go() -> int:
         return await registry.register_v3_pool(_FakeV3Pool())

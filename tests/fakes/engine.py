@@ -118,6 +118,7 @@ class FakeEngine:
         events: list[str] | None = None,
         backfill_target: int = 12_000,
         last_processed_block: int | None = 12_345,
+        snapshot_seed_block: int | None = None,
         stop_raises: Exception | None = None,
     ) -> None:
         self._events = events
@@ -127,7 +128,7 @@ class FakeEngine:
         self.stop_raises = stop_raises
         self._backfill_target = backfill_target
         self._last_processed_block = last_processed_block
-        self._snapshot_seed_block: int | None = None
+        self._snapshot_seed_block: int | None = snapshot_seed_block
         self.seed_args: list[int | None] = []
         self.subscribe_calls: list[str] = []
         self.start_calls: list[tuple[str, str, str | None]] = []
@@ -363,15 +364,11 @@ class FakeEngineRegistry:
         node_http: str,
         node_ws: str,
         *,
-        v3_snapshot: object,
-        v4_snapshot: object,
         verify_state_view: str | None = None,
     ) -> int:
         self.start_calls.append({
             "node_http": node_http,
             "node_ws": node_ws,
-            "v3_snapshot": v3_snapshot,
-            "v4_snapshot": v4_snapshot,
             "verify_state_view": verify_state_view,
         })
         return self.engine._backfill_target

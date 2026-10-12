@@ -1,7 +1,7 @@
 """Integration tests for EngineRegistry.start — the two-phase Layer A facade.
 
-`start(...)` runs the pre-pump startup ritual (subscribe → stream snapshots →
-backfill → verify config) and stops at `PumpPhase::Backfilled`, BEFORE
+`start(...)` runs the pre-pump startup ritual (subscribe → backfill →
+verify config) and stops at `PumpPhase::Backfilled`, BEFORE
 `resume()`. This is the consumer-safety invariant: between subscribe and
 resume (including stream/backfill/verify) zero result batches are emitted,
 so the caller can attach its consumer any time before `resume()` without
@@ -35,54 +35,26 @@ def test_start_no_snapshots_calls_subscribe_then_verify_never_resume() -> None:
     assert backfill_target == 18_000_000
 
 
-class _FakeSnapshot:
-    """Minimal snapshot double exposing ``newest_block`` for block derivation."""
+def test_start_reads_the_snapshot_seed_block_from_the_engine() -> None:
+    """start() reads the snapshot seed block ``S`` back from the shared
+    ``BotState`` (recorded at ``Bot`` construction by ``load_snapshot_from_db``)
+    and stashes it as the per-pool step-1 verify seed, then configures verify.
 
-    def __init__(self, newest_block: int) -> None:
-        self.newest_block = newest_block
-
-
-def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
-    """start() derives snapshot_block = min(snap.newest_block) across supplied
-    snapshots and stashes it for the per-pool verify, never passing it to
-    a backfill call (the snapshot→WS gap closes automatically inside
-    `resume()` via the core `BlockPump::resume_from_subscribe`, not from
-    `start()`).
-
-    The module-level stream functions are patched with recorders (the real fns
-    need a full DB-backed snapshot); the engine is a real Fake. This verifies
-    start()'s ORCHESTRATION — that it streams, stashes the derived block as
-    `_verify_snapshot_block`, and configures verify in the documented order —
-    not the stream fns themselves.
+    There is no injected ``v3_snapshot``/``v4_snapshot`` kwargs seam any more:
+    the seed is already on the core ``BotState`` before ``subscribe()``, so
+    ``after_subscribe`` advances the phase to ``SnapshotLoaded``.
     """
-    fake = FakeEngine(backfill_target=18_000_000)
+    fake = FakeEngine(backfill_target=18_000_000, snapshot_seed_block=18_000_050)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    # `start()` no longer ingests snapshot dicts (the
-    # `load_*_from_py` surface is retired); it derives `S = min(newest_block)`
-    # + sets `snapshot_seed_block` BEFORE `subscribe()` so `after_subscribe`
-    # advances the phase to `SnapshotLoaded`.
-    v3_snap = _FakeSnapshot(newest_block=18_000_100)
-    v4_snap = _FakeSnapshot(newest_block=18_000_050)
+    registry.start("http://localhost:8545", "ws://localhost:8546")
 
-    registry.start(
-        "http://localhost:8545",
-        "ws://localhost:8546",
-        v3_snapshot=v3_snap,
-        v4_snapshot=v4_snap,
-    )
-
-    # The snapshot seed block is set BEFORE subscribe (so the engine
-    # phase advances to SnapshotLoaded via after_subscribe), then
-    # verify-config. No stream/load_*_from_py calls remain.
+    # The seed is READ (no setter call), then verify-config; never resume.
     assert fake.calls == [
-        "set_snapshot_seed_block",
         "subscribe",
         "set_verify_rpc_url",
     ]
-    # The derived block (the min of the two newest_blocks) is set on the
-    # engine's snapshot_seed_block + stashed as the step-1 verify seed.
-    assert fake.seed_args == [18_000_050]
+    assert fake.seed_args == []
     assert registry._verify_snapshot_block == 18_000_050
     assert "resume" not in fake.calls
 
@@ -138,14 +110,14 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
 
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     """T3 (ADR-006 D4): Bot exposes subscribe/resume as delegating entry
-    points once a ArbitrageEngine is constructed against it (which attaches
-    the shared PumpState). The Bot is the D4 pump owner; these methods drive
-    the SAME PumpState the engine reads.
+     points once a ArbitrageEngine is constructed against it (which attaches
+     the shared PumpState). The Bot is the D4 pump owner; these methods drive
+     the SAME PumpState the engine reads.
 
-    `backfill_from_snapshot` is retired — the snapshot→WS gap is
-    closed automatically inside the core `BlockPump::resume_from_subscribe`
-   . The non-DB path uses the `snapshot_seed_block` setter to record
-    `S` so the core auto-backfill picks it up.
+     `backfill_from_snapshot` is retired — the snapshot→WS gap is
+     closed automatically inside the core `BlockPump::resume_from_subscribe`
+    . `S` is recorded on the shared `BotState` by the DB load at construction;
+     the core auto-backfill picks it up from there.
     """
     from degenbot._ffi import Bot
     from degenbot.arbitrage.engine_registry import ArbitrageEngine
@@ -156,50 +128,39 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     for method in ("subscribe", "resume"):
         assert hasattr(bot, method), f"Bot must expose {method} after engine attach"
     # backfill_from_snapshot is retired.
-    assert not hasattr(bot, "backfill_from_snapshot"), (
-        "Bot::backfill_from_snapshot retired"
-    )
+    assert not hasattr(bot, "backfill_from_snapshot"), "Bot::backfill_from_snapshot retired"
     # The engine still exposes subscribe/resume too (reads the same shared state).
     for method in ("subscribe", "resume"):
         assert hasattr(engine, method)
     assert not hasattr(engine, "backfill_from_snapshot"), (
         "ArbitrageEngine::backfill_from_snapshot retired"
     )
-    # The non-DB path uses the snapshot_seed_block setter.
+    # The engine still exposes the snapshot seed block (getter+setter): the DB
+    # load records `S` and `start()` reads it back.
     assert hasattr(engine, "snapshot_seed_block")  # getter+setter
 
 
-def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypatch) -> None:
+def test_start_stashes_snapshot_block_for_two_step_verify() -> None:
     """T1 (ADR-006 D4 + two-step verify prep): start() stashes the snapshot
-    block (min newest_block) and the backfill target (from subscribe) on the
-    registry, so the per-pool two-step verify (T6) can pass them to the verify
-    closures without re-deriving. These are NOT wired into engine.set_verify_*
-    (that dead path is deleted in T5) — they live on the registry for T6 to read.
-    No behavior change yet beyond setting the fields (T6 reads them)."""
-    fake = FakeEngine(backfill_target=18_000_000)
+    seed block (read from the shared ``BotState``) on the registry, so the
+    per-pool two-step verify (T6) can pass it to the verify closures without
+    re-deriving. It is NOT wired into engine.set_verify_* (that dead path is
+    deleted in T5) — it lives on the registry for T6 to read."""
+    fake = FakeEngine(backfill_target=18_000_000, snapshot_seed_block=18_000_050)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    v3_snap = _FakeSnapshot(newest_block=18_000_100)
-    v4_snap = _FakeSnapshot(newest_block=18_000_050)
+    registry.start("http://localhost:8545", "ws://localhost:8546")
 
-    registry.start(
-        "http://localhost:8545",
-        "ws://localhost:8546",
-        v3_snapshot=v3_snap,
-        v4_snapshot=v4_snap,
-    )
-
-    # snapshot_block is the min of the supplied newest_blocks. The registry
-    # no longer stashes a backfill_block for step-2 — the post-drain pin carries
-    # its OWN block (captured atomically with the drain), so step-2 takes no
-    # `block` argument from the registry (2026-06-29 fix).
+    # The registry no longer stashes a backfill_block for step-2 — the
+    # post-drain pin carries its OWN block (captured atomically with the drain),
+    # so step-2 takes no `block` argument from the registry (2026-06-29 fix).
     assert registry._verify_snapshot_block == 18_000_050
     assert not hasattr(registry, "_verify_backfill_block")
 
 
 def test_start_stashes_None_blocks_when_no_snapshots() -> None:
-    """With no snapshots, there's no snapshot block to derive and no backfill
-    applied, so the snapshot block stash is None (T6 will guard on None ==
+    """With no DB seed (cold start), the shared ``BotState`` carries no snapshot
+    block, so the snapshot block stash is None (T6 will guard on None ==
     verify not applicable for this pool). The registry no longer stashes a
     backfill_block — step-2 pins its own block."""
     fake = FakeEngine(backfill_target=18_000_000)

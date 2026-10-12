@@ -21,20 +21,6 @@ V3_POOL = "0x" + "22" * 20
 V4_PM = "0x000000000004444c5dc75cB358380D2e3De08A90"
 
 
-def _make_v3_snapshot(
-    pools: dict[str, dict[int, tuple[int, int]]],
-) -> dict[str, dict[int, tuple[int, int]]]:
-    """Build a V3 snapshot dict for load_v3_snapshot_from_py()."""
-    return pools
-
-
-def _make_v4_snapshot(
-    pool_managers: dict[str, dict[str, dict[int, tuple[int, int]]]],
-) -> dict[str, dict[str, dict[int, tuple[int, int]]]]:
-    """Build a V4 snapshot dict for load_v4_snapshot_from_py()."""
-    return pool_managers
-
-
 def _make_pool_id(suffix: int) -> str:
     """Generate a 32-byte pool ID as hex string."""
     return "0x" + (b"\x00" * 31 + bytes([suffix])).hex()

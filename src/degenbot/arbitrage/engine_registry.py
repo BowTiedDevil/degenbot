@@ -2,8 +2,8 @@
 
 :class:`EngineRegistry` is the **one correct way to start** a
 :class:`~degenbot._ffi.ArbitrageEngine` operator: it runs the
-pre-pump startup ritual (``subscribe`` → stream snapshots → ``backfill`` →
-verify config) and *stops before* ``resume()``, so the caller can attach its
+pre-pump startup ritual (``subscribe`` → ``backfill`` → verify config)
+and *stops before* ``resume()``, so the caller can attach its
 result consumer before any batches flow. It also registers pools and paths.
 
 It is a **thin adapter**: every decision it used to own now belongs to the
@@ -36,8 +36,9 @@ from degenbot.logging import logger as bot_logger
 # The `load_*_from_py` ingestion surface + `_v3_snapshot_to_py_dict`
 # / `_v4_snapshot_to_py_dict` converters are retired (the in-memory
 # SnapshotStore is gone). Per-pool tick data is read via the Db arm (held tx) or
-# the Chain arm (RPC) at registration; `start()` only sets the snapshot seed
-# block `S`.
+# the Chain arm (RPC) at registration; the snapshot seed block `S` is recorded
+# on the shared `BotState` by `Bot.load_snapshot_from_db` at construction, and
+# `start()` reads it back for the per-pool verify seed.
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.utils.bytes import to_0x_hex
 
@@ -48,8 +49,6 @@ if TYPE_CHECKING:
     from typing import Any
 
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-    from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
-    from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
 __all__ = ["EngineRegistry"]
 
@@ -117,17 +116,15 @@ class EngineRegistry:
         # (HookedPoolRejectedError / DynamicFeePoolRejectedError). Default:
         # NoOpPathPredicate (accept all).
         self.path_predicate: PathCompositionPredicate = path_predicate or NoOpPathPredicate()
-        # T1 (ADR-006 D4 + two-step verify prep): the snapshot seed block and
-        # the backfill target block, stashed in start() for the per-pool
+        # T1 (ADR-006 D4 + two-step verify prep): the snapshot seed block,
+        # read back from the shared `BotState` in start() for the per-pool
         # two-step verify (T6) to pass to the verify closures — NOT wired into
         # the orphaned engine.set_verify_*_block setters (deleted in T5).
-        # snapshot_block = min(snap.newest_block) across supplied snapshots.
-        # `None` when no snapshots were supplied (no seed) — T6 guards
-        # accordingly. (Pre-fix the registry also stashed a
-        # `_verify_backfill_block` constant for step-2 to compare against —
-        # removed 2026-06-29: the post-drain pin now carries its OWN block,
-        # captured atomically with the drain, so step-2 takes no `block`
-        # argument from the registry.)
+        # `None` on a cold start (no DB seed) — T6 guards accordingly.
+        # (Pre-fix the registry also stashed a `_verify_backfill_block`
+        # constant for step-2 to compare against — removed 2026-06-29: the
+        # post-drain pin now carries its OWN block, captured atomically with
+        # the drain, so step-2 takes no `block` argument from the registry.)
         self._verify_snapshot_block: int | None = None
 
     def start(
@@ -135,8 +132,6 @@ class EngineRegistry:
         node_http: str,
         node_ws: str,
         *,
-        v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
-        v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
         verify_state_view: str | None = None,
     ) -> int:
         """Run the pre-pump startup ritual and stop BEFORE resume().
@@ -144,7 +139,7 @@ class EngineRegistry:
         Delegates the core ordering to the engine's one-call startup ritual
         (the Rust ``EngineDriver::start`` mirror — ``subscribe(ws)`` then
         verify-config); the Python side keeps only the snapshot seed ``S``
-        resolution and the non-DB ``set_snapshot_seed_block`` call.
+        read-back.
         Stops at the snapshot-loaded phase so the caller can attach its result
         consumer before batches begin to flow (`resume()` is the single gate
         after which the pump emits one ResultBatch per block into the
@@ -161,53 +156,28 @@ class EngineRegistry:
         snapshot→WS backfill runs automatically inside ``resume()``
         (``BlockPump::resume_from_subscribe``) using the pump's own HTTP provider.
 
-        Non-DB snapshots (file/memory): pass ``v3_snapshot``/``v4_snapshot``
-        kwargs; each is converted to a single Python dict and handed to the
-        engine via ``load_v3_snapshot_from_py`` / ``load_v4_snapshot_from_py``
-        (ONE PyO3 crossing per family — the per-pool
-        ``insert_*_pool_snapshot`` crossings), then
-        ``snapshot_block = min(s.newest_block)`` stashes the per-pool step-1
-        verify seed. These two kwargs are non-DB-only — the DB path constructs
-        the Bot with ``config.database.path`` and passes no snapshots here.
+        There is no injected-snapshot kwargs seam: a bot is born with the DB
+        snapshot (core ``SnapshotStore``, ``config.database.path``) or
+        cold-start. On the DB path ``S`` is already on the shared ``BotState``
+        (``Bot.load_snapshot_from_db``); on a cold start it is ``None``. Either
+        way ``start()`` only reads it back for the per-pool step-1 verify seed.
 
         Returns:
             The first observed WS block from ``subscribe`` (the resume live-loop
             anchor).
 
         """
-        # Compute the snapshot seed block `S` BEFORE `subscribe()` so the
-        # core's `after_subscribe` phase transition sees `core_has_snapshot =
-        # true` and advances the engine phase to `SnapshotLoaded` (required by
-        # `resume()`). The non-DB path no longer fills a
-        # `SnapshotStore` via `load_*_from_py` (retired); per-pool tick
-        # data is read through the Db arm (held tx) or the Chain arm (RPC) at
-        # registration. `S` is the only thing stashed here — it drives the
-        # core auto-backfill inside `resume()` that closes the
-        # snapshot→WS gap (the pyo3 `backfill_from_snapshot` is retired; the
-        # non-DB path sets S via the `snapshot_seed_block` property setter —
-        # the DB path's `load_snapshot_from_db` already set S).
-        if v3_snapshot is not None or v4_snapshot is not None:
-            # Non-DB (file/memory) path — `S = min(newest_block)` across the
-            # supplied snapshots. The tick-data dicts themselves are NOT
-            # ingested here (the Store is retired); per-pool tick
-            # data is fetched via the Chain arm (RPC) at registration.
-            snapshot_block = min(
-                s.newest_block for s in (v3_snapshot, v4_snapshot) if s is not None
-            )
-        else:
-            # DB path (Shape 2): snapshot already loaded at Bot construction;
-            # read S from the core BotState via the engine getter.
-            snapshot_block = self.engine.snapshot_seed_block
-
-        # Only set when a snapshot was supplied (else there's no seed).
+        # The snapshot seed block `S` is recorded on the shared `BotState` by
+        # `Bot.load_snapshot_from_db` at construction (the DB path) or is
+        # `None` on a cold start; the injected-snapshot setter seam is retired.
+        # Read it back here so the per-pool step-1 verify seed and the core
+        # auto-backfill inside `resume()` (which closes the snapshot→WS gap)
+        # both see it. `S` is already on `BotState` before `subscribe()` on the
+        # DB path, so the core's `after_subscribe` phase transition sees
+        # `core_has_snapshot = true` and advances the phase to
+        # `SnapshotLoaded` (required by `resume()`).
+        snapshot_block = self.engine.snapshot_seed_block
         self._verify_snapshot_block = snapshot_block
-        # Record S on the shared BotState so the core auto-backfill
-        # inside `resume()` closes the snapshot→WS gap (the pyo3
-        # `backfill_from_snapshot` is retired; the non-DB path sets S via the
-        # `snapshot_seed_block` property setter — the DB path's
-        # `load_snapshot_from_db` already set S).
-        if snapshot_block is not None:
-            self.engine.snapshot_seed_block = snapshot_block
 
         # The one-call startup ritual (the Rust `EngineDriver::start` mirror):
         # subscribe(ws) -> verify-config(http, view), consumer-safe (it stops
@@ -266,9 +236,9 @@ class EngineRegistry:
     ) -> int:
         """Run a V3 pool's core-owned verify lifecycle and return its ``pool_id``.
 
-        Tick data is resolved by the Rust engine from the loaded snapshot
-        (fed via load_v3_snapshot_from_py or the DB path's load_snapshot_from_db).
-        The engine applies buffered events on top of stale snapshot data.
+        Tick data is resolved by the Rust engine from the DB snapshot loaded
+        at ``Bot`` construction (``Bot.load_snapshot_from_db``). The engine
+        applies buffered events on top of stale snapshot data.
 
         ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V3
         pool is ALREADY registered there by `bot.build_pool` (the V3 builder
@@ -306,9 +276,9 @@ class EngineRegistry:
     ) -> int:
         """Run a V4 pool's core-owned verify lifecycle and return its ``pool_id``.
 
-        Tick data is resolved by the Rust engine from the loaded snapshot
-        (fed via load_v4_snapshot_from_py or the DB path's load_snapshot_from_db).
-        The engine applies buffered events on top of stale snapshot data.
+        Tick data is resolved by the Rust engine from the DB snapshot loaded
+        at ``Bot`` construction (``Bot.load_snapshot_from_db``). The engine
+        applies buffered events on top of stale snapshot data.
 
         Pool admission (amount-modifying hooks / dynamic fees) is enforced
         by the Rust core as a *correctness floor* — the solver's V3-CL math

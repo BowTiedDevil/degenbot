@@ -154,7 +154,6 @@ def boot_runner(
             bot=FakeBot(),
             engine_registry=FakeEngineRegistry(backfill_target=12_000),
             async_w3=FakeAsyncW3(),
-            snapshots=(None, None, None, None),
             path_builder=path_builder if path_builder is not None else (lambda **kw: None),
             consumer=lambda **kw: noop_coro(),
             settlement_arm=settlement_arm,

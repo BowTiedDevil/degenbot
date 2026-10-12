@@ -8,7 +8,7 @@ clock) is owned by the ONE ``_SessionState`` built in ``start()``.
 It is the one place that enforces the phase ordering the engine's state
 machine requires.
 
-    start():  subscribe -> stream snapshots -> backfill -> verify config
+    start():  subscribe -> backfill -> verify config
               (``EngineRegistry.start``, stops at Backfilled, pre-resume)
     run():    the run ritual (``_run_ritual``) drives consumer-attach ->
               watch-attach -> ``resume()`` -> registration -> main loop
@@ -24,8 +24,8 @@ delegates path registration to :mod:`~degenbot.runner.build_paths` and the
 main loop to :mod:`~degenbot.runner.consume`.
 
 Testability seams (mirrors ``EngineRegistry``'s ``engine=`` seam): ``bot``,
-``engine_registry``, ``async_w3``, ``snapshots``, ``path_builder``, and
-``consumer`` are injectable.
+``engine_registry``, ``async_w3``, ``path_builder``, and ``consumer`` are
+injectable.
 """
 
 from __future__ import annotations
@@ -294,7 +294,6 @@ class InjectedActors:
     bot: Bot | None = None
     engine_registry: EngineRegistry | None = None
     async_w3: AsyncAlloyProvider | None = None
-    snapshots: tuple[Any, Any, Any, Any] | None = None
     path_builder: Any = None
     consumer: Any = None
     #: Factory for the session's lazily-built sim/submit pipeline (``None`` =
@@ -342,7 +341,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
     runner is the ONE place that enforces the phase ordering the engine's
     state machine requires:
 
-        start():  subscribe → stream snapshots → backfill → verify config
+        start():  subscribe → backfill → verify config
                   (``EngineRegistry.start``, stops at Backfilled, pre-resume)
         run():    the run ritual (``_run_ritual.RunRitual``) owns the startup
                   ordering — attach consumer → watch → ``resume()`` →
@@ -366,8 +365,8 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
     engine owns canonical state.
 
     Testability seams (mirrors ``EngineRegistry``'s ``engine=`` seam): ``bot``,
-    ``engine_registry``, ``async_w3``, ``snapshots``, ``path_builder``,
-    ``consumer``, and the registration ``scheduler`` are injectable. When
+    ``engine_registry``, ``async_w3``, ``path_builder``, ``consumer``, and the
+    registration ``scheduler`` are injectable. When
     injected, ``start()``/``run()`` orchestrate the fakes and the phase
     ordering is verifiable offline; when ``None`` (production), the actors
     are built from ``cfg`` and the real module functions are called.
@@ -383,7 +382,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         """Store config + injectable test actors; the real actors are built in ``start()``.
 
         ``actors`` bundles the test/DI actor seams (``bot``/``engine_registry``/
-        ``async_w3``/``snapshots``/``path_builder``/``consumer``/``scheduler``).
+        ``async_w3``/``path_builder``/``consumer``/``scheduler``).
         """
         # Strategy admission is host-owned (ADR-057): the runner carries no
         # Python-side arm gate. The host boot registers each configured facet
@@ -396,7 +395,6 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         self._injected_bot = injected.bot
         self._injected_engine_registry = injected.engine_registry
         self._injected_async_w3 = injected.async_w3
-        self._injected_snapshots = injected.snapshots
         self._path_builder = injected.path_builder
         self._consumer = injected.consumer
         self._injected_pipeline_factory = injected.pipeline_factory
@@ -406,7 +404,6 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         self._injected_settlement_endpoints = injected.settlement_endpoints
         self._injected_stop_engine = injected.stop_engine
         self._scheduler = injected.scheduler
-        # Snapshots for the registration pass (nulled by the trim).
         # The phase machine is the ONLY lifecycle state (no ``_started`` bool
         # — Started re-entry is the no-op; Running/Closed re-entry is the
         # phase error).
@@ -541,7 +538,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
 
     # ── Phase A: pre-resume startup ─────────────────────────────────
     async def start(self) -> BotRunner:
-        """Build the actors, fetch block state, load snapshots, run ``engine_registry.start()``.
+        """Build the actors, fetch block state, run ``engine_registry.start()``.
 
         Stops at ``Backfilled`` — BEFORE ``resume()``. Zero result batches
         emit during this window (the pump isn't running), so ``run()`` can
@@ -585,29 +582,16 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
 
         sim_ctx = self._build_sim_ctx(async_w3, cfg, engine_registry)
 
-        # ── Snapshots (the non-DB injected path only; the engine's DB
-        # snapshot is loaded eagerly at Bot construction via
-        # `Bot::load_snapshot_from_db`, and the snapshot→WS gap closes in
-        # `resume_from_subscribe`). `engine_registry.start()` takes
-        # `v3_snapshot`/`v4_snapshot` kwargs ONLY when the snapshots are
-        # non-DB (file/memory) — the `_injected` fast path. The production
-        # DB path reads the snapshot at construction and `start()` takes no
-        # snapshot kwargs.
-        start_v3, start_v4 = self._start_snapshots()
-
         # ── Engine pre-resume ritual (subscribe → verify) ──
         # The snapshot→WS gap is closed automatically inside
         # `BlockPump::resume_from_subscribe` at resume. `start()` only
         # subscribes + sets up verify config; resume drives both the backfill
-        # and the live loop. Non-DB snapshots flow through `load_*_from_py`
-        # in `start()`; the DB path takes no kwargs (snapshot loaded at
-        # construction; `snapshot_seed_block` is read from the core
-        # `BotState` by `start()` via the `snapshot_seed_block` getter).
+        # and the live loop. The DB snapshot is loaded eagerly at Bot
+        # construction via `Bot::load_snapshot_from_db`; `start()` reads the
+        # seed `S` from the core `BotState` (there are no snapshot kwargs).
         backfill_target = engine_registry.start(
             cfg.node_http,
             cfg.node_ws,
-            v3_snapshot=start_v3,
-            v4_snapshot=start_v4,
             verify_state_view=EthereumMainnetUniswapV4.state_view.address,
         )
         if backfill_target > current_block:
@@ -794,28 +778,6 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
             erc6909_profit=cfg.erc6909_profit,
         )
         return sim_ctx
-
-    def _start_snapshots(self) -> tuple[Any, Any]:
-        """Resolve ``(start_v3, start_v4)`` for the pre-resume ritual.
-
-        Injected snapshots (the ``_injected`` fast path) flow through
-        ``engine_registry.start()`` to seed the non-DB snapshot block ``S``.
-        The production DB path passes NO snapshot objects: the engine's DB
-        snapshot is loaded eagerly at ``Bot`` construction via
-        ``Bot::load_snapshot_from_db`` and per-pool tick data resolves
-        core-side at construction (the builder's Db/Chain arms), so a
-        driver-side snapshot object has no consumer (the retired V3 pool
-        tracker pre-population was its last one).
-
-        Returns:
-            The ``(start_v3, start_v4)`` snapshot pair for the injected
-            fast path, or ``(None, None)`` on the production DB path.
-
-        """
-        if self._injected_snapshots is not None:
-            v3_snap, v4_snap, _v3_blk, _v4_blk = self._injected_snapshots
-            return v3_snap, v4_snap
-        return None, None
 
     # ── Phase B: the rolling-start main loop ──────────────────────────
     async def run(self) -> SessionEndVerdict:

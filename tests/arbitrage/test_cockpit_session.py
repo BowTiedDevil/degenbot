@@ -166,7 +166,6 @@ class TestSessionOwner:
                 bot=_FakeBot(),
                 engine_registry=_FakeEngineRegistry(),
                 async_w3=_FakeAsyncW3(),
-                snapshots=(object(), object(), None, None),
                 path_builder=lambda **kw: _noop(),
                 consumer=capturing_consumer,
                 relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
