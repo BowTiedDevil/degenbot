@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import os
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.logging import logger
@@ -14,6 +16,12 @@ if TYPE_CHECKING:
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+
+
+# Operational pacing between tick RPC calls, for constrained fork sources
+# (rate-limited archive endpoints). Read once at import; 0 (default) disables
+# pacing entirely.
+_PACE_SECONDS = float(os.environ.get("DEGENBOT_TICK_FETCH_PACE_MS", "0") or 0) / 1000
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -100,7 +108,19 @@ def make_tick_data_fetcher(
     ) -> FetchedTickData | None:
         pool = pool_lookup(block_number)
         if pool is None:
+            # Loud: a None here silently degrades on-demand tick fetches into
+            # "cannot compute" swap failures downstream.
+            logger.warning(
+                "tick fetcher: pool_lookup(block=%r) returned None — "
+                "on-demand tick fetch unavailable",
+                block_number,
+            )
             return None
+        logger.debug(
+            "tick fetcher: fetching word %d at block %d",
+            word_position,
+            block_number,
+        )
 
         ctx = _FetchContext(
             io=io,
@@ -152,11 +172,20 @@ def _fetch_v3(*, ctx: _FetchContext) -> bool:
     # ADR-005 slice 14j: when io is a BotIo, delegate tick RPC calls to Rust.
     # ADR-005 slice 14j: delegate tick RPC calls to Rust (BotIo is the only
     # executor; the Python parity-gate fallback is retired).
+    if _PACE_SECONDS:
+        time.sleep(_PACE_SECONDS)
     try:
         bitmap_value = ctx.io.fetch_tick_bitmap(
             ctx.pool_ref.address, ctx.word_position, block=ctx.block_number
         )
     except Exception:  # ruff:ignore[blind-except]
+        # Loud: the word is unfetched — a silent False here degrades into
+        # "cannot compute" swap failures downstream.
+        logger.warning(
+            "Failed to fetch tick bitmap for word %d — failing the word",
+            ctx.word_position,
+            exc_info=True,
+        )
         return False
 
     if bitmap_value != 0:
@@ -167,6 +196,8 @@ def _fetch_v3(*, ctx: _FetchContext) -> bool:
         ]
 
         for active_tick in active_ticks:
+            if _PACE_SECONDS:
+                time.sleep(_PACE_SECONDS)
             try:
                 liquidity_gross, liquidity_net = ctx.io.fetch_tick_data(
                     ctx.pool_ref.address,
@@ -174,12 +205,17 @@ def _fetch_v3(*, ctx: _FetchContext) -> bool:
                     block=ctx.block_number,
                 )
             except Exception:  # ruff:ignore[blind-except]
-                logger.debug(
-                    "Failed to fetch tick data for tick %d",
+                # A skipped tick would record the word as known with an
+                # incomplete liquidity map — silent empty rows downstream
+                # (the boundary gate trusts known words). Fail the word
+                # instead: the caller treats it as unfetched (Sparse
+                # re-fetches on demand; the boundary gate raises).
+                logger.warning(
+                    "Failed to fetch tick data for tick %d — failing the word",
                     active_tick,
                     exc_info=True,
                 )
-                continue
+                return False
 
             ctx.fetched[active_tick] = ctx.types.liquidity_at_tick(
                 liquidity_net=int(liquidity_net),
@@ -198,6 +234,8 @@ def _fetch_v4(*, ctx: _FetchContext, state_view_address: str, pool_id: bytes) ->
     """
     # ADR-005 slice 14k: delegate V4 tick RPCs to Rust (BotIo is the only
     # executor; the Python parity-gate fallback is retired).
+    if _PACE_SECONDS:
+        time.sleep(_PACE_SECONDS)
     try:
         bitmap_value = ctx.io.fetch_v4_tick_bitmap(
             state_view_address,
@@ -216,6 +254,8 @@ def _fetch_v4(*, ctx: _FetchContext, state_view_address: str, pool_id: bytes) ->
         ]
 
         for active_tick in active_ticks:
+            if _PACE_SECONDS:
+                time.sleep(_PACE_SECONDS)
             try:
                 liquidity_gross, liquidity_net = ctx.io.fetch_v4_tick_data(
                     state_view_address,
@@ -224,12 +264,14 @@ def _fetch_v4(*, ctx: _FetchContext, state_view_address: str, pool_id: bytes) ->
                     block=ctx.block_number,
                 )
             except Exception:  # ruff:ignore[blind-except]
-                logger.debug(
-                    "Failed to fetch V4 tick data for tick %d",
+                # Same word-integrity rule as the V3 path: a skipped tick
+                # would record the word as known with an incomplete map.
+                logger.warning(
+                    "Failed to fetch V4 tick data for tick %d — failing the word",
                     active_tick,
                     exc_info=True,
                 )
-                continue
+                return False
 
             ctx.fetched[active_tick] = ctx.types.liquidity_at_tick(
                 liquidity_net=int(liquidity_net),
