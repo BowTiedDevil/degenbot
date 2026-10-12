@@ -582,8 +582,11 @@ data the solve already builds, and the point-wise minimum of its hop tangent lin
 per-hop caps. A constant-product-family hop contributes its exact post-fee entry tangent
 beside the fee-agnostic rise; a CL hop contributes its pool-static tangent fan. A
 Solidly/Aerodrome/Camelot stable hop contributes its entry tangent (its output curve is
-concave in the input) beside its reserve cap; the Curve / Balancer stable families keep
-the reserve cap alone.
+concave in the input) beside its reserve cap, and a Balancer V2 stable hop contributes
+its entry tangent wherever the closed-form curvature test holds (its output curve is
+concave there) beside its reserve cap; the Curve stableswap family keeps the reserve cap
+alone, because its leaf's out-curve was measured non-concave (an entry tangent would
+under-cut a real leaf).
 Extending a single piece's validity window is not a sound bound.
 
 **Envelope gate**:

@@ -93,6 +93,26 @@ impl<'a> DegeneratePathEvent<'a> {
                     }) => format!(
                         "solidly_stable(r0={reserves_0},r1={reserves_1},token_in={token_in})"
                     ),
+                    Some(HopMath::BalancerStable {
+                        amp,
+                        balances,
+                        token_index_in,
+                        token_index_out,
+                        ..
+                    }) => format!(
+                        "balancer_stable(amp={amp},n={},i={token_index_in},j={token_index_out})",
+                        balances.len()
+                    ),
+                    Some(HopMath::CurveStableswap {
+                        amp,
+                        xp,
+                        token_index_in,
+                        token_index_out,
+                        ..
+                    }) => format!(
+                        "curve_stableswap(amp={amp},n={},i={token_index_in},j={token_index_out})",
+                        xp.len()
+                    ),
                 };
                 let ranges = match slot {
                     Some(HopMath::Cl(ch)) => Some(ch.seq),

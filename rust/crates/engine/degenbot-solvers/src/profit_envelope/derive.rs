@@ -1,6 +1,7 @@
 use crate::cl::{build_cl_crossing_table, ClCrossingTable};
 use crate::runtime::SolveRuntimeConfig;
 use alloy::primitives::{aliases::I512, U256, U512};
+use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 use std::sync::Arc;
@@ -16,11 +17,12 @@ use super::kernel::Line;
 /// the family's real math leaf by the proptest suite in `profit_envelope_tests`.
 /// The Solidly/Aerodrome/Camelot STABLE invariant is concave in the input
 /// (see [`HopMath::SolidlyStable`]), so it gets an entry-tangent rise beside
-/// its reserve cap. The remaining stableswap families (Curve / Balancer
-/// stable) keep the SOUND reserve-cap bound only — their amplification term
-/// makes the output curve's entry rate non-monotone, so a tangent-at-zero
-/// slope is not sound there and the amplification-bounded peak-rate
-/// derivation is a documented follow-up.
+/// its reserve cap; the Balancer V2 STABLE invariant is likewise concave
+/// wherever its closed-form curvature test holds (see
+/// [`HopMath::BalancerStable`]). The Curve stableswap family keeps the SOUND
+/// reserve-cap bound only: its leaf's out-curve was MEASURED non-concave (see
+/// [`HopMath::CurveStableswap`]), so an entry tangent there would under-cut a
+/// real leaf and skip a profitable path.
 #[derive(Clone, Debug)]
 pub enum HopMath<'a> {
     /// Constant-product hop (exact Möbius family: V2/Aerodrome-style state).
@@ -57,14 +59,80 @@ pub enum HopMath<'a> {
         scaling_in: U256,
         scaling_out: U256,
     },
-    /// SOUND but LOOSE reserve-only cap for the stableswap families whose
-    /// marginal-rate peak needs amplification-bounded derivation (deferred:
-    /// Curve / Balancer stable). `reserve_out` is the NATIVE output-token
-    /// reserve: the most you can ever extract is the pool's entire holding.
-    /// Turns a `None` (unscreened, solved unscreened) into a `Some` so
-    /// provably-below-floor paths still skip — a strictly-sound conservative
-    /// step that never risks skipping a profitable path.
+    /// SOUND but LOOSE reserve-only cap. `reserve_out` is the NATIVE
+    /// output-token reserve: the most you can ever extract is the pool's
+    /// entire holding. Turns a `None` (unscreened, solved unscreened) into a
+    /// `Some` so provably-below-floor paths still skip — a strictly-sound
+    /// conservative step that never risks skipping a profitable path. It is
+    /// also the fallback for a stableswap family whose entry tangent was
+    /// MEASURED non-concave against its real leaf (Curve — see
+    /// [`HopMath::CurveStableswap`]) or whose rise must be dropped.
     ReserveCap { reserve_out: U256 },
+
+    /// Balancer V2 STABLE pool (`An·Σx + D = An·D + D^(n+1)/(n^n·Πx)` in the
+    /// leaf's `amp·n/AMP_PRECISION` convention). SOUND: the output curve is
+    /// CONCAVE in the upscaled input wherever the closed-form curvature test
+    /// [`balancer_stable_concave_at`] holds, so the entry tangent point-wise
+    /// dominates it (tangent-line property of concave functions through the
+    /// origin). The rise carries the leaf's fee/scaling conversion plus a
+    /// mandatory additive allowance for the leaf's own integer rounding; the
+    /// flat native reserve cap stays beside it. The rise is DROPPED (cap-only —
+    /// never `None`, never looser than the plain cap) on `I512` overflow, on a
+    /// failed curvature test, or wherever the leaf's own arithmetic could wrap
+    /// across the evaluation window.
+    ///
+    /// `balances` BORROWS the leaf's UPSCALED 18-decimal, BPT-skipped vector
+    /// (the gate maps it in the pre-solve hot loop, so it must not clone a
+    /// `Vec` per hop per candidate path) and `invariant` is its pre-computed
+    /// `D`; the arm converts the slope to native units with
+    /// `scaling_factor_in/out` and the retained fee fraction
+    /// `(ONE − swap_fee)/ONE`.
+    BalancerStable {
+        amp: U256,
+        balances: &'a [U256],
+        token_index_in: usize,
+        token_index_out: usize,
+        invariant: U256,
+        swap_fee: U256,
+        scaling_factor_in: U256,
+        scaling_factor_out: U256,
+    },
+
+    /// Curve stableswap hop. Carries the leaf's full resolve-time state (a
+    /// BORROWED view of the rate-adjusted `xp`, the pairwise indices, the
+    /// fee/rate/precision constants and the `DVariant`/`YVariant`
+    /// discriminators) so the family is gated through its own variant rather
+    /// than a bare reserve cap — but the derived line set is the NATIVE reserve
+    /// cap ALONE. `xp` is borrowed for the same hot-loop reason as
+    /// [`HopMath::BalancerStable::balances`].
+    ///
+    /// WHY no tangent: the Curve leaf's out-curve was MEASURED against the real
+    /// `degenbot_math::curve::stableswap` leaves and found NON-CONCAVE. The
+    /// y-iteration floors (`div`) and can settle a unit below the invariant's
+    /// root, and `dy_raw = xp_out − y − 1` then reports MORE than the ideal
+    /// curve. The Standard y-iteration overshoots the entry tangent by only 1–2
+    /// native units in extreme configurations, but a `Variant0`/`Variant1`
+    /// y-iteration — which omits the `A_PRECISION` divisor, and is paired with
+    /// whatever D-step the pool identity names, read independently by
+    /// `project_curve` — overshoots by ~1e24 native units (the pool's whole
+    /// output reserve) on a pool whose co-coin is nearly empty. Counterexamples
+    /// are pinned in `tests/profit_envelope_tests.rs`. An entry tangent there
+    /// would be an UNSOUND rise, so the family stays on the cap.
+    CurveStableswap {
+        amp: U256,
+        a_precision: U256,
+        xp: &'a [U256],
+        token_index_in: usize,
+        token_index_out: usize,
+        n_coins: U256,
+        fee: U256,
+        fee_denom: U256,
+        precision: U256,
+        rate_multiplier_in: U256,
+        rate_multiplier_out: U256,
+        y_variant: YVariant,
+        d_variant: DVariant,
+    },
 
     /// Solidly/Aerodrome/Camelot STABLE pool (the `x0·y·(x0² + y²) = K`
     /// invariant). SOUND: the output curve is CONCAVE in the native input —
@@ -388,6 +456,298 @@ fn solidly_stable_rise(
         b: I512::try_from(b).ok()?,
         c: I512::try_from(c).ok()?,
     })
+}
+
+/// The Balancer V2 `AMP_PRECISION = 1000` — the leaf's amplification scaling
+/// (`amp` is stored pre-multiplied by it, and the invariant's `amp_times_total`
+/// term is divided by it).
+const BALANCER_AMP_PRECISION: u64 = 1_000;
+
+/// The Balancer fixed-point `ONE = 10^18` — the `swap_fee` denominator and the
+/// domain the 18-decimal upscaled balances live in.
+const BALANCER_ONE: u64 = 1_000_000_000_000_000_000;
+
+/// Exact closed-form curvature test for a StableSwap out-curve at the ENTRY
+/// point, in the family's scaled domain.
+///
+/// Both n-token StableSwap invariants the gate covers reduce, for a fixed
+/// invariant `D` and fixed co-balances, to the same implicit out-curve
+/// `y² + k·y = C/x` with `k = x + T` (`T` constant in the input-side balance
+/// `x`, `C` constant in `x`). Writing `m` for the invariant's amplification
+/// coefficient and `W = m·(y + k)` for its product term, the marginal rate is
+/// `s(x) = y·(m·x + W)/(x·(m·y + W))`; differentiating along the curve gives
+/// `ds/dx = −2·y·G/(x²·(2y + k)²)` with
+/// `G = (x + y + k)² + (y − x)·(y + k)`.
+///
+/// The curve is therefore CONCAVE at the entry exactly when `2y + k > 0` and
+/// `G ≥ 0`. `y + k = C/(x·y) > 0` for positive balances, so only the sign of
+/// `G` is in question — and it is a delicate one (for an extreme imbalance the
+/// two terms nearly cancel), which is why it is evaluated exactly rather than
+/// bounded. `k` arrives as the rational `k_num/k_den` (`k_den > 0`) so no
+/// division happens; `None` means the exact evaluation overflowed `I512`, and
+/// the caller drops the rise (cap-only — never looser than the plain cap).
+fn stableswap_concave_at(x: U512, y: U512, k_num: U512, k_den: U512) -> Option<bool> {
+    let kd = I512::try_from(k_den).ok()?;
+    if kd <= I512::ZERO {
+        return None;
+    }
+    let k = I512::try_from(k_num).ok()?;
+    let x = I512::try_from(x).ok()?;
+    let y = I512::try_from(y).ok()?;
+    let two = I512::try_from(U512::from(2u64)).ok()?;
+    let three = I512::try_from(U512::from(3u64)).ok()?;
+
+    // `2y + k > 0` is required for a positive marginal rate.
+    let two_y_plus_k = two.checked_mul(y)?.checked_mul(kd)?.checked_add(k)?;
+    if two_y_plus_k <= I512::ZERO {
+        return Some(false);
+    }
+    let x_plus_y_plus_k = x.checked_add(y)?.checked_mul(kd)?.checked_add(k)?;
+    let y_times_y_plus_k = y.checked_mul(y.checked_mul(kd)?.checked_add(k)?)?;
+    // 2·(3·(y² + y·k) + k²) + x·(2y + 3k), cleared of `kd` denominators.
+    let curvature_term = two
+        .checked_mul(
+            three
+                .checked_mul(y_times_y_plus_k)?
+                .checked_mul(kd)?
+                .checked_add(k.checked_mul(k)?)?,
+        )?
+        .checked_add(
+            x.checked_mul(
+                two.checked_mul(y)?
+                    .checked_mul(kd)?
+                    .checked_add(three.checked_mul(k)?)?,
+            )?
+            .checked_mul(kd)?,
+        )?;
+    // `ds/dx ≤ 0` ⟺ `2·x·(2y + k)²·kd − (x + y + k)·curvature_term ≤ 0` (the
+    // common `y > 0` factor divided out; `kd > 0`).
+    let lhs = two
+        .checked_mul(x)?
+        .checked_mul(two_y_plus_k)?
+        .checked_mul(two_y_plus_k)?
+        .checked_mul(kd)?;
+    let rhs = x_plus_y_plus_k.checked_mul(curvature_term)?;
+    Some(lhs <= rhs)
+}
+
+/// Build the line set for a Balancer V2 STABLE hop: `[rise, flat]`.
+///
+/// The leaf's invariant is `An·Σx + D = An·D + D^(n+1)/(n^n·Πx)` in the
+/// `An = amp·n/AMP_PRECISION` convention (both `calculate_invariant` and the
+/// deployed variant's Newton fixed point reduce to it). An exact-in swap adds
+/// the post-fee input to the input balance and re-solves the output balance
+/// against the SAME `D`, so the out-curve is that invariant's level curve. Its
+/// entry marginal rate is closed-form (no invariant solve): writing
+/// `W = D^(n+1)/(n^n·Πx) = m·(Σx − D) + D` and `u = x_in·x_out`,
+/// `−dx_out/dx_in = (m·u + W·x_out)/(m·u + W·x_in)`.
+///
+/// The NATIVE-unit rise is that rate times the retained fee fraction and the
+/// scaling ratio, `slope·sf_in·(ONE − swap_fee)/(ONE·sf_out)` — the leaf
+/// upscales the input by `sf_in`, takes `mul_up(·, swap_fee)` off it, and
+/// downscales the output by `sf_out`.
+///
+/// ADDITIVE ALLOWANCE: the rise carries `a = 0` — and that is derived, not
+/// assumed. Every rounding in the Balancer leaf is pool-favoring: the fee is
+/// taken with `mul_up` (so the retained input is at most the continuous
+/// `x·(1 − f)`), the output Newton divides with `div_up` (so its root is at
+/// least the invariant's), `calc_out_given_in` subtracts a further `1`, and the
+/// final downscale floors. The leaf's integer output is therefore never above
+/// the ideal curve, so the entry tangent dominates it with nothing to absorb
+/// (measured margin `≥ 1` native unit on the proptest matrix).
+///
+/// The rise is DROPPED (cap-only) whenever the curvature test fails, the `I512`
+/// coefficients overflow, or the leaf's arithmetic could wrap across the whole
+/// evaluation window `[0, reserve_out]`: the gate sweeps the line at any native
+/// input, and the leaf runs its Newton at the POST-trade scale
+/// `x_in + x·sf_in`, where `D²`/`D·P_D` products can wrap `u256` and return a
+/// garbage root that could exceed the tangent. The window test bounds the
+/// upscaled input by `reserve_out·sf_in`, which is exactly the largest amount
+/// the cap lets the gate ask for.
+#[expect(clippy::too_many_arguments)] // mirrors the hop state's field set
+fn balancer_stable_lines(
+    amp: U256,
+    balances: &[U256],
+    token_index_in: usize,
+    token_index_out: usize,
+    invariant: U256,
+    swap_fee: U256,
+    scaling_factor_in: U256,
+    scaling_factor_out: U256,
+) -> Option<(Vec<Line>, U256)> {
+    let b_out = *balances.get(token_index_out)?;
+    if scaling_factor_out.is_zero() {
+        return None;
+    }
+    // Native output reserve: you can never extract more than the pool holds.
+    let reserve_out = b_out / scaling_factor_out;
+    if reserve_out.is_zero() {
+        return None;
+    }
+    let flat = Line {
+        a: I512::try_from(U512::from(reserve_out)).ok()?,
+        b: I512::ZERO,
+        c: I512::ONE,
+    };
+    match balancer_stable_rise(
+        amp,
+        balances,
+        token_index_in,
+        token_index_out,
+        invariant,
+        swap_fee,
+        scaling_factor_in,
+        scaling_factor_out,
+    ) {
+        Some(rise) => Some((vec![rise, flat], reserve_out)),
+        None => Some((vec![flat], reserve_out)),
+    }
+}
+
+/// The Balancer-stable entry-tangent rise line (see [`balancer_stable_lines`]);
+/// `None` whenever the rise must be dropped in favour of the flat cap alone.
+#[expect(clippy::too_many_arguments)] // mirrors the hop state's field set
+fn balancer_stable_rise(
+    amp: U256,
+    balances: &[U256],
+    token_index_in: usize,
+    token_index_out: usize,
+    invariant: U256,
+    swap_fee: U256,
+    scaling_factor_in: U256,
+    scaling_factor_out: U256,
+) -> Option<Line> {
+    if balances.len() < 2 || scaling_factor_in.is_zero() {
+        return None;
+    }
+    let n_tokens = U256::from(u64::try_from(balances.len()).ok()?);
+    let x_in = *balances.get(token_index_in)?;
+    let x_out = *balances.get(token_index_out)?;
+    if x_in.is_zero() || x_out.is_zero() {
+        return None;
+    }
+    let amp_prec = U256::from(BALANCER_AMP_PRECISION);
+    // The leaf's `amp_times_total`.
+    let amp_n = amp.checked_mul(n_tokens)?;
+    if amp_n.is_zero() {
+        return None;
+    }
+    let sum = balances
+        .iter()
+        .try_fold(U256::ZERO, |acc, b| acc.checked_add(*b))?;
+    // `Σx − D` must be non-negative for the invariant relation to hold.
+    let sum_minus_d = sum.checked_sub(invariant)?;
+
+    // `w_scaled = W·AMP_PRECISION = amp·n·(Σx − D) + AMP_PRECISION·D`.
+    let w_scaled = U512::from(amp_n)
+        .checked_mul(U512::from(sum_minus_d))?
+        .checked_add(U512::from(amp_prec).checked_mul(U512::from(invariant))?)?;
+    let cross = U512::from(amp_n)
+        .checked_mul(U512::from(x_in))?
+        .checked_mul(U512::from(x_out))?;
+    let num = cross.checked_add(w_scaled.checked_mul(U512::from(x_out))?)?;
+    let den = cross.checked_add(w_scaled.checked_mul(U512::from(x_in))?)?;
+    if den.is_zero() {
+        return None;
+    }
+
+    // Curvature guard at the entry: `k = x_in + Σ'' + D/m − D`, carried as the
+    // rational `k_num/(amp·n)`.
+    let sum_minus_out = sum.checked_sub(x_out)?;
+    let k_den = U512::from(amp_n);
+    let k_pos = k_den.checked_mul(U512::from(sum_minus_out))?;
+    let k_prec = U512::from(amp_prec).checked_mul(U512::from(invariant))?;
+    let k_neg = k_den.checked_mul(U512::from(invariant))?;
+    let k_num = k_pos.checked_add(k_prec)?.checked_sub(k_neg)?;
+    if !stableswap_concave_at(U512::from(x_in), U512::from(x_out), k_num, k_den)? {
+        return None;
+    }
+
+    // Faithful-arithmetic window guard: the leaf's Newton runs at the maximal
+    // post-trade scale, and its `invariant²`, `D·P_D` and `n·D²` products must
+    // stay inside `u256` there. The window's largest upscaled input is
+    // `reserve_out·scaling_factor_in` (the cap is the largest native input the
+    // gate ever evaluates), and the largest output balance stays below
+    // `x_out + (Σx − x_out)`.
+    let u256_max = U512::from(U256::MAX);
+    let out_reserve_native = x_out.checked_div(scaling_factor_out)?;
+    let window_in = out_reserve_native.checked_mul(scaling_factor_in)?;
+    let x_in_max = U512::from(x_in).checked_add(U512::from(window_in))?;
+    let invariant_wide = U512::from(invariant);
+    let n_tokens_wide = U512::from(n_tokens);
+    // `n·D²` (the deployed numerator's first term) and `n·x·D²` (the monorepo
+    // `D_P` accumulation at the maximal scale).
+    if invariant_wide
+        .checked_mul(invariant_wide)?
+        .checked_mul(n_tokens_wide)?
+        > u256_max
+        || x_in_max
+            .checked_mul(invariant_wide)?
+            .checked_mul(invariant_wide)?
+            .checked_mul(n_tokens_wide)?
+            > u256_max
+    {
+        return None;
+    }
+
+    // Native slope: `slope·sf_in·(ONE − swap_fee)/(ONE·sf_out)`.
+    let one = U512::from(BALANCER_ONE);
+    if swap_fee >= U256::from(BALANCER_ONE) {
+        return None;
+    }
+    let retained = one.checked_sub(U512::from(swap_fee))?;
+    let b = num
+        .checked_mul(U512::from(scaling_factor_in))?
+        .checked_mul(retained)?;
+    let c = den
+        .checked_mul(one)?
+        .checked_mul(U512::from(scaling_factor_out))?;
+    if c.is_zero() {
+        return None;
+    }
+    Some(Line {
+        a: I512::ZERO,
+        b: I512::try_from(b).ok()?,
+        c: I512::try_from(c).ok()?,
+    })
+}
+
+/// Build the line set for a Curve stableswap hop: `[flat]` — the NATIVE reserve
+/// cap alone, by a VERIFIED non-concavity finding.
+///
+/// The entry-tangent shape was evaluated against the real
+/// `degenbot_math::curve::stableswap` leaves (`stableswap_get_y` over all
+/// `DVariant`/`YVariant` pairs) and REJECTED: the leaf's y-iteration floors
+/// (`div`) and can settle a unit below the invariant's root, so
+/// `dy_raw = xp_out − y − 1` reports more than the ideal curve. The measured
+/// overshoot is 1–2 native units for the `Standard` y-iteration (extreme
+/// amplification, nearly-empty co-coin), and grows to ~1e24 native units — the
+/// pool's whole output reserve, at a 1-wei input — when a
+/// `Variant0`/`Variant1` y-iteration (which omits the `A_PRECISION` divisor)
+/// is paired with a `Standard` D-step. A tangent that under-cuts a real leaf is
+/// an unsound skip, so the family keeps the sound cap. The counterexamples are
+/// pinned in `tests/profit_envelope_tests.rs`.
+fn curve_stableswap_lines(
+    xp: &[U256],
+    token_index_out: usize,
+    precision: U256,
+    rate_multiplier_out: U256,
+) -> Option<(Vec<Line>, U256)> {
+    if rate_multiplier_out.is_zero() {
+        return None;
+    }
+    let xp_out = *xp.get(token_index_out)?;
+    // Native output reserve = `xp[out]·PRECISION/rate_out`.
+    let reserve_out = xp_out.saturating_mul(precision) / rate_multiplier_out;
+    if reserve_out.is_zero() {
+        return None;
+    }
+    let flat = Line {
+        a: I512::try_from(U512::from(reserve_out)).ok()?,
+        b: I512::ZERO,
+        c: I512::ONE,
+    };
+    Some((vec![flat], reserve_out))
 }
 
 /// The first eligible crossing's tangent: the only CL line that anchors at the
@@ -752,6 +1112,36 @@ pub(crate) fn hop_lines_and_cap_cached(
         } => solidly_stable_lines(
             reserves_0, reserves_1, decimals_0, decimals_1, token_in, fee_numer, fee_denom,
         ),
+        HopMath::BalancerStable {
+            amp,
+            balances,
+            token_index_in,
+            token_index_out,
+            invariant,
+            swap_fee,
+            scaling_factor_in,
+            scaling_factor_out,
+        } => balancer_stable_lines(
+            amp,
+            balances,
+            token_index_in,
+            token_index_out,
+            invariant,
+            swap_fee,
+            scaling_factor_in,
+            scaling_factor_out,
+        ),
+        // Curve carries its whole state so the family is gated through its own
+        // variant, but the derived lines are the native reserve cap alone — its
+        // entry tangent was measured non-concave against the real leaf (see
+        // `curve_stableswap_lines`).
+        HopMath::CurveStableswap {
+            xp,
+            token_index_out,
+            precision,
+            rate_multiplier_out,
+            ..
+        } => curve_stableswap_lines(xp, token_index_out, precision, rate_multiplier_out),
         HopMath::Weighted {
             balance_in,
             balance_out,
@@ -759,41 +1149,14 @@ pub(crate) fn hop_lines_and_cap_cached(
             weight_out,
             scaling_in,
             scaling_out,
-        } => {
-            if balance_in.is_zero()
-                || balance_out.is_zero()
-                || weight_out.is_zero()
-                || scaling_out.is_zero()
-            {
-                return None;
-            }
-            // Slope (native units) = B_out · sf_in · w_in / (B_in · w_out · sf_out),
-            // computed in U512 to avoid overflow, then narrowed to I512.
-            let n512 = U512::from(balance_out)
-                .saturating_mul(U512::from(scaling_in))
-                .saturating_mul(U512::from(weight_in));
-            let d512 = U512::from(balance_in)
-                .saturating_mul(U512::from(weight_out))
-                .saturating_mul(U512::from(scaling_out));
-            if d512.is_zero() {
-                return None;
-            }
-            let n = I512::try_from(n512).ok()?;
-            let d = I512::try_from(d512).ok()?;
-            // Cap (native) = B_out / sf_out (the asymptotic reserve).
-            let cap = balance_out / scaling_out;
-            let rise = Line {
-                a: I512::ZERO,
-                b: n,
-                c: d,
-            };
-            let flat = Line {
-                a: I512::try_from(U512::from(cap)).ok()?,
-                b: I512::ZERO,
-                c: I512::ONE,
-            };
-            Some((vec![rise, flat], cap))
-        }
+        } => weighted_lines(
+            balance_in,
+            balance_out,
+            weight_in,
+            weight_out,
+            scaling_in,
+            scaling_out,
+        ),
         HopMath::ReserveCap { reserve_out } => {
             if reserve_out.is_zero() {
                 return None;
@@ -808,6 +1171,51 @@ pub(crate) fn hop_lines_and_cap_cached(
             Some((vec![flat], reserve_out))
         }
     }
+}
+
+/// Build the line set for a Balancer V2 WEIGHTED hop: `[rise, flat]`.
+///
+/// The rise slope (native units) is
+/// `B_out·sf_in·w_in/(B_in·w_out·sf_out)`, computed in `U512` to avoid
+/// overflow and then narrowed to `I512`; the flat cap is the asymptotic
+/// reserve `B_out/sf_out`.
+fn weighted_lines(
+    balance_in: U256,
+    balance_out: U256,
+    weight_in: U256,
+    weight_out: U256,
+    scaling_in: U256,
+    scaling_out: U256,
+) -> Option<(Vec<Line>, U256)> {
+    if balance_in.is_zero()
+        || balance_out.is_zero()
+        || weight_out.is_zero()
+        || scaling_out.is_zero()
+    {
+        return None;
+    }
+    let slope_num = U512::from(balance_out)
+        .saturating_mul(U512::from(scaling_in))
+        .saturating_mul(U512::from(weight_in));
+    let slope_den = U512::from(balance_in)
+        .saturating_mul(U512::from(weight_out))
+        .saturating_mul(U512::from(scaling_out));
+    if slope_den.is_zero() {
+        return None;
+    }
+    let rise = Line {
+        a: I512::ZERO,
+        b: I512::try_from(slope_num).ok()?,
+        c: I512::try_from(slope_den).ok()?,
+    };
+    // Cap (native) = B_out / sf_out (the asymptotic reserve).
+    let cap = balance_out / scaling_out;
+    let flat = Line {
+        a: I512::try_from(U512::from(cap)).ok()?,
+        b: I512::ZERO,
+        c: I512::ONE,
+    };
+    Some((vec![rise, flat], cap))
 }
 
 /// Classify WHY a CL hop was rejected by `hop_lines_and_cap` (diagnostic). Runs only when production returned `None`, so it reports

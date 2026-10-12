@@ -66,84 +66,8 @@ pub fn solve_path_with_min_profit(
     gate: &GateDeps<'_>,
 ) -> SolveOutcome {
     // Hard cutover : the gate is unconditional.
-    let views: Vec<Option<crate::profit_envelope::HopMath<'_>>> = resolved
-        .hops
-        .iter()
-        .map(|h| match h {
-            ResolvedHop::V2 { state } => Some(HopMath::V2(state)),
-            ResolvedHop::V3 { prepared, .. } | ResolvedHop::V4 { prepared, .. } => {
-                Some(HopMath::Cl(ClHop {
-                    seq: &prepared.int_seq,
-                    crossings: std::borrow::Cow::Borrowed(&prepared.crossings),
-                }))
-            }
-            // Solidly volatile is the constant-product family → the
-            // fee-agnostic V2 lines. Solidly stable is concave in the input,
-            // so its entry tangent is a sound rise beside the reserve cap.
-            ResolvedHop::SolidlyStable { state } => {
-                if state.stable {
-                    // Reserves stay NATIVE and un-oriented; the arm orients
-                    // them from `token_in` (the leaf's own convention).
-                    Some(HopMath::SolidlyStable {
-                        reserves_0: state.reserves_0,
-                        reserves_1: state.reserves_1,
-                        decimals_0: state.decimals_0,
-                        decimals_1: state.decimals_1,
-                        token_in: state.token_in,
-                        fee_numer: state.fee_numer,
-                        fee_denom: state.fee_denom,
-                    })
-                } else {
-                    let (reserve_in, reserve_out) = if state.token_in == 0 {
-                        (state.reserves_0, state.reserves_1)
-                    } else {
-                        (state.reserves_1, state.reserves_0)
-                    };
-                    Some(HopMath::SolidlyVolatile {
-                        reserve_in,
-                        reserve_out,
-                        // Solidly stores the fee RATE (`fee_numer/fee_denom`);
-                        // the Möbius tangent wants the retained fraction.
-                        gamma_numer: state.fee_denom.saturating_sub(state.fee_numer),
-                        fee_denom: state.fee_denom,
-                    })
-                }
-            }
-            // Concave weighted-pool curve → entry-rate tangent dominates
-            // globally (sound) + the reserve asymptote caps it.
-            ResolvedHop::BalancerWeighted { state } => {
-                Some(crate::profit_envelope::HopMath::Weighted {
-                    balance_in: state.balance_in,
-                    balance_out: state.balance_out,
-                    weight_in: state.weight_in,
-                    weight_out: state.weight_out,
-                    scaling_in: state.scaling_factor_in,
-                    scaling_out: state.scaling_factor_out,
-                })
-            }
-            // Stableswap families (Balancer stable / Curve) → sound reserve
-            // cap only (see the Solidly-stable note above).
-            ResolvedHop::BalancerStable { state } => state
-                .balances
-                .get(state.token_index_out)
-                .copied()
-                .filter(|b| !b.is_zero() && !state.scaling_factor_out.is_zero())
-                .map(|b| HopMath::ReserveCap {
-                    reserve_out: b / state.scaling_factor_out,
-                }),
-            ResolvedHop::CurveStableswap { state } => {
-                // Native output-token reserve = xp[out] · PRECISION / rate_out
-                // (you can never extract more than the pool holds).
-                let xp_out = state.xp.get(state.token_index_out)?;
-                if state.rate_multiplier_out.is_zero() {
-                    return None;
-                }
-                Some(HopMath::ReserveCap {
-                    reserve_out: xp_out.saturating_mul(state.precision) / state.rate_multiplier_out,
-                })
-            }
-        })
-        .collect();
+    let views: Vec<Option<crate::profit_envelope::HopMath<'_>>> =
+        resolved.hops.iter().map(hop_math_for).collect();
     let (envelope, mut gate_stats) = path_profit_bound_with_floor(&views, gate, min_profit);
     match envelope {
         // Unsupported families are SOLVED unscreened, never skipped — the
@@ -188,6 +112,104 @@ pub fn solve_path_with_min_profit(
         envelope,
         stats,
         gate_stats,
+    }
+}
+
+/// Map one resolved hop to the gate's hop view, or `None` when the family has
+/// no rigorous bound (an unmapped hop POISONS the whole path — no skip without
+/// a proof). Extracted from [`solve_path_with_min_profit`] so the hot-loop
+/// mapping is one short call per hop, and so the two stableswap arms can BORROW
+/// the leaf's state slices instead of cloning a `Vec` per hop per candidate
+/// path.
+fn hop_math_for(hop: &ResolvedHop) -> Option<crate::profit_envelope::HopMath<'_>> {
+    match hop {
+        ResolvedHop::V2 { state } => Some(HopMath::V2(state)),
+        ResolvedHop::V3 { prepared, .. } | ResolvedHop::V4 { prepared, .. } => {
+            Some(HopMath::Cl(ClHop {
+                seq: &prepared.int_seq,
+                crossings: std::borrow::Cow::Borrowed(&prepared.crossings),
+            }))
+        }
+        // Solidly volatile is the constant-product family → the
+        // fee-agnostic V2 lines. Solidly stable is concave in the input,
+        // so its entry tangent is a sound rise beside the reserve cap.
+        ResolvedHop::SolidlyStable { state } => {
+            if state.stable {
+                // Reserves stay NATIVE and un-oriented; the arm orients
+                // them from `token_in` (the leaf's own convention).
+                Some(HopMath::SolidlyStable {
+                    reserves_0: state.reserves_0,
+                    reserves_1: state.reserves_1,
+                    decimals_0: state.decimals_0,
+                    decimals_1: state.decimals_1,
+                    token_in: state.token_in,
+                    fee_numer: state.fee_numer,
+                    fee_denom: state.fee_denom,
+                })
+            } else {
+                let (reserve_in, reserve_out) = if state.token_in == 0 {
+                    (state.reserves_0, state.reserves_1)
+                } else {
+                    (state.reserves_1, state.reserves_0)
+                };
+                Some(HopMath::SolidlyVolatile {
+                    reserve_in,
+                    reserve_out,
+                    // Solidly stores the fee RATE (`fee_numer/fee_denom`);
+                    // the Möbius tangent wants the retained fraction.
+                    gamma_numer: state.fee_denom.saturating_sub(state.fee_numer),
+                    fee_denom: state.fee_denom,
+                })
+            }
+        }
+        // Concave weighted-pool curve → entry-rate tangent dominates
+        // globally (sound) + the reserve asymptote caps it.
+        ResolvedHop::BalancerWeighted { state } => {
+            Some(crate::profit_envelope::HopMath::Weighted {
+                balance_in: state.balance_in,
+                balance_out: state.balance_out,
+                weight_in: state.weight_in,
+                weight_out: state.weight_out,
+                scaling_in: state.scaling_factor_in,
+                scaling_out: state.scaling_factor_out,
+            })
+        }
+        // Balancer stable: the leaf's out-curve is concave in the upscaled
+        // input wherever the derive arm's closed-form curvature test holds,
+        // so its entry tangent is a sound rise beside the reserve cap.
+        ResolvedHop::BalancerStable { state } => Some(HopMath::BalancerStable {
+            amp: state.amp,
+            balances: state.balances.as_slice(),
+            token_index_in: state.token_index_in,
+            token_index_out: state.token_index_out,
+            invariant: state.invariant,
+            swap_fee: state.swap_fee,
+            scaling_factor_in: state.scaling_factor_in,
+            scaling_factor_out: state.scaling_factor_out,
+        }),
+        // Curve: the entry tangent was MEASURED non-concave against the
+        // real leaf (see `curve_stableswap_lines`), so the family keeps the
+        // sound native reserve cap — carried through its own hop view.
+        ResolvedHop::CurveStableswap { state } => {
+            if state.rate_multiplier_out.is_zero() {
+                return None;
+            }
+            Some(HopMath::CurveStableswap {
+                amp: state.amp,
+                a_precision: state.a_precision,
+                xp: state.xp.as_slice(),
+                token_index_in: state.token_index_in,
+                token_index_out: state.token_index_out,
+                n_coins: state.n_coins,
+                fee: state.fee,
+                fee_denom: state.fee_denom,
+                precision: state.precision,
+                rate_multiplier_in: state.rate_multiplier_in,
+                rate_multiplier_out: state.rate_multiplier_out,
+                y_variant: state.y_variant,
+                d_variant: state.d_variant,
+            })
+        }
     }
 }
 

@@ -993,6 +993,12 @@ fn path_profit_bound_inner(
                             "SolidlyStable(zero={})",
                             reserves_0.is_zero() || reserves_1.is_zero()
                         ),
+                        HopMath::BalancerStable { balances, .. } => {
+                            format!("BalancerStable(n={})", balances.len())
+                        }
+                        HopMath::CurveStableswap { xp, .. } => {
+                            format!("CurveStableswap(n={})", xp.len())
+                        }
                     };
                     diag!(domain = solver, hop_index = e.hop_index,
                         family = %family,

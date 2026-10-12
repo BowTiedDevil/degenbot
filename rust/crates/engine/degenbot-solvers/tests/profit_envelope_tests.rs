@@ -1442,3 +1442,538 @@ fn solidly_stable_tangent_raises_skip_count_on_synthesized_corpus() {
         "the entry tangent must raise the skip count ({old_skips} -> {new_skips})"
     );
 }
+
+// ===========================================================================
+// Balancer V2 STABLE entry-tangent soundness + Curve stableswap non-concavity.
+//
+// The gate maps a Balancer-stable hop to `HopMath::BalancerStable` (entry
+// tangent beside the native reserve cap) wherever the closed-form curvature
+// test holds, and a Curve stableswap hop to `HopMath::CurveStableswap` (native
+// reserve cap ALONE). The oracle for both is the REAL leaf, never a
+// reimplementation: `balancer::stable_math::calc_out_given_in` (with
+// `calculate_invariant` / `calculate_invariant_deployed` for D) and
+// `curve::stableswap::stableswap_get_y`. A bound that ever dips below the leaf
+// would skip a profitable path.
+// ===========================================================================
+
+use degenbot_math::balancer::fixed_point::mul_up;
+use degenbot_math::balancer::stable_math::{
+    calc_out_given_in, calculate_invariant, calculate_invariant_deployed,
+};
+use degenbot_math::curve::stableswap::{stableswap_get_d, stableswap_get_y, DVariant, YVariant};
+
+const BAL_ONE: u64 = 1_000_000_000_000_000_000;
+
+/// One generated Balancer-stable shape (a randomized-matrix row).
+#[derive(Clone, Debug)]
+struct BalancerShape {
+    amp: U256,
+    balances: Vec<U256>,
+    token_index_in: usize,
+    token_index_out: usize,
+    invariant: U256,
+    swap_fee: U256,
+    scaling_factor_in: U256,
+    scaling_factor_out: U256,
+}
+
+impl BalancerShape {
+    fn hop(&self) -> HopMath<'_> {
+        HopMath::BalancerStable {
+            amp: self.amp,
+            balances: self.balances.as_slice(),
+            token_index_in: self.token_index_in,
+            token_index_out: self.token_index_out,
+            invariant: self.invariant,
+            swap_fee: self.swap_fee,
+            scaling_factor_in: self.scaling_factor_in,
+            scaling_factor_out: self.scaling_factor_out,
+        }
+    }
+
+    /// The NATIVE output-token reserve (`balance_out / scaling_factor_out`).
+    fn native_out_reserve(&self) -> U256 {
+        self.balances[self.token_index_out] / self.scaling_factor_out
+    }
+
+    /// The REAL Balancer leaf, driven exactly as `simulate_balancer_stable_hop`.
+    fn leaf_output(&self, x_native: U256) -> Option<U256> {
+        let upscaled = x_native.saturating_mul(self.scaling_factor_in);
+        let fee = mul_up(upscaled, self.swap_fee).ok()?;
+        let after_fee = upscaled.saturating_sub(fee);
+        let out_up = calc_out_given_in(
+            self.amp,
+            &self.balances,
+            self.token_index_in,
+            self.token_index_out,
+            after_fee,
+            self.invariant,
+        )
+        .ok()?;
+        if self.scaling_factor_out.is_zero() {
+            return None;
+        }
+        Some(out_up / self.scaling_factor_out)
+    }
+}
+
+fn balancer_next(state: &mut u64) -> u64 {
+    *state = state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    *state
+}
+
+fn balancer_pow10(exp: u32) -> U256 {
+    let mut v = U256::ONE;
+    for _ in 0..exp {
+        v = v.saturating_mul(U256::from(10u64));
+    }
+    v
+}
+
+/// Draw one matrix row: token count 2..=4, amplification `amp = A·1000` for
+/// `A` in 10..=5000, upscaled balances log-uniform over `10^18..10^24` with an
+/// imbalance ratio up to `1e4` in either direction, the four realistic swap
+/// fees, the three scaling-factor pairs the task names, a token index pair, and
+/// either invariant entry point (`calculate_invariant` /
+/// `calculate_invariant_deployed`).
+fn balancer_shape(state: &mut u64) -> Option<BalancerShape> {
+    let n = 2 + (balancer_next(state) % 3) as usize; // 2..=4
+    let a = 10 + balancer_next(state) % 4_991; // 10..=5000
+    let amp = U256::from(a).saturating_mul(U256::from(1_000u64));
+    let base_exp = 18 + balancer_next(state) % 7; // 18..=24
+    let ratio_exp = balancer_next(state) % 5; // 0..=4 → ratio up to 1e4
+    let up = balancer_next(state).is_multiple_of(2);
+    let mut balances = Vec::with_capacity(n);
+    for k in 0..n {
+        let e_k = if k == 0 {
+            base_exp
+        } else if up {
+            base_exp + ratio_exp
+        } else {
+            base_exp.saturating_sub(ratio_exp)
+        }
+        .clamp(1, 30);
+        let mantissa = 1 + balancer_next(state) % 9_999;
+        balances.push(
+            balancer_pow10(u32::try_from(e_k).unwrap_or(1)).saturating_mul(U256::from(mantissa))
+                / U256::from(1_000u64),
+        );
+    }
+    if balances.iter().any(U256::is_zero) {
+        return None;
+    }
+    let token_index_in = (balancer_next(state) as usize) % n;
+    let token_index_out = (balancer_next(state) as usize) % n;
+    if token_index_in == token_index_out {
+        return None;
+    }
+    let fees = [
+        0u64,
+        1_000_000_000_000_000,
+        10_000_000_000_000_000,
+        100_000_000_000_000_000,
+    ];
+    let swap_fee = U256::from(fees[(balancer_next(state) % 4) as usize]);
+    // The three scaling-factor pairs the matrix names — never both large, so a
+    // unit-input probe stays strictly below the native reserve.
+    let pairs = [
+        (U256::ONE, U256::ONE),
+        (U256::from(1_000_000_000_000u64), U256::ONE),
+        (U256::ONE, U256::from(1_000_000_000_000u64)),
+    ];
+    let (scaling_factor_in, scaling_factor_out) = pairs[(balancer_next(state) % 3) as usize];
+    let invariant = if balancer_next(state).is_multiple_of(2) {
+        calculate_invariant(amp, &balances).ok()?
+    } else {
+        calculate_invariant_deployed(amp, &balances, true).ok()?
+    };
+    if invariant.is_zero() {
+        return None;
+    }
+    Some(BalancerShape {
+        amp,
+        balances,
+        token_index_in,
+        token_index_out,
+        invariant,
+        swap_fee,
+        scaling_factor_in,
+        scaling_factor_out,
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    /// Point-wise dominance of the Balancer-stable entry-tangent bound over the
+    /// REAL `calc_out_given_in` leaf on a dense log grid up to the reserve cap.
+    #[test]
+    fn balancer_stable_entry_tangent_dominates_real_leaf(seed in any::<u64>()) {
+        let cfg = SolveRuntimeConfig::default();
+        let mut rng = seed | 1;
+        let mut n_shapes = 0u32;
+        let mut n_asserts = 0u32;
+        let mut n_rise_active = 0u32;
+        let mut n_guard_fired = 0u32;
+        let mut n_leaf_wrapped = 0u32;
+        let mut n_leaf_undefined = 0u32;
+        let mut min_margin = U256::MAX;
+
+        for _ in 0..400 {
+            let Some(shape) = balancer_shape(&mut rng) else {
+                continue;
+            };
+            let out_reserve = shape.native_out_reserve();
+            if out_reserve.is_zero() {
+                continue;
+            }
+            n_shapes += 1;
+            let views = [Some(shape.hop())];
+
+            // A shape whose rise was dropped (curvature test failed or the
+            // faithful-arithmetic window guard fired) bounds to the flat cap
+            // ALONE, so its unit-input bound is exactly the output reserve.
+            let unit_bound = path_output_bound_at(&views, &U256::ONE, &cfg)
+                .expect("the Balancer-stable bound always derives");
+            if unit_bound >= out_reserve {
+                n_guard_fired += 1;
+                prop_assert_eq!(
+                    unit_bound, out_reserve,
+                    "a cap-only shape must bound to the flat cap"
+                );
+            }
+
+            // Dense log grid from the reserve cap down ~8 decades.
+            let mut x = out_reserve;
+            for _ in 0..40 {
+                if x.is_zero() {
+                    break;
+                }
+                for probe in [x, x.saturating_add(U256::ONE)] {
+                    let Some(leaf) = shape.leaf_output(probe) else {
+                        n_leaf_undefined += 1;
+                        continue;
+                    };
+                    // A leaf reporting more than the pool holds has wrapped its
+                    // own arithmetic; that is not the invariant curve, so no
+                    // invariant-based bound is defined there.
+                    if leaf > out_reserve {
+                        n_leaf_wrapped += 1;
+                        continue;
+                    }
+                    let bound = path_output_bound_at(&views, &probe, &cfg)
+                        .expect("the Balancer-stable bound always derives");
+                    prop_assert!(
+                        bound >= leaf,
+                        "Balancer-stable bound {bound} < leaf {leaf} at x={probe} \
+                         (amp={}, n={}, i={}, j={}, fee={}, sf_in={}, sf_out={})",
+                        shape.amp,
+                        shape.balances.len(),
+                        shape.token_index_in,
+                        shape.token_index_out,
+                        shape.swap_fee,
+                        shape.scaling_factor_in,
+                        shape.scaling_factor_out
+                    );
+                    let margin = bound - leaf;
+                    if margin < min_margin {
+                        min_margin = margin;
+                    }
+                    n_asserts += 1;
+                    if bound < out_reserve {
+                        n_rise_active += 1;
+                    }
+                }
+                x = x.saturating_mul(U256::from(464u64)) / U256::from(1000u64);
+            }
+        }
+
+        eprintln!(
+            "balancer_stable proptest: shapes={n_shapes} asserts={n_asserts} \
+             rise_active={n_rise_active} guard_fired_cap_only={n_guard_fired} \
+             leaf_wrapped={n_leaf_wrapped} leaf_undefined={n_leaf_undefined} \
+             min_margin={min_margin}"
+        );
+
+        prop_assert!(n_shapes >= 300, "matrix too small: {n_shapes} shapes");
+        prop_assert!(n_asserts >= 2_000, "vacuous matrix: {n_asserts} assertions");
+        prop_assert!(
+            n_rise_active >= 200,
+            "the tangent rise was never the active line: {n_rise_active} probes"
+        );
+        prop_assert!(
+            n_guard_fired > 0,
+            "the wide matrix never exercised the curvature/window guard: \
+             {n_guard_fired} cap-only shapes"
+        );
+    }
+}
+
+/// Shape assertion for the Balancer arm: a shape inside the curvature domain
+/// derives the `[rise, flat]` set (its unit-input bound sits strictly below the
+/// reserve cap, so the rise is the active line), while an extreme shape whose
+/// post-trade window would wrap the leaf's `u256` products derives the flat cap
+/// ALONE (unit-input bound exactly the reserve).
+#[test]
+fn balancer_stable_curvature_guard_shape() {
+    let cfg = SolveRuntimeConfig::default();
+    let amp = U256::from(10_000u64); // A = 10
+    let fee = U256::from(3_000_000_000_000_000u64); // 0.3 %
+
+    // A 10x imbalance keeps the entry point inside the curvature domain, so
+    // the rise survives beside the cap.
+    let inside_balances = vec![balancer_pow10(21), balancer_pow10(20)];
+    let inside = BalancerShape {
+        amp,
+        invariant: calculate_invariant(amp, &inside_balances).expect("converges"),
+        balances: inside_balances,
+        token_index_in: 0,
+        token_index_out: 1,
+        swap_fee: fee,
+        scaling_factor_in: U256::ONE,
+        scaling_factor_out: U256::ONE,
+    };
+    let inside_reserve = inside.native_out_reserve();
+    let inside_bound =
+        path_output_bound_at(&[Some(inside.hop())], &U256::ONE, &cfg).expect("derives");
+    assert!(
+        inside_bound < inside_reserve,
+        "inside-domain shape must carry the entry-tangent rise \
+         (bound {inside_bound} vs cap {inside_reserve})"
+    );
+
+    // The same 10x imbalance at a scale whose post-trade window would wrap the
+    // leaf's `D²`/`D·P_D` products across `u256` — the faithful-arithmetic
+    // window guard drops the rise, leaving the flat cap alone.
+    let extreme_balances = vec![balancer_pow10(30), balancer_pow10(29)];
+    let extreme = BalancerShape {
+        amp,
+        invariant: calculate_invariant(amp, &extreme_balances).expect("converges"),
+        balances: extreme_balances,
+        token_index_in: 0,
+        token_index_out: 1,
+        swap_fee: fee,
+        scaling_factor_in: U256::ONE,
+        scaling_factor_out: U256::ONE,
+    };
+    let extreme_reserve = extreme.native_out_reserve();
+    let extreme_bound =
+        path_output_bound_at(&[Some(extreme.hop())], &U256::ONE, &cfg).expect("derives");
+    assert_eq!(
+        extreme_bound, extreme_reserve,
+        "extreme shape must drop the rise to the cap alone"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Curve stableswap non-concavity counterexamples (PINNED, deterministic).
+//
+// The src docs claim the Curve out-curve is non-concave against the real leaf,
+// so an entry tangent would under-cut it and the family stays on the reserve
+// cap. These cases demonstrate it: build the hop, derive the entry-tangent line
+// the Solidly/Balancer arms would derive (same closed-form marginal rate, same
+// fee/scaling conversion, ceil-rounded like `Line::eval`), and assert the REAL
+// `stableswap_get_y` leaf output EXCEEDS it at some input in the sweep.
+// ---------------------------------------------------------------------------
+
+/// One deterministic Curve case (three coins; the co-coin is index 2).
+#[derive(Clone, Copy, Debug)]
+struct CurveCase {
+    xp: [U256; 3],
+    token_index_in: usize,
+    token_index_out: usize,
+    amp: U256,
+    a_precision: U256,
+    n_coins: U256,
+    fee: U256,
+    fee_denom: U256,
+    precision: U256,
+    rate_multiplier_in: U256,
+    rate_multiplier_out: U256,
+    y_variant: YVariant,
+    d_variant: DVariant,
+}
+
+impl CurveCase {
+    /// The REAL Curve leaf output, driven exactly as `simulate_curve_hop`.
+    fn leaf_output(&self, x_native: U256) -> Option<U256> {
+        let x = self.xp[self.token_index_in]
+            .saturating_add(x_native.saturating_mul(self.rate_multiplier_in) / self.precision);
+        let y = stableswap_get_y(
+            self.token_index_in,
+            self.token_index_out,
+            x,
+            &self.xp,
+            self.amp,
+            self.n_coins,
+            self.a_precision,
+            self.y_variant,
+            self.d_variant,
+        )
+        .ok()?;
+        let dy_raw = self.xp[self.token_index_out]
+            .saturating_sub(y)
+            .saturating_sub(U256::ONE);
+        let fee = dy_raw.saturating_mul(self.fee) / self.fee_denom;
+        Some(dy_raw.saturating_sub(fee).saturating_mul(self.precision) / self.rate_multiplier_out)
+    }
+
+    /// The entry-tangent value the Balancer/Solidly arms would derive for this
+    /// hop at native input `x`, as an exact `U512` with a CEIL (matching
+    /// `Line::eval`'s `ceil_div`, so the tangent is never rounded down in the
+    /// leaf's favour). `None` when the closed-form marginal rate is undefined.
+    fn entry_tangent_at(&self, x_native: U256) -> Option<U512> {
+        let invariant = stableswap_get_d(
+            &self.xp,
+            self.amp,
+            self.n_coins,
+            self.a_precision,
+            self.d_variant,
+        )
+        .ok()?;
+        // `amp·n / a_precision` — the invariant's amplification coefficient.
+        let amp_n_eff = self
+            .amp
+            .checked_mul(self.n_coins)?
+            .checked_div(self.a_precision)?;
+        let total = self
+            .xp
+            .iter()
+            .copied()
+            .fold(U256::ZERO, U256::saturating_add);
+        // `P = D + m·(Σx − D)` — the invariant's product term.
+        let product =
+            invariant.checked_add(amp_n_eff.checked_mul(total.checked_sub(invariant)?)?)?;
+        let cross = self.xp[self.token_index_in].checked_mul(self.xp[self.token_index_out])?;
+        let rate_num = amp_n_eff
+            .checked_mul(cross)?
+            .checked_add(product.checked_mul(self.xp[self.token_index_out])?)?;
+        let rate_den = amp_n_eff
+            .checked_mul(cross)?
+            .checked_add(product.checked_mul(self.xp[self.token_index_in])?)?;
+        let retained = self.fee_denom.checked_sub(self.fee)?;
+        let numer = U512::from(rate_num)
+            .checked_mul(U512::from(self.rate_multiplier_in))?
+            .checked_mul(U512::from(retained))?;
+        let denom = U512::from(rate_den)
+            .checked_mul(U512::from(self.rate_multiplier_out))?
+            .checked_mul(U512::from(self.fee_denom))?;
+        if denom.is_zero() {
+            return None;
+        }
+        let prod = numer.checked_mul(U512::from(x_native))?;
+        Some(prod.checked_add(denom)?.checked_sub(U512::ONE)? / denom)
+    }
+
+    /// Sweep the log grid and return `(max_excess, argmax, leaf_at_argmax)` —
+    /// the largest amount by which the REAL leaf exceeds the entry tangent.
+    fn max_excess(&self) -> (U512, U256, U256) {
+        let reserve =
+            self.xp[self.token_index_out].saturating_mul(self.precision) / self.rate_multiplier_out;
+        let mut best = U512::ZERO;
+        let mut arg = U256::ZERO;
+        let mut leaf_at = U256::ZERO;
+        let mut x = reserve;
+        for _ in 0..120 {
+            if x.is_zero() {
+                break;
+            }
+            if let (Some(leaf), Some(tangent)) = (self.leaf_output(x), self.entry_tangent_at(x)) {
+                let leaf512 = U512::from(leaf);
+                if leaf512 > tangent && leaf512 - tangent > best {
+                    best = leaf512 - tangent;
+                    arg = x;
+                    leaf_at = leaf;
+                }
+            }
+            x = x.saturating_mul(U256::from(464u64)) / U256::from(1000u64);
+        }
+        (best, arg, leaf_at)
+    }
+}
+
+fn curve_base(xp: [U256; 3], y_variant: YVariant, d_variant: DVariant) -> CurveCase {
+    CurveCase {
+        xp,
+        token_index_in: 0,
+        token_index_out: 1,
+        amp: U256::from(10_000u64), // A = 100 (a_precision = 100)
+        a_precision: U256::from(100u64),
+        n_coins: U256::from(3u64),
+        fee: U256::from(4_000_000u64), // 0.04 % of 1e10
+        fee_denom: U256::from(10_000_000_000u64),
+        precision: U256::from(BAL_ONE),
+        rate_multiplier_in: U256::from(BAL_ONE),
+        rate_multiplier_out: U256::from(BAL_ONE),
+        y_variant,
+        d_variant,
+    }
+}
+
+/// Coherent Standard/Standard 3-coin pool whose co-coin is nearly empty and
+/// whose amplification is at the top of the realistic range — the leaf's
+/// Standard y-iteration overshoots the entry tangent by a measured 1–2 native
+/// units here (the smallest soundness breach that still makes a tangent
+/// unsound).
+fn curve_standard_nearly_empty_co_coin() -> CurveCase {
+    let mut case = curve_base(
+        [balancer_pow10(24), balancer_pow10(24), balancer_pow10(19)],
+        YVariant::Standard,
+        DVariant::Standard,
+    );
+    case.amp = U256::from(1_000_000u64); // A = 10_000
+    case
+}
+
+/// A `Variant1` y-iteration paired with a `Standard` D-step — `project_curve`
+/// reads the two discriminators INDEPENDENTLY from the pool identity, so the
+/// pairing is reachable — on a pool whose co-coin is nearly empty. The
+/// `Variant1` y-step omits the `A_PRECISION` divisor, so its root is not the
+/// invariant's and the leaf overshoots the entry tangent by ~1e24 native units
+/// (essentially the pool's whole output reserve).
+fn curve_variant1_standard_nearly_empty_co_coin() -> CurveCase {
+    curve_base(
+        [balancer_pow10(24), balancer_pow10(24), U256::ONE],
+        YVariant::Variant1,
+        DVariant::Standard,
+    )
+}
+
+/// The Standard/Standard case: the real leaf overshoots the entry tangent — the
+/// measured reason Curve stays on the cap. The overshoot is small (a 1–2
+/// native-unit rounding excess) but a single unit is already an unsound skip.
+#[test]
+fn curve_standard_nearly_empty_co_coin_is_non_concave() {
+    let case = curve_standard_nearly_empty_co_coin();
+    let (excess, arg, leaf) = case.max_excess();
+    eprintln!(
+        "curve Standard/Standard counterexample: excess={excess} native units \
+         at x={arg} (leaf={leaf}, tangent={})",
+        case.entry_tangent_at(arg).unwrap_or_default()
+    );
+    assert!(
+        excess >= U512::from(1u64),
+        "expected the Standard/Standard leaf to overshoot the entry tangent, \
+         got {excess}"
+    );
+}
+
+/// The Variant1/Standard case: the overshoot reaches the pool's whole output
+/// reserve (`~1e24` native units, far past the `1e5+` scale).
+#[test]
+fn curve_variant1_standard_nearly_empty_co_coin_is_non_concave() {
+    let case = curve_variant1_standard_nearly_empty_co_coin();
+    let (excess, arg, leaf) = case.max_excess();
+    eprintln!(
+        "curve Variant1/Standard counterexample: excess={excess} native \
+         units at x={arg} (leaf={leaf}, tangent={})",
+        case.entry_tangent_at(arg).unwrap_or_default()
+    );
+    assert!(
+        excess >= U512::from(100_000u64),
+        "expected the Variant1/Standard leaf to overshoot the entry tangent by \
+         far more than 1e5 native units, got {excess}"
+    );
+}
