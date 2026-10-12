@@ -187,9 +187,9 @@ allow-star-arg-any = true
 ]
 
 [tool.pytest.ini_options]
+# Serial by design: xdist dropped — 16-way parallel anvil forks outran the RPC
+# tier (spawn timeouts), and wall-clock speed is no longer the binding constraint.
 addopts = [
-    "--numprocesses", "auto",
-    "--dist", "loadgroup",
     "--import-mode", "importlib",
     "-m", "not slow and not base and not online_rpc",
 ]
