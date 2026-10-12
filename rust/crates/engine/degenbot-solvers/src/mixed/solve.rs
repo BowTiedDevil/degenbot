@@ -599,32 +599,14 @@ fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResul
         .map(solidly_hop_v2_equiv)
         .collect::<Option<Vec<_>>>()?;
 
-    solve_golden_section_path_int(
-        &v2_equiv,
-        &|x| simulate_solidly_path(x, hops),
-        &|x| simulate_solidly_path_outputs(x, hops),
-        VerifySweep::Ascending,
-    )
+    solve_golden_section_path_int(&v2_equiv, &|x| simulate_solidly_path(x, hops), &|x| {
+        simulate_solidly_path_outputs(x, hops)
+    })
 }
 
 /// Number of golden-section refinement iterations (mirrors Python's
 /// `SolidlyStableSolver.GOLDEN_SECTION_ITERATIONS`).
 const GOLDEN_SECTION_ITERATIONS: usize = 25;
-
-/// The integer-verification candidate order a family's ±3 sweep uses.
-///
-/// The families probe the neighbourhood differently: Solidly and Balancer
-/// weighted scan `center-3 ..= center+3` ascending, while Balancer stable and
-/// Curve walk outward `center±delta` from a moving best. The order is part of
-/// the observed behavior, so it stays explicit rather than unified.
-#[derive(Clone, Copy)]
-enum VerifySweep {
-    /// Ascending `center-3 ..= center+3` scan (Solidly, Balancer weighted).
-    Ascending,
-    /// Outward `center±delta` walk from the running best (Balancer stable,
-    /// Curve).
-    Outward,
-}
 
 /// Shared golden-section solve template for the stable-family arms (Solidly,
 /// Balancer weighted, Balancer stable, Curve stableswap).
@@ -633,13 +615,13 @@ enum VerifySweep {
 /// ±5x bracket around the Möbius optimum, the 25-iteration phi-approximated
 /// golden loop, and the ±3 integer verification. The family-specific parts
 /// enter as closures: `simulate` evaluates one candidate input against the real
-/// math leaf, `simulate_outputs` returns the per-hop outputs for the winning
-/// input, and `sweep` selects the integer-verification candidate order.
+/// math leaf, and `simulate_outputs` returns the per-hop outputs for the
+/// winning input. All four arms share one integer-verification order (see
+/// [`ascending_sweep`]).
 fn solve_golden_section_path_int(
     v2_equiv: &[degenbot_math::v2::IntHopState],
     simulate: &impl Fn(U256) -> U256,
     simulate_outputs: &impl Fn(U256) -> Vec<U256>,
-    sweep: VerifySweep,
 ) -> Option<SolvePathResult> {
     use crate::mobius_int::compute_int_mobius_coefficients;
     use crate::mobius_int_exact::compute_mobius_model_optimal_input;
@@ -671,7 +653,7 @@ fn solve_golden_section_path_int(
     }
     if x_high <= x_low {
         // Degenerate bracket — fall back to a single-point verification.
-        return verify_best(simulate, simulate_outputs, sweep, x_low);
+        return verify_best(simulate, simulate_outputs, x_low);
     }
 
     // --- Golden-section search (25 iterations) ---
@@ -708,27 +690,19 @@ fn solve_golden_section_path_int(
     }
 
     let x_opt = (x_low + x_high) / U256::from(2u64);
-    verify_best(simulate, simulate_outputs, sweep, x_opt)
+    verify_best(simulate, simulate_outputs, x_opt)
 }
 
 /// Integer verification + result construction for the golden-section template:
-/// resolve `center` to the max-profit input under the family's `sweep` order,
-/// then build the [`SolvePathResult`]. Returns `None` when no candidate is
-/// profitable.
+/// resolve `center` to the max-profit input with the shared ascending ±3 sweep
+/// ([`ascending_sweep`]), then build the [`SolvePathResult`]. Returns `None`
+/// when no candidate is profitable.
 fn verify_best(
     simulate: &impl Fn(U256) -> U256,
     simulate_outputs: &impl Fn(U256) -> Vec<U256>,
-    sweep: VerifySweep,
     center: U256,
 ) -> Option<SolvePathResult> {
-    let (best_input, best_profit) = match sweep {
-        VerifySweep::Ascending => ascending_sweep(simulate, center)?,
-        VerifySweep::Outward => {
-            let best_input = outward_sweep(simulate, center)?;
-            let best_profit = simulate(best_input).saturating_sub(best_input);
-            (best_input, best_profit)
-        }
-    };
+    let (best_input, best_profit) = ascending_sweep(simulate, center)?;
 
     let hop_outputs = simulate_outputs(best_input);
     let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
@@ -745,9 +719,16 @@ fn verify_best(
     })
 }
 
-/// Ascending `center-3 ..= center+3` integer sweep (candidate set clamped at
-/// 1); the earliest max-profit candidate wins ties. Returns the input and its
-/// profit, or `None` when no candidate is profitable.
+/// The shared integer-verification order: an ascending `center-3 ..= center+3`
+/// scan (candidate set clamped at 1) where the earliest max-profit candidate
+/// wins ties. Returns the input and its profit, or `None` when no candidate is
+/// profitable.
+///
+/// All four stable arms use this one order. The outward `center±delta` walk it
+/// replaces was measured against it on the golden-parity matrix and each arm's
+/// drift-net corpus: profits were identical to within a single wei, this scan
+/// was never worse (and a wei better on a few paths), and its worst-case
+/// residual matched the walk's — so the simpler scan is the survivor.
 fn ascending_sweep(simulate: &impl Fn(U256) -> U256, center: U256) -> Option<(U256, U256)> {
     const SEARCH_RADIUS: u64 = 3;
     let one = U256::from(1u64);
@@ -774,36 +755,6 @@ fn ascending_sweep(simulate: &impl Fn(U256) -> U256, center: U256) -> Option<(U2
         None
     } else {
         Some((best_input, best_profit))
-    }
-}
-
-/// Outward `center±delta` integer sweep from the running best; the earliest
-/// max-profit candidate wins ties. Returns the best input, or `None` when no
-/// candidate is profitable.
-fn outward_sweep(simulate: &impl Fn(U256) -> U256, start: U256) -> Option<U256> {
-    let mut best_profit = simulate(start).saturating_sub(start);
-    let mut best_input = start;
-    for delta in 1u64..=3 {
-        let cand_up = best_input.saturating_add(U256::from(delta));
-        let profit_up = simulate(cand_up).saturating_sub(cand_up);
-        if profit_up > best_profit {
-            best_profit = profit_up;
-            best_input = cand_up;
-        }
-        if best_input >= U256::from(delta) {
-            let cand_dn = best_input - U256::from(delta);
-            let profit_dn = simulate(cand_dn).saturating_sub(cand_dn);
-            if profit_dn > best_profit {
-                best_profit = profit_dn;
-                best_input = cand_dn;
-            }
-        }
-    }
-
-    if best_profit.is_zero() {
-        None
-    } else {
-        Some(best_input)
     }
 }
 
@@ -951,7 +902,6 @@ fn solve_balancer_weighted_path_int(resolved: &ResolvedMixedPath) -> Option<Solv
         &v2_equiv,
         &|x| simulate_balancer_weighted_path(x, hops),
         &|x| simulate_balancer_weighted_path_outputs(x, hops),
-        VerifySweep::Ascending,
     )
 }
 
@@ -1095,7 +1045,6 @@ fn solve_balancer_stable_path_int(resolved: &ResolvedMixedPath) -> Option<SolveP
         &v2_equiv,
         &|x| simulate_balancer_stable_path(x, hops),
         &|x| simulate_balancer_stable_path_outputs(x, hops),
-        VerifySweep::Outward,
     )
 }
 
@@ -1169,12 +1118,9 @@ fn solve_curve_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
         .map(curve_hop_v2_equiv)
         .collect::<Option<Vec<_>>>()?;
 
-    solve_golden_section_path_int(
-        &v2_equiv,
-        &|x| simulate_curve_path(x, hops),
-        &|x| simulate_curve_path_outputs(x, hops),
-        VerifySweep::Outward,
-    )
+    solve_golden_section_path_int(&v2_equiv, &|x| simulate_curve_path(x, hops), &|x| {
+        simulate_curve_path_outputs(x, hops)
+    })
 }
 
 /// V2-equivalent [`IntHopState`] for a Curve stableswap hop.

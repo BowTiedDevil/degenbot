@@ -72,11 +72,11 @@ IS the hop type. Then:
 - the entry itself, `solve_<family>_path_int` (`:588`, `:938`, `:1085`, `:1164`
   are the four landed examples), built on the shared golden template
   `solve_golden_section_path_int` (`:642`) where the family uses the
-  stable-family search. The template's family-specific parts enter as closures:
-  `simulate`, `simulate_outputs`, and a `VerifySweep` (`:625`) selecting the
-  ±3 integer-verification candidate order. A family whose search genuinely
-  differs does not reuse the template — but it must still own the whole search
-  (precheck, bracket, refine, verify), never a fragment.
+  stable-family search. The template's family-specific parts enter as two
+  closures: `simulate` and `simulate_outputs`. The ±3 integer-verification
+  order is shared by every arm, not a per-family choice. A family whose search
+  genuinely differs does not reuse the template — but it must still own the
+  whole search (precheck, bracket, refine, verify), never a fragment.
 
 ### Site 5 — the simulators, the V2-equivalent projection, and `hop_math_for`
 
