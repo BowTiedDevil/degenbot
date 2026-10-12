@@ -36,12 +36,13 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
         pool_address: ChecksummedAddress | str,
         *,
         silent: bool = False,
-        pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """Get a pool from its address by checking the registry first.
 
         If the pool is already tracked or found in the global registry,
-        that instance will be returned. Otherwise, a new one will be built.
+        that instance will be returned. Otherwise, it is built through
+        ``Bot.build_pool`` — the one supported construction path (the
+        pool classes refuse direct construction post-ADR-005).
 
         Returns:
             The computed value.
@@ -74,20 +75,19 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
             raise PoolNotAssociated(pool_address)
 
         try:
-            new_pool = self.pool_factory(
-                address=pool_address,
+            new_pool = self._bot.build_pool(
+                pool_address,
                 silent=silent,
-                **(pool_class_kwargs or {}),
             )
-        except (LiquidityPoolError, TypeError) as exc:
-            # TypeError: post-ADR-005 the pool classes refuse direct
-            # construction (Bot.build_pool and the test factories are the
-            # supported flows) — surface that as this tracker's documented
-            # creation failure instead of leaking the TypeError.
+        except LiquidityPoolError as exc:
             raise PoolCreationFailed(
                 message=f"Could not build V2 pool {pool_address}: {exc}",
             ) from exc
         else:
+            if not isinstance(new_pool, self.pool_factory):
+                raise PoolCreationFailed(
+                    message=f"Pool {pool_address} is not a {self.pool_factory.__name__}",
+                )
             self._add_tracked_pool(new_pool)
             return new_pool
 
@@ -161,7 +161,6 @@ class AerodromeV2PoolTracker(
         token_addresses: tuple[str, str],
         *,
         silent: bool = False,
-        pool_class_kwargs: dict[str, Any] | None = None,
     ) -> AerodromeV2Pool:
         """Get a volatile pool by its token addresses.
 
@@ -181,7 +180,6 @@ class AerodromeV2PoolTracker(
         return self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            pool_class_kwargs=pool_class_kwargs,
         )
 
     def _require_pool_implementation_address(self) -> ChecksummedAddress:
@@ -268,8 +266,6 @@ class AerodromeV3PoolTracker(
         tick_spacing: int,
         *,
         silent: bool = False,
-        # keyword arguments passed to the pool class constructor
-        pool_class_kwargs: dict[str, Any] | None = None,
     ) -> AerodromeV3Pool:
         """Return pool from tokens and tick spacing.
 
@@ -287,7 +283,6 @@ class AerodromeV3PoolTracker(
         pool = self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            pool_class_kwargs=pool_class_kwargs,  # ty:ignore[unknown-argument]
         )
         assert isinstance(pool, AerodromeV3Pool)
         return pool
