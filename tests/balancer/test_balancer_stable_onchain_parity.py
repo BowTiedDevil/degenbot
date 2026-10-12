@@ -2,9 +2,9 @@
 
 Golden conversion of the exact-equality parity tests in
 ``tests/balancer/test_stable_pool_class.py``: the MetaStable pools
-(``wsteth_weth``, ``cbeth_wsteth`` — no BPT token, near-static rates) and the
-ComposableStable pools (``tusd_bsp``, ``bb_s_usd`` — BPT token + time-varying
-rate providers). Each asserts the Python
+(``wsteth_weth``, ``cbeth_wsteth``, ``ankreth_weth``, ``reth_weth`` — no BPT
+token, near-static rates) and the ComposableStable pools (``tusd_bsp``,
+``bb_s_usd`` — BPT token + time-varying rate providers). Each asserts the Python
 ``calculate_tokens_out_from_tokens_in`` / ``calculate_tokens_in_from_tokens_out``
 exactly equals the on-chain ``BalancerQueries.querySwap`` (GIVEN_IN +
 GIVEN_OUT) over all non-BPT swap directions and the amount-multiplier grid.
@@ -28,7 +28,7 @@ resolve to at the pinned block (cached-if-valid, fresh-if-expired) — and a
 non-static :class:`_CapturedRateProvider` injects them so the pool's
 ``requires_io_at_calculation_time`` path (which the StaleRateResult guard
 mandates for Composable pools) returns the same rates querySwap used. Verified
-offline: 216/216 exact matches (4 pools x all non-BPT directions x multipliers).
+offline: 288/288 exact matches (6 pools x all non-BPT directions x multipliers).
 
 - **Replay mode** (default, CI): reads recorded ints; the deferred
   ``contract=`` callable is never invoked, so no fork is created. Offline.
@@ -81,6 +81,8 @@ _STABLE_CASSETTES = {
     "cbeth_wsteth": _CASSETTE_DIR / "balancer_stable_cbeth_wsteth.json",
     "tusd_bsp": _CASSETTE_DIR / "balancer_stable_tusd_bsp.json",
     "bb_s_usd": _CASSETTE_DIR / "balancer_stable_bb_s_usd.json",
+    "ankreth_weth": _CASSETTE_DIR / "balancer_stable_ankreth_weth.json",
+    "reth_weth": _CASSETTE_DIR / "balancer_stable_reth_weth.json",
 }
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -305,9 +307,10 @@ def test_balancer_v2_stable_query_swap_given_in(
 ) -> None:
     """Balancer V2 stable pool: GIVEN_IN == golden(querySwap).
 
-    Covers MetaStable pools (wstETH/WETH, cbETH/wstETH — near-static rates, no
-    BPT) and ComposableStable pools (TUSD BSP, bb-s-USD — BPT token +
-    time-varying rate providers with cache-aware rate resolution).
+    Covers MetaStable pools (wstETH/WETH, cbETH/wstETH, ankrETH/WETH,
+    rETH/WETH — near-static rates, no BPT) and ComposableStable pools
+    (TUSD BSP, bb-s-USD — BPT token + time-varying rate providers with
+    cache-aware rate resolution).
     """
     _run_stable_parity(
         golden_factory,

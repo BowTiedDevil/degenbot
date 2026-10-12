@@ -1,0 +1,42 @@
+{
+ "chain_id": 1,
+ "block": 24407242,
+ "address": "0x8A34b5ad76F528bfEc06c80D85EF3b53dA7FC300",
+ "name": "ankreth_weth",
+ "pool_id": "0x8a34b5ad76f528bfec06c80d85ef3b53da7fc30000020000000000000000043e",
+ "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+ "tokens": [
+  {
+   "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+   "name": "Wrapped Ether",
+   "symbol": "WETH",
+   "decimals": 18
+  },
+  {
+   "address": "0xE95A203B1a91a908F9B9CE46459d101078c2c3cb",
+   "name": "Ankr Staked ETH",
+   "symbol": "ankrETH",
+   "decimals": 18
+  }
+ ],
+ "balances": [
+  321492975118008012,
+  384319575173055040
+ ],
+ "fee": "1/2500",
+ "amp": 50000,
+ "base_scaling_factors": [
+  1000000000000000000,
+  1000000000000000000
+ ],
+ "resolved_scaling_factors": [
+  1000000000000000000,
+  1220730630433816158
+ ],
+ "resolved_rates": [
+  1000000000000000000,
+  1220730630433816158
+ ],
+ "bpt_idx": null,
+ "invariant_version": 2
+}

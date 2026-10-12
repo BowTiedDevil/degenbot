@@ -1,0 +1,42 @@
+{
+ "chain_id": 1,
+ "block": 24407242,
+ "address": "0x1E19CF2D73a72Ef1332C882F20534B6519Be0276",
+ "name": "reth_weth",
+ "pool_id": "0x1e19cf2d73a72ef1332c882f20534b6519be0276000200000000000000000112",
+ "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+ "tokens": [
+  {
+   "address": "0xae78736Cd615f374D3085123A210448E74Fc6393",
+   "name": "Rocket Pool ETH",
+   "symbol": "rETH",
+   "decimals": 18
+  },
+  {
+   "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+   "name": "Wrapped Ether",
+   "symbol": "WETH",
+   "decimals": 18
+  }
+ ],
+ "balances": [
+  15754986914575329,
+  14097706513785435
+ ],
+ "fee": "1/2500",
+ "amp": 50000,
+ "base_scaling_factors": [
+  1000000000000000000,
+  1000000000000000000
+ ],
+ "resolved_scaling_factors": [
+  1157077871144999941,
+  1000000000000000000
+ ],
+ "resolved_rates": [
+  1157077871144999941,
+  1000000000000000000
+ ],
+ "bpt_idx": null,
+ "invariant_version": 2
+}
