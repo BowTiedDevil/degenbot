@@ -10,6 +10,8 @@
 //! The CL hop uses `crate::cl::*` (same crate); the V2 + CL
 //! Möbius arms call `crate::mobius_int::*` / `crate::mobius_int_exact::*`.
 
+use std::collections::BTreeSet;
+
 use alloy::primitives::{U256, U512};
 
 use crate::profit_envelope::{
@@ -17,8 +19,8 @@ use crate::profit_envelope::{
 };
 
 use crate::mixed::{
-    BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, ResolvedHop,
-    ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
+    BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType,
+    ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
 };
 
 /// Dispatches based on path composition:
@@ -213,6 +215,118 @@ fn hop_math_for(hop: &ResolvedHop) -> Option<crate::profit_envelope::HopMath<'_>
     }
 }
 
+/// One solver entry selected by a path's family set. The selection ORDER is
+/// behavior-relevant: a V2+Solidly path is a Solidly solve rather than a walk,
+/// and a Solidly+CL pairing is refused rather than walked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FamilyArm {
+    /// Every hop is V2 → the integer-exact Möbius solve.
+    ExactV2,
+    /// Every hop is concentrated-liquidity (V3/V4) → the all-CL walk.
+    ConcentratedLiquidity,
+    /// V2 ∪ Solidly-stable with ≥1 Solidly hop → the Solidly solve.
+    Solidly,
+    /// V2 ∪ Balancer-weighted with ≥1 weighted hop → the weighted solve.
+    Weighted,
+    /// V2 ∪ Balancer-stable with ≥1 stable hop → the stable solve.
+    Stable,
+    /// V2 ∪ Curve with ≥1 Curve hop → the Curve solve.
+    Curve,
+    /// A family pairing the solver has no engine for → refuse (no solve).
+    Unsupported,
+    /// Mixed V2 + CL → the mixed walk.
+    Walkable,
+}
+
+/// One row of [`FAMILY_DISPATCH`]: the family set a path may present, the
+/// family it must present, and the arm that claims it.
+struct FamilyRow {
+    /// Families the path may contain for this row to match (`None` = any).
+    allowed: Option<&'static [HopType]>,
+    /// A family the path must contain for this row to match.
+    required: Option<HopType>,
+    /// The arm this row selects.
+    arm: FamilyArm,
+}
+
+/// The ordered family-set dispatch table. The FIRST row whose `allowed` set
+/// contains every present family (and whose `required` family, when set, is
+/// present) selects the arm. A path matching no row falls to
+/// [`FamilyArm::Walkable`].
+///
+/// The order is load-bearing, not cosmetic: a V2+Solidly path must reach
+/// [`FamilyArm::Solidly`] before the CL/mixed walk, and a Solidly+CL pairing
+/// (or a Solidly hop beside a weighted/stable/Curve hop) must be refused
+/// rather than walked. Each `Unsupported` row therefore requires its family
+/// with no allowed-set constraint — it fires only once the narrower rows above
+/// it have all failed.
+static FAMILY_DISPATCH: &[FamilyRow] = &[
+    FamilyRow {
+        allowed: Some(&[HopType::V2]),
+        required: None,
+        arm: FamilyArm::ExactV2,
+    },
+    FamilyRow {
+        allowed: Some(&[HopType::V3, HopType::V4]),
+        required: None,
+        arm: FamilyArm::ConcentratedLiquidity,
+    },
+    FamilyRow {
+        allowed: Some(&[HopType::V2, HopType::SolidlyStable]),
+        required: Some(HopType::SolidlyStable),
+        arm: FamilyArm::Solidly,
+    },
+    FamilyRow {
+        allowed: None,
+        required: Some(HopType::SolidlyStable),
+        arm: FamilyArm::Unsupported,
+    },
+    FamilyRow {
+        allowed: Some(&[HopType::V2, HopType::BalancerWeighted]),
+        required: Some(HopType::BalancerWeighted),
+        arm: FamilyArm::Weighted,
+    },
+    FamilyRow {
+        allowed: None,
+        required: Some(HopType::BalancerWeighted),
+        arm: FamilyArm::Unsupported,
+    },
+    FamilyRow {
+        allowed: Some(&[HopType::V2, HopType::BalancerStable]),
+        required: Some(HopType::BalancerStable),
+        arm: FamilyArm::Stable,
+    },
+    FamilyRow {
+        allowed: None,
+        required: Some(HopType::BalancerStable),
+        arm: FamilyArm::Unsupported,
+    },
+    FamilyRow {
+        allowed: Some(&[HopType::V2, HopType::CurveStableswap]),
+        required: Some(HopType::CurveStableswap),
+        arm: FamilyArm::Curve,
+    },
+    FamilyRow {
+        allowed: None,
+        required: Some(HopType::CurveStableswap),
+        arm: FamilyArm::Unsupported,
+    },
+];
+
+/// Classify a path by the SET of hop families it contains — the dispatch key.
+/// The table is consulted in order and the first matching row wins.
+fn family_arm(families: &BTreeSet<HopType>) -> FamilyArm {
+    FAMILY_DISPATCH
+        .iter()
+        .find(|row| {
+            row.required.is_none_or(|f| families.contains(&f))
+                && row
+                    .allowed
+                    .is_none_or(|allowed| families.iter().all(|f| allowed.contains(f)))
+        })
+        .map_or(FamilyArm::Walkable, |row| row.arm)
+}
+
 #[must_use]
 // The `expect` must disappear under `hotpath`: instrumented builds move the
 // fn body into macro code, so too_many_lines no longer fires there and a
@@ -228,146 +342,86 @@ pub fn solve_path_inner(
     if !resolved.valid {
         return (None, crate::cl::WalkStats::default());
     }
-    let all_v2 = resolved
-        .hops
-        .iter()
-        .all(|h| matches!(h, ResolvedHop::V2 { .. }));
-    let all_cl = resolved.hops.iter().all(|h| h.as_int_sequence().is_some());
-    let has_solidly = resolved
-        .hops
-        .iter()
-        .any(|h| matches!(h, ResolvedHop::SolidlyStable { .. }));
-    let all_v2_or_solidly = resolved.hops.iter().all(|h| {
-        matches!(
-            h,
-            ResolvedHop::V2 { .. } | ResolvedHop::SolidlyStable { .. }
-        )
-    });
-    let has_balancer_weighted = resolved
-        .hops
-        .iter()
-        .any(|h| matches!(h, ResolvedHop::BalancerWeighted { .. }));
-    let all_v2_or_weighted = resolved.hops.iter().all(|h| {
-        matches!(
-            h,
-            ResolvedHop::V2 { .. } | ResolvedHop::BalancerWeighted { .. }
-        )
-    });
-    let has_balancer_stable = resolved
-        .hops
-        .iter()
-        .any(|h| matches!(h, ResolvedHop::BalancerStable { .. }));
-    let all_v2_or_stable = resolved.hops.iter().all(|h| {
-        matches!(
-            h,
-            ResolvedHop::V2 { .. } | ResolvedHop::BalancerStable { .. }
-        )
-    });
-    let has_curve = resolved
-        .hops
-        .iter()
-        .any(|h| matches!(h, ResolvedHop::CurveStableswap { .. }));
-    let all_v2_or_curve = resolved.hops.iter().all(|h| {
-        matches!(
-            h,
-            ResolvedHop::V2 { .. } | ResolvedHop::CurveStableswap { .. }
-        )
-    });
+    // The distinct hop families present in this path — the dispatch key,
+    // computed ONCE. Every arm below is a set-membership test against it; see
+    // [`FAMILY_DISPATCH`] for the ordered arm selection.
+    let families: BTreeSet<HopType> = resolved.hops.iter().map(ResolvedHop::hop_type).collect();
 
-    let (result, walk_stats) = if all_v2 {
-        let int_hops: Vec<_> = resolved
-            .hops
-            .iter()
-            .filter_map(ResolvedHop::as_v2_state)
-            .cloned()
-            .collect();
-        // Non-CL arms never touch the walk counters — zero stats.
-        if int_hops.len() == resolved.hops.len() {
-            (
-                crate::mobius_int_exact::exact_mobius_solve(&int_hops)
-                    .ok()
-                    .and_then(|r| {
-                        if r.is_profitable && !r.optimal_input.is_zero() && !r.profit.is_zero() {
-                            // V2 constant-product pools: each hop's consumed input
-                            // is the previous hop's output (hop_outputs[i-1]),
-                            // with hop 0 consuming optimal_input.
-                            let mut consumed_inputs = Vec::with_capacity(r.hop_outputs.len());
-                            consumed_inputs.push(r.optimal_input);
-                            for i in 1..r.hop_outputs.len() {
-                                consumed_inputs.push(r.hop_outputs[i - 1]);
+    let (result, walk_stats) = match family_arm(&families) {
+        FamilyArm::ExactV2 => {
+            let int_hops: Vec<_> = resolved
+                .hops
+                .iter()
+                .filter_map(ResolvedHop::as_v2_state)
+                .cloned()
+                .collect();
+            // Non-CL arms never touch the walk counters — zero stats.
+            if int_hops.len() == resolved.hops.len() {
+                (
+                    crate::mobius_int_exact::exact_mobius_solve(&int_hops)
+                        .ok()
+                        .and_then(|r| {
+                            if r.is_profitable && !r.optimal_input.is_zero() && !r.profit.is_zero()
+                            {
+                                // V2 constant-product pools: each hop's consumed input
+                                // is the previous hop's output (hop_outputs[i-1]),
+                                // with hop 0 consuming optimal_input.
+                                let mut consumed_inputs = Vec::with_capacity(r.hop_outputs.len());
+                                consumed_inputs.push(r.optimal_input);
+                                for i in 1..r.hop_outputs.len() {
+                                    consumed_inputs.push(r.hop_outputs[i - 1]);
+                                }
+                                Some(SolvePathResult {
+                                    optimal_input: r.optimal_input,
+                                    profit: r.profit,
+                                    hop_outputs: r.hop_outputs,
+                                    consumed_inputs,
+                                    ..Default::default()
+                                })
+                            } else {
+                                None
                             }
-                            Some(SolvePathResult {
-                                optimal_input: r.optimal_input,
-                                profit: r.profit,
-                                hop_outputs: r.hop_outputs,
-                                consumed_inputs,
-                                ..Default::default()
-                            })
-                        } else {
-                            None
-                        }
-                    }),
-                crate::cl::WalkStats::default(),
-            )
-        } else {
-            (None, crate::cl::WalkStats::default())
+                        }),
+                    crate::cl::WalkStats::default(),
+                )
+            } else {
+                (None, crate::cl::WalkStats::default())
+            }
         }
-    } else if all_cl {
-        // V3-V3, V4-V4, V3-V4, V4-V3, V3-V3-V3, etc: all concentrated-liquidity.
-        // Shares the mixed arm's construction flow — see
+        // All-CL (V3/V4) and mixed V2+CL share ONE construction flow — see
         // `solve_walkable_path_int`.
-        solve_walkable_path_int(resolved, gate, walk_env)
-    } else if all_v2_or_solidly && has_solidly {
-        // All-V2-or-Solidly with ≥1 Solidly hop — the two-stage Möbius
-        // precheck + golden-section solve. Scope (p):
-        // Solidly mixed with CL is rejected below.
-        (
+        FamilyArm::ConcentratedLiquidity | FamilyArm::Walkable => {
+            solve_walkable_path_int(resolved, gate, walk_env)
+        }
+        // V2 ∪ Solidly-stable with ≥1 Solidly hop — the two-stage Möbius
+        // precheck + golden-section solve.
+        FamilyArm::Solidly => (
             solve_solidly_path_int(resolved),
             crate::cl::WalkStats::default(),
-        )
-    } else if has_solidly {
-        // A Solidly hop alongside a CL hop — out of scope (p). The
-        // Solidly solve is a per-hop `swap_fn` walk incompatible with
-        // CL tick-range enumeration; Python rejects these too.
-        (None, crate::cl::WalkStats::default())
-    } else if all_v2_or_weighted && has_balancer_weighted {
-        // All-V2-or-Balancer-weighted with ≥1 weighted hop — the
-        // Möbius precheck + golden-section solve over the Balancer
-        // weighted math leaf. Scope: weighted mixed with CL is
-        // rejected below (same scope rule as Solidly+CL).
-        (
+        ),
+        // V2 ∪ Balancer-weighted with ≥1 weighted hop — the Möbius
+        // precheck + golden-section solve over the Balancer weighted math leaf.
+        FamilyArm::Weighted => (
             solve_balancer_weighted_path_int(resolved),
             crate::cl::WalkStats::default(),
-        )
-    } else if has_balancer_weighted {
-        // A weighted hop alongside a CL hop — out of scope (same
-        // rationale as Solidly+CL).
-        (None, crate::cl::WalkStats::default())
-    } else if all_v2_or_stable && has_balancer_stable {
-        // All-V2-or-Balancer-stable with ≥1 stable hop — the
-        // Möbius precheck + golden-section solve over the Balancer
-        // stable math leaf. Scope: stable mixed with CL or weighted is
-        // rejected below.
-        (
+        ),
+        // V2 ∪ Balancer-stable with ≥1 stable hop — the Möbius precheck +
+        // golden-section solve over the Balancer stable math leaf.
+        FamilyArm::Stable => (
             solve_balancer_stable_path_int(resolved),
             crate::cl::WalkStats::default(),
-        )
-    } else if has_balancer_stable {
-        // A stable hop alongside a CL or weighted hop — out of scope.
-        (None, crate::cl::WalkStats::default())
-    } else if all_v2_or_curve && has_curve {
-        // All-V2-or-Curve with ≥1 Curve hop — the Möbius precheck +
+        ),
+        // V2 ∪ Curve with ≥1 Curve hop — the Möbius precheck +
         // golden-section solve over the Curve stableswap math leaf.
-        (
+        FamilyArm::Curve => (
             solve_curve_path_int(resolved),
             crate::cl::WalkStats::default(),
-        )
-    } else if has_curve {
-        // A Curve hop alongside a CL or Balancer hop — out of scope.
-        (None, crate::cl::WalkStats::default())
-    } else {
-        // Mixed V2 + CL (V3 or V4)
-        solve_walkable_path_int(resolved, gate, walk_env)
+        ),
+        // A Solidly/weighted/stable/Curve hop beside a CL hop, or beside a
+        // second such family — out of scope. The per-hop `swap_fn` solves are
+        // incompatible with CL tick-range enumeration; Python rejects these
+        // too. Refuse rather than walk a partial composition.
+        FamilyArm::Unsupported => (None, crate::cl::WalkStats::default()),
     };
 
     // V4 int128 guard: reject paths where any V4 hop's consumed input or
@@ -1617,5 +1671,101 @@ mod gate_tests {
         let stats = r.gate_stats;
         assert_eq!(stats.unsupported, 0);
         assert_eq!(stats.evaluated, 1);
+    }
+
+    /// Pin [`family_arm`]'s row selection directly — every row of the accepted
+    /// [`FAMILY_DISPATCH`] table plus the `Walkable` default — so a future row
+    /// reorder or predicate edit cannot silently change an arm.
+    ///
+    /// WHY the FOUR reject rows (`FamilyArm::Unsupported`) and the default
+    /// exist: a path that pairs a Solidly, Balancer, or Curve hop with a CL
+    /// hop — or with a second such family — has no single engine. The per-hop
+    /// `swap_fn` solves are incompatible with CL tick-range enumeration (Python
+    /// rejects these too), so such a path MUST be refused, not silently
+    /// composed. The rows above each reject row are the narrower accept rows;
+    /// the reject rows are the `allowed: None` catch-alls that fire only once
+    /// those fail. `Walkable` is the fallback — the mixed V2+CL case, the ONLY
+    /// cross-family composition the walk supports — and a reject that fell
+    /// through to it would walk an unsupported path. The empty-set case is
+    /// defensive: an empty family set is vacuously `⊆ {V2}`, so it selects
+    /// `ExactV2` exactly as the old vacuous `all_v2` did.
+    #[test]
+    fn family_dispatch_table_selects_the_row_the_old_ladder_selected() {
+        let set =
+            |families: &[HopType]| -> BTreeSet<HopType> { families.iter().copied().collect() };
+
+        let cases: &[(&[HopType], FamilyArm)] = &[
+            // ExactV2 row: every hop V2 (a SET, so a duplicate V2 collapses).
+            (&[HopType::V2], FamilyArm::ExactV2),
+            (&[HopType::V2, HopType::V2], FamilyArm::ExactV2),
+            // ConcentratedLiquidity row: every hop CL (V3/V4).
+            (&[HopType::V3], FamilyArm::ConcentratedLiquidity),
+            (&[HopType::V4], FamilyArm::ConcentratedLiquidity),
+            (
+                &[HopType::V3, HopType::V4],
+                FamilyArm::ConcentratedLiquidity,
+            ),
+            // Solidly accept row: V2 ∪ Solidly with ≥1 Solidly hop. A lone
+            // Solidly path is the arm's own len<2 concern, not the dispatch's.
+            (&[HopType::V2, HopType::SolidlyStable], FamilyArm::Solidly),
+            (&[HopType::SolidlyStable], FamilyArm::Solidly),
+            // Solidly reject row: Solidly beside a CL hop (or both CLs).
+            (
+                &[HopType::SolidlyStable, HopType::V3],
+                FamilyArm::Unsupported,
+            ),
+            (
+                &[HopType::SolidlyStable, HopType::V3, HopType::V4],
+                FamilyArm::Unsupported,
+            ),
+            // Weighted accept row, then its reject row beside a CL hop.
+            (
+                &[HopType::V2, HopType::BalancerWeighted],
+                FamilyArm::Weighted,
+            ),
+            (
+                &[HopType::BalancerWeighted, HopType::V3],
+                FamilyArm::Unsupported,
+            ),
+            // Stable accept row, then its reject row beside a CL hop and
+            // beside a second non-V2 family.
+            (&[HopType::V2, HopType::BalancerStable], FamilyArm::Stable),
+            (
+                &[HopType::BalancerStable, HopType::BalancerWeighted],
+                FamilyArm::Unsupported,
+            ),
+            (
+                &[
+                    HopType::V2,
+                    HopType::BalancerStable,
+                    HopType::BalancerWeighted,
+                ],
+                FamilyArm::Unsupported,
+            ),
+            // Curve accept row, then its reject row beside a CL hop.
+            (&[HopType::V2, HopType::CurveStableswap], FamilyArm::Curve),
+            (
+                &[HopType::CurveStableswap, HopType::V3],
+                FamilyArm::Unsupported,
+            ),
+            // Walkable default: mixed V2+CL is the only cross-family walk; the
+            // set is unordered, so the hop order must not matter.
+            (&[HopType::V2, HopType::V3], FamilyArm::Walkable),
+            (
+                &[HopType::V2, HopType::V3, HopType::V4],
+                FamilyArm::Walkable,
+            ),
+            (&[HopType::V3, HopType::V2], FamilyArm::Walkable),
+            // Defensive empty set: vacuously ⊆ {V2} → ExactV2.
+            (&[], FamilyArm::ExactV2),
+        ];
+
+        for (families, expected) in cases {
+            assert_eq!(
+                family_arm(&set(families)),
+                *expected,
+                "family_arm({families:?}) selected the wrong arm"
+            );
+        }
     }
 }
