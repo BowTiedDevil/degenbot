@@ -162,6 +162,20 @@ class NoPoolStateAvailable(LiquidityPoolError):
         super().__init__(message=f"No pool state known prior to block {block}")
 
 
+class MissingLiquidityData(LiquidityPoolError):
+    """Raised when a swap needs tick data the pool's map does not carry and
+    the on-demand fetch could not provide it (e.g. a rate-limited fork
+    source). Distinct from IncompleteSwap: the swap's impossibility was not
+    established - the map is merely incomplete."""
+
+    def __init__(self, word: int) -> None:
+        """Initialize the instance."""
+        self.word = word
+        super().__init__(
+            message=f"Liquidity map is missing tick-bitmap word {word}; the on-demand fetch failed.",
+        )
+
+
 class InvalidSwapInputAmount(LiquidityPoolError):
     """InvalidSwapInputAmount class."""
 
