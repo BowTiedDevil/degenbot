@@ -412,6 +412,15 @@ crate::config_schema! {
             doc = "Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too).";
     }
 
+    // The Python companion's pool-construction builders. The on-chain tick
+    // fetches those builders issue run through the companion, so the rate
+    // clamp for constrained fork/archive sources is a builder knob, not a
+    // core one; 0 is the declared off posture.
+    builders BuildersConfig {
+        tick_fetch_min_interval_ms [ms] = 0, env = "DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS", def = "0",
+            doc = "Minimum interval (ms) between the on-chain tick RPCs the Python companion's tick fetcher issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). 0 (or unset) disables the clamp entirely.";
+    }
+
     solve SolveConfig {
         solve_cpus [opt usize] = None, env = "DEGENBOT_SOLVE_CPUS", def = "(unset)",
             doc = "Override the detected solve CPU budget (worker bin count).";

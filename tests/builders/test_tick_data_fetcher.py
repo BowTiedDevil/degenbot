@@ -17,11 +17,14 @@ fallback is retired), so ``FakePoolIO`` exposes those methods with canned
 return values — no ABI encoding needed.
 """
 
+from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from degenbot.builders import tick_data_fetcher
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -182,3 +185,48 @@ class TestBitmapFetchRaises:
         )
 
         assert fetcher(word_position=3, block_number=200) is None
+
+
+class TestRateClampReadsTheTypedConfig:
+    """The tick-fetch rate clamp comes from the installed verdict, not os.environ.
+
+    The knob is declared as ``builders.tick_fetch_min_interval_ms`` (env
+    ``DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS``), so the builder reads the typed
+    value at use time. ``governed_holder`` re-governs the process config
+    holder, which is how a per-test override reaches a later resolution.
+    """
+
+    def test_min_interval_seconds_comes_from_the_verdict(
+        self, governed_holder: Callable[[dict[str, str]], None]
+    ) -> None:
+        governed_holder({"DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS": "20"})
+        assert tick_data_fetcher._min_interval_seconds() == pytest.approx(0.02)
+
+    def test_pace_spaces_calls_by_the_configured_interval(
+        self,
+        governed_holder: Callable[[dict[str, str]], None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        governed_holder({"DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS": "20"})
+        monkeypatch.setattr(tick_data_fetcher._governor, "_next_free", 0.0)
+
+        clock = [1000.0]
+        sleeps: list[float] = []
+
+        def _monotonic() -> float:
+            return clock[0]
+
+        def _sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock[0] += seconds
+
+        monkeypatch.setattr(
+            tick_data_fetcher,
+            "time",
+            SimpleNamespace(monotonic=_monotonic, sleep=_sleep),
+        )
+
+        tick_data_fetcher._pace()  # first call only schedules the next free slot
+        assert sleeps == []
+        tick_data_fetcher._pace()  # second call waits out the interval
+        assert sleeps == pytest.approx([0.02])

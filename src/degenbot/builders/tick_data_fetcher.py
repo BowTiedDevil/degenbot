@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
-import os
 import threading
 import time
 from typing import TYPE_CHECKING, Any, cast
 
+from degenbot.config import resolved_config
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
@@ -21,28 +21,53 @@ if TYPE_CHECKING:
 
 # Operational rate clamp for constrained fork sources: dRPC's free plan
 # advertises 100 req/s — the governor clamps the tick RPC calls to at most
-# one per DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS (e.g. 20 => 50 req/s), leaving
-# headroom for the anvil fork's own background fetching. Read once at
-# import; 0 (default) disables the clamp entirely.
-_MIN_INTERVAL_SECONDS = (
-    float(os.environ.get("DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS", "0") or 0) / 1000
-)
-_pace_lock = threading.Lock()
-_pace_next_free = 0.0
+# one per the declared ``builders.tick_fetch_min_interval_ms`` (env
+# ``DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS``; e.g. 20 => 50 req/s), leaving
+# headroom for the anvil fork's own background fetching. The value comes
+# from the installed verdict at use time; 0 (default) disables the clamp.
+def _min_interval_seconds() -> float:
+    """Return the configured tick-fetch rate clamp in seconds.
+
+    Returns:
+        The minimum interval between tick RPCs, in seconds; ``0`` disables it.
+
+    """
+    return resolved_config().values.builders.tick_fetch_min_interval_ms / 1000
+
+
+class _TickFetchGovernor:
+    """Space outgoing tick RPCs by a monotonic minimum interval.
+
+    A no-op when the interval is ``0`` (the declared default). The next-free
+    instant lives on the instance rather than a module global, and the lock
+    serialises concurrent fetchers so the schedule is one timeline, not one
+    per thread.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._next_free = 0.0
+
+    def pace(self) -> None:
+        """Block until the configured interval has elapsed since the last call."""
+        min_interval_seconds = _min_interval_seconds()
+        if min_interval_seconds <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            scheduled = max(now, self._next_free)
+            self._next_free = scheduled + min_interval_seconds
+        wait = scheduled - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+
+
+_governor = _TickFetchGovernor()
 
 
 def _pace() -> None:
     """Clamp outgoing tick RPCs to at most one call per the configured interval."""
-    global _pace_next_free
-    if _MIN_INTERVAL_SECONDS <= 0:
-        return
-    with _pace_lock:
-        now = time.monotonic()
-        scheduled = max(now, _pace_next_free)
-        _pace_next_free = scheduled + _MIN_INTERVAL_SECONDS
-    wait = scheduled - time.monotonic()
-    if wait > 0:
-        time.sleep(wait)
+    _governor.pace()
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
