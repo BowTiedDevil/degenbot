@@ -1,3 +1,5 @@
+from collections.abc import Generator
+
 import pydantic_core
 import pytest
 
@@ -8,8 +10,9 @@ from degenbot.aerodrome.types import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import ExternalUpdateError
-from degenbot.fork import AnvilFork
+from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.uniswap.math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from tests.conftest import TEST_BASE_FULL_NODE_HTTP_URI, _require_live_node
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import make_contract
 
@@ -48,6 +51,28 @@ AERODROME_V3_QUOTER_ABI = pydantic_core.from_json(
 
 # This mark will be applied to ALL tests in this file.
 pytestmark = pytest.mark.base
+
+
+@pytest.fixture(scope="module")
+def fork_base_full() -> Generator[AnvilFork, None, None]:
+    """Module-scoped base fork (overriding the conftest per-test default).
+
+    Every test in this module is chain-read-only — construction, quoter
+    calls, and simulated swaps touch no chain state — and all run at the
+    same tip block, so one fork serves the file. Each test still builds
+    its own ``Bot``, so in-memory pool state cannot leak between them.
+
+    """
+    _require_live_node()
+    fork = AnvilFork(
+        fork_url=TEST_BASE_FULL_NODE_HTTP_URI,
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            anvil_opts=["--accounts=0", "--optimism"],
+        ),
+    )
+    yield fork
+    fork.close()
 
 
 def test_aerodrome_v2_address_generator():
