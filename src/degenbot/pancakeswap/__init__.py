@@ -7,9 +7,5 @@ shipped ``deployments.json`` by the top-level ``degenbot`` package init via
 """
 
 from .pools import PancakeswapV3Pool
-from .trackers import PancakeswapV3PoolTracker
 
-__all__ = (
-    "PancakeswapV3Pool",
-    "PancakeswapV3PoolTracker",
-)
+__all__ = ("PancakeswapV3Pool",)

@@ -369,7 +369,7 @@ def __getattr__(name: str) -> _DeploymentConstant:
 
     This breaks a circular import: the constants call ``_record()`` →
     ``load_deployments()`` → ``deployment_loader`` → pool classes →
-    ``uniswap.__init__`` → ``trackers`` → this module. The Rust resolver
+    ``uniswap.__init__`` → this module. The Rust resolver
     fns (``resolve_deployer``, ``resolve_v2_init_hash``, ``resolve_v3_init_hash``)
     are available immediately as module-level imports; only the typed
     constants need the heavy chain, so they build on first access.

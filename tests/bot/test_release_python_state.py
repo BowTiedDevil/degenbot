@@ -1,11 +1,10 @@
 """Tests for Bot.release_python_state() — the Python-state teardown handshake.
 
 After the Rust engine takes ownership of canonical pool/token state, the Bot's
-Python-side caches (tracker `_tracked_pools`/`_untracked_pools` + snapshots,
-the pool + token registries) are scaffolding that should be dropped so the hot
-loop only holds the engine + the async Alloy provider handle. This encodes the 15-line
-hand-rolled trim block from `main()` behind a single Bot method, so the example
-stops reverse-engineering Bot internals.
+Python-side caches (the pool + token registries) are scaffolding that should be
+dropped so the hot loop only holds the engine + the async Alloy provider handle.
+This encodes the 15-line hand-rolled trim block from `main()` behind a single
+Bot method, so the example stops reverse-engineering Bot internals.
 
 The mid-lifecycle release is *not* end-of-life: the live pump keeps writing V3
 Mint/Burn/Swap through the shared Rust ``BotState``. So the release must NOT
@@ -16,14 +15,12 @@ storage is dropped; Rust stays canonical.
 """
 
 import pathlib
-from threading import Lock
 from unittest.mock import MagicMock
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import AlloyProvider
-from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.fakes.pools import FakeSessionPool
 
 # V3 Mint topic — keccak256("Mint(address,address,int24,int24,uint128,uint256,uint256)").
@@ -62,55 +59,8 @@ def _fake_provider(chain_id: int = 1) -> AlloyProvider:
     return provider
 
 
-class _FakeTrackerWithSnapshot:
-    """Minimal tracker exercising the unload_snapshot() conditional.
-
-    Mirrors the shape AbstractPoolTracker concrete subclasses present:
-    `_tracked_pools`, `_untracked_pools`, and an optional `unload_snapshot`.
-    """
-
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self._tracked_pools: dict[str, object] = {"0xpool": object()}
-        self._untracked_pools: set[str] = {"0xother"}
-        self.snapshot_unloaded = False
-
-    def unload_snapshot(self) -> None:
-        self.snapshot_unloaded = True
-
-
 class TestReleasePythonState:
     """Bot.release_python_state() — drop Python caches after Rust owns state."""
-
-    def test_release_clears_tracker_caches(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
-
-        factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
-        tracker = bot.add_tracker(UniswapV2PoolTracker, factory_address=factory)
-        # seed non-empty caches
-        assert tracker._tracked_pools == {}
-        tracker._tracked_pools["0xdead"] = object()
-        tracker._untracked_pools.add("0xbeef")
-
-        bot.release_python_state()
-
-        assert tracker._tracked_pools == {}
-        assert tracker._untracked_pools == set()
-
-    def test_release_calls_unload_snapshot_where_present(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
-
-        fake_key = get_checksum_address("0x0000000000000000000000000000000000000001")
-        fake = _FakeTrackerWithSnapshot()
-        bot._trackers[fake_key] = fake
-
-        bot.release_python_state()
-
-        assert fake.snapshot_unloaded is True
-        assert fake._tracked_pools == {}
-        assert fake._untracked_pools == set()
 
     def test_release_resets_pool_and_token_registries(self, tmp_path: pathlib.Path) -> None:
         session = _test_session(tmp_path)
@@ -133,10 +83,6 @@ class TestReleasePythonState:
     def test_release_is_idempotent(self, tmp_path: pathlib.Path) -> None:
         session = _test_session(tmp_path)
         bot = Bot(**session, provider=_fake_provider(1))
-        bot.add_tracker(
-            UniswapV2PoolTracker,
-            factory_address="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
-        )
 
         bot.release_python_state()
         # second call must not raise

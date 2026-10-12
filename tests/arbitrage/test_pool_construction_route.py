@@ -95,17 +95,11 @@ def _v4_step() -> Any:
 
 
 class TestConstructionContext:
-    def test_for_bot_resolves_policy_values_without_trackers(self, tmp_path: Path) -> None:
-        """The context shrinks to resolved policy values: the three V3
-        trackers leave it (the core route owns the construction order), and
-        the resolved route policy enters."""
+    def test_for_bot_resolves_policy_values(self, tmp_path: Path) -> None:
+        """The context shrinks to resolved policy values: the core route owns
+        the construction order, and the resolved route policy enters."""
 
-        class _NoTrackerBot(_RouteRecordingBot):
-            def add_tracker(self, *_a: Any, **_k: Any) -> Any:  # pragma: no cover
-                msg = "the construction route is core policy — the driver must not build trackers"
-                raise AssertionError(msg)
-
-        ctx = ConstructionContext.for_bot(_NoTrackerBot(database_path=tmp_path / "unused.db"))
+        ctx = ConstructionContext.for_bot(_RouteRecordingBot(database_path=tmp_path / "unused.db"))
         assert ctx.bot.chain_id == 1
         assert ctx.weth == f"weth:{WETH_ADDRESS}"
         route = ctx.construction_route
@@ -168,9 +162,7 @@ class TestRouteFailureClassification:
         assert outcome.tag == "v4-hook-rejected"
         assert outcome.counts_as_skip is False
         assert (
-            pipeline._ledger.unregistrable_record(
-                pipeline._ledger.pool_memo_key(step, PoolKind.V4)
-            )
+            pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(step, PoolKind.V4))
             is not None
         ), "a stable admission fact memoizes"
 

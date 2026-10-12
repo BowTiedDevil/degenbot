@@ -1,4 +1,4 @@
-"""Camelot V2 liquidity pools and trackers.
+"""Camelot V2 liquidity pools.
 
 ADR-005 slice 7 step 4b: the hollow ``CamelotLiquidityPool`` subclass is
 deleted — the canonical ``UniswapV2Pool`` is registered for the Camelot

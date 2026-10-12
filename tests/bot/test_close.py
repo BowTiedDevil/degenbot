@@ -3,42 +3,32 @@
 ``with Bot(...) as bot:`` exit (and an explicit ``close()``) must:
 
 (a) close the provider connection,
-(b) release the tracker/registry caches,
+(b) release the pool/token registry caches,
 (c) be idempotent, and
 (d) never suppress an exception raised by the ``with`` body.
 
-These are behavioural postcondition tests against the *real* objects Bot
-owns — a real ``UniswapV2PoolTracker`` populated through its own
-``get_pool()`` path, and real Rust-registered pools. The only stand-in is
-the injected provider (the external RPC boundary, whose real ``AlloyProvider.close()`` is an
-unobservable no-op). No call-count assertions on doubles.
+These are behavioural postcondition tests against the *real* objects Bot owns
+— a real Python pool registry populated through its own ``add()`` path. The
+only stand-in is the injected provider (the external RPC boundary, whose real
+``AlloyProvider.close()`` is an unobservable no-op). No call-count assertions on
+doubles.
 """
 
 from __future__ import annotations
 
-from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
 
 from degenbot.bot import Bot
-from degenbot.exceptions.pool import PoolNotAssociated
-from degenbot.uniswap.trackers import UniswapV2PoolTracker
-from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.fakes.pools import FakeSessionPool
 
 if TYPE_CHECKING:
     import pathlib
 
-# Canonical Uniswap V2 factory (the tracker resolves its deployment from it).
-_V2_FACTORY = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
-# A distinct, unrelated factory so a registry pool can be driven into the
-# tracker's *untracked* cache through the real get_pool() path.
-_OTHER_FACTORY = "0x1111111111111111111111111111111111111111"
-_TOKEN0 = "0x0000000000000000000000000000000000000011"
-_TOKEN1 = "0x0000000000000000000000000000000000000012"
-_TRACKED_POOL = "0x0000000000000000000000000000000000000021"
-_UNTRACKED_POOL = "0x0000000000000000000000000000000000000022"
+
+# A sentinel pool address seeded into the Python pool registry.
+_SEEDED_POOL = "0x0000000000000000000000000000000000000021"
 
 
 class _BoundaryProvider:
@@ -73,44 +63,13 @@ def _make_bot(tmp_path: pathlib.Path) -> tuple[Bot, _BoundaryProvider]:
     return Bot(**_test_session(tmp_path), provider=provider), provider
 
 
-def _seed_tracker_caches(bot: Bot, tracker: UniswapV2PoolTracker) -> None:
-    """Populate both tracker caches via the tracker's own ``get_pool()`` path.
-
-    Builds two real, Rust-registered V2 pools and adds them to the Bot's
-    Python pool registry: one with the tracker's own factory (driven into
-    ``_tracked_pools``) and one with an unrelated factory (driven into
-    ``_untracked_pools``). No private-cache mutation and no mocks.
-    """
-    token0 = make_erc20(bot._py_bot, _TOKEN0, name="Token0", symbol="TK0", decimals=18)
-    token1 = make_erc20(bot._py_bot, _TOKEN1, name="Token1", symbol="TK1", decimals=18)
-    fees = {"fee_token0": Fraction(3, 1000), "fee_token1": Fraction(3, 1000)}
-
-    tracked = make_v2_pool(
-        _TRACKED_POOL,
-        token0=token0,
-        token1=token1,
-        factory=_V2_FACTORY,
-        reserves_token0=1,
-        reserves_token1=1,
-        py_bot=bot._py_bot,
-        **fees,
+def _seed_pool_registry(bot: Bot) -> None:
+    """Populate the Python pool registry through its own ``add()`` path."""
+    bot.pools.add(
+        pool_address=_SEEDED_POOL,
+        pool=FakeSessionPool(_SEEDED_POOL),  # type: ignore[arg-type]
+        chain_id=1,
     )
-    bot.pools.add(pool=tracked, chain_id=1, pool_address=tracked.address)
-    assert tracker.get_pool(tracked.address) is tracked
-
-    untracked = make_v2_pool(
-        _UNTRACKED_POOL,
-        token0=token0,
-        token1=token1,
-        factory=_OTHER_FACTORY,
-        reserves_token0=1,
-        reserves_token1=1,
-        py_bot=bot._py_bot,
-        **fees,
-    )
-    bot.pools.add(pool=untracked, chain_id=1, pool_address=untracked.address)
-    with pytest.raises(PoolNotAssociated):
-        tracker.get_pool(untracked.address)
 
 
 class TestBotContextManager:
@@ -120,20 +79,15 @@ class TestBotContextManager:
         provider = _BoundaryProvider(1)
 
         with Bot(**session, provider=provider) as bot:
-            # Observable pre-state: both tracker caches + the pool registry populated.
-            tracker = bot.add_tracker(UniswapV2PoolTracker, factory_address=_V2_FACTORY)
-            _seed_tracker_caches(bot, tracker)
-            assert tracker.tracked_pool_count() == 1
-            assert tracker.untracked_pool_count() == 1
-            assert len(bot.pools) == 2
+            # Observable pre-state: the pool registry is populated.
+            _seed_pool_registry(bot)
+            assert len(bot.pools) == 1
             assert provider.closed is False
 
         # (a) provider connection closed and the Bot's handle released
         assert provider.closed is True
         assert bot._provider is None
-        # (b) tracker caches and pool registry released
-        assert tracker.tracked_pool_count() == 0
-        assert tracker.untracked_pool_count() == 0
+        # (b) pool registry released
         assert bot.pools is None
         assert bot._closed is True
 
@@ -171,14 +125,12 @@ class TestBotContextManager:
     def test_close_composes_release_python_state(self, tmp_path: pathlib.Path) -> None:
         """Contract (b): release_python_state mid-lifecycle, then close stays safe."""
         bot, provider = _make_bot(tmp_path)
-        tracker = bot.add_tracker(UniswapV2PoolTracker, factory_address=_V2_FACTORY)
-        _seed_tracker_caches(bot, tracker)
+        _seed_pool_registry(bot)
+        assert len(bot.pools) == 1
 
         # Mid-lifecycle release drops Python caches but keeps the live
         # connections (the Bot is still running).
         bot.release_python_state()
-        assert tracker.tracked_pool_count() == 0
-        assert tracker.untracked_pool_count() == 0
         assert len(bot.pools) == 0
         assert provider.closed is False
 

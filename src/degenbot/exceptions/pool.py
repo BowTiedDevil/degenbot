@@ -4,7 +4,6 @@ Includes exceptions for:
 - Generic pool operations (LiquidityPoolError, BrokenPool, ...)
 - EVM execution (EVMRevertError, InvalidUint256)
 - Curve StableSwap (CurveError, MissingCurveData)
-- Pool trackers (TrackerError, PoolNotAssociated, ...)
 """
 
 from __future__ import annotations
@@ -62,32 +61,6 @@ class MissingCurveData(CurveError):
         self.pool_address = pool_address
         self.data_type = data_type
         super().__init__(message=message)
-
-
-# --- Pool Trackers ---
-
-
-class TrackerError(DegenbotError):
-    """Exception raised inside pool tracker helpers."""
-
-
-class PoolNotAssociated(TrackerError):
-    """Raised by a pool tracker if a requested pool address is not associated with the DEX."""
-
-    def __init__(self, pool_address: str) -> None:
-        """Initialize the instance."""
-        super().__init__(message=f"Pool {pool_address} is not associated with this DEX")
-
-
-class PoolCreationFailed(TrackerError):
-    """PoolCreationFailed class."""
-
-
-"""PoolCreationFailed class."""
-
-
-class TrackerAlreadyInitialized(TrackerError):
-    """Raised by a pool tracker if a caller attempts to create from a known factory address."""
 
 
 # --- Liquidity Pools ---
@@ -163,16 +136,20 @@ class NoPoolStateAvailable(LiquidityPoolError):
 
 
 class MissingLiquidityData(LiquidityPoolError):
-    """Raised when a swap needs tick data the pool's map does not carry and
-    the on-demand fetch could not provide it (e.g. a rate-limited fork
+    """Raised when a swap needs tick data the pool's map does not carry.
+
+    The on-demand fetch could not provide it (e.g. a rate-limited fork
     source). Distinct from IncompleteSwap: the swap's impossibility was not
-    established - the map is merely incomplete."""
+    established - the map is merely incomplete.
+    """
 
     def __init__(self, word: int) -> None:
         """Initialize the instance."""
         self.word = word
         super().__init__(
-            message=f"Liquidity map is missing tick-bitmap word {word}; the on-demand fetch failed.",
+            message=(
+                f"Liquidity map is missing tick-bitmap word {word}; the on-demand fetch failed."
+            ),
         )
 
 

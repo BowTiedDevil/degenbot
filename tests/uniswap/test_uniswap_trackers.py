@@ -1,346 +1,158 @@
-import pytest
+"""Derive -> build -> register: the by-tokens construction path (offline).
 
+The pool-tracker family was removed (P1 tracker-family removal). The surviving
+contract is the end-to-end flow the trackers wrapped: derive the CREATE2 pool
+address from the token pair (``generate_v2_pool_address`` /
+``generate_v3_pool_address``), build through the one supported door
+(``Bot.build_pool``), and observe the registration in ``Bot.pools``.
+
+The derivation math itself is pinned by
+``tests/ffi/test_ffi_create2_exposure.py`` and the aerodrome clone-parity tests;
+this module pins the composition. Fully offline: the V2/V3 build choreography is
+served from recorded ``OfflineProvider`` cassettes (see
+``tests/pool_companion/_helpers``), so the module runs in the default (no fork)
+selection.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.pool import PoolNotAssociated, TrackerAlreadyInitialized, TrackerError
-from degenbot.fork import AnvilFork
-from degenbot.pancakeswap.trackers import PancakeswapV3PoolTracker
-from degenbot.sushiswap.trackers import SushiswapV3PoolTracker
-from degenbot.types.chain import ChainId
-from degenbot.uniswap.deployments import (
-    UniswapFactoryDeployment,
-    UniswapV3ExchangeDeployment,
-)
-from degenbot.uniswap.trackers import (
-    DeploymentOverrides,
-    UniswapV2PoolTracker,
-    UniswapV3PoolTracker,
-)
-from tests.helpers.bot_factory import make_bot_with_provider
-
-pytestmark = pytest.mark.online_rpc
-
-
-MAINNET_UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address(
-    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-)
-MAINNET_UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address(
-    "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-)
-MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS = get_checksum_address(
-    "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac",
-)
-MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS = get_checksum_address(
-    "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F",
+from degenbot.uniswap import resolve_deployer, resolve_v2_init_hash, resolve_v3_init_hash
+from degenbot.uniswap.v2_functions import generate_v2_pool_address
+from degenbot.uniswap.v3_functions import generate_v3_pool_address
+from tests.helpers.erc20_factory import make_erc20
+from tests.pool_companion._helpers import (
+    make_test_database,
+    v2_offline_provider,
+    v3_offline_provider,
 )
 
-MAINNET_WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-MAINNET_WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
-MAINNET_SUSHISWAPV2_WETH_WBTC_ADDRESS = get_checksum_address(
-    "0xceff51756c56ceffca006cd410b03ffc46dd3a58",
-)
-MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS = get_checksum_address(
-    "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940",
-)
-MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS = get_checksum_address(
-    "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
-)
-
-BASE_UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
-BASE_UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address("0x33128a8fC17869897dcE68Ed026d694621f6FDfD")
-BASE_WETH_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
-BASE_DEGEN_ADDRESS = get_checksum_address("0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed")
-BASE_UNISWAP_V2_WETH_DEGEN_ADDRESS = get_checksum_address(
-    "0x7C327d692B72f60b28AecEDbcC1BA784712fE7b2",
-)
-BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS = get_checksum_address(
-    "0xc9034c3E7F58003E6ae0C8438e7c8f4598d5ACAA",
-)
-BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = get_checksum_address(
-    "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
-)
-BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = get_checksum_address(
-    "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
-)
-BASE_CBETH_WETH_V3_POOL_ADDRESS = get_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
-BASE_CBETH_ADDRESS = get_checksum_address("0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22")
-
-BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
-    name="PancakeSwap V3",
-    chain_id=ChainId.BASE,
-    factory=UniswapFactoryDeployment(
-        address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
-        deployer=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
-        pool_init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
-    ),
-)
+if TYPE_CHECKING:
+    import pathlib
 
 
-@pytest.mark.base
-def test_create_base_chain_trackers(fork_base_full: AnvilFork):
+MAINNET_UNISWAP_V2_FACTORY = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+MAINNET_UNISWAP_V3_FACTORY = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
 
-    bot = make_bot_with_provider(fork_base_full.provider)
-    uniswap_v2_pool_tracker = UniswapV2PoolTracker(
-        factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS,
-        bot=bot,
-    )
-    assert uniswap_v2_pool_tracker._factory_address == BASE_UNISWAP_V2_FACTORY_ADDRESS
+MAINNET_WETH = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+MAINNET_USDC = get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 
-    uniswap_v3_pool_tracker = UniswapV3PoolTracker(
-        factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS,
-        bot=bot,
-    )
-    assert uniswap_v3_pool_tracker._factory_address == BASE_UNISWAP_V3_FACTORY_ADDRESS
+MAINNET_UNISWAPV2_WETH_USDC = get_checksum_address("0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc")
+MAINNET_UNISWAPV3_WETH_USDC = get_checksum_address("0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8")
 
-    # Get known pairs
-    uniswap_v2_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(
-        token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS),
-    )
-    uniswap_v3_lp = uniswap_v3_pool_tracker.get_pool_from_tokens_and_fee(
-        token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS),
-        pool_fee=3000,
-    )
-
-    assert uniswap_v2_lp.address == BASE_UNISWAP_V2_WETH_DEGEN_ADDRESS
-    assert uniswap_v3_lp.address == BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS
-
-    with pytest.raises(TrackerAlreadyInitialized):
-        UniswapV2PoolTracker(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS, bot=bot)
-    with pytest.raises(TrackerAlreadyInitialized):
-        UniswapV3PoolTracker(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS, bot=bot)
+V3_FEE = 3000
+_SQRT_PRICE_X96 = 2_198_666_895_605_149_686_863
+_TICK = -76_020
+_LIQUIDITY = 1_234_567_890
 
 
-@pytest.mark.base
-def test_base_pancake_v3_pool_tracker(fork_base_full: AnvilFork):
-    pancakev3_lp_manager = PancakeswapV3PoolTracker(
-        factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
-        overrides=DeploymentOverrides(deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS),
-    )
-
-    v3_pool = pancakev3_lp_manager.get_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)
-
-    assert (
-        pancakev3_lp_manager.get_pool_from_tokens_and_fee(
-            token_addresses=(BASE_WETH_ADDRESS, BASE_CBETH_ADDRESS),
-            pool_fee=100,
-        )
-        is v3_pool
-    )
-
-
-@pytest.mark.base
-def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
-
-    bot = make_bot_with_provider(fork_mainnet_full.provider)
-    uniswap_v2_pool_tracker = UniswapV2PoolTracker(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
-        bot=bot,
-    )
-    sushiswap_v2_pool_tracker = UniswapV2PoolTracker(
-        factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS,
-        bot=bot,
-    )
-
-    assert uniswap_v2_pool_tracker._factory_address == MAINNET_UNISWAP_V2_FACTORY_ADDRESS
-    assert sushiswap_v2_pool_tracker._factory_address == MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS
-
-    # Ensure each pool manager has a unique state
-    assert uniswap_v2_pool_tracker.__dict__ is not sushiswap_v2_pool_tracker.__dict__
-
-    assert (
-        uniswap_v2_pool_tracker._untracked_pools is not sushiswap_v2_pool_tracker._untracked_pools
-    )
-
-    uniswap_v3_pool_tracker = UniswapV3PoolTracker(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
-        bot=bot,
-    )
-
-    # Get known pairs
-    uniswap_v2_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(
-        token_addresses=(
-            MAINNET_WETH_ADDRESS,
-            MAINNET_WBTC_ADDRESS,
-        ),
-    )
-    sushiswap_v2_lp = sushiswap_v2_pool_tracker.get_pool_from_tokens(
-        token_addresses=(
-            MAINNET_WETH_ADDRESS,
-            MAINNET_WBTC_ADDRESS,
-        ),
-    )
-    uniswap_v3_lp = uniswap_v3_pool_tracker.get_pool_from_tokens_and_fee(
-        token_addresses=(
-            MAINNET_WETH_ADDRESS,
-            MAINNET_WBTC_ADDRESS,
-        ),
-        pool_fee=3000,
-    )
-
-    assert uniswap_v2_lp.address == MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS
-    assert sushiswap_v2_lp.address == MAINNET_SUSHISWAPV2_WETH_WBTC_ADDRESS
-    assert uniswap_v3_lp.address == MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS
-
-    # Calling get_pool at the wrong pool manager should raise an exception
-    with pytest.raises(
-        TrackerError,
-        match=f"Pool {uniswap_v2_lp.address} is not associated with this DEX",
+def _seed_tokens(bot: Bot) -> None:
+    """Register the WETH/USDC token companions so the offline build skips metadata RPC."""
+    for address, name, symbol, decimals in (
+        (MAINNET_WETH, "Wrapped Ether", "WETH", 18),
+        (MAINNET_USDC, "USD Coin", "USDC", 6),
     ):
-        sushiswap_v2_pool_tracker.get_pool(pool_address=uniswap_v2_lp.address)
-
-    assert uniswap_v2_lp.address in sushiswap_v2_pool_tracker._untracked_pools
-    assert sushiswap_v2_lp.address not in sushiswap_v2_pool_tracker._untracked_pools
-    with pytest.raises(PoolNotAssociated):
-        sushiswap_v2_pool_tracker.get_pool(pool_address=uniswap_v2_lp.address)
-
-    with pytest.raises(
-        TrackerError,
-        match=f"Pool {sushiswap_v2_lp.address} is not associated with this DEX",
-    ):
-        uniswap_v2_pool_tracker.get_pool(pool_address=sushiswap_v2_lp.address)
-    with pytest.raises(PoolNotAssociated):
-        uniswap_v2_pool_tracker.get_pool(pool_address=sushiswap_v2_lp.address)
-    assert sushiswap_v2_lp.address in uniswap_v2_pool_tracker._untracked_pools
-    assert uniswap_v2_lp.address not in uniswap_v2_pool_tracker._untracked_pools
-
-
-def test_tracker_behavior_for_unassociated_pools(fork_mainnet_full: AnvilFork):
-
-    bot = make_bot_with_provider(fork_mainnet_full.provider)
-    uniswap_v3_pool_tracker = UniswapV3PoolTracker(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
-        bot=bot,
-    )
-    sushiswap_v3_pool_tracker = SushiswapV3PoolTracker(
-        factory_address=MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS,
-        bot=bot,
-    )
-
-    uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
-
-    assert MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS not in sushiswap_v3_pool_tracker._untracked_pools
-    # The manager will find the registered pool first, compare the factory address, and then reject
-    # it as unassociated
-    with pytest.raises(PoolNotAssociated):
-        sushiswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
-
-    # The manager will now have this pool in its untracked set, and repeated calls can be rejected
-    # faster with the short-circuit check
-    assert MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS in sushiswap_v3_pool_tracker._untracked_pools
-    with pytest.raises(PoolNotAssociated):
-        sushiswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
-
-
-def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
-
-    bot = make_bot_with_provider(fork_mainnet_full.provider)
-    uniswap_v2_pool_tracker = UniswapV2PoolTracker(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
-        bot=bot,
-    )
-
-    v2_weth_wbtc_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(
-        token_addresses=(
-            MAINNET_WETH_ADDRESS,
-            MAINNET_WBTC_ADDRESS,
-        ),
-    )
-
-    new_v2_weth_wbtc_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(
-        token_addresses=(
-            MAINNET_WETH_ADDRESS,
-            MAINNET_WBTC_ADDRESS,
-        ),
-    )
-
-    # The pool manager should have found the original pool in AllPools and re-used it
-    assert v2_weth_wbtc_lp is new_v2_weth_wbtc_lp
-
-    # Remove from the pool manager and the bot's registry
-    uniswap_v2_pool_tracker.remove(pool_address=new_v2_weth_wbtc_lp.address)
-    bot.pools.remove(
-        pool_address=new_v2_weth_wbtc_lp.address,
-        chain_id=1,
-    )
-
-    # This should be a completely new pool object
-    super_new_v2_weth_wbtc_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(
-        token_addresses=(
-            MAINNET_WETH_ADDRESS,
-            MAINNET_WBTC_ADDRESS,
-        ),
-    )
-    assert super_new_v2_weth_wbtc_lp is not new_v2_weth_wbtc_lp
-    assert super_new_v2_weth_wbtc_lp is not v2_weth_wbtc_lp
-
-    assert (
-        bot.pools.get(
-            pool_address=v2_weth_wbtc_lp.address,
+        bot.tokens.add(
+            token_address=address,
             chain_id=1,
+            token=make_erc20(
+                bot._py_bot, address, chain_id=1, name=name, symbol=symbol, decimals=decimals
+            ),
         )
-        is super_new_v2_weth_wbtc_lp
-    )
 
-    bot.pools.remove(
-        pool_address=v2_weth_wbtc_lp.address,
+
+def _v2_bot(tmp_path: pathlib.Path) -> Bot:
+    bot = Bot(
+        database=make_test_database(tmp_path),
         chain_id=1,
+        provider=v2_offline_provider(
+            weth_addr=MAINNET_WETH,
+            usdc_addr=MAINNET_USDC,
+            factory_addr=MAINNET_UNISWAP_V2_FACTORY,
+            pool_addr=MAINNET_UNISWAPV2_WETH_USDC,
+        ),
+    )
+    _seed_tokens(bot)
+    return bot
+
+
+def _derive_v2_pool_address() -> str:
+    deployer = resolve_deployer(1, MAINNET_UNISWAP_V2_FACTORY)
+    init_hash = resolve_v2_init_hash(1, MAINNET_UNISWAP_V2_FACTORY)
+    return generate_v2_pool_address(
+        deployer_address=deployer,
+        token_addresses=(MAINNET_WETH, MAINNET_USDC),
+        init_hash=init_hash,
     )
 
-    assert (
-        bot.pools.get(
-            pool_address=v2_weth_wbtc_lp.address,
-            chain_id=1,
-        )
-        is not super_new_v2_weth_wbtc_lp
+
+def test_derive_and_build_v2_pool(tmp_path: pathlib.Path) -> None:
+    """The V2 pair address derives from the token set, builds, and registers."""
+    pool_address = _derive_v2_pool_address()
+    assert pool_address == MAINNET_UNISWAPV2_WETH_USDC
+
+    bot = _v2_bot(tmp_path)
+    pool = bot.build_pool(pool_address)
+
+    assert pool.address == MAINNET_UNISWAPV2_WETH_USDC
+    assert pool.token0.address == MAINNET_WETH
+    assert pool.token1.address == MAINNET_USDC
+    assert bot.pools.get(pool_address=pool.address, chain_id=1) is pool
+    # Idempotent: a second build returns the registered instance.
+    assert bot.build_pool(pool_address) is pool
+
+
+def test_derive_and_build_v3_pool(tmp_path: pathlib.Path) -> None:
+    """The V3 pool address derives from the token set + fee, builds, and registers."""
+    deployer = resolve_deployer(1, MAINNET_UNISWAP_V3_FACTORY)
+    init_hash = resolve_v3_init_hash(1, MAINNET_UNISWAP_V3_FACTORY)
+    pool_address = generate_v3_pool_address(
+        deployer_address=deployer,
+        token_addresses=sorted((MAINNET_WETH, MAINNET_USDC)),
+        fee=V3_FEE,
+        init_hash=init_hash,
     )
+    assert pool_address == MAINNET_UNISWAPV3_WETH_USDC
 
-    uniswap_v3_pool_tracker = UniswapV3PoolTracker(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
-        bot=bot,
+    bot = Bot(
+        database=make_test_database(tmp_path),
+        chain_id=1,
+        provider=v3_offline_provider(
+            weth_addr=MAINNET_WETH,
+            usdc_addr=MAINNET_USDC,
+            factory_addr=MAINNET_UNISWAP_V3_FACTORY,
+            pool_addr=MAINNET_UNISWAPV3_WETH_USDC,
+            sqrt_price=_SQRT_PRICE_X96,
+            tick=_TICK,
+            liquidity=_LIQUIDITY,
+        ),
     )
-    v3_pool = uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
-    assert uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is v3_pool
+    _seed_tokens(bot)
+    pool = bot.build_pool(pool_address)
 
-    bot.pools.remove(pool_address=v3_pool.address, chain_id=uniswap_v3_pool_tracker.chain_id)
-    uniswap_v3_pool_tracker.remove(v3_pool.address)
-
-    assert uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is not v3_pool
-
-
-def test_get_already_registered_pool(fork_mainnet_full: AnvilFork):
-
-    bot = make_bot_with_provider(fork_mainnet_full.provider)
-    uniswap_v2_pool_tracker = UniswapV2PoolTracker(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
-        bot=bot,
-    )
-    v2_pool = uniswap_v2_pool_tracker.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
-    # Remove from the pool manager, but not the registry
-    uniswap_v2_pool_tracker.remove(pool_address=MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
-    new_v2_pool = uniswap_v2_pool_tracker.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
-    assert v2_pool is new_v2_pool
-
-    uniswap_v3_pool_tracker = UniswapV3PoolTracker(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
-        bot=bot,
-    )
-    v3_pool = uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
-    # Remove from the pool manager, but not the registry
-    uniswap_v3_pool_tracker.remove(v3_pool.address)
-    new_v3_pool = uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
-    assert v3_pool is new_v3_pool
+    assert pool.address == MAINNET_UNISWAPV3_WETH_USDC
+    assert pool.token0.address == MAINNET_WETH
+    assert pool.token1.address == MAINNET_USDC
+    assert bot.pools.get(pool_address=pool.address, chain_id=1) is pool
 
 
-def test_get_pool_with_kwargs(fork_mainnet_full: AnvilFork):
+def test_pool_remove_and_recreate(tmp_path: pathlib.Path) -> None:
+    """A removed pool re-derives and re-builds to a fresh object (ADR-007).
 
-    bot = make_bot_with_provider(fork_mainnet_full.provider)
-    uniswap_v2_pool_tracker = UniswapV2PoolTracker(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
-        bot=bot,
-    )
-    uniswap_v2_pool_tracker.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
+    The unregister half of the pool seam: after ``bot.pools.remove`` drops the
+    Python wrapper (and unregisters the core pool), the same derived address
+    builds a brand-new instance and re-registers it.
+    """
+    pool_address = _derive_v2_pool_address()
 
-    uniswap_v3_pool_tracker = UniswapV3PoolTracker(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
-        bot=bot,
-    )
-    uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
+    bot = _v2_bot(tmp_path)
+    first = bot.build_pool(pool_address)
+    bot.pools.remove(pool_address=first.address, chain_id=1)
+    assert bot.pools.get(pool_address=first.address, chain_id=1) is None
+
+    second = bot.build_pool(pool_address)
+    assert second is not first
+    assert bot.pools.get(pool_address=second.address, chain_id=1) is second

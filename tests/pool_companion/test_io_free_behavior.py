@@ -2,7 +2,7 @@
 
 The remaining distinct (non-invariant) coverage from the per-class
 ``*_io_free*.py`` / ``*_construction_guard.py`` files: V2 calc delegation,
-tracker wiring, token cache/RPC paths, Balancer rate-provider storage, and the
+token cache/RPC paths, Balancer rate-provider storage, and the
 Curve single-arg seam details. Bodies are preserved verbatim (class + method
 names unchanged) so failure attribution stays sharp; only the module location
 and shared helpers changed.
@@ -19,7 +19,6 @@ import pytest
 from degenbot._ffi import Bot as _Engine
 from degenbot._ffi.v2_math import calc_exact_in_v2, calc_exact_out_v2
 from degenbot.abi import encode as abi_encode
-from degenbot.aerodrome.trackers import AerodromeV2PoolTracker
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
@@ -28,40 +27,27 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
-    PoolCreationFailed,
 )
 from degenbot.provider import OfflineProvider
-from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
-from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
-from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.pool_companion._helpers import (
     PY_BOT,
     UNISWAP_V2_FACTORY,
-    UNISWAP_V3_FACTORY,
-    USDC_WETH_V3_POOL,
-    V3_FEE,
-    V3_TICK_SPACING,
     WETH_USDC_V2_POOL,
     make_test_database,
     make_usdc,
     make_weth,
-    v2_offline_provider,
 )
-
-# Base Aerodrome V2 volatile factory + the tBTC/WETH cassette pool.
-AERODROME_V2_FACTORY = get_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
-AERODROME_V2_POOL = get_checksum_address("0x2722C8f9B5E2aC72D1f225f8e8c990E449ba0078")
 
 if TYPE_CHECKING:
     import pathlib
 
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
 def _make_weth() -> Erc20Token:
@@ -278,239 +264,6 @@ class TestV2CalcDelegation:
             pool.calculate_tokens_out_from_tokens_in(token_in=bogus, token_in_quantity=10**18)
 
         assert spy.calc_out_calls == []
-
-
-class TestV2PoolTrackerWithBot:
-    """UniswapV2PoolTracker delegates to Bot when available."""
-
-    def test_tracker_uses_bot_build_pool(self, tmp_path: pathlib.Path) -> None:
-        """When a manager has a bot, get_pool delegates to bot.build_pool."""
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.chain_id = 1
-        provider.is_connected.return_value = True
-        provider.get_block_number.return_value = 18_000_000
-        bot = Bot(database=database, chain_id=1, provider=provider)
-
-        factory = UNISWAP_V2_FACTORY
-        manager = bot.add_tracker(UniswapV2PoolTracker, factory_address=factory)
-
-        assert manager._bot is bot
-
-        weth = make_weth()
-        usdc = make_usdc()
-        mock_pool = make_v2_pool(
-            address=WETH_USDC_V2_POOL,
-            chain_id=1,
-            token0=weth,
-            token1=usdc,
-            factory=factory,
-            fee_token0=Fraction(3, 1000),
-            fee_token1=Fraction(3, 1000),
-            reserves_token0=1000 * 10**18,
-            reserves_token1=2_000_000 * 10**6,
-            state_block=18_000_000,
-        )
-
-        bot.pools.add(pool_address=mock_pool.address, chain_id=1, pool=mock_pool)
-
-        pool = manager.get_pool(WETH_USDC_V2_POOL)
-        assert pool is mock_pool
-        assert pool.address == get_checksum_address(WETH_USDC_V2_POOL)
-
-    def test_manager_builds_pool_via_bot(self, tmp_path: pathlib.Path) -> None:
-        """Manager builds a new pool via bot.build_pool when not in registry."""
-        weth_addr = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-        usdc_addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-        factory_addr = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-
-        database = make_test_database(tmp_path)
-        bot = Bot(
-            database=database,
-            chain_id=1,
-            provider=v2_offline_provider(
-                weth_addr=weth_addr,
-                usdc_addr=usdc_addr,
-                factory_addr=factory_addr,
-                pool_addr=WETH_USDC_V2_POOL,
-            ),
-        )
-
-        weth = make_erc20(
-            bot._py_bot, weth_addr, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
-        )
-        usdc = make_erc20(
-            bot._py_bot, usdc_addr, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
-        )
-        bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)
-        bot.tokens.add(token_address=usdc_addr, chain_id=1, token=usdc)
-
-        manager = bot.add_tracker(UniswapV2PoolTracker, factory_address=factory_addr)
-
-        pool = manager.get_pool(WETH_USDC_V2_POOL)
-        assert isinstance(pool, UniswapV2Pool)
-        assert pool.address == get_checksum_address(WETH_USDC_V2_POOL)
-        assert pool.token0.address == get_checksum_address(weth_addr)
-        assert pool.token1.address == get_checksum_address(usdc_addr)
-
-        assert pool.address in manager._tracked_pools
-        assert bot.pools.get(pool_address=pool.address, chain_id=1) is pool
-
-        pool2 = manager.get_pool(WETH_USDC_V2_POOL)
-        assert pool2 is pool
-
-
-class TestV3PoolTrackerWithBot:
-    """UniswapV3PoolTracker delegates to Bot when available."""
-
-    def test_tracker_uses_bot_pools_registry(self, tmp_path: pathlib.Path) -> None:
-        """When a manager has a bot, get_pool checks bot.pools first."""
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.chain_id = 1
-        provider.is_connected.return_value = True
-        provider.get_block_number.return_value = 18_000_000
-        bot = Bot(database=database, chain_id=1, provider=provider)
-
-        factory = UNISWAP_V3_FACTORY
-        manager = bot.add_tracker(UniswapV3PoolTracker, factory_address=factory)
-
-        assert manager._bot is bot
-
-        weth = make_weth()
-        usdc = make_usdc()
-        mock_pool = make_v3_pool(
-            address=USDC_WETH_V3_POOL,
-            token0=weth,
-            token1=usdc,
-            factory=factory,
-            fee=V3_FEE,
-            tick_spacing=V3_TICK_SPACING,
-            sqrt_price_x96=2198666895605149686863,
-            tick=-76020,
-            liquidity=1234567890,
-            state_block=18_000_000,
-        )
-        bot.pools.add(pool_address=mock_pool.address, chain_id=1, pool=mock_pool)
-
-        pool = manager.get_pool(USDC_WETH_V3_POOL)
-        assert pool is mock_pool
-
-
-class TestAerodromeV2PoolTrackerWithBot:
-    """AerodromeV2PoolTracker delegates construction to the Bot (ADR-005).
-
-    The tracker's un-built-pool path routes through ``Bot.build_pool`` —
-    the same shape as the Uniswap siblings — rather than constructing the
-    pool class directly (which refuses post-ADR-005).
-    """
-
-    def test_tracker_returns_registered_pool(self, tmp_path: pathlib.Path) -> None:
-        """A pool present in the bot's registry is returned and tracked."""
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.chain_id = 8453
-        provider.is_connected.return_value = True
-        provider.get_block_number.return_value = 18_000_000
-        bot = Bot(database=database, chain_id=8453, provider=provider)
-
-        manager = bot.add_tracker(AerodromeV2PoolTracker, factory_address=AERODROME_V2_FACTORY)
-
-        mock_pool = make_aerodrome_v2_pool(
-            AERODROME_V2_POOL,
-            token0=make_weth(),
-            token1=make_usdc(),
-            factory=AERODROME_V2_FACTORY,
-            fee=Fraction(3, 1000),
-            stable=False,
-            reserves_token0=1000 * 10**18,
-            reserves_token1=2_000_000 * 10**6,
-        )
-        bot.pools.add(
-            pool_address=mock_pool.address,
-            chain_id=8453,
-            pool=mock_pool,
-        )
-
-        pool = manager.get_pool(AERODROME_V2_POOL)
-        assert pool is mock_pool
-        assert pool.address in manager._tracked_pools
-
-    def test_tracker_builds_via_bot(self, tmp_path: pathlib.Path) -> None:
-        """An un-registered pool is built through bot.build_pool."""
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.chain_id = 8453
-        provider.is_connected.return_value = True
-        provider.get_block_number.return_value = 18_000_000
-        bot = Bot(database=database, chain_id=8453, provider=provider)
-
-        manager = bot.add_tracker(AerodromeV2PoolTracker, factory_address=AERODROME_V2_FACTORY)
-
-        # Built in a separate (default) bot, so it is absent from this
-        # bot's registry and the fallback must fire.
-        built = make_aerodrome_v2_pool(
-            AERODROME_V2_POOL,
-            token0=make_weth(),
-            token1=make_usdc(),
-            factory=AERODROME_V2_FACTORY,
-            fee=Fraction(3, 1000),
-            stable=False,
-            reserves_token0=1000 * 10**18,
-            reserves_token1=2_000_000 * 10**6,
-        )
-        bot.build_pool = MagicMock(return_value=built)  # type: ignore[method-assign]
-
-        pool = manager.get_pool(AERODROME_V2_POOL)
-        bot.build_pool.assert_called_once_with(AERODROME_V2_POOL, silent=False)
-        assert pool is built
-        assert pool.address in manager._tracked_pools
-
-    def test_tracker_rejects_foreign_family(self, tmp_path: pathlib.Path) -> None:
-        """A build_pool result of the wrong family raises PoolCreationFailed."""
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.chain_id = 8453
-        provider.is_connected.return_value = True
-        provider.get_block_number.return_value = 18_000_000
-        bot = Bot(database=database, chain_id=8453, provider=provider)
-
-        manager = bot.add_tracker(AerodromeV2PoolTracker, factory_address=AERODROME_V2_FACTORY)
-
-        wrong_family = make_v2_pool(
-            address=WETH_USDC_V2_POOL,
-            chain_id=1,
-            token0=make_weth(),
-            token1=make_usdc(),
-            factory=UNISWAP_V2_FACTORY,
-            fee_token0=Fraction(3, 1000),
-            fee_token1=Fraction(3, 1000),
-            reserves_token0=1000 * 10**18,
-            reserves_token1=2_000_000 * 10**6,
-            state_block=18_000_000,
-        )
-        bot.build_pool = MagicMock(return_value=wrong_family)  # type: ignore[method-assign]
-
-        with pytest.raises(PoolCreationFailed, match="is not a AerodromeV2Pool"):
-            manager.get_pool(AERODROME_V2_POOL)
-
-    def test_tracker_wraps_build_failure(self, tmp_path: pathlib.Path) -> None:
-        """A build_pool failure is surfaced as PoolCreationFailed."""
-        database = make_test_database(tmp_path)
-        provider = MagicMock()
-        provider.chain_id = 8453
-        provider.is_connected.return_value = True
-        provider.get_block_number.return_value = 18_000_000
-        bot = Bot(database=database, chain_id=8453, provider=provider)
-
-        manager = bot.add_tracker(AerodromeV2PoolTracker, factory_address=AERODROME_V2_FACTORY)
-
-        bot.build_pool = MagicMock(  # type: ignore[method-assign]
-            side_effect=LiquidityPoolError(message="no liquidity data"),
-        )
-
-        with pytest.raises(PoolCreationFailed, match="Could not build V2 pool"):
-            manager.get_pool(AERODROME_V2_POOL)
 
 
 class TestBotTokenIOMethods:

@@ -25,7 +25,6 @@ from degenbot._ffi.deployments import (
 # `degenbot` package init via `register_from_deployments(load_deployments())`.
 from degenbot.registry.pool_type import pool_type_registry
 
-from .trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 from .v2_liquidity_pool import UniswapV2Pool
 from .v2_types import (
     UniswapV2PoolExternalUpdate,
@@ -53,13 +52,11 @@ __all__ = (
     "UniswapV2PoolExternalUpdate",
     "UniswapV2PoolSimulationResult",
     "UniswapV2PoolState",
-    "UniswapV2PoolTracker",
     "UniswapV3LiquiditySnapshot",
     "UniswapV3Pool",
     "UniswapV3PoolExternalUpdate",
     "UniswapV3PoolSimulationResult",
     "UniswapV3PoolState",
-    "UniswapV3PoolTracker",
     "UniswapV4LiquiditySnapshot",
     "UniswapV4Pool",
     "UniswapV4PoolExternalUpdate",

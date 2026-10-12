@@ -9,9 +9,8 @@ from degenbot._ffi import Bot as _Engine
 from degenbot._ffi import BotIo
 
 # Import-order anchor: the aerodrome package must initialize before the
-# builders below pull in `degenbot.uniswap`, or the latent
-# `degenbot.uniswap.trackers` <-> `degenbot.aerodrome.trackers` import
-# cycle trips. The facade no longer names the class directly.
+# builders below pull in `degenbot.uniswap`; the facade does not name the
+# class directly.
 from degenbot.aerodrome.pools import AerodromeV2Pool  # ruff:ignore[unused-import]
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALANCER_V2_POOLS
 from degenbot.balancer.pools import BalancerV2Pool
@@ -47,7 +46,7 @@ from degenbot.config import resolve_chain_id, resolve_database_path
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.pool import BrokenPool, TrackerAlreadyInitialized
+from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
 from degenbot.provider import (
     AlloyProvider,  # ruff:ignore[typing-only-first-party-import]
@@ -71,7 +70,6 @@ if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import Pool
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
-    from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.rpc_types import BlockIdentifier
 
@@ -249,7 +247,6 @@ class Bot(AccountQueryMixin):
         self.managed_pools = ManagedPoolRegistry(py_bot=self._py_bot)
         self.pools = PoolRegistry(py_bot=self._py_bot, managed_pool_registry=self.managed_pools)
         self.tokens = TokenRegistry(py_bot=self._py_bot)
-        self._trackers: dict[str, AbstractPoolTracker[Any]] = {}
         # Idempotency flag for close(); mirrored by bot_lifecycle.close.
         self._closed: bool = False
 
@@ -355,40 +352,6 @@ class Bot(AccountQueryMixin):
         """The single RPC provider for this Bot's chain."""
         return self._provider
 
-    def add_tracker[M: AbstractPoolTracker[Any]](
-        self,
-        manager_cls: type[M],
-        *,
-        factory_address: str,
-        **kwargs: Any,
-    ) -> M:
-        """Create a pool manager within this bot's session.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            TrackerAlreadyInitialized: See function documentation.
-
-        """
-        factory_address = get_checksum_address(factory_address)
-
-        key = factory_address
-        if key in self._trackers:
-            raise TrackerAlreadyInitialized(
-                message="A manager has already been initialized for this address. "
-                "Access it using the bot's manager registry.",
-            )
-
-        manager = manager_cls(
-            factory_address=factory_address,
-            chain_id=self.chain_id,
-            bot=self,
-            **kwargs,
-        )
-        self._trackers[key] = manager
-        return manager
-
     def block_stream(self) -> BlockStream:
         """Fresh async iterator over ``newHeads`` block notifications.
 
@@ -411,18 +374,16 @@ class Bot(AccountQueryMixin):
         return self._py_bot.block_stream()
 
     def release_python_state(self) -> None:
-        """Drop Python-side pool/token/tracker caches once Rust owns canonical state.
+        """Drop Python-side pool/token caches once Rust owns canonical state.
 
         After the Rust engine has taken ownership of all pool state (snapshots
         streamed, pools registered, backfill complete), the Python-side
-        tracker caches, snapshots, and pool/token registries are redundant —
-        the hot loop only needs the engine and the async Alloy provider
-        handle. This drops them so they stop pinning pool objects in memory.
+        pool/token registries are redundant — the hot loop only needs the
+        engine and the async Alloy provider handle. This drops them so they
+        stop pinning pool objects in memory.
 
         Idempotent; safe to call once, at the end of the startup handshake
-        (after ``build_paths`` completes). Concrete trackers that carry a
-        snapshot (e.g. ``UniswapV3StateTB``) have ``unload_snapshot()``
-        called to release the snapshot reference.
+        (after ``build_paths`` completes).
         """
         _release_python_state(self)
 

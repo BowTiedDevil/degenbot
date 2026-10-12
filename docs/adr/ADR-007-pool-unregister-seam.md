@@ -25,17 +25,22 @@ topology** — and its Slice 4 implemented what the IESD3L task body called "Opt
 
 So the construction shape — the thing IESD3L was framed as needing to decide — is already the
 B2 pattern the task body recommended. B1 (return the raw `PyPool` handle) would break every
-library caller of `AbstractLiquidityPool` (`uniswap/trackers.py`, `curve/trackers.py`,
-`examples/eth_backrun_*.py`); B3 (delete the `PoolRegistry`, make `BotState` the registry) is a
-larger-blast-radius cleanup that is not needed for correctness. The only actually-open gap is the
-**missing unregister half** of the seam, which surfaced concretely as a failing test:
+library caller of `AbstractLiquidityPool` (`examples/eth_backrun_*.py`); B3 (delete the
+`PoolRegistry`, make `BotState` the registry) is a larger-blast-radius cleanup that is not needed
+for correctness. The only actually-open gap is the **missing unregister half** of the seam, which
+surfaced concretely as a failing test. The by-tokens construction path derives the CREATE2 address
+from the token pair, removes the pool, and rebuilds it through `Bot.build_pool`:
 
 `tests/uniswap/test_uniswap_trackers.py::test_pool_remove_and_recreate` does:
 
 ```python
-uniswap_v2_pool_tracker.remove(pool_address=new_v2_weth_wbtc_lp.address)
-bot.pools.remove(pool_address=new_v2_weth_wbtc_lp.address, chain_id=1)   # Python-only removal
-super_new_v2_weth_wbtc_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(...)  # re-build
+pool_address = generate_v2_pool_address(
+    deployer_address=deployer_address,
+    token_addresses=(weth_address, wbtc_address),
+    init_hash=pool_init_hash,
+)
+bot.pools.remove(pool_address=pool_address, chain_id=1)   # Python-only removal
+super_new_v2_weth_wbtc_lp = bot.build_pool(pool_address)  # re-build
 ```
 
 `PoolRegistry.remove` (`src/degenbot/registry/pool.py:156`) deletes only the Python wrapper.

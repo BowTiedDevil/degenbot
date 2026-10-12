@@ -6,7 +6,6 @@ from .deployment import AbstractExchangeDeployment
 from .erc20_token import AbstractErc20Token
 from .liquidity_pool import AbstractLiquidityPool
 from .pool_state import AbstractPoolState
-from .pool_tracker import AbstractPoolTracker
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -28,7 +27,6 @@ __all__ = (
     "AbstractExchangeDeployment",
     "AbstractLiquidityPool",
     "AbstractPoolState",
-    "AbstractPoolTracker",
     "AbstractRegistry",
     "AbstractSimulationResult",
 )

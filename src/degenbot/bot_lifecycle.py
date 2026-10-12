@@ -1,16 +1,15 @@
 """Shared Python-handle teardown for ``Bot``.
 
 ``Bot`` is the single-chain facade (ADR-006 D5) with attribute shape
-(``_trackers``, ``pools``, ``tokens``, ``managed_pools``, ``_py_bot``,
-``_provider``, ``_io``). This module holds the teardown body in one place so
-the facade delegates to it rather than inlining ~15 lines.
+(``pools``, ``tokens``, ``managed_pools``, ``_py_bot``, ``_provider``,
+``_io``). This module holds the teardown body in one place so the facade
+delegates to it rather than inlining ~15 lines.
 
 Two entry points:
 
-- :func:`release_python_state` — the *mid-lifecycle* handshake: drop
-  tracker caches/snapshots + pool/token registries once the Rust engine has
-  taken ownership of canonical pool state. The Bot keeps running; only the
-  redundant Python caches go.
+- :func:`release_python_state` — the *mid-lifecycle* handshake: drop the
+  pool/token registries once the Rust engine has taken ownership of canonical
+  pool state. The Bot keeps running; only the redundant Python caches go.
 - :func:`close` — the *end-of-life* teardown: composes
   :func:`release_python_state`, closes the provider, and drops references. Idempotent
   via a per-instance ``_closed`` flag.
@@ -35,7 +34,6 @@ class _BotLike(Protocol):
     cycles for a structural protocol that only needs call-site shape.
     """
 
-    _trackers: Any
     pools: Any
     tokens: Any
     managed_pools: Any
@@ -51,23 +49,12 @@ class _BotLike(Protocol):
 
 
 def release_python_state(bot: _BotLike) -> None:
-    """Drop Python-side pool/token/tracker caches once Rust owns canonical state.
+    """Drop Python-side pool/token caches once Rust owns canonical state.
 
-    Clears every tracker's ``_tracked_pools``/``_untracked_pools``, calls
-    ``unload_snapshot()`` where present, then resets the pool and token
-    registries. Idempotent and safe to call before :func:`close`.
+    Resets the pool and token registries. Idempotent and safe to call before
+    :func:`close`.
     """
-    # 1. Drop tracker caches and snapshots (prevent them pinning pool objects)
-    for tracker in bot._trackers.values():  # ruff:ignore[private-member-access]
-        if hasattr(tracker, "_tracked_pools"):
-            tracker._tracked_pools.clear()  # ruff:ignore[private-member-access]
-        if hasattr(tracker, "_untracked_pools"):
-            tracker._untracked_pools.clear()  # ruff:ignore[private-member-access]
-        unload_snapshot = getattr(tracker, "unload_snapshot", None)
-        if callable(unload_snapshot):
-            unload_snapshot()
-
-    # 2. Drop the pool and token registries (Rust owns canonical state). The
+    # Drop the pool and token registries (Rust owns canonical state). The
     # mid-lifecycle handoff keeps the Rust ``BotState`` pools — the live pump
     # keeps writing V3 Mint/Burn/Swap through the shared core, so we must NOT
     # unregister (propagate_to_rust=False). Unregistering is end-of-life only
@@ -87,7 +74,7 @@ def close(bot: _BotLike) -> None:
         return
     bot._closed = True  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
 
-    # 1. Drop tracker caches/snapshots + pool/token registries (idempotent)
+    # 1. Drop the pool/token registries (idempotent)
     release_python_state(bot)
 
     # 2. Close the provider connection if it exposes close()
@@ -110,7 +97,7 @@ def close(bot: _BotLike) -> None:
     bot._async_adapter = None  # ruff:ignore[private-member-access]
 
     # 5. Drop the registries + builders + ctx that each hold a strong ref to
-    #    `_py_bot` (PoolRegistry → Bot, Tokens/Trackers, BuilderContext →
+    #    `_py_bot` (PoolRegistry → Bot, TokenRegistry, BuilderContext →
     #    Bot). Rust `Bot` is refcounted; until EVERY Python holder is
     #    dropped the rust core stays alive and keeps its `ConstructionIo`'s
     #    `Arc<dyn Provider>` — the same reconnect-into-a-dead-socket hazard as
@@ -119,7 +106,6 @@ def close(bot: _BotLike) -> None:
     bot.pools = None
     bot.tokens = None
     bot.managed_pools = None
-    bot._trackers = None  # ruff:ignore[private-member-access]
     bot._erc20_builder = None  # ruff:ignore[private-member-access]
     bot._curve_builder = None  # ruff:ignore[private-member-access]
     bot._balancer_builder = None  # ruff:ignore[private-member-access]

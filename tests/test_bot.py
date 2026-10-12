@@ -46,13 +46,10 @@ import pytest
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.provider import OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.pool_type import PoolProbe
-from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.fakes.session import session_registry_methods
 from tests.fakes.tokens import FakeToken
 
@@ -157,11 +154,6 @@ class TestBotInit:
         bot = Bot(**session, provider=_fake_provider(1))
         assert not hasattr(bot, "config")
 
-    def test_bot_trackers_empty_at_start(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
-        assert bot._trackers == {}
-
     def test_bot_exposes_chain_id_and_provider(self, tmp_path: pathlib.Path) -> None:
         session = _test_session(tmp_path, chain_id=1)
         provider = _fake_provider(1)
@@ -203,33 +195,6 @@ class TestBotPyBotHandle:
         assert bot._py_bot.chain_id == 10
 
 
-class TestBotAddTracker:
-    """Bot.add_tracker() tests (single-chain — no chain_id arg)."""
-
-    def test_add_tracker_stores_manager(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
-
-        manager = bot.add_tracker(
-            UniswapV2PoolTracker,
-            factory_address="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
-        )
-        assert isinstance(manager, UniswapV2PoolTracker)
-        key = get_checksum_address("0x5C69bEe701ef814E44274f655e7632cB715C14B6")
-        assert key in bot._trackers
-        assert bot._trackers[key] is manager
-
-    def test_add_tracker_rejects_duplicate(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
-
-        factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
-        bot.add_tracker(UniswapV2PoolTracker, factory_address=factory)
-
-        with pytest.raises(TrackerAlreadyInitialized):
-            bot.add_tracker(UniswapV2PoolTracker, factory_address=factory)
-
-
 class TestMultipleBots:
     """Multiple Bot instances must have independent state."""
 
@@ -242,16 +207,6 @@ class TestMultipleBots:
         assert bot1.managed_pools is not bot2.managed_pools
         assert bot1.provider is not bot2.provider
         assert bot1.database_path != bot2.database_path
-
-    def test_independent_trackers(self, tmp_path: pathlib.Path) -> None:
-        bot1 = Bot(**_test_session(tmp_path / "bot1"), provider=_fake_provider(1))
-        bot2 = Bot(**_test_session(tmp_path / "bot2"), provider=_fake_provider(1))
-
-        factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
-        manager1 = bot1.add_tracker(UniswapV2PoolTracker, factory_address=factory)
-        # Second bot can add a manager for the same factory without error
-        manager2 = bot2.add_tracker(UniswapV2PoolTracker, factory_address=factory)
-        assert manager1 is not manager2
 
 
 class TestBuildDelegatedIdentityReturnSurface:

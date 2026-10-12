@@ -1,10 +1,9 @@
-"""Aerodrome V2/V3 liquidity pools and trackers."""
+"""Aerodrome V2/V3 liquidity pools."""
 
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
 from .pools import AerodromeV2Pool, AerodromeV3Pool
-from .trackers import AerodromeV2PoolTracker, AerodromeV3PoolTracker
 from .types import AerodromeV2PoolState, AerodromeV3PoolState
 
 # Deployment data (chain_id, factory → deployer / init_hash / variant /
@@ -15,8 +14,6 @@ from .types import AerodromeV2PoolState, AerodromeV3PoolState
 __all__ = (
     "AerodromeV2Pool",
     "AerodromeV2PoolState",
-    "AerodromeV2PoolTracker",
     "AerodromeV3Pool",
     "AerodromeV3PoolState",
-    "AerodromeV3PoolTracker",
 )

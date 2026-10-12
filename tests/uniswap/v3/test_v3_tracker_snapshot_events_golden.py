@@ -5,23 +5,22 @@ Golden conversion of the two retired dir-snapshot tests
 `test_pool_manager_applies_snapshot_from_dir`), which pinned the pre-builder-
 retirement behavior of "drained snapshot tick maps seed the built pool." That
 behavior died with the Python V3 builder (the tick maps passed to
-`build_pool` were silently discarded); the tracker contract that survived is
-the one this test pins:
+`build_pool` were silently discarded); the snapshot-apply contract that
+survived is the one this test pins:
 
-    A `UniswapV3PoolTracker` built with `snapshot=` applies the snapshot's
-    pending Mint/Burn events to a freshly-built pool via
-    `_apply_pending_liquidity_updates` → `pool.update_liquidity_map`.
+    A snapshot's pending Mint/Burn events are applied to a freshly-built pool
+    via `snapshot.pending_updates(...)` → `pool.update_liquidity_map`.
 
-Scope note: `tracker.get_pool()` itself delegates to `build_pool`, whose
-delegated core choreography is RPC-shaped end to end — that path is covered by
-the parity suites' build contracts and is out of replay scope here. What this
-test pins is the tracker's apply step (the seam that survived the builder
-retirement): pool + recorded events in, chain-truth state out.
+Scope note: building the pool through `Bot.build_pool` is RPC-shaped end to
+end — that path is covered by the parity suites' build contracts and is out of
+replay scope here. What this test pins is the snapshot-apply step (the seam
+that survived the builder retirement): pool + recorded events in, chain-truth
+state out.
 
 What is golden: the pool's on-chain tick state at two consecutive pinned
 blocks plus the real Mint/Burn events between them. Record mode captures both
 against a live archive fork; replay mode rebuilds the pool I/O-free from the
-recorded cassette, feeds the recorded events through the tracker's apply
+recorded cassette, feeds the recorded events through the snapshot-apply
 step, and asserts the application lands the exact recorded state — with a
 hard dial-block so the replay is offline by contract (the same convention as
 the onchain-parity suites).
@@ -35,7 +34,7 @@ the onchain-parity suites).
 
 Pinned to Ethereum mainnet blocks 24,407,814 (snapshot) and 24,407,815 (the
 event block — three real WBTC/WETH Mint/Burn events, no swaps in the span so
-the tracker-applied state is pure Mint/Burn arithmetic), served by a local
+the snapshot-applied state is pure Mint/Burn arithmetic), served by a local
 archive node (URI configurable via `tests.env`; see
 `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI`).
 """
@@ -52,11 +51,8 @@ import pytest
 
 from degenbot import abi_decode
 from degenbot._ffi import Bot as _Engine
-from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork, ForkLaunchConfig
-from degenbot.provider import OfflineProvider
-from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent
@@ -133,19 +129,6 @@ class _RecordFork(AbstractContextManager):
             self.fork.close()
 
 
-def _offline_provider() -> OfflineProvider:
-    """A real offline provider (recorded JSON, no RPC) bound to mainnet.
-
-    ``Bot.__init__`` reads ``provider.chain_id`` (the recorded chain id) to
-    enforce session/chain alignment; no RPC is issued at construction — the
-    same stand-in ``tests/test_bot.py::_fake_provider`` uses.
-    """
-    return OfflineProvider(
-        chain_id=1,
-        blocks={"1": {"timestamp": 1, "calls": {}, "code": {}}},
-    )
-
-
 def _build_wbtc_weth_v3_io_free(cassette: dict[str, Any]) -> UniswapV3Pool:
     """Build the WBTC/WETH V3 pool I/O-free from a full tick-state cassette."""
     scalars = cassette["scalars"]
@@ -220,7 +203,7 @@ def test_tracker_applies_pending_snapshot_events(golden_factory) -> None:
     blocks, captures the chain's tick state at the event block, and records
     both into a chain_data cassette plus the golden entry. Replay mode
     rebuilds the pool I/O-free, feeds the recorded events through the
-    tracker's apply step, and asserts the exact recorded state.
+    snapshot-apply step, and asserts the exact recorded state.
     """
     golden = golden_factory(chain_id=1, block_number=TRACKER_EVENT_BLOCK)
 
@@ -247,23 +230,15 @@ def test_tracker_applies_pending_snapshot_events(golden_factory) -> None:
 
         pool = _build_wbtc_weth_v3_io_free(snapshot_cassette)
 
-        # The tracker drives the pool's pending-event application: the events
-        # are queued into the snapshot exactly as the facade's event queue
-        # holds them (raw Mint/Burn records, as the runner streams them), then
-        # the apply step consumes them through `update_liquidity_map` — the
-        # surviving tracker contract under test.
-        # The tracker only reads ``bot.chain_id`` on this replay path; bind
-        # the offline provider so the facade construction stays I/O-free.
-        bot = Bot(database=":memory:", provider=_offline_provider())
+        # The events are queued into the snapshot exactly as the facade's
+        # event queue holds them (raw Mint/Burn records, as the runner streams
+        # them), then applied to the freshly-built pool through
+        # `update_liquidity_map` — the surviving snapshot-apply contract.
         snapshot = _snapshot_with_events(events)
-        tracker = UniswapV3PoolTracker(
-            factory_address=UNISWAP_V3_FACTORY_ADDRESS,
-            bot=bot,
-            snapshot=snapshot,
-        )
-        tracker._apply_pending_liquidity_updates(pool)
+        for liquidity_update in snapshot.pending_updates(pool.address):
+            pool.update_liquidity_map(liquidity_update)
 
-        _assert_tick_state(pool, expected_state, label="tracker-applied")
+        _assert_tick_state(pool, expected_state, label="snapshot-applied")
 
 
 def _snapshot_with_events(events: list[dict[str, Any]]) -> UniswapV3LiquiditySnapshot:
