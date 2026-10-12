@@ -22,7 +22,7 @@ pools x 2 directions x 9 multipliers).
   mainnet at the pinned block is shared across the whole loop.
 
 Pinned to Ethereum mainnet block 24,407,242, served by a local archive node
-(URI configurable via ``tests.env``; see ``ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
+(URI configurable via ``tests.env``; see ``TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.utils.bytes import to_bytes
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.golden.oracle import (
     assert_golden_keys_exact,
     replay_makes_no_network_calls,  # ruff: ignore[unused-import]
@@ -151,7 +151,7 @@ class _RecordFork(AbstractContextManager):
     def __enter__(self) -> Self:
         if self._recording:
             self.fork = AnvilFork(
-                fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+                fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 fork_block=BALANCER_PARITY_BLOCK,
                 launch=ForkLaunchConfig(
                     storage_caching=True,

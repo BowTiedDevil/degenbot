@@ -2,7 +2,7 @@
 """Record a TRIPOOL construction cassette for the Curve A-ramp regression.
 
 Forks Ethereum mainnet at ``--block`` via the archive URI (``tests.env`` /
-``ETHEREUM_ARCHIVE_NODE_HTTP_URI``), builds the pool through the production
+``TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI``), builds the pool through the production
 ``Bot.build_pool`` path, and serializes the pool's constructor inputs into the
 cassette schema loaded by ``tests.curve.test_curve_onchain_parity``
 (``_build_curve_io_free``). The recorded cassette lets
@@ -25,7 +25,7 @@ import json
 from pathlib import Path
 
 from degenbot.fork import AnvilFork
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.bot_factory import make_bot_with_provider
 
 TRIPOOL_ADDRESS = "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"
@@ -48,7 +48,7 @@ def main() -> None:
     out = Path(f"tests/fixtures/chain_data/1/curve_tripool_block_{block}.json")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         fork_block=block,
     )
     try:

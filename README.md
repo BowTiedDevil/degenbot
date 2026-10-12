@@ -91,7 +91,7 @@ The `Bot` class is the central session object for all degenbot operations. It ma
 # Executed but never shown: the live-RPC examples read historical state, so
 # they need an archive-capable node, which is what the harness name resolves.
 import degenbot
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
 ```python
@@ -170,7 +170,7 @@ Degenbot pools follow an **I/O-free architecture** where on-chain data is fetche
 <!-- invisible-code-block: python
 # Executed but never shown: the live-RPC examples read historical state, so
 # they need an archive-capable node, which is what the harness name resolves.
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
 ```python
@@ -930,7 +930,7 @@ import asyncio
 import degenbot
 # Executed but never shown: the live-RPC examples read historical state, so
 # they need an archive-capable node, which is what the harness name resolves.
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
@@ -1512,7 +1512,7 @@ from degenbot._ffi.contract import Contract
 from degenbot._ffi.provider import AlloyProvider
 # Executed but never shown: the live-RPC examples read historical state, so
 # they need an archive-capable node, which is what the harness name resolves.
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
 <!-- live-rpc: start "requires live RPC" -->

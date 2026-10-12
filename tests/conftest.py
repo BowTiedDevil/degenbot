@@ -88,7 +88,7 @@ def _rpc(key: str, default: str) -> str:
     ``dotenv.dotenv_values`` reads only the file, so a bare ``env_values.get`` would
     ignore ``os.environ`` entirely — leaving no way for a user to override an RPC
     endpoint without editing the (gitignored) ``tests.env``. Checking ``os.environ``
-    first makes ad-hoc overrides (``ETHEREUM_ARCHIVE_NODE_HTTP_URI='…' pytest …``)
+    first makes ad-hoc overrides (``TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI='…' pytest …``)
     work across machines and CI without touching any file.
 
     The names this resolves are the harness's own vocabulary, deliberately kept
@@ -99,52 +99,52 @@ def _rpc(key: str, default: str) -> str:
     ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>`` names and must not grow a fallback
     onto them — a second namespace that shares a fallback is how the next
     ambiguity starts. ``executor/ape-config.yaml`` reads
-    ``${ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
+    ``${TEST_ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
     ``_FULL_`` names outlive the suite that defines them.
     """
     return os.environ.get(key, env_values.get(key, default))
 
 
-ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc(
-    "ARBITRUM_FULL_NODE_HTTP_URI",
+TEST_ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc(
+    "TEST_ARBITRUM_FULL_NODE_HTTP_URI",
     "https://arbitrum-one-rpc.publicnode.com",
 )
-ARBITRUM_FULL_NODE_WS_URI: str = _rpc(
-    "ARBITRUM_FULL_NODE_WS_URI",
+TEST_ARBITRUM_FULL_NODE_WS_URI: str = _rpc(
+    "TEST_ARBITRUM_FULL_NODE_WS_URI",
     "wss://arbitrum-one-rpc.publicnode.com",
 )
 
-BASE_ARCHIVE_NODE_HTTP_URI: str = _rpc(
-    "BASE_ARCHIVE_NODE_HTTP_URI",
+TEST_BASE_ARCHIVE_NODE_HTTP_URI: str = _rpc(
+    "TEST_BASE_ARCHIVE_NODE_HTTP_URI",
     "https://mainnet.base.org",
 )
-BASE_ARCHIVE_NODE_WS_URI: str = _rpc(
-    "BASE_ARCHIVE_NODE_WS_URI",
+TEST_BASE_ARCHIVE_NODE_WS_URI: str = _rpc(
+    "TEST_BASE_ARCHIVE_NODE_WS_URI",
     "wss://mainnet.base.org",
 )
-BASE_FULL_NODE_HTTP_URI: str = _rpc(
-    "BASE_FULL_NODE_HTTP_URI",
+TEST_BASE_FULL_NODE_HTTP_URI: str = _rpc(
+    "TEST_BASE_FULL_NODE_HTTP_URI",
     "https://mainnet.base.org",
 )
-BASE_FULL_NODE_WS_URI: str = _rpc(
-    "BASE_FULL_NODE_WS_URI",
+TEST_BASE_FULL_NODE_WS_URI: str = _rpc(
+    "TEST_BASE_FULL_NODE_WS_URI",
     "wss://mainnet.base.org",
 )
 
-ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = _rpc(
-    "ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = _rpc(
+    "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
     "https://ethereum-rpc.publicnode.com",
 )
-ETHEREUM_ARCHIVE_NODE_WS_URI: str = _rpc(
-    "ETHEREUM_ARCHIVE_NODE_WS_URI",
+TEST_ETHEREUM_ARCHIVE_NODE_WS_URI: str = _rpc(
+    "TEST_ETHEREUM_ARCHIVE_NODE_WS_URI",
     "wss://ethereum-rpc.publicnode.com",
 )
-ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc(
-    "ETHEREUM_FULL_NODE_HTTP_URI",
+TEST_ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc(
+    "TEST_ETHEREUM_FULL_NODE_HTTP_URI",
     "https://ethereum-rpc.publicnode.com",
 )
-ETHEREUM_FULL_NODE_WS_URI: str = _rpc(
-    "ETHEREUM_FULL_NODE_WS_URI",
+TEST_ETHEREUM_FULL_NODE_WS_URI: str = _rpc(
+    "TEST_ETHEREUM_FULL_NODE_WS_URI",
     "wss://ethereum-rpc.publicnode.com",
 )
 
@@ -372,7 +372,7 @@ def standalone_anvil() -> Generator[AnvilFork, None, None]:
 def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
     _require_live_node()
     fork = AnvilFork(
-        fork_url=ARBITRUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ARBITRUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             storage_caching=False,
             anvil_opts=["--accounts=0"],
@@ -396,7 +396,7 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
     _require_live_node()
 
     fork = AnvilFork(
-        fork_url=BASE_ARCHIVE_NODE_HTTP_URI,
+        fork_url=TEST_BASE_ARCHIVE_NODE_HTTP_URI,
         fork_block=block_number,
         launch=ForkLaunchConfig(
             storage_caching=True,
@@ -411,7 +411,7 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
 def fork_base_full() -> Generator[AnvilFork, None, None]:
     _require_live_node()
     fork = AnvilFork(
-        fork_url=BASE_FULL_NODE_HTTP_URI,
+        fork_url=TEST_BASE_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             storage_caching=False,
             anvil_opts=["--accounts=0", "--optimism"],
@@ -435,7 +435,7 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
     _require_live_node()
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         fork_block=block_number,
         launch=ForkLaunchConfig(
             storage_caching=True,
@@ -450,7 +450,7 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
 def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
     _require_live_node()
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             storage_caching=False,
             anvil_opts=["--accounts=0"],

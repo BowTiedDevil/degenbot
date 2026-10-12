@@ -62,7 +62,7 @@ toolchain:
 node-identity:
     @curl -s -X POST -H 'content-type: application/json' \
         --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' \
-        "${ETHEREUM_FULL_NODE_HTTP_URI:?set ETHEREUM_FULL_NODE_HTTP_URI}"
+        "${TEST_ETHEREUM_FULL_NODE_HTTP_URI:?set TEST_ETHEREUM_FULL_NODE_HTTP_URI}"
 
 # Run the standalone-Rust-consumer smoke (ADR-005 standalone claim). Proves a
 # `cargo add degenbot` consumer reaches BotState/DexIdentity/calc math with no

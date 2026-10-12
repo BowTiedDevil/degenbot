@@ -21,7 +21,7 @@ chain's websocket endpoint and it streams that chain. The example above names
 chain `1` through `DEGENBOT_RPC_WS_CHAINID_1`. The operator `config.toml` is
 the BASE layer of that cascade, so `[nodes] ws = { 1 =
 "ws://127.0.0.1:8546" }` works too; the export above simply outranks the
-file for chain `1`. The `ETHEREUM_ARCHIVE_NODE_WS_URI` name is a
+file for chain `1`. The `TEST_ETHEREUM_ARCHIVE_NODE_WS_URI` name is a
 test-environment variable, not a canonical Rust configuration key.
 
 When launching the packaged AppImage from a desktop session, pass the variable

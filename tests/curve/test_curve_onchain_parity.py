@@ -29,7 +29,7 @@ per pool + 18/18 ``calc_withdraw_one_coin``/``calc_token_amount`` matches for
 
 Pinned to Ethereum mainnet block 24,407,242 (tip minus ~1M), served by a
 local archive node (URI configurable via ``tests.env``; see
-``ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
+``TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ from degenbot.curve.types import (
     YVariant,
 )
 from degenbot.fork import AnvilFork, ForkLaunchConfig
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.golden.oracle import (
     assert_golden_keys_exact,
@@ -241,7 +241,7 @@ class _RecordFork(AbstractContextManager):
     def __enter__(self) -> Self:
         if self._recording:
             self.fork = AnvilFork(
-                fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+                fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 fork_block=self._block,
                 launch=ForkLaunchConfig(
                     storage_caching=True,

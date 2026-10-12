@@ -14,7 +14,7 @@ node:
     mainnet:
       # URI is injected from the environment (devcontainer/CI); replaces the stale
       # compose-era `node:8545` service name. Same var convention as tests/conftest.py.
-      uri: ${ETHEREUM_FULL_NODE_HTTP_URI}
+      uri: ${TEST_ETHEREUM_FULL_NODE_HTTP_URI}
 
 foundry:
   host: auto

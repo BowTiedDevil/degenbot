@@ -37,7 +37,7 @@ reverts.
 
 Pinned to Ethereum mainnet block 24,407,242 (tip minus ~1M), served by a
 local archive node (URI configurable via ``tests.env``; see
-``ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
+``TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
 """
 
 from __future__ import annotations
@@ -57,9 +57,9 @@ from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.uniswap.math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
-# RPC URI is overridable via tests.env (see ETHEREUM_ARCHIVE_NODE_HTTP_URI);
+# RPC URI is overridable via tests.env (see TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI);
 # only contacted in record mode — replay is fully offline.
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.golden.oracle import (
     assert_golden_keys_exact,
     replay_makes_no_network_calls,  # ruff: ignore[unused-import]
@@ -211,7 +211,7 @@ class _RecordFork(AbstractContextManager):
     def __enter__(self) -> Self:
         if self._recording:
             self.fork = AnvilFork(
-                fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+                fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 fork_block=UNISWAP_V3_PARITY_BLOCK,
                 launch=ForkLaunchConfig(
                     storage_caching=True,

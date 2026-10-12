@@ -37,7 +37,7 @@ Pinned to Ethereum mainnet blocks 24,407,814 (snapshot) and 24,407,815 (the
 event block — three real WBTC/WETH Mint/Burn events, no swaps in the span so
 the tracker-applied state is pure Mint/Burn arithmetic), served by a local
 archive node (URI configurable via `tests.env`; see
-`ETHEREUM_ARCHIVE_NODE_HTTP_URI`).
+`TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI`).
 """
 
 from __future__ import annotations
@@ -65,9 +65,9 @@ from degenbot.updater.pool_updater_configs import (
     UNISWAP_V3_MINT_EVENT_HASH,
 )
 
-# RPC URI is overridable via tests.env (see ETHEREUM_ARCHIVE_NODE_HTTP_URI);
+# RPC URI is overridable via tests.env (see TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI);
 # only contacted in record mode — replay is fully offline.
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.golden.oracle import (
     assert_golden_keys_exact,
     replay_makes_no_network_calls,  # ruff: ignore[unused-import]
@@ -116,7 +116,7 @@ class _RecordFork(AbstractContextManager):
     def __enter__(self) -> Self:
         if self._recording:
             self.fork = AnvilFork(
-                fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+                fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 # Pinned AT the event block: anvil serves every block up to
                 # the pin, so both the snapshot block (one before) and the
                 # event block itself are readable.

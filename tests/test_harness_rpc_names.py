@@ -1,7 +1,7 @@
-"""The ``ETHEREUM_*_NODE_*_URI`` names stay inside the test harness.
+"""The ``TEST_*_NODE_*_URI`` names stay inside the test harness.
 
 The suite resolves endpoints through ``tests/conftest.py``'s
-``*_{ARCHIVE,FULL}_NODE_{HTTP,WS}_URI`` names. They are test-scoped on purpose:
+``TEST_*_{ARCHIVE,FULL}_NODE_{HTTP,WS}_URI`` names. They are test-scoped on purpose:
 the suite needs two node tiers per chain, while the operator file's ``[nodes]``
 tables hold one endpoint per transport per chain. Three properties follow, and
 each is guarded here because the failure mode is a silently wrong endpoint

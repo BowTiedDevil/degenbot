@@ -17,7 +17,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.provider import OfflineProvider
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.utils.bytes import to_bytes
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 
 if TYPE_CHECKING:

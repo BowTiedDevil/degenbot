@@ -29,7 +29,7 @@
 //! in one place.
 //!
 //! ## On-chain state at block 25635461 (read via `cast storage` against
-//! `ETHEREUM_ARCHIVE_NODE_HTTP_URI`; slot derivation per
+//! `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI`; slot derivation per
 //! `docs/architecture/v4_poolmanager_storage_layout.md`)
 //!
 //! - slot0.sqrtPriceX96 = 1_809_847_926_502_557_434_949_706_007_283_582

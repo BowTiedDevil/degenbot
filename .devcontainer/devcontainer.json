@@ -216,7 +216,7 @@
     // attach.sh carries its own host-zone resolution + self-heal + --env TZ
     // forwarding to cover that path; see the timezone block in attach.sh.
     "TZ": "${localEnv:TZ}",
-    // Ethereum RPC URIs. The host's tests.env points these at localhost:8545
+    // Ethereum RPC URIs. A host tests.env may point these at localhost:8545
     // (the local anvil node, reachable via pasta port-forwarding). Inside the
     // container "localhost" is the container's own loopback, not the host's —
     // so these containerEnv entries override the shared tests.env values to
@@ -224,17 +224,17 @@
     // loopback where anvil listens. Precedence (envvar > tests.env > default)
     // is implemented in tests/conftest.py:_rpc, so containerEnv always wins
     // here without editing the bind-mounted tests.env.
-    "ETHEREUM_ARCHIVE_NODE_HTTP_URI": "http://host.containers.internal:8545/",
-    "ETHEREUM_ARCHIVE_NODE_WS_URI": "ws://host.containers.internal:8546/",
-    "ETHEREUM_FULL_NODE_HTTP_URI": "http://host.containers.internal:8545/",
-    "ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/",
+    "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI": "http://host.containers.internal:8545/",
+    "TEST_ETHEREUM_ARCHIVE_NODE_WS_URI": "ws://host.containers.internal:8546/",
+    "TEST_ETHEREUM_FULL_NODE_HTTP_URI": "http://host.containers.internal:8545/",
+    "TEST_ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/",
     // Node endpoints for chain 1 (Ethereum mainnet), as the container-local
     // override of the bind-mounted host operator file. The file is the base
     // layer and names the HOST's endpoints (`[nodes] http = { 1 =
     // "http://localhost:8545" }`), which the container cannot reach; the
     // `DEGENBOT_RPC_{HTTP,WS}_CHAINID_{cid}` names are chain-id-discriminated
     // and outrank the file for that chain alone (NOT the test-scoped
-    // ETHEREUM_*_NODE_*_URI pair above), so these entries re-point the same
+    // TEST_ETHEREUM_*_NODE_*_URI pair above), so these entries re-point the same
     // host anvil endpoint at host.containers.internal. An explicit `--node`
     // outranks them both.
     "DEGENBOT_RPC_HTTP_CHAINID_1": "http://host.containers.internal:8545",
@@ -260,11 +260,13 @@
     // it. The code default is loopback-only, which pasta cannot reach
     // inbound — this override is what makes host.containers.internal:9464
     // work for the ethereum-pod Prometheus.
-        "DEGENBOT_METRICS_ADDR": "0.0.0.0:9464",
+    "DEGENBOT_METRICS_ADDR": "0.0.0.0:9464",
     // hotpath profiler exporter (epic 5GXLG5): bind all interfaces so the
     // -p 6772:6772 publish (runArgs above) can forward host traffic into it —
     // hotpath's code default is loopback-only, unreachable via pasta inbound.
-    // Only active while DEGENBOT_HOTPATH=1 has constructed the guard.
+    // Only active while DEGENBOT_HOTPATH=1 has constructed the guard. The knob
+    // is owned by the external hotpath crate (prometheus_server.rs), not the
+    // DEGENBOT_ schema, so the env-read gate deliberately does not see it.
     "HOTPATH_PROMETHEUS_HOST": "0.0.0.0",
     // T5 (RMH23E): OTLP span export target for DEGENBOT_OTEL=1 runs. Jaeger
     // (ethereum pod) publishes 4318 to the host; the code default is the

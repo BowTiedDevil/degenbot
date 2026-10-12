@@ -80,9 +80,9 @@ import pytest
 
 from degenbot.registry.deployment_loader import DeploymentRecord, load_deployments
 from tests.conftest import (
-    ARBITRUM_FULL_NODE_HTTP_URI,
-    BASE_ARCHIVE_NODE_HTTP_URI,
-    ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+    TEST_ARBITRUM_FULL_NODE_HTTP_URI,
+    TEST_BASE_ARCHIVE_NODE_HTTP_URI,
+    TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
 )
 from tests.registry.deployment_verification import (
     EXPECTED_FACTORY_SELECTORS,
@@ -121,9 +121,9 @@ def _tier(gte: int) -> bool:
 # The local Ethereum node (tests.env → http://localhost:8545) covers chain 1;
 # Base/Arbitrum default to public RPCs and skip when unreachable.
 _CHAIN_RPC: dict[int, str] = {
-    1: ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-    8453: BASE_ARCHIVE_NODE_HTTP_URI,
-    42161: ARBITRUM_FULL_NODE_HTTP_URI,
+    1: TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+    8453: TEST_BASE_ARCHIVE_NODE_HTTP_URI,
+    42161: TEST_ARBITRUM_FULL_NODE_HTTP_URI,
 }
 
 _CAST: CastHarness = FoundryCast()

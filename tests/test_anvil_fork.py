@@ -8,9 +8,9 @@ from degenbot.provider import AlloyProvider
 from degenbot.utils.bytes import to_bytes
 
 from .conftest import (
-    BASE_FULL_NODE_HTTP_URI,
-    ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-    ETHEREUM_FULL_NODE_HTTP_URI,
+    TEST_BASE_FULL_NODE_HTTP_URI,
+    TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+    TEST_ETHEREUM_FULL_NODE_HTTP_URI,
 )
 
 pytestmark = pytest.mark.online_rpc
@@ -21,7 +21,7 @@ WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 def test_web3_endpoints():
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
     assert fork.http_url == f"http://127.0.0.1:{fork.port}"
@@ -35,7 +35,7 @@ def test_web3_endpoints():
 def test_set_bytecode():
     fake_bytecode = to_bytes("0x42069")
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             storage_caching=False,
             bytecode_overrides=[
@@ -52,7 +52,7 @@ def test_set_storage():
     new_storage_value_padded = new_storage_value.hex().zfill(64)
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
     assert fork.provider.get_storage_at(
@@ -67,7 +67,7 @@ def test_set_storage():
     ) == to_bytes(new_storage_value_padded)
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             storage_caching=False,
             storage_overrides=[(WETH_ADDRESS, storage_position, new_storage_value)],
@@ -108,7 +108,7 @@ def test_rpc_methods(fork_mainnet_full: AnvilFork):
 
 def test_mine_and_reset():
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
     starting_block = fork.provider.get_block_number()
@@ -122,7 +122,7 @@ def test_mine_and_reset():
 
 def test_fork_from_transaction_hash():
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             fork_transaction_hash=(
                 "0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6"
@@ -144,7 +144,7 @@ def test_set_next_block_base_fee_in_constructor():
     base_fee_override = 69 * 10**9
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False, base_fee=base_fee_override),
     )
     fork.mine()
@@ -153,7 +153,7 @@ def test_set_next_block_base_fee_in_constructor():
 
 def test_reset_and_set_next_block_base_fee():
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
     base_fee_override = 69 * 10**9
@@ -169,18 +169,18 @@ def test_reset_and_set_next_block_base_fee():
 @pytest.mark.base
 def test_reset_to_new_endpoint():
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
     assert fork.provider.chain_id == 1
 
-    fork.reset(fork_url=BASE_FULL_NODE_HTTP_URI)
+    fork.reset(fork_url=TEST_BASE_FULL_NODE_HTTP_URI)
     assert fork.provider.chain_id == 8453
 
 
 def test_reset_to_new_transaction_hash():
     fork = AnvilFork(
-        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
     )
     fork.reset(
         transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6",
@@ -192,7 +192,7 @@ def test_ipc_kwargs() -> None:
     # IPCProvider type check retired — AnvilFork now uses Rust DynProvider
     # timeout check retired — Rust provider manages its own timeouts
     AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(localhost="127.0.0.1", storage_caching=False),
     )
 
@@ -200,7 +200,7 @@ def test_ipc_kwargs() -> None:
 def test_balance_overrides_in_constructor():
     fake_balance = 100 * 10**18
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             storage_caching=False,
             balance_overrides=[
@@ -214,7 +214,7 @@ def test_balance_overrides_in_constructor():
 def test_nonce_overrides_in_constructor():
     fake_nonce = 69
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             storage_caching=False,
             nonce_overrides=[
@@ -230,7 +230,7 @@ def test_bytecode_overrides_in_constructor():
     fake_bytecode = to_bytes("0x0420")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             storage_caching=False,
             bytecode_overrides=[(fake_address, fake_bytecode)],
@@ -243,7 +243,7 @@ def test_coinbase_override_in_constructor():
     fake_coinbase = get_checksum_address("0x6969696969696969696969696969696969696969")
 
     fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False, coinbase=fake_coinbase),
     )
     fork.mine()

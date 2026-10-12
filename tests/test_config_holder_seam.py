@@ -26,7 +26,7 @@ from degenbot.config import resolve_http_rpc_uri
 from degenbot.provider.factory import get_provider_from_config
 
 #: The operator-namespace names — deliberately the ``DEGENBOT_RPC_*`` family,
-#: NOT the conftest ``_rpc`` vocabulary (``ETHEREUM_*_NODE_*``), which is the
+#: NOT the conftest ``_rpc`` vocabulary (``TEST_*_NODE_*``), which is the
 #: harness's own namespace and must not be coupled.
 #:
 #: The WS family is used (not HTTP): request scope prefers a WS endpoint over

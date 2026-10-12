@@ -41,8 +41,8 @@
 //!         --example record_py_oracle_corpus
 //!
 //! Node resolution mirrors the parity tests: the ethereum scenarios read
-//! `ETHEREUM_ARCHIVE_NODE_HTTP_URI` (the `tests/conftest.py` name) and the
-//! base scenarios read `BASE_ARCHIVE_NODE_HTTP_URI` (falling back to the
+//! `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` (the `tests/conftest.py` name) and the
+//! base scenarios read `TEST_BASE_ARCHIVE_NODE_HTTP_URI` (falling back to the
 //! keyless endpoint the aerodrome/pancakeswap tests fork);
 //! `--ethereum-node` / `--base-node` / `--arbitrum-node` override. Every node
 //! flag is repeatable: its values form that tier's ordered endpoint pool
@@ -164,9 +164,9 @@ const CURVE_METAPOOL_MULTIBLOCK_CASSETTE: &str =
 /// Which endpoint tier serves a scenario, resolved like the parity tests do.
 #[derive(Clone, Copy)]
 enum NodeTier {
-    /// `ETHEREUM_ARCHIVE_NODE_HTTP_URI` - the ethereum parity fork URL.
+    /// `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` - the ethereum parity fork URL.
     Ethereum,
-    /// `BASE_ARCHIVE_NODE_HTTP_URI` - what the base parity tests fork.
+    /// `TEST_BASE_ARCHIVE_NODE_HTTP_URI` - what the base parity tests fork.
     Base,
     /// The camelot test's keyless public endpoint.
     Arbitrum,
@@ -1578,10 +1578,10 @@ fn pool_for(tier: NodeTier, args: &Args) -> Result<Vec<String>, String> {
             if !args.ethereum_nodes.is_empty() {
                 return Ok(args.ethereum_nodes.clone());
             }
-            match std::env::var("ETHEREUM_ARCHIVE_NODE_HTTP_URI").ok() {
+            match std::env::var("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI").ok() {
                 Some(uri) => Ok(vec![uri]),
                 None => Err(
-                    "no ethereum node: set ETHEREUM_ARCHIVE_NODE_HTTP_URI (the conftest name) or --ethereum-node"
+                    "no ethereum node: set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (the conftest name) or --ethereum-node"
                         .to_string(),
                 ),
             }
@@ -1590,7 +1590,7 @@ fn pool_for(tier: NodeTier, args: &Args) -> Result<Vec<String>, String> {
             if !args.base_nodes.is_empty() {
                 return Ok(args.base_nodes.clone());
             }
-            Ok(vec![std::env::var("BASE_ARCHIVE_NODE_HTTP_URI")
+            Ok(vec![std::env::var("TEST_BASE_ARCHIVE_NODE_HTTP_URI")
                 .unwrap_or_else(|_| {
                     "https://mainnet.base.org".to_string()
                 })])

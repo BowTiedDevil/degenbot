@@ -81,7 +81,7 @@ Replay: read cassette bytes -> verify_cassette_bytes (drift gate) -> Cassette::f
 ## (E) Feasibility + order
 
 Endpoints:
-- ETHEREUM_ARCHIVE_NODE_HTTP_URI = http://localhost:8545/ => curl HTTP 000, no listener. UNUSABLE.
+- TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI = http://localhost:8545/ => curl HTTP 000, no listener. UNUSABLE.
 - lb.drpc.live/ethereum/`<key>`: JSON-RPC 200 for eth_blockNumber; historical eth_call/eth_getStorageAt OK; but eth_getLogs errors: "ranges over 10000 blocks are not supported on free plan" (even a 100-block range over a busy contract) AND "Unknown state. First available state is 1" for pre-recent blocks. INSUFFICIENT for historical getLogs.
 - Known public endpoints blocked/limited: publicnode 403, ankr needs key, 1rpc/drpc.org/blastapi 403 (Cloudflare 1010), merkle 429, flashbots 504, securerpc/payload DNS.
 - WORKING (unauthenticated): https://gateway.tenderly.co/public/mainnet — full-history getLogs (400k blocks/req OK), historical eth_call, eth_getBalance. Use this unless the manager supplies an archive key.

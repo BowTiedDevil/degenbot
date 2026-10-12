@@ -21,10 +21,10 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import (
-    ARBITRUM_FULL_NODE_HTTP_URI,
-    BASE_ARCHIVE_NODE_HTTP_URI,
-    BASE_FULL_NODE_HTTP_URI,
-    ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+    TEST_ARBITRUM_FULL_NODE_HTTP_URI,
+    TEST_BASE_ARCHIVE_NODE_HTTP_URI,
+    TEST_BASE_FULL_NODE_HTTP_URI,
+    TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -102,7 +102,7 @@ LIVE_CHAINS = (
             node_flag="--ethereum-node",
             # The tests.env tier is the local fork node; the env carries no
             # second ethereum archive, so this tier stays a one-endpoint pool.
-            node_urls=(ETHEREUM_ARCHIVE_NODE_HTTP_URI,),
+            node_urls=(TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,),
             pace_ms=ETHEREUM_PACE_MS,
             timeout_s=1800,
         ),
@@ -116,7 +116,7 @@ LIVE_CHAINS = (
             # blastapi is the proven keyless server of the camelot pin; the
             # authenticated dRPC tier from tests.env (via conftest) is the
             # failover, its pin coverage unproven.
-            node_urls=(ARBITRUM_ARCHIVE_NODE, ARBITRUM_FULL_NODE_HTTP_URI),
+            node_urls=(ARBITRUM_ARCHIVE_NODE, TEST_ARBITRUM_FULL_NODE_HTTP_URI),
             pace_ms=ARBITRUM_PACE_MS,
             timeout_s=600,
         ),
@@ -130,7 +130,7 @@ LIVE_CHAINS = (
             # The authenticated archive tier from tests.env (via conftest)
             # is the primary; the keyless parity fork endpoint is the
             # failover (it rate-limits bursts - see BASE_PACE_MS).
-            node_urls=(BASE_ARCHIVE_NODE_HTTP_URI, BASE_FULL_NODE_HTTP_URI),
+            node_urls=(TEST_BASE_ARCHIVE_NODE_HTTP_URI, TEST_BASE_FULL_NODE_HTTP_URI),
             pace_ms=BASE_PACE_MS,
             timeout_s=900,
         ),

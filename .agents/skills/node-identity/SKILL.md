@@ -14,10 +14,10 @@ just node-identity
 # equivalent to:
 curl -s -X POST -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' \
-  "$ETHEREUM_FULL_NODE_HTTP_URI"
+  "$TEST_ETHEREUM_FULL_NODE_HTTP_URI"
 ```
 
-`ETHEREUM_FULL_NODE_HTTP_URI` resolves to `reth/{VERSION}`.
+`TEST_ETHEREUM_FULL_NODE_HTTP_URI` resolves to `reth/{VERSION}`.
 
 ## A locally spawned anvil is a separate node
 
