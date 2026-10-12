@@ -137,21 +137,23 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     """Check that every supported block-identifier input converts to a block number"""
     provider = fork_mainnet_full.provider
 
-    # Known string literals
+    # Known string literals. The BlockTag ladder's contract is exactly three
+    # tags (earliest/latest/pending); 'safe'/'finalized' are not members and
+    # are refused loudly by the identifier surface.
     latest_block = get_number_for_block_identifier("latest", provider)
     earliest_block = get_number_for_block_identifier("earliest", provider)
     pending_block = get_number_for_block_identifier("pending", provider)
-    safe_block = get_number_for_block_identifier("safe", provider)
-    finalized_block = get_number_for_block_identifier("finalized", provider)
 
     assert BlockNumber.__value__ is int
     assert isinstance(latest_block, BlockNumber.__value__)
     assert isinstance(earliest_block, BlockNumber.__value__)
     assert isinstance(pending_block, BlockNumber.__value__)
-    assert isinstance(safe_block, BlockNumber.__value__)
-    assert isinstance(finalized_block, BlockNumber.__value__)
 
-    assert latest_block != earliest_block != pending_block != safe_block != finalized_block
+    assert latest_block != earliest_block != pending_block
+
+    for unsupported in ("safe", "finalized"):
+        with pytest.raises(DegenbotValueError):
+            get_number_for_block_identifier(unsupported, provider)
 
     # BlockNumber
     assert isinstance(

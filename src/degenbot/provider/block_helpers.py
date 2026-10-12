@@ -8,7 +8,7 @@ extract the timestamp here, so the block-tag contract has one home.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.rpc_types import BlockIdentifier, BlockTag
@@ -41,14 +41,15 @@ def get_number_for_block_identifier(
             return provider.get_block_number()
         case int() as block_number_as_int:
             return block_number_as_int
-        case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
-            block = provider.get_block(cast("int | str", identifier))
-            if block is None:
-                raise DegenbotValueError(message=f"Block {block_tag} not found")
-            block_number = block.get("number")
-            if TYPE_CHECKING:
-                assert block_number is not None
-            return block_number
+        case "pending":
+            # The pending block's number is derivable (head + 1); fetching it
+            # fails on nodes that materialize no pending block (dRPC serves
+            # None) and the number carries no extra information.
+            return provider.get_block_number() + 1
+        case "latest":
+            return provider.get_block_number()
+        case "earliest":
+            return 0
         case str() as block_number_as_str:
             try:
                 return int(block_number_as_str, 16)
