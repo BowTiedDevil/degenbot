@@ -40,8 +40,11 @@
 > brute-force verification are salvaged into a permanent golden-arm regression
 > test by a follow-up task, pinning that conclusion against future regressions.
 >
-> Rejected-patch reference copy: `.scratch/sr2-rejected.patch` +
-> `.scratch/sr2-solidly_t.rs` (session-scratch, not committed).
+> Design record: this doc IS the record of the rejected patch. The patch and
+> module lived only as session-local scratch (`.scratch/sr2-rejected.patch`,
+> `.scratch/sr2-solidly_t.rs`) that was never committed and does not survive;
+> the derivation, the measured regression, and the disposition above are the
+> durable reference.
 
 ---
 
