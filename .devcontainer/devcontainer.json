@@ -224,10 +224,10 @@
     // loopback where anvil listens. Precedence (envvar > tests.env > default)
     // is implemented in tests/conftest.py:_rpc, so containerEnv always wins
     // here without editing the bind-mounted tests.env.
-    "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI": "http://host.containers.internal:8545/",
-    "TEST_ETHEREUM_ARCHIVE_NODE_WS_URI": "ws://host.containers.internal:8546/",
-    "TEST_ETHEREUM_FULL_NODE_HTTP_URI": "http://host.containers.internal:8545/",
-    "TEST_ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/",
+    // "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI": "http://host.containers.internal:8545/",
+    // "TEST_ETHEREUM_ARCHIVE_NODE_WS_URI": "ws://host.containers.internal:8546/",
+    // "TEST_ETHEREUM_FULL_NODE_HTTP_URI": "http://host.containers.internal:8545/",
+    // "TEST_ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/",
     // Node endpoints for chain 1 (Ethereum mainnet), as the container-local
     // override of the bind-mounted host operator file. The file is the base
     // layer and names the HOST's endpoints (`[nodes] http = { 1 =
@@ -237,8 +237,8 @@
     // TEST_ETHEREUM_*_NODE_*_URI pair above), so these entries re-point the same
     // host anvil endpoint at host.containers.internal. An explicit `--node`
     // outranks them both.
-    "DEGENBOT_RPC_HTTP_CHAINID_1": "http://host.containers.internal:8545",
-    "DEGENBOT_RPC_WS_CHAINID_1": "ws://host.containers.internal:8546",
+    // "DEGENBOT_RPC_HTTP_CHAINID_1": "http://host.containers.internal:8545",
+    // "DEGENBOT_RPC_WS_CHAINID_1": "ws://host.containers.internal:8546",
     // The backrun facet's searcher-feed endpoint — the one dial the ambient
     // fleet boot makes that the node-RPC names above cannot redirect. The
     // suite default (tests/ambient_config.toml) is a dead loopback so the
