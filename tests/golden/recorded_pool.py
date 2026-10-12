@@ -16,6 +16,7 @@ Supported families: Uniswap v2, v3 and v4.
 
 from __future__ import annotations
 
+import gzip
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -255,20 +256,31 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
 
 
 def record_pool(pool: Any, path: Path, *, block: int) -> dict[str, Any]:
-    """Persist a live pool's constructor inputs to a JSON golden file."""
+    """Persist a live pool's constructor inputs to a JSON golden file.
+
+    ``.gz``-suffixed paths are written gzip-compressed (full-range tick maps
+    are large); the loader is transparent to the suffix.
+    """
     state = extract_pool_state(pool, block=block)
     payload = {
         "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
         **state,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if path.suffix == ".gz":
+        path.write_bytes(gzip.compress(text.encode("utf-8")))
+    else:
+        path.write_text(text, encoding="utf-8")
     return state
 
 
 def load_pool(path: Path, *, chain_id: int, block: int) -> Any:
     """Read a recorded-pool golden file and rebuild the I/O-free pool."""
-    state = json.loads(path.read_text(encoding="utf-8"))
+    if path.suffix == ".gz":
+        state = json.loads(gzip.decompress(path.read_bytes()))
+    else:
+        state = json.loads(path.read_text(encoding="utf-8"))
     if state.get("chain_id") != chain_id:
         msg = _CHAIN_MISMATCH_MSG.format(
             path=path,
