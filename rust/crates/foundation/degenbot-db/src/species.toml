@@ -156,6 +156,18 @@ kind = "aerodrome_v3"
 family = "v3"
 table = "aerodrome_v3_pools"
 fee_denominator = 1000000
+# Verified against ICLPoolState (aerodrome-finance/slipstream) plus on-chain
+# probes of the cbETH/WETH clone at a pinned archive block and tip:
+# - slot0() returns SIX fields (sqrtPriceX96, tick, observationIndex,
+#   observationCardinality, observationCardinalityNext, unlocked) — the
+#   uniswap `uint8 feeProtocol` field is absent. The rpc abi decoder reads
+#   the shared two-word prefix, so the tail width does not matter.
+# - fee() is a DYNAMIC uint24 (90 at the pinned block, 60 at tip) — never
+#   treat it as static pool metadata.
+# - The HEAD storage layout is NOT uniswap v3: storage slot 0 holds the
+#   factory address on-chain. Tick access is verified only through the
+#   ticks(int24)/tickBitmap(int16) FUNCTIONS; raw-storage tick reads are
+#   unverified for this family (tick_bootstrap must not assume them).
 slot_layout = "uniswap_v3"
 [[species.chains]]
 chain_id = 8453
