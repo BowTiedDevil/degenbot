@@ -16,6 +16,7 @@ Commits happen only in the manager's post-settle quiet window, staged whole. Lea
 Yours:
 
 - `cargo test -p <crate>` for crates you touched
+- `cargo fmt --manifest-path rust/Cargo.toml -p <touched crate> -- --check` for any Rust edit (the commit hook rustfmts staged files; a P4a chunk needed a manager-side fix)
 - `uv run --no-sync pytest <the test files you touched>`
 - `uv run --no-sync ruff check <touched files>` AND `uv run --no-sync ruff format --check <touched files>` — the commit hook formats every staged file, so a format miss blocks the manager's commit (two chunks have needed manager-side format fixes; check both)
 
