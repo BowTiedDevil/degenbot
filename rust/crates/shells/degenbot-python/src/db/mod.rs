@@ -13,6 +13,7 @@ pub mod aave;
 #[cfg(feature = "aave-updater")]
 pub mod aave_analysis;
 pub mod discovery;
+pub mod discovery_read;
 pub mod liquidity_updater;
 pub mod pool_read;
 pub mod read_seams;
@@ -231,6 +232,10 @@ pub mod db {
     // Read seams (token-id resolution + graph edition).
     #[pymodule_export]
     use super::read_seams::{db_fetch_graph_edition, db_resolve_token_ids};
+
+    // Discovery read seam: the typed candidate-pool enumeration.
+    #[pymodule_export]
+    use super::discovery_read::{db_fetch_discovery_rows, PyDiscoveryPoolRow};
 
     // Discovery seam: upsert/write functions + the pool-row input builders.
     #[pymodule_export]

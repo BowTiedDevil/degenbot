@@ -180,6 +180,95 @@ class DebtPositionData:
     def stable_debt(self, /) -> bool: ...
 
 @final
+class DiscoveryPoolRow:
+    """
+    One discovered candidate pool — the typed `degenbot_db::discovery_read` row
+    flattened across the three family variants so Python sees one uniform view.
+
+    Family-scoped fields are `None` where the family has no such column:
+    `address` is `None` for V4 (`manager` + `pool_hash` identify it instead),
+    `stable` is `None` outside Aerodrome V2, `tick_spacing` is `None` for V2,
+    and `update_block` (the liquidity-update marker) is `None` for V2 (whose
+    subclass tables carry no such column).
+    """
+    @property
+    def address(self, /) -> str | None:
+        """
+        The V2/V3 checksummed pool address; `None` for V4.
+        """
+    @property
+    def db_id(self, /) -> int:
+        """
+        The raw DB row id (`pools.id` for V2/V3, `managed_pools.id` for V4).
+        """
+    @property
+    def factory(self, /) -> str:
+        """
+        The owning exchange's checksummed factory address.
+        """
+    @property
+    def family(self, /) -> str:
+        """
+        The coarse family tag (`"V2"` / `"V3"` / `"V4"`) — the key Python maps
+        to `degenbot.pathfinding.PoolKind`.
+        """
+    @property
+    def fee(self, /) -> int | None:
+        """
+        The pool's fee (`fee_token0` for V2/V3, `fee_currency0` for V4).
+        """
+    @property
+    def kind(self, /) -> str:
+        """
+        The raw polymorphic `kind` string (`"uniswap_v3"`, `"aerodrome_v2"`, ...).
+        """
+    @property
+    def manager(self, /) -> str | None:
+        """
+        The V4 pool-manager address; `None` for V2/V3.
+        """
+    @property
+    def pool_hash(self, /) -> str | None:
+        """
+        The V4 pool hash (`0x`-prefixed hex); `None` for V2/V3.
+        """
+    @property
+    def stable(self, /) -> bool | None:
+        """
+        The Aerodrome V2 stable flag; `None` for every other family.
+        """
+    @property
+    def tick_spacing(self, /) -> int | None:
+        """
+        The V3/V4 tick spacing; `None` for V2.
+        """
+    @property
+    def token0(self, /) -> str:
+        """
+        The `token0` / `currency0` checksummed address.
+        """
+    @property
+    def token0_id(self, /) -> int:
+        """
+        The DB token id for `token0`.
+        """
+    @property
+    def token1(self, /) -> str:
+        """
+        The `token1` / `currency1` checksummed address.
+        """
+    @property
+    def token1_id(self, /) -> int:
+        """
+        The DB token id for `token1`.
+        """
+    @property
+    def update_block(self, /) -> int | None:
+        """
+        The liquidity-update marker block (V3/V4); `None` for V2.
+        """
+
+@final
 class ExchangeRow:
     """
     A typed `exchanges` row (`exchange` relationship hydration).
@@ -497,6 +586,23 @@ def db_compact_database(path: str) -> None:
     `VACUUM`. A no-op for `:memory:`. Raises `ValueError` on failure.
     """
 
+def db_fetch_discovery_rows(database_path: str, chain_id: int) -> list[DiscoveryPoolRow]:
+    """
+    `degenbot._ffi.db.db_fetch_discovery_rows(database_path, chain_id) -> list[DiscoveryPoolRow]`
+
+    Read every candidate pool for `chain_id` from the Rust `discovery_read`
+    surface — the V2/V3 `UNION ALL` (ascending `pools.id`) then the V4 branch
+    (ascending `managed_pools.id`). The single read that answers a general
+    token-pair discovery query without the graph seam's degree >= 2 cycle
+    filter. Read-only; raises `ValueError` on a DB/query/decode failure after
+    releasing the GIL.
+
+    # Errors
+
+    Returns `ValueError` when the database cannot be opened, queried, or a row
+    fails to decode.
+    """
+
 def db_fetch_exchange(database_path: str, exchange_id: int) -> ExchangeRow | None:
     """
     `degenbot._ffi.db.db_fetch_exchange(database_path, exchange_id) -> ExchangeRow | None`
@@ -734,6 +840,7 @@ __all__ = [
     "DatabasePositionQuery",
     "DatabaseSnapshot",
     "DebtPositionData",
+    "DiscoveryPoolRow",
     "ExchangeRow",
     "LiquidityPoolRow",
     "LiquidityUpdateEvent",
@@ -747,6 +854,7 @@ __all__ = [
     "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
+    "db_fetch_discovery_rows",
     "db_fetch_exchange",
     "db_fetch_exchange_by_name",
     "db_fetch_graph_edition",
