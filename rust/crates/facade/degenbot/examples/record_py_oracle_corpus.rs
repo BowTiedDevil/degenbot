@@ -139,6 +139,8 @@ const BALANCER_STABLE_CASSETTES: &[&str] = &[
     "balancer_stable_cbeth_wsteth.json",
     "balancer_stable_tusd_bsp.json",
     "balancer_stable_bb_s_usd.json",
+    "balancer_stable_ankreth_weth.json",
+    "balancer_stable_reth_weth.json",
 ];
 const BALANCER_WEIGHTED_CASSETTES: &[&str] = &[
     "balancer_weighted_weth_bal.json",
