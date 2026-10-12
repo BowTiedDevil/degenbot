@@ -1762,7 +1762,7 @@ fn config_derived_statics_are_classified() {
     let census_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/config_derived_statics_census.txt");
     let census_text = std::fs::read_to_string(&census_path)
-        .unwrap_or_else(|err| panic!("read census {}: {err}", census_path.display()));
+        .expect("read tests/config_derived_statics_census.txt");
     let mut census: BTreeMap<String, String> = BTreeMap::new();
     for (index, raw) in census_text.lines().enumerate() {
         let line = raw.trim();
