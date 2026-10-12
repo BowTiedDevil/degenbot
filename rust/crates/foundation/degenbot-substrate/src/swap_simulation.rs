@@ -602,6 +602,17 @@ pub(crate) enum PolicyAttempt {
 /// not satisfy the walker — give up rather than loop forever. No-fetcher
 /// and exhausted-miss collapse to `FetchExhausted`; a fetcher error is
 /// `FetchFailed`. All four legacy failure collapses are observable here.
+///
+/// Fetch errors are deliberately single-strike (decision 2026-10): the
+/// abort surfaces honestly (`MissingTickWord` → the python seam's
+/// `MissingLiquidityData(word)`) and the CALLER owns its retry budget —
+/// the record recipe (`scripts/record_v3_golden.py`) retries the walk and
+/// converges because failed words stay unmarked (words 15→12→8 advanced
+/// per retry under the rate governor during the WBTC/WETH full-range
+/// capture). Embedding engine-side backoff would renegotiate ADR-040's
+/// failure buckets and make swap latency policy-dependent; revisit only
+/// if live-bot telemetry shows the policy gating walks under rate
+/// pressure.
 pub(crate) fn drive(sim: &mut impl ComputeMerge, block: u64) -> PolicyAttempt {
     let mut attempted: HashSet<i32> = HashSet::new();
     let mut fetched_words: Vec<i32> = Vec::new();
