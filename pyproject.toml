@@ -126,6 +126,12 @@ allow-star-arg-any = true
     "print",     # the generator prints its summary to stdout by design
     "shebang-not-executable",  # invoked as `uv run python ...`, not directly
 ]
+"scripts/record_v3_golden.py" = [
+    # The golden recorder prints its walk progress (frontier advances, retry
+    # causes, the boundary check) to stdout by design — the operator watches
+    # a long-running live-RPC walk and needs the transcript.
+    "print",
+]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "ARG",
