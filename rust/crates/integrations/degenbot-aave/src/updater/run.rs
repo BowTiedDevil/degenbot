@@ -278,6 +278,15 @@ pub struct RunSpec {
     pub to_block: Option<u64>,
     /// The chunk width in blocks. Must be non-zero.
     pub chunk_size: u64,
+
+    /// The widest block range a single `eth_getLogs` request may span. Must be
+    /// non-zero. The commit granularity ([`Self::chunk_size`]) is
+    /// independent: a chunk wider than this is fetched as several
+    /// `max_block_range`-sized requests. Mirrors the Python updater's
+    /// per-request clamp (`fetch_logs_retrying`'s `max_blocks_per_request`),
+    /// so an operator can point the run at a public RPC with a tighter
+    /// `eth_getLogs` range limit without shrinking the commit chunk.
+    pub max_block_range: u64,
     /// Stop after committing this many chunks; `None` = run through
     /// `to_block`.
     pub max_chunks: Option<usize>,
@@ -347,7 +356,7 @@ pub struct RunSpec {
 ///   drift is rare; flagged for the orchestrator's parity-gate review.
 #[expect(clippy::missing_errors_doc)]
 pub fn run_aave_update(database_path: &Path, spec: RunSpec) -> Result<AaveUpdateReport, RunError> {
-    if spec.chunk_size == 0 {
+    if spec.chunk_size == 0 || spec.max_block_range == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
             from: 1,
             to: 0,
@@ -370,7 +379,7 @@ pub fn run_aave_update(database_path: &Path, spec: RunSpec) -> Result<AaveUpdate
 ///
 /// Same conditions as [`run_aave_update`].
 pub fn run_aave_update_on_db(db: &DegenbotDb, spec: RunSpec) -> Result<AaveUpdateReport, RunError> {
-    if spec.chunk_size == 0 {
+    if spec.chunk_size == 0 || spec.max_block_range == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
             from: 1,
             to: 0,
@@ -557,6 +566,7 @@ async fn run_aave_update_driver(
         market_id,
         to_block,
         chunk_size,
+        max_block_range,
         max_chunks,
         verify,
         cancel,
@@ -588,7 +598,13 @@ async fn run_aave_update_driver(
     // The injected provider serves the whole run (ADR-068 D5) — the core
     // never builds a transport; the caller owns the construction.
     let provider = Arc::new(provider);
-    let fetcher = LogFetcher::new(provider.clone(), chunk_size);
+    // The RPC request width is the `max_block_range` clamp, NOT the commit
+    // chunk: a chunk wider than the clamp is fetched as several
+    // `max_block_range`-sized `eth_getLogs` requests, while the commit stays
+    // `chunk_size`-wide. Mirrors the Python updater's per-request clamp
+    // (`fetch_logs_retrying`'s `max_blocks_per_request`) decoupled from its
+    // `--chunk` commit granularity.
+    let fetcher = LogFetcher::new(provider.clone(), max_block_range);
 
     // Resolve the chain tip if `to_block` is None.
     let last_block = match to_block {

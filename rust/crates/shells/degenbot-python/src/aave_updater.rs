@@ -88,6 +88,9 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 /// - `market_id` — the `aave_v3_markets.id` to advance.
 /// - `to_block` — `int` to advance to a specific block; `None` for the tip.
 /// - `chunk_size` — blocks per chunk.
+/// - `max_block_range` — the widest block range a single `eth_getLogs`
+///   request may span (independent of `chunk_size`); the Python updater's
+///   per-request clamp.
 /// - `rpc_url` — the HTTP RPC endpoint.
 /// - `cancel_handle` — a [`CancelHandle`] (shared with `run_pool_update`);
 ///   a `signal.SIGINT` handler calls `.cancel()`.
@@ -135,6 +138,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
     *,
     verify_all_interval=None,
     verify_all_at_completion=false,
+    max_block_range=10000,
 ))]
 #[expect(clippy::too_many_arguments)]
 fn run_aave_update(
@@ -150,6 +154,7 @@ fn run_aave_update(
     max_chunks: Option<usize>,
     verify_all_interval: Option<u64>,
     verify_all_at_completion: bool,
+    max_block_range: u64,
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
@@ -177,6 +182,7 @@ fn run_aave_update(
                     market_id,
                     to_block,
                     chunk_size,
+                    max_block_range,
                     provider,
                     cancel,
                     progress,

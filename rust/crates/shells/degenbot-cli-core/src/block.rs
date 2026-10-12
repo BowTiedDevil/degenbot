@@ -29,6 +29,17 @@ pub const DEFAULT_TO_BLOCK: &str = "latest:-64";
 /// The `--verify-all-interval` default (`1_000_000`), ported from `cli/pool.py`.
 pub const DEFAULT_VERIFY_ALL_INTERVAL: u64 = 1_000_000;
 
+/// The `--max-block-range` default (`10_000`): the widest block range a single
+/// `eth_getLogs` request may span.
+///
+/// Mirrors the Python updater's per-request clamp (`fetch_logs_retrying`'s
+/// `max_blocks_per_request`), which capped the RPC request range independently
+/// of the `--chunk` commit granularity. Exposing it lets an operator point the
+/// updater at a public RPC whose `eth_getLogs` range limit is tighter than the
+/// default `--chunk` (e.g. dRPC's free plan) without shrinking the commit chunk.
+/// The core rejects `0`.
+pub const DEFAULT_MAX_BLOCK_RANGE: u64 = 10_000;
+
 /// The RPC retry budget the console's spot reads use.
 const RPC_MAX_RETRIES: u32 = 5;
 

@@ -84,7 +84,7 @@ The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/she
 Update positions for all active Aave V3 markets by processing blockchain events.
 
 ```bash
-degenbot aave update [--chunk SIZE] [--to-block BLOCK]
+degenbot aave update [--chunk SIZE] [--max-block-range BLOCKS] [--to-block BLOCK]
 ```
 
 #### Parameters
@@ -92,6 +92,7 @@ degenbot aave update [--chunk SIZE] [--to-block BLOCK]
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--chunk` | 10,000 | Maximum number of blocks to process per database commit |
+| `--max-block-range` | 10,000 | Maximum block range a single `eth_getLogs` request may span, independent of `--chunk`. Lower it for RPC providers that cap the `eth_getLogs` block range |
 | `--to-block` | `latest:-64` | Last block in update range. Format: `TAG[:OFFSET]` |
 
 #### Block Identifiers
@@ -120,6 +121,10 @@ degenbot aave update --to-block "latest:-128"
 
 # Update using smaller chunks for slower machines
 degenbot aave update --chunk 5000
+
+# Cap the per-request block range for an RPC whose eth_getLogs
+# range limit is tighter than the commit chunk (e.g. dRPC free)
+degenbot aave update --max-block-range 100
 
 # Update to a specific block for historical analysis
 degenbot aave update --to-block "18900000"

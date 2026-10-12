@@ -589,6 +589,7 @@ fn run_once(
             market_id: 1,
             to_block: Some(to_block),
             chunk_size: BOOTSTRAP_WINDOW + 1,
+            max_block_range: 10_000,
             provider,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(NoProgress),

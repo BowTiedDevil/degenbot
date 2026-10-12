@@ -39,7 +39,7 @@ use clap::{ArgAction, Args, CommandFactory as _, Parser, Subcommand, ValueEnum};
 use degenbot_cli_core::{
     AaveCommand, CliContext, CliError, Command, ConfigCommand, DatabaseCommand, ExchangeCommand,
     FleetCommand, PathCommand, PathDirection, PoolCommand, PoolFamily, PosturePatchEntry,
-    StrategyCommand, StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK,
+    StrategyCommand, StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_MAX_BLOCK_RANGE, DEFAULT_TO_BLOCK,
     DEFAULT_VERIFY_ALL_INTERVAL,
 };
 use degenbot_config::{EnvVars, NodeTransport, ProcessEnv, DEFAULT_CHAIN_ID_ENV};
@@ -363,6 +363,11 @@ pub enum AaveSub {
         /// the database.
         #[arg(long = "chunk", value_name = "BLOCKS", default_value_t = DEFAULT_CHUNK_SIZE)]
         chunk_size: u64,
+        /// The maximum number of blocks a single `eth_getLogs` request may
+        /// span, independent of `--chunk`. Lower it for RPC providers that
+        /// cap the `eth_getLogs` block range (e.g. dRPC's free plan).
+        #[arg(long = "max-block-range", value_name = "BLOCKS", default_value_t = DEFAULT_MAX_BLOCK_RANGE)]
+        max_block_range: u64,
         /// The last block in the update range. Must be a valid block
         /// identifier: 'earliest', 'finalized', 'safe', 'latest', 'pending'.
         /// An identifier can be given with an optional offset, e.g. 'latest:-64'
@@ -843,6 +848,7 @@ fn aave(command: &AaveSub, cli: &Cli, ctx: &CliContext<'_>) -> Result<AaveComman
         }),
         AaveSub::Update {
             chunk_size,
+            max_block_range,
             to_block,
             verify,
             verify_all_interval,
@@ -852,6 +858,7 @@ fn aave(command: &AaveSub, cli: &Cli, ctx: &CliContext<'_>) -> Result<AaveComman
             no_backup,
         } => Ok(AaveCommand::Update {
             chunk_size: *chunk_size,
+            max_block_range: *max_block_range,
             to_block: to_block.clone(),
             verify_chunk: verify.chunk_gate(),
             verify_all: verify.all_gate(),

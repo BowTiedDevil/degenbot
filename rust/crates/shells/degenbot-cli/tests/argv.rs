@@ -11,7 +11,7 @@ use degenbot_cli::argv::{resolve_with_env, Cli};
 use degenbot_cli_core::{
     AaveCommand, CliError, Command, ConfigCommand, DatabaseCommand, ExchangeCommand, FleetCommand,
     PathCommand, PathDirection, PoolCommand, PoolFamily, PosturePatchEntry, PosturePatchValue,
-    StrategyCommand, StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK,
+    StrategyCommand, StrategyFacet, DEFAULT_CHUNK_SIZE, DEFAULT_MAX_BLOCK_RANGE, DEFAULT_TO_BLOCK,
     DEFAULT_VERIFY_ALL_INTERVAL,
 };
 use degenbot_config::{MapEnv, NodeTransport};
@@ -239,12 +239,29 @@ fn aave_arms_round_trip() {
         ]),
         Command::Aave(AaveCommand::Update {
             chunk_size: DEFAULT_CHUNK_SIZE,
+            max_block_range: DEFAULT_MAX_BLOCK_RANGE,
             to_block: DEFAULT_TO_BLOCK.to_string(),
             verify_chunk: false,
             verify_all: false,
             verify_all_interval: DEFAULT_VERIFY_ALL_INTERVAL,
             stop_after_one_chunk: true,
             dry_run: true,
+            enable_backup: false,
+        })
+    );
+    // `--max-block-range` is the per-request RPC clamp, independent of
+    // `--chunk`; a bare run keeps the default clamp with the default gates.
+    assert_eq!(
+        resolve(&["degenbot", "aave", "update", "--max-block-range", "500"]),
+        Command::Aave(AaveCommand::Update {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            max_block_range: 500,
+            to_block: DEFAULT_TO_BLOCK.to_string(),
+            verify_chunk: true,
+            verify_all: false,
+            verify_all_interval: DEFAULT_VERIFY_ALL_INTERVAL,
+            stop_after_one_chunk: false,
+            dry_run: false,
             enable_backup: false,
         })
     );

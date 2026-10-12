@@ -63,7 +63,7 @@ pub mod strategy;
 pub use aave::{resolve_aave_deployment, AaveCommand, AaveDeployment, AAVE_DEPLOYMENTS};
 pub use block::{
     parse_to_block, resolve_chain_selector, resolve_to_block, BlockTag, ToBlockSpec,
-    DEFAULT_CHUNK_SIZE, DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
+    DEFAULT_CHUNK_SIZE, DEFAULT_MAX_BLOCK_RANGE, DEFAULT_TO_BLOCK, DEFAULT_VERIFY_ALL_INTERVAL,
 };
 pub use cancel::CancelHandle;
 pub use command::{Command, DatabaseCommand};

@@ -109,6 +109,9 @@ pub enum AaveCommand {
     Update {
         /// Max blocks per chunk before committing.
         chunk_size: u64,
+        /// The widest block range a single `eth_getLogs` request may
+        /// span (independent of `chunk_size`).
+        max_block_range: u64,
         /// The raw `--to-block` identifier.
         to_block: String,
         /// The per-chunk touched-position verify.
@@ -202,6 +205,7 @@ pub(crate) fn execute(
         ),
         AaveCommand::Update {
             chunk_size,
+            max_block_range,
             to_block,
             verify_chunk,
             verify_all,
@@ -214,6 +218,7 @@ pub(crate) fn execute(
             cancel,
             &UpdateArgs {
                 chunk_size: *chunk_size,
+                max_block_range: *max_block_range,
                 to_block,
                 verify_chunk: *verify_chunk,
                 verify_all: *verify_all,
@@ -357,6 +362,7 @@ fn carried_drive(path: &std::path::Path) -> Result<CompletedMarketDrive, CliErro
 #[expect(clippy::struct_excessive_bools)]
 struct UpdateArgs<'a> {
     chunk_size: u64,
+    max_block_range: u64,
     to_block: &'a str,
     verify_chunk: bool,
     verify_all: bool,
@@ -459,6 +465,7 @@ fn update(
                         market_id: market.id,
                         to_block: resolved,
                         chunk_size: args.chunk_size,
+                        max_block_range: args.max_block_range,
                         provider,
                         cancel: cancel.flag(),
                         progress: Arc::new(NoProgress),

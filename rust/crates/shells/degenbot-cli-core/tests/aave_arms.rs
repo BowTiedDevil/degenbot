@@ -701,6 +701,7 @@ fn reset_reinits_through_the_activate_seam_without_an_update() {
 fn update_command(to_block: &str, dry_run: bool) -> AaveCommand {
     AaveCommand::Update {
         chunk_size: 10_000,
+        max_block_range: 10_000,
         to_block: to_block.to_string(),
         verify_chunk: true,
         verify_all: false,

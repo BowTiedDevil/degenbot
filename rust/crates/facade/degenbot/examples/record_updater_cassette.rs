@@ -663,6 +663,7 @@ async fn record_aave_run_chunk(
                 market_id,
                 to_block: Some(to_block),
                 chunk_size: to_block - from_block + 1,
+                max_block_range: 10_000,
                 provider: recorder.as_alloy_provider(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 progress: Arc::new(degenbot::aave::updater::NoProgress),

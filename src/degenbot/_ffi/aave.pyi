@@ -92,6 +92,7 @@ def run_aave_update(
     *,
     verify_all_interval: int | None = None,
     verify_all_at_completion: bool = False,
+    max_block_range: int = 10000,
 ) -> dict:
     """
     `degenbot._ffi.aave.run_aave_update(database_path, chain_id, market_id, to_block,
@@ -122,6 +123,9 @@ def run_aave_update(
     - `market_id` — the `aave_v3_markets.id` to advance.
     - `to_block` — `int` to advance to a specific block; `None` for the tip.
     - `chunk_size` — blocks per chunk.
+    - `max_block_range` — the widest block range a single
+      `eth_getLogs` request may span (independent of `chunk_size`);
+      the Python updater's per-request clamp. Defaults to `10000`.
     - `rpc_url` — the HTTP RPC endpoint.
     - `cancel_handle` — a [`CancelHandle`] (shared with `run_pool_update`);
       a `signal.SIGINT` handler calls `.cancel()`.
