@@ -363,31 +363,23 @@ pub fn encode_slot0() -> Vec<u8> {
 /// two static fields are needed by the builder snapshot; the tail is ignored
 /// (mirrors the Python `decode_slot0`).
 ///
-/// The v3-family returns differ in tail width — Uniswap/Pancake carry seven
-/// words, the Aerodrome Slipstream pools six — but every variant shares the
-/// same leading `(uint160 sqrtPriceX96, int24 tick)` static prefix, so decode
-/// that prefix directly instead of the full typed return.
+/// The v3-family returns share the leading `(uint160 sqrtPriceX96, int24
+/// tick)` static prefix; the tails differ in width (Uniswap/Pancake seven
+/// words, the Aerodrome Slipstream pools six — `ICLPoolState` has no
+/// `feeProtocol` field). Static tuples are prefix-positioned, so decode the
+/// shared prefix with the typed form and ignore the tail.
 ///
 /// # Errors
 ///
 /// Returns [`ProviderError::DecodingError`] on a payload shorter than the
 /// two-word prefix.
 pub fn decode_slot0(bytes: &[u8]) -> ProviderResult<(U256, I256)> {
-    if bytes.len() < 64 {
-        return Err(ProviderError::DecodingError {
-            message: format!(
-                "slot0 decode: expected at least 64 bytes of return data, got {}",
-                bytes.len()
-            ),
-        });
-    }
-    let sqrt_price_x96 = U256::from_be_slice(&bytes[..32]);
-    // int24 is right-aligned in its word and sign-extended by the ABI; taking
-    // the low four bytes as i32 reproduces the sign the encoder wrote.
-    let tick = widen_int24(i32::from_be_bytes([
-        bytes[60], bytes[61], bytes[62], bytes[63],
-    ]));
-    Ok((sqrt_price_x96, tick))
+    let (sqrt_price_x96, tick) =
+        <(alloy::primitives::U160, alloy::primitives::aliases::I24) as alloy::sol_types::SolValue>::abi_decode(bytes)
+            .map_err(|e| ProviderError::DecodingError {
+                message: format!("slot0 decode: {e}"),
+            })?;
+    Ok((U256::from(sqrt_price_x96), widen_int24(tick.as_i32())))
 }
 
 /// Encode the `liquidity()` calldata (no args).
