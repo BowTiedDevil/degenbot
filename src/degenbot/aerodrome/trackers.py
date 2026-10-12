@@ -79,7 +79,11 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
                 silent=silent,
                 **(pool_class_kwargs or {}),
             )
-        except LiquidityPoolError as exc:
+        except (LiquidityPoolError, TypeError) as exc:
+            # TypeError: post-ADR-005 the pool classes refuse direct
+            # construction (Bot.build_pool and the test factories are the
+            # supported flows) — surface that as this tracker's documented
+            # creation failure instead of leaking the TypeError.
             raise PoolCreationFailed(
                 message=f"Could not build V2 pool {pool_address}: {exc}",
             ) from exc
