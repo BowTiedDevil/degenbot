@@ -143,7 +143,7 @@ RUN npm install -g agent-browser
 RUN agent-browser install --with-deps
 RUN npx skills add vercel-labs/agent-browser -g --agent pi --yes
 
-RUN go install github.com/sandover/ergo/cmd/ergo@latest
+RUN go install github.com/sandover/ergo/v6/cmd/ergo@latest
 
 # prek (git hook runner) as a global uv tool. Lands in ~/.local/bin via the
 # uv tool bin dir (already on PATH via ENV above). Baked into the image for
