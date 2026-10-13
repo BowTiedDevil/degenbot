@@ -96,7 +96,7 @@ impl WalkMemoState {
                 self.negatives_played += 1;
                 // Soundness: the cached-negative skip rides the same
                 // exact-key invariant positive hits rely on —
-                // `walk_path_fingerprint` folds the full per-range state,
+                // `walk_cl_path_fingerprint` folds the full per-range state,
                 // cfg is fixed per engine lifetime, and env is a pure
                 // derivation of hop state + cfg (path_bound_lines).
                 // Identical inputs -> identical unprofitable outcome.
@@ -348,7 +348,7 @@ fn mix_u256(acc: &mut u64, v: U256) {
 }
 
 /// Fold one CL sequence's per-range state into the two lanes — the EXACT
-/// mixing body [`walk_path_fingerprint`] folds per position: the
+/// mixing body [`walk_cl_path_fingerprint`] folds per position: the
 /// empty-sequence tag, the full per-range state (liquidity, prices, gamma,
 /// swap direction) into lane_a, and the derived gross/cross accumulators +
 /// every word-boundary price into lane_b. The `gross`/`cross` accumulators
@@ -412,53 +412,39 @@ fn fold_v2_hop(lane_a: &mut u64, lane_b: &mut u64, hop: &IntHopState) {
     mix_u256(lane_b, hop.reserve_out);
 }
 
-/// 128-bit content fingerprint of the path composition: one lane folds hop
-/// order and the full per-range state (liquidity, prices, gamma, swap
-/// direction), the other folds the derived capacity fields (gross/output
-/// pairs) and every word-boundary price, so two distinct compositions that
-/// collapse one lane cannot collapse both. The crossing tables + word
-/// profiles are pure deterministic derivations of the sequence, so this
-/// fingerprint is the EXACT correctness key for a cached result.
+/// The unified entry's memo key for an all-CL composition: the mixed key
+/// projected over CL-only positions. Production folds every all-CL path
+/// through this projection (the all-CL-only key was retired with the
+/// duplicated solve body), so the fingerprint suites pin exactly this fold.
+#[cfg(test)]
 #[must_use]
-pub(crate) fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
-    let mut lane_a: u64 = 0xCBF2_9CE4_8422_2325;
-    let mut lane_b: u64 = 0x6E99_B980_B247_C7F6;
-    let mut gross = U256::ZERO;
-    let mut cross = U256::ZERO;
-    for (i, seq) in sequences.iter().enumerate() {
-        mix_u256(&mut lane_a, U256::from((i as u64).wrapping_add(3)));
-        mix_u256(&mut lane_b, U256::from((i as u64).wrapping_add(5)));
-        fold_sequence_ranges(&mut lane_a, &mut lane_b, &mut gross, &mut cross, seq);
-    }
-    (u128::from(lane_a) << 64) | u128::from(lane_b)
+pub(crate) fn walk_cl_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
+    let v2_hops: Vec<Option<IntHopState>> = sequences.iter().map(|_| None).collect();
+    let cl_sequences: Vec<Option<&IntV3TickRangeSequence>> =
+        sequences.iter().map(|s| Some(*s)).collect();
+    let hop_order = vec![false; sequences.len()];
+    walk_mixed_path_fingerprint(&v2_hops, &cl_sequences, &hop_order)
 }
 
-/// 128-bit content fingerprint of a MIXED V2+CL path composition — the
-/// mixed entry's (`solve_mixed_piecewise`) exact correctness key for the
-/// cross-block memo, same contract as [`walk_path_fingerprint`]: the
-/// crossing tables + word profiles are pure derivations of the sequence,
-/// cfg is fixed per engine lifetime, and env (`&[RefineBound]`, the
+/// 128-bit content fingerprint of a path composition — the unified solve
+/// entry's (`solve_mixed_piecewise`) exact correctness key for the cross-block
+/// memo: the crossing tables + word profiles are pure derivations of the
+/// sequence, cfg is fixed per engine lifetime, and env (`&[RefineBound]`, the
 /// kernel-window bounds) is a pure derivation of hop state + cfg (the bounds
 /// derive from the envelope's composed `PathBoundLines`, folding the V2
 /// reserves and fee params via the family line builders' `hop_lines_and_cap` →
 /// `mobius_lines`), so folding every position's determining state makes the key
-/// exact for mixed compositions.
+/// exact for every composition — all-CL, V2+CL mixed, and pure-V2 alike. One
+/// entry, one key space: fingerprint identity is composition identity.
 ///
-/// Per position it folds the hop index (the same `(i + 3)` / `(i + 5)` lane
-/// mixing [`walk_path_fingerprint`] uses), a V2/CL discriminator tag, and
-/// the hop state: V2 via [`fold_v2_hop`] (every field
-/// `PieceView::constant_product` consumes), CL via [`fold_sequence_ranges`]
-/// (the same per-range folding the all-CL key performs — no forked mixing),
-/// with the `gross`/`cross` accumulators threaded path-wide across the CL
-/// positions exactly as [`walk_path_fingerprint`] threads them; V2
-/// positions contribute nothing to them (the original CL-only accumulation
-/// discipline). The mixed keys are transient in-memory memo keys — a value
-/// shift here is inert.
-///
-/// The all-CL and mixed fingerprints cover different composition spaces
-/// (both entries may share one `WalkMemo` handle — fingerprint identity is
-/// composition identity), so no cross-compatibility between the two keys is
-/// required or intended. The u128 two-lane output discipline is kept.
+/// Per position it folds the hop index (the `(i + 3)` / `(i + 5)` lane
+/// mixing), a V2/CL discriminator tag, and the hop state: V2 via
+/// [`fold_v2_hop`] (every field `PieceView::constant_product` consumes), CL
+/// via [`fold_sequence_ranges`] (every field the CL walk consumes), with the
+/// `gross`/`cross` accumulators threaded path-wide across the CL positions;
+/// V2 positions contribute nothing to them (the original CL-only
+/// accumulation discipline). The keys are transient in-memory memo keys — a
+/// value shift here is inert. The u128 two-lane output discipline is kept.
 #[must_use]
 pub(crate) fn walk_mixed_path_fingerprint(
     v2_hops: &[Option<IntHopState>],
@@ -560,7 +546,7 @@ mod tests {
     /// The all-CL memo key for a single-sequence path — what the sweep pins
     /// (folded from the sequence directly; no stored per-hop value remains).
     fn prepared_key(seq: &IntV3TickRangeSequence) -> u128 {
-        walk_path_fingerprint(&[seq])
+        walk_cl_path_fingerprint(&[seq])
     }
 
     /// Perturb one CL-range field and assert the folded key moves.
@@ -617,24 +603,24 @@ mod tests {
         )]);
         // Hop order is part of the key.
         assert_ne!(
-            walk_path_fingerprint(&[&a, &b]),
-            walk_path_fingerprint(&[&b, &a])
+            walk_cl_path_fingerprint(&[&a, &b]),
+            walk_cl_path_fingerprint(&[&b, &a])
         );
         // Position index is part of the key.
         assert_ne!(
-            walk_path_fingerprint(&[&a]),
-            walk_path_fingerprint(&[&a, &b])
+            walk_cl_path_fingerprint(&[&a]),
+            walk_cl_path_fingerprint(&[&a, &b])
         );
         // A duplicated hop must not fold to a distinct pair's key.
         assert_ne!(
-            walk_path_fingerprint(&[&a, &a]),
-            walk_path_fingerprint(&[&a, &b])
+            walk_cl_path_fingerprint(&[&a, &a]),
+            walk_cl_path_fingerprint(&[&a, &b])
         );
         // The empty-sequence tag is distinct from a populated sequence.
         let empty = make_seq(vec![]);
         assert_ne!(
-            walk_path_fingerprint(&[&empty]),
-            walk_path_fingerprint(&[&a])
+            walk_cl_path_fingerprint(&[&empty]),
+            walk_cl_path_fingerprint(&[&a])
         );
     }
 

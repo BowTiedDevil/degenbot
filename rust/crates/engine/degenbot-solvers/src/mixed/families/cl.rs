@@ -95,54 +95,34 @@ pub(crate) fn solve_walkable_path_int(
     // side; the kernel names no envelope type).
     let window = walk_env.map(|env| refine_bounds(&env.lines));
 
-    let all_cl = resolved.hops.iter().all(|h| h.as_int_sequence().is_some());
-
-    let out = if all_cl {
-        // The projection's prepared hop IS the all-CL entry's intake, so clone
-        // it (three `Arc` bumps per hop) rather than translate it to any other
-        // shape.
-        let Some(prepared) = resolved
-            .hops
-            .iter()
-            .map(|h| h.as_prepared_cl_hop().cloned())
-            .collect::<Option<Vec<_>>>()
-        else {
-            return (None, crate::cl::WalkStats::default());
-        };
-        crate::cl::solve_cl_piecewise(
-            &prepared,
-            gate.walk_memo(),
-            gate.telemetry(),
-            &gate.runtime,
-            window.as_deref(),
-        )
-    } else {
-        // ONE borrowed hop view, one entry per position: V2 borrows the
-        // resolved state; CL borrows the projection's prepared value (the
-        // tick-range sequence paired with its `Arc` tables), so the positional
-        // pairing the parallel slices needed is structural and nothing is
-        // derived or rebuilt per solve.
-        let mut hops: Vec<crate::cl::MixedHopView<'_>> = Vec::with_capacity(resolved.hops.len());
-        for h in &resolved.hops {
-            match h {
-                ResolvedHop::V2 { state } => hops.push(crate::cl::MixedHopView::V2(state)),
-                ResolvedHop::V3 { prepared } | ResolvedHop::V4 { prepared } => {
-                    hops.push(crate::cl::MixedHopView::Cl(prepared));
-                }
-                // Not a walkable V2/CL path (the caller routes other families
-                // elsewhere); refuse rather than solve a partial composition.
-                _ => return (None, crate::cl::WalkStats::default()),
+    // ONE route for every path this arm accepts (all-CL included): one
+    // borrowed hop view per position — V2 borrows the resolved state; CL
+    // borrows the projection's prepared value (the tick-range sequence paired
+    // with its `Arc` tables), so the positional pairing is structural and
+    // nothing is cloned, derived, or rebuilt per solve. The all-CL dispatch
+    // branch this replaces cloned the prepared hops (three `Arc` bumps per
+    // hop) into a second solve body; the intake shape survives only as the
+    // forwarding `solve_cl_piecewise` convenience for offline callers.
+    let mut hops: Vec<crate::cl::MixedHopView<'_>> = Vec::with_capacity(resolved.hops.len());
+    for h in &resolved.hops {
+        match h {
+            ResolvedHop::V2 { state } => hops.push(crate::cl::MixedHopView::V2(state)),
+            ResolvedHop::V3 { prepared } | ResolvedHop::V4 { prepared } => {
+                hops.push(crate::cl::MixedHopView::Cl(prepared));
             }
+            // Not a walkable V2/CL path (the caller routes other families
+            // elsewhere); refuse rather than solve a partial composition.
+            _ => return (None, crate::cl::WalkStats::default()),
         }
+    }
 
-        crate::cl::solve_mixed_piecewise(
-            &hops,
-            gate.walk_memo(),
-            gate.telemetry(),
-            &gate.runtime,
-            window.as_deref(),
-        )
-    };
+    let out = crate::cl::solve_mixed_piecewise(
+        &hops,
+        gate.walk_memo(),
+        gate.telemetry(),
+        &gate.runtime,
+        window.as_deref(),
+    );
 
     (
         out.result.map(|(optimal_input, profit, hop_outputs)| {

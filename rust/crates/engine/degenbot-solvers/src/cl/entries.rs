@@ -4,7 +4,7 @@ use super::active_set::{solve_active_set_path, PieceView, WalkOutcome};
 use super::crossings::{
     build_cl_crossing_table, build_cl_word_profiles_from_crossings, cl_walk_hop_cached,
 };
-use super::memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, MemoProbe, WalkMemo};
+use super::memo::{walk_mixed_path_fingerprint, MemoProbe, WalkMemo};
 use super::tally::WalkTelemetry;
 use super::window::RefineBound;
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
@@ -135,14 +135,23 @@ pub fn derive_and_solve_cl_piecewise(
     solve_cl_piecewise(&prepared, None, None, cfg, None)
 }
 
-/// THE all-CL solve entry: one interface taking the projection's prepared hops
-/// and the caller's engine-owned cross-block memo handle.
+/// The all-CL intake convenience: the projection's prepared hops plus the
+/// caller's engine-owned cross-block memo handle, forwarded to the ONE solve
+/// body ([`solve_mixed_piecewise`]) over borrowed [`MixedHopView::Cl`] views.
+/// This is an intake shape, not a second solve body — the memo fold, hop
+/// assembly, and walk are the unified entry's — and its contract matches the
+/// unified entry's exactly (a path shorter than two hops is refused).
 ///
 /// `prepared[k]` IS the hop — the tick-range sequence it was derived from plus
 /// the crossing table and word profiles built from it (built once per
 /// `(pool, direction)` in `HopProjectionCache`, shared via `Arc` across paths)
 /// — so the table source and the tables travel as one value and no positional
 /// re-derivation is needed.
+///
+/// Memo keys are the unified entry's: a CL-only composition folds through
+/// [`walk_mixed_path_fingerprint`] like every other composition (the key
+/// values are transient in-memory memo keys; the all-CL-only key this
+/// replaces was retired with the duplicated solve body).
 #[must_use]
 #[hotpath::measure(label = "cl_solve.int_solve_cl_path")]
 pub fn solve_cl_piecewise(
@@ -155,48 +164,8 @@ pub fn solve_cl_piecewise(
     // envelope type reaches into the kernel.
     env: Option<&[RefineBound]>,
 ) -> WalkOutcome {
-    if prepared.is_empty() {
-        return WalkOutcome::none();
-    }
-
-    // Cross-block composition memo: the fingerprint is the exact correctness
-    // key (the tables are pure derivations of their sequence), so an identical
-    // key cannot carry a stale result. The probe runs BEFORE hop assembly — the
-    // key needs only the hops' sequences, so a `Hit` or `Negative` returns
-    // without paying the `PieceView` builds. `None` memo = disabled run never
-    // pays the fingerprint or the lock.
-    let mut commit = None;
-    if let Some(memo) = memo {
-        if memo.active() {
-            let seqs: Vec<&IntV3TickRangeSequence> =
-                prepared.iter().map(|h| h.int_seq.as_ref()).collect();
-            let fp = walk_path_fingerprint(&seqs);
-            if let Some(outcome) = memo_replay(memo, fp) {
-                return outcome;
-            }
-            commit = Some((memo, fp));
-        }
-    }
-
-    let outcome = solve_cl_piecewise_inner(prepared, tele, cfg, env);
-    if let Some((memo, fp)) = commit {
-        memo_commit(memo, fp, &outcome);
-    }
-    outcome
-}
-
-/// The memo-less solve body (the memo hook is the only difference).
-fn solve_cl_piecewise_inner(
-    prepared: &[PreparedClHop],
-    tele: Option<&WalkTelemetry>,
-    cfg: &SolveRuntimeConfig,
-    env: Option<&[RefineBound]>,
-) -> WalkOutcome {
-    let hops: Vec<PieceView> = prepared
-        .iter()
-        .map(|h| cl_walk_hop_cached(h.int_seq.as_ref(), Some(&h.crossings), Some(&h.profiles)))
-        .collect();
-    solve_active_set_path(&hops, cfg, env, tele)
+    let hops: Vec<MixedHopView<'_>> = prepared.iter().map(MixedHopView::Cl).collect();
+    solve_mixed_piecewise(&hops, memo, tele, cfg, env)
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +184,8 @@ fn solve_cl_piecewise_inner(
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 ///
-/// THE mixed V2+CL solve entry. `memo` (mirroring [`solve_cl_piecewise`]
+/// THE solve entry — the ONE solve body for every walkable composition
+/// (all-CL, V2+CL mixed, pure-V2). `memo` (mirroring [`solve_cl_piecewise`]
 /// position-for-position) is the caller's engine-owned cross-block
 /// composition memo: the entry probes by `walk_mixed_path_fingerprint`
 /// BEFORE hop assembly — the key needs only the hop states, sequences, and

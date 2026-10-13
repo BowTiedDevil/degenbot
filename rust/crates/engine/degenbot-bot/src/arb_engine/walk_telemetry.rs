@@ -358,7 +358,11 @@ mod tests {
     /// is exactly one probe + one cache consult + a commit.
     fn solve_once(memo: &WalkMemo, prepared: &PreparedClHop) {
         let cfg = SolveRuntimeConfig::default();
-        let _ = solve_cl_piecewise(std::slice::from_ref(prepared), Some(memo), None, &cfg, None);
+        // TWO hops: the unified entry's contract refuses paths shorter than
+        // two hops (the all-CL intake forwards that same contract), and one
+        // call must stay exactly one probe + one cache consult + a commit.
+        let two = [prepared.clone(), prepared.clone()];
+        let _ = solve_cl_piecewise(&two, Some(memo), None, &cfg, None);
     }
 
     #[test]

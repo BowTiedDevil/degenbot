@@ -919,11 +919,13 @@ mod tests {
             .collect()
     }
 
-    /// The all-CL intake: resolve -> prepared hops -> `solve_cl_piecewise`.
+    /// The all-CL intake: resolve -> prepared hops -> the forwarding all-CL
+    /// convenience (`solve_cl_piecewise`, which builds views and calls the one
+    /// solve body).
     fn all_cl_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
         // The projection's derivation value rides each CL hop and IS the
-        // entry's intake now: clone the hop (three `Arc` bumps) rather than
-        // translate it to the mixed entry's table shape.
+        // intake's shape: clone the hop (three `Arc` bumps) as the caller side
+        // of callers that own prepared hops.
         let prepared: Vec<_> = r
             .hops
             .iter()
@@ -1012,6 +1014,27 @@ mod tests {
             on, off,
             "memo ON/OFF solves are byte-equal on the all-CL intake"
         );
+    }
+
+    /// Path arity is layered: a single-hop input projects nothing at
+    /// resolution, so no shorter-than-two path ever reaches a solve surface
+    /// through this intake — and the intake's unified contract refuses one
+    /// regardless (the retired all-CL body used to solve single hops).
+    #[test]
+    fn all_cl_solve_refuses_a_single_hop_path() {
+        let mut core = BotState::new();
+        let a = register_v3_at(
+            &mut core,
+            [0xa1u8; 20],
+            U256::from(71_305_346_262_837_903_834_189_555_302u128),
+        );
+        let refs = [v3_ref(a, true)];
+        let cache = HopProjectionCache::new();
+        let mut r = ResolvedMixedPath::default();
+        let mut pc = 0u64;
+        assert!(resolve_hops(&core, &refs, &mut r, &cache, Some(&mut pc), true).is_empty());
+        assert_eq!(pc, 0, "a single hop is not a projectable path");
+        assert!(all_cl_solve(&r).is_none(), "single-hop inputs never solve");
     }
 
     /// Memo ON vs OFF parity on a mixed V2 + V4 path (V4 zfo=true buys

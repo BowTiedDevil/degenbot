@@ -3,11 +3,13 @@
 // Pedantic + restriction lints that production code denies are relaxed here.
 #![expect(clippy::print_stderr, clippy::print_stdout, clippy::too_many_lines)]
 
-//! Entry-level A/B readout: today's `all-CL` dispatch route vs the unified
-//! route (`all-CL` workloads through the mixed entry), on real captured
-//! paths. This is one of the two bench inputs the unify-or-split decision
-//! needs; the other is the functions-timing run over the `cl_solve.*` labels
-//! (same binary under `--features hotpath`, see the usage block).
+//! Entry-level A/B readout: the retained `all-CL` intake convenience vs
+//! the unified solve entry directly, on real captured paths. This harness
+//! was the entry-level bench input for the solve-entry unification decision
+//! (the other was the functions-timing run over the `cl_solve.*` labels —
+//! same binary under `--features hotpath`, see the usage block); post-
+//! unification the two arms share ONE solve body, so the ratio measures the
+//! intake shape alone and the parity gate pins the forwarding contract.
 //!
 //! Usage:
 //!
@@ -27,21 +29,20 @@
 //! Arms measured per `all-CL` path (interleaved reps, order alternates per
 //! rep):
 //!
-//! - Arm "today": the production branch route in `mixed::families::cl` — the
-//!   prepared hops are CLONED from the resolved path (three `Arc` bumps per
-//!   hop) and handed to `solve_cl_piecewise`.
-//! - Arm "unified": one borrowed `MixedHopView::Cl` per position handed to
-//!   `solve_mixed_piecewise` — the route an `all-CL`-unifying change would
-//!   take.
+//! - Arm "intake": the retained `all-CL` convenience route — the prepared
+//!   hops CLONED (three `Arc` bumps per hop, the caller shape this harness
+//!   models) and handed to the forwarding `solve_cl_piecewise`.
+//! - Arm "direct": one borrowed `MixedHopView::Cl` per position handed to
+//!   `solve_mixed_piecewise`, the ONE solve body both routes share.
 //!
 //! Parity gate: both arms must return byte-equal
 //! `(optimal_input, profit, hop_outputs)`; any divergence fails the process
-//! (exit 1) — unification is only a pure refactor if this holds.
+//! (exit 1) — the forwarding intake contract.
 //!
 //! The row census answers "which entry is hotter": each captured row is
-//! classified by the route the production branch would pick (all hops CL ->
-//! `all-CL` entry; any `V2` hop -> mixed entry; other families -> refused
-//! here).
+//! classified by the route the pre-unification dispatch branch picked (all
+//! hops CL -> `all-CL` entry; any `V2` hop -> mixed entry; other families ->
+//! refused here) — the decision record's traffic-mix input.
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
@@ -232,8 +233,8 @@ fn main() {
             let today_first = rep % 2 == 0;
             for arm_today in [today_first, !today_first] {
                 if arm_today {
-                    // Today's branch route: clone (three Arc bumps per hop),
-                    // then the all-CL entry.
+                    // The intake route: clone (three Arc bumps per hop),
+                    // then the forwarding all-CL convenience.
                     let t0 = std::time::Instant::now();
                     let cloned: Vec<PreparedClHop> = prepared.clone();
                     let out = solve_cl_piecewise(&cloned, Some(&memo), None, &cfg, None);
@@ -329,13 +330,13 @@ fn main() {
     println!();
     println!("                                 total_us   path_p50_us  path_p95_us");
     println!(
-        "arm today   (clone + all-CL)  {:>10} {:>12} {:>11}",
+        "arm intake (clone + forward) {:>10} {:>12} {:>11}",
         total_today,
         median_us(&mut med_today),
         p95_us(&mut p95_today)
     );
     println!(
-        "arm unified (borrow + mixed)  {:>10} {:>12} {:>11}",
+        "arm direct (borrow + body)   {:>10} {:>12} {:>11}",
         total_unified,
         median_us(&mut med_unified),
         p95_us(&mut p95_unified)

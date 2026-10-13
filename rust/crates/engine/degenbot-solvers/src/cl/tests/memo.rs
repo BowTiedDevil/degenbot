@@ -1,7 +1,7 @@
 //! WalkMemo behavioral tests: the three-state probe, negative/hit replay,
 //! census-scoped eviction across epochs, the monotone-epoch reorg-rewind
 //! contract, and the negative-entries gauge - plus the mixed V2+CL memo
-//! twins and the `walk_path_fingerprint` separation tests that pin the
+//! twins and the `walk_cl_path_fingerprint` separation tests that pin the
 //! memo key's content stability.
 
 //! Split out of `cl::tests` (the `refinements` precedent); shared helpers
@@ -12,7 +12,7 @@ use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 
-use crate::cl::memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, MemoProbe, WalkMemo};
+use crate::cl::memo::{walk_cl_path_fingerprint, walk_mixed_path_fingerprint, MemoProbe, WalkMemo};
 use crate::cl::{solve_cl_piecewise, solve_mixed_piecewise, MixedHopView, PreparedClHop};
 use crate::runtime::SolveRuntimeConfig;
 
@@ -28,19 +28,19 @@ fn walk_fingerprint_is_content_stable_and_separates_compositions() {
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
     let sv = [&seq1, &seq2];
 
-    let fp_a = walk_path_fingerprint(&sv);
-    let fp_b = walk_path_fingerprint(&sv);
+    let fp_a = walk_cl_path_fingerprint(&sv);
+    let fp_b = walk_cl_path_fingerprint(&sv);
     assert_eq!(fp_a, fp_b, "fingerprint must be a pure function of content");
 
     // Reversed hop order is a different composition.
-    let fp_rev = walk_path_fingerprint(&[&seq2, &seq1]);
+    let fp_rev = walk_cl_path_fingerprint(&[&seq2, &seq1]);
     assert_ne!(fp_a, fp_rev, "hop order must separate compositions");
 
     // A single-field state change must change the key.
     let mut h1 = hop1.clone();
     h1.liquidity += 1;
     let seq1b = IntV3TickRangeSequence::new(vec![h1]).unwrap();
-    let fp_changed = walk_path_fingerprint(&[&seq1b, &seq2]);
+    let fp_changed = walk_cl_path_fingerprint(&[&seq1b, &seq2]);
     assert_ne!(fp_a, fp_changed, "a liquidity delta must change the key");
 }
 
@@ -52,8 +52,8 @@ fn walk_fingerprint_separates_swap_direction() {
     let seq = IntV3TickRangeSequence::new(vec![hop]).unwrap();
     let seq_flipped = IntV3TickRangeSequence::new(vec![flipped]).unwrap();
     assert_ne!(
-        walk_path_fingerprint(&[&seq]),
-        walk_path_fingerprint(&[&seq_flipped]),
+        walk_cl_path_fingerprint(&[&seq]),
+        walk_cl_path_fingerprint(&[&seq_flipped]),
         "a direction flip must change the key"
     );
 }
@@ -69,8 +69,8 @@ fn walk_fingerprint_separates_word_boundary_lists() {
     let seq_a = IntV3TickRangeSequence::new(vec![tail_a]).unwrap();
     let seq_b = IntV3TickRangeSequence::new(vec![tail_b]).unwrap();
     assert_ne!(
-        walk_path_fingerprint(&[&seq_a]),
-        walk_path_fingerprint(&[&seq_b]),
+        walk_cl_path_fingerprint(&[&seq_a]),
+        walk_cl_path_fingerprint(&[&seq_b]),
         "a later word boundary must change the key"
     );
 }
@@ -673,5 +673,84 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
     assert!(
         replayed.stats.sims > 0,
         "the changed composition must re-run the walk"
+    );
+}
+
+/// Unification pin: the all-CL intake (`solve_cl_piecewise`) is a forwarding
+/// convenience over the ONE solve body — its outcomes must be byte-equal to
+/// the unified entry's on the same prepared hops, in every memo stance.
+#[test]
+fn all_cl_intake_forwards_to_the_unified_entry_byte_exact() {
+    // The profitable late-liquidity fixture.
+    let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+    let mut liquidities = vec![1_000_000_000u128; 10];
+    liquidities.push(10_000_000_000_000u128);
+    liquidities.push(1_000_000_000u128);
+    let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+    let prepared = [
+        PreparedClHop::derive(std::sync::Arc::new(seq1.clone())),
+        PreparedClHop::derive(std::sync::Arc::new(seq2.clone())),
+    ];
+    let views: Vec<MixedHopView<'_>> = prepared.iter().map(MixedHopView::Cl).collect();
+    let cfg = SolveRuntimeConfig::default();
+
+    // Stance 1: no memo handle.
+    let via_intake = solve_cl_piecewise(&prepared, None, None, &cfg, None);
+    let direct = solve_mixed_piecewise(&views, None, None, &cfg, None);
+    assert!(via_intake.result.is_some(), "fixture must be profitable");
+    assert_eq!(
+        via_intake.result, direct.result,
+        "no-memo results must match"
+    );
+    assert_eq!(
+        via_intake.stats.sims, direct.stats.sims,
+        "no-memo walk cost must match"
+    );
+
+    // Stance 2: memo handle present, inactive.
+    let off = WalkMemo::new(false, false);
+    let via_off = solve_cl_piecewise(&prepared, Some(&off), None, &cfg, None);
+    let direct_off = solve_mixed_piecewise(&views, Some(&off), None, &cfg, None);
+    assert_eq!(via_off.result, direct_off.result);
+
+    // Stance 3: active memos — SEPARATE handles so both routes Miss and walk
+    // (one shared handle would turn the second call into a cache hit).
+    let memo_a = WalkMemo::new(true, true);
+    memo_a.begin_block(1);
+    let memo_b = WalkMemo::new(true, true);
+    memo_b.begin_block(1);
+    let via_active = solve_cl_piecewise(&prepared, Some(&memo_a), None, &cfg, None);
+    let direct_active = solve_mixed_piecewise(&views, Some(&memo_b), None, &cfg, None);
+    assert_eq!(via_active.result, direct_active.result);
+    assert_eq!(via_active.stats.sims, direct_active.stats.sims);
+}
+
+/// Contract pin: both solve surfaces refuse paths shorter than two hops (the
+/// unified entry's `len < 2` guard; the all-CL intake forwards that contract).
+#[test]
+fn both_solve_entries_refuse_paths_shorter_than_two_hops() {
+    let hop = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
+    let seq = IntV3TickRangeSequence::new(vec![hop]).unwrap();
+    let prepared = [PreparedClHop::derive(std::sync::Arc::new(seq.clone()))];
+    let views = [MixedHopView::Cl(&prepared[0])];
+    let cfg = SolveRuntimeConfig::default();
+
+    assert!(
+        solve_cl_piecewise(&prepared, None, None, &cfg, None)
+            .result
+            .is_none(),
+        "the all-CL intake must refuse a single hop"
+    );
+    assert!(
+        solve_mixed_piecewise(&views, None, None, &cfg, None)
+            .result
+            .is_none(),
+        "the unified entry must refuse a single hop"
+    );
+    assert!(
+        solve_cl_piecewise(&[], None, None, &cfg, None)
+            .result
+            .is_none(),
+        "the all-CL intake must refuse an empty path"
     );
 }

@@ -557,3 +557,32 @@ entries — non-discriminating on this corpus; the guard asymmetry
   more capture would refine the mix input, not the decision — the decision
   turned on the tax being unmeasurable), and any ergo state change beyond
   closing A47GNH and opening XW3H5V.
+
+### Unification landed (ergo XW3H5V)
+
+The scoped replacement landed: `mixed::families/cl.rs` carries ONE route for
+every path the arm accepts (one borrowed `MixedHopView` per position into the
+unified body — the prepared-hop clone is gone), `solve_cl_piecewise` is a
+forwarding intake convenience, and the duplicated all-CL solve body and its
+all-CL-only fingerprint are retired (CL-only compositions fold through
+`walk_mixed_path_fingerprint`: one entry, one key space). The contract is
+uniform — paths shorter than two hops are refused at every solve surface,
+pinned in the solvers tests and at the substrate intake (whose pin also
+records that resolution projects nothing for a single-hop input, making the
+arity layering explicit).
+
+Post-land harness check (the "intake" arm is now the forwarding intake vs
+the shared body; the parity gate is the forwarding contract):
+
+| corpus | paths | parity | intake (µs) | direct (µs) | direct/intake |
+|---|---|---|---|---|---|
+| `heavy_cl_solve_captures` | 156 | 0 div | 607,515 | 603,044 | 0.9926x |
+| `live_capture_loop17` | 217 | 0 div | 23,514,828 | 23,676,046 | 1.0068x |
+
+Same noise band as the decision measurements, 0 parity divergences — the
+intake shape costs nothing measurable either. The tables above stand as the
+historical A/B (two separate solve bodies then); nothing in the decision
+changes. One label-semantics note for future functions-timing runs:
+`cl_solve.int_solve_cl_path` now measures the forwarding intake (inclusive
+of the body's span), and `cl_solve.exact_solve_mixed_path_n` the one solve
+body for every composition.
