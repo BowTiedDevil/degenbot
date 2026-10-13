@@ -1096,11 +1096,10 @@ check-no-sqlalchemy:
 #
 # Regeneration is deterministic: the same cdylib produces a byte-identical
 # tree, so the second of two consecutive runs must be diff-empty (the drift
-# gate below asserts this continuously). After regenerating, the installed
-# development extension still carries the pre-toggle feature set; only its
-# cargo cache was disturbed — `just dev` restores the canonical build plan,
-# and the receipt gates stay green because the source fingerprint is
-# unchanged.
+# gate below asserts this continuously). The introspected build lands in its
+# own target dir (`<target_dir>/stubgen-inspect`), so it never churns the
+# canonical cache: the installed development extension and `just dev`'s build
+# plan are untouched, and no follow-up `just dev` is needed.
 #
 # `just gen-stubs --check` (used by tests/ffi/test_ffi_stub_drift.py)
 # generates into a temp dir and FAILS on any diff against the committed tree
@@ -1122,13 +1121,18 @@ gen-stubs check="":
         *) echo "usage: just gen-stubs [--check]" >&2; exit 2 ;;
     esac
     # The generator parses introspection chunks statically (object-file
-    # symbols), so the introspected build is never loaded or installed.
-    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot_rs --features experimental-inspect
-    cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-stubgen
+    # symbols), so the introspected build is never loaded or installed. Build it
+    # into its own target dir: `experimental-inspect` is a distinct feature set
+    # from `dev-features`, so sharing the canonical dir would churn its
+    # fingerprints. The first run pays a from-scratch workspace compile; later
+    # runs are incremental.
+    inspect_dir="{{ target_dir }}/stubgen-inspect"
+    CARGO_TARGET_DIR="$inspect_dir" cargo build --locked --manifest-path rust/Cargo.toml -p degenbot_rs --features experimental-inspect
+    CARGO_TARGET_DIR="$inspect_dir" cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-stubgen
     out="$(mktemp -d)"
     trap 'rm -rf "$out"' EXIT
-    {{ target_dir }}/debug/degenbot-stubgen \
-        {{ target_dir }}/debug/libdegenbot_rs.so _ffi "$out"
+    "$inspect_dir/debug/degenbot-stubgen" \
+        "$inspect_dir/debug/libdegenbot_rs.so" _ffi "$out"
     # Pipeline steps: ruff-format then ruff-check-fix the generated tree
     # BEFORE the diff/copy branch. The generator's raw signatures (long
     # single-line defs, `X |None`, unsorted imports) are not format- or
