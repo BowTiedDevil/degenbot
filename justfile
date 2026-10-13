@@ -1,6 +1,13 @@
 # Justfile for degenbot development
 # https://github.com/casey/just
 
+# Cargo target directory — per-environment, like UV_PROJECT_ENVIRONMENT and
+# PYTHONPYCACHEPREFIX. The repo is bind-mounted between host and container, so a
+# shared target dir makes the two sides fight over cargo fingerprints and
+# artifacts; point each environment at its own dir (container: devcontainer.json;
+# host: .envrc). Defaults to rust/target for CI and a bare checkout.
+target_dir := env_var_or_default("CARGO_TARGET_DIR", "rust/target")
+
 # Default recipe - show available commands
 default:
     @just --list
@@ -140,7 +147,7 @@ test-rust: test-standalone
 
 # Run the cargo workspace suite under cargo-nextest: per-process test
 # isolation, cross-binary parallelism, and per-test durations as JUnit XML at
-# rust/target/nextest/ci/nextest-ci.junit.xml. `--no-fail-fast` so one failing
+# <cargo target dir>/nextest/ci/nextest-ci.junit.xml. `--no-fail-fast` so one failing
 # test never aborts the whole run.
 # Requires cargo-nextest: cargo install --locked cargo-nextest
 # Extra args forward to `cargo nextest run` (e.g. `just test-rust-nextest -E 'test(foo)'`).
@@ -160,7 +167,7 @@ test-timing top='30':
     uv run --no-sync python - <<'EOF'
     import statistics, xml.etree.ElementTree as ET
     top = int("{{top}}")
-    tree = ET.parse("rust/target/nextest/ci/nextest-ci.junit.xml")
+    tree = ET.parse("{{ target_dir }}/nextest/ci/nextest-ci.junit.xml")
     cases = sorted(
         ((float(tc.get("time")), f"{tc.get('classname')}. {tc.get('name')}") for tc in tree.iter("testcase")),
         reverse=True,
@@ -935,7 +942,11 @@ update-deps:
     set -euo pipefail
     uv run --no-sync python scripts/bump_python_deps.py
     uv lock --upgrade
-    uv sync
+    # --no-install-project: never let uv rebuild the project with default
+    # features (that would clobber the dev-features extension); rebuild it
+    # explicitly via `just dev` instead.
+    uv sync --no-install-project
+    just dev
     cargo upgrade --manifest-path rust/Cargo.toml --incompatible
     cargo update --manifest-path rust/Cargo.toml
 
@@ -1098,8 +1109,8 @@ gen-stubs check="":
     cargo build --locked --manifest-path rust/Cargo.toml -p degenbot-stubgen
     out="$(mktemp -d)"
     trap 'rm -rf "$out"' EXIT
-    rust/target/debug/degenbot-stubgen \
-        rust/target/debug/libdegenbot_rs.so _ffi "$out"
+    {{ target_dir }}/debug/degenbot-stubgen \
+        {{ target_dir }}/debug/libdegenbot_rs.so _ffi "$out"
     # Pipeline steps: ruff-format then ruff-check-fix the generated tree
     # BEFORE the diff/copy branch. The generator's raw signatures (long
     # single-line defs, `X |None`, unsorted imports) are not format- or

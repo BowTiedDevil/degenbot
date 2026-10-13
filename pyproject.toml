@@ -256,6 +256,17 @@ paths = ["src/degenbot"]
 [tool.uv]
 exclude-newer = "14 days"
 link-mode = "copy"
+cache-keys = [
+    # Any uv *project* build (uv build, or a plain uv sync) must invalidate when
+    # a Rust input changes. The test/dev entrypoints build the extension through
+    # maturin (`just dev`) and never rely on uv's project build, but this keeps
+    # `uv build`/`uv sync` from serving a stale cached wheel after a Rust edit.
+    {file = "rust/**/Cargo.toml"},
+    {file = "rust/Cargo.lock"},
+    {file = "rust/crates/**/src/**/*.rs"},
+    {file = "rust/crates/**/build.rs"},
+    {file = ".cargo/**"},
+]
 
 [tool.maturin]
 manifest-path = "rust/crates/shells/degenbot-python/Cargo.toml"

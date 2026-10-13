@@ -204,6 +204,13 @@
     // (/tmp/degenbot-pycache-host, set in the justfile) so the two environments
     // never share a bytecache.
     "PYTHONPYCACHEPREFIX": "/tmp/degenbot-pycache-container",
+
+    // CARGO_TARGET_DIR is deliberately NOT set here: the container keeps the
+    // default bind-mounted rust/target (reusing its large build cache), while
+    // the HOST sets CARGO_TARGET_DIR to ~/.cache/degenbot-target (see .envrc)
+    // so host builds never touch this bind-mounted rust/target. That asymmetry
+    // is what stops host pytest from clobbering the container's cargo state.
+
     // Forward host TZ (if exported) for tools that read the env var directly.
     // Empty on hosts without TZ exported — falls back to bind-mounted
     // /etc/localtime above.

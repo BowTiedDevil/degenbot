@@ -4,7 +4,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-target_dir="$(realpath -m -- "${GC_TARGET_DIR:-$repo_root/rust/target}")"
+target_dir="$(realpath -m -- "${GC_TARGET_DIR:-${CARGO_TARGET_DIR:-$repo_root/rust/target}}")"
 maturin_dir="$target_dir/maturin"
 age="${AGE:-7}"
 

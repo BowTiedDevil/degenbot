@@ -18,7 +18,7 @@
 #                  resolve workspace-member features) unless set explicitly.
 #   COV_FEATURES   features for the instrumented build (default
 #                  degenbot-bot/otel — same rationale as CRAP_FEATURES)
-#   COV_ROOT       output root (default rust/target/coverage)
+#   COV_ROOT       output root (default <cargo target dir>/coverage)
 #   COV_PYTEST_ARGS extra pytest args for the pyo3 arm (always runs the
 #                  pyproject-default deselection; pass e.g. 'tests/abi -q')
 #   LLVM_COV/LLVM_PROFDATA  set explicitly for non-rustup hosts; defaults to
@@ -30,7 +30,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COV_ROOT="${COV_ROOT:-$ROOT/rust/target/coverage}"
+COV_ROOT="${COV_ROOT:-${CARGO_TARGET_DIR:-$ROOT/rust/target}/coverage}"
 mode="${1:?usage: scripts/coverage.sh rust|pyo3|all}"
 shift || true
 
