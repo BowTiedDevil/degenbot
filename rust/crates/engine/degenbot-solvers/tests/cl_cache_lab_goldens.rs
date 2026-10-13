@@ -13,8 +13,8 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_solvers::cl::cache::{strategy_catalog, CacheEvent, ClCacheStrategy};
 use degenbot_solvers::cl::solve_cl_piecewise;
-use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy};
 use serde_json::Value;
 
 const PROFIT_EPS: u128 = 100_000;

@@ -27,8 +27,8 @@ extern crate degenbot_solvers;
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
+use degenbot_solvers::cl::cache::{strategy_catalog, CacheEvent, ClCacheStrategy};
 use degenbot_solvers::cl::{solve_cl_piecewise, PreparedClHop, WalkTelemetry};
-use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy};
 use serde_json::Value;
 
 fn u256(s: &str) -> Result<U256, String> {
@@ -248,7 +248,7 @@ fn main() {
                 CacheEvent::TickCross { .. } => 2,
                 _ => 3,
             };
-            let pre: Vec<degenbot_solvers::cl_cache::BuildCounters> =
+            let pre: Vec<degenbot_solvers::cl::cache::BuildCounters> =
                 catalog.iter().map(|s| s.counters().clone()).collect();
             let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
             let t_ref = std::time::Instant::now();

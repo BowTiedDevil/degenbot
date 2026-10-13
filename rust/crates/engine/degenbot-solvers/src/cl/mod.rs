@@ -1,32 +1,41 @@
-//! Integer-exact V3 tick range representation and Möbius coefficient computation.
+//! The **Concentrated Liquidity Kernel** — the CL family's home and the
+//! library the typed V3/V4 adapters call at the resolve seam.
 //!
-//! Converts V3 concentrated liquidity parameters (L, √P, tick bounds) into
-//! integer effective reserves compatible with the exact Möbius solver
-//! (`exact_mobius_solve`).
+//! GLOSSARY.md "Concentrated Liquidity Kernel": the data-parameterized module
+//! that is the concrete home of everything the concentrated-liquidity solve
+//! shares across the Uniswap V3 and V4 designs — crossing derivation from a
+//! tick-range sequence, the active-set walk over the piecewise-Möbius
+//! segments, the CL hop and path simulation, and the word-profile build over
+//! the prepared hop's tables.
 //!
-//! # V3 Effective Reserves
+//! # Interface
 //!
-//! A V3 tick range is a bounded-product CFMM with virtual reserves:
+//! The kernel's intake is the **prepared hop** (ADR-069 D2): the tick-range
+//! sequence plus the crossing table and word profiles derived from it, built
+//! once per `(pool, direction)` by the projection and shared via `Arc`. The
+//! solve entries take `&[PreparedClHop]` (all-CL) or one [`MixedHopView`] per
+//! position (mixed), so the tables travel with the sequence that produced them
+//! and nothing is re-derived per solve.
 //!
-//! ```text
-//! R₀ + α = L / √P    (token0 virtual reserves, in Q96 integer form)
-//! R₁ + β = L · √P    (token1 virtual reserves, in Q96 integer form)
-//! ```
+//! The kernel is generic over *data*, never over a trait per pool (ADR-059 D6):
+//! there is no trait object on the walk, so the hottest loop in the solver
+//! stays monomorphic. The concrete V3 and V4 designs differ in storage slots,
+//! event shapes, and state reads (slot0 vs state-view, hooks hashed into the
+//! PoolId), not in solve structure, so their adapters stay typed code
+//! (ADR-059 D3) and call the kernel at the resolve seam to produce the one
+//! prepared hop.
 //!
-//! Since √P is stored as `sqrtPriceX96 = √P · 2^96`, the effective reserves are:
+//! # Import direction
 //!
-//! ```text
-//! R₀ + α = (L · 2^96) / sqrtPriceX96
-//! R₁ + β = (L · sqrtPriceX96) / 2^96
-//! ```
+//! `cl/*` carries no envelope vocabulary — no `Line`, verdict, or cap. The
+//! tangent fan is derived from the kernel's crossing tables by the CL family
+//! module's bound side, and the engine-owned fan cache stays borrowed, never
+//! owned.
 //!
-//! These are integer divisions that match EVM truncation semantics.
-//!
-//! # Fee Representation
-//!
-//! V3 fee is stored as `fee / 1_000_000` (e.g., 3000 = 0.3%).
-//! Gamma = 1 - fee = (1_000_000 - fee) / 1_000_000.
-//! We store `gamma_numer = 1_000_000 - fee`, `fee_denom = 1_000_000`.
+//! KNOWN DEBT: [`solve_cl_piecewise`] (and the walk beneath it) still takes
+//! `walk_env: Option<&PathBoundLines>`, so an envelope type reaches into the
+//! kernel today. That intake is mediated in the CL family-module chunk
+//! (ADR-071 D5 commit 2); it is documented here, not fixed in this relocation.
 //!
 //! # Module layout
 //!
@@ -43,12 +52,14 @@
 //!   into.
 //! - `telemetry` — the event census and the walk's timed-section helper,
 //!   written only when the crate's default-off `telemetry` feature is enabled.
+//! - `cache` — the cache-lab seam: instrumented crossing-table + word-profile
+//!   cache strategies (crossing derivation is kernel territory), driven by the
+//!   `cl_cache_lab` example and the `cl_cache_*` regression binaries.
 
 use std::sync::Arc;
 
-pub use ::degenbot_pools::int_v3_hop::{
-    IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence,
-};
+pub(crate) use ::degenbot_pools::int_v3_hop::IntV3TickRangeHop;
+pub use ::degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
 /// Cached per-ending-range crossing table, parallel to `IntV3TickRangeSequence`.
 pub type ClCrossingTable = Vec<IntTickRangeCrossing>;
@@ -64,6 +75,8 @@ mod path_sim;
 mod tally;
 mod telemetry;
 mod word_profile;
+
+pub mod cache;
 
 #[cfg(test)]
 #[expect(

@@ -1,7 +1,7 @@
 //! Regression suite for the segment-patch clamps of S3/S4/S7.
 //!
 //! Strategy-level through the public API so it never collides with the
-//! in-module unit tests while two sessions work cl_cache.rs.
+//! in-module unit tests while two sessions work `cl/cache.rs`.
 //!
 //! Pinned findings:
 //! - Trailing-range Liquidity event (range == n-1): segs holds n-1 slots for
@@ -18,8 +18,8 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_solvers::cl::cache::{strategy_catalog, CacheEvent};
 use degenbot_solvers::cl::{build_cl_crossing_table, ClCrossingTable};
-use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent};
 
 fn single_range_seq() -> IntV3TickRangeSequence {
     let mk = |liq: u128, lo: u64, hi: u64, price: u64| IntV3TickRangeHop {

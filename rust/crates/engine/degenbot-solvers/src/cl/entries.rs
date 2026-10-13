@@ -150,6 +150,9 @@ pub fn solve_cl_piecewise(
     memo: Option<&WalkMemo>,
     tele: Option<&WalkTelemetry>,
     cfg: &SolveRuntimeConfig,
+    // KNOWN DEBT (ADR-071 D5 commit 1): this envelope intake is mediated in the
+    // CL family-module chunk. `cl/*` must not grow envelope vocabulary; see the
+    // "Import direction" note in `cl/mod.rs`.
     env: Option<&PathBoundLines>,
 ) -> WalkOutcome {
     if prepared.is_empty() {
