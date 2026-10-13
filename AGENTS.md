@@ -182,17 +182,21 @@ A bare `cargo build` or `maturin develop` can still serve the wrong feature set;
 prefer the recipes.
 
 ## Python Environment
-Use `uv`.
+
+Use `uv`. The `--no-sync` prefix is defined once as the justfile `py_run`
+variable (`uv run --no-sync`), so recipes never hand-write the flag; `just venv`
+prints the active venv path, and `just py <cmd>` runs an ad-hoc command against
+it.
 
 Python linters run through `uvx` (ephemeral, latest), so their recipes carry no
 `--no-sync`: `just lint-python` / `lint-python-check` use `uvx ruff`, `dead-code`
 uses `uvx vulture`. The exception is `ty`: it resolves third-party imports and
 the `degenbot` stubs from the project environment, so it cannot run under `uvx`
 (that resolves against uvx's ephemeral site-packages and reports spurious
-errors). The recipe uses `uv run --no-sync --with ty ty check` — latest `ty`, but
-run under the project venv. `maturin` likewise needs the project venv
-(`maturin develop` installs into the *current* virtualenv), so it stays on
-`uv run --no-sync`.
+errors). Its recipe uses the `py_run` prefix with `--with ty` — latest `ty`, run
+under the project venv. `maturin` likewise needs the project venv (`maturin
+develop` installs into the *current* virtualenv), so it stays on the `py_run`
+prefix.
 
 ## Node access
 

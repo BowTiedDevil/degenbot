@@ -8,9 +8,27 @@
 # host: .envrc). Defaults to rust/target for CI and a bare checkout.
 target_dir := env_var_or_default("CARGO_TARGET_DIR", "rust/target")
 
+# The project-venv command prefix. `--no-sync` stops `uv run` from rebuilding the
+# project (which would clobber the dev-features extension); the maturin install
+# owns the extension. Defined once so recipes never hand-write the flag.
+py_run := "uv run --no-sync"
+
 # Default recipe - show available commands
 default:
     @just --list
+
+
+# Print the current environment's virtualenv path (host or container, whichever
+# is active — uv resolves it from UV_PROJECT_ENVIRONMENT or a local .venv).
+venv:
+    @{{ py_run }} python -c 'import sys; print(sys.prefix)'
+
+
+# Run a command against the project venv without hand-writing `--no-sync`
+# (ad-hoc use; recipes should use `{{ py_run }}` directly, which preserves
+# argument quoting).
+py *args:
+    {{ py_run }} {{ args }}
 
 # Print the project's single source-of-truth version (the [workspace.package]
 # literal in rust/Cargo.toml, inherited by every crate + bridged into the wheel
@@ -137,7 +155,7 @@ pre-push:
 # job and the pre-push hook call this subunit directly; humans use `just test`.
 test-rust: test-standalone
     #!/usr/bin/env bash
-    python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     # vendored deployments.json (degenbot-uniswap) must match the canonical
     # Python-tree registry file byte-for-byte: a crate can only embed
@@ -156,7 +174,7 @@ test-rust: test-standalone
 test-rust-nextest *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo nextest run --locked --manifest-path rust/Cargo.toml --workspace --profile ci --no-fail-fast {{ args }}
 
@@ -164,7 +182,7 @@ test-rust-nextest *args:
 test-timing top='30':
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run --no-sync python - <<'EOF'
+    {{ py_run }} python - <<'EOF'
     import statistics, xml.etree.ElementTree as ET
     top = int("{{top}}")
     tree = ET.parse("{{ target_dir }}/nextest/ci/nextest-ci.junit.xml")
@@ -390,14 +408,14 @@ dev:
 # pre-push hook call this subunit directly; humans use `just test`. Under the
 # default offline marker filter (`-m "not slow and not base and not online_rpc and not stub_drift"`)
 # this covers the PyO3 seam, golden on-chain-oracle replay, AND the relocated
-# seam suites. A focused parity-only run is `uv run --no-sync pytest -m onchain_oracle`.
+# seam suites. A focused parity-only run is `just py pytest -m onchain_oracle`.
 #
 # The `dev` prerequisite builds + installs the extension (incremental `maturin
 # develop`) so the suite always exercises the current Rust sources. This replaces
 # the retired runtime build-receipt/staleness gate: freshness is guaranteed by
 # building the thing we test, not by inspecting whether a build happened.
 test-python: dev
-    uv run --no-sync pytest -x -q --no-header
+    {{ py_run }} pytest -x -q --no-header
 
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
 # pytest with the whole child-process output captured to a log file, then scans
@@ -445,7 +463,7 @@ test-flake-probe:
     set -euo pipefail
     for i in 1 2 3; do
         echo "▶ flake-probe run ${i}/3"
-        timeout 600 uv run --no-sync pytest -q --no-header -p no:cacheprovider \
+        timeout 600 {{ py_run }} pytest -q --no-header -p no:cacheprovider \
             tests/arbitrage/test_arbitrage_session.py tests/operator/test_operator_channel.py
     done
     echo "✓ flake-probe: 3/3 green"
@@ -458,7 +476,7 @@ test-flake-probe:
 # the shared file (last-writer-wins, losing keys). Replay is read-only and safe
 # under xdist, but record accumulates writes.
 record-golden *args:
-    DEGENBOT_GOLDEN_MODE=record uv run --no-sync pytest -m onchain_oracle -q --no-header -n0 {{ args }}
+    DEGENBOT_GOLDEN_MODE=record {{ py_run }} pytest -m onchain_oracle -q --no-header -n0 {{ args }}
 
 # Live chain-data drift gate (explicit only — never in test/pre-push/CI lanes):
 # re-records every py_oracle corpus twice and requires byte-identity with disk,
@@ -467,7 +485,7 @@ record-golden *args:
 #   just live-drift                # all three chains
 #   just live-drift -- -k ethereum # one chain
 live-drift *args:
-    uv run --no-sync pytest -m live_drift -q --no-header tests/golden/test_live_drift.py {{ args }}
+    {{ py_run }} pytest -m live_drift -q --no-header tests/golden/test_live_drift.py {{ args }}
 
 
 # Record the README examples' chain surface into the offline replay cassette
@@ -478,14 +496,14 @@ live-drift *args:
 # is rewritten to it). The README suite then replays offline via the
 # `Bot(provider=...)` seam (conftest.py). Requires a reachable archive node.
 record-readme-cassette:
-    uv run --no-sync python scripts/record_readme_cassette.py
+    {{ py_run }} python scripts/record_readme_cassette.py
 
 
 # Drift gate for the README cassette: re-record and require byte-identity with
 # the committed file. Needs a reachable archive node (not a CI gate — CI replays
 # the committed cassette offline).
 check-readme-cassette:
-    uv run --no-sync python scripts/record_readme_cassette.py --check
+    {{ py_run }} python scripts/record_readme_cassette.py --check
 
 # Verify every shipped deployment address is actually deployed on-chain (cast).
 # Tier 1 (bytecode presence) by default; escalate via the env var:
@@ -495,7 +513,7 @@ check-readme-cassette:
 # Requires a reachable RPC per chain (tests.env / env vars). Deselected from the
 # default `test-python` run (online_rpc marker) — run on demand only.
 verify-deployments *args:
-    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run --no-sync pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} {{ py_run }} pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # Re-populate the golden deployment-verification capture (tiers 1/2/4 facts for
 # every factory row on a reachable chain) consumed by the hermetic replay
@@ -504,7 +522,7 @@ verify-deployments *args:
 # unreachable chains contribute no rows. Tier 4 is asserted live while
 # recording, so a capture is only committed when every recorded row verified.
 record-deployment-golden *args:
-    DEGENBOT_GOLDEN_MODE=record DEGENBOT_VERIFY_DEPLOYMENTS=4 uv run --no-sync pytest -m online_rpc -q --no-header -p no:randomly -n0 {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_GOLDEN_MODE=record DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ py_run }} pytest -m online_rpc -q --no-header -p no:randomly -n0 {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # ========== Tier-3 On-Chain Oracles ==========
 #
@@ -584,7 +602,7 @@ test-tier3 family='all':
             *) echo "unknown tier-3 family '$1' (families: step swap v2 v4 path5000 curve balancer pancake pancake2 | all)" >&2; exit 2 ;;
         esac
         tier3-oracle/"$harness"
-        python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+        python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
         export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         cargo test --locked --manifest-path rust/Cargo.toml -p "$pkg" --test "$test"
     }
@@ -715,7 +733,7 @@ crap-coverage *args:
     fi
     # degenbot-python's test harnesses link libpython, same reason `test-rust`
     # exports this (resolve before cd'ing: uv wants the Python project root).
-    python_libdir="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     # LLVM tool discovery. With a rustup toolchain cargo-llvm-cov locates
     # llvm-tools-preview by itself and these must stay UNSET. On a system-rustc
@@ -845,7 +863,7 @@ lint-python:
     # ty must run under the project environment (it resolves third-party imports
     # and the degenbot stubs from the venv), so `uvx ty` cannot work; `--with ty`
     # gives the latest ty without pinning it into the venv.
-    uv run --no-sync --with ty ty check --fix --no-progress src/
+    {{ py_run }} --with ty ty check --fix --no-progress src/
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -855,7 +873,7 @@ lint-comment-hygiene:
 
 lint-python-check:
     uvx ruff check src/ examples/
-    uv run --no-sync --with ty ty check --no-progress src/
+    {{ py_run }} --with ty ty check --no-progress src/
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see
@@ -940,7 +958,7 @@ format:
 update-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run --no-sync python scripts/bump_python_deps.py
+    {{ py_run }} python scripts/bump_python_deps.py
     uv lock --upgrade
     # --no-install-project: never let uv rebuild the project with default
     # features (that would clobber the dev-features extension); rebuild it
@@ -1008,8 +1026,8 @@ setup-git-hooks:
 # (tests/standalone_parity/dual_driver_gate.py --live).
 test-settlement-parity:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-settlement-bot-example --test boot_gate
-    uv run --no-sync pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
-    uv run --no-sync python tests/standalone_parity/dual_driver_gate.py --recorded
+    {{ py_run }} pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
+    {{ py_run }} python tests/standalone_parity/dual_driver_gate.py --recorded
 
 # ========== No-Python Console Gate (ADR-051 D10 / ergo EA6DY7) ==========
 #
@@ -1065,7 +1083,7 @@ check-cancel-safety:
 # test-owned Python surfaces. The gate also checks the root dependency and lock
 # declarations and proves its AST detector rejects a synthetic import.
 check-no-sqlalchemy:
-    uv run --no-sync pytest -q tests/test_no_sqlalchemy_test_imports.py
+    {{ py_run }} pytest -q tests/test_no_sqlalchemy_test_imports.py
 
 # ========== Stub Generation + Verification (ADR-066) ==========
 #
@@ -1166,7 +1184,7 @@ lint-stubtest:
     # are PyO3-synthetic runtime semantics, not stub drift. Staleness of the
     # introspected .so is owned by the build step (the test tracks depend on
     # `dev`) — stubtest simply checks whatever is installed.
-    uv run --no-sync stubtest --ignore-disjoint-bases \
+    {{ py_run }} stubtest --ignore-disjoint-bases \
         --allowlist tests/ffi/stubtest_allowlist.txt degenbot._ffi
 
 # Dedicated regenerate-and-diff stub gate (ADR-066 D2/D3): the compile-coupled
