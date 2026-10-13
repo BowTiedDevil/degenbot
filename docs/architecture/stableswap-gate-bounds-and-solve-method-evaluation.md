@@ -8,8 +8,8 @@ families. This document records the soundness derivations, the measured
 evaluations, and the drift-net methodology that settled each family's line set,
 so the next engineer does not re-derive the concavity, re-attempt the rejected
 closed-form search, or re-measure the Curve counterexamples. It is the durable
-record; the working notes that produced it live in the per-task result docs
-under `docs/ergo-results/`.
+record. The per-task working notes that produced it were removed in the
+`docs/ergo-results/` cleanup and are recoverable from git history.
 
 ## Verdict (TL;DR)
 
@@ -205,7 +205,8 @@ reverted (the crate is byte-identical to its pre-change state); the rejected
 patch's reference copy is session-scratch (`.scratch/sr2-rejected.patch` and
 `.scratch/sr2-solidly_t.rs`, not committed), and the design record is preserved
 in the per-task result doc titled "simulation-free `t`-parametrized solve for
-one-Solidly-hop mixed paths" under `docs/ergo-results/`.
+one-Solidly-hop mixed paths" (removed in the `docs/ergo-results/` cleanup;
+recoverable from git history).
 
 ### Decision and what would change it
 

@@ -23,7 +23,7 @@ Every build and test command goes through the justfile. **Never hand-type `cargo
 Design standalone features without a backwards compatibility layer. Add a feature flag to allow parallel implementations if necessary, followed by a hard cutover and flag removal.
 
 ## Planning
-Use `ergo` for all planning. Discover usage with `ergo --help` and `ergo quickstart`. Include detailed implementation and planning notes in the body of each task.
+Use `ergo` for all planning. Discover usage with `ergo --help` and `ergo quickstart`. Include detailed implementation and planning notes in the body of each task. The `result` key is only for tasks with a durable document deliverable — most tasks produce code changes, and the merged diff is the deliverable, so close those with `{"state":"done"}` and no `result`.
 
 ## Refactoring & Feature Development
 Use red/green test-driven development when refactoring and adding new features. Use `/skill:tdd` for guidelines.

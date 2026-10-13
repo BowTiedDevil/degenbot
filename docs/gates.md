@@ -71,8 +71,9 @@ bare token.
 static whose initialization path reads the config holder freezes a snapshot;
 the `reinstall_for_tests` seam then leaves it stale-able. Chunk SERRGX made the
 holder seam safe by auditing every such static, but that audit is a **snapshot**
-in `docs/ergo-results/serrgx-result.md` — the next holder-derived static would
-land silently stale-able. This census makes the audit durable.
+(chunk SERRGX's result doc — removed in the `docs/ergo-results/` cleanup;
+recoverable from git history) — the next holder-derived static would land
+silently stale-able. This census makes the audit durable.
 
 **Gate body.**
 `rust/crates/facade/degenbot/tests/architecture_gates.rs::config_derived_statics_are_classified`
@@ -202,8 +203,8 @@ just gen-stubs --check` opts into writing, mirroring the `REGEN_*` pattern of
 ended, `--- Logging error ---` blocks and raw `Reconnection attempt` lines
 printed to the real stdout/stderr of the test process while the exit code stayed
 `0`. Post-session output never reaches pytest plugins, so the tripwire cannot
-live inside the suite (see `docs/ergo-results/pui7hc-result.md` and
-`kl2ez3-result.md`).
+live inside the suite (see the PUI7HC and KL2EZ3 result docs — removed in
+the `docs/ergo-results/` cleanup; recoverable from git history).
 
 **Gate body.** `scripts/pytest_noise_gate.sh`. `run [pytest args...]` captures the
 whole child-process output (`2>&1 | tee`), reads the suite exit from
