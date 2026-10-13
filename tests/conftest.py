@@ -53,6 +53,16 @@ from tests.helpers.bot_factory import make_bot_with_provider
 from tests.offline import is_offline
 from tests.standalone_anvil import seed as seed_catalog
 
+# The FFI module init installs the process-wide holder from the env at the FIRST
+# degenbot import, and the root conftest (imported before this file, for the
+# README harness) imports degenbot -- so the setdefaults above landed after that
+# boot and were silently missed: the ambient chain pin AND the hermetic DB path
+# never reached the snapshot. Re-govern once here through the sanctioned test
+# seam so constructions observe this file's declared environment. Fail-closed:
+# if the ambient file does not load, collection errors here rather than tests
+# resolving against a bare-env snapshot.
+reinstall_config_holder_for_tests()
+
 # ADR-052 D1: a legacy `alembic_version`-marked DB heals itself at open. The
 # committed `rust/crates/**/fixtures/*.db` parity fixtures are read-only
 # references shared by many tests, so pin the killswitch for the Python suite:
