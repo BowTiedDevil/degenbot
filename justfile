@@ -252,7 +252,7 @@ check-rust-binding-default:
 # telemetry, allocator, and allocator-selection features are development-only
 # and are not part of the release-wheel or standalone-default matrix.
 check-rust-dev-features:
-    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --features dev-features
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$(scripts/build_extension.sh rustflags)" cargo check --locked -p degenbot_rs --all-targets --manifest-path rust/Cargo.toml --features dev-features
 
 # Check the release-equivalent extension feature set in the release profile.
 # The release maturin command uses `pyo3/extension-module`; this package feature
@@ -264,7 +264,7 @@ check-rust-extension-release:
 # default gate. It intentionally includes test-only and mutually exclusive
 # variants and must never be used to validate default or release behavior.
 check-rust-all-features:
-    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo check --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$(scripts/build_extension.sh rustflags)" cargo check --locked --workspace --all-targets --all-features --manifest-path rust/Cargo.toml
 
 # Hotpath test lane. Tokio's full RuntimeMetrics getters sit behind the
 # unstable API and there is no global rustflag, so any direct hotpath
@@ -272,7 +272,7 @@ check-rust-all-features:
 # `cargo test` (e.g. `just test-hotpath -- frame_pipeline`).
 # Canonical form; do not hand-type the RUSTFLAGS.
 test-hotpath *args:
-    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-bot --features hotpath {{ args }}
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$(scripts/build_extension.sh rustflags)" cargo test --locked --manifest-path rust/Cargo.toml -p degenbot-bot --features hotpath {{ args }}
 
 # Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
 # outer #[allow] form; this closes the historical inner-attribute loophole it

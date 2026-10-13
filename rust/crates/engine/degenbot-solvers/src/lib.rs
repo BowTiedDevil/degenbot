@@ -20,6 +20,16 @@
 //! `pyo3`-free (enforced by `just check-no-pyo3-in-cores`); consumable by
 //! both the standalone Rust path (`cargo add degenbot-solvers`) and the
 //! PyO3 driver shell.
+
+// tokio's full `RuntimeMetrics` getters — which the `hotpath` crate reads for
+// solver-phase profiling — are gated behind tokio's unstable cfg; there is no
+// repository-wide rustflag, so supply it per-build (`just dev`,
+// `just test-hotpath`). Without it the metrics are silently absent.
+#[cfg(all(feature = "hotpath", not(tokio_unstable)))]
+compile_error!(
+    "the `hotpath` feature requires `RUSTFLAGS=--cfg tokio_unstable`; use `just dev` / `just test-hotpath`"
+);
+
 pub mod affected_keys;
 pub mod basket;
 pub mod bounded_brent;

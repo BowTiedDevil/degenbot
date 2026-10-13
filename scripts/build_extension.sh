@@ -36,8 +36,13 @@ case "$mode" in
         RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$hotpath -C instrument-coverage" \
             uv run --no-sync maturin develop --features dev-features "$@"
         ;;
+    rustflags)
+        # Print the scoped hotpath rustflag for callers (the justfile check /
+        # hotpath recipes) so it is defined in exactly one place.
+        printf '%s' "$hotpath"
+        ;;
     *)
-        printf 'usage: %s {develop|build|coverage}\n' "$(basename "$0")" >&2
+        printf 'usage: %s {develop|build|coverage|rustflags}\n' "$(basename "$0")" >&2
         exit 2
         ;;
 esac

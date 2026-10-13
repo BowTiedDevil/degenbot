@@ -43,6 +43,16 @@
 //! `degenbot-solvers` crate and is imported via `::degenbot_solvers` —
 //! never re-exported from here.
 
+// tokio's full `RuntimeMetrics` getters — which the `hotpath` crate reads for
+// pump/solver profiling — are gated behind tokio's unstable cfg. There is no
+// repository-wide rustflag, so the cfg is supplied per-build by the hotpath
+// lanes (`just dev`, `just test-hotpath`, scripts/build_extension.sh). Without
+// it the metrics are silently absent; fail loudly instead.
+#[cfg(all(feature = "hotpath", not(tokio_unstable)))]
+compile_error!(
+    "the `hotpath` feature requires `RUSTFLAGS=--cfg tokio_unstable` (tokio's RuntimeMetrics is unstable-gated); use `just dev` / `just test-hotpath`"
+);
+
 pub mod bot_core;
 
 /// Default-build stub for the instruments module: same call surface, always

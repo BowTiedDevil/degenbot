@@ -38,8 +38,11 @@ warnings = "deny"
 # cargo-llvm-cov builds set --cfg coverage and the instrumented tests carry
 # #[cfg_attr(coverage, ignore)] for timing-sensitive pins; declare the name so
 # default (non-instrumented) builds accept the attribute instead of
-# erroring on an unknown cfg.
-unexpected_cfgs = { level = "deny", check-cfg = ['cfg(coverage, values(none()))'] }
+# erroring on an unknown cfg. `tokio_unstable` is supplied per-build via RUSTFLAGS
+# on the hotpath lanes (degenbot-bot / degenbot-solvers carry a `compile_error!`
+# guard so a hotpath build without it fails loudly instead of silently dropping
+# the tokio RuntimeMetrics).
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(coverage, values(none()))', 'cfg(tokio_unstable)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
