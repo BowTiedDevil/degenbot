@@ -273,8 +273,32 @@ env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
 
 
-def _rpc(key: str, default: str) -> str:
-    """Resolve an RPC URI with precedence: envvar > tests.env > built-in default.
+# The harness's endpoint vocabulary: one row per (env-var name, default URI),
+# resolved through ``_rpc`` and bound below. Archive and full tiers deliberately
+# share a default wherever one public endpoint serves both today (Arbitrum and
+# Ethereum via publicnode, Base via mainnet.base.org) -- the table makes that
+# sharing visible, and a tier that needs its own endpoint (a real archive node)
+# changes only its row. A name absent from the table raises at collection, so
+# the vocabulary cannot drift from its defaults. The names are imported across
+# the suite (``tests/test_anvil_fork.py``, the parity suites) and the ``_FULL_``
+# env spellings are an external contract (``executor/ape-config.yaml``), so the
+# bindings stay real module-level assignments.
+_DEFAULT_RPC_URIS: dict[str, str] = {
+    "TEST_ARBITRUM_FULL_NODE_HTTP_URI": "https://arbitrum-one-rpc.publicnode.com",
+    "TEST_ARBITRUM_FULL_NODE_WS_URI": "wss://arbitrum-one-rpc.publicnode.com",
+    "TEST_BASE_ARCHIVE_NODE_HTTP_URI": "https://mainnet.base.org",
+    "TEST_BASE_ARCHIVE_NODE_WS_URI": "wss://mainnet.base.org",
+    "TEST_BASE_FULL_NODE_HTTP_URI": "https://mainnet.base.org",
+    "TEST_BASE_FULL_NODE_WS_URI": "wss://mainnet.base.org",
+    "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI": "https://ethereum-rpc.publicnode.com",
+    "TEST_ETHEREUM_ARCHIVE_NODE_WS_URI": "wss://ethereum-rpc.publicnode.com",
+    "TEST_ETHEREUM_FULL_NODE_HTTP_URI": "https://ethereum-rpc.publicnode.com",
+    "TEST_ETHEREUM_FULL_NODE_WS_URI": "wss://ethereum-rpc.publicnode.com",
+}
+
+
+def _rpc(key: str) -> str:
+    """Resolve an RPC URI with precedence: envvar > tests.env > table default.
 
     ``dotenv.dotenv_values`` reads only the file, so a bare ``env_values.get`` would
     ignore ``os.environ`` entirely — leaving no way for a user to override an RPC
@@ -293,51 +317,21 @@ def _rpc(key: str, default: str) -> str:
     ``${TEST_ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
     ``_FULL_`` names outlive the suite that defines them.
     """
-    return os.environ.get(key, env_values.get(key, default))
+    return os.environ.get(key, env_values.get(key, _DEFAULT_RPC_URIS[key]))
 
 
-TEST_ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc(
-    "TEST_ARBITRUM_FULL_NODE_HTTP_URI",
-    "https://arbitrum-one-rpc.publicnode.com",
-)
-TEST_ARBITRUM_FULL_NODE_WS_URI: str = _rpc(
-    "TEST_ARBITRUM_FULL_NODE_WS_URI",
-    "wss://arbitrum-one-rpc.publicnode.com",
-)
+TEST_ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc("TEST_ARBITRUM_FULL_NODE_HTTP_URI")
+TEST_ARBITRUM_FULL_NODE_WS_URI: str = _rpc("TEST_ARBITRUM_FULL_NODE_WS_URI")
 
-TEST_BASE_ARCHIVE_NODE_HTTP_URI: str = _rpc(
-    "TEST_BASE_ARCHIVE_NODE_HTTP_URI",
-    "https://mainnet.base.org",
-)
-TEST_BASE_ARCHIVE_NODE_WS_URI: str = _rpc(
-    "TEST_BASE_ARCHIVE_NODE_WS_URI",
-    "wss://mainnet.base.org",
-)
-TEST_BASE_FULL_NODE_HTTP_URI: str = _rpc(
-    "TEST_BASE_FULL_NODE_HTTP_URI",
-    "https://mainnet.base.org",
-)
-TEST_BASE_FULL_NODE_WS_URI: str = _rpc(
-    "TEST_BASE_FULL_NODE_WS_URI",
-    "wss://mainnet.base.org",
-)
+TEST_BASE_ARCHIVE_NODE_HTTP_URI: str = _rpc("TEST_BASE_ARCHIVE_NODE_HTTP_URI")
+TEST_BASE_ARCHIVE_NODE_WS_URI: str = _rpc("TEST_BASE_ARCHIVE_NODE_WS_URI")
+TEST_BASE_FULL_NODE_HTTP_URI: str = _rpc("TEST_BASE_FULL_NODE_HTTP_URI")
+TEST_BASE_FULL_NODE_WS_URI: str = _rpc("TEST_BASE_FULL_NODE_WS_URI")
 
-TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = _rpc(
-    "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
-    "https://ethereum-rpc.publicnode.com",
-)
-TEST_ETHEREUM_ARCHIVE_NODE_WS_URI: str = _rpc(
-    "TEST_ETHEREUM_ARCHIVE_NODE_WS_URI",
-    "wss://ethereum-rpc.publicnode.com",
-)
-TEST_ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc(
-    "TEST_ETHEREUM_FULL_NODE_HTTP_URI",
-    "https://ethereum-rpc.publicnode.com",
-)
-TEST_ETHEREUM_FULL_NODE_WS_URI: str = _rpc(
-    "TEST_ETHEREUM_FULL_NODE_WS_URI",
-    "wss://ethereum-rpc.publicnode.com",
-)
+TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = _rpc("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI")
+TEST_ETHEREUM_ARCHIVE_NODE_WS_URI: str = _rpc("TEST_ETHEREUM_ARCHIVE_NODE_WS_URI")
+TEST_ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc("TEST_ETHEREUM_FULL_NODE_HTTP_URI")
+TEST_ETHEREUM_FULL_NODE_WS_URI: str = _rpc("TEST_ETHEREUM_FULL_NODE_WS_URI")
 
 
 @pytest.fixture
@@ -375,18 +369,39 @@ def _require_live_node() -> None:
         pytest.skip("requires live RPC/anvil (not available in offline CI)")
 
 
-@pytest.fixture
-def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
+def _fork(
+    *,
+    fork_url: str,
+    storage_caching: bool,
+    fork_block: int | None = None,
+    extra_opts: tuple[str, ...] = (),
+) -> Generator[AnvilFork, None, None]:
+    """Shared body behind the ``fork_*`` fixtures: guard, launch, yield, close.
+
+    ``fork_block`` is the archive tier's indirect-param target (``None`` forks
+    at head, like every full-tier fixture -- ``AnvilFork``'s default);
+    ``extra_opts`` carries the chain's anvil flags after the universal
+    ``--accounts=0``.
+    """
     _require_live_node()
     fork = AnvilFork(
-        fork_url=TEST_ARBITRUM_FULL_NODE_HTTP_URI,
+        fork_url=fork_url,
+        fork_block=fork_block,
         launch=ForkLaunchConfig(
-            storage_caching=False,
-            anvil_opts=["--accounts=0"],
+            storage_caching=storage_caching,
+            anvil_opts=["--accounts=0", *extra_opts],
         ),
     )
     yield fork
     fork.close()
+
+
+@pytest.fixture
+def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
+    yield from _fork(
+        fork_url=TEST_ARBITRUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+    )
 
 
 @pytest.fixture
@@ -400,33 +415,21 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
     ```
 
     """
-    block_number = getattr(request, "param", None)
-    _require_live_node()
-
-    fork = AnvilFork(
+    yield from _fork(
         fork_url=TEST_BASE_ARCHIVE_NODE_HTTP_URI,
-        fork_block=block_number,
-        launch=ForkLaunchConfig(
-            storage_caching=True,
-            anvil_opts=["--accounts=0", "--optimism"],
-        ),
+        fork_block=getattr(request, "param", None),
+        storage_caching=True,
+        extra_opts=("--optimism",),
     )
-    yield fork
-    fork.close()
 
 
 @pytest.fixture
 def fork_base_full() -> Generator[AnvilFork, None, None]:
-    _require_live_node()
-    fork = AnvilFork(
+    yield from _fork(
         fork_url=TEST_BASE_FULL_NODE_HTTP_URI,
-        launch=ForkLaunchConfig(
-            storage_caching=False,
-            anvil_opts=["--accounts=0", "--optimism"],
-        ),
+        storage_caching=False,
+        extra_opts=("--optimism",),
     )
-    yield fork
-    fork.close()
 
 
 @pytest.fixture
@@ -440,33 +443,19 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
     ```
 
     """
-    block_number = getattr(request, "param", None)
-    _require_live_node()
-
-    fork = AnvilFork(
+    yield from _fork(
         fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-        fork_block=block_number,
-        launch=ForkLaunchConfig(
-            storage_caching=True,
-            anvil_opts=["--accounts=0"],
-        ),
+        fork_block=getattr(request, "param", None),
+        storage_caching=True,
     )
-    yield fork
-    fork.close()
 
 
 @pytest.fixture
 def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
-    _require_live_node()
-    fork = AnvilFork(
+    yield from _fork(
         fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
-        launch=ForkLaunchConfig(
-            storage_caching=False,
-            anvil_opts=["--accounts=0"],
-        ),
+        storage_caching=False,
     )
-    yield fork
-    fork.close()
 
 
 @pytest.fixture
@@ -487,6 +476,18 @@ def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Generator[Bot, None,
     bot.close()
 
 
+def _golden_target(request: pytest.FixtureRequest) -> tuple[Path, str]:
+    """Per-test golden JSON path + mode shared by both golden factories.
+
+    When --golden-root is the default, GOLDEN_ROOT already encodes it; honour
+    an explicit override by rewriting the root anchor too.
+    """
+    mode: str = request.config.getoption("--golden-mode")
+    root = Path(request.config.getoption("--golden-root"))
+    rel = _nodeid_to_path(request.node.nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
+    return root / rel, mode
+
+
 @pytest.fixture
 def golden_factory(request: pytest.FixtureRequest):
     """Factory for :class:`tests.golden.oracle.GoldenOracle` (L2 golden seam).
@@ -505,12 +506,7 @@ def golden_factory(request: pytest.FixtureRequest):
                 continue
             assert calc == res.value
     """
-    mode: str = request.config.getoption("--golden-mode")
-    root = Path(request.config.getoption("--golden-root"))
-    # When --golden-root is the default, GOLDEN_ROOT already encodes it; honour
-    # an explicit override by rewriting the root anchor too.
-    rel = _nodeid_to_path(request.node.nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
-    path = root / rel
+    path, mode = _golden_target(request)
 
     def bind(*, chain_id: int, block_number: int) -> GoldenOracle:
         return GoldenOracle(path=path, chain_id=chain_id, block_number=block_number, mode=mode)
@@ -527,10 +523,7 @@ def recorded_pool_factory(request: pytest.FixtureRequest):
     by ``--golden-mode`` (replay by default, record to (re)populate the file against a
     pinned fork). See ``docs/architecture/golden-onchain-parity.md``.
     """
-    mode: str = request.config.getoption("--golden-mode")
-    root = Path(request.config.getoption("--golden-root"))
-    rel = _nodeid_to_path(request.node.nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
-    path = root / rel
+    path, mode = _golden_target(request)
 
     def bind(*, chain_id: int, block_number: int) -> RecordedPool:
         return RecordedPool(path=path, chain_id=chain_id, block=block_number, mode=mode)
