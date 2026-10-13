@@ -434,6 +434,17 @@ state (a selective projection for CL) so the solve runs lock-free off a copied v
 its variants let the solver pick the algorithm from path composition. Not a pool concept
 and not math-leaf vocabulary.
 
+**Family module**:
+The solver crate's single module owning everything one hop family contributes to a solve and
+its bound: the state slice, the V2-equivalent projection, the simulate triple, the solve entry
+(built on the shared golden template where the stable-family search applies), and the family's
+envelope lines (its rise line beside its cap). The residual central sites are one dispatch row
+and one `ResolvedHop` / `HopMath` enum arm; the shared kernels — the golden-section template,
+the integer-verification order, the envelope composition and caches — stay monomorphic and
+family-blind (ADR-059 D6).
+_Avoid_: a family's functions scattered across `mixed/mod.rs`, `mixed/solve.rs`, and
+`profit_envelope/derive.rs`; per-family copies of the search template.
+
 **Solve anchor**:
 The block at-or-above the pool-state head that a block's solve, verification, and
 simulation run against. A hop whose price clock runs ahead of the anchor is *future* and
@@ -508,6 +519,25 @@ validated parse) by the digest writer.
 _Avoid_: opaque pre-rendered strings; hand-parsed JSON inverses.
 
 ## Piecewise CL solving
+
+**Concentrated Liquidity Kernel**:
+The data-parameterized module that is the concrete home of everything the
+concentrated-liquidity solve shares across the Uniswap V3 and V4 designs: crossing
+derivation from a tick-range sequence, the active-set walk over the piecewise-Möbius
+segments, the CL hop and path simulation, and the word-profile build over the prepared
+hop's tables. CL is a mild generic over the V3/V4 designs — the two differ in storage
+slots, event shapes, and state reads (slot0 vs state-view, hooks hashed into the PoolId),
+not in solve structure — so the kernel is generic over *data* (the prepared hop value,
+ADR-069 D2), never over a trait per pool, and the hottest walk in the solver stays
+monomorphic (ADR-059 D6). The concrete V3 and V4 pool adapters stay typed code — species
+that genuinely diverge stay typed per ADR-059 D3 — and call the kernel at the resolve
+seam to produce the one prepared hop. The kernel carries no envelope vocabulary: no
+`Line`, no verdict, no cap. The tangent fan is derived from the kernel's crossing tables
+by the family module's bound side, and the engine-owned fan cache stays borrowed, never
+owned. Home: `degenbot-math`'s `cl` module (sibling of the `v2` and `balancer` leaves,
+ADR-035) once a second tier consumer reaches it; the solver crate's `cl` tree until then.
+_Avoid_: a trait hierarchy over pools on the solve path; the kernel as an unowned tree
+inside the solver crate; envelope types inside the kernel; "CL family" naming the kernel.
 
 **Piecewise walker**:
 The active-set engine that solves a multi-hop concentrated-liquidity arbitrage by
