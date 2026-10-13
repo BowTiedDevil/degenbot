@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from degenbot.types.chain import HexStr
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.chain import ChecksummedAddress
 
 # ── RPC primitive aliases (C1 — replaces ``web3.types`` primitives) ───────
 

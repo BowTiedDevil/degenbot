@@ -15,7 +15,7 @@ The ``PositionAnalysisResult`` bucket-sorter stays here (it's trivial Python, no
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.aave import AavePriceOracle
 from degenbot.checksum_cache import get_checksum_address
@@ -29,8 +29,8 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     import pathlib
 
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.provider import AlloyProvider
+    from degenbot.types.chain import ChecksummedAddress
 
 
 class DatabasePositionQuery:
@@ -82,7 +82,7 @@ class DatabasePositionQuery:
             The computed value.
 
         """
-        return self._handle().get_collateral_config_map(user_id)
+        return cast("dict[int, bool]", self._handle().get_collateral_config_map(user_id))
 
     def get_oracle_address(self, market_id: int) -> ChecksummedAddress | None:
         """Get the price oracle address for a market.

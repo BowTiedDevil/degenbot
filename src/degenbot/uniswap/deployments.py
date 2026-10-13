@@ -30,7 +30,7 @@ from degenbot.types.abstract import AbstractExchangeDeployment
 from degenbot.types.chain import ChainId
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.chain import ChecksummedAddress
 
     # Declare the types of the lazy constants so static checkers know their
     # concrete types (not the union that __getattr__ returns at runtime).

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_solidly as _rs_calc_exact_in_stable_solidly,
@@ -315,13 +315,16 @@ class AerodromeV2PoolCalc:
             The computed integer value.
 
         """
-        return _rs_calc_exact_in_volatile(
-            amount_in,
-            token_in,
-            reserves0,
-            reserves1,
-            fee.numerator,
-            fee.denominator,
+        return cast(
+            "int",
+            _rs_calc_exact_in_volatile(
+                amount_in,
+                token_in,
+                reserves0,
+                reserves1,
+                fee.numerator,
+                fee.denominator,
+            ),
         )
 
     @staticmethod
@@ -332,15 +335,18 @@ class AerodromeV2PoolCalc:
             The computed integer value.
 
         """
-        return _rs_calc_exact_in_stable_solidly(
-            ctx.amount_in,
-            ctx.token_in,
-            ctx.reserves0,
-            ctx.reserves1,
-            ctx.decimals0,
-            ctx.decimals1,
-            ctx.fee.numerator,
-            ctx.fee.denominator,
+        return cast(
+            "int",
+            _rs_calc_exact_in_stable_solidly(
+                ctx.amount_in,
+                ctx.token_in,
+                ctx.reserves0,
+                ctx.reserves1,
+                ctx.decimals0,
+                ctx.decimals1,
+                ctx.fee.numerator,
+                ctx.fee.denominator,
+            ),
         )
 
     @staticmethod
@@ -351,12 +357,15 @@ class AerodromeV2PoolCalc:
             The computed integer value.
 
         """
-        return _rs_calc_exact_out_volatile(
-            ctx.reserves_in,
-            ctx.reserves_out,
-            ctx.token_out_quantity,
-            ctx.fee.numerator,
-            ctx.fee.denominator,
+        return cast(
+            "int",
+            _rs_calc_exact_out_volatile(
+                ctx.reserves_in,
+                ctx.reserves_out,
+                ctx.token_out_quantity,
+                ctx.fee.numerator,
+                ctx.fee.denominator,
+            ),
         )
 
     @staticmethod
@@ -373,13 +382,16 @@ class AerodromeV2PoolCalc:
             The computed integer value.
 
         """
-        return _rs_calc_exact_out_stable_solidly(
-            ctx.token_out_quantity,
-            ctx.token_in,
-            ctx.reserves_0,
-            ctx.reserves_1,
-            ctx.decimals_0,
-            ctx.decimals_1,
-            ctx.fee.numerator,
-            ctx.fee.denominator,
+        return cast(
+            "int",
+            _rs_calc_exact_out_stable_solidly(
+                ctx.token_out_quantity,
+                ctx.token_in,
+                ctx.reserves_0,
+                ctx.reserves_1,
+                ctx.decimals_0,
+                ctx.decimals_1,
+                ctx.fee.numerator,
+                ctx.fee.denominator,
+            ),
         )

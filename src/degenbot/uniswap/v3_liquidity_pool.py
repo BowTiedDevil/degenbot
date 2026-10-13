@@ -29,7 +29,7 @@ known-empty on a Tracked pool (complete map).
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict, cast
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
@@ -265,14 +265,17 @@ class UniswapV3Pool(
         except ValueError as exc:
             msg = "No V3 pool state available (pool not registered in Rust)"
             raise DegenbotValueError(message=msg) from exc
-        return self.PoolState.__value__(
-            address=self.address,
-            liquidity=view.liquidity,
-            sqrt_price_x96=view.sqrt_price_x96,
-            tick=view.tick,
-            tick_bitmap=self.tick_bitmap,
-            tick_data=self.tick_data,
-            block=view.update_block,
+        return cast(
+            "UniswapV3PoolState",
+            self.PoolState.__value__(
+                address=self.address,
+                liquidity=view.liquidity,
+                sqrt_price_x96=view.sqrt_price_x96,
+                tick=view.tick,
+                tick_bitmap=self.tick_bitmap,
+                tick_data=self.tick_data,
+                block=view.update_block,
+            ),
         )
 
     def simulate_exact_input_swap(

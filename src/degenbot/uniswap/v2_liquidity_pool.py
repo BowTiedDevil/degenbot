@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
@@ -23,9 +23,9 @@ from degenbot.uniswap.v2_types import (
 )
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import DexIdentity, Pool
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
 
 
 class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
@@ -263,11 +263,14 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         except ValueError as exc:
             msg = "No V2 pool state available (pool not registered in Rust)"
             raise DegenbotValueError(message=msg) from exc
-        return self.PoolState.__value__(
-            address=self.address,
-            reserves_token0=view.reserve0,
-            reserves_token1=view.reserve1,
-            block=view.update_block,
+        return cast(
+            "UniswapV2PoolState",
+            self.PoolState.__value__(
+                address=self.address,
+                reserves_token0=view.reserve0,
+                reserves_token1=view.reserve1,
+                block=view.update_block,
+            ),
         )
 
     def external_update(
@@ -473,13 +476,16 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
             reserves_token0 = self.reserves_token0
             reserves_token1 = self.reserves_token1
 
-        return _rs_calc_exact_in_stable_camelot(
-            token_in_quantity,
-            token_in_index,
-            reserves_token0,
-            reserves_token1,
-            precision_multiplier_token0,
-            precision_multiplier_token1,
-            fee.numerator,
-            fee.denominator,
+        return cast(
+            "int",
+            _rs_calc_exact_in_stable_camelot(
+                token_in_quantity,
+                token_in_index,
+                reserves_token0,
+                reserves_token1,
+                precision_multiplier_token0,
+                precision_multiplier_token1,
+                fee.numerator,
+                fee.denominator,
+            ),
         )

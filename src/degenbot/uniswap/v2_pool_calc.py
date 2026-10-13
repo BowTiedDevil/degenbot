@@ -13,7 +13,7 @@ See: contract_reference/uniswap/V2/UniswapV2Factory.sol (UniswapV2Pair swap/mint
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -92,7 +92,7 @@ class UniswapV2PoolCalc:
             # (no separate Python state read beforehand — no pump-interleave risk).
             # Rust returns 0 on overdraw (amount_out >= reserve_out); convert to
             # the original Python contract's LiquidityPoolError.
-            result = self._py_pool.calculate_tokens_in(
+            result: int = self._py_pool.calculate_tokens_in(
                 zero_for_one=zero_for_one,
                 amount_out=token_out_quantity,
             )
@@ -119,12 +119,15 @@ class UniswapV2PoolCalc:
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
             )
 
-        return calc_exact_out_v2(
-            reserves_in,
-            reserves_out,
-            token_out_quantity,
-            fee.numerator,
-            fee.denominator,
+        return cast(
+            "int",
+            calc_exact_out_v2(
+                reserves_in,
+                reserves_out,
+                token_out_quantity,
+                fee.numerator,
+                fee.denominator,
+            ),
         )
 
     def calculate_tokens_out_from_tokens_in(
@@ -169,9 +172,12 @@ class UniswapV2PoolCalc:
             # `calculate_tokens_in_from_tokens_out`'s overdraw-sentinel
             # translation below).
             try:
-                return self._py_pool.calculate_tokens_out(
-                    zero_for_one=zero_for_one,
-                    amount_in=token_in_quantity,
+                return cast(
+                    "int",
+                    self._py_pool.calculate_tokens_out(
+                        zero_for_one=zero_for_one,
+                        amount_in=token_in_quantity,
+                    ),
                 )
             except ValueError as e:
                 raise LiquidityPoolError(
@@ -193,12 +199,15 @@ class UniswapV2PoolCalc:
             reserves_out = override_state.reserves_token0
             fee = self._fee_token1
 
-        return calc_exact_in_v2(
-            reserves_in,
-            reserves_out,
-            token_in_quantity,
-            fee.numerator,
-            fee.denominator,
+        return cast(
+            "int",
+            calc_exact_in_v2(
+                reserves_in,
+                reserves_out,
+                token_in_quantity,
+                fee.numerator,
+                fee.denominator,
+            ),
         )
 
     def get_absolute_price(

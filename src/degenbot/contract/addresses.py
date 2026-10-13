@@ -8,7 +8,7 @@ from degenbot.contract import _rs_create2_address
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.chain import ChecksummedAddress
 
 
 def create2_address(

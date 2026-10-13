@@ -6,7 +6,7 @@ plain pools, metapools, lending pools, and crypto pools.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NamedTuple, Self
+from typing import TYPE_CHECKING, Any, NamedTuple, Self, cast
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.stableswap_pool_state import PoolStrategies, StableswapPoolState
@@ -55,13 +55,13 @@ class _HandleCurveDataProviderAdapter:
         self._py_pool = py_pool
 
     def block_number(self) -> int:
-        v = self._py_pool.fetch_curve_block_number()
+        v: int | None = self._py_pool.fetch_curve_block_number()
         if v is None:
             raise MissingCurveData(self._py_pool.address, "block_number", "no data provider stored")
         return v
 
     def block_timestamp(self, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_block_timestamp(block_number)
+        v: int | None = self._py_pool.fetch_curve_block_timestamp(block_number)
         if v is None:
             raise MissingCurveData(
                 self._py_pool.address, "block_timestamp", "no data provider stored"
@@ -69,7 +69,9 @@ class _HandleCurveDataProviderAdapter:
         return v
 
     def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_token_balance(token_address, holder_address, block_number)
+        v: int | None = self._py_pool.fetch_curve_token_balance(
+            token_address, holder_address, block_number
+        )
         if v is None:
             raise MissingCurveData(
                 self._py_pool.address, "token_balance", "no data provider stored"
@@ -77,7 +79,7 @@ class _HandleCurveDataProviderAdapter:
         return v
 
     def token_total_supply(self, token_address: str, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_token_total_supply(token_address, block_number)
+        v: int | None = self._py_pool.fetch_curve_token_total_supply(token_address, block_number)
         if v is None:
             raise MissingCurveData(
                 self._py_pool.address, "token_total_supply", "no data provider stored"
@@ -85,7 +87,7 @@ class _HandleCurveDataProviderAdapter:
         return v
 
     def lending_rates(self, block_number: int) -> tuple[int, ...]:
-        rates = self._py_pool.fetch_curve_lending_rates(block_number)
+        rates: tuple[int, ...] | None = self._py_pool.fetch_curve_lending_rates(block_number)
         if not rates:
             raise MissingCurveData(
                 self._py_pool.address, "lending_rates", "no data provider stored"
@@ -93,25 +95,25 @@ class _HandleCurveDataProviderAdapter:
         return tuple(rates)
 
     def d(self, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_d(block_number)
+        v: int | None = self._py_pool.fetch_curve_d(block_number)
         if v is None:
             raise MissingCurveData(self._py_pool.address, "d", "no data provider stored")
         return v
 
     def gamma(self, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_gamma(block_number)
+        v: int | None = self._py_pool.fetch_curve_gamma(block_number)
         if v is None:
             raise MissingCurveData(self._py_pool.address, "gamma", "no data provider stored")
         return v
 
     def price_scale(self, block_number: int) -> tuple[int, ...]:
-        scales = self._py_pool.fetch_curve_price_scale(block_number)
+        scales: tuple[int, ...] | None = self._py_pool.fetch_curve_price_scale(block_number)
         if not scales:
             raise MissingCurveData(self._py_pool.address, "price_scale", "no data provider stored")
         return tuple(scales)
 
     def admin_balances(self, block_number: int) -> tuple[int, ...]:
-        bal = self._py_pool.fetch_curve_admin_balances(block_number)
+        bal: tuple[int, ...] | None = self._py_pool.fetch_curve_admin_balances(block_number)
         if not bal:
             raise MissingCurveData(
                 self._py_pool.address, "admin_balances", "no data provider stored"
@@ -119,7 +121,7 @@ class _HandleCurveDataProviderAdapter:
         return tuple(bal)
 
     def redemption_price(self, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_redemption_price(block_number)
+        v: int | None = self._py_pool.fetch_curve_redemption_price(block_number)
         if v is None:
             raise MissingCurveData(
                 self._py_pool.address, "redemption_price", "no data provider stored"
@@ -127,7 +129,7 @@ class _HandleCurveDataProviderAdapter:
         return v
 
     def base_cache_updated(self, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_base_cache_updated(block_number)
+        v: int | None = self._py_pool.fetch_curve_base_cache_updated(block_number)
         if v is None:
             raise MissingCurveData(
                 self._py_pool.address, "base_cache_updated", "no data provider stored"
@@ -135,7 +137,7 @@ class _HandleCurveDataProviderAdapter:
         return v
 
     def base_virtual_price(self, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_base_virtual_price(block_number)
+        v: int | None = self._py_pool.fetch_curve_base_virtual_price(block_number)
         if v is None:
             raise MissingCurveData(
                 self._py_pool.address, "base_virtual_price", "no data provider stored"
@@ -143,7 +145,7 @@ class _HandleCurveDataProviderAdapter:
         return v
 
     def virtual_price(self, block_number: int) -> int:
-        v = self._py_pool.fetch_curve_virtual_price(block_number)
+        v: int | None = self._py_pool.fetch_curve_virtual_price(block_number)
         if v is None:
             raise MissingCurveData(
                 self._py_pool.address, "virtual_price", "no data provider stored"
@@ -417,7 +419,7 @@ class CurveStableswapPool(
         (ADR-005 slice 11b). Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
-        return tuple(self._py_pool.balance_vector().balances)
+        return cast("tuple[int, ...]", tuple(self._py_pool.balance_vector().balances))
 
     @property
     def state(self) -> CurveStableswapPoolState:
@@ -636,7 +638,10 @@ class CurveStableswapPool(
         # Rust-owned: D computation + LP-total-supply I/O + the
         # deposit/reduction scaling all run in the Rust core on this pool's
         # current balances.
-        return self._py_pool.curve_calc_token_amount(list(amounts), deposit, block_number)
+        return cast(
+            "int",
+            self._py_pool.curve_calc_token_amount(list(amounts), deposit, block_number),
+        )
 
     def calc_withdraw_one_coin(
         self,
@@ -656,7 +661,7 @@ class CurveStableswapPool(
         # `total_supply`) are not consumed by any caller, so only `dy` is
         # returned.
         dy = self._py_pool.curve_calc_withdraw_one_coin(_token_amount, i, block_number)
-        return (dy,)
+        return (cast("int", dy),)
 
     def get_dy(
         self,
@@ -691,7 +696,10 @@ class CurveStableswapPool(
         block_number = self._resolve_block_number(block_identifier)
         override_balances = list(override_state.balances) if override_state is not None else None
         try:
-            return self._py_pool.curve_get_dy(i, j, dx, block_number, override_balances)
+            return cast(
+                "int",
+                self._py_pool.curve_get_dy(i, j, dx, block_number, override_balances),
+            )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
 
@@ -721,7 +729,10 @@ class CurveStableswapPool(
         block_number = self._resolve_block_number(block_identifier)
         override_balances = list(override_state.balances) if override_state is not None else None
         try:
-            return self._py_pool.curve_get_dy_underlying(i, j, dx, block_number, override_balances)
+            return cast(
+                "int",
+                self._py_pool.curve_get_dy_underlying(i, j, dx, block_number, override_balances),
+            )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
 

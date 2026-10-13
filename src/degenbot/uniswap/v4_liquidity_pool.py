@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import dataclasses
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot.abi import encode
 from degenbot.checksum_cache import get_checksum_address
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from degenbot.types.chain import ChecksummedAddress
 
 
-def _signed_amounts(read: dict, *, zero_for_one: bool) -> tuple[int, int]:
+def _signed_amounts(read: dict[str, Any], *, zero_for_one: bool) -> tuple[int, int]:
     """Split a computed swap read's signed deltas into (amount_in, amount_out).
 
     The Rust seam returns the deposited-`+`/sent-`-` per-token deltas; the
@@ -495,7 +495,7 @@ class UniswapV4Pool(
             The current sqrt price as a Q64.96 value (from Rust).
 
         """
-        return self._py_pool.concentrated_liquidity().sqrt_price_x96
+        return cast("int", self._py_pool.concentrated_liquidity().sqrt_price_x96)
 
     @property
     def state(self) -> UniswapV4PoolState:
@@ -515,15 +515,18 @@ class UniswapV4Pool(
         except ValueError as exc:
             msg = "No V4 pool state available (pool not registered in Rust)"
             raise DegenbotValueError(message=msg) from exc
-        return self.PoolState.__value__(
-            id=self.pool_id,
-            address=self._pool_manager_address,
-            liquidity=view.liquidity,
-            sqrt_price_x96=view.sqrt_price_x96,
-            tick=view.tick,
-            tick_bitmap=self.tick_bitmap,
-            tick_data=self.tick_data,
-            block=view.update_block,
+        return cast(
+            "UniswapV4PoolState",
+            self.PoolState.__value__(
+                id=self.pool_id,
+                address=self._pool_manager_address,
+                liquidity=view.liquidity,
+                sqrt_price_x96=view.sqrt_price_x96,
+                tick=view.tick,
+                tick_bitmap=self.tick_bitmap,
+                tick_data=self.tick_data,
+                block=view.update_block,
+            ),
         )
 
     @property

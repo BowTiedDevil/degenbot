@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.chainlink import ChainlinkPriceFeed
 from degenbot.checksum_cache import get_checksum_address
@@ -106,4 +106,4 @@ class ChainlinkPriceContract:
         _round_id, answer, _started_at, _updated_at, _answered_in_round = (
             self._get_py_feed().latest_round_data()
         )
-        return float(answer) / (10**self.decimals)
+        return cast("float", float(answer) / (10**self.decimals))

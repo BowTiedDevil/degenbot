@@ -164,7 +164,7 @@ def canonical_type(abi_input: dict[str, Any]) -> str:
         The canonical type string, e.g. ``"((address,uint256),bytes)[2]"``.
 
     """
-    typ = abi_input["type"]
+    typ: str = abi_input["type"]
     if not typ.startswith("tuple"):
         return typ
     members = ",".join(canonical_type(component) for component in abi_input.get("components") or [])

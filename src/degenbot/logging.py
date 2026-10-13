@@ -42,10 +42,7 @@ import logging.handlers
 import os
 import queue
 import sys
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing import TextIO
+from typing import Any, TextIO, cast
 
 """
 Create a global logger instance.
@@ -72,7 +69,7 @@ logger.propagate = False
 # slow ``os.write`` blocks only the listener thread whose sole job is
 # writing). See ``tests/test_rust_logging_bridge.py`` (the
 # ``QueueHandler-not-StreamHandler`` + listener-drains guards).
-class _LiveStdoutStreamHandler(logging.StreamHandler):
+class _LiveStdoutStreamHandler(logging.StreamHandler[TextIO]):
     """The console writer — resolves ``sys.stdout`` at emit time, never pins it.
 
     A pinned stream is a pytest-teardown hazard: this module is imported while
@@ -98,10 +95,10 @@ class _LiveStdoutStreamHandler(logging.StreamHandler):
         logging.Handler.__init__(self)
 
     @property
-    def stream(self) -> "TextIO":
+    def stream(self) -> TextIO:
         current = sys.stdout
         if current is not None and not current.closed:
-            return current
+            return cast("TextIO", current)
         # The active stdout is closed (post-teardown) or None (pythonw /
         # interpreter shutdown): fall back to the process original so the
         # record stays visible rather than erroring. When even that is gone,
@@ -109,7 +106,7 @@ class _LiveStdoutStreamHandler(logging.StreamHandler):
         # ``--- Logging error ---`` spray from a dying interpreter.
         for candidate in (sys.__stdout__, sys.stderr):
             if candidate is not None and not candidate.closed:
-                return candidate
+                return cast("TextIO", candidate)
         return io.StringIO()
 
 
@@ -174,7 +171,7 @@ _STDOUT_HANDLER.setFormatter(_AreaFormatter())
 # ``Condition``, no notifier thread) — ``put_nowait`` is a few microseconds and never
 # blocks. ``respect_handler_level=True`` so the listener still honors each
 # destination handler's level (mirrors direct-emit semantics).
-_LOG_QUEUE: queue.SimpleQueue = queue.SimpleQueue()
+_LOG_QUEUE: queue.SimpleQueue[Any] = queue.SimpleQueue()
 _QUEUED_HANDLER = logging.handlers.QueueHandler(_LOG_QUEUE)
 _LOG_LISTENER = logging.handlers.QueueListener(
     _LOG_QUEUE,

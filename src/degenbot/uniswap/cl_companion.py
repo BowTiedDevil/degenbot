@@ -16,7 +16,7 @@ the companions stay Python (ADR-023).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.exceptions import ExternalUpdateError
 from degenbot.exceptions.pool import LiquidityMapWordMissing, NoPoolStateAvailable
@@ -77,7 +77,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     @property
     def sqrt_price_x96(self) -> int:
         """Sqrt price x96. Returns: The current sqrt price as a Q64.96 value (from Rust)."""
-        return self._py_pool.concentrated_liquidity().sqrt_price_x96
+        return cast("int", self._py_pool.concentrated_liquidity().sqrt_price_x96)
 
     @property
     def tick(self) -> int:
@@ -150,7 +150,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         """
         if state.liquidity == 0:
             return False
-        return state.sqrt_price_x96 > 1
+        return cast("bool", state.sqrt_price_x96 > 1)
 
     def update_tick_data(
         self,

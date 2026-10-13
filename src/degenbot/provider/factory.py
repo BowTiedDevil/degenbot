@@ -15,7 +15,7 @@ CLI can reach it without a lib->cli reverse dependency.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.config import resolve_chain_id, resolve_http_rpc_uri
 from degenbot.exceptions.base import DegenbotValueError
@@ -157,6 +157,9 @@ async def get_async_provider_from_config(
     if provider_factory is None:
         provider_factory = AsyncAlloyProvider.create
     try:
-        return await provider_factory(endpoint, chain_id=session_chain_id)
+        return cast(
+            "AsyncAlloyProvider",
+            await provider_factory(endpoint, chain_id=session_chain_id),
+        )
     except chain_mismatch_error as exc:
         raise ChainIdentityMismatchError(message=_chain_mismatch_message(exc)) from exc

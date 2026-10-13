@@ -9,6 +9,8 @@ the Rust core (``rust/crates/foundation/degenbot-core/src/libzip.rs``) is the si
 implementation, ``#[cfg(test)]`` corpus the regression set.
 """
 
+from typing import cast
+
 from degenbot._ffi.solady import flz_compress as _flz_compress_rust
 from degenbot._ffi.solady import flz_decompress as _flz_decompress_rust
 from degenbot.types.chain import HexStr
@@ -27,7 +29,7 @@ def flz_compress(uncompressed_data: str | bytes) -> bytes:
         The compressed data.
 
     """
-    return _flz_compress_rust(uncompressed_data)
+    return cast("bytes", _flz_compress_rust(uncompressed_data))
 
 
 def flz_decompress(compressed_data: bytes | bytearray | HexStr) -> bytes:
@@ -42,4 +44,4 @@ def flz_decompress(compressed_data: bytes | bytearray | HexStr) -> bytes:
         The decompressed data.
 
     """
-    return _flz_decompress_rust(compressed_data)
+    return cast("bytes", _flz_decompress_rust(compressed_data))

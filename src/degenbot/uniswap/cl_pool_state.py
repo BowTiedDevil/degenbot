@@ -7,7 +7,7 @@ reading the typed ``PoolTickCoverage`` enum off the CL handle (survey C7).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from degenbot.uniswap import PoolTickCoverage
 
@@ -27,4 +27,7 @@ class ConcentratedLiquidityPoolState:
         retired; the shared CL state owns the read of the typed enum).
 
         """
-        return self._py_pool.concentrated_liquidity().coverage == PoolTickCoverage.Sparse
+        return cast(
+            "bool",
+            self._py_pool.concentrated_liquidity().coverage == PoolTickCoverage.Sparse,
+        )

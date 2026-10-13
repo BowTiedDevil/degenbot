@@ -59,13 +59,16 @@ class DatabaseSnapshot(DatabaseSnapshotBase[ChecksummedAddress]):
         return self._rust().get_liquidity_map_v3(pool_key)
 
     def _seam_all_liquidity_maps(self) -> dict[str, dict[int, tuple[int, int]]]:
-        return self._rust().get_all_liquidity_maps_v3()
+        return cast(
+            "dict[str, dict[int, tuple[int, int]]]",
+            self._rust().get_all_liquidity_maps_v3(),
+        )
 
     def _seam_newest_block(self) -> BlockNumber | None:
         return self._rust().get_newest_block_v3()
 
     def _seam_pools(self) -> set[str]:
-        return self._rust().get_pools_v3()
+        return cast("set[str]", self._rust().get_pools_v3())
 
     @override
     def _all_maps_key(self, raw_key: object) -> ChecksummedAddress:

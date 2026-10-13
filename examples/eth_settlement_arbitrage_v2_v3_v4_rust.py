@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import sys
 import time
+from typing import Any, cast
 
 from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.exceptions import BootRefused
@@ -83,7 +84,7 @@ async def main() -> None:
                     step_from_wire,
                 )
 
-                async def operator_handler(op: str, payload: dict) -> dict:
+                async def operator_handler(op: str, payload: dict[str, Any]) -> dict[str, Any]:
                     if op == "add_path":
                         steps = [step_from_wire(s) for s in payload["steps"]]
                         directions = payload.get("directions")
@@ -110,7 +111,7 @@ async def main() -> None:
                     operator_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await operator_task
-                    await operator.close()
+                    await cast("OperatorServer", operator).close()
     except ActivationGateRefused as exc:
         # The posture gate refused the fleet: same fail-fast discipline as
         # the boot refusal — one named line, EX_CONFIG, no partial run().

@@ -7,7 +7,7 @@ three-layer architecture); file-based snapshot sources are not supported.
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Protocol, TypedDict
+from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
 from degenbot.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.logging import logger
@@ -250,14 +250,17 @@ class LiquiditySnapshotBase[K, U, E: LiquidityEvent, S: LiquiditySnapshotSource]
 
     def _pending_updates(self, pool_key: K) -> tuple[U, ...]:
         try:
-            return tuple(
-                self._update_type(
-                    block_number=event.block_number,
-                    liquidity=event.liquidity,
-                    tick_lower=event.tick_lower,
-                    tick_upper=event.tick_upper,
-                )
-                for event in self._liquidity_events[pool_key]
+            return cast(
+                "tuple[U, ...]",
+                tuple(
+                    self._update_type(
+                        block_number=event.block_number,
+                        liquidity=event.liquidity,
+                        tick_lower=event.tick_lower,
+                        tick_upper=event.tick_upper,
+                    )
+                    for event in self._liquidity_events[pool_key]
+                ),
             )
         finally:
             self._liquidity_events[pool_key].clear()

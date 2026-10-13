@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from itertools import starmap
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, cast, runtime_checkable
 
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.math import fixed_point_mul_down
@@ -265,7 +265,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         for the mutable ``balances`` slot; this getter returns the live tuple
         (one U256 per token, including BPT for Composable pools).
         """
-        return tuple(self._py_pool.balance_vector().balances)
+        return cast("tuple[int, ...]", tuple(self._py_pool.balance_vector().balances))
 
     @property
     def state(self) -> PoolState:
@@ -350,8 +350,11 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         if rates is None:
             msg = "no Balancer stable rate provider available"
             raise DegenbotValueError(message=msg)
-        return tuple(
-            starmap(fixed_point_mul_down, zip(self._base_scaling_factors, rates, strict=True))
+        return cast(
+            "tuple[int, ...]",
+            tuple(
+                starmap(fixed_point_mul_down, zip(self._base_scaling_factors, rates, strict=True))
+            ),
         )
 
     def _should_warn_stale_rates(self) -> bool:
@@ -406,7 +409,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
             if self._rate_provider_is_static
             else list(self._resolve_scaling_factors(block_identifier))
         )
-        result = self._py_pool.calculate_tokens_out_for_pair(
+        result: int = self._py_pool.calculate_tokens_out_for_pair(
             index_in=idx_in,
             index_out=idx_out,
             amount_in=token_in_quantity,
@@ -448,7 +451,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
             if self._rate_provider_is_static
             else list(self._resolve_scaling_factors(block_identifier))
         )
-        result = self._py_pool.calculate_tokens_in_for_pair(
+        result: int = self._py_pool.calculate_tokens_in_for_pair(
             index_in=idx_in,
             index_out=idx_out,
             amount_out=token_out_quantity,

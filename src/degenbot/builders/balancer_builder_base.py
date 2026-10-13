@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from enum import IntEnum
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.abi import AbiDecodeError, decode
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
@@ -184,7 +184,7 @@ class BalancerBuilderBase:
 
     @staticmethod
     def _fetch_amp(io: BotIo, address: str, block: int) -> int:
-        return io.fetch_balancer_amp(address, block=block)
+        return cast("int", io.fetch_balancer_amp(address, block=block))
 
     @staticmethod
     def _fetch_rate_providers(

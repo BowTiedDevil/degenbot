@@ -32,6 +32,8 @@ from degenbot.dispatch import (
 from degenbot.runner._dispatch import _resolve_relay_providers
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from degenbot.runner._dispatch import RawEngineResult
     from degenbot.runner.bot_runner import _SessionState
 
@@ -50,7 +52,7 @@ class BatchWork:
     block_timestamp: int
     base_fee_next: int
     current_block: int
-    payloads: dict[int, dict] | None = None
+    payloads: dict[int, dict[str, Any]] | None = None
 
 
 async def build_batch_executor(session: _SessionState) -> BatchExecutor:

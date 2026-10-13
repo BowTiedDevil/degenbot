@@ -14,7 +14,7 @@ with range validation; the async surface takes keyword arguments only.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot.provider._rust import RustAlloyProvider
 from degenbot.provider.block_helpers import block_timestamp_from, resolve_block_tag
@@ -151,8 +151,11 @@ class _AlloyQueryMixin(_AlloyBacked):
         An unsupported tag string raises ``ValueError`` (:meth:`BlockTag.parse`).
 
         """
-        return self._provider.get_block(
-            resolve_block_tag(block_identifier, self._provider.get_block_number())
+        return cast(
+            "BlockData | None",
+            self._provider.get_block(
+                resolve_block_tag(block_identifier, self._provider.get_block_number())
+            ),
         )
 
     def get_code(self, address: str, block: int | None = None) -> bytes:
@@ -166,7 +169,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             Contract bytecode as bytes
 
         """
-        return self._provider.get_code(address, block)
+        return cast("bytes", self._provider.get_code(address, block))
 
     def call(
         self,
@@ -193,7 +196,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             >>> balance = int.from_bytes(result, "big")
 
         """
-        return self._provider.call(to, data, block)
+        return cast("bytes", self._provider.call(to, data, block))
 
     def get_logs(
         self,
@@ -268,11 +271,14 @@ class _AlloyQueryMixin(_AlloyBacked):
 
         # Call Rust provider's get_logs with keyword arguments
         # The Rust provider returns list[LogData] with bytes for hex fields
-        return self._provider.get_logs(
-            from_block=from_block_val,
-            to_block=to_block_val,
-            addresses=addresses_val,
-            topics=topics_val,
+        return cast(
+            "list[LogData]",
+            self._provider.get_logs(
+                from_block=from_block_val,
+                to_block=to_block_val,
+                addresses=addresses_val,
+                topics=topics_val,
+            ),
         )
 
     def get_transaction(self, tx_hash: str) -> TransactionData | None:
@@ -286,7 +292,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             or None if not found.
 
         """
-        return self._provider.get_transaction(tx_hash)
+        return cast("TransactionData | None", self._provider.get_transaction(tx_hash))
 
     def get_transaction_receipt(self, tx_hash: str) -> TransactionReceiptData | None:
         """Get a transaction receipt by hash.
@@ -299,7 +305,10 @@ class _AlloyQueryMixin(_AlloyBacked):
             or None if not found.
 
         """
-        return self._provider.get_transaction_receipt(tx_hash)
+        return cast(
+            "TransactionReceiptData | None",
+            self._provider.get_transaction_receipt(tx_hash),
+        )
 
     def estimate_gas(
         self,
@@ -341,7 +350,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             Storage value at the position as bytes (32)
 
         """
-        return self._provider.get_storage_at(address, position, block)
+        return cast("bytes", self._provider.get_storage_at(address, position, block))
 
     def close(self) -> None:
         """Close connection pool and release resources."""
@@ -373,7 +382,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             Balance in wei as int
 
         """
-        return self._provider.get_balance(address, block)
+        return cast("int", self._provider.get_balance(address, block))
 
     def get_transaction_count(
         self,
@@ -434,7 +443,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             The raw return data from the contract call.
 
         """
-        return self._provider.call(tx["to"], to_bytes(tx["data"]), block)
+        return cast("bytes", self._provider.call(tx["to"], to_bytes(tx["data"]), block))
 
     def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[bytes]:
         """Execute multiple eth_calls sequentially and return results in order.

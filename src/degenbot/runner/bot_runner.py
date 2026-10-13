@@ -265,11 +265,11 @@ class _SessionState:
     #: The result-consumer drain task (written by the run ritual at
     #: consumer-attach; read by the pump-finished watchdog and handed to the
     #: session watch). ``None`` before ``run()``.
-    result_consumer_task: asyncio.Task | None = None
+    result_consumer_task: asyncio.Task[Any] | None = None
     #: The scheduled registration hand-off (the run ritual's scheduler
     #: output; the trim guard reads it to refuse a mid-climb outside
     #: trim). ``None`` for a backrun-only boot, which schedules nothing.
-    registration_task: asyncio.Task | None = None
+    registration_task: asyncio.Task[Any] | None = None
     #: The registration-owned construction context (written by the run
     #: ritual for the real builder; ``None`` for injected builders).
     registration_context: ConstructionContext | None = None
@@ -850,7 +850,10 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         if session.registration_pipeline is None:
             msg = "no live registration pipeline; on-demand discovery unavailable"
             raise RuntimeError(msg)
-        return await session.registration_pipeline.trigger_discovery(bound=bound)
+        return cast(
+            "int",
+            await session.registration_pipeline.trigger_discovery(bound=bound),
+        )
 
     def _trim_python_state(self, *, close_read_tx: bool = True) -> None:
         """Trim redundant Python state once registration is done.

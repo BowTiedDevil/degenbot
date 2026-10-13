@@ -26,7 +26,7 @@ from degenbot.checksum_cache import get_checksum_address
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.chain import ChecksummedAddress
 
 
 def generate_aerodrome_v2_pool_address(

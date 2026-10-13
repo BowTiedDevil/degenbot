@@ -11,6 +11,8 @@ mint rather than mistranslating.
 
 from __future__ import annotations
 
+from typing import cast
+
 # ADR-013: Rust symbols enter Python through a `degenbot.<domain>` barrier,
 # and this module sits inside one. Resolve the core vocabulary from the
 # partially-initialized package — the ordering contract lives in
@@ -34,7 +36,7 @@ def _pool_kind_for_tag(tag: str) -> PoolKind:
     if member is None:
         msg = f"core pool-family tag {tag!r} has no PoolKind member (stale FFI binding?)"
         raise AttributeError(msg)
-    return member
+    return cast("PoolKind", member)
 
 
 #: The canonical family tags, in discriminant order — BUILT from the core's

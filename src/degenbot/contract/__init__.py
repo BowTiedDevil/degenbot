@@ -41,8 +41,8 @@ from degenbot._ffi.contract import get_function_selector as _get_function_select
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot._ffi import ChecksummedAddress as Address
     from degenbot.provider import AlloyProvider
+    from degenbot.types.chain import ChecksummedAddress as Address
 
 
 class Contract:

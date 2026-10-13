@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.provider._rust import RustAlloyProvider
 from degenbot.types.rpc_types import BlockTag
@@ -137,7 +137,7 @@ class _OfflineDataMixin(_OfflineBacked):
             Raw return data from the contract call
 
         """
-        return self._alloy.call(to, to_bytes(data), block_number=block)
+        return cast("bytes", self._alloy.call(to, to_bytes(data), block_number=block))
 
     def get_code(
         self,
@@ -154,7 +154,7 @@ class _OfflineDataMixin(_OfflineBacked):
             Contract bytecode, or empty bytes if not recorded
 
         """
-        return self._alloy.get_code(address, block_number=block)
+        return cast("bytes", self._alloy.get_code(address, block_number=block))
 
     def get_block(
         self,
@@ -177,7 +177,7 @@ class _OfflineDataMixin(_OfflineBacked):
                 block_num = int(block_identifier)
             except (ValueError, TypeError):
                 return None
-        return self._alloy.get_block(block_num)
+        return cast("BlockData | None", self._alloy.get_block(block_num))
 
     def get_balance(
         self,

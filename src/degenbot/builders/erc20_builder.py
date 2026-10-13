@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import EtherPlaceholder
@@ -309,7 +309,7 @@ class Erc20Builder:
         balance = io.fetch_token_balance(token.address, address, block=block_number)
 
         token.set_cached_balance(address, block_number, balance)
-        return balance
+        return cast("int", balance)
 
     def get_token_approval(  # ruff:ignore[no-self-use]
         self,
@@ -341,7 +341,7 @@ class Erc20Builder:
         approval = io.fetch_token_allowance(token.address, owner, spender, block=block_number)
 
         token.set_cached_approval(block_number, owner, spender, approval)
-        return approval
+        return cast("int", approval)
 
     def get_token_total_supply(  # ruff:ignore[no-self-use]
         self,
@@ -389,7 +389,7 @@ class Erc20Builder:
         assert io is not None
 
         block_number = _resolve_block_number(io, block_identifier)
-        return io.get_balance(address, block=block_number)
+        return cast("int", io.get_balance(address, block=block_number))
 
 
 # --- Package-level helpers (BotIo equivalents of Erc20Token.fetch_*) ---
@@ -403,8 +403,8 @@ def _resolve_block_number(io: BotIo, block_identifier: BlockIdentifier | None) -
 
     """
     if block_identifier is None:
-        return io.get_block_number()
+        return cast("int", io.get_block_number())
     if isinstance(block_identifier, int):
         return block_identifier
     # For string identifiers like 'latest', 'earliest', 'pending'
-    return io.get_block_number()
+    return cast("int", io.get_block_number())

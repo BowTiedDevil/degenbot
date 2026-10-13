@@ -14,7 +14,7 @@ scalar-property surface this tree exposes as awaited methods.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.provider._rust import RustAsyncAlloyProvider
 from degenbot.provider.block_helpers import block_timestamp_from, resolve_block_tag
@@ -61,7 +61,7 @@ class _AsyncAlloyEndpointMixin(_AsyncAlloyBacked):
             The current block number.
 
         """
-        return await self._provider.get_block_number()
+        return cast("int", await self._provider.get_block_number())
 
     async def get_chain_id(self) -> int:
         """Return the chain ID.
@@ -70,7 +70,7 @@ class _AsyncAlloyEndpointMixin(_AsyncAlloyBacked):
             The chain ID.
 
         """
-        return await self._provider.get_chain_id()
+        return cast("int", await self._provider.get_chain_id())
 
     async def get_gas_price(self) -> int:
         """Return the current gas price in wei.
@@ -79,7 +79,7 @@ class _AsyncAlloyEndpointMixin(_AsyncAlloyBacked):
             The current gas price in wei.
 
         """
-        return await self._provider.get_gas_price()
+        return cast("int", await self._provider.get_gas_price())
 
 
 class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
@@ -97,8 +97,11 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
         An unsupported tag string raises ``ValueError`` (:meth:`BlockTag.parse`).
 
         """
-        return await self._provider.get_block(
-            resolve_block_tag(block_identifier, await self._provider.get_block_number())
+        return cast(
+            "BlockData | None",
+            await self._provider.get_block(
+                resolve_block_tag(block_identifier, await self._provider.get_block_number())
+            ),
         )
 
     async def get_transaction(self, tx_hash: str) -> TransactionData | None:
@@ -108,7 +111,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The transaction data, or None if not found.
 
         """
-        return await self._provider.get_transaction(tx_hash)
+        return cast("TransactionData | None", await self._provider.get_transaction(tx_hash))
 
     async def get_transaction_receipt(self, tx_hash: str) -> TransactionReceiptData | None:
         """Get a transaction receipt by hash.
@@ -117,7 +120,10 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The transaction receipt, or None if not found.
 
         """
-        return await self._provider.get_transaction_receipt(tx_hash)
+        return cast(
+            "TransactionReceiptData | None",
+            await self._provider.get_transaction_receipt(tx_hash),
+        )
 
     async def get_logs(
         self,
@@ -133,11 +139,14 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             A list of matching log entries.
 
         """
-        return await self._provider.get_logs(
-            from_block=from_block,
-            to_block=to_block,
-            addresses=addresses,
-            topics=topics,
+        return cast(
+            "list[LogData]",
+            await self._provider.get_logs(
+                from_block=from_block,
+                to_block=to_block,
+                addresses=addresses,
+                topics=topics,
+            ),
         )
 
     async def call(
@@ -152,7 +161,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The raw return data from the contract call.
 
         """
-        return await self._provider.call(to, data, block)
+        return cast("bytes", await self._provider.call(to, data, block))
 
     async def call_raw(
         self,
@@ -165,7 +174,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The raw return data from the contract call.
 
         """
-        return await self._provider.call(tx["to"], to_bytes(tx["data"]), block)
+        return cast("bytes", await self._provider.call(tx["to"], to_bytes(tx["data"]), block))
 
     async def batch_call(
         self,
@@ -200,7 +209,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The contract bytecode, or empty bytes if not a contract.
 
         """
-        return await self._provider.get_code(address, block)
+        return cast("bytes", await self._provider.get_code(address, block))
 
     async def estimate_gas(
         self,
@@ -216,7 +225,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The estimated gas units.
 
         """
-        return await self._provider.estimate_gas(to, data, from_, value, block)
+        return cast("int", await self._provider.estimate_gas(to, data, from_, value, block))
 
     async def get_storage_at(
         self,
@@ -230,7 +239,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The storage value as bytes.
 
         """
-        return await self._provider.get_storage_at(address, position, block)
+        return cast("bytes", await self._provider.get_storage_at(address, position, block))
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
         """Get the balance of an address in wei.
@@ -239,7 +248,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The balance in wei.
 
         """
-        return await self._provider.get_balance(address, block)
+        return cast("int", await self._provider.get_balance(address, block))
 
     async def get_transaction_count(
         self,
@@ -252,7 +261,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The transaction count (nonce).
 
         """
-        return await self._provider.get_transaction_count(address, block)
+        return cast("int", await self._provider.get_transaction_count(address, block))
 
     async def make_request(self, method: str, params: list[Any]) -> Any:  # ruff:ignore[any-type]
         """Make a raw JSON-RPC request.

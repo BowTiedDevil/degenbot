@@ -354,7 +354,7 @@ class Bot(AccountQueryMixin):
     @property
     def provider(self) -> AlloyProvider:
         """The single RPC provider for this Bot's chain."""
-        return self._provider
+        return cast("AlloyProvider", self._provider)
 
     def block_stream(self) -> BlockStream:
         """Fresh async iterator over ``newHeads`` block notifications.

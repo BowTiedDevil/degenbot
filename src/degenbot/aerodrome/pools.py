@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
@@ -163,11 +163,14 @@ class AerodromeV2Pool(
         except ValueError as exc:
             msg = f"No Aerodrome V2 pool state available for {self.address}"
             raise DegenbotValueError(message=msg) from exc
-        return self.PoolState.__value__(
-            address=self.address,
-            reserves_token0=view.reserve0,
-            reserves_token1=view.reserve1,
-            block=view.update_block,
+        return cast(
+            "AerodromeV2PoolState",
+            self.PoolState.__value__(
+                address=self.address,
+                reserves_token0=view.reserve0,
+                reserves_token1=view.reserve1,
+                block=view.update_block,
+            ),
         )
 
     @property

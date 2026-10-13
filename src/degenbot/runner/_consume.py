@@ -318,7 +318,7 @@ def _apply_result_if_ready(
 
     # SIMPIPE2 T3: the engine's inline-sim payloads (empty dict = the legacy
     # FFI-sim path for every entry — per-entry presence decides).
-    payloads: dict[int, dict] = {
+    payloads: dict[int, dict[str, Any]] = {
         int(pid): payload for pid, payload in cast("Any", batch.get("payloads") or {}).items()
     }
 

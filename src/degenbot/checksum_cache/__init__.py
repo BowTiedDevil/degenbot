@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING
 from degenbot._ffi import to_checksum_address
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
-    from degenbot.types.chain import HexAddress
+    from degenbot.types.chain import ChecksummedAddress, HexAddress
 
 _HEX_PREFIX_LENGTH = 2
 

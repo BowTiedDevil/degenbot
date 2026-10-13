@@ -8,7 +8,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.chain import ChainId
 
 if typing.TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.chain import ChecksummedAddress
 
 
 def _min_uint(_: int) -> int:

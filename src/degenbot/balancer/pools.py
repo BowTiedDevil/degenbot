@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
@@ -162,7 +162,7 @@ class BalancerV2Pool(AbstractLiquidityPool):
         (ADR-005 slice 12b). Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
-        return tuple(self._py_pool.balance_vector().balances)
+        return cast("tuple[int, ...]", tuple(self._py_pool.balance_vector().balances))
 
     @property
     def state(self) -> PoolState:
@@ -212,12 +212,15 @@ class BalancerV2Pool(AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return self._py_pool.calculate_tokens_out_for_pair(
-            index_in=self._tokens.index(token_in),
-            index_out=self._tokens.index(token_out),
-            amount_in=token_in_quantity,
-            override_balances=(
-                list(override_state.balances) if override_state is not None else None
+        return cast(
+            "int",
+            self._py_pool.calculate_tokens_out_for_pair(
+                index_in=self._tokens.index(token_in),
+                index_out=self._tokens.index(token_out),
+                amount_in=token_in_quantity,
+                override_balances=(
+                    list(override_state.balances) if override_state is not None else None
+                ),
             ),
         )
 
@@ -236,12 +239,15 @@ class BalancerV2Pool(AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return self._py_pool.calculate_tokens_in_for_pair(
-            index_in=self._tokens.index(token_in),
-            index_out=self._tokens.index(token_out),
-            amount_out=token_out_quantity,
-            override_balances=(
-                list(override_state.balances) if override_state is not None else None
+        return cast(
+            "int",
+            self._py_pool.calculate_tokens_in_for_pair(
+                index_in=self._tokens.index(token_in),
+                index_out=self._tokens.index(token_out),
+                amount_out=token_out_quantity,
+                override_balances=(
+                    list(override_state.balances) if override_state is not None else None
+                ),
             ),
         )
 
