@@ -73,10 +73,9 @@ pub(crate) fn refine_bounds(lines: &[Line]) -> Vec<RefineBound> {
 /// Solve a walkable path — every hop is V2, V3, or V4 — with the active-set
 /// piecewise Möbius walk.
 ///
-/// All-CL and mixed V2+CL paths share this ONE construction flow: the hop
-/// order, V2 states, borrowed CL sequences, and per-CL-hop prepared tables are
-/// assembled once, then the memo-capable all-CL entry or the mixed entry
-/// consumes them.
+/// All-CL and mixed V2+CL paths share this ONE construction flow: one
+/// borrowed hop view per position (V2 state or prepared CL hop) into the one
+/// solve body — nothing cloned, derived, or rebuilt per solve.
 ///
 /// The pre-built `IntV3TickRangeSequence` from `resolve_path` was constructed
 /// directly from U256 values (no f64 conversion); V3 and V4 hops produce the
@@ -85,9 +84,9 @@ pub(crate) fn solve_walkable_path_int(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
     walk_env: Option<&PathBoundLines>,
-) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
+) -> crate::mixed::SolveArmOutcome {
     if resolved.hops.len() < 2 {
-        return (None, crate::cl::WalkStats::default());
+        return crate::mixed::SolveArmOutcome::refused(crate::cl::WalkRefusal::TooShort);
     }
 
     // Translate the envelope's composed bound lines into the kernel's own
@@ -112,11 +111,13 @@ pub(crate) fn solve_walkable_path_int(
             }
             // Not a walkable V2/CL path (the caller routes other families
             // elsewhere); refuse rather than solve a partial composition.
-            _ => return (None, crate::cl::WalkStats::default()),
+            _ => {
+                return crate::mixed::SolveArmOutcome::refused(crate::cl::WalkRefusal::NotWalkable)
+            }
         }
     }
 
-    let out = crate::cl::solve_mixed_piecewise(
+    let out = crate::cl::solve_piecewise(
         &hops,
         gate.walk_memo(),
         gate.telemetry(),
@@ -124,8 +125,8 @@ pub(crate) fn solve_walkable_path_int(
         window.as_deref(),
     );
 
-    (
-        out.result.map(|(optimal_input, profit, hop_outputs)| {
+    crate::mixed::SolveArmOutcome {
+        result: out.result.map(|(optimal_input, profit, hop_outputs)| {
             // consumed_inputs[0] = optimal_input (first hop consumes full input).
             // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
             // becomes this hop's input).
@@ -142,8 +143,9 @@ pub(crate) fn solve_walkable_path_int(
                 ..Default::default()
             }
         }),
-        out.stats,
-    )
+        refusal: out.refusal,
+        stats: out.stats,
+    }
 }
 
 // ---------------------------------------------------------------------------

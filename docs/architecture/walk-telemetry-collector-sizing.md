@@ -203,7 +203,7 @@ impl WalkTelemetry {
 | `simulate_walk_path` / `_inner` | `+ &mut WalkTally` | `active_set.rs:223-229` |
 | `simulate_v3_range_swap` (pub) | `+ &mut WalkTally` | `hop_sim.rs:57-59` (writer :102); callers `active_set.rs:136`, `path_sim.rs:92` (its `ClPathSim::simulate` gains the param too), `profit_envelope.rs:3454,3548` (tests), `examples/v2_cl_parity_probe.rs:442`, `cl/tests/mod.rs` (~12 sites) |
 | `word_profile_min_input_for_output` + profile build | `+ &mut WalkTally` | `word_profile.rs:125-185`; caller `crossings.rs:14` |
-| `solve_cl_piecewise` / `solve_mixed_piecewise` | `+ tele: Option<&WalkTelemetry>` beside `memo` | `entries.rs:112,218` |
+| `solve_cl_piecewise` / `solve_piecewise` | `+ tele: Option<&WalkTelemetry>` beside `memo` | `entries.rs:112,218` |
 | `derive_and_solve_cl_piecewise` (offline wrapper) | **UNCHANGED** — threads `None` internally | `entries.rs:94-100` (kills ~35 test/example touch points) |
 | `GateDeps` | `+ pub telemetry: Option<&'a WalkTelemetry>` + accessor (mirrors `walk_memo` :1806,1858) | `profit_envelope.rs:1797-1810` |
 | mixed dispatch | `gate.telemetry()` beside `gate.walk_memo()` | `mixed/solve.rs:471-486` |

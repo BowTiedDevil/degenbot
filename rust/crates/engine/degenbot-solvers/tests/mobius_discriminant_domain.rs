@@ -19,7 +19,7 @@
 
 use alloy::primitives::U256;
 use degenbot_math::v2::{int_simulate_path, IntHopState};
-use degenbot_solvers::cl::{solve_mixed_piecewise, MixedHopView};
+use degenbot_solvers::cl::{solve_piecewise, MixedHopView};
 use degenbot_solvers::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients};
 use degenbot_solvers::mobius_int_exact::{
     compute_mobius_model_optimal_input, exact_mobius_solve, isqrt_u512, narrow_u512_to_u256,
@@ -62,7 +62,7 @@ fn baseline(hops: &[IntHopState]) -> Solve {
 
 fn walk(hops: &[IntHopState]) -> Solve {
     let views: Vec<MixedHopView<'_>> = hops.iter().map(MixedHopView::V2).collect();
-    solve_mixed_piecewise(&views, None, None, &SolveRuntimeConfig::default(), None).result
+    solve_piecewise(&views, None, None, &SolveRuntimeConfig::default(), None).result
 }
 
 /// `(opt, profit, outputs)` from sweeping `int_simulate_path` at `anchor - 2

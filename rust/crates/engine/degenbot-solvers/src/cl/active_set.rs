@@ -624,13 +624,33 @@ pub struct WalkStats {
     pub census: WalkEventCensus,
 }
 
-/// The walk entry's whole return: result + returned telemetry (no
-/// frozen thread-locals on the read-back path; the entry
-/// drains its own counters at entry and reports this stats value at exit).
+/// Why a solve surface declined WITHOUT walking (closed vocabulary; each
+/// variant names the thing it fell from). A walk that runs and finds nothing
+/// profitable is NOT a refusal — it carries `refusal: None` — so a caller can
+/// tell "this shape is not mine" from "this composition has no profit". Two
+/// other no-value facts deliberately ride outside this vocabulary: the
+/// profit-envelope gate's rejection (`SolveOutcome::envelope`) and the V4
+/// int128 hard reject (that walk RAN; its stats show it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalkRefusal {
+    /// Fewer than two hops: not a walkable composition.
+    TooShort,
+    /// A hop family no solve surface here consumes; the caller routes it.
+    NotWalkable,
+    /// A partially-resolved path (hops missing) — never solved.
+    Unresolved,
+}
+
+/// The walk entry's whole return: result + typed refusal + returned telemetry
+/// (no frozen thread-locals on the read-back path; the entry drains its own
+/// counters at entry and reports this stats value at exit).
 #[derive(Debug, Default)]
 pub struct WalkOutcome {
     /// `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
     pub result: Option<(U256, U256, Vec<U256>)>,
+    /// Set only when the surface declined without walking (see
+    /// [`WalkRefusal`]); `None` on every walked outcome.
+    pub refusal: Option<WalkRefusal>,
     /// This path's walk-combinator counters + census tally.
     pub stats: WalkStats,
     /// Census piece recorder (drained; empty unless the census gate is on).
@@ -638,9 +658,23 @@ pub struct WalkOutcome {
 }
 
 impl WalkOutcome {
+    /// A walked outcome with no profitable value (the memo's cached-negative
+    /// replay lands here too — the walk once ran and found nothing).
     pub(super) fn none() -> Self {
         Self {
             result: None,
+            refusal: None,
+            stats: WalkStats::default(),
+            census_pieces: Vec::new(),
+        }
+    }
+
+    /// The surface declined before walking: no value, no stats, the named
+    /// refusal.
+    pub(super) fn refused(refusal: WalkRefusal) -> Self {
+        Self {
+            result: None,
+            refusal: Some(refusal),
             stats: WalkStats::default(),
             census_pieces: Vec::new(),
         }
@@ -649,6 +683,7 @@ impl WalkOutcome {
     pub(super) fn from_result(result: Option<(U256, U256, Vec<U256>)>) -> Self {
         Self {
             result,
+            refusal: None,
             stats: WalkStats::default(),
             census_pieces: Vec::new(),
         }
@@ -707,6 +742,7 @@ pub(super) fn solve_active_set_path(
     let _ = tele;
     WalkOutcome {
         result: out,
+        refusal: None,
         stats,
         census_pieces,
     }

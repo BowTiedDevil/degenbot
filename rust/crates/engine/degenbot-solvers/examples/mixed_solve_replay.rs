@@ -16,7 +16,7 @@
 
 //! Offline heavy mixed V2+CL path replay harness with N-repeat stable timing.
 //! Mirrors `cl_solve_replay.rs` for paths that dispatch to
-//! `solve_mixed_piecewise` (V2→V3→V3, V2→V3→V4, …).
+//! `solve_piecewise` (V2→V3→V3, V2→V3→V4, …).
 //!
 //! Usage:
 //!   `cargo run -p degenbot-solvers --example mixed_solve_replay -- [<capture.jsonl>]`
@@ -26,7 +26,7 @@
 //! the live hook
 //! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`), rebuilds
 //! `IntHopState` per V2 hop + `IntV3TickRangeSequence` per CL hop from the
-//! captured fields, and re-runs `solve_mixed_piecewise` — the exact
+//! captured fields, and re-runs `solve_piecewise` — the exact
 //! decomposed call `mixed::solve_mixed_path_int` makes — OFFLINE, with no
 //! bot / RPC / DB. Each path is solved N times; the median / p95 / min wall
 //! time is the stable A/B signal. Per-run nondeterminism is flagged (the solver
@@ -37,7 +37,7 @@
 //! The capture records `measured.time_us` for the FULL `solve_path_with_min`
 //! call (profit-envelope gate + resolve + the decomposed solver). This harness
 //! re-runs only the decomposed solver entry
-//! (`solve_mixed_piecewise`; the prepared hops are derived once per path, so
+//! (`solve_piecewise`; the prepared hops are derived once per path, so
 //! the rep loop measures the solve). If the replay time ≪ `measured.time_us`,
 //! the bottleneck is NOT the
 //! active-set walk — it lives in the profit-envelope gate or the resolve phase
@@ -54,7 +54,7 @@ use std::sync::Arc;
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solvers::cl::{solve_mixed_piecewise, MixedHopView, PreparedClHop, WalkStats};
+use degenbot_solvers::cl::{solve_piecewise, MixedHopView, PreparedClHop, WalkStats};
 use serde_json::Value;
 
 #[path = "common/mod.rs"]
@@ -235,7 +235,7 @@ fn main() {
         let mut divergent_reps = false;
         for _ in 0..iters {
             let t0 = std::time::Instant::now();
-            let out = solve_mixed_piecewise(
+            let out = solve_piecewise(
                 &views,
                 None,
                 None,

@@ -29,7 +29,9 @@ use crate::profit_envelope::{
 };
 use crate::runtime::SolveRuntimeConfig;
 
-use crate::mixed::{HopType, ResolvedHop, ResolvedMixedPath, SolvePathResult, INT128_MAX};
+use crate::mixed::{
+    HopType, ResolvedHop, ResolvedMixedPath, SolveArmOutcome, SolvePathResult, INT128_MAX,
+};
 
 /// Dispatches based on path composition:
 /// - V2-V2: integer-exact Möbius solver (closed-form U512 isqrt)
@@ -48,6 +50,10 @@ use crate::mixed::{HopType, ResolvedHop, ResolvedMixedPath, SolvePathResult, INT
 #[derive(Debug)]
 pub struct SolveOutcome {
     pub result: Option<SolvePathResult>,
+    /// Set only when a solve surface declined without walking (see
+    /// [`crate::cl::WalkRefusal`]); `None` on every walked outcome,
+    /// profitable or not. The envelope gate's rejection rides [`Self::envelope`].
+    pub refusal: Option<crate::cl::WalkRefusal>,
     /// The gate's typed fact, carried independently of walk telemetry.
     /// Planning maps `Bound` at or below its floor to the no-envelope-profit
     /// rejection; `Unsupported` remains solve-unscreened.
@@ -92,6 +98,7 @@ pub fn solve_path_with_min_profit(
                 gate_stats.skipped += 1;
                 return SolveOutcome {
                     result: None,
+                    refusal: None,
                     envelope,
                     stats: crate::cl::WalkStats::default(),
                     gate_stats,
@@ -116,11 +123,12 @@ pub fn solve_path_with_min_profit(
     } else {
         None
     };
-    let (result, stats) = solve_path_inner(resolved, gate, walk_env.as_ref());
+    let arm = solve_path_inner(resolved, gate, walk_env.as_ref());
     SolveOutcome {
-        result,
+        result: arm.result,
+        refusal: arm.refusal,
         envelope,
-        stats,
+        stats: arm.stats,
         gate_stats,
     }
 }
@@ -153,11 +161,8 @@ fn refuse_to_math(_hop: &ResolvedHop) -> Option<HopMath<'_>> {
 /// its result plus walk telemetry. Dispatch runs ONCE per solve, never per
 /// candidate input (ADR-059 D6), so a static fn pointer costs nothing in the
 /// hot loop.
-pub(crate) type SolveFn = fn(
-    &ResolvedMixedPath,
-    &GateDeps<'_>,
-    Option<&PathBoundLines>,
-) -> (Option<SolvePathResult>, crate::cl::WalkStats);
+pub(crate) type SolveFn =
+    fn(&ResolvedMixedPath, &GateDeps<'_>, Option<&PathBoundLines>) -> SolveArmOutcome;
 
 /// The family's `ResolvedHop -> Option<HopMath>` gate projection.
 pub(crate) type ToMathFn = fn(&ResolvedHop) -> Option<HopMath<'_>>;
@@ -343,13 +348,14 @@ pub(crate) fn family_row_for(ht: HopType) -> &'static FamilyRow {
         .unwrap_or(&WALKABLE_ROW)
 }
 
-/// The refusal rows' path entry: no engine for the pairing → no result.
+/// The refusal rows' path entry: no engine for the pairing → the named
+/// refusal, never a silent empty result.
 fn refuse_path(
     _resolved: &ResolvedMixedPath,
     _gate: &GateDeps<'_>,
     _walk_env: Option<&PathBoundLines>,
-) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
-    (None, crate::cl::WalkStats::default())
+) -> SolveArmOutcome {
+    SolveArmOutcome::refused(crate::cl::WalkRefusal::NotWalkable)
 }
 
 /// The V2 family's path entry: the integer-exact Möbius solve.
@@ -357,7 +363,7 @@ fn solve_exact_v2_entry(
     resolved: &ResolvedMixedPath,
     _gate: &GateDeps<'_>,
     _walk_env: Option<&PathBoundLines>,
-) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
+) -> SolveArmOutcome {
     let int_hops: Vec<_> = resolved
         .hops
         .iter()
@@ -365,7 +371,7 @@ fn solve_exact_v2_entry(
         .cloned()
         .collect();
     if int_hops.len() == resolved.hops.len() {
-        (
+        SolveArmOutcome::walked(
             crate::mobius_int_exact::exact_mobius_solve(&int_hops)
                 .ok()
                 .and_then(|r| {
@@ -392,7 +398,7 @@ fn solve_exact_v2_entry(
             crate::cl::WalkStats::default(),
         )
     } else {
-        (None, crate::cl::WalkStats::default())
+        SolveArmOutcome::refused(crate::cl::WalkRefusal::NotWalkable)
     }
 }
 
@@ -402,10 +408,10 @@ pub fn solve_path_inner(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
     walk_env: Option<&crate::profit_envelope::PathBoundLines>,
-) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
+) -> SolveArmOutcome {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
-        return (None, crate::cl::WalkStats::default());
+        return SolveArmOutcome::refused(crate::cl::WalkRefusal::Unresolved);
     }
     // The distinct hop families present in this path — the dispatch key,
     // computed ONCE. [`family_row`] is a set-membership test against it; see
@@ -414,24 +420,27 @@ pub fn solve_path_inner(
 
     // The row lookup IS the dispatch (ADR-071 D3): the selected family's path
     // entry is a fn pointer on the row, so no central `match` arm names it.
-    let (result, walk_stats) = (family_row(&families).solve)(resolved, gate, walk_env);
+    let arm = (family_row(&families).solve)(resolved, gate, walk_env);
 
     // V4 int128 guard: reject paths where any V4 hop's consumed input or
     // output exceeds int128_max. V4's toBalanceDelta() calls toInt128() on
     // swap amounts — if either doesn't fit, V4 reverts with SafeCastOverflow.
-    if let Some(ref r) = result {
+    if let Some(ref r) = arm.result {
         for (i, hop) in resolved.hops.iter().enumerate() {
             if matches!(hop, ResolvedHop::V4 { .. }) {
                 let consumed = r.consumed_inputs.get(i).copied().unwrap_or(U256::ZERO);
                 let output = r.hop_outputs.get(i).copied().unwrap_or(U256::ZERO);
                 if consumed > INT128_MAX || output > INT128_MAX {
-                    return (None, walk_stats);
+                    // A hard reject AFTER the walk (not a refusal): the
+                    // stats show the walk ran and its value is unexecutable
+                    // on-chain.
+                    return SolveArmOutcome::walked(None, arm.stats);
                 }
             }
         }
     }
 
-    let result = result.map(|mut r| {
+    let result = arm.result.map(|mut r| {
         r.state_nonces.clone_from(&resolved.state_nonces);
         // The pool-state descriptions are consumed ONLY by the
         // [solver-st] debug sites in the bot - formatting U256s for every
@@ -477,7 +486,11 @@ pub fn solve_path_inner(
         r.solver_pool_states = pool_states;
         r
     });
-    (result, walk_stats)
+    SolveArmOutcome {
+        result,
+        refusal: arm.refusal,
+        stats: arm.stats,
+    }
 }
 
 /// Number of golden-section refinement iterations (mirrors Python's
@@ -669,7 +682,7 @@ mod gate_tests {
         let p = profitable_path();
         assert_eq!(
             solve_path_with_min_profit(&p, U256::from(u64::MAX), &GateDeps::offline()).result,
-            solve_path_inner(&p, &GateDeps::offline(), None).0,
+            solve_path_inner(&p, &GateDeps::offline(), None).result,
             "offline deps (no prefix cache) must be bit-for-bit identical"
         );
     }

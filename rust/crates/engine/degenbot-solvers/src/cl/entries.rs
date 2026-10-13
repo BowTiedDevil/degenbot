@@ -1,6 +1,6 @@
 use degenbot_math::v2::IntHopState;
 
-use super::active_set::{solve_active_set_path, PieceView, WalkOutcome};
+use super::active_set::{solve_active_set_path, PieceView, WalkOutcome, WalkRefusal};
 use super::crossings::{
     build_cl_crossing_table, build_cl_word_profiles_from_crossings, cl_walk_hop_cached,
 };
@@ -137,7 +137,7 @@ pub fn derive_and_solve_cl_piecewise(
 
 /// The all-CL intake convenience: the projection's prepared hops plus the
 /// caller's engine-owned cross-block memo handle, forwarded to the ONE solve
-/// body ([`solve_mixed_piecewise`]) over borrowed [`MixedHopView::Cl`] views.
+/// body ([`solve_piecewise`]) over borrowed [`MixedHopView::Cl`] views.
 /// This is an intake shape, not a second solve body — the memo fold, hop
 /// assembly, and walk are the unified entry's — and its contract matches the
 /// unified entry's exactly (a path shorter than two hops is refused).
@@ -165,7 +165,7 @@ pub fn solve_cl_piecewise(
     env: Option<&[RefineBound]>,
 ) -> WalkOutcome {
     let hops: Vec<MixedHopView<'_>> = prepared.iter().map(MixedHopView::Cl).collect();
-    solve_mixed_piecewise(&hops, memo, tele, cfg, env)
+    solve_piecewise(&hops, memo, tele, cfg, env)
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ pub fn solve_cl_piecewise(
 /// pairing is structural and no table is rebuilt per solve.)
 #[must_use]
 #[hotpath::measure(label = "cl_solve.exact_solve_mixed_path_n")]
-pub fn solve_mixed_piecewise(
+pub fn solve_piecewise(
     hops: &[MixedHopView<'_>],
     memo: Option<&WalkMemo>,
     tele: Option<&WalkTelemetry>,
@@ -207,7 +207,7 @@ pub fn solve_mixed_piecewise(
     env: Option<&[RefineBound]>,
 ) -> WalkOutcome {
     if hops.len() < 2 {
-        return WalkOutcome::none();
+        return WalkOutcome::refused(WalkRefusal::TooShort);
     }
 
     // Cross-block composition memo: the fingerprint is the exact correctness

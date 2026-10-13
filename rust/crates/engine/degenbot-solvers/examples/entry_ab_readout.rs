@@ -33,7 +33,7 @@
 //!   hops CLONED (three `Arc` bumps per hop, the caller shape this harness
 //!   models) and handed to the forwarding `solve_cl_piecewise`.
 //! - Arm "direct": one borrowed `MixedHopView::Cl` per position handed to
-//!   `solve_mixed_piecewise`, the ONE solve body both routes share.
+//!   `solve_piecewise`, the ONE solve body both routes share.
 //!
 //! Parity gate: both arms must return byte-equal
 //! `(optimal_input, profit, hop_outputs)`; any divergence fails the process
@@ -47,7 +47,7 @@
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_solvers::cl::{
-    solve_cl_piecewise, solve_mixed_piecewise, MixedHopView, PreparedClHop, WalkMemo,
+    solve_cl_piecewise, solve_piecewise, MixedHopView, PreparedClHop, WalkMemo,
 };
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 use serde_json::Value;
@@ -270,7 +270,7 @@ fn main() {
                     let t0 = std::time::Instant::now();
                     let views: Vec<MixedHopView<'_>> =
                         prepared.iter().map(MixedHopView::Cl).collect();
-                    let out = solve_mixed_piecewise(&views, Some(&memo), None, &cfg, None);
+                    let out = solve_piecewise(&views, Some(&memo), None, &cfg, None);
                     times_direct.push(t0.elapsed().as_micros());
                     sims_direct += out.stats.sims as u64;
                     match &parity_ref {
@@ -317,7 +317,7 @@ fn main() {
                 .collect();
             let cl = solve_cl_piecewise(&prepared, None, None, &cfg, None);
             let views: Vec<MixedHopView<'_>> = prepared.iter().map(MixedHopView::Cl).collect();
-            let mx = solve_mixed_piecewise(&views, None, None, &cfg, None);
+            let mx = solve_piecewise(&views, None, None, &cfg, None);
             (cl.result.map(|(_, p, _)| p), mx.result.map(|(_, p, _)| p))
         }
         None => (None, None),

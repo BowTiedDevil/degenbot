@@ -547,7 +547,7 @@ fn test_int_v3_sequence_empty() {
 }
 
 #[test]
-fn test_solve_mixed_piecewise_v3_then_v2_no_panic() {
+fn test_solve_piecewise_v3_then_v2_no_panic() {
     // V2 pool: 1.5M USDC / 800 WETH (cheap WETH)
     // V3 pool at 1:1 with different effective reserves
     let v2_hop = IntHopState::new(
@@ -577,7 +577,7 @@ fn test_solve_mixed_piecewise_v3_then_v2_no_panic() {
     let cl_prepared = PreparedClHop::derive(Arc::new(v3_seq));
 
     // v3_first: the CL hop leads, then the V2 hop.
-    let result = solve_mixed_piecewise(
+    let result = solve_piecewise(
         &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2_hop)],
         None,
         None,
@@ -1031,7 +1031,7 @@ fn walk_mixed_fingerprint_separates_hop_order() {
     let (v2, cl_seq) = mixed_memo_fixture();
     let cl_prepared = PreparedClHop::derive(Arc::new(cl_seq));
     let memo = WalkMemo::new(true, true);
-    let base = solve_mixed_piecewise(
+    let base = solve_piecewise(
         &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
         None,
@@ -1041,14 +1041,14 @@ fn walk_mixed_fingerprint_separates_hop_order() {
     .result
     .expect("mixed fixture must be profitable");
     memo.begin_block(2);
-    let replayed = solve_mixed_piecewise(
+    let replayed = solve_piecewise(
         &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2)],
         Some(&memo),
         None,
         &cfg,
         None,
     );
-    let fresh = solve_mixed_piecewise(
+    let fresh = solve_piecewise(
         &[MixedHopView::Cl(&cl_prepared), MixedHopView::V2(&v2)],
         None,
         None,
@@ -1226,7 +1226,7 @@ fn test_solve_cl_piecewise_3hop_profitable() {
 // ── N-hop mixed path solver tests ────────────────────────────
 
 #[test]
-fn test_solve_mixed_piecewise_2hop_delegates() {
+fn test_solve_piecewise_2hop_delegates() {
     // 2-hop mixed path should delegate to existing 2-hop solver
     let v2_hop = IntHopState::new(
         U256::from(1_500_000_000_000u64),
@@ -1240,7 +1240,7 @@ fn test_solve_mixed_piecewise_2hop_delegates() {
     let cl_prepared = PreparedClHop::derive(Arc::new(v3_seq));
 
     // V2 first, then CL
-    let result = solve_mixed_piecewise(
+    let result = solve_piecewise(
         &[MixedHopView::V2(&v2_hop), MixedHopView::Cl(&cl_prepared)],
         None,
         None,
@@ -1296,14 +1296,14 @@ fn mixed_path_cached_crossings_match_offline_solve() {
 
     // Projection-backed cached tables must equal the offline build
     // (byte-identical mixed-path math).
-    let cached = solve_mixed_piecewise(
+    let cached = solve_piecewise(
         &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&cached_hop)],
         None,
         None,
         &SolveRuntimeConfig::default(),
         None,
     );
-    let offline = solve_mixed_piecewise(
+    let offline = solve_piecewise(
         &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&derived_hop)],
         None,
         None,
@@ -1319,7 +1319,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
 }
 
 #[test]
-fn test_solve_mixed_piecewise_3hop_v2_cl_v2() {
+fn test_solve_piecewise_3hop_v2_cl_v2() {
     // 3-hop mixed path: V2 → CL → V2
     let v2_hop1 = IntHopState::new(
         U256::from(2_000_000_000_000u64),              // 2M USDC
@@ -1338,7 +1338,7 @@ fn test_solve_mixed_piecewise_3hop_v2_cl_v2() {
     let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
     let cl_prepared = PreparedClHop::derive(Arc::new(v3_seq));
 
-    let result = solve_mixed_piecewise(
+    let result = solve_piecewise(
         &[
             MixedHopView::V2(&v2_hop1),
             MixedHopView::Cl(&cl_prepared),
@@ -1390,7 +1390,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
     let cached_hop = PreparedClHop::from_parts(Arc::new(v3_seq.clone()), crossing, profile);
     let derived_hop = PreparedClHop::derive(Arc::new(v3_seq));
 
-    let cached = solve_mixed_piecewise(
+    let cached = solve_piecewise(
         &[
             MixedHopView::V2(&v2_hop1),
             MixedHopView::Cl(&cached_hop),
@@ -1401,7 +1401,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
         &SolveRuntimeConfig::default(),
         None,
     );
-    let offline = solve_mixed_piecewise(
+    let offline = solve_piecewise(
         &[
             MixedHopView::V2(&v2_hop1),
             MixedHopView::Cl(&derived_hop),
@@ -2367,7 +2367,7 @@ fn reference_uncapped_cl_solve(
 }
 
 /// The legacy mixed V2+CL enumeration with NO `max_candidates` cap
-/// (uncapped twin of the pre-cutover `solve_mixed_piecewise`).
+/// (uncapped twin of the pre-cutover `solve_piecewise`).
 #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
 fn reference_uncapped_mixed_solve(
     v2_hops: &[Option<IntHopState>],
@@ -2575,7 +2575,7 @@ fn solve_cl_piecewise_beyond_ten_range_prefix_finds_corner_profit() {
 /// deep-late-liquidity CL construction; the CL hop's argmax piece sits
 /// beyond the legacy 10-tuple prefix.
 #[test]
-fn solve_mixed_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
+fn solve_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
     // V2 entry pool priced at tick +750: price(token0) = r1/r0
     // ≈ 1.0001^750 ≈ 1.07163.
     let r0 = U256::from(1_000_000_000_000_000u128);
@@ -2593,7 +2593,7 @@ fn solve_mixed_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
         &[true, false],
     );
     let cl_prepared = PreparedClHop::derive(Arc::new(cl_seq));
-    let result = solve_mixed_piecewise(
+    let result = solve_piecewise(
         &[MixedHopView::V2(&v2_entry), MixedHopView::Cl(&cl_prepared)],
         None,
         None,

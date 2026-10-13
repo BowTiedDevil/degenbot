@@ -942,7 +942,7 @@ mod tests {
         .result
     }
 
-    /// The mixed intake: resolve -> one borrowed hop view -> `solve_mixed_piecewise`.
+    /// The mixed intake: resolve -> one borrowed hop view -> `solve_piecewise`.
     fn mixed_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
         // One borrowed view per position: V2 borrows the resolved state; CL
         // borrows the projection's prepared value (sequence + `Arc` tables).
@@ -959,7 +959,7 @@ mod tests {
                 _ => return None,
             }
         }
-        degenbot_solvers::cl::solve_mixed_piecewise(
+        degenbot_solvers::cl::solve_piecewise(
             &hops,
             None,
             None,

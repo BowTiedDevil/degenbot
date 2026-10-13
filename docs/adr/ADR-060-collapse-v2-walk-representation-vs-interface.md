@@ -98,11 +98,11 @@ it does not touch either simulator.
 | `src/cl/crossings.rs` | `walk_event_first_above_predicted_inner` | Outer loop `continue`s on `ConstantProduct`; inner inversion uses `swap_exact_out` (V2) vs `cl_hop_min_input_for_output` (CL). | Second dispatch site. Under B: a per-piece exact-out-inversion capability. |
 | `src/cl/crossings.rs` | `cl_walk_hop_cached`, `cl_walk_hop` | The single CL hop assembler (crossings + profiles, `Arc`-cloned). | Builder fed by the piece descriptor; unchanged otherwise. |
 | `src/cl/entries.rs` | `solve_cl_piecewise` + `_inner` | Production all-CL entry: builds `WalkHop::Cl` per `ClSolveTables`, memo fingerprinted. | Stays public; constructs pieces instead of enum arms. |
-| `src/cl/entries.rs` | `solve_mixed_piecewise` | Production mixed entry: builds `ConstantProduct`/`Cl` from `hop_order`. | Stays public; constructs pieces. |
+| `src/cl/entries.rs` | `solve_piecewise` | Production mixed entry: builds `ConstantProduct`/`Cl` from `hop_order`. | Stays public; constructs pieces. |
 | `src/cl/entries.rs` | `solve_v3_v3_piecewise`, `solve_mixed_v2_v3_piecewise` | Convenience/offline entries (tests, doc comments); build fixed 2-hop hop lists. | Not production intakes. Compile/behave only; candidates for deletion. |
 | `src/cl/entries.rs` | `ClSolveTables`, memo plumbing | Prepared `Arc` tables + `walk_path_fingerprint`/`WalkMemo`. | Unaffected by the enum; the piece descriptor should carry the prepared tables. |
 | `src/mixed/solve.rs` | `solve_path_inner` dispatch pyramid | `all_v2` → `exact_mobius_solve`; `all_cl` → `solve_cl_piecewise`; Solidly/weighted/stable/curve two-stage solves; else `solve_mixed_path_int`. | Only the `all_cl`/mixed walk arms move; the family two-stage branches are non-goals. |
-| `src/mixed/solve.rs` | `solve_mixed_path_int` | Adapter: builds `v2_hops`, CL sequences, `hop_order`, `cl_prepared`, then calls `solve_mixed_piecewise`. | Adapter shape only. Under A the `v2_hops` projection becomes a degenerate CL sequence. |
+| `src/mixed/solve.rs` | `solve_mixed_path_int` | Adapter: builds `v2_hops`, CL sequences, `hop_order`, `cl_prepared`, then calls `solve_piecewise`. | Adapter shape only. Under A the `v2_hops` projection becomes a degenerate CL sequence. |
 | `src/profit_envelope.rs` | `HopMath`, `hop_lines_and_cap` | Already family-parametric (V2/Cl/SolidlyVolatile/Weighted/ReserveCap) with per-family bound lines. | Out of scope; evidence envelope-level unification already works. |
 | `src/cl_cache.rs` | `ClCacheStrategy`, `PreparedHop` | Cache-lab seam: strategies refill crossing+profile tables and solve through the production entry. | Lab seam over `IntV3TickRangeSequence`, not a walk projection. Untouched. |
 | `degenbot-bot/src/bot_core/resolve/mod.rs` | `all_cl_solve`, `mixed_solve` | Build `ClSolveTables` from the `ResolvedHop` `as_*` projections and call the entries. | Adapters; public entry shape unchanged. |
@@ -114,7 +114,7 @@ it does not touch either simulator.
 ### Discrepancies with the working survey
 
 - Only **two** of the four solve entries are production intakes:
-  `solve_cl_piecewise` and `solve_mixed_piecewise`. `solve_v3_v3_piecewise`
+  `solve_cl_piecewise` and `solve_piecewise`. `solve_v3_v3_piecewise`
   and `solve_mixed_v2_v3_piecewise` appear only in tests and doc comments.
 - `cl_cache.rs` is a cache-lab seam over `IntV3TickRangeSequence` /
   `PreparedHop`; it contains no `WalkHop` reference. The production CL

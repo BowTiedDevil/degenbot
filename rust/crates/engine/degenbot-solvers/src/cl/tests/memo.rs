@@ -16,7 +16,7 @@ use crate::cl::memo::{
     walk_cl_path_fingerprint, walk_mixed_path_fingerprint, walk_views_fingerprint, MemoProbe,
     WalkMemo,
 };
-use crate::cl::{solve_cl_piecewise, solve_mixed_piecewise, MixedHopView, PreparedClHop};
+use crate::cl::{solve_cl_piecewise, solve_piecewise, MixedHopView, PreparedClHop, WalkRefusal};
 use crate::runtime::SolveRuntimeConfig;
 
 use super::{
@@ -441,7 +441,7 @@ fn memo_mixed_cached_hit_replays_the_solution_without_the_walk() {
     let memo = WalkMemo::new(true, true);
 
     // First solve: Miss → the walk runs and stores the solution.
-    let first = solve_mixed_piecewise(&hops, Some(&memo), None, &cfg, None);
+    let first = solve_piecewise(&hops, Some(&memo), None, &cfg, None);
     let first_result = first.result.expect("mixed fixture must be profitable");
     #[cfg(feature = "telemetry")]
     assert!(first.stats.sims > 0, "first solve must run the walk");
@@ -457,7 +457,7 @@ fn memo_mixed_cached_hit_replays_the_solution_without_the_walk() {
     memo.begin_block(2);
 
     // Second solve: the cached hit replays byte-identically, no walk.
-    let second = solve_mixed_piecewise(&hops, Some(&memo), None, &cfg, None);
+    let second = solve_piecewise(&hops, Some(&memo), None, &cfg, None);
     assert_eq!(
         second.result,
         Some(first_result),
@@ -495,7 +495,7 @@ fn memo_mixed_cached_negative_skips_the_walk_on_replay() {
     let cfg = SolveRuntimeConfig::default();
     let memo = WalkMemo::new(true, true);
 
-    let first = solve_mixed_piecewise(&hops, Some(&memo), None, &cfg, None);
+    let first = solve_piecewise(&hops, Some(&memo), None, &cfg, None);
     assert!(first.result.is_none(), "fixture must be unprofitable");
     #[cfg(feature = "telemetry")]
     assert!(first.stats.sims > 0, "first solve must run the walk");
@@ -512,7 +512,7 @@ fn memo_mixed_cached_negative_skips_the_walk_on_replay() {
 
     memo.begin_block(2);
 
-    let second = solve_mixed_piecewise(&hops, Some(&memo), None, &cfg, None);
+    let second = solve_piecewise(&hops, Some(&memo), None, &cfg, None);
     assert!(second.result.is_none());
     assert_eq!(
         second.stats.sims, 0,
@@ -558,7 +558,7 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
 
     let cl_prepared = PreparedClHop::derive(std::sync::Arc::new(cl_seq));
     let memo = WalkMemo::new(true, true);
-    let base = solve_mixed_piecewise(
+    let base = solve_piecewise(
         &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
         None,
@@ -569,7 +569,7 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
     .expect("mixed fixture must be profitable");
     memo.begin_block(2);
 
-    let replayed = solve_mixed_piecewise(
+    let replayed = solve_piecewise(
         &[
             MixedHopView::V2(&v2_changed),
             MixedHopView::Cl(&cl_prepared),
@@ -579,7 +579,7 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
         &cfg,
         None,
     );
-    let fresh = solve_mixed_piecewise(
+    let fresh = solve_piecewise(
         &[
             MixedHopView::V2(&v2_changed),
             MixedHopView::Cl(&cl_prepared),
@@ -631,7 +631,7 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
     let cl_prepared = PreparedClHop::derive(std::sync::Arc::new(cl_seq));
     let cl_prepared_changed = PreparedClHop::derive(std::sync::Arc::new(cl_seq_changed));
     let memo = WalkMemo::new(true, true);
-    let base = solve_mixed_piecewise(
+    let base = solve_piecewise(
         &[MixedHopView::V2(&v2), MixedHopView::Cl(&cl_prepared)],
         Some(&memo),
         None,
@@ -642,7 +642,7 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
     .expect("mixed fixture must be profitable");
     memo.begin_block(2);
 
-    let replayed = solve_mixed_piecewise(
+    let replayed = solve_piecewise(
         &[
             MixedHopView::V2(&v2),
             MixedHopView::Cl(&cl_prepared_changed),
@@ -652,7 +652,7 @@ fn memo_mixed_changed_cl_sequence_misses_instead_of_replaying() {
         &cfg,
         None,
     );
-    let fresh = solve_mixed_piecewise(
+    let fresh = solve_piecewise(
         &[
             MixedHopView::V2(&v2),
             MixedHopView::Cl(&cl_prepared_changed),
@@ -699,7 +699,7 @@ fn all_cl_intake_forwards_to_the_unified_entry_byte_exact() {
 
     // Stance 1: no memo handle.
     let via_intake = solve_cl_piecewise(&prepared, None, None, &cfg, None);
-    let direct = solve_mixed_piecewise(&views, None, None, &cfg, None);
+    let direct = solve_piecewise(&views, None, None, &cfg, None);
     assert!(via_intake.result.is_some(), "fixture must be profitable");
     assert_eq!(
         via_intake.result, direct.result,
@@ -713,7 +713,7 @@ fn all_cl_intake_forwards_to_the_unified_entry_byte_exact() {
     // Stance 2: memo handle present, inactive.
     let off = WalkMemo::new(false, false);
     let via_off = solve_cl_piecewise(&prepared, Some(&off), None, &cfg, None);
-    let direct_off = solve_mixed_piecewise(&views, Some(&off), None, &cfg, None);
+    let direct_off = solve_piecewise(&views, Some(&off), None, &cfg, None);
     assert_eq!(via_off.result, direct_off.result);
 
     // Stance 3: active memos — SEPARATE handles so both routes Miss and walk
@@ -723,7 +723,7 @@ fn all_cl_intake_forwards_to_the_unified_entry_byte_exact() {
     let memo_b = WalkMemo::new(true, true);
     memo_b.begin_block(1);
     let via_active = solve_cl_piecewise(&prepared, Some(&memo_a), None, &cfg, None);
-    let direct_active = solve_mixed_piecewise(&views, Some(&memo_b), None, &cfg, None);
+    let direct_active = solve_piecewise(&views, Some(&memo_b), None, &cfg, None);
     assert_eq!(via_active.result, direct_active.result);
     assert_eq!(via_active.stats.sims, direct_active.stats.sims);
     // The cost-parity half is only meaningful over real walks — without the
@@ -771,22 +771,36 @@ fn both_solve_entries_refuse_paths_shorter_than_two_hops() {
     let views = [MixedHopView::Cl(&prepared[0])];
     let cfg = SolveRuntimeConfig::default();
 
-    assert!(
-        solve_cl_piecewise(&prepared, None, None, &cfg, None)
-            .result
-            .is_none(),
-        "the all-CL intake must refuse a single hop"
+    let via_intake = solve_cl_piecewise(&prepared, None, None, &cfg, None);
+    let direct = solve_piecewise(&views, None, None, &cfg, None);
+    assert_eq!(
+        via_intake.refusal,
+        Some(WalkRefusal::TooShort),
+        "the all-CL intake must name its single-hop refusal"
     );
-    assert!(
-        solve_mixed_piecewise(&views, None, None, &cfg, None)
-            .result
-            .is_none(),
-        "the unified entry must refuse a single hop"
+    assert_eq!(
+        direct.refusal,
+        Some(WalkRefusal::TooShort),
+        "the unified entry must name its single-hop refusal"
     );
-    assert!(
-        solve_cl_piecewise(&[], None, None, &cfg, None)
-            .result
-            .is_none(),
-        "the all-CL intake must refuse an empty path"
+    assert!(via_intake.result.is_none() && direct.result.is_none());
+
+    // Refusal is not unprofitability: a walked negative carries no refusal
+    // (fees dominate this two-hop fixture — the walk runs and finds nothing).
+    let hop2 = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
+    let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
+    let negative = [
+        PreparedClHop::derive(std::sync::Arc::new(seq.clone())),
+        PreparedClHop::derive(std::sync::Arc::new(seq2)),
+    ];
+    let walked = solve_cl_piecewise(&negative, None, None, &cfg, None);
+    assert!(walked.result.is_none(), "fixture must walk to None");
+    assert_eq!(
+        walked.refusal, None,
+        "a walked negative must not report a refusal"
     );
+
+    // The empty path names the same arity refusal.
+    let empty = solve_cl_piecewise(&[], None, None, &cfg, None);
+    assert_eq!(empty.refusal, Some(WalkRefusal::TooShort));
 }

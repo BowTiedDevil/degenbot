@@ -90,14 +90,13 @@ pub mod cache;
 )]
 mod tests;
 
-pub use active_set::{WalkOutcome, WalkStats};
+pub use active_set::{WalkOutcome, WalkRefusal, WalkStats};
 pub use crossings::{
     build_cl_crossing_table, build_cl_word_profiles, build_cl_word_profiles_from_crossings,
     DENSE_OBSERVE_THRESHOLD,
 };
 pub use entries::{
-    derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_mixed_piecewise, MixedHopView,
-    PreparedClHop,
+    derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_piecewise, MixedHopView, PreparedClHop,
 };
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{WalkMemo, WalkMemoStats};

@@ -28,8 +28,8 @@ use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
 use crate::cl::{
-    build_cl_crossing_table, derive_and_solve_cl_piecewise, solve_cl_piecewise,
-    solve_mixed_piecewise, MixedHopView,
+    build_cl_crossing_table, derive_and_solve_cl_piecewise, solve_cl_piecewise, solve_piecewise,
+    MixedHopView,
 };
 use crate::mixed::families::cl::{refine_bounds, ClHop};
 use crate::profit_envelope::{
@@ -602,7 +602,7 @@ fn loop17_anchor_sweep_modes_agree() {
     }
 }
 
-// mixed-path Loop-21 equality through solve_mixed_piecewise
+// mixed-path Loop-21 equality through solve_piecewise
 
 #[test]
 fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
@@ -632,8 +632,8 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
         MixedHopView::Cl(&prep[0]),
         MixedHopView::V2(&v2s[1]),
     ];
-    let off = solve_mixed_piecewise(&hops, None, None, &cfg, None);
-    let on = solve_mixed_piecewise(&hops, None, None, &cfg, Some(&bounds));
+    let off = solve_piecewise(&hops, None, None, &cfg, None);
+    let on = solve_piecewise(&hops, None, None, &cfg, Some(&bounds));
     assert_eq!(off.result, on.result, "Loop-21 moved the mixed-path argmax");
     assert!(on.stats.sims <= off.stats.sims);
     println!(

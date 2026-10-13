@@ -348,6 +348,40 @@ pub struct ResolvedMixedPath {
 /// Includes optimality data, per-hop output amounts for the encoder, and
 /// per-hop consumed input amounts for correct profit calculation and V4
 /// int128 overflow detection.
+/// The family's path-level solve return (the [`SolveFn`] row shape): the
+/// value when profitable, the typed refusal when the arm declined without
+/// walking (see [`crate::cl::WalkRefusal`] for the walked/unwalked boundary),
+/// plus the walk telemetry. Replaces the old
+/// `(Option<SolvePathResult>, WalkStats)` tuple, which conflated refusal with
+/// unprofitability.
+#[derive(Debug)]
+pub struct SolveArmOutcome {
+    pub result: Option<SolvePathResult>,
+    pub refusal: Option<crate::cl::WalkRefusal>,
+    pub stats: crate::cl::WalkStats,
+}
+
+impl SolveArmOutcome {
+    /// The arm ran its search (walk or golden section) and produced `result`
+    /// (possibly `None` = no profit found).
+    pub(crate) fn walked(result: Option<SolvePathResult>, stats: crate::cl::WalkStats) -> Self {
+        Self {
+            result,
+            refusal: None,
+            stats,
+        }
+    }
+
+    /// The arm declined the shape before any search: the named refusal.
+    pub(crate) fn refused(refusal: crate::cl::WalkRefusal) -> Self {
+        Self {
+            result: None,
+            refusal: Some(refusal),
+            stats: crate::cl::WalkStats::default(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct SolvePathResult {
     /// Optimal input amount (uint256).

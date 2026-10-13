@@ -83,8 +83,8 @@ pub(crate) fn solve_balancer_stable_entry(
     resolved: &ResolvedMixedPath,
     _gate: &GateDeps<'_>,
     _walk_env: Option<&PathBoundLines>,
-) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
-    (
+) -> crate::mixed::SolveArmOutcome {
+    crate::mixed::SolveArmOutcome::walked(
         solve_balancer_stable_path_int(resolved),
         crate::cl::WalkStats::default(),
     )

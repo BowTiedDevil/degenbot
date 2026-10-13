@@ -428,7 +428,7 @@ pub(crate) fn walk_cl_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) ->
 }
 
 /// 128-bit content fingerprint of a path composition — the unified solve
-/// entry's (`solve_mixed_piecewise`) exact correctness key for the cross-block
+/// entry's (`solve_piecewise`) exact correctness key for the cross-block
 /// memo: the crossing tables + word profiles are pure derivations of the
 /// sequence, cfg is fixed per engine lifetime, and env (`&[RefineBound]`, the
 /// kernel-window bounds) is a pure derivation of hop state + cfg (the bounds
