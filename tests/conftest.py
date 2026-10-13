@@ -1,3 +1,13 @@
+"""Fixtures, suite-wide gates, and the declared environment for the Python suite.
+
+Sections, top to bottom: the suite environment (the ``DEGENBOT_*`` pins every
+construction observes, sealed by the config-holder re-govern, with the per-test
+``governed_holder`` seam beside it); collection gates and hooks; the RPC
+vocabulary with the anvil/fork/Bot fixtures; the golden record/replay
+factories. The README doctest harness lives in the root ``conftest.py``;
+offline detection lives in ``tests/offline.py``.
+"""
+
 import atexit
 import logging
 import os
@@ -12,14 +22,22 @@ from _pytest.config import Config, Parser
 from _pytest.nodes import Item
 from hypothesis import settings
 
-# The Rust FFI module init installs the process-wide typed BotConfig at import
-# (env > $XDG_CONFIG_HOME/$HOME/.config/degenbot/config.toml), and the runner's
+# THE SUITE ENVIRONMENT, DECLARED IN ONE PLACE. The Rust FFI module init
+# installs the process-wide typed BotConfig at import (env >
+# $XDG_CONFIG_HOME/$HOME/.config/degenbot/config.toml), and the runner's
 # activation gate refuses a boot whose fleet has no active facet. A developer's
 # ambient operator config therefore leaks into the suite (one machine fails CI,
-# another silently misses the refusal). Pin ONE suite-wide ambient config
-# before any degenbot import; `setdefault` honors an explicit operator
+# another silently misses the refusal). Because the root conftest (imported
+# before this file, for the README harness) imports degenbot, the holder boots
+# from whatever the process env held before this file ran — so every pin is
+# applied to `os.environ` BEFORE the degenbot imports below, and the holder
+# re-govern after them seals the declared environment as the process snapshot.
+# Fail-closed: if a declared file does not load, collection errors here rather
+# than tests resolving against a bare-env snapshot.
+#
+# Pin ONE suite-wide ambient config; `setdefault` honors an explicit operator
 # override. `tests/ambient_config.toml` activates the mevblocker backrun facet
-# only - every other schema key keeps its default.
+# only — every other schema key keeps its default.
 os.environ.setdefault(
     "DEGENBOT_CONFIG",
     str(Path(__file__).resolve().parent / "ambient_config.toml"),
@@ -53,22 +71,61 @@ from tests.helpers.bot_factory import make_bot_with_provider
 from tests.offline import is_offline
 from tests.standalone_anvil import seed as seed_catalog
 
-# The FFI module init installs the process-wide holder from the env at the FIRST
-# degenbot import, and the root conftest (imported before this file, for the
-# README harness) imports degenbot -- so the setdefaults above landed after that
-# boot and were silently missed: the ambient chain pin AND the hermetic DB path
-# never reached the snapshot. Re-govern once here through the sanctioned test
-# seam so constructions observe this file's declared environment. Fail-closed:
-# if the ambient file does not load, collection errors here rather than tests
-# resolving against a bare-env snapshot.
+# Seal the declared environment: the imports above booted the holder from
+# whatever the process env held at that first degenbot import (before this
+# file's pins), so re-govern once here through the sanctioned test seam — from
+# now on, every construction observes the pins above.
 reinstall_config_holder_for_tests()
 
 # ADR-052 D1: a legacy `alembic_version`-marked DB heals itself at open. The
 # committed `rust/crates/**/fixtures/*.db` parity fixtures are read-only
 # references shared by many tests, so pin the killswitch for the Python suite:
 # the Rust `auto_heal_matrix` tests own the heal-at-open behavior. (A test that
-# needs the heal can still override the var explicitly.)
+# needs the heal can still override the var explicitly.) Unlike the pins above,
+# the DB layer reads this name at open time — not the loader at boot — so its
+# position relative to the re-govern is free; it lives here to keep the
+# declared environment in one place.
 os.environ.setdefault("DEGENBOT_DB_AUTO_HEAL", "0")
+
+
+# The per-test counterpart of the re-govern above: import-time governance is
+# process-wide and one-shot; this fixture re-governs around individual tests.
+@pytest.fixture
+def governed_holder() -> Iterator[Callable[[dict[str, str]], None]]:
+    """Per-test ``DEGENBOT_*`` override that re-governs the process config holder.
+
+    ``govern({name: value})`` sets the env names, re-loads env+file, and
+    reinstalls the process-wide typed-config holder (and the shell's published
+    verdict). Teardown restores the process environment EXACTLY and re-governs
+    the holder back to the ambient snapshot, so tests that do not opt in keep
+    the ``tests/ambient_config.toml`` behavior unchanged.
+
+    This is the config-holder test seam: production first-wins is untouched; the seam
+    exists so per-test ``DEGENBOT_RPC_*`` overrides govern the NEXT
+    construction instead of being silently pinned to the process's first
+    resolution.
+
+    Yields:
+        ``govern(env)``, which applies the env override and re-governs the
+        holder.
+
+    """
+    saved = dict(os.environ)
+
+    def govern(env: dict[str, str]) -> None:
+        for name, value in env.items():
+            os.environ[name] = value
+        reinstall_config_holder_for_tests()
+
+    try:
+        yield govern
+    finally:
+        for name in list(os.environ):
+            if name not in saved:
+                del os.environ[name]
+        os.environ.update(saved)
+        reinstall_config_holder_for_tests()
+
 
 # Hypothesis policy: no per-example wall-clock deadline. Fuzz tests here assert
 # math/round-trip properties, not timing; the 200ms default only fails
@@ -77,87 +134,6 @@ os.environ.setdefault("DEGENBOT_DB_AUTO_HEAL", "0")
 # explicit @settings(deadline=...), which overrides this profile.
 settings.register_profile("default", deadline=None)
 settings.load_profile("default")
-
-env_file = dotenv.find_dotenv("tests.env")
-env_values = dotenv.dotenv_values(env_file)
-
-
-def _rpc(key: str, default: str) -> str:
-    """Resolve an RPC URI with precedence: envvar > tests.env > built-in default.
-
-    ``dotenv.dotenv_values`` reads only the file, so a bare ``env_values.get`` would
-    ignore ``os.environ`` entirely — leaving no way for a user to override an RPC
-    endpoint without editing the (gitignored) ``tests.env``. Checking ``os.environ``
-    first makes ad-hoc overrides (``TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI='…' pytest …``)
-    work across machines and CI without touching any file.
-
-    The names this resolves are the harness's own vocabulary, deliberately kept
-    out of the operator namespace: the suite needs two node tiers per chain
-    (archive and full), while the operator file's ``[nodes]`` tables hold one
-    endpoint per transport per chain, so a second HTTP endpoint for the same
-    chain has nowhere to fold into. They are therefore not
-    ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>`` names and must not grow a fallback
-    onto them — a second namespace that shares a fallback is how the next
-    ambiguity starts. ``executor/ape-config.yaml`` reads
-    ``${TEST_ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
-    ``_FULL_`` names outlive the suite that defines them.
-    """
-    return os.environ.get(key, env_values.get(key, default))
-
-
-TEST_ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc(
-    "TEST_ARBITRUM_FULL_NODE_HTTP_URI",
-    "https://arbitrum-one-rpc.publicnode.com",
-)
-TEST_ARBITRUM_FULL_NODE_WS_URI: str = _rpc(
-    "TEST_ARBITRUM_FULL_NODE_WS_URI",
-    "wss://arbitrum-one-rpc.publicnode.com",
-)
-
-TEST_BASE_ARCHIVE_NODE_HTTP_URI: str = _rpc(
-    "TEST_BASE_ARCHIVE_NODE_HTTP_URI",
-    "https://mainnet.base.org",
-)
-TEST_BASE_ARCHIVE_NODE_WS_URI: str = _rpc(
-    "TEST_BASE_ARCHIVE_NODE_WS_URI",
-    "wss://mainnet.base.org",
-)
-TEST_BASE_FULL_NODE_HTTP_URI: str = _rpc(
-    "TEST_BASE_FULL_NODE_HTTP_URI",
-    "https://mainnet.base.org",
-)
-TEST_BASE_FULL_NODE_WS_URI: str = _rpc(
-    "TEST_BASE_FULL_NODE_WS_URI",
-    "wss://mainnet.base.org",
-)
-
-TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = _rpc(
-    "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
-    "https://ethereum-rpc.publicnode.com",
-)
-TEST_ETHEREUM_ARCHIVE_NODE_WS_URI: str = _rpc(
-    "TEST_ETHEREUM_ARCHIVE_NODE_WS_URI",
-    "wss://ethereum-rpc.publicnode.com",
-)
-TEST_ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc(
-    "TEST_ETHEREUM_FULL_NODE_HTTP_URI",
-    "https://ethereum-rpc.publicnode.com",
-)
-TEST_ETHEREUM_FULL_NODE_WS_URI: str = _rpc(
-    "TEST_ETHEREUM_FULL_NODE_WS_URI",
-    "wss://ethereum-rpc.publicnode.com",
-)
-
-
-def _require_live_node() -> None:
-    """Skip a live-network test in the constrained (no-RPC, no-anvil) CI runner.
-
-    Guards the root ``fork_*`` fixtures: any test that chains off them (bot_*, per-file
-    bot/token/pool fixtures, …) skips transitively via ``pytest.skip``, so a fork/anvil
-    test can never fail offline CI. Local dev (RPC + anvil reachable) runs them normally.
-    """
-    if is_offline():
-        pytest.skip("requires live RPC/anvil (not available in offline CI)")
 
 
 def pytest_addoption(parser: Parser):
@@ -293,6 +269,224 @@ def _set_degenbot_logging():
     _QUEUED_HANDLER.setLevel(logging.DEBUG)
 
 
+env_file = dotenv.find_dotenv("tests.env")
+env_values = dotenv.dotenv_values(env_file)
+
+
+def _rpc(key: str, default: str) -> str:
+    """Resolve an RPC URI with precedence: envvar > tests.env > built-in default.
+
+    ``dotenv.dotenv_values`` reads only the file, so a bare ``env_values.get`` would
+    ignore ``os.environ`` entirely — leaving no way for a user to override an RPC
+    endpoint without editing the (gitignored) ``tests.env``. Checking ``os.environ``
+    first makes ad-hoc overrides (``TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI='…' pytest …``)
+    work across machines and CI without touching any file.
+
+    The names this resolves are the harness's own vocabulary, deliberately kept
+    out of the operator namespace: the suite needs two node tiers per chain
+    (archive and full), while the operator file's ``[nodes]`` tables hold one
+    endpoint per transport per chain, so a second HTTP endpoint for the same
+    chain has nowhere to fold into. They are therefore not
+    ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>`` names and must not grow a fallback
+    onto them — a second namespace that shares a fallback is how the next
+    ambiguity starts. ``executor/ape-config.yaml`` reads
+    ``${TEST_ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
+    ``_FULL_`` names outlive the suite that defines them.
+    """
+    return os.environ.get(key, env_values.get(key, default))
+
+
+TEST_ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc(
+    "TEST_ARBITRUM_FULL_NODE_HTTP_URI",
+    "https://arbitrum-one-rpc.publicnode.com",
+)
+TEST_ARBITRUM_FULL_NODE_WS_URI: str = _rpc(
+    "TEST_ARBITRUM_FULL_NODE_WS_URI",
+    "wss://arbitrum-one-rpc.publicnode.com",
+)
+
+TEST_BASE_ARCHIVE_NODE_HTTP_URI: str = _rpc(
+    "TEST_BASE_ARCHIVE_NODE_HTTP_URI",
+    "https://mainnet.base.org",
+)
+TEST_BASE_ARCHIVE_NODE_WS_URI: str = _rpc(
+    "TEST_BASE_ARCHIVE_NODE_WS_URI",
+    "wss://mainnet.base.org",
+)
+TEST_BASE_FULL_NODE_HTTP_URI: str = _rpc(
+    "TEST_BASE_FULL_NODE_HTTP_URI",
+    "https://mainnet.base.org",
+)
+TEST_BASE_FULL_NODE_WS_URI: str = _rpc(
+    "TEST_BASE_FULL_NODE_WS_URI",
+    "wss://mainnet.base.org",
+)
+
+TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = _rpc(
+    "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+    "https://ethereum-rpc.publicnode.com",
+)
+TEST_ETHEREUM_ARCHIVE_NODE_WS_URI: str = _rpc(
+    "TEST_ETHEREUM_ARCHIVE_NODE_WS_URI",
+    "wss://ethereum-rpc.publicnode.com",
+)
+TEST_ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc(
+    "TEST_ETHEREUM_FULL_NODE_HTTP_URI",
+    "https://ethereum-rpc.publicnode.com",
+)
+TEST_ETHEREUM_FULL_NODE_WS_URI: str = _rpc(
+    "TEST_ETHEREUM_FULL_NODE_WS_URI",
+    "wss://ethereum-rpc.publicnode.com",
+)
+
+
+@pytest.fixture
+def standalone_anvil() -> Generator[AnvilFork, None, None]:
+    """A non-forking standalone anvil seeded with canonical contracts (no upstream RPC).
+
+    Uses :class:`degenbot.fork.AnvilFork` with ``fork_url=None`` + a fixed chain id,
+    seeded via :mod:`tests.standalone_anvil.seed` (compiled bytecode at fixed
+    addresses + a funded EOA). Provider/anvil-backed tests that only need to
+    exercise the RPC/contract seams run against it locally AND in the anvil CI
+    job with no external network. See ``tests/standalone_anvil/seed.py`` for the
+    fixed addresses.
+    """
+    if shutil.which("anvil") is None:
+        pytest.skip("requires the anvil binary (not present in the no-anvil CI job)")
+    # A default funded dev account (anvil account 0) is kept so tests that need
+    # to send a real transaction (e.g. emitting a log) can: anvil unlocks dev
+    # accounts server-side, so eth_sendTransaction needs no client-side signing
+    # (emitter: tests/standalone_anvil/emit.py).
+    fork = AnvilFork(launch=ForkLaunchConfig(chain_id=seed_catalog.CHAIN_ID))
+    seed_catalog.seed(fork)
+    fork.mine()  # advance past genesis so get_block_number() > 0
+    yield fork
+    fork.close()
+
+
+def _require_live_node() -> None:
+    """Skip a live-network test in the constrained (no-RPC, no-anvil) CI runner.
+
+    Guards the root ``fork_*`` fixtures: any test that chains off them (bot_*, per-file
+    bot/token/pool fixtures, …) skips transitively via ``pytest.skip``, so a fork/anvil
+    test can never fail offline CI. Local dev (RPC + anvil reachable) runs them normally.
+    """
+    if is_offline():
+        pytest.skip("requires live RPC/anvil (not available in offline CI)")
+
+
+@pytest.fixture
+def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
+    _require_live_node()
+    fork = AnvilFork(
+        fork_url=TEST_ARBITRUM_FULL_NODE_HTTP_URI,
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            anvil_opts=["--accounts=0"],
+        ),
+    )
+    yield fork
+    fork.close()
+
+
+@pytest.fixture
+def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
+    """An AnvilFork using the default mainnet archive node. To fork from a specific block,
+    parametrize the test with an indirect parameter for this fixture, e.g.:
+
+    ```
+        @pytest.mark.parametrize("fork_base_archive", [block_number], indirect=True)
+        def test_using_fork(fork_base_archive: AnvilFork): ...
+    ```
+
+    """
+    block_number = getattr(request, "param", None)
+    _require_live_node()
+
+    fork = AnvilFork(
+        fork_url=TEST_BASE_ARCHIVE_NODE_HTTP_URI,
+        fork_block=block_number,
+        launch=ForkLaunchConfig(
+            storage_caching=True,
+            anvil_opts=["--accounts=0", "--optimism"],
+        ),
+    )
+    yield fork
+    fork.close()
+
+
+@pytest.fixture
+def fork_base_full() -> Generator[AnvilFork, None, None]:
+    _require_live_node()
+    fork = AnvilFork(
+        fork_url=TEST_BASE_FULL_NODE_HTTP_URI,
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            anvil_opts=["--accounts=0", "--optimism"],
+        ),
+    )
+    yield fork
+    fork.close()
+
+
+@pytest.fixture
+def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
+    """An AnvilFork using the default mainnet archive node. To fork from a specific block,
+    parametrize the test with an indirect parameter for this fixture, e.g.:
+
+    ```
+        @pytest.mark.parametrize("fork_mainnet_archive", [block_number], indirect=True)
+        def test_using_fork(fork_mainnet_archive: AnvilFork): ...
+    ```
+
+    """
+    block_number = getattr(request, "param", None)
+    _require_live_node()
+
+    fork = AnvilFork(
+        fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_block=block_number,
+        launch=ForkLaunchConfig(
+            storage_caching=True,
+            anvil_opts=["--accounts=0"],
+        ),
+    )
+    yield fork
+    fork.close()
+
+
+@pytest.fixture
+def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
+    _require_live_node()
+    fork = AnvilFork(
+        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
+        launch=ForkLaunchConfig(
+            storage_caching=False,
+            anvil_opts=["--accounts=0"],
+        ),
+    )
+    yield fork
+    fork.close()
+
+
+@pytest.fixture
+def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Generator[Bot, None, None]:
+    """Provide a Bot with the mainnet full fork's provider registered."""
+    provider = fork_mainnet_full.provider
+    bot = make_bot_with_provider(provider)
+    yield bot
+    bot.close()
+
+
+@pytest.fixture
+def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Generator[Bot, None, None]:
+    """Provide a Bot with the mainnet archive fork's provider registered."""
+    provider = fork_mainnet_archive.provider
+    bot = make_bot_with_provider(provider)
+    yield bot
+    bot.close()
+
+
 @pytest.fixture
 def golden_factory(request: pytest.FixtureRequest):
     """Factory for :class:`tests.golden.oracle.GoldenOracle` (L2 golden seam).
@@ -342,173 +536,3 @@ def recorded_pool_factory(request: pytest.FixtureRequest):
         return RecordedPool(path=path, chain_id=chain_id, block=block_number, mode=mode)
 
     return bind
-
-
-@pytest.fixture
-def standalone_anvil() -> Generator[AnvilFork, None, None]:
-    """A non-forking standalone anvil seeded with canonical contracts (no upstream RPC).
-
-    Uses :class:`degenbot.fork.AnvilFork` with ``fork_url=None`` + a fixed chain id,
-    seeded via :mod:`tests.standalone_anvil.seed` (compiled bytecode at fixed
-    addresses + a funded EOA). Provider/anvil-backed tests that only need to
-    exercise the RPC/contract seams run against it locally AND in the anvil CI
-    job with no external network. See ``tests/standalone_anvil/seed.py`` for the
-    fixed addresses.
-    """
-    if shutil.which("anvil") is None:
-        pytest.skip("requires the anvil binary (not present in the no-anvil CI job)")
-    # A default funded dev account (anvil account 0) is kept so tests that need
-    # to send a real transaction (e.g. emitting a log) can: anvil unlocks dev
-    # accounts server-side, so eth_sendTransaction needs no client-side signing
-    # (emitter: tests/standalone_anvil/emit.py).
-    fork = AnvilFork(launch=ForkLaunchConfig(chain_id=seed_catalog.CHAIN_ID))
-    seed_catalog.seed(fork)
-    fork.mine()  # advance past genesis so get_block_number() > 0
-    yield fork
-    fork.close()
-
-
-@pytest.fixture
-def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
-    _require_live_node()
-    fork = AnvilFork(
-        fork_url=TEST_ARBITRUM_FULL_NODE_HTTP_URI,
-        launch=ForkLaunchConfig(
-            storage_caching=False,
-            anvil_opts=["--accounts=0"],
-        ),
-    )
-    yield fork
-    fork.close()
-
-
-@pytest.fixture
-def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
-    """An AnvilFork using the default mainnet archive node. To fork from a specific block,
-    parametrize the test with an indirect parameter for this fixture, e.g.:
-
-    ```
-        @pytest.mark.parametrize("fork_base_archive", [block_number], indirect=True)
-        def test_using_fork(fork_base_archive: AnvilFork): ...
-    ```
-    """
-    block_number = getattr(request, "param", None)
-    _require_live_node()
-
-    fork = AnvilFork(
-        fork_url=TEST_BASE_ARCHIVE_NODE_HTTP_URI,
-        fork_block=block_number,
-        launch=ForkLaunchConfig(
-            storage_caching=True,
-            anvil_opts=["--accounts=0", "--optimism"],
-        ),
-    )
-    yield fork
-    fork.close()
-
-
-@pytest.fixture
-def fork_base_full() -> Generator[AnvilFork, None, None]:
-    _require_live_node()
-    fork = AnvilFork(
-        fork_url=TEST_BASE_FULL_NODE_HTTP_URI,
-        launch=ForkLaunchConfig(
-            storage_caching=False,
-            anvil_opts=["--accounts=0", "--optimism"],
-        ),
-    )
-    yield fork
-    fork.close()
-
-
-@pytest.fixture
-def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
-    """An AnvilFork using the default mainnet archive node. To fork from a specific block,
-    parametrize the test with an indirect parameter for this fixture, e.g.:
-
-    ```
-        @pytest.mark.parametrize("fork_mainnet_archive", [block_number], indirect=True)
-        def test_using_fork(fork_mainnet_archive: AnvilFork): ...
-    ```
-    """
-    block_number = getattr(request, "param", None)
-    _require_live_node()
-
-    fork = AnvilFork(
-        fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
-        fork_block=block_number,
-        launch=ForkLaunchConfig(
-            storage_caching=True,
-            anvil_opts=["--accounts=0"],
-        ),
-    )
-    yield fork
-    fork.close()
-
-
-@pytest.fixture
-def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
-    _require_live_node()
-    fork = AnvilFork(
-        fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
-        launch=ForkLaunchConfig(
-            storage_caching=False,
-            anvil_opts=["--accounts=0"],
-        ),
-    )
-    yield fork
-    fork.close()
-
-
-@pytest.fixture
-def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Generator[Bot, None, None]:
-    """Provide a Bot with the mainnet full fork's provider registered."""
-    provider = fork_mainnet_full.provider
-    bot = make_bot_with_provider(provider)
-    yield bot
-    bot.close()
-
-
-@pytest.fixture
-def governed_holder() -> Iterator[Callable[[dict[str, str]], None]]:
-    """Per-test ``DEGENBOT_*`` override that re-governs the process config holder.
-
-    ``govern({name: value})`` sets the env names, re-loads env+file, and
-    reinstalls the process-wide typed-config holder (and the shell's published
-    verdict). Teardown restores the process environment EXACTLY and re-governs
-    the holder back to the ambient snapshot, so tests that do not opt in keep
-    the ``tests/ambient_config.toml`` behavior unchanged.
-
-    This is the config-holder test seam: production first-wins is untouched; the seam
-    exists so per-test ``DEGENBOT_RPC_*`` overrides govern the NEXT
-    construction instead of being silently pinned to the process's first
-    resolution.
-
-    Yields:
-        ``govern(env)``, which applies the env override and re-governs the
-        holder.
-    """
-    saved = dict(os.environ)
-
-    def govern(env: dict[str, str]) -> None:
-        for name, value in env.items():
-            os.environ[name] = value
-        reinstall_config_holder_for_tests()
-
-    try:
-        yield govern
-    finally:
-        for name in list(os.environ):
-            if name not in saved:
-                del os.environ[name]
-        os.environ.update(saved)
-        reinstall_config_holder_for_tests()
-
-
-@pytest.fixture
-def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Generator[Bot, None, None]:
-    """Provide a Bot with the mainnet archive fork's provider registered."""
-    provider = fork_mainnet_archive.provider
-    bot = make_bot_with_provider(provider)
-    yield bot
-    bot.close()
