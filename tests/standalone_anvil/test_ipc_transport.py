@@ -13,7 +13,10 @@ socket the test asserts both capabilities:
 
 - a one-shot request path: ``eth_chainId``, a token read (``decimals()``), and
   the sim client's ``eth_callMany`` framing;
-- a live subscription: the pump's ``subscribe`` reaches block ``W``.
+- a live subscription: the pump's ``subscribe`` reaches block ``W`` — the
+  handshake's log-catchup condition is met by a background ``Ping`` emitter
+  (``_ping_logs_during_subscribe``), so the boundary is log-confirmed within a
+  couple of blocks instead of paying the 15s settle fallback.
 
 It also asserts the scope filter refuses rather than degrading: an ``http``-only
 file cannot satisfy a subscription, and a chain with no entry at all refuses the
@@ -39,10 +42,13 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from degenbot import _ffi
+from degenbot.abi import encode as abi_encode
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from degenbot.crypto import function_selector
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.provider import AlloyProvider
 from tests.standalone_anvil import seed as seed_catalog
+from tests.standalone_anvil.emit import emit_tx
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -53,6 +59,10 @@ _OTHER_CHAIN_ID = 999
 # `decimals()` on the seeded SimpleToken; the selector is the ERC-20 ABI entry.
 _DECIMALS_SELECTOR = bytes.fromhex("313ce567")
 _TOKEN_DECIMALS = 8
+
+# `ping(uint256,bytes32)` on the seeded EventEmitter — a real, mined log the
+# subscribe handshake can observe (see `_ping_logs_during_subscribe`).
+_PING_SELECTOR = function_selector("ping(uint256,bytes32)")
 
 
 def _resolve_from_operator_file(tmp_path: Path, body: str, *ops: list[Any]) -> list[dict]:
@@ -140,7 +150,52 @@ def _spawn_anvil() -> AnvilFork:
     return fork
 
 
-@pytest.fixture()
+def _ping_calldata() -> bytes:
+    """``EventEmitter.ping`` calldata — one real ``Ping`` log per call."""
+
+    return _PING_SELECTOR + abi_encode(["uint256", "bytes32"], [42, b"\x00" * 32])
+
+
+@contextlib.contextmanager
+def _ping_logs_during_subscribe(fork: AnvilFork) -> Iterator[None]:
+    """Emit a ``Ping`` log on a background thread while a subscribe runs.
+
+    The pump's subscribe boundary is the block of the first *delivered* log,
+    falling back to the header-confirmed head only after the 15s
+    ``LOG_CATCHUP_SETTLE_SECS`` window. The seeded chain emits no logs at all —
+    ``set_code`` / ``set_storage`` are not transactions — so an unassisted
+    subscribe always pays the full settle. Emitting one log per block lets the
+    handshake take its log-confirmed path instead: the same IPC transport is
+    exercised, without the 15s wait.
+    """
+
+    stop = threading.Event()
+
+    def _emit_loop() -> None:
+        provider = AlloyProvider(fork.http_url)
+        try:
+            while not stop.is_set():
+                with contextlib.suppress(Exception):
+                    emit_tx(
+                        provider,
+                        to=seed_catalog.EVENT_EMITTER,
+                        data=_ping_calldata(),
+                        chain_id=_CHAIN_ID,
+                    )
+                stop.wait(0.1)
+        finally:
+            provider.close()
+
+    thread = threading.Thread(target=_emit_loop, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=10.0)
+
+
+@pytest.fixture
 def resolved_ipc_node(tmp_path: Path) -> Iterator[tuple[AnvilFork, dict, dict, dict]]:
     """A live anvil over IPC plus the operator-file resolution over its socket.
 
@@ -209,7 +264,8 @@ def test_ipc_request_and_subscription_resolve_from_the_operator_file(
     engine = ArbitrageEngine()
     try:
         block_before = fork.provider.block_number
-        boundary = engine.subscribe(subscription["uri"])
+        with _ping_logs_during_subscribe(fork):
+            boundary = engine.subscribe(subscription["uri"])
         assert boundary >= block_before, (
             "the pump's subscribe reaches a live block over the ipc socket"
         )
