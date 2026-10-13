@@ -153,9 +153,10 @@ The canonical Python gate is `just test-python` (CI and the pre-push hook run it
 ## Build-Artifact Housekeeping
 
 `rust/target` holds several independently rebuildable cache families (normal
-Cargo, maturin, coverage, LLVM coverage, Criterion, wheels, rustdoc). The
-family policy lives in `scripts/gc-target.sh`; `just gc-target` reports and
-sweeps them per-family. Preview before cleanup:
+Cargo, maturin, coverage, LLVM coverage, Criterion, wheels, rustdoc, and the
+`gen-stubs` introspected build under `stubgen-inspect`). The family policy lives
+in `scripts/gc-target.sh`; `just gc-target` reports and sweeps them per-family.
+Preview before cleanup:
 
 ```bash
 DRY_RUN=1 just gc-target        # report candidates; delete nothing
@@ -164,6 +165,13 @@ AGE=7 just gc-target            # destructive seven-day sweep
 
 `AGE=N` uses `find -mtime +N`, so `AGE=0` means older than one day rather than
 literally every file. `target/maturin` is always outside the deletion boundary.
+
+The dev profile already uses `opt-level = 1` + `debug = "line-tables-only"` (the
+minimal-debuginfo setting), so a large `rust/target` is not a debuginfo problem:
+it is feature-variant fan-out — differing feature unification across the
+`--workspace` / `-p` / `--all-features` / `dev-features` lanes gives each crate
+dozens of distinct `.rlib` variants. `just gc-target` reclaims the stale ones by
+age; a fresh sweep after a burst of lane-switching is the normal remedy.
 
 ## Building the Rust extension
 
