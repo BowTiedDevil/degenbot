@@ -52,6 +52,14 @@ mod kernel;
 pub use capture::{CapturedHop, DegeneratePathEvent, DegeneratePathSink};
 pub use derive::{ClHop, HopMath, PrefixCache};
 
+// The per-family envelope line builders the `FAMILY_DISPATCH` rows register
+// (ADR-071 D3): the former `hop_lines_and_cap_cached` match arms, now named
+// entry points referenced by fn pointer from `mixed::solve`.
+pub(crate) use derive::{
+    balancer_stable_hop_lines, cl_hop_lines, curve_hop_lines, refuse_lines, reserve_cap_hop_lines,
+    solidly_hop_lines, v2_hop_lines, weighted_hop_lines,
+};
+
 #[cfg(test)]
 pub(crate) use gate::path_bound_lines;
 pub(crate) use gate::path_bound_lines_with_stats;

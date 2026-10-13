@@ -1,4 +1,6 @@
 use crate::cl::{build_cl_crossing_table, ClCrossingTable};
+use crate::mixed::solve::{family_row_for, FamilyRow, RESERVE_CAP_ROW};
+use crate::mixed::HopType;
 use crate::runtime::SolveRuntimeConfig;
 use alloy::primitives::{aliases::I512, U256, U512};
 use degenbot_math::solidly::SOLIDLY_MIN_SCALED_RESERVE;
@@ -176,20 +178,52 @@ impl<'a> HopMath<'a> {
         })
     }
 
+    /// The dispatch row this hop's family registers (ADR-071 D3/D4) — the ONE
+    /// residual `HopMath` arm site. Every arm is a one-line delegation into the
+    /// family-set table (`mixed::solve::FAMILY_DISPATCH`); the `lines` builder
+    /// and the family label below are read straight off the returned row.
+    pub(crate) fn family_row(&self) -> &'static FamilyRow {
+        match self {
+            HopMath::V2(_) => family_row_for(HopType::V2),
+            HopMath::Cl(_) => family_row_for(HopType::V3),
+            HopMath::SolidlyVolatile { .. } | HopMath::SolidlyStable { .. } => {
+                family_row_for(HopType::SolidlyStable)
+            }
+            HopMath::Weighted { .. } => family_row_for(HopType::BalancerWeighted),
+            HopMath::BalancerStable { .. } => family_row_for(HopType::BalancerStable),
+            HopMath::CurveStableswap { .. } => family_row_for(HopType::CurveStableswap),
+            HopMath::ReserveCap { .. } => &RESERVE_CAP_ROW,
+        }
+    }
+
+    /// The family's envelope line builder, read off this hop's dispatch row.
+    /// This is the ONE residual `lines` site: the row's `lines` fn is the
+    /// family's builder, so the former `hop_lines_and_cap_cached` match is now
+    /// a one-line delegation.
+    pub(crate) fn lines(
+        self,
+        cfg: &SolveRuntimeConfig,
+        fan_cache: Option<(&PrefixCache, u64)>,
+        stats: &mut GateStats,
+    ) -> Option<(Vec<Line>, U256)> {
+        (self.family_row().lines)(&self, cfg, fan_cache, stats)
+    }
+
     /// The family label for this hop: the degenerate-path capture row's
     /// `family` field and the gate's degenerate-hop diagnostic share this ONE
     /// shape, so a new family is labelled in exactly one place and the two
-    /// sites cannot diverge.
+    /// sites cannot diverge. The family token comes from the dispatch row.
     #[must_use]
     pub fn family_label(&self) -> String {
+        let label = self.family_row().label;
         match self {
-            HopMath::V2(h) => format!("v2(r_in={},r_out={})", h.reserve_in, h.reserve_out),
-            HopMath::Cl(_) => "cl".to_string(),
+            HopMath::V2(h) => format!("{label}(r_in={},r_out={})", h.reserve_in, h.reserve_out),
+            HopMath::Cl(_) => label.to_string(),
             HopMath::SolidlyVolatile {
                 reserve_in,
                 reserve_out,
                 ..
-            } => format!("solidly_volatile(r_in={reserve_in},r_out={reserve_out})"),
+            } => format!("{label}_volatile(r_in={reserve_in},r_out={reserve_out})"),
             HopMath::Weighted {
                 balance_in,
                 balance_out,
@@ -197,16 +231,16 @@ impl<'a> HopMath<'a> {
                 weight_out,
                 ..
             } => format!(
-                "weighted(b_in={balance_in},b_out={balance_out},\
+                "{label}(b_in={balance_in},b_out={balance_out},\
                  w_in={weight_in},w_out={weight_out})"
             ),
-            HopMath::ReserveCap { reserve_out } => format!("reserve_cap(r_out={reserve_out})"),
+            HopMath::ReserveCap { reserve_out } => format!("{label}(r_out={reserve_out})"),
             HopMath::SolidlyStable {
                 reserves_0,
                 reserves_1,
                 token_in,
                 ..
-            } => format!("solidly_stable(r0={reserves_0},r1={reserves_1},token_in={token_in})"),
+            } => format!("{label}_stable(r0={reserves_0},r1={reserves_1},token_in={token_in})"),
             HopMath::BalancerStable {
                 amp,
                 balances,
@@ -214,7 +248,7 @@ impl<'a> HopMath<'a> {
                 token_index_out,
                 ..
             } => format!(
-                "balancer_stable(amp={amp},n={},i={token_index_in},j={token_index_out})",
+                "{label}(amp={amp},n={},i={token_index_in},j={token_index_out})",
                 balances.len()
             ),
             HopMath::CurveStableswap {
@@ -224,7 +258,7 @@ impl<'a> HopMath<'a> {
                 token_index_out,
                 ..
             } => format!(
-                "curve_stableswap(amp={amp},n={},i={token_index_in},j={token_index_out})",
+                "{label}(amp={amp},n={},i={token_index_in},j={token_index_out})",
                 xp.len()
             ),
         }
@@ -1102,39 +1136,78 @@ pub(crate) fn hop_lines_and_cap_cached(
     fan_cache: Option<(&PrefixCache, u64)>,
     stats: &mut GateStats,
 ) -> Option<(Vec<Line>, U256)> {
+    hop.lines(cfg, fan_cache, stats)
+}
+
+// ---------------------------------------------------------------------------
+// Per-family envelope line builders (ADR-071 D3)
+// ---------------------------------------------------------------------------
+// Each is the family's `lines` entry point, registered on its `FAMILY_DISPATCH`
+// row; `HopMath::lines` dispatches to them through the row. The bodies are the
+// former `hop_lines_and_cap_cached` match arms, moved verbatim.
+
+/// The V2 family's line builder: `[rise_feeless, rise_fee'd, flat]`.
+pub(crate) fn v2_hop_lines(
+    hop: &HopMath<'_>,
+    _cfg: &SolveRuntimeConfig,
+    _fan_cache: Option<(&PrefixCache, u64)>,
+    _stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
+    let HopMath::V2(h) = hop else {
+        return None;
+    };
+    let (r_in, r_out) = (h.reserve_in, h.reserve_out);
+    if r_in.is_zero() || r_out.is_zero() {
+        return None;
+    }
+    mobius_lines(r_in, r_out, h.gamma_numer, h.fee_denom)
+}
+
+/// The concentrated-liquidity family's line builder: the tangent fan derived
+/// from the hop's carried crossing table.
+pub(crate) fn cl_hop_lines(
+    hop: &HopMath<'_>,
+    cfg: &SolveRuntimeConfig,
+    fan_cache: Option<(&PrefixCache, u64)>,
+    stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
+    let HopMath::Cl(ch) = hop else {
+        return None;
+    };
+    let seq = ch.seq;
+    // Tangent-line budget: dense CL pools emit one tangent per range,
+    // and composition across two CL hops multiplies them (K² not
+    // R1×R2) — so the set is sampled to `max_tangent_lines`. Keeping
+    // fewer tangents only LOOSENS the envelope (every tangent is a
+    // global upper bound), so the gate never skips a profitable path.
+    let max_tangent_lines = cfg.max_tangent_lines.max(1);
+    if seq.ranges.is_empty() {
+        return None;
+    }
+    // Carried crossings: the table the resolve pass already built once
+    // per (pool, direction) for the active-set walk — deriving it here
+    // per path dominated gate time. The table rides the [ClHop]
+    // descriptor; tableless callers pay their own derive via
+    // HopMath::cl_derived.
+    let crossings: &[IntTickRangeCrossing] = ch.crossings.as_ref();
+    cl_lines_and_cap(
+        crossings,
+        max_tangent_lines,
+        cfg.tangent_sample_by_mass,
+        fan_cache,
+        stats,
+    )
+}
+
+/// The Solidly family's line builder: volatile pools take the Möbius rises,
+/// stable pools the concave-in-the-input rise beside the reserve cap.
+pub(crate) fn solidly_hop_lines(
+    hop: &HopMath<'_>,
+    _cfg: &SolveRuntimeConfig,
+    _fan_cache: Option<(&PrefixCache, u64)>,
+    _stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
     match hop {
-        HopMath::V2(h) => {
-            let (r_in, r_out) = (h.reserve_in, h.reserve_out);
-            if r_in.is_zero() || r_out.is_zero() {
-                return None;
-            }
-            mobius_lines(r_in, r_out, h.gamma_numer, h.fee_denom)
-        }
-        HopMath::Cl(ch) => {
-            let seq = ch.seq;
-            // Tangent-line budget: dense CL pools emit one tangent per range,
-            // and composition across two CL hops multiplies them (K² not
-            // R1×R2) — so the set is sampled to `max_tangent_lines`. Keeping
-            // fewer tangents only LOOSENS the envelope (every tangent is a
-            // global upper bound), so the gate never skips a profitable path.
-            let max_tangent_lines = cfg.max_tangent_lines.max(1);
-            if seq.ranges.is_empty() {
-                return None;
-            }
-            // Carried crossings: the table the resolve pass already built once
-            // per (pool, direction) for the active-set walk — deriving it here
-            // per path dominated gate time. The table rides the [ClHop]
-            // descriptor; tableless callers pay their own derive via
-            // HopMath::cl_derived.
-            let crossings: &[IntTickRangeCrossing] = ch.crossings.as_ref();
-            cl_lines_and_cap(
-                crossings,
-                max_tangent_lines,
-                cfg.tangent_sample_by_mass,
-                fan_cache,
-                stats,
-            )
-        }
         HopMath::SolidlyVolatile {
             reserve_in,
             reserve_out,
@@ -1144,7 +1217,7 @@ pub(crate) fn hop_lines_and_cap_cached(
             if reserve_in.is_zero() || reserve_out.is_zero() {
                 return None;
             }
-            mobius_lines(reserve_in, reserve_out, gamma_numer, fee_denom)
+            mobius_lines(*reserve_in, *reserve_out, *gamma_numer, *fee_denom)
         }
         HopMath::SolidlyStable {
             reserves_0,
@@ -1155,66 +1228,133 @@ pub(crate) fn hop_lines_and_cap_cached(
             fee_numer,
             fee_denom,
         } => solidly_stable_lines(
-            reserves_0, reserves_1, decimals_0, decimals_1, token_in, fee_numer, fee_denom,
+            *reserves_0,
+            *reserves_1,
+            *decimals_0,
+            *decimals_1,
+            *token_in,
+            *fee_numer,
+            *fee_denom,
         ),
-        HopMath::BalancerStable {
-            amp,
-            balances,
-            token_index_in,
-            token_index_out,
-            invariant,
-            swap_fee,
-            scaling_factor_in,
-            scaling_factor_out,
-        } => balancer_stable_lines(
-            amp,
-            balances,
-            token_index_in,
-            token_index_out,
-            invariant,
-            swap_fee,
-            scaling_factor_in,
-            scaling_factor_out,
-        ),
-        // Curve is gated through its own variant, but the derived lines are
-        // the native reserve cap alone — its entry tangent was measured
-        // non-concave against the real leaf (see `curve_stableswap_lines`).
-        HopMath::CurveStableswap {
-            xp,
-            token_index_out,
-            precision,
-            rate_multiplier_out,
-            ..
-        } => curve_stableswap_lines(xp, token_index_out, precision, rate_multiplier_out),
-        HopMath::Weighted {
-            balance_in,
-            balance_out,
-            weight_in,
-            weight_out,
-            scaling_in,
-            scaling_out,
-        } => weighted_lines(
-            balance_in,
-            balance_out,
-            weight_in,
-            weight_out,
-            scaling_in,
-            scaling_out,
-        ),
-        HopMath::ReserveCap { reserve_out } => {
-            if reserve_out.is_zero() {
-                return None;
-            }
-            // `out ≤ reserve_out` for ALL inputs (you cannot extract more
-            // than the pool holds). Flat-only — sound, loose.
-            let flat = Line {
-                a: I512::try_from(U512::from(reserve_out)).ok()?,
-                b: I512::ZERO,
-                c: I512::ONE,
-            };
-            Some((vec![flat], reserve_out))
-        }
+        _ => None,
     }
+}
+
+/// The Balancer-weighted family's line builder: the concave entry tangent plus
+/// the asymptotic reserve cap.
+pub(crate) fn weighted_hop_lines(
+    hop: &HopMath<'_>,
+    _cfg: &SolveRuntimeConfig,
+    _fan_cache: Option<(&PrefixCache, u64)>,
+    _stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
+    let HopMath::Weighted {
+        balance_in,
+        balance_out,
+        weight_in,
+        weight_out,
+        scaling_in,
+        scaling_out,
+    } = hop
+    else {
+        return None;
+    };
+    weighted_lines(
+        *balance_in,
+        *balance_out,
+        *weight_in,
+        *weight_out,
+        *scaling_in,
+        *scaling_out,
+    )
+}
+
+/// The Balancer-stable family's line builder.
+pub(crate) fn balancer_stable_hop_lines(
+    hop: &HopMath<'_>,
+    _cfg: &SolveRuntimeConfig,
+    _fan_cache: Option<(&PrefixCache, u64)>,
+    _stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
+    let HopMath::BalancerStable {
+        amp,
+        balances,
+        token_index_in,
+        token_index_out,
+        invariant,
+        swap_fee,
+        scaling_factor_in,
+        scaling_factor_out,
+    } = hop
+    else {
+        return None;
+    };
+    balancer_stable_lines(
+        *amp,
+        balances,
+        *token_index_in,
+        *token_index_out,
+        *invariant,
+        *swap_fee,
+        *scaling_factor_in,
+        *scaling_factor_out,
+    )
+}
+
+/// The Curve family's line builder: the native reserve cap alone — its entry
+/// tangent was measured non-concave against the real leaf (see
+/// `curve_stableswap_lines`).
+pub(crate) fn curve_hop_lines(
+    hop: &HopMath<'_>,
+    _cfg: &SolveRuntimeConfig,
+    _fan_cache: Option<(&PrefixCache, u64)>,
+    _stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
+    let HopMath::CurveStableswap {
+        xp,
+        token_index_out,
+        precision,
+        rate_multiplier_out,
+        ..
+    } = hop
+    else {
+        return None;
+    };
+    curve_stableswap_lines(xp, *token_index_out, *precision, *rate_multiplier_out)
+}
+
+/// The gate-only `ReserveCap` pseudo-family's line builder: a flat line at the
+/// native reserve (`out ≤ reserve_out` for ALL inputs — you cannot extract
+/// more than the pool holds). Sound, loose.
+pub(crate) fn reserve_cap_hop_lines(
+    hop: &HopMath<'_>,
+    _cfg: &SolveRuntimeConfig,
+    _fan_cache: Option<(&PrefixCache, u64)>,
+    _stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
+    let HopMath::ReserveCap { reserve_out } = hop else {
+        return None;
+    };
+    if reserve_out.is_zero() {
+        return None;
+    }
+    let flat = Line {
+        a: I512::try_from(U512::from(*reserve_out)).ok()?,
+        b: I512::ZERO,
+        c: I512::ONE,
+    };
+    Some((vec![flat], *reserve_out))
+}
+
+/// The refusal / walkable rows' line builder: no rigorous bound (a `None` hop
+/// view poisons the path). Never reached through a family row's `lines`.
+pub(crate) fn refuse_lines(
+    _hop: &HopMath<'_>,
+    _cfg: &SolveRuntimeConfig,
+    _fan_cache: Option<(&PrefixCache, u64)>,
+    _stats: &mut GateStats,
+) -> Option<(Vec<Line>, U256)> {
+    None
 }
 
 /// Build the line set for a Balancer V2 WEIGHTED hop: `[rise, flat]`.

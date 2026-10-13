@@ -82,6 +82,23 @@ pub enum HopType {
 }
 
 impl HopType {
+    /// Every variant, in discriminant order.
+    ///
+    /// ADR-071 D3: the family dispatch table is DATA, so the compiler cannot
+    /// see that each family is registered. The `family_dispatch_table_...`
+    /// test iterates this list and pairs it with an exhaustive `match` (no
+    /// wildcard arm) over the variants, so a newly added `HopType` fails
+    /// compilation of that test until its registration is asserted.
+    pub const ALL: &[HopType] = &[
+        Self::V2,
+        Self::V3,
+        Self::V4,
+        Self::SolidlyStable,
+        Self::BalancerWeighted,
+        Self::BalancerStable,
+        Self::CurveStableswap,
+    ];
+
     /// Whether this hop type uses concentrated-liquidity math.
     ///
     /// V3 and V4 hops are both CL — they share the same solver dispatch.
