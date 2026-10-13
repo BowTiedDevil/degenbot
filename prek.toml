@@ -179,6 +179,12 @@ hooks = [
   # for the degenbot._ffi seam; the slimmed bespoke gate (R0 + driver-module
   # tombstones) runs in the pytest suites below.
   { id = "stubtest", name = "Stubtest drift gate", language = "system", entry = "just lint-stubtest", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  # ADR-066 D2/D3: the regenerate-and-diff drift gate is compile-coupled and
+  # excluded from the default pytest selection (`stub_drift` marker), so it runs
+  # here as its own pre-push gate (and as the CI `stub-drift` job). The
+  # path-scoped `stub-drift-staged` pre-commit hook still covers the common
+  # FFI-surface edit at commit time.
+  { id = "stub-drift", name = "Stub drift gate", language = "system", entry = "just lint-stub-drift", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # Compiled architecture gates, moved here from pre-commit (see note 5
   # above): cargo-test invariants with no per-file slice.

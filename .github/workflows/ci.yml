@@ -461,3 +461,45 @@ jobs:
           # FF-T5: the profile leg force (auto is the enum default - same
           # behavior as unset; pinned is the forced-override leg).
           DEGENBOT_FLEET_PROFILE: ${{ matrix.fleet-profile }}
+
+  stub-drift:
+    # ADR-066 D2/D3: the regenerate-and-diff stub gate, promoted out of the
+    # default pytest selection. `just gen-stubs --check` cargo-builds
+    # degenbot_rs with the temporary `experimental-inspect` feature +
+    # degenbot-stubgen before introspecting the cdylib, so it is compile-coupled
+    # and was the slowest default-run test (~60s) — previously paid on EVERY
+    # python-test matrix leg. It runs here, once, as a dedicated gate; the
+    # `stub_drift` marker keeps it out of the default suite. No extension build
+    # is needed: the gate only needs uv (for the ruff format/lint pass over the
+    # generated tree), the Rust toolchain, and just.
+    name: Stub Drift (regen-and-diff)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.98.1
+
+      - name: Cache Cargo
+        # Shares the ci-rust prefix with the rust/python jobs so the common
+        # workspace deps are reused; the `experimental-inspect` toggle only adds
+        # feature-specific fingerprints, and `just dev` still selects the
+        # canonical feature set from whatever the cache carries.
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: ci-rust
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Sync the uv environment (no extension build)
+        run: uv sync --locked --dev --no-install-project
+
+      - name: Regenerate-and-diff stub gate
+        run: just lint-stub-drift

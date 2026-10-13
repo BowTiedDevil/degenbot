@@ -197,15 +197,18 @@ allow-star-arg-any = true
 # tier (spawn timeouts), and wall-clock speed is no longer the binding constraint.
 addopts = [
     "--import-mode", "importlib",
-    "-m", "not slow and not base and not online_rpc",
+    "-m", "not slow and not base and not online_rpc and not stub_drift",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # pytest-timeout: a hung test FAILS with a timeout report instead of parking
 # its xdist worker with no failure signal. Thread method — signal is unsafe
-# under asyncio/xdist. 300s gives ~200x headroom over the slowest default-run
-# test (~1.6s measured). No per-test or per-suite headroom is granted: a test
-# that outruns this budget fails loudly so the slowness gets investigated.
+# under asyncio/xdist. 300s is orders of magnitude over the slowest default-run
+# test (the pathfinding snapshot enumeration, a few seconds): the compile-coupled
+# stub-drift gate that used to dominate the default run is excluded via the
+# `stub_drift` marker and runs as its own CI gate. No per-test or per-suite
+# headroom is granted: a test that outruns this budget fails loudly so the
+# slowness gets investigated.
 timeout = 300
 timeout_method = "thread"
 pythonpath = ["src", "."]
@@ -222,6 +225,7 @@ markers = [
     "onchain_oracle: on-chain parity test whose oracle truth is read from a golden file (tests/golden); offline in CI — see docs/architecture/golden-onchain-parity.md",
     "online_rpc: test requiring a live external RPC (mainnet/arbitrum/base archive node) — skipped in CI by default; run on-demand with `-m online_rpc`. See docs/architecture/golden-onchain-parity.md.",
     "live_drift: explicit-only live drift gate — re-runs the record_py_oracle_corpus --check against live archive endpoints per chain (paced, minutes of RPC); never in default, CI, or pre-push runs; run with `-m live_drift` or `just live-drift`",
+    "stub_drift: compile-coupled regenerate-and-diff stub gate — cargo-builds the cdylib with the temporary experimental-inspect feature, so it is excluded from the default pytest selection and runs once as the dedicated CI `stub-drift` job; run on demand with `-m stub_drift` or `just lint-stub-drift`",
 ]
 
 [dependency-groups]

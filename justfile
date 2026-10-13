@@ -91,7 +91,7 @@ test: test-rust-nextest test-python
 
 # Run every pre-push gate manually, in hook order and fail-fast — the
 # object-DB GC brake, the commitlint push-range re-lint, then the Rust/Python
-# code linters (clippy, ruff+ty, stubtest), then the Rust and Python build +
+# code linters (clippy, ruff+ty, stubtest, stub drift), then the Rust and Python build +
 # test tracks, exactly as the installed prek pre-push hook runs them
 # (prek.toml, stages = ["pre-push"]). The installed hook and ci.yml stay
 # authoritative on an actual push; this is for checking the gates with
@@ -117,6 +117,7 @@ pre-push:
     run_gate "Rust clippy"             just lint-rust-check
     run_gate "Python lint"             just lint-python-check
     run_gate "Stubtest drift gate"     just lint-stubtest
+    run_gate "Stub drift gate"         just lint-stub-drift
     run_gate "Rust build"              just build-rust-extension
     run_gate "Rust tests"              just test-rust-nextest
     run_gate "Python build (maturin)"  just dev
@@ -406,7 +407,7 @@ rebuild-if-stale:
 
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the
-# default offline marker filter (`-m "not slow and not base and not online_rpc"`)
+# default offline marker filter (`-m "not slow and not base and not online_rpc and not stub_drift"`)
 # this covers the PyO3 seam, golden on-chain-oracle replay, AND the relocated
 # seam suites. A focused parity-only run is `uv run --no-sync pytest -m onchain_oracle`.
 test-python:
@@ -1156,6 +1157,17 @@ lint-stubtest:
     # AGENTS.md) — stubtest simply checks whatever is installed.
     uv run --no-sync stubtest --ignore-disjoint-bases \
         --allowlist tests/ffi/stubtest_allowlist.txt degenbot._ffi
+
+# Dedicated regenerate-and-diff stub gate (ADR-066 D2/D3): the compile-coupled
+# face of the stub-drift ratchet. `just gen-stubs --check` cargo-builds
+# degenbot_rs with the temporary `experimental-inspect` feature + degenbot-stubgen
+# before introspecting the cdylib, so it is NOT in the default pytest selection
+# (the `stub_drift` marker excludes it) — it runs once as the CI `stub-drift`
+# job, and here for an on-demand local run. Run it with exclusive use of the
+# build graph: a concurrent `just dev` / `cargo build` holds the debug lock and
+# can relink the introspected `.so`.
+lint-stub-drift:
+    just gen-stubs --check
 
 # The solve-entry A/B readout (the unification harness): per-path median/p95
 # for the all-CL intake vs the direct entry over a capture corpus, parity-gated

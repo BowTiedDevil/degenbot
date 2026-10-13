@@ -15,7 +15,7 @@ The five ratchets:
 | Comment hygiene | `scripts/hooks/comment-hygiene.sh` | `scripts/hooks/comment-hygiene-census.txt` (+ `-waivers.txt`) | `just lint-comment-hygiene` |
 | Config-derived statics | `rust/crates/facade/degenbot/tests/architecture_gates.rs::config_derived_statics_are_classified` | `rust/crates/facade/degenbot/tests/config_derived_statics_census.txt` | `just check-config-derived-statics` |
 | Worker census | `rust/crates/foundation/degenbot-core/src/worker_census.rs` (+ `pubsub_runtime.rs` live counts) | the `register(...)` call sites themselves | `cargo test -p degenbot-core worker_census` |
-| Stub drift | `prek.toml` `stub-drift-staged` -> `just gen-stubs --check`; `tests/ffi/test_ffi_stub_drift.py` | the committed `src/degenbot/_ffi/*.pyi` tree | `just gen-stubs --check` |
+| Stub drift | `prek.toml` `stub-drift-staged` -> `just gen-stubs --check`; `tests/ffi/test_ffi_stub_drift.py` (compile-coupled test carries the `stub_drift` marker; runs once as the CI `stub-drift` job) | the committed `src/degenbot/_ffi/*.pyi` tree | `just lint-stub-drift` |
 | pytest noise gate | `scripts/pytest_noise_gate.sh` | the `signatures` array in that script | `just test-python-noise-gate` |
 
 ---
@@ -177,8 +177,12 @@ stale while the report said otherwise.
   unset).
 - `tests/ffi/test_ffi_stub_drift.py` — the pytest face:
   `test_committed_stubs_carry_generator_header` and
-  `test_committed_stubs_match_generator_output` (which shells out to
-  `just gen-stubs --check`). It probes cargo's debug build lock
+  `test_config_projection_stubs_are_typed` stay in the default suite (cheap,
+  committed-tree-only). `test_committed_stubs_match_generator_output` (which
+  shells out to `just gen-stubs --check`) is compile-coupled and carries the
+  `stub_drift` marker, so the default pytest selection excludes it; it runs once
+  as the dedicated CI `stub-drift` job and as the pre-push `stub-drift` gate. For
+  a direct local run it probes cargo's debug build lock
   (`rust/target/debug/.cargo-build-lock`) and fails with a distinct message when
   another lane is mid-build.
 
@@ -189,11 +193,14 @@ stale while the report said otherwise.
 `just gen-stubs` and commit the regenerated tree. Generator gaps live only in
 `tests/ffi/stubtest_allowlist.txt` (ADR-066 D3), never in a hand edit.
 
-**Run it.** `just gen-stubs --check` (cargo-builds the cdylib with the temporary
-`experimental-inspect` feature, so run it with exclusive use of the build graph
-— a concurrent `just dev`/`cargo build` can relink the `.so`). `REGEN_STUBS=1
-just gen-stubs --check` opts into writing, mirroring the `REGEN_*` pattern of
-`docs/rust-config-keys.md`. The pytest face runs in the pre-push suite.
+**Run it.** `just lint-stub-drift` (an alias of `just gen-stubs --check`) — it
+cargo-builds the cdylib with the temporary `experimental-inspect` feature, so
+run it with exclusive use of the build graph — a concurrent `just dev`/`cargo
+build` can relink the `.so`. It runs once per CI run as the dedicated
+`stub-drift` job and as the `stub-drift` pre-push gate; the default pytest
+selection excludes the pytest face via the `stub_drift` marker (run it directly
+with `pytest -m stub_drift`). `REGEN_STUBS=1 just gen-stubs --check` opts into
+writing, mirroring the `REGEN_*` pattern of `docs/rust-config-keys.md`.
 
 ---
 

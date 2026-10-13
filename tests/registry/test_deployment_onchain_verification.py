@@ -45,7 +45,7 @@ progressively stronger and more expensive:
 Running
 -------
 The whole module is marked ``online_rpc`` and so is **deselected by default**
-(``pyproject.toml`` → ``-m "not slow and not base and not online_rpc"``) — CI
+(``pyproject.toml`` → ``-m "not slow and not base and not online_rpc and not stub_drift"``) — CI
 runs offline and never needs a node. Run on demand against a local/mainnet RPC::
 
     just verify-deployments

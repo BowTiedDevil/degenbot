@@ -31,6 +31,13 @@ directory") up front and fails with a distinct message when another build
 is in progress; rerun it once the other build finishes. A foreign
 build that starts after the probe still races the introspection, so a
 suspicious failure is arbitrated by rerunning this test alone.
+
+Because of that compile cost `test_committed_stubs_match_generator_output`
+carries the ``stub_drift`` marker and is excluded from the default pytest
+selection (``pyproject.toml`` ``addopts``): it runs once as the dedicated CI
+``stub-drift`` job (``just lint-stub-drift``) and on demand locally with
+``pytest -m stub_drift``. The header and typed-projection checks stay in the
+default run — they are cheap and read only the committed tree.
 """
 
 from __future__ import annotations
@@ -40,6 +47,8 @@ import fcntl
 import os
 import pathlib
 import subprocess
+
+import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _STUB_DIR = _REPO_ROOT / "src" / "degenbot" / "_ffi"
@@ -99,9 +108,12 @@ def test_committed_stubs_carry_generator_header() -> None:
 
 
 # The regen-and-diff check rebuilds the cdylib with the `experimental-inspect`
-# feature before generating, so it carries the workspace's toggle cost. There
-# is no per-test timeout: a warm rebuild that can't fit the 300s default is a
-# loud failure to investigate, not a hang to budget around.
+# feature before generating, so it carries the workspace's toggle cost. It is
+# therefore excluded from the default pytest selection (`stub_drift` marker) and
+# run as the dedicated CI `stub-drift` job / `just lint-stub-drift`. There is no
+# per-test timeout: a warm rebuild that can't fit the 300s default is a loud
+# failure to investigate, not a hang to budget around.
+@pytest.mark.stub_drift
 def test_committed_stubs_match_generator_output() -> None:
     """Committed stubs are byte-identical to `just gen-stubs --check` output.
 
