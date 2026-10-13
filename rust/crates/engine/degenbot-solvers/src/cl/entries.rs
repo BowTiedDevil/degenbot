@@ -4,7 +4,7 @@ use super::active_set::{solve_active_set_path, PieceView, WalkOutcome};
 use super::crossings::{
     build_cl_crossing_table, build_cl_word_profiles_from_crossings, cl_walk_hop_cached,
 };
-use super::memo::{walk_mixed_path_fingerprint, MemoProbe, WalkMemo};
+use super::memo::{walk_views_fingerprint, MemoProbe, WalkMemo};
 use super::tally::WalkTelemetry;
 use super::window::RefineBound;
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
@@ -149,9 +149,9 @@ pub fn derive_and_solve_cl_piecewise(
 /// re-derivation is needed.
 ///
 /// Memo keys are the unified entry's: a CL-only composition folds through
-/// [`walk_mixed_path_fingerprint`] like every other composition (the key
-/// values are transient in-memory memo keys; the all-CL-only key this
-/// replaces was retired with the duplicated solve body).
+/// the one composition key like every other composition (the key values are
+/// transient in-memory memo keys; the all-CL-only key this replaces was
+/// retired with the duplicated solve body).
 #[must_use]
 #[hotpath::measure(label = "cl_solve.int_solve_cl_path")]
 pub fn solve_cl_piecewise(
@@ -210,41 +210,19 @@ pub fn solve_mixed_piecewise(
         return WalkOutcome::none();
     }
 
-    // Cross-block composition memo: the mixed fingerprint folds every
-    // position's family tag + hop state (V2: the full `IntHopState` the
-    // constant-product view consumes; CL: the same per-range folding the
-    // all-CL key uses), so the key is exact for mixed compositions — cfg is
-    // fixed per engine lifetime and env (`&[RefineBound]`, the kernel-window
-    // bounds) is a pure derivation of hop state + cfg, translated from the
-    // envelope's composed lines at the family-module seam. The probe runs
-    // BEFORE hop assembly — the
-    // key needs only the hop states, sequences, and order, so a `Hit` or
-    // `Negative` returns without paying the `PieceView` builds. `None` memo =
-    // disabled run never pays the fingerprint or the lock. (The key is
-    // re-projected from the view here: the V2 state clone is the fold's, not
-    // the walk's.)
+    // Cross-block composition memo: the fingerprint is the exact correctness
+    // key (the tables are pure derivations of the hop states), so an
+    // identical key cannot carry a stale result. The probe runs BEFORE hop
+    // assembly — the key needs only the hop states, sequences, and order, so
+    // a `Hit` or `Negative` returns without paying the `PieceView` builds.
+    // `None` memo = disabled run never pays the fingerprint or the lock.
     let mut commit = None;
     if let Some(memo) = memo {
         if memo.active() {
-            let v2_hops: Vec<Option<IntHopState>> = hops
-                .iter()
-                .map(|h| match h {
-                    MixedHopView::V2(state) => Some((*state).clone()),
-                    MixedHopView::Cl(_) => None,
-                })
-                .collect();
-            let cl_sequences: Vec<Option<&IntV3TickRangeSequence>> = hops
-                .iter()
-                .map(|h| match h {
-                    MixedHopView::Cl(prepared) => Some(prepared.int_seq.as_ref()),
-                    MixedHopView::V2(_) => None,
-                })
-                .collect();
-            let hop_order: Vec<bool> = hops
-                .iter()
-                .map(|h| matches!(h, MixedHopView::V2(_)))
-                .collect();
-            let fp = walk_mixed_path_fingerprint(&v2_hops, &cl_sequences, &hop_order);
+            // The key folds straight off the views — no intermediate vectors,
+            // no state clones; the capture-schema fold over Option slots is
+            // the memo module's other front door over the same position core.
+            let fp = walk_views_fingerprint(hops);
             if let Some(outcome) = memo_replay(memo, fp) {
                 return outcome;
             }

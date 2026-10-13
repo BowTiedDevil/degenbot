@@ -1,6 +1,7 @@
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 
+use super::entries::MixedHopView;
 use super::IntV3TickRangeSequence;
 
 // ---------------------------------------------------------------------------
@@ -445,38 +446,104 @@ pub(crate) fn walk_cl_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) ->
 /// V2 positions contribute nothing to them (the original CL-only
 /// accumulation discipline). The keys are transient in-memory memo keys — a
 /// value shift here is inert. The u128 two-lane output discipline is kept.
+// The entries fold through `walk_views_fingerprint` (the native-intake
+// front door over the same `Fold` core); this Option-slot form is the
+// capture/replay schema vocabulary and the tests' cheap bare-state door.
+#[cfg(test)]
 #[must_use]
 pub(crate) fn walk_mixed_path_fingerprint(
     v2_hops: &[Option<IntHopState>],
     cl_sequences: &[Option<&IntV3TickRangeSequence>],
     hop_order: &[bool], // true = V2, false = CL
 ) -> u128 {
-    let mut lane_a: u64 = 0xCBF2_9CE4_8422_2325;
-    let mut lane_b: u64 = 0x6E99_B980_B247_C7F6;
-    let mut gross = U256::ZERO;
-    let mut cross = U256::ZERO;
+    let mut fold = Fold::new();
     for (i, &is_v2) in hop_order.iter().enumerate() {
-        mix_u256(&mut lane_a, U256::from((i as u64).wrapping_add(3)));
-        mix_u256(&mut lane_b, U256::from((i as u64).wrapping_add(5)));
-        mix_u256(&mut lane_a, U256::from(u64::from(is_v2)));
-        // A `None` state is a structurally invalid position (the entry
-        // refuses it before probing); fold a distinct absent tag so it
-        // cannot share a key with any present state or empty sequence.
-        if is_v2 {
-            if let Some(hop) = &v2_hops[i] {
-                fold_v2_hop(&mut lane_a, &mut lane_b, hop);
-            } else {
-                mix_u256(&mut lane_a, U256::from(0xFACEu64));
-                mix_u256(&mut lane_b, U256::from(0xFEEDu64));
+        fold.position(i, is_v2, v2_hops[i].as_ref(), cl_sequences[i]);
+    }
+    fold.finish()
+}
+
+/// The same key over the entries' native intake — the hot-path front door:
+/// folds straight off the hop views, with no intermediate vectors and no
+/// state clones. [`walk_mixed_path_fingerprint`] is the capture/replay schema
+/// adapter over the same position core, so the two doors cannot fork a key.
+#[must_use]
+pub(crate) fn walk_views_fingerprint(views: &[MixedHopView<'_>]) -> u128 {
+    let mut fold = Fold::new();
+    for (i, &view) in views.iter().enumerate() {
+        match view {
+            MixedHopView::V2(state) => fold.position(i, true, Some(state), None),
+            MixedHopView::Cl(prepared) => {
+                fold.position(i, false, None, Some(prepared.int_seq.as_ref()));
             }
-        } else if let Some(seq) = cl_sequences[i] {
-            fold_sequence_ranges(&mut lane_a, &mut lane_b, &mut gross, &mut cross, seq);
-        } else {
-            mix_u256(&mut lane_a, U256::from(0xFACEu64));
-            mix_u256(&mut lane_b, U256::from(0xFEEDu64));
         }
     }
-    (u128::from(lane_a) << 64) | u128::from(lane_b)
+    fold.finish()
+}
+
+/// The two-lane fold accumulator shared by both key front doors: lane_a folds
+/// hop order + full per-range state, lane_b folds the derived capacity
+/// fields + word-boundary prices, so two distinct compositions that collapse
+/// one lane cannot collapse both.
+struct Fold {
+    lane_a: u64,
+    lane_b: u64,
+    gross: U256,
+    cross: U256,
+}
+
+impl Fold {
+    fn new() -> Self {
+        Self {
+            lane_a: 0xCBF2_9CE4_8422_2325,
+            lane_b: 0x6E99_B980_B247_C7F6,
+            gross: U256::ZERO,
+            cross: U256::ZERO,
+        }
+    }
+
+    /// One position's fold share: the hop-index lane mixing, the V2/CL
+    /// discriminator tag, and the hop state.
+    fn position(
+        &mut self,
+        i: usize,
+        is_v2: bool,
+        v2: Option<&IntHopState>,
+        cl: Option<&IntV3TickRangeSequence>,
+    ) {
+        mix_u256(&mut self.lane_a, U256::from((i as u64).wrapping_add(3)));
+        mix_u256(&mut self.lane_b, U256::from((i as u64).wrapping_add(5)));
+        mix_u256(&mut self.lane_a, U256::from(u64::from(is_v2)));
+        if is_v2 {
+            if let Some(hop) = v2 {
+                fold_v2_hop(&mut self.lane_a, &mut self.lane_b, hop);
+            } else {
+                self.absent();
+            }
+        } else if let Some(seq) = cl {
+            fold_sequence_ranges(
+                &mut self.lane_a,
+                &mut self.lane_b,
+                &mut self.gross,
+                &mut self.cross,
+                seq,
+            );
+        } else {
+            self.absent();
+        }
+    }
+
+    /// A `None` state is a structurally invalid position (the entry refuses
+    /// it before probing); fold a distinct absent tag so it cannot share a
+    /// key with any present state or empty sequence.
+    fn absent(&mut self) {
+        mix_u256(&mut self.lane_a, U256::from(0xFACEu64));
+        mix_u256(&mut self.lane_b, U256::from(0xFEEDu64));
+    }
+
+    fn finish(self) -> u128 {
+        (u128::from(self.lane_a) << 64) | u128::from(self.lane_b)
+    }
 }
 
 // ---------------------------------------------------------------------------

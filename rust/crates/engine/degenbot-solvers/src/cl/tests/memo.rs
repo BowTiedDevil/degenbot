@@ -12,7 +12,10 @@ use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 
-use crate::cl::memo::{walk_cl_path_fingerprint, walk_mixed_path_fingerprint, MemoProbe, WalkMemo};
+use crate::cl::memo::{
+    walk_cl_path_fingerprint, walk_mixed_path_fingerprint, walk_views_fingerprint, MemoProbe,
+    WalkMemo,
+};
 use crate::cl::{solve_cl_piecewise, solve_mixed_piecewise, MixedHopView, PreparedClHop};
 use crate::runtime::SolveRuntimeConfig;
 
@@ -723,6 +726,39 @@ fn all_cl_intake_forwards_to_the_unified_entry_byte_exact() {
     let direct_active = solve_mixed_piecewise(&views, Some(&memo_b), None, &cfg, None);
     assert_eq!(via_active.result, direct_active.result);
     assert_eq!(via_active.stats.sims, direct_active.stats.sims);
+    // The cost-parity half is only meaningful over real walks — without the
+    // telemetry feature the counters read zero and the equality above is
+    // vacuous.
+    #[cfg(feature = "telemetry")]
+    {
+        assert!(
+            via_active.stats.sims > 0,
+            "the intake arm's Miss path must walk"
+        );
+        assert!(
+            direct_active.stats.sims > 0,
+            "the direct arm's Miss path must walk"
+        );
+    }
+}
+
+/// The two key front doors must fold identically for the same composition —
+/// the no-fork claim the memo module's docs make, pinned.
+#[test]
+fn key_front_doors_agree_for_cl_only_compositions() {
+    let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+    let seq2 = multi_range_sequence(0, 60, false, &[1_000_000_000u128]);
+    let prepared = [
+        PreparedClHop::derive(std::sync::Arc::new(seq1.clone())),
+        PreparedClHop::derive(std::sync::Arc::new(seq2.clone())),
+    ];
+    let views: Vec<MixedHopView<'_>> = prepared.iter().map(MixedHopView::Cl).collect();
+    let seqs = [&seq1, &seq2];
+    assert_eq!(
+        walk_views_fingerprint(&views),
+        walk_cl_path_fingerprint(&seqs),
+        "the views door and the capture door must fold the same key"
+    );
 }
 
 /// Contract pin: both solve surfaces refuse paths shorter than two hops (the

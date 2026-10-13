@@ -83,11 +83,23 @@ fn p95_us(samples: &mut [u128]) -> u128 {
     samples[idx.saturating_sub(1).min(samples.len() - 1)]
 }
 
-/// Row route classification at the JSON level, mirroring the production
+/// The route the pre-unification dispatch branch picked for a row (the
+/// decision record's traffic-mix input).
+#[derive(Clone, Copy)]
+enum Route {
+    /// Every hop carries an int sequence: the all-CL entry.
+    AllCl,
+    /// Any V2 hop: the mixed entry.
+    Mixed,
+    /// Foreign family or unparseable row: the dispatch arm refuses it.
+    Other,
+}
+
+/// Row route classification at the JSON level, mirroring the pre-unification
 /// branch test (all hops carry an int sequence -> `all-CL` entry).
-fn route_of(doc: &Value) -> &'static str {
+fn route_of(doc: &Value) -> Route {
     let Some(hops) = doc.get("hops").and_then(Value::as_array) else {
-        return "other";
+        return Route::Other;
     };
     if doc.get("hop_order").is_some() {
         // Mixed-schema row: per-hop `kind` discriminant.
@@ -98,17 +110,17 @@ fn route_of(doc: &Value) -> &'static str {
             |h| matches!(h.get("kind").and_then(Value::as_str), Some(k) if k != "CL" && k != "V2"),
         );
         if any_foreign {
-            "other"
+            Route::Other
         } else if all_cl {
-            "all_cl"
+            Route::AllCl
         } else {
-            "mixed"
+            Route::Mixed
         }
     } else {
         // Pure-CL-schema row: hops are arrays of CL ranges.
         match parse_cl_hops(hops) {
-            Ok(_) => "all_cl",
-            Err(_) => "other",
+            Ok(_) => Route::AllCl,
+            Err(_) => Route::Other,
         }
     }
 }
@@ -180,14 +192,14 @@ fn main() {
     let (mut n_rows, mut n_all_cl, mut n_mixed, mut n_other) = (0u64, 0u64, 0u64, 0u64);
     let mut n_paths = 0u64;
     let mut parity_fail = 0u64;
-    let mut sims_today = 0u64;
-    let mut sims_unified = 0u64;
+    let mut sims_intake = 0u64;
+    let mut sims_direct = 0u64;
     // Per-rep totals (whole-corpus wall) per arm.
-    let mut rep_totals_today: Vec<u128> = Vec::with_capacity(iters);
-    let mut rep_totals_unified: Vec<u128> = Vec::with_capacity(iters);
+    let mut rep_totals_intake: Vec<u128> = Vec::with_capacity(iters);
+    let mut rep_totals_direct: Vec<u128> = Vec::with_capacity(iters);
     // Per-path median wall per arm (the stable per-path signal).
-    let mut path_med_today: Vec<u128> = Vec::new();
-    let mut path_med_unified: Vec<u128> = Vec::new();
+    let mut path_med_intake: Vec<u128> = Vec::new();
+    let mut path_med_direct: Vec<u128> = Vec::new();
 
     for line in content.lines() {
         if line.trim().is_empty() {
@@ -202,9 +214,9 @@ fn main() {
         };
         n_rows += 1;
         match route_of(&doc) {
-            "all_cl" => n_all_cl += 1,
-            "mixed" => n_mixed += 1,
-            _ => n_other += 1,
+            Route::AllCl => n_all_cl += 1,
+            Route::Mixed => n_mixed += 1,
+            Route::Other => n_other += 1,
         }
         let pid: u64 = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
         let Some(seqs) = all_cl_seqs_of(&doc) else {
@@ -223,51 +235,51 @@ fn main() {
             .map(|s| PreparedClHop::derive(std::sync::Arc::new(IntV3TickRangeSequence::clone(s))))
             .collect();
 
-        let mut times_today: Vec<u128> = Vec::with_capacity(iters);
-        let mut times_unified: Vec<u128> = Vec::with_capacity(iters);
+        let mut times_intake: Vec<u128> = Vec::with_capacity(iters);
+        let mut times_direct: Vec<u128> = Vec::with_capacity(iters);
         let mut parity_ref: Option<Option<(U256, U256, Vec<U256>)>> = None;
 
         for rep in 0..iters {
             // Interleaved reps with alternating order: thermal/cache drift
             // cancels across arms instead of landing on one of them.
-            let today_first = rep % 2 == 0;
-            for arm_today in [today_first, !today_first] {
-                if arm_today {
+            let intake_first = rep % 2 == 0;
+            for arm_intake in [intake_first, !intake_first] {
+                if arm_intake {
                     // The intake route: clone (three Arc bumps per hop),
                     // then the forwarding all-CL convenience.
                     let t0 = std::time::Instant::now();
                     let cloned: Vec<PreparedClHop> = prepared.clone();
                     let out = solve_cl_piecewise(&cloned, Some(&memo), None, &cfg, None);
-                    times_today.push(t0.elapsed().as_micros());
-                    sims_today += out.stats.sims as u64;
+                    times_intake.push(t0.elapsed().as_micros());
+                    sims_intake += out.stats.sims as u64;
                     match &parity_ref {
                         None => parity_ref = Some(out.result),
                         Some(want) => {
                             if *want != out.result {
                                 parity_fail += 1;
                                 eprintln!(
-                                    "path {pid} rep {rep}: PARITY DIVERGENCE today arm {want:?} vs {out:?}",
+                                    "path {pid} rep {rep}: PARITY DIVERGENCE intake arm {want:?} vs {out:?}",
                                     out = out.result
                                 );
                             }
                         }
                     }
                 } else {
-                    // The unified route: one borrowed view per hop, then the
-                    // mixed entry.
+                    // The direct route: one borrowed view per hop, then the
+                    // one solve body.
                     let t0 = std::time::Instant::now();
                     let views: Vec<MixedHopView<'_>> =
                         prepared.iter().map(MixedHopView::Cl).collect();
                     let out = solve_mixed_piecewise(&views, Some(&memo), None, &cfg, None);
-                    times_unified.push(t0.elapsed().as_micros());
-                    sims_unified += out.stats.sims as u64;
+                    times_direct.push(t0.elapsed().as_micros());
+                    sims_direct += out.stats.sims as u64;
                     match &parity_ref {
                         None => parity_ref = Some(out.result),
                         Some(want) => {
                             if *want != out.result {
                                 parity_fail += 1;
                                 eprintln!(
-                                    "path {pid} rep {rep}: PARITY DIVERGENCE unified arm {want:?} vs {out:?}",
+                                    "path {pid} rep {rep}: PARITY DIVERGENCE direct arm {want:?} vs {out:?}",
                                     out = out.result
                                 );
                             }
@@ -276,11 +288,11 @@ fn main() {
                 }
             }
         }
-        path_med_today.push(median_us(&mut times_today));
-        path_med_unified.push(median_us(&mut times_unified));
+        path_med_intake.push(median_us(&mut times_intake));
+        path_med_direct.push(median_us(&mut times_direct));
         for r in 0..iters {
-            rep_totals_today.push(times_today[r]);
-            rep_totals_unified.push(times_unified[r]);
+            rep_totals_intake.push(times_intake[r]);
+            rep_totals_direct.push(times_direct[r]);
         }
     }
 
@@ -295,7 +307,7 @@ fn main() {
             s
         })
     };
-    let (one_cl, one_mixed) = match one_hop_seq {
+    let (one_intake, one_direct) = match one_hop_seq {
         Some(seq) => {
             let prepared: Vec<PreparedClHop> = seq
                 .iter()
@@ -312,43 +324,45 @@ fn main() {
     };
 
     // ---- Report -----------------------------------------------------------
-    let total_today: u128 = rep_totals_today.iter().sum();
-    let total_unified: u128 = rep_totals_unified.iter().sum();
-    let mut med_today = path_med_today.clone();
-    let mut med_unified = path_med_unified.clone();
-    let mut p95_today = path_med_today;
-    let mut p95_unified = path_med_unified;
+    let total_intake: u128 = rep_totals_intake.iter().sum();
+    let total_direct: u128 = rep_totals_direct.iter().sum();
+    let mut med_intake = path_med_intake.clone();
+    let mut med_direct = path_med_direct.clone();
+    let mut p95_intake = path_med_intake;
+    let mut p95_direct = path_med_direct;
     println!();
     println!("== Row census (production branch route) ==");
     println!("rows={n_rows} route_all_cl={n_all_cl} route_mixed={n_mixed} route_other={n_other}");
     println!();
     println!("== Entry A/B over {n_paths} all-CL path(s), {iters} reps per arm (interleaved) ==");
-    println!("parity: {parity_fail} divergence(s); sims today={sims_today} unified={sims_unified}");
+    println!("parity: {parity_fail} divergence(s); sims intake={sims_intake} direct={sims_direct}");
     println!(
-        "1-hop edge: all-CL entry profit={one_cl:?} | mixed entry profit={one_mixed:?} (len<2 guard)"
+        "1-hop edge (uniform len<2 guard): intake refused={} | direct refused={}",
+        one_intake.is_none(),
+        one_direct.is_none()
     );
     println!();
     println!("                                 total_us   path_p50_us  path_p95_us");
     println!(
         "arm intake (clone + forward) {:>10} {:>12} {:>11}",
-        total_today,
-        median_us(&mut med_today),
-        p95_us(&mut p95_today)
+        total_intake,
+        median_us(&mut med_intake),
+        p95_us(&mut p95_intake)
     );
     println!(
         "arm direct (borrow + body)   {:>10} {:>12} {:>11}",
-        total_unified,
-        median_us(&mut med_unified),
-        p95_us(&mut p95_unified)
+        total_direct,
+        median_us(&mut med_direct),
+        p95_us(&mut p95_direct)
     );
     // Integer basis points: no float casts (workspace clippy denies them).
-    let ratio_bp: u128 = total_unified
+    let ratio_bp: u128 = total_direct
         .saturating_mul(10_000)
-        .checked_div(total_today)
+        .checked_div(total_intake)
         .unwrap_or(0);
-    if total_today > 0 {
+    if total_intake > 0 {
         println!(
-            "unified/today total = {}.{:04}x ( <1 = unified faster )",
+            "direct/intake total = {}.{:04}x ( <1 = direct faster )",
             ratio_bp / 10_000,
             ratio_bp % 10_000
         );
@@ -356,7 +370,7 @@ fn main() {
     println!();
     println!(
         "VERDICT DATA: parity_fail={parity_fail} n_paths={n_paths} sims_equal={} ratio_bp={ratio_bp}",
-        sims_today == sims_unified
+        sims_intake == sims_direct
     );
 
     if parity_fail > 0 {

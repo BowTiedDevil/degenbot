@@ -123,10 +123,11 @@ with data" in the live-capture section.
 ### (b) Per-hop `source_fingerprint` gate share — RESOLVED BY BOUNDS (ergo 3S7HGF): keep the gate
 
 The concern: the memo entries re-derive fingerprints the resolve intake already
-computed (`ClSolveTables::source_fingerprint` is checked against
-`walk_path_fingerprint(&[seq])` at every solve entry, entries.rs:87-93 and the
-mixed equivalent), roughly three passes over the tick data per solve, before the
-memo probe can even run.
+computed (`ClSolveTables::source_fingerprint` is checked against the path
+composition key at every solve entry — since the entry unification, one fold
+over the hop views; the all-CL-only `walk_path_fingerprint` this section
+originally named is retired with the duplicated solve body), roughly three
+passes over the tick data per solve, before the memo probe can even run.
 
 Facts established from code (no measurement):
 
@@ -136,8 +137,10 @@ Facts established from code (no measurement):
   nothing unless the `hotpath` Cargo feature is enabled
   (`hotpath = ["hotpath/hotpath", "hotpath/threads"]`).
 - The span labels that exist and would decide this:
-  - `cl_solve.int_solve_cl_path` — `solve_cl_piecewise` (entries.rs:73),
-  - `cl_solve.exact_solve_mixed_path_n` — `solve_mixed_piecewise` (entries.rs:160).
+  - `cl_solve.int_solve_cl_path` — `solve_cl_piecewise` (the forwarding
+    all-CL intake in `cl/entries.rs`),
+  - `cl_solve.exact_solve_mixed_path_n` — `solve_mixed_piecewise` (the one
+    solve body in `cl/entries.rs`).
 
 The share measurement is **PENDING**: it needs a telemetry-enabled live run and
 cannot be produced cheaply offline (the spans are compile-time no-ops in default

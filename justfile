@@ -1156,3 +1156,21 @@ lint-stubtest:
     # AGENTS.md) — stubtest simply checks whatever is installed.
     uv run --no-sync stubtest --ignore-disjoint-bases \
         --allowlist tests/ffi/stubtest_allowlist.txt degenbot._ffi
+
+# The solve-entry A/B readout (the unification harness): per-path median/p95
+# for the all-CL intake vs the direct entry over a capture corpus, parity-gated
+# (exits 1 on divergence). DR_AB_ITERS / DR_AB_MEMO shape the run.
+entry-ab corpus="heavy_cl_solve_captures.jsonl":
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers --example entry_ab_readout -- rust/crates/engine/degenbot-solvers/tests/fixtures/{{corpus}}
+
+# The same run instrumented: functions-timing over the cl_solve.* labels.
+# HOTPATH_OUTPUT_PATH (default hp.json) names the report — a runtime artifact,
+# never committed.
+entry-ab-telemetry corpus="heavy_cl_solve_captures.jsonl":
+    HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH="${HOTPATH_OUTPUT_PATH:-hp.json}" HOTPATH_REPORT=functions-timing,threads cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers --features hotpath --example entry_ab_readout -- rust/crates/engine/degenbot-solvers/tests/fixtures/{{corpus}}
+
+# The WalkMemo cross-block reuse readout: the fixture A/B (memo off vs on)
+# over the captured corpus. DR_READOUT_EPOCHS sets the epoch count.
+walkmemo-readout:
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers --example walkmemo_readout
+
