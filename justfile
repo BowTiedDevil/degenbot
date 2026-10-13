@@ -10,9 +10,9 @@ target_dir := env_var_or_default("CARGO_TARGET_DIR", "rust/target")
 
 # The project-venv command prefix. `--no-sync` skips uv's project build so
 # `uv run` does not re-link the extension before every recipe; a plain `uv sync`
-# now builds the same dev-features extension (pyproject.toml `config-settings`),
-# so this is a speed choice, not a correctness guard. Defined once so recipes
-# never hand-write the flag.
+# now builds the same dev-features extension (pyproject.toml
+# `config-settings-package`), so this is a speed choice, not a correctness
+# guard. Defined once so recipes never hand-write the flag.
 py_run := "uv run --no-sync"
 
 # Default recipe - show available commands

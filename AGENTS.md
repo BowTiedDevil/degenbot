@@ -137,8 +137,8 @@ Hotpath's full Tokio `RuntimeMetrics` getters are behind Tokio's unstable API
 uv's PEP 517 project build and the `just check-rust-*` / `just dev` /
 `just test-hotpath` recipes — gets it without an ad-hoc `RUSTFLAGS=`. The
 binding layer's `dev-features` set (which enables `hotpath`) is applied to uv
-project builds via `[tool.uv] config-settings` (`maturin.build-args`), so a
-plain `uv sync` builds the same extension `just dev` installs.
+project builds via `[tool.uv] config-settings-package` (`maturin.build-args`),
+so a plain `uv sync` builds the same extension `just dev` installs.
 
 ## Rust test scope
 
@@ -192,7 +192,7 @@ The extension is the editable install's artifact: a gitignored
 `src/degenbot/_ffi.abi3.so` written into the source tree, not a cache. It
 self-heals from every entrypoint — `just dev`, `just test-python`, and a plain
 `uv sync` (whose project build selects `dev-features` via `[tool.uv]
-config-settings`, so it can no longer clobber the extension with a
+config-settings-package`, so it can no longer clobber the extension with a
 default-features wheel). There is deliberately no pointer/staleness layer: the
 artifact must live in-tree for the editable import to resolve, and rebuilding it
 is the fix.
