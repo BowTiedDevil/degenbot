@@ -351,7 +351,7 @@ check-config-derived-statics:
 # local validation; the feature set is the same as the release maturin
 # invocation.
 build-rust-extension:
-    cargo build --locked -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
+    scripts/build_extension.sh build
 
 # ========== Build-Artifact Housekeeping ==========
 
@@ -384,7 +384,7 @@ bootstrap:
 # `just bootstrap` first; `--no-sync` keeps this build from silently replacing
 # the explicit development feature set with ordinary package defaults.
 dev:
-    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run --no-sync maturin develop --features dev-features
+    scripts/build_extension.sh develop
 
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the

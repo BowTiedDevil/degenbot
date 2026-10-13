@@ -139,18 +139,16 @@ run_pyo3_arm() {
     }
     trap restore_abi3 EXIT INT TERM
 
-    # Instrumented cdylib build with the same feature set the dev install
-    # uses (pyproject [tool.maturin] features), into an isolated target dir so
-    # the normal cargo/maturin caches stay untouched. RUSTFLAGS supplies the
-    # scoped --cfg tokio_unstable required by hotpath's full RuntimeMetrics
-    # getters; it is not a repository-wide Cargo setting.
-    # LLVM_PROFILE_FILE must cover the BUILD itself, not just pytest: the
-    # workspace's build scripts are also compiled with instrument-coverage and
-    # write default_<...>.profraw into each crate dir at build time.
-    RUSTFLAGS="--cfg tokio_unstable -C instrument-coverage" \
+    # Instrumented cdylib build via the canonical extension build
+    # (scripts/build_extension.sh coverage): the SAME dev feature set `just dev`
+    # installs, plus `-C instrument-coverage`, into an isolated target dir so the
+    # normal cargo/maturin caches stay untouched. LLVM_PROFILE_FILE must cover
+    # the BUILD itself, not just pytest: the workspace's build scripts are also
+    # compiled with instrument-coverage and write default_<...>.profraw into each
+    # crate dir at build time.
     CARGO_TARGET_DIR="$COV_ROOT/pyo3-build" \
     LLVM_PROFILE_FILE="$raw/build-%p-%m.profraw" \
-        uv run --no-sync maturin develop
+        "$ROOT/scripts/build_extension.sh" coverage
 
     LLVM_PROFILE_FILE="$raw/pyo3-%p-%m.profraw" \
         uv run --no-sync pytest -q --no-header ${COV_PYTEST_ARGS:-} "$@"

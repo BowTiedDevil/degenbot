@@ -34,10 +34,13 @@ def test_python_package_build_uses_release_equivalent_defaults() -> None:
 def test_development_features_have_one_canonical_alias() -> None:
     binding = tomllib.loads(BINDING_MANIFEST.read_text(encoding="utf-8"))
     justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    build_script = (REPO_ROOT / "scripts/build_extension.sh").read_text(encoding="utf-8")
 
     assert binding["features"]["dev-features"] == DEVELOPMENT_FEATURES
     assert "uv sync --locked --dev --no-install-project" in justfile
-    assert "uv run --no-sync maturin develop --features dev-features" in justfile
+    # The canonical dev-feature install lives in the shared build primitive
+    # (scripts/build_extension.sh), which `just dev` and coverage route through.
+    assert "uv run --no-sync maturin develop --features dev-features" in build_script
     cargo_check = (
         "cargo check --locked -p degenbot_rs --all-targets --manifest-path "
         "rust/Cargo.toml --features dev-features"
