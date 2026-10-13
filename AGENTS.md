@@ -180,6 +180,15 @@ of the test entrypoints:
   `.so`.
 - After a Rust edit that a running bot must reflect, run `just dev` before it.
 
+The extension is the editable install's artifact: a gitignored
+`src/degenbot/_ffi.abi3.so` written into the source tree, not a cache. It
+self-heals from every entrypoint — `just dev`, `just test-python`, and a plain
+`uv sync` (whose project build selects `dev-features` via `[tool.uv]
+config-settings`, so it can no longer clobber the extension with a
+default-features wheel). There is deliberately no pointer/staleness layer: the
+artifact must live in-tree for the editable import to resolve, and rebuilding it
+is the fix.
+
 A bare `cargo build` or `maturin develop` can still serve the wrong feature set;
 prefer the recipes.
 
