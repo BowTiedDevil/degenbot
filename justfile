@@ -8,9 +8,11 @@
 # host: .envrc). Defaults to rust/target for CI and a bare checkout.
 target_dir := env_var_or_default("CARGO_TARGET_DIR", "rust/target")
 
-# The project-venv command prefix. `--no-sync` stops `uv run` from rebuilding the
-# project (which would clobber the dev-features extension); the maturin install
-# owns the extension. Defined once so recipes never hand-write the flag.
+# The project-venv command prefix. `--no-sync` skips uv's project build so
+# `uv run` does not re-link the extension before every recipe; a plain `uv sync`
+# now builds the same dev-features extension (pyproject.toml `config-settings`),
+# so this is a speed choice, not a correctness guard. Defined once so recipes
+# never hand-write the flag.
 py_run := "uv run --no-sync"
 
 # Default recipe - show available commands
@@ -960,9 +962,9 @@ update-deps:
     set -euo pipefail
     {{ py_run }} python scripts/bump_python_deps.py
     uv lock --upgrade
-    # --no-install-project: never let uv rebuild the project with default
-    # features (that would clobber the dev-features extension); rebuild it
-    # explicitly via `just dev` instead.
+    # --no-install-project: skip uv's redundant project build (a plain `uv sync`
+    # now builds the same dev-features extension); `just dev` rebuilds it
+    # explicitly.
     uv sync --no-install-project
     just dev
     cargo upgrade --manifest-path rust/Cargo.toml --incompatible
