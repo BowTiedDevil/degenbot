@@ -398,9 +398,11 @@ fn fold_sequence_ranges(
 /// `gamma_numer`, `fee_denom`) through `swap` / `swap_exact_out` / the
 /// shifted-piece anchor, so all four go into lane_a, and the reserve pair
 /// (the hop's extractable-output capacity) again into lane_b. This is the
-/// key-completeness requirement against env: `PathBoundLines` folds the V2
-/// reserves and fee params via `hop_lines_and_cap` → `mobius_lines`, so the
-/// fingerprint must fold exactly what determines the solve outcome.
+/// key-completeness requirement against env: the refine bounds (`RefineBound`)
+/// derive from the envelope's composed `PathBoundLines`, whose V2 reserves and
+/// fee params are folded by the family line builders (`hop_lines_and_cap` →
+/// `mobius_lines`), so the fingerprint must fold exactly what determines the
+/// solve outcome.
 fn fold_v2_hop(lane_a: &mut u64, lane_b: &mut u64, hop: &IntHopState) {
     mix_u256(lane_a, hop.reserve_in);
     mix_u256(lane_a, hop.reserve_out);
@@ -435,10 +437,12 @@ pub(crate) fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u1
 /// mixed entry's (`solve_mixed_piecewise`) exact correctness key for the
 /// cross-block memo, same contract as [`walk_path_fingerprint`]: the
 /// crossing tables + word profiles are pure derivations of the sequence,
-/// cfg is fixed per engine lifetime, and env (PathBoundLines) is a pure
-/// derivation of hop state + cfg (it folds the V2 reserves and fee params
-/// via `hop_lines_and_cap` → `mobius_lines`), so folding every position's
-/// determining state makes the key exact for mixed compositions.
+/// cfg is fixed per engine lifetime, and env (`&[RefineBound]`, the
+/// kernel-window bounds) is a pure derivation of hop state + cfg (the bounds
+/// derive from the envelope's composed `PathBoundLines`, folding the V2
+/// reserves and fee params via the family line builders' `hop_lines_and_cap` →
+/// `mobius_lines`), so folding every position's determining state makes the key
+/// exact for mixed compositions.
 ///
 /// Per position it folds the hop index (the same `(i + 3)` / `(i + 5)` lane
 /// mixing [`walk_path_fingerprint`] uses), a V2/CL discriminator tag, and

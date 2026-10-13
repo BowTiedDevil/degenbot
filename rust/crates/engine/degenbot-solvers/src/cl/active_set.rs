@@ -14,8 +14,8 @@ use super::crossings::{
 use super::hop_sim::simulate_v3_range_swap;
 use super::tally::{WalkSection, WalkTally, WalkTelemetry};
 use super::telemetry::{event_census_record, Mark, WalkEventCensus};
+use super::window::{clamp_window_to_bound, RefineBound};
 use super::{ClCrossingTable, ClProfileTable};
-use crate::profit_envelope::{clamp_window_to_bound, PathBoundLines};
 use crate::runtime::{AnchorSweep, SolveRuntimeConfig};
 
 // ---------------------------------------------------------------------------
@@ -461,7 +461,7 @@ pub(super) fn walk_refine_window(
     rec: &mut WalkRecorder,
     piece_anchor: Option<U256>,
     cfg: &SolveRuntimeConfig,
-    env: Option<&PathBoundLines>,
+    env: Option<&[RefineBound]>,
     tally: &mut WalkTally,
 ) -> (U256, alloy::primitives::I256) {
     use alloy::primitives::I256;
@@ -472,7 +472,7 @@ pub(super) fn walk_refine_window(
     let mut lo = lo;
     let mut hi = hi;
     if let Some(env) = env {
-        match clamp_window_to_bound(&env.lines, lo, hi, rec.best_floor()) {
+        match clamp_window_to_bound(env, lo, hi, rec.best_floor()) {
             Some((clamped_lo, clamped_hi)) => {
                 lo = clamped_lo;
                 hi = clamped_hi;
@@ -683,7 +683,7 @@ const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 pub(super) fn solve_active_set_path(
     hops: &[PieceView],
     cfg: &SolveRuntimeConfig,
-    env: Option<&PathBoundLines>,
+    env: Option<&[RefineBound]>,
     tele: Option<&WalkTelemetry>,
 ) -> WalkOutcome {
     let s_t0 = std::time::Instant::now();
@@ -716,7 +716,7 @@ pub(super) fn solve_active_set_path(
 fn solve_active_set_path_inner(
     hops: &[PieceView],
     cfg: &SolveRuntimeConfig,
-    env: Option<&PathBoundLines>,
+    env: Option<&[RefineBound]>,
     tally: &mut WalkTally,
 ) -> Option<(U256, U256, Vec<U256>)> {
     /// Advance the landed tuple one piece past the window's right edge
@@ -756,7 +756,7 @@ fn solve_active_set_path_inner(
         rec: &mut WalkRecorder,
         refine_neighbor: bool,
         cfg: &SolveRuntimeConfig,
-        env: Option<&PathBoundLines>,
+        env: Option<&[RefineBound]>,
         tally: &mut WalkTally,
     ) {
         let Some(hint) = anchor else {

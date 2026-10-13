@@ -1071,8 +1071,9 @@ pub(crate) mod tests {
     use super::*;
 
     use crate::cl::{build_cl_crossing_table, simulate_v3_range_swap, WalkTally};
+    use crate::mixed::families::cl::ClHop;
     use crate::profit_envelope::derive::tests::hop_lines_and_cap;
-    use crate::profit_envelope::derive::{ClHop, HopMath};
+    use crate::profit_envelope::derive::HopMath;
     use crate::profit_envelope::kernel::{Line, COMPOSE_TARGET_BITS};
     use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
     use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};

@@ -534,6 +534,10 @@ pub struct SolvePathResult {
 
 pub mod solve;
 
+/// Per-family modules (ADR-071 D1): one module per pool family owning
+/// everything the family contributes to a solve and its bound.
+pub(crate) mod families;
+
 // Re-export the solve dispatcher + the simulate entry points reached by the
 // orchestrator/tests so callers can use `degenbot_solvers::mixed::solve_path`
 // without descending into `solve`.

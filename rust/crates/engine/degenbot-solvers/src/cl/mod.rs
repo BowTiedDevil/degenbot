@@ -32,10 +32,9 @@
 //! module's bound side, and the engine-owned fan cache stays borrowed, never
 //! owned.
 //!
-//! KNOWN DEBT: [`solve_cl_piecewise`] (and the walk beneath it) still takes
-//! `walk_env: Option<&PathBoundLines>`, so an envelope type reaches into the
-//! kernel today. That intake is mediated in the CL family-module chunk
-//! (ADR-071 D5 commit 2); it is documented here, not fixed in this relocation.
+//! The walk's refine-window intake is kernel-side data ([`RefineBound`]), not
+//! an envelope type: the CL family module translates the composed
+//! `PathBoundLines` into windows at the seam (see `cl::window`).
 //!
 //! # Module layout
 //!
@@ -47,6 +46,8 @@
 //!   mixed entry's [`MixedHopView`] intake.
 //! - `memo` — the cross-block composition memo.
 //! - `path_sim` — the public byte-exact forward path simulator.
+//! - `window` — the kernel-side refine-window data ([`RefineBound`]) and its
+//!   exact integer clamp, with no envelope vocabulary.
 //! - `tally` — the owned walk-telemetry value: the per-solve [`WalkTally`]
 //!   accumulator and the engine-owned [`WalkTelemetry`] collector it merges
 //!   into.
@@ -74,6 +75,7 @@ mod memo;
 mod path_sim;
 mod tally;
 mod telemetry;
+mod window;
 mod word_profile;
 
 pub mod cache;
@@ -99,7 +101,12 @@ pub use entries::{
 };
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{WalkMemo, WalkMemoStats};
+// The byte-exact forward path simulator is the CL kernel's public harness
+// surface (external benchmarks/offline replays evaluate path profit through
+// it), so it stays public API: the family module owns the solve/bound surface,
+// not this simulator.
 pub use path_sim::{ClPathOutcome, ClPathSim};
 pub use tally::{WalkNsCensus, WalkSection, WalkTally, WalkTelemetry};
 pub use telemetry::WalkEventCensus;
+pub use window::RefineBound;
 pub use word_profile::ClWordProfile;

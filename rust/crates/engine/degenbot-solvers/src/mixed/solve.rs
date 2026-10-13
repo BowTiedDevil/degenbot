@@ -14,10 +14,11 @@ use std::collections::BTreeSet;
 
 use alloy::primitives::{U256, U512};
 
+use crate::mixed::families::cl::{cl_hop_lines, cl_to_math, solve_walkable_path_int};
 use crate::profit_envelope::{
-    balancer_stable_hop_lines, cl_hop_lines, curve_hop_lines, path_profit_bound_with_floor,
-    refuse_lines, reserve_cap_hop_lines, solidly_hop_lines, v2_hop_lines, weighted_hop_lines,
-    ClHop, Envelope, GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache,
+    balancer_stable_hop_lines, curve_hop_lines, path_profit_bound_with_floor, refuse_lines,
+    reserve_cap_hop_lines, solidly_hop_lines, v2_hop_lines, weighted_hop_lines, Envelope, GateDeps,
+    GateStats, HopMath, Line, PathBoundLines, PrefixCache,
 };
 use crate::runtime::SolveRuntimeConfig;
 
@@ -134,20 +135,6 @@ fn hop_math_for(hop: &ResolvedHop) -> Option<crate::profit_envelope::HopMath<'_>
 fn v2_to_math(hop: &ResolvedHop) -> Option<HopMath<'_>> {
     match hop {
         ResolvedHop::V2 { state } => Some(HopMath::V2(state)),
-        _ => None,
-    }
-}
-
-/// The concentrated-liquidity family's gate projection: V3 and V4 share one
-/// prepared hop (ADR-069), so both resolve to `HopMath::Cl` (ADR-071 D2).
-fn cl_to_math(hop: &ResolvedHop) -> Option<HopMath<'_>> {
-    match hop {
-        ResolvedHop::V3 { prepared, .. } | ResolvedHop::V4 { prepared, .. } => {
-            Some(HopMath::Cl(ClHop {
-                seq: &prepared.int_seq,
-                crossings: std::borrow::Cow::Borrowed(&prepared.crossings),
-            }))
-        }
         _ => None,
     }
 }
@@ -637,97 +624,6 @@ pub fn solve_path_inner(
         r
     });
     (result, walk_stats)
-}
-
-/// Solve a walkable path — every hop is V2, V3, or V4 — with the active-set
-/// piecewise Möbius walk.
-///
-/// All-CL and mixed V2+CL paths share this ONE construction flow: the hop
-/// order, V2 states, borrowed CL sequences, and per-CL-hop prepared tables are
-/// assembled once, then the memo-capable all-CL entry or the mixed entry
-/// consumes them.
-///
-/// The pre-built `IntV3TickRangeSequence` from `resolve_path` was constructed
-/// directly from U256 values (no f64 conversion); V3 and V4 hops produce the
-/// same type.
-fn solve_walkable_path_int(
-    resolved: &ResolvedMixedPath,
-    gate: &GateDeps<'_>,
-    walk_env: Option<&crate::profit_envelope::PathBoundLines>,
-) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
-    if resolved.hops.len() < 2 {
-        return (None, crate::cl::WalkStats::default());
-    }
-
-    let all_cl = resolved.hops.iter().all(|h| h.as_int_sequence().is_some());
-
-    let out = if all_cl {
-        // The projection's prepared hop IS the all-CL entry's intake, so clone
-        // it (three `Arc` bumps per hop) rather than translate it to any other
-        // shape.
-        let Some(prepared) = resolved
-            .hops
-            .iter()
-            .map(|h| h.as_prepared_cl_hop().cloned())
-            .collect::<Option<Vec<_>>>()
-        else {
-            return (None, crate::cl::WalkStats::default());
-        };
-        crate::cl::solve_cl_piecewise(
-            &prepared,
-            gate.walk_memo(),
-            gate.telemetry(),
-            &gate.runtime,
-            walk_env,
-        )
-    } else {
-        // ONE borrowed hop view, one entry per position: V2 borrows the
-        // resolved state; CL borrows the projection's prepared value (the
-        // tick-range sequence paired with its `Arc` tables), so the positional
-        // pairing the parallel slices needed is structural and nothing is
-        // derived or rebuilt per solve.
-        let mut hops: Vec<crate::cl::MixedHopView<'_>> = Vec::with_capacity(resolved.hops.len());
-        for h in &resolved.hops {
-            match h {
-                ResolvedHop::V2 { state } => hops.push(crate::cl::MixedHopView::V2(state)),
-                ResolvedHop::V3 { prepared } | ResolvedHop::V4 { prepared } => {
-                    hops.push(crate::cl::MixedHopView::Cl(prepared));
-                }
-                // Not a walkable V2/CL path (the caller routes other families
-                // elsewhere); refuse rather than solve a partial composition.
-                _ => return (None, crate::cl::WalkStats::default()),
-            }
-        }
-
-        crate::cl::solve_mixed_piecewise(
-            &hops,
-            gate.walk_memo(),
-            gate.telemetry(),
-            &gate.runtime,
-            walk_env,
-        )
-    };
-
-    (
-        out.result.map(|(optimal_input, profit, hop_outputs)| {
-            // consumed_inputs[0] = optimal_input (first hop consumes full input).
-            // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
-            // becomes this hop's input).
-            let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-            consumed_inputs.push(optimal_input);
-            for i in 1..hop_outputs.len() {
-                consumed_inputs.push(hop_outputs[i - 1]);
-            }
-            SolvePathResult {
-                optimal_input,
-                profit,
-                hop_outputs,
-                consumed_inputs,
-                ..Default::default()
-            }
-        }),
-        out.stats,
-    )
 }
 
 /// Solve an all-V2-or-Solidly (no CL hops, ≥1 Solidly) path with the shared
@@ -1367,6 +1263,8 @@ fn simulate_curve_hop(amount_in: U256, hop: &CurveStableswapHopState) -> U256 {
 #[expect(clippy::panic)] // the derivability assertions are the point
 mod gate_tests {
     use super::*;
+
+    use crate::mixed::families::cl::{cl_hop_lines, cl_to_math, solve_walkable_path_int};
     use crate::mixed::ResolvedMixedPath;
     use degenbot_math::v2::IntHopState;
     use degenbot_uniswap::dex_identity::DexVariant;

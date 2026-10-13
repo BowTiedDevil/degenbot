@@ -37,8 +37,7 @@
 //! # Module layout
 //!
 //! - `kernel` — the `Line`/I512 numeric kernel, the exact concave-envelope
-//!   composition (`compose_envelopes_exact`), the discrete concave max, and
-//!   the walk-refine window clamp.
+//!   composition (`compose_envelopes_exact`), and the discrete concave max.
 //! - `derive` — per-hop line derivation (Möbius rises, CL tangent fans,
 //!   `hop_lines_and_cap[_cached]`) plus the engine-owned prefix / fan cache.
 //! - `gate` — the gate entry (`path_profit_bound*`), the typed verdict, the
@@ -50,13 +49,19 @@ mod gate;
 mod kernel;
 
 pub use capture::{CapturedHop, DegeneratePathEvent, DegeneratePathSink};
-pub use derive::{ClHop, HopMath, PrefixCache};
+pub use derive::{HopMath, PrefixCache};
+// The CL family's gate view, re-exported at its historical path (the family
+// module is its home; ADR-071 D1).
+pub use crate::mixed::families::cl::ClHop;
+
+pub(crate) use derive::content_mix_u256;
+pub(crate) use gate::record_gate;
 
 // The per-family envelope line builders the `FAMILY_DISPATCH` rows register
 // (ADR-071 D3): the former `hop_lines_and_cap_cached` match arms, now named
 // entry points referenced by fn pointer from `mixed::solve`.
 pub(crate) use derive::{
-    balancer_stable_hop_lines, cl_hop_lines, curve_hop_lines, refuse_lines, reserve_cap_hop_lines,
+    balancer_stable_hop_lines, curve_hop_lines, refuse_lines, reserve_cap_hop_lines,
     solidly_hop_lines, v2_hop_lines, weighted_hop_lines,
 };
 
@@ -68,5 +73,4 @@ pub use gate::{
     path_profit_bound_with_stats, Envelope, GateDeps, GateSkipCause, GateStats, PathBoundLines,
 };
 
-pub(crate) use kernel::clamp_window_to_bound;
 pub use kernel::Line;

@@ -6,8 +6,8 @@ use super::crossings::{
 };
 use super::memo::{walk_mixed_path_fingerprint, walk_path_fingerprint, MemoProbe, WalkMemo};
 use super::tally::WalkTelemetry;
+use super::window::RefineBound;
 use super::{ClCrossingTable, ClProfileTable, IntV3TickRangeSequence};
-use crate::profit_envelope::PathBoundLines;
 use crate::runtime::SolveRuntimeConfig;
 
 /// One CL hop's DERIVATION value: the tick-range sequence it was derived from,
@@ -150,10 +150,10 @@ pub fn solve_cl_piecewise(
     memo: Option<&WalkMemo>,
     tele: Option<&WalkTelemetry>,
     cfg: &SolveRuntimeConfig,
-    // KNOWN DEBT (ADR-071 D5 commit 1): this envelope intake is mediated in the
-    // CL family-module chunk. `cl/*` must not grow envelope vocabulary; see the
-    // "Import direction" note in `cl/mod.rs`.
-    env: Option<&PathBoundLines>,
+    // Kernel-side refine-window data: the CL family module translates the
+    // envelope's composed bound lines into [`RefineBound`]s at the seam, so no
+    // envelope type reaches into the kernel.
+    env: Option<&[RefineBound]>,
 ) -> WalkOutcome {
     if prepared.is_empty() {
         return WalkOutcome::none();
@@ -190,7 +190,7 @@ fn solve_cl_piecewise_inner(
     prepared: &[PreparedClHop],
     tele: Option<&WalkTelemetry>,
     cfg: &SolveRuntimeConfig,
-    env: Option<&PathBoundLines>,
+    env: Option<&[RefineBound]>,
 ) -> WalkOutcome {
     let hops: Vec<PieceView> = prepared
         .iter()
@@ -234,7 +234,7 @@ pub fn solve_mixed_piecewise(
     memo: Option<&WalkMemo>,
     tele: Option<&WalkTelemetry>,
     cfg: &SolveRuntimeConfig,
-    env: Option<&PathBoundLines>,
+    env: Option<&[RefineBound]>,
 ) -> WalkOutcome {
     if hops.len() < 2 {
         return WalkOutcome::none();
@@ -244,8 +244,10 @@ pub fn solve_mixed_piecewise(
     // position's family tag + hop state (V2: the full `IntHopState` the
     // constant-product view consumes; CL: the same per-range folding the
     // all-CL key uses), so the key is exact for mixed compositions — cfg is
-    // fixed per engine lifetime and env (PathBoundLines) is a pure
-    // derivation of hop state + cfg. The probe runs BEFORE hop assembly — the
+    // fixed per engine lifetime and env (`&[RefineBound]`, the kernel-window
+    // bounds) is a pure derivation of hop state + cfg, translated from the
+    // envelope's composed lines at the family-module seam. The probe runs
+    // BEFORE hop assembly — the
     // key needs only the hop states, sequences, and order, so a `Hit` or
     // `Negative` returns without paying the `PieceView` builds. `None` memo =
     // disabled run never pays the fingerprint or the lock. (The key is

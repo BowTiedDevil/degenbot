@@ -31,8 +31,9 @@ use crate::cl::{
     build_cl_crossing_table, derive_and_solve_cl_piecewise, solve_cl_piecewise,
     solve_mixed_piecewise, MixedHopView,
 };
+use crate::mixed::families::cl::{refine_bounds, ClHop};
 use crate::profit_envelope::{
-    path_bound_lines, path_output_bound_at, path_profit_bound, ClHop, GateDeps, HopMath,
+    path_bound_lines, path_output_bound_at, path_profit_bound, GateDeps, HopMath,
 };
 use crate::runtime::{AnchorSweep, SolveRuntimeConfig};
 
@@ -504,8 +505,9 @@ fn loop21_envelope_pruned_refine_is_argmax_equal_and_never_loses_sims() {
         let cfg = SolveRuntimeConfig::default();
         let env = path_bound_lines(&views, &cfg);
         assert!(env.is_some(), "{name}: walk bound lines derivable");
+        let bounds = env.as_ref().map(|e| refine_bounds(&e.lines));
         let off = solve_cl_piecewise(&prep, None, None, &cfg, None);
-        let on = solve_cl_piecewise(&prep, None, None, &cfg, env.as_ref());
+        let on = solve_cl_piecewise(&prep, None, None, &cfg, bounds.as_deref());
         assert_eq!(
             off.result, on.result,
             "{name}: Loop-21 pruned refine moved the argmax"
@@ -622,6 +624,7 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
     ];
     let cfg = SolveRuntimeConfig::default();
     let env = path_bound_lines(&views, &cfg).expect("mixed bound derivable");
+    let bounds = refine_bounds(&env.lines);
     // ONE borrowed hop view: V2 borrows the states, CL borrows the
     // projection's prepared value (V2 → CL → V2 order).
     let hops = [
@@ -630,7 +633,7 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
         MixedHopView::V2(&v2s[1]),
     ];
     let off = solve_mixed_piecewise(&hops, None, None, &cfg, None);
-    let on = solve_mixed_piecewise(&hops, None, None, &cfg, Some(&env));
+    let on = solve_mixed_piecewise(&hops, None, None, &cfg, Some(&bounds));
     assert_eq!(off.result, on.result, "Loop-21 moved the mixed-path argmax");
     assert!(on.stats.sims <= off.stats.sims);
     println!(
