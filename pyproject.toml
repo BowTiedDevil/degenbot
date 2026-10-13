@@ -272,10 +272,14 @@ cache-keys = [
 # produce the SAME dev-features extension `just dev` installs, so a plain
 # `uv sync` cannot clobber it with a default-features wheel. maturin reads this
 # from the PEP 517 config settings (`maturin.build-args`); the
-# `cfg(tokio_unstable)` it also needs comes from `.cargo/config.toml`. CI builds
-# with `--no-install-project` and release uses maturin-action, so neither reads
-# this.
-config-settings = { "maturin.build-args" = "--features dev-features" }
+# `cfg(tokio_unstable)` it also needs comes from `.cargo/config.toml`. It MUST be
+# scoped with `config-settings-package` to this package only: an unscoped
+# `config-settings` is applied to EVERY build uv runs, so `--features
+# dev-features` would be handed to dependency builds too (e.g. `pydantic-core`,
+# which is also a maturin crate) and fail with "does not contain this feature".
+# CI builds with `--no-install-project` and release uses maturin-action, so
+# neither reads this.
+config-settings-package = { "degenbot" = { "maturin.build-args" = "--features dev-features" } }
 
 [tool.maturin]
 manifest-path = "rust/crates/shells/degenbot-python/Cargo.toml"
