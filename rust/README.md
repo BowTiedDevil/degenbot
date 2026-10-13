@@ -396,20 +396,15 @@ is deprecated.
 ## Python extension freshness
 
 After a Rust source change, do not trust a fast or cached maturin/uv build by
-itself. Run `just verify-build-fresh`. The `degenbot_rs` build script writes the
-repo-root `.build-number` receipt and fingerprints its own sources, every
-crate under the explicit
-`rust/crates/{foundation,engine,integrations,shells,facade}` roles, the workspace
-manifests/lockfile, and Cargo configuration. The installed extension carries the
-same values, allowing
-`just verify-build-fresh` to detect stale cached wheels.
+itself. There is no build receipt or runtime staleness gate; freshness comes
+from the rebuild being a mandatory, incremental step of the entrypoints:
 
-If the check reports staleness, rebuild with:
+- `just dev` rebuilds the editable extension (`maturin develop`).
+- `just test-python` (and `just test`) depend on `just dev`, so the Python suite
+  always rebuilds first and can never exercise a stale `.so`.
+- A plain `uv sync` rebuilds it too - with the `dev-features` set - so it cannot
+  clobber the extension with a default-features wheel.
 
-```bash
-just dev
-just verify-build-fresh
-```
-
-The full rationale and raw build-info API are in
-[AGENTS.md](../AGENTS.md#rebuilding-the-rust-so-after-edits).
+After a Rust edit that a running bot must reflect, run `just dev` before it. The
+recipe contract and rationale are in
+[AGENTS.md](../AGENTS.md#building-the-rust-extension).

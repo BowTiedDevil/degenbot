@@ -167,8 +167,7 @@ Known integration cost (the honest price of B):
   with mypy, so adopting it means a `dev`-group `mypy` entry plus a gate
   recipe. The Python-side type checker stays `ty` (stubtest is a
   consistency checker, not a replacement type checker), and
-  `uv run stubtest degenbot._ffi` needs the fresh `.so` (the
-  `verify-build-fresh` receipt gate already covers staleness).
+  `uv run stubtest degenbot._ffi` needs the fresh `.so` (the test entrypoints rebuild it first - `just test-python` depends on `just dev`).
 - **Extension-module noise.** stubtest against native modules needs a
   small allowlist for PyO3-synthesized members (object-protocol dunders,
   `__getstate__`/`__setstate__`, etc.) and for "defines in stub but

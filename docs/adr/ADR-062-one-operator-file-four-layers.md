@@ -259,7 +259,7 @@ cannot drift apart silently again.
 
 **D14 — Gates.** `just test-rust` (full workspace), `just check-rust-consumer`,
 `just check-rust-binding-default`, `just check-rust-extension-release`,
-`just test-standalone`, `just dev && just verify-build-fresh`, and the targeted
+`just test-standalone`, `just dev`, and the targeted
 pytest set. Three behavior tests are new gates rather than refactors: an
 end-to-end **IPC** boot (today nothing in the suite dials a socket end to end),
 "**Rust creates the database on first run**", and the Python↔Rust **parity**
