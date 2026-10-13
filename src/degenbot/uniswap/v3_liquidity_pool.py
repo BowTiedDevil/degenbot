@@ -352,6 +352,7 @@ class UniswapV3Pool(
             MissingLiquidityData: If the walk entered an unfetched word and
                 the on-demand fetch failed.
             InvalidSwapInputAmount: On a zero-amount swap.
+            LiquidityPoolError: If the seam reports an unexpected status.
 
         """
         initial_state = override_state if override_state is not None else self.state
@@ -373,7 +374,7 @@ class UniswapV3Pool(
             # (the price would invert past the protocol bound). The offline
             # struct's revert-analog is the python-era IncompleteSwap.
             raise IncompleteSwap(amount_in=0, amount_out=0)
-        if status in ("fetch_failed", "fetch_exhausted"):
+        if status in {"fetch_failed", "fetch_exhausted"}:
             # The walk entered a word the map lacks and the on-demand fetch
             # could not provide (e.g. rate-limited fork sources). Distinct
             # from the swap being impossible.

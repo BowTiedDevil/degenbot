@@ -37,7 +37,8 @@ def get_number_for_block_identifier(
 
     """
     match identifier:
-        case None:
+        case None | "latest":
+            # None and 'latest' both mean the current head.
             return provider.get_block_number()
         case int() as block_number_as_int:
             return block_number_as_int
@@ -46,8 +47,6 @@ def get_number_for_block_identifier(
             # fails on nodes that materialize no pending block (dRPC serves
             # None) and the number carries no extra information.
             return provider.get_block_number() + 1
-        case "latest":
-            return provider.get_block_number()
         case "earliest":
             return 0
         case str() as block_number_as_str:
