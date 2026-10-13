@@ -126,12 +126,6 @@ allow-star-arg-any = true
     "print",     # the generator prints its summary to stdout by design
     "shebang-not-executable",  # invoked as `uv run python ...`, not directly
 ]
-"scripts/record_v3_golden.py" = [
-    # The golden recorder prints its walk progress (frontier advances, retry
-    # causes, the boundary check) to stdout by design — the operator watches
-    # a long-running live-RPC walk and needs the transcript.
-    "print",
-]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "ARG",
@@ -143,9 +137,6 @@ allow-star-arg-any = true
     "private-member-access",   # tests may need to access private attributes to test implementation
     "print",     # print
     "module-import-not-at-top-of-file",
-]
-"src/degenbot/operator/operator_channel.py" = [
-    "import-outside-top-level",  # the fleet mirror home is lazy: the transport module stays independent of the compiled extension and the home mints on the first fleet-posture op
 ]
 "src/degenbot/build_info/__init__.py" = [
     "import-outside-top-level",  # the _ffi import is lazy so the receipt helpers work (and the module imports) even where the extension is stale/broken
@@ -266,13 +257,6 @@ possibly-unresolved-reference = "warn"
 unsound-return-statement = "error"
 
 [tool.vulture]
-# Dead-code detector. Output is a triage list, not a gate: each hit
-# needs a human call (rg for refs) before deletion — vulture is static
-# and can't see FFI-seam callers (Rust core) or framework dispatch
-# (pydantic validators, protocol params). 80% confidence is the operating point
-# — the 60% tier is
-# mostly framework-dispatched methods (validators, properties on
-# models, enum members referenced dynamically).
 min_confidence = 80
 paths = ["src/degenbot"]
 
@@ -296,22 +280,5 @@ manifest-path = "rust/crates/shells/degenbot-python/Cargo.toml"
 python-source = "src"
 module-name = "degenbot._ffi"
 bindings = "pyo3"
-# Dev/agent loop builds select the workspace [profile.dev] (opt-level 1, no
-# LTO or stripping, line-tables-only debug info). This intentionally favors
-# representative optimization over an unoptimized debug build while
-# keeping uv-sync cdylib rebuilds substantially cheaper than release. This
-# setting is consumed by local editable-install builds (`just dev`); the
-# published wheel is built by the PyO3/maturin-action in
-# .github/workflows/release.yml, which passes `--release` and its explicit
-# feature selection — so the shipped artifact uses the
-# workspace release profile (thin LTO, stripping, and its intentional
-# per-package codegen-unit policy) and is unaffected by this setting.
 profile = "dev"
-# The default package build intentionally selects no Cargo features. This
-# keeps `pip install .`, `uv build`, and ordinary maturin builds on the
-# binding crate's declared defaults (the release-equivalent domain surface).
-# The local development-wheel feature set lives in the binding manifest's
-# `dev-features` alias and is selected explicitly by `just dev`; release
-# wheels use `--release --features pyo3/extension-module` and likewise exclude
-# all development-only profiling, telemetry, allocator, and mimalloc features.
 python-packages = ["degenbot"]

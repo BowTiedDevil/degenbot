@@ -69,6 +69,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from degenbot import fleet
 from degenbot.logging import logger
 from degenbot.pathfinding import FAMILY_TAG_TO_POOL_KIND, POOL_FAMILY_TAGS, PoolKind
 from degenbot.utils.tasks import cancel_and_reap
@@ -166,8 +167,6 @@ def handle_fleet_posture_op(op: str, payload: dict[str, Any]) -> dict[str, Any]:
         refused patch (the typed ``PostureRetuneError`` surfaces verbatim).
 
     """
-    from degenbot import fleet  # lazy: the home mints on the first fleet-posture op
-
     if op == "get_fleet_posture":
         return {"effective": fleet.current_posture()}
     if op == "set_fleet_posture":

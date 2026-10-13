@@ -118,6 +118,5 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
     for index, item in enumerate(readme_items):
         item.add_marker(pytest.mark.order(index))
-        item.add_marker(pytest.mark.xdist_group("readme_sybil"))
 
     items[:] = readme_items + other_items
