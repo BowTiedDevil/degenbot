@@ -8,6 +8,7 @@ relative to its path. It is picked up because pyproject.toml includes
 "README.md" in testpaths.
 """
 
+import functools
 import pathlib
 from collections.abc import Iterable
 
@@ -141,36 +142,34 @@ _README_CASSETTE = (
     pathlib.Path(__file__).resolve().parent / "tests/fixtures/chain_data/1/readme_examples.json"
 )
 
-# The original `get_provider_from_config` reference is saved here for the
-# duration of a README item and restored in teardown (Sybil items do not run
-# conftest autouse fixtures, so the bind is done from the runtest hooks).
-_README_ORIGINAL_PROVIDER_FACTORY = None
-_README_OFFLINE_PROVIDER = None
 
-
-def _readme_offline_provider():
+# The provider factory is redirected for the duration of a README item and
+# restored in teardown (Sybil items do not run conftest autouse fixtures, so the
+# bind is done from the runtest hooks). `pytest.MonkeyPatch` owns the
+# save/restore, so there is no module-level mutable state.
+@functools.lru_cache(maxsize=1)
+def _readme_offline_provider() -> OfflineProvider:
     """The cassette-backed provider, built once and reused across README items."""
-    global _README_OFFLINE_PROVIDER  # noqa: PLW0603
-    if _README_OFFLINE_PROVIDER is None:
-        _README_OFFLINE_PROVIDER = OfflineProvider.from_json_file(_README_CASSETTE)
-    return _README_OFFLINE_PROVIDER
+    return OfflineProvider.from_json_file(_README_CASSETTE)
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
     """Bind the recorded cassette provider for README items (no-op elsewhere)."""
-    global _README_ORIGINAL_PROVIDER_FACTORY  # noqa: PLW0603
     if "README.md" not in item.nodeid or not _README_CASSETTE.is_file():
         return
 
-    _README_ORIGINAL_PROVIDER_FACTORY = _bot_module.get_provider_from_config
-    _bot_module.get_provider_from_config = lambda **_kwargs: _readme_offline_provider()  # ty: ignore[invalid-assignment]
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        _bot_module,
+        "get_provider_from_config",
+        lambda **_kwargs: _readme_offline_provider(),
+    )
+    item._readme_monkeypatch = monkeypatch  # type: ignore[attr-defined]
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:  # noqa: ARG001
     """Restore the configured provider factory after a README item."""
-    global _README_ORIGINAL_PROVIDER_FACTORY  # noqa: PLW0603
-    if _README_ORIGINAL_PROVIDER_FACTORY is None:
-        return
-
-    _bot_module.get_provider_from_config = _README_ORIGINAL_PROVIDER_FACTORY
-    _README_ORIGINAL_PROVIDER_FACTORY = None
+    monkeypatch = getattr(item, "_readme_monkeypatch", None)
+    if monkeypatch is not None:
+        monkeypatch.undo()
+        item._readme_monkeypatch = None  # type: ignore[attr-defined]
