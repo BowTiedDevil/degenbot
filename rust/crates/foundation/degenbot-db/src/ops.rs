@@ -14,9 +14,11 @@
 //!   the source and the destination.
 //! - [`compact_database`] — `VACUUM`.
 //! - [`upgrade_database`] — ensure the DB is at the current Rust schema; on a
-//!   fresh file applies the head DDL + the Rust stamp; on an already-Rust-owned
-//!   DB it is a no-op; a legacy `alembic_version`-marked DB is healed
-//!   out-of-place to Rust ownership (ADR-011); a foreign file is **refused**.
+//!   fresh file applies the head DDL + the Rust stamp; a Rust-owned DB stamped
+//!   behind the binary is brought forward under the ADR-052 D2 forward
+//!   version-lock; an already-current DB is a no-op; a legacy
+//!   `alembic_version`-marked DB is healed out-of-place to Rust ownership
+//!   (ADR-011); a foreign file is **refused**.
 //!
 //! # Rust-owned from birth
 //!
@@ -35,6 +37,7 @@ use crate::migrate::{
     apply_fresh_standalone, classify_schema, convert_alembic_to_rust_owned as run_cutover_on_conn,
     stamp_rust_schema_version, SchemaState,
 };
+use crate::migrations::{apply_rust_migrations, MigrationOutcome};
 use crate::pragma::apply_open_pragmas;
 use crate::schema::SCHEMA_HEAD;
 
@@ -50,6 +53,15 @@ pub enum UpgradeOutcome {
     /// A legacy `alembic_version`-marked DB was healed out-of-place to Rust
     /// ownership (ADR-011).
     HealedLegacy,
+
+    /// A Rust-owned DB stamped behind the binary was brought forward under the
+    /// ADR-052 D2 forward version-lock.
+    Migrated {
+        /// The stamp before the run.
+        from: u32,
+        /// The stamp after the run (`== RUST_SCHEMA_VERSION`).
+        to: u32,
+    },
 }
 
 /// Create a fresh degenbot `SQLite` DB at `path`.
@@ -124,6 +136,10 @@ pub fn compact_database(path: &Path) -> Result<(), DbError> {
 ///
 /// - A Rust-owned DB at the current stamp → no-op
 ///   ([`UpgradeOutcome::AlreadyCurrent`]).
+/// - A Rust-owned DB stamped *behind* the binary → the pending steps are
+///   applied under the ADR-052 D2 forward version-lock
+///   ([`UpgradeOutcome::Migrated`]) — the same [`apply_rust_migrations`] the
+///   open path runs.
 /// - An empty file (no tables, no legacy history) → applies the full head DDL
 ///   + the Rust stamp ([`UpgradeOutcome::CreatedFresh`]).
 /// - A legacy `alembic_version`-marked DB → healed out-of-place to Rust
@@ -149,7 +165,15 @@ pub fn upgrade_database(path: &Path) -> Result<UpgradeOutcome, DbError> {
             apply_fresh_standalone(&conn)?;
             Ok(UpgradeOutcome::CreatedFresh)
         }
-        SchemaState::RustOwned { .. } => Ok(UpgradeOutcome::AlreadyCurrent),
+        SchemaState::RustOwned { .. } => {
+            // Bring a stale Rust-owned DB forward under the D2 lock — the same
+            // registry the open path applies — so `upgrade_database` never
+            // reports "already current" for a file stamped behind the binary.
+            match apply_rust_migrations(&conn)? {
+                MigrationOutcome::AlreadyCurrent { .. } => Ok(UpgradeOutcome::AlreadyCurrent),
+                MigrationOutcome::Applied { from, to } => Ok(UpgradeOutcome::Migrated { from, to }),
+            }
+        }
         SchemaState::LegacyAlembic => {
             // The heal renames the file (atomic swap): drop this handle first.
             drop(conn);
@@ -486,5 +510,48 @@ mod tests {
                 schema_version: RUST_SCHEMA_VERSION,
             }
         );
+    }
+    /// A Rust-owned DB stamped BEHIND the binary is brought forward under the
+    /// ADR-052 D2 forward version-lock. Regression: `upgrade_database` used to
+    /// report `AlreadyCurrent` for a stale Rust-owned file, silently leaving it
+    /// behind the binary's schema.
+    #[test]
+    fn upgrade_database_migrates_a_stale_rust_owned_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("stale.db");
+        create_new_database(&db_path).unwrap();
+
+        // Roll the stamp back to 1 — behind RUST_SCHEMA_VERSION.
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            &format!("UPDATE {RUST_STAMP_TABLE} SET schema_version = 1"),
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            upgrade_database(&db_path).unwrap(),
+            UpgradeOutcome::Migrated {
+                from: 1,
+                to: RUST_SCHEMA_VERSION,
+            }
+        );
+
+        // A second run is the idempotent no-op.
+        assert_eq!(
+            upgrade_database(&db_path).unwrap(),
+            UpgradeOutcome::AlreadyCurrent
+        );
+
+        let probe = Connection::open(&db_path).unwrap();
+        let stamp: i64 = probe
+            .query_row(
+                &format!("SELECT schema_version FROM {RUST_STAMP_TABLE}"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stamp, i64::from(RUST_SCHEMA_VERSION));
     }
 }

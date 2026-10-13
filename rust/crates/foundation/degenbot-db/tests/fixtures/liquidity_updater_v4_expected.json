@@ -1,15 +1,5 @@
 {
   "chain_id": 1,
-  "initialization_maps": [
-    {
-      "bitmap": "3072",
-      "word": 0
-    },
-    {
-      "bitmap": "1645504557321206042154969182557350504982735865633579863348609024",
-      "word": 4
-    }
-  ],
   "liquidity_update_block": 202,
   "liquidity_update_log_index": 0,
   "pool_hash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",

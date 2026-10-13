@@ -7,9 +7,9 @@ rust-stamped fixture — ``db_upgrade_database`` / ``db_heal_database`` are no-o
 on a ``rust_owned`` file — so a stale fixture must be regenerated via its own
 generator.
 
-This is a ratchet: the fixtures in :data:`_GRANDFATHERED` predate the current
-version and are tolerated; a NEW stale fixture fails. The ``alembic_revs/*``
-fixtures are intentionally-historical migration inputs and are excluded.
+A stale fixture is a hard failure: the fix is to bring it forward, not to
+tolerate it. ``alembic_revs/*`` fixtures are intentionally-historical migration
+inputs and are excluded.
 """
 
 from __future__ import annotations
@@ -21,17 +21,6 @@ from degenbot.db import db_schema_version
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STAMP_TABLE = "_degenbot_db_schema_version"
-
-# Fixtures known stale relative to `db_schema_version()`. Regenerating each is
-# tracked work — `mainnet_snapshot`'s generator rewrites the lossless
-# path-multiset baselines, and the liquidity-updater generator still inserts
-# into the `initialization_maps` table dropped at v3. Do NOT add here;
-# regenerate the fixture instead.
-_GRANDFATHERED = {
-    "tests/pathfinding/fixtures/mainnet_snapshot.db",
-    "rust/crates/foundation/degenbot-db/tests/fixtures/liquidity_updater_v3_initial.db",
-    "rust/crates/foundation/degenbot-db/tests/fixtures/liquidity_updater_v4_initial.db",
-}
 
 
 def _committed_fixtures() -> list[Path]:
@@ -66,7 +55,7 @@ def test_committed_db_fixtures_are_at_the_production_schema() -> None:
         if "alembic_revs/" in relative:
             continue
         version = _schema_version(path)
-        if version is not None and version != current and relative not in _GRANDFATHERED:
+        if version is not None and version != current:
             stale.append(f"{relative} (schema {version}, current {current})")
     assert not stale, "committed DB fixtures drifted from the production schema: " + "; ".join(
         stale

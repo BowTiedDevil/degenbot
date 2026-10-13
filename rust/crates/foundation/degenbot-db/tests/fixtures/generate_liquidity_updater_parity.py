@@ -42,7 +42,6 @@ V4_POOL_HASH = "0x" + "c" * 64
 V4_HOOKS = "0x" + "0" * 40
 V4_MODIFY_TOPIC = to_bytes("0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec")
 SEED_TICKS = [(-10, 1_000_000, 1_000_000), (10, -1_000_000, 1_000_000), (12345, 500, 500)]
-SEED_MAPS = [(-1, 1 << 255), (0, 1 << 1), (4, 1 << 210)]
 
 
 def _checkpoint(path: pathlib.Path) -> None:
@@ -133,10 +132,6 @@ def _build_v3(path: pathlib.Path) -> None:
             "INSERT INTO liquidity_positions (pool_id, tick, liquidity_net, liquidity_gross) VALUES (?, ?, ?, ?)",
             [(pool_id, tick, str(net), str(gross)) for tick, net, gross in SEED_TICKS],
         )
-        connection.executemany(
-            "INSERT INTO initialization_maps (pool_id, word, bitmap) VALUES (?, ?, ?)",
-            [(pool_id, word, str(bitmap)) for word, bitmap in SEED_MAPS],
-        )
         connection.commit()
     _checkpoint(path)
 
@@ -173,10 +168,6 @@ def _build_v4(path: pathlib.Path) -> None:
             "INSERT INTO managed_pool_liquidity_positions (managed_pool_id, tick, liquidity_net, liquidity_gross) VALUES (?, ?, ?, ?)",
             [(managed_id, tick, str(net), str(gross)) for tick, net, gross in SEED_TICKS],
         )
-        connection.executemany(
-            "INSERT INTO managed_pool_initialization_maps (managed_pool_id, word, bitmap) VALUES (?, ?, ?)",
-            [(managed_id, word, str(bitmap)) for word, bitmap in SEED_MAPS],
-        )
         connection.commit()
     _checkpoint(path)
 
@@ -187,9 +178,6 @@ def _dump_v3(path: pathlib.Path, pool_id: int) -> dict[str, object]:
             "SELECT tick, liquidity_net, liquidity_gross FROM liquidity_positions WHERE pool_id=? ORDER BY tick",
             (pool_id,),
         ).fetchall()
-        maps = connection.execute(
-            "SELECT word, bitmap FROM initialization_maps WHERE pool_id=? ORDER BY word", (pool_id,)
-        ).fetchall()
         marker = connection.execute(
             "SELECT liquidity_update_block, liquidity_update_log_index FROM uniswap_v3_pools WHERE pool_id=?",
             (pool_id,),
@@ -199,7 +187,6 @@ def _dump_v3(path: pathlib.Path, pool_id: int) -> dict[str, object]:
             {"tick": row[0], "liquidity_net": str(row[1]), "liquidity_gross": str(row[2])}
             for row in positions
         ],
-        "initialization_maps": [{"word": row[0], "bitmap": str(row[1])} for row in maps],
         "liquidity_update_block": marker[0],
         "liquidity_update_log_index": marker[1],
     }
@@ -211,10 +198,6 @@ def _dump_v4(path: pathlib.Path, managed_id: int) -> dict[str, object]:
             "SELECT tick, liquidity_net, liquidity_gross FROM managed_pool_liquidity_positions WHERE managed_pool_id=? ORDER BY tick",
             (managed_id,),
         ).fetchall()
-        maps = connection.execute(
-            "SELECT word, bitmap FROM managed_pool_initialization_maps WHERE managed_pool_id=? ORDER BY word",
-            (managed_id,),
-        ).fetchall()
         marker = connection.execute(
             "SELECT liquidity_update_block, liquidity_update_log_index FROM uniswap_v4_pools WHERE managed_pool_id=?",
             (managed_id,),
@@ -224,7 +207,6 @@ def _dump_v4(path: pathlib.Path, managed_id: int) -> dict[str, object]:
             {"tick": row[0], "liquidity_net": str(row[1]), "liquidity_gross": str(row[2])}
             for row in positions
         ],
-        "initialization_maps": [{"word": row[0], "bitmap": str(row[1])} for row in maps],
         "liquidity_update_block": marker[0],
         "liquidity_update_log_index": marker[1],
     }

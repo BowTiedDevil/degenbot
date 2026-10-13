@@ -730,9 +730,11 @@ def db_upgrade_database(path: str) -> str:
     `degenbot._ffi.db.db_upgrade_database(path: str) -> str`
 
     Ensure the DB is at the current Rust schema. Returns `"already_current"` if
-    it was already there, `"created_fresh"` if an empty file was brought up, or
-    `"healed_legacy"` if a legacy `alembic_version`-marked DB was healed
-    out-of-place. Raises `ValueError` for an unrecognized schema.
+    it was already there, `"migrated"` if a Rust-owned DB stamped behind the
+    binary was brought forward under the ADR-052 D2 forward version-lock,
+    `"created_fresh"` if an empty file was brought up, or `"healed_legacy"` if a
+    legacy `alembic_version`-marked DB was healed out-of-place. Raises
+    `ValueError` for an unrecognized schema.
     """
 
 def db_upsert_exchange(
