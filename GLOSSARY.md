@@ -436,10 +436,11 @@ and not math-leaf vocabulary.
 
 **Family module**:
 The solver crate's single module owning everything one hop family contributes to a solve and
-its bound: the state slice, the V2-equivalent projection, the simulate triple, the solve entry
-(built on the shared golden template where the stable-family search applies), and the family's
-envelope lines (its rise line beside its cap). The residual central sites are one dispatch row
-and one `ResolvedHop` / `HopMath` enum arm; the shared kernels — the golden-section template,
+its bound: the state slice, the gate projection (`to_math`), the V2-equivalent projection,
+the simulate triple, the solve entry (built on the shared golden template where the
+stable-family search applies), and the family's envelope lines (its rise line beside its
+cap, or a CL family's tangent fan). The residual central sites are one dispatch row and one
+enum arm in each of `ResolvedHop` and `HopMath`; the shared kernels — the golden-section template,
 the integer-verification order, the envelope composition and caches — stay monomorphic and
 family-blind (ADR-059 D6).
 _Avoid_: a family's functions scattered across `mixed/mod.rs`, `mixed/solve.rs`, and
@@ -539,6 +540,17 @@ ADR-035) once a second tier consumer reaches it; the solver crate's `cl` tree un
 _Avoid_: a trait hierarchy over pools on the solve path; the kernel as an unowned tree
 inside the solver crate; envelope types inside the kernel; "CL family" naming the kernel.
 
+**Refine bound**:
+The walk-side refine-window bound in the kernel's own vocabulary: one affine upper bound on the
+path output at input `x`, expressed as the predicate `(a + b·x)/c ≥ best` with `c > 0`, which marks
+the inputs a composed envelope bound cannot disprove. The active-set walk intersects its refine
+window against these bounds and skips the disproven sub-window without a simulation, so no
+envelope type (`Line`, verdict, cap) reaches into the kernel. The CL family module translates
+the envelope's composed lines into refine bounds at the seam (`refine_bounds`).
+
+_Avoid_: an envelope type inside the kernel; re-deriving the bound inside the walk instead of at
+the seam.
+
 **Piecewise walker**:
 The active-set engine that solves a multi-hop concentrated-liquidity arbitrage by
 climbing per-hop ending-range indices piece by piece, refining the terminal window until
@@ -611,7 +623,9 @@ A piecewise-linear concave upper bound on a hop's output curve, derived from pro
 data the solve already builds, and the point-wise minimum of its hop tangent lines and
 per-hop caps. A constant-product-family hop contributes its exact post-fee entry tangent
 beside the fee-agnostic rise; a CL hop contributes its pool-static tangent fan. A
-Solidly/Aerodrome/Camelot stable hop contributes its entry tangent (its output curve is
+Balancer V2 weighted hop contributes its entry tangent (its output curve is concave in the
+input) beside its asymptotic reserve cap. A Solidly/Aerodrome/Camelot stable hop
+contributes its entry tangent (its output curve is
 concave in the input) beside its reserve cap, and a Balancer V2 stable hop contributes
 its entry tangent wherever the closed-form curvature test holds (its output curve is
 concave there) beside its reserve cap; the Curve stableswap family keeps the reserve cap
