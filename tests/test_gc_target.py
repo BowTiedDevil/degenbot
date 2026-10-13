@@ -50,6 +50,7 @@ def test_dry_run_reports_complete_families_without_deleting(tmp_path: Path) -> N
         target / "criterion" / "solver",
         target / "wheels" / "degenbot.whl",
         target / "doc" / "degenbot",
+        target / "stubgen-inspect" / "debug",
         target / "lcov.info",
     ]
     for path in selected:
@@ -93,11 +94,19 @@ def test_dry_run_reports_complete_families_without_deleting(tmp_path: Path) -> N
         "criterion",
         "wheels",
         "documentation",
+        "stubgen-inspect",
     }
     assert families["maturin"]["policy"] == "protected"
     assert int(families["maturin"]["selected-paths"]) == 0
     assert int(families["normal-cargo"]["reclaimable-bytes"]) > 0
-    for family in ("coverage", "llvm-coverage", "criterion", "wheels", "documentation"):
+    for family in (
+        "coverage",
+        "llvm-coverage",
+        "criterion",
+        "wheels",
+        "documentation",
+        "stubgen-inspect",
+    ):
         assert int(families[family]["size-bytes"]) > 0
         assert int(families[family]["reclaimable-bytes"]) > 0
 

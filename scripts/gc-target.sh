@@ -52,6 +52,7 @@ declare -a family_names=(
     criterion
     wheels
     documentation
+    stubgen-inspect
 )
 declare -A family_policy=(
     [normal-cargo]="age+incremental+dedupe"
@@ -61,6 +62,7 @@ declare -A family_policy=(
     [criterion]="age"
     [wheels]="age"
     [documentation]="age"
+    [stubgen-inspect]="age"
 )
 declare -A family_size=()
 declare -A family_reclaimable=()
@@ -83,6 +85,7 @@ family_size["llvm-coverage"]="$(apparent_bytes "$target_dir/llvm-cov-target")"
 family_size["criterion"]="$(apparent_bytes "$target_dir/criterion")"
 family_size["wheels"]="$(apparent_bytes "$target_dir/wheels")"
 family_size["documentation"]="$(apparent_bytes "$target_dir/doc")"
+family_size["stubgen-inspect"]="$(apparent_bytes "$target_dir/stubgen-inspect")"
 
 declare -a candidate_paths=()
 declare -A candidate_seen=()
@@ -179,6 +182,7 @@ select_stale_children llvm-coverage "$target_dir/llvm-cov-target"
 select_stale_children criterion "$target_dir/criterion"
 select_stale_children wheels "$target_dir/wheels"
 select_stale_children documentation "$target_dir/doc"
+select_stale_children stubgen-inspect "$target_dir/stubgen-inspect"
 
 # CRAP and ad-hoc LLVM runs also leave coverage files directly in the Cargo
 # target root rather than under rust/target/coverage.
