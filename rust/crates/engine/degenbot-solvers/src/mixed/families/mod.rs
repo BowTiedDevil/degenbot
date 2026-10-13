@@ -2,3 +2,4 @@
 //! everything the family contributes to a solve and its bound.
 
 pub(crate) mod cl;
+pub(crate) mod solidly;

@@ -24,7 +24,6 @@ use degenbot_math::v2::IntHopState;
 use degenbot_pools::{
     BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 };
-use degenbot_uniswap::dex_identity::DexVariant;
 
 // ---------------------------------------------------------------------------
 // Snapshot data (V3/V4 registration intake)
@@ -189,48 +188,6 @@ pub struct PoolHop {
 #[derive(Clone, Debug)]
 pub struct MixedPath {
     pub pools: Vec<MixedPoolRef>,
-}
-
-/// Resolved state for a Solidly/Aerodrome/Camelot hop, ready for the
-/// Solidly solve branch. Carries everything the `degenbot-solidly-math`
-/// leaf needs in the leaf's own contract shape: **un-oriented**
-/// `reserves_0`/`reserves_1` + a `token_in` direction flag (matching
-/// [`degenbot_math::solidly::calc_exact_in_stable_solidly`] etc. 1:1).
-///
-/// `variant` + `stable` together dispatch the math:
-/// - `(AerodromeV2Stable, true)` → `calc_exact_in_stable_solidly`
-/// - `(CamelotV2Stable, true)` → `calc_exact_in_stable_camelot`
-/// - `(_, false)` → `calc_exact_in_volatile`
-///
-/// Decimals are carried as the **scale** (`10^decimals`, e.g. `1_000_000`
-/// for a 6-decimal token) — what `calc_k` divides by. The `fee` pair is the
-/// **fee fraction** (`amount_in_after_fee = amount_in - amount_in *
-/// fee_numer / fee_denom`); the resolve arm converts each family's stored
-/// fee shape into this convention (Aerodrome stores it directly as the fee
-/// fraction; Camelot stores the retained-fraction gamma and the arm inverts
-/// it).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SolidlyHopState {
-    /// Reserve of token0 (un-oriented).
-    pub reserves_0: U256,
-    /// Reserve of token1 (un-oriented).
-    pub reserves_1: U256,
-    /// Decimals scale of token0 (`10^decimals`, e.g. `1_000_000`).
-    pub decimals_0: U256,
-    /// Decimals scale of token1 (`10^decimals`, e.g. `1_000_000`).
-    pub decimals_1: U256,
-    /// Direction flag: `0` swaps token0→token1, `1` swaps token1→token0.
-    /// Mirrors `token_in` in [`degenbot_math::solidly::calc_exact_in_stable_solidly`].
-    pub token_in: u8,
-    /// Fee numerator — the fee fraction is `fee_numer / fee_denom`.
-    pub fee_numer: U256,
-    /// Fee denominator.
-    pub fee_denom: U256,
-    /// `true` for the stable (x³y + xy³) invariant, `false` for volatile
-    /// (constant-product).
-    pub stable: bool,
-    /// DEX+variant discriminator — selects the solidly vs camelot math leaf.
-    pub variant: DexVariant,
 }
 
 /// Resolved state for a Balancer V2 weighted pool hop, ready for the
@@ -540,8 +497,11 @@ pub(crate) mod families;
 
 // Re-export the solve dispatcher + the simulate entry points reached by the
 // orchestrator/tests so callers can use `degenbot_solvers::mixed::solve_path`
-// without descending into `solve`.
-pub use solve::{simulate_solidly_path, solve_path, solve_path_with_min_profit};
+// without descending into `solve`. The Solidly simulate entry and its resolved
+// state slice are owned by the family module (ADR-071 D1); the dispatcher stays
+// in `solve`.
+pub use families::solidly::{simulate_solidly_path, SolidlyHopState};
+pub use solve::{solve_path, solve_path_with_min_profit};
 
 #[cfg(test)]
 mod taxonomy_tests {

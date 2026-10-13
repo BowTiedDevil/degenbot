@@ -15,16 +15,17 @@ use std::collections::BTreeSet;
 use alloy::primitives::{U256, U512};
 
 use crate::mixed::families::cl::{cl_hop_lines, cl_to_math, solve_walkable_path_int};
+use crate::mixed::families::solidly::{solidly_hop_lines, solidly_to_math, solve_solidly_entry};
 use crate::profit_envelope::{
     balancer_stable_hop_lines, curve_hop_lines, path_profit_bound_with_floor, refuse_lines,
-    reserve_cap_hop_lines, solidly_hop_lines, v2_hop_lines, weighted_hop_lines, Envelope, GateDeps,
-    GateStats, HopMath, Line, PathBoundLines, PrefixCache,
+    reserve_cap_hop_lines, v2_hop_lines, weighted_hop_lines, Envelope, GateDeps, GateStats,
+    HopMath, Line, PathBoundLines, PrefixCache,
 };
 use crate::runtime::SolveRuntimeConfig;
 
 use crate::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType,
-    ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
+    ResolvedHop, ResolvedMixedPath, SolvePathResult, INT128_MAX,
 };
 
 /// Dispatches based on path composition:
@@ -135,45 +136,6 @@ fn hop_math_for(hop: &ResolvedHop) -> Option<crate::profit_envelope::HopMath<'_>
 fn v2_to_math(hop: &ResolvedHop) -> Option<HopMath<'_>> {
     match hop {
         ResolvedHop::V2 { state } => Some(HopMath::V2(state)),
-        _ => None,
-    }
-}
-
-/// The Solidly family's gate projection. Solidly volatile is the
-/// constant-product family → the fee-agnostic V2 lines. Solidly stable is
-/// concave in the input, so its entry tangent is a sound rise beside the
-/// reserve cap.
-fn solidly_to_math(hop: &ResolvedHop) -> Option<HopMath<'_>> {
-    match hop {
-        ResolvedHop::SolidlyStable { state } => {
-            if state.stable {
-                // Reserves stay NATIVE and un-oriented; the arm orients
-                // them from `token_in` (the leaf's own convention).
-                Some(HopMath::SolidlyStable {
-                    reserves_0: state.reserves_0,
-                    reserves_1: state.reserves_1,
-                    decimals_0: state.decimals_0,
-                    decimals_1: state.decimals_1,
-                    token_in: state.token_in,
-                    fee_numer: state.fee_numer,
-                    fee_denom: state.fee_denom,
-                })
-            } else {
-                let (reserve_in, reserve_out) = if state.token_in == 0 {
-                    (state.reserves_0, state.reserves_1)
-                } else {
-                    (state.reserves_1, state.reserves_0)
-                };
-                Some(HopMath::SolidlyVolatile {
-                    reserve_in,
-                    reserve_out,
-                    // Solidly stores the fee RATE (`fee_numer/fee_denom`);
-                    // the Möbius tangent wants the retained fraction.
-                    gamma_numer: state.fee_denom.saturating_sub(state.fee_numer),
-                    fee_denom: state.fee_denom,
-                })
-            }
-        }
         _ => None,
     }
 }
@@ -494,18 +456,6 @@ fn solve_exact_v2_entry(
     }
 }
 
-/// [`SolveFn`] adapter for the Solidly family's single-argument path entry.
-fn solve_solidly_entry(
-    resolved: &ResolvedMixedPath,
-    _gate: &GateDeps<'_>,
-    _walk_env: Option<&PathBoundLines>,
-) -> (Option<SolvePathResult>, crate::cl::WalkStats) {
-    (
-        solve_solidly_path_int(resolved),
-        crate::cl::WalkStats::default(),
-    )
-}
-
 /// [`SolveFn`] adapter for the Balancer-weighted family's path entry.
 fn solve_balancer_weighted_entry(
     resolved: &ResolvedMixedPath,
@@ -626,35 +576,6 @@ pub fn solve_path_inner(
     (result, walk_stats)
 }
 
-/// Solve an all-V2-or-Solidly (no CL hops, ≥1 Solidly) path with the shared
-/// golden-section template (`solve_golden_section_path_int`).
-///
-/// Faithful port of `arbitrage.solvers.solidly_stable.SolidlyStableSolver`
-/// (the `_solve_golden_section` branch with `swap_fn` set). The Möbius
-/// precheck early-outs unprofitable paths before the expensive search.
-fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-    use degenbot_math::v2::IntHopState;
-
-    let hops = &resolved.hops;
-    if hops.len() < 2 {
-        return None;
-    }
-
-    // V2-equivalent IntHopState per hop: Solidly hops orient reserves by
-    // `token_in` and convert the fee (SolidlyHopState stores the fee
-    // fraction `fee_numer/fee_denom`; IntHopState wants the retained
-    // fraction `gamma_numer/fee_denom`, so `gamma_numer = fee_denom -
-    // fee_numer`). V2 hops pass through unchanged.
-    let v2_equiv: Vec<IntHopState> = hops
-        .iter()
-        .map(solidly_hop_v2_equiv)
-        .collect::<Option<Vec<_>>>()?;
-
-    solve_golden_section_path_int(&v2_equiv, &|x| simulate_solidly_path(x, hops), &|x| {
-        simulate_solidly_path_outputs(x, hops)
-    })
-}
-
 /// Number of golden-section refinement iterations (mirrors Python's
 /// `SolidlyStableSolver.GOLDEN_SECTION_ITERATIONS`).
 const GOLDEN_SECTION_ITERATIONS: usize = 25;
@@ -669,7 +590,7 @@ const GOLDEN_SECTION_ITERATIONS: usize = 25;
 /// math leaf, and `simulate_outputs` returns the per-hop outputs for the
 /// winning input. All four arms share one integer-verification order (see
 /// [`ascending_sweep`]).
-fn solve_golden_section_path_int(
+pub(crate) fn solve_golden_section_path_int(
     v2_equiv: &[degenbot_math::v2::IntHopState],
     simulate: &impl Fn(U256) -> U256,
     simulate_outputs: &impl Fn(U256) -> Vec<U256>,
@@ -809,122 +730,6 @@ fn ascending_sweep(simulate: &impl Fn(U256) -> U256, center: U256) -> Option<(U2
     }
 }
 
-/// Build the V2-equivalent [`IntHopState`] for a hop in a Solidly solve
-/// path. Solidly hops orient reserves by `token_in` and convert the fee
-/// (fee fraction → retained fraction); V2 hops pass through unchanged.
-/// Returns `None` for any non-V2/non-Solidly hop or when the Solidly fee
-/// pair overflows `u64` (the path is then unsolvable here).
-fn solidly_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_math::v2::IntHopState> {
-    use degenbot_math::v2::IntHopState;
-    match hop {
-        ResolvedHop::V2 { state } => Some(state.clone()),
-        ResolvedHop::SolidlyStable { state } => {
-            let (reserve_in, reserve_out) = if state.token_in == 0 {
-                (state.reserves_0, state.reserves_1)
-            } else {
-                (state.reserves_1, state.reserves_0)
-            };
-            // SolidlyHopState fee = fee fraction (fee_numer/fee_denom).
-            // IntHopState fee = retained fraction (gamma_numer/fee_denom).
-            let gamma_numer = state.fee_denom.saturating_sub(state.fee_numer);
-            let gn: u64 = gamma_numer.try_into().ok()?;
-            let fd: u64 = state.fee_denom.try_into().ok()?;
-            Some(IntHopState::new(reserve_in, reserve_out, gn, fd))
-        }
-        _ => None,
-    }
-}
-
-/// Simulate a Solidly-or-V2 path, returning only the final output.
-/// Per-hop dispatch: Solidly hops call the `degenbot-solidly-math` leaf
-/// selected by `(variant, stable)`; V2 hops reuse `IntHopState::swap`.
-#[must_use]
-pub fn simulate_solidly_path(x: U256, hops: &[ResolvedHop]) -> U256 {
-    simulate_solidly_path_outputs(x, hops)
-        .last()
-        .copied()
-        .unwrap_or(U256::ZERO)
-}
-
-/// Simulate a Solidly-or-V2 path, returning per-hop outputs.
-/// `hop_outputs[i]` = output of hop `i` given `hop_outputs[i-1]` as input
-/// (or `x` for `i==0`). Returns `U256::ZERO` per hop once the chain breaks
-/// at a zero amount (matching the Python `_simulate_mixed_path_int`'s
-/// early-out).
-#[must_use]
-fn simulate_solidly_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U256> {
-    let mut amount = x;
-    let mut outputs = Vec::with_capacity(hops.len());
-    for hop in hops {
-        if amount.is_zero() {
-            outputs.push(U256::ZERO);
-            continue;
-        }
-        let out = match hop {
-            ResolvedHop::V2 { state } => state.swap(amount).unwrap_or(U256::ZERO),
-            ResolvedHop::SolidlyStable { state } => simulate_solidly_hop(amount, state),
-            // Non-V2/Solidly hops can't reach here — the solve dispatch
-            // rejects Solidly+CL paths before calling this.
-            _ => U256::ZERO,
-        };
-        outputs.push(out);
-        amount = out;
-    }
-    outputs
-}
-
-/// Evaluate a single Solidly hop's output via the `degenbot-solidly-math`
-/// leaf, selected by `(variant, stable)`. Returns `U256::ZERO` on
-/// overflow / invalid `token_in` (the leaf's `Err` variants), matching the
-/// Python `_simulate_mixed_path_int`'s defensive fallback.
-fn simulate_solidly_hop(amount_in: U256, hop: &SolidlyHopState) -> U256 {
-    use degenbot_math::solidly::{
-        calc_exact_in_stable_camelot, calc_exact_in_stable_solidly, calc_exact_in_volatile,
-    };
-    use degenbot_uniswap::dex_identity::DexVariant;
-    if amount_in.is_zero() {
-        return U256::ZERO;
-    }
-    let out = match (hop.variant, hop.stable) {
-        (DexVariant::AerodromeV2Stable | DexVariant::AerodromeV2Volatile, true) => {
-            calc_exact_in_stable_solidly(
-                amount_in,
-                hop.token_in,
-                hop.reserves_0,
-                hop.reserves_1,
-                hop.decimals_0,
-                hop.decimals_1,
-                hop.fee_numer,
-                hop.fee_denom,
-            )
-        }
-        (DexVariant::CamelotV2Stable | DexVariant::CamelotV2Volatile, true) => {
-            calc_exact_in_stable_camelot(
-                amount_in,
-                hop.token_in,
-                hop.reserves_0,
-                hop.reserves_1,
-                hop.decimals_0,
-                hop.decimals_1,
-                hop.fee_numer,
-                hop.fee_denom,
-            )
-        }
-        (_, false) => calc_exact_in_volatile(
-            amount_in,
-            hop.token_in,
-            hop.reserves_0,
-            hop.reserves_1,
-            hop.fee_numer,
-            hop.fee_denom,
-        ),
-        // A non-Solidly variant with `stable=true` is impossible — these
-        // DEXes have no stable pool family. Falls back to zero output.
-        _ => return U256::ZERO,
-    };
-    out.unwrap_or(U256::ZERO)
-}
-
 /// Solve an all-V2-or-Balancer-weighted (no CL hops, ≥1 weighted) path with
 /// the shared golden-section template (`solve_golden_section_path_int`).
 ///
@@ -1043,7 +848,7 @@ fn simulate_balancer_weighted_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec
 /// `amount_in_after_fee = amount_in - mul_up(amount_in, swap_fee)`),
 /// then the invariant math runs on the after-fee amount. Returns
 /// `U256::ZERO` on overflow / error (matching the defensive fallback in
-/// `simulate_solidly_hop`).
+/// `mixed::families::solidly::simulate_solidly_hop`).
 fn simulate_balancer_weighted_hop(amount_in: U256, hop: &BalancerWeightedHopState) -> U256 {
     use degenbot_math::balancer::fixed_point::mul_up;
     use degenbot_math::balancer::weighted_math::calc_out_given_in;
@@ -1260,7 +1065,6 @@ fn simulate_curve_hop(amount_in: U256, hop: &CurveStableswapHopState) -> U256 {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[expect(clippy::panic)] // the derivability assertions are the point
 mod gate_tests {
     use super::*;
 
@@ -1313,122 +1117,6 @@ mod gate_tests {
     }
 
     #[test]
-    fn m6776w_solidly_volatile_fee_floor_counterexample_is_bounded() {
-        let r0 = 502_363u64;
-        let r1 = 7_772_466u64;
-        let x = 32u64;
-        let hop = HopMath::SolidlyVolatile {
-            reserve_in: U256::from(r0),
-            reserve_out: U256::from(r1),
-            gamma_numer: U256::from(997u64),
-            fee_denom: U256::from(1_000u64),
-        };
-        let bound = path_output_bound_at(
-            &[Some(hop)],
-            &U256::from(x),
-            &crate::runtime::SolveRuntimeConfig::default(),
-        );
-        let state = crate::mixed::SolidlyHopState {
-            reserves_0: U256::from(r0),
-            reserves_1: U256::from(r1),
-            decimals_0: U256::from(1_000_000u64),
-            decimals_1: U256::from(1_000_000u64),
-            token_in: 0,
-            fee_numer: U256::from(3u64),
-            fee_denom: U256::from(1_000u64),
-            stable: false,
-            variant: DexVariant::AerodromeV2Volatile,
-        };
-        let true_out = simulate_solidly_hop(U256::from(x), &state);
-        assert_eq!(true_out, U256::from(495u64));
-        assert!(
-            bound.is_some_and(|bound| bound >= true_out),
-            "Solidly volatile bound must dominate true output"
-        );
-    }
-
-    /// RED before the Solidly-stable tangent: the gate cannot prune a
-    /// Solidly-stable path whose reserve cap sits far above the profit floor —
-    /// the reserve-cap-only line makes the bound the pool's entire holding, so
-    /// every unprofitable Solidly candidate still pays a full golden-section
-    /// solve. The entry tangent is far tighter, so the same path (a single
-    /// hop, whose true max profit is zero) is skipped once the hop maps to
-    /// `SolidlyStable`.
-    #[test]
-    fn solidly_stable_tangent_prunes_where_reserve_cap_cannot() {
-        use crate::profit_envelope::path_profit_bound_with_floor;
-
-        let reserve = U256::from(1_000_000_000_000_000_000_000_000u128); // 1e24
-        let floor = U256::from(1_000_000_000_000_000_000u64); // 1e18
-        let cfg = crate::runtime::SolveRuntimeConfig::default();
-
-        // Today's mapping: flat reserve cap only. The bound is the whole
-        // holding, far above the floor, so the gate runs the solve.
-        let (cap_env, _) = path_profit_bound_with_floor(
-            &[Some(HopMath::ReserveCap {
-                reserve_out: reserve,
-            })],
-            &GateDeps::offline_with_runtime(cfg),
-            floor,
-        );
-        let Envelope::Bound(cap_bound) = cap_env else {
-            panic!("the reserve-cap bound must derive");
-        };
-        assert!(
-            cap_bound > floor,
-            "the reserve cap cannot prune at this floor (bound {cap_bound} > floor {floor})"
-        );
-
-        // The new mapping: entry tangent + cap.
-        let state = crate::mixed::SolidlyHopState {
-            reserves_0: reserve,
-            reserves_1: reserve,
-            decimals_0: U256::from(1_000_000_000_000_000_000u64),
-            decimals_1: U256::from(1_000_000_000_000_000_000u64),
-            token_in: 0,
-            fee_numer: U256::from(3u64),
-            fee_denom: U256::from(10_000u64),
-            stable: true,
-            variant: DexVariant::AerodromeV2Stable,
-        };
-        let (tangent_env, _) = path_profit_bound_with_floor(
-            &[Some(HopMath::SolidlyStable {
-                reserves_0: state.reserves_0,
-                reserves_1: state.reserves_1,
-                decimals_0: state.decimals_0,
-                decimals_1: state.decimals_1,
-                token_in: state.token_in,
-                fee_numer: state.fee_numer,
-                fee_denom: state.fee_denom,
-            })],
-            &GateDeps::offline_with_runtime(cfg),
-            floor,
-        );
-        let Envelope::Bound(tangent_bound) = tangent_env else {
-            panic!("the tangent bound must derive");
-        };
-        assert!(
-            tangent_bound <= floor,
-            "the entry tangent must prune (bound {tangent_bound} <= floor {floor})"
-        );
-
-        // Through the real entry: skipped, with no walk simulations.
-        let p = ResolvedMixedPath {
-            hops: vec![ResolvedHop::SolidlyStable { state }],
-            valid: true,
-            state_nonces: vec![1],
-            max_update_block: 0,
-        };
-        let r = solve_path_with_min_profit(&p, floor, &GateDeps::offline());
-        assert!(
-            r.result.is_none(),
-            "the gate must skip the unprofitable Solidly-stable path"
-        );
-        assert_eq!(r.gate_stats.skipped, 1);
-        assert_eq!(r.stats.sims, 0, "a skip carries no walk simulations");
-    }
-
-    #[test]
     fn gate_zero_floor_skips_provably_unprofitable_path() {
         // Identical V2 pools both ways: fees guarantee the round trip can
         // never net positive, so the envelope bound must be ZERO and the
@@ -1461,74 +1149,6 @@ mod gate_tests {
     use proptest::prelude::*;
 
     proptest! {
-        /// Solidly volatile = constant-product: the fee-agnostic and exact-fee
-        /// rise lines plus the flat cap must dominate `calc_exact_in_volatile`
-        /// for every reserve/amount.
-        #[test]
-        fn m6776w_solidly_volatile_bound_dominates_real_leaf(
-            r0 in 1u64..10_000_000u64,
-            r1 in 1u64..10_000_000u64,
-            x in 0u64..10_000_000u64,
-            token_in in 0u8..2u8,
-        ) {
-            let (rin, rout) = if token_in == 0 { (r0, r1) } else { (r1, r0) };
-            let hop = HopMath::SolidlyVolatile {
-                reserve_in: U256::from(rin),
-                reserve_out: U256::from(rout),
-                gamma_numer: U256::from(997u64),
-                fee_denom: U256::from(1000u64),
-            };
-            let bound = path_output_bound_at(&[Some(hop)], &U256::from(x), &crate::runtime::SolveRuntimeConfig::default())
-                .unwrap_or(U256::ZERO);
-            let state = crate::mixed::SolidlyHopState {
-                reserves_0: U256::from(r0),
-                reserves_1: U256::from(r1),
-                decimals_0: U256::from(1_000_000u64),
-                decimals_1: U256::from(1_000_000u64),
-                token_in,
-                fee_numer: U256::from(3u64),
-                fee_denom: U256::from(1000u64),
-                stable: false,
-                variant: DexVariant::AerodromeV2Volatile,
-            };
-            let true_out = simulate_solidly_hop(U256::from(x), &state);
-            prop_assert!(
-                bound >= true_out,
-                "solidly-volatile bound {bound} < true {true_out} (r0={r0},r1={r1},x={x},t={token_in})"
-            );
-        }
-
-        /// Solidly stable (stableswap): the reserve cap must dominate the real
-        /// stable leaf output for every amount (guards the cap unit).
-        #[test]
-        fn m6776w_solidly_stable_reserve_cap_dominates_real_leaf(
-            r0 in 1u64..1_000_000_000u64,
-            r1 in 1u64..1_000_000_000u64,
-            x in 0u64..1_000_000_000u64,
-            token_in in 0u8..2u8,
-        ) {
-            let reserve_out = if token_in == 0 { r1 } else { r0 };
-            let hop = HopMath::ReserveCap { reserve_out: U256::from(reserve_out) };
-            let bound = path_output_bound_at(&[Some(hop)], &U256::from(x), &crate::runtime::SolveRuntimeConfig::default())
-                .unwrap_or(U256::ZERO);
-            let state = crate::mixed::SolidlyHopState {
-                reserves_0: U256::from(r0),
-                reserves_1: U256::from(r1),
-                decimals_0: U256::from(1_000_000u64),
-                decimals_1: U256::from(1_000_000u64),
-                token_in,
-                fee_numer: U256::from(3u64),
-                fee_denom: U256::from(1000u64),
-                stable: true,
-                variant: DexVariant::AerodromeV2Stable,
-            };
-            let true_out = simulate_solidly_hop(U256::from(x), &state);
-            prop_assert!(
-                bound >= true_out,
-                "solidly-stable cap {bound} < true {true_out} (r0={r0},r1={r1},x={x},t={token_in})"
-            );
-        }
-
         /// Curve stableswap: the reserve cap (`xp[out]·PRECISION/rate_out` = the
         /// native output-token reserve) must dominate the real Curve leaf output
         /// for every amount — guards the rate-multiplier unit conversion.

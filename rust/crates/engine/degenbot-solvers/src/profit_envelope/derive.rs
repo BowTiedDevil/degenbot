@@ -4,7 +4,6 @@ use crate::mixed::solve::{family_row_for, FamilyRow, RESERVE_CAP_ROW};
 use crate::mixed::HopType;
 use crate::runtime::SolveRuntimeConfig;
 use alloy::primitives::{aliases::I512, U256, U512};
-use degenbot_math::solidly::SOLIDLY_MIN_SCALED_RESERVE;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 use std::sync::Arc;
@@ -274,7 +273,7 @@ impl<'a> HopMath<'a> {
 /// `I512` or its denominator is zero: the fee-agnostic rise still bounds the
 /// curve, so the result merely loosens. Returns `None` when the feeless
 /// coefficients do not fit — no rigorous line, caller treats it as degenerate.
-fn mobius_lines(
+pub(crate) fn mobius_lines(
     r_in: U256,
     r_out: U256,
     gamma_numer: U256,
@@ -309,227 +308,6 @@ fn mobius_lines(
     }
     lines.push(flat);
     Some((lines, r_out))
-}
-
-/// Build the line set for a Solidly/Aerodrome/Camelot STABLE hop:
-/// `[rise, flat]`.
-///
-/// The deployed invariant in the 1e18-scaled domain is
-/// `f(x0, y) = x0·y·(x0² + y²) = K`, with `K = f(Ra, Rb)` at the pre-trade
-/// scaled reserves. An exact-in swap sets `x0 = Ra + m` (`m` the post-fee
-/// scaled input) and the output is `Rb − y`.
-///
-/// Implicit differentiation gives the marginal output rate
-/// `dy/dx0 = −y·(3x0² + y²) / (x0·(x0² + 3y²))`; writing `t = y/x0`, the
-/// rate is `price(x0) = t·(3 + t²)/(1 + 3t²)`. On the level curve
-/// `x0⁴·(t + t³) = K`, so `t` strictly decreases in `x0`; and
-/// `d/dt[price] = 3·(t² − 1)²/(1 + 3t²)² ≥ 0`, so the rate is non-increasing
-/// in the input. The output curve is therefore CONCAVE, and a concave curve
-/// through the origin lies below its entry tangent (`O(x) ≤ O'(0)·x`): the
-/// entry slope is a sound global rise line.
-///
-/// The entry slope in NATIVE token units: the leaf scales the input by
-/// `ONE/decimals_in`, scales the output by `decimals_out/ONE`, and takes the
-/// fee off the input (retaining `(fee_denom − fee_numer)/fee_denom`), giving
-/// `price_entry · γ/fee_denom · decimals_out/decimals_in` with
-/// `price_entry = Rb·(3·Ra² + Rb²) / (Ra·(Ra² + 3·Rb²))`.
-///
-/// The rise carries a mandatory additive allowance `a` in native output
-/// units, composed as `A = a·C` so the line evaluates to
-/// `a + ceil(b·x/c)`:
-/// - the fee floor retains `x − ⌊x·fee_numer/fee_denom⌋ ≥ (1 − f)·x`, so the
-///   scaled input can exceed its continuous value by up to `ONE/decimals_in`,
-///   worth up to `price_entry·decimals_out/decimals_in` native output — the
-///   dominant term, `ceil(price_entry·decimals_out/decimals_in)`;
-/// - the leaf returns the FLOOR of the invariant root (and the Camelot
-///   convergence probe can stop one scaled unit high), so the realized
-///   output can exceed the ideal curve by a few scaled units, each
-///   `decimals_out/ONE` native — allowed for with `ceil(4·decimals_out/ONE)`.
-///
-/// The flat reserve cap (`out ≤ reserve_out`) stays beside the rise; the
-/// point-wise minimum of both is still a rigorous upper bound. The rise is
-/// DROPPED (not fatal — the cap still bounds) whenever its coefficients do not
-/// fit `I512`, or when the pool sits outside the range where the leaf's own
-/// invariant arithmetic is exact ACROSS THE WHOLE EVALUATION WINDOW. The gate
-/// sweeps the hop's lines over `x ∈ [0, reserve_out]`, but the leaf's Newton
-/// runs at the POST-trade scale `x0 = Ra + x·ONE/decimals_in`, which can exceed
-/// the pre-trade `Ra` by `reserve_out·ONE/decimals_in` scaled units; there the
-/// leaf's `calc_d` products wrap `u256` and a wrapped Newton denominator
-/// returns a garbage root that can inflate the leaf's output ABOVE the tangent.
-/// So the rise is kept only where the scaled reserves clear the leaf's own
-/// precision floor [`SOLIDLY_MIN_SCALED_RESERVE`] (defined in the leaf's crate
-/// beside `ONE`, because it is the leaf's arithmetic limit), the pre-trade
-/// `calc_k` product cannot wrap, the leaf's input upscaling `reserve_out·ONE`
-/// fits `u256`, and every post-trade `calc_d` term at
-/// `x0_max = Ra + reserve_out·ONE/decimals_in`, `y ≤ Rb` stays inside `u256`.
-/// Returns `None` only for a zero output reserve —
-/// the degenerate exit the flat cap always took.
-fn solidly_stable_lines(
-    reserves_0: U256,
-    reserves_1: U256,
-    decimals_0: U256,
-    decimals_1: U256,
-    token_in: u8,
-    fee_numer: U256,
-    fee_denom: U256,
-) -> Option<(Vec<Line>, U256)> {
-    let (reserve_in, reserve_out, decimals_in, decimals_out) = if token_in == 0 {
-        (reserves_0, reserves_1, decimals_0, decimals_1)
-    } else {
-        (reserves_1, reserves_0, decimals_1, decimals_0)
-    };
-
-    // A pool holding nothing of the output token can yield nothing.
-    if reserve_out.is_zero() {
-        return None;
-    }
-
-    // The flat cap is always sound (`out ≤ reserve_out`: you cannot extract
-    // more than the pool holds). Every failure below falls back to it.
-    let flat = Line {
-        a: I512::try_from(U512::from(reserve_out)).ok()?,
-        b: I512::ZERO,
-        c: I512::ONE,
-    };
-
-    match solidly_stable_rise(
-        reserve_in,
-        reserve_out,
-        decimals_in,
-        decimals_out,
-        fee_numer,
-        fee_denom,
-    ) {
-        Some(rise) => Some((vec![rise, flat], reserve_out)),
-        None => Some((vec![flat], reserve_out)),
-    }
-}
-
-/// The Solidly-stable entry-tangent rise line (see [`solidly_stable_lines`]);
-/// `None` whenever the rise must be dropped in favour of the flat cap alone.
-/// Besides the `I512`-fit and precision checks, the gate here verifies the
-/// leaf's invariant arithmetic is non-wrapping over the ENTIRE evaluation
-/// window `[0, reserve_out]` — not merely at the pre-trade reserves — because a
-/// wrapped post-trade Newton denominator can return a garbage root above the
-/// tangent (see the `calc_d` window check below).
-fn solidly_stable_rise(
-    reserve_in: U256,
-    reserve_out: U256,
-    decimals_in: U256,
-    decimals_out: U256,
-    fee_numer: U256,
-    fee_denom: U256,
-) -> Option<Line> {
-    if decimals_in.is_zero() || decimals_out.is_zero() || fee_denom.is_zero() {
-        return None;
-    }
-    // The Solidly leaf's 18-decimal fixed-point unit — the invariant's scaled
-    // domain and the additive-slack divisor.
-    let one = U512::from(degenbot_math::solidly::ONE);
-    let d_in = U512::from(decimals_in);
-    let d_out = U512::from(decimals_out);
-    let ra = U512::from(reserve_in).checked_mul(one)?.checked_div(d_in)?;
-    let rb = U512::from(reserve_out)
-        .checked_mul(one)?
-        .checked_div(d_out)?;
-    if ra.is_zero() || rb.is_zero() {
-        return None;
-    }
-
-    // Faithful-arithmetic gate. The leaf's invariant helpers divide by `ONE`
-    // twice and multiply the quotients, so the rise is only trustworthy where
-    // the scaled reserves clear the leaf's own precision floor
-    // (`SOLIDLY_MIN_SCALED_RESERVE`, defined in the leaf's crate beside `ONE`),
-    // the pre-trade `calc_k` product cannot wrap `u256`, AND the whole
-    // evaluation window stays non-wrapping. The gate sweeps the hop's lines
-    // over `x in [0, reserve_out]`, but the leaf's Newton runs at the
-    // POST-trade scale `x0 = Ra + x·ONE/decimals_in`, which exceeds the
-    // pre-trade `Ra` by up to `reserve_out·ONE/decimals_in` scaled units. In
-    // that regime the leaf's `calc_d` products wrap `u256` — `(x0·x0/ONE)·x0`
-    // once `x0³ >
-    // ONE·u256::MAX`, `y·y` once `y > 2¹²⁸`, and `3·x0·(y·y/ONE)` past
-    // `u256::MAX` — and a wrapped Newton denominator yields a garbage root
-    // that can inflate the leaf's output ABOVE the tangent. The rise is
-    // therefore dropped (cap-only fallback) wherever the window could wrap;
-    // that may only tighten the bound, never loosen it.
-    let min_scaled = U512::from(SOLIDLY_MIN_SCALED_RESERVE);
-    if ra < min_scaled || rb < min_scaled {
-        return None;
-    }
-    let u256_max = U512::from(U256::MAX);
-    let k_a = ra.checked_mul(rb)?.checked_div(one)?;
-    let k_b = ra
-        .checked_mul(ra)?
-        .checked_div(one)?
-        .checked_add(rb.checked_mul(rb)?.checked_div(one)?)?;
-    if k_a.checked_mul(k_b)? > u256_max {
-        return None;
-    }
-    // The leaf's own input upscaling `amount_in · ONE` (with `amount_in <=
-    // reserve_out`) must fit `u256`. The four products below are the leaf's
-    // `calc_d` wrap candidates at the maximal post-trade scale.
-    let out_upscaled = U512::from(reserve_out).checked_mul(one)?;
-    if out_upscaled > u256_max {
-        return None;
-    }
-    // Maximal post-trade scale (`gamma <= 1` absorbed conservatively) and the
-    // monotone Newton-descent bound `y <= Rb` (the seed is `Rb`, and each step
-    // strictly descends toward the root).
-    let x0_max = ra.checked_add(out_upscaled.checked_div(d_in)?)?;
-    let x0_sq = x0_max.checked_mul(x0_max)?;
-    let rb_sq = rb.checked_mul(rb)?;
-    if x0_sq > u256_max
-        || x0_sq.checked_div(one)?.checked_mul(x0_max)? > u256_max
-        || rb_sq > u256_max
-        || U512::from(3u64)
-            .checked_mul(x0_max)?
-            .checked_mul(rb_sq.checked_div(one)?)?
-            > u256_max
-    {
-        return None;
-    }
-
-    // Entry marginal rate (scaled domain, pre-trade reserves).
-    let three = U512::from(3u64);
-    let ra2 = ra.checked_mul(ra)?;
-    let rb2 = rb.checked_mul(rb)?;
-    let num_price = rb.checked_mul(ra2.checked_mul(three)?.checked_add(rb2)?)?;
-    let den_price = ra.checked_mul(rb2.checked_mul(three)?.checked_add(ra2)?)?;
-    if den_price.is_zero() {
-        return None;
-    }
-
-    // Native-unit rise: `price · γ/fee_denom · decimals_out/decimals_in`.
-    let gamma = U512::from(fee_denom.saturating_sub(fee_numer));
-    let b = num_price.checked_mul(gamma)?.checked_mul(d_out)?;
-    let c = den_price
-        .checked_mul(U512::from(fee_denom))?
-        .checked_mul(d_in)?;
-    if c.is_zero() {
-        return None;
-    }
-
-    // Additive allowance (see the doc comment), composed as `A = a·C`.
-    let a_den = den_price.checked_mul(d_in)?;
-    if a_den.is_zero() {
-        return None;
-    }
-    let a_price = num_price
-        .checked_mul(d_out)?
-        .checked_add(a_den)?
-        .checked_sub(U512::ONE)?
-        .checked_div(a_den)?;
-    let a_root = U512::from(4u64)
-        .checked_mul(d_out)?
-        .checked_add(one - U512::ONE)?
-        .checked_div(one)?;
-    let big_a = a_price.checked_add(a_root)?.checked_mul(c)?;
-
-    Some(Line {
-        a: I512::try_from(big_a).ok()?,
-        b: I512::try_from(b).ok()?,
-        c: I512::try_from(c).ok()?,
-    })
 }
 
 /// The Balancer V2 `AMP_PRECISION = 1000` — the leaf's amplification scaling
@@ -865,47 +643,6 @@ pub(crate) fn v2_hop_lines(
         return None;
     }
     mobius_lines(r_in, r_out, h.gamma_numer, h.fee_denom)
-}
-
-/// The Solidly family's line builder: volatile pools take the Möbius rises,
-/// stable pools the concave-in-the-input rise beside the reserve cap.
-pub(crate) fn solidly_hop_lines(
-    hop: &HopMath<'_>,
-    _cfg: &SolveRuntimeConfig,
-    _fan_cache: Option<(&PrefixCache, u64)>,
-    _stats: &mut GateStats,
-) -> Option<(Vec<Line>, U256)> {
-    match hop {
-        HopMath::SolidlyVolatile {
-            reserve_in,
-            reserve_out,
-            gamma_numer,
-            fee_denom,
-        } => {
-            if reserve_in.is_zero() || reserve_out.is_zero() {
-                return None;
-            }
-            mobius_lines(*reserve_in, *reserve_out, *gamma_numer, *fee_denom)
-        }
-        HopMath::SolidlyStable {
-            reserves_0,
-            reserves_1,
-            decimals_0,
-            decimals_1,
-            token_in,
-            fee_numer,
-            fee_denom,
-        } => solidly_stable_lines(
-            *reserves_0,
-            *reserves_1,
-            *decimals_0,
-            *decimals_1,
-            *token_in,
-            *fee_numer,
-            *fee_denom,
-        ),
-        _ => None,
-    }
 }
 
 /// The Balancer-weighted family's line builder: the concave entry tangent plus
@@ -1255,7 +992,6 @@ impl std::fmt::Debug for PrefixCache {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used)] // tiny literals; panic on typo is the point
 pub(crate) mod tests {
     use super::*;
 
@@ -1315,82 +1051,5 @@ pub(crate) mod tests {
         // Epoch 7 never touched: no carry.
         let c = PrefixCache::new();
         assert!(c.get(7, &chain).is_none());
-    }
-
-    // ===================================================================
-    // Solidly-stable faithful-arithmetic window guard.
-    // ===================================================================
-
-    /// A pool comfortably inside the faithful-arithmetic domain keeps the
-    /// entry-tangent rise; a pool whose post-trade window scale would wrap the
-    /// leaf's `calc_d` products drops it and falls back to the flat cap alone.
-    ///
-    /// The guard is asserted on the DERIVED LINE-SET SHAPE (line count + which
-    /// line survives), not on any downstream bound number: the whole point is
-    /// that the rise is absent for the wide-window pool.
-    #[test]
-    fn solidly_stable_window_guard_drops_rise_only_past_the_wrap_threshold() {
-        use alloy::primitives::aliases::I512;
-
-        let one_18 = U256::from(1_000_000_000_000_000_000u64);
-        let one_6 = U256::from(1_000_000u64);
-
-        // Balanced 1e24 / 1e24, 18-dec: `x0_max ~ 2e24`, every `calc_d` term
-        // far inside u256, so the rise is ACTIVE.
-        let r_healthy = U256::from(1_000_000_000_000_000_000_000_000u128);
-        let (healthy_lines, healthy_cap) = solidly_stable_lines(
-            r_healthy,
-            r_healthy,
-            one_18,
-            one_18,
-            0,
-            U256::from(3u64),
-            U256::from(10_000u64),
-        )
-        .expect("the healthy pool derives");
-        assert_eq!(
-            healthy_lines.len(),
-            2,
-            "the healthy pool must carry [rise, flat]"
-        );
-        assert!(
-            healthy_lines[0].b > I512::ZERO,
-            "the first line must be the non-constant rise"
-        );
-        assert_eq!(healthy_lines[1].b, I512::ZERO, "the second is the flat cap");
-        assert_eq!(healthy_cap, r_healthy);
-
-        // 6-dec in-reserve ~1e12 native with an 18-dec out-reserve ~1e29 native:
-        // `reserve_out·ONE/decimals_in ~ 1e41`, so `x0_max² ~ 1e82` exceeds
-        // `u256::MAX (~1.16e77)` and the leaf's `calc_d` `(x0·x0/ONE)·x0` term
-        // wraps. The rise must be DROPPED.
-        let r_in_6 = U256::from(1_000_000_000_000u128);
-        let r_out_18 = U256::from(100_000_000_000_000_000_000_000_000_000u128);
-        let (wide_lines, wide_cap) = solidly_stable_lines(
-            r_in_6,
-            r_out_18,
-            one_6,
-            one_18,
-            0,
-            U256::from(3u64),
-            U256::from(10_000u64),
-        )
-        .expect("the wide-window pool still derives the cap");
-        assert_eq!(
-            wide_lines.len(),
-            1,
-            "the wide-window pool must fall back to cap-ONLY"
-        );
-        assert_eq!(
-            wide_lines[0].b,
-            I512::ZERO,
-            "the surviving line is the flat cap"
-        );
-        assert_eq!(
-            wide_lines[0].a,
-            I512::try_from(U512::from(r_out_18)).expect("cap fits I512"),
-            "the flat cap is the output reserve"
-        );
-        assert_eq!(wide_cap, r_out_18);
     }
 }

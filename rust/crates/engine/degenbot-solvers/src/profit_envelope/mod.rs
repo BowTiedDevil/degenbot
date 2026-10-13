@@ -61,9 +61,12 @@ pub(crate) use gate::record_gate;
 // (ADR-071 D3): the former `hop_lines_and_cap_cached` match arms, now named
 // entry points referenced by fn pointer from `mixed::solve`.
 pub(crate) use derive::{
-    balancer_stable_hop_lines, curve_hop_lines, refuse_lines, reserve_cap_hop_lines,
-    solidly_hop_lines, v2_hop_lines, weighted_hop_lines,
+    balancer_stable_hop_lines, curve_hop_lines, refuse_lines, reserve_cap_hop_lines, v2_hop_lines,
+    weighted_hop_lines,
 };
+// The shared constant-product rise builder: V2 and Solidly-volatile both call
+// it, so the family modules reach it through this re-export.
+pub(crate) use derive::mobius_lines;
 
 #[cfg(test)]
 pub(crate) use gate::path_bound_lines;
