@@ -36,6 +36,18 @@ def test_installed_extension_is_fresh() -> None:
     verify_build_fresh()
 
 
+@pytest.fixture(scope="module")
+def uv_cache_key_paths() -> set[Path]:
+    """Every repo path matched by the ``tool.uv.cache-keys`` patterns.
+
+    Parsed and globbed once per module: the parametrized cases below each
+    re-derived this set, paying the pyproject parse + repo glob eight times over.
+    """
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    cache_keys = pyproject["tool"]["uv"]["cache-keys"]
+    return {REPO_ROOT / match for key in cache_keys for match in REPO_ROOT.glob(key["file"])}
+
+
 @pytest.mark.parametrize(
     "relative_path",
     [
@@ -49,14 +61,10 @@ def test_installed_extension_is_fresh() -> None:
         Path("rust/crates/shells/degenbot-python/build_scan.rs"),
     ],
 )
-def test_uv_cache_keys_cover_rust_build_inputs(relative_path: Path) -> None:
-    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
-    cache_keys = pyproject["tool"]["uv"]["cache-keys"]
+def test_uv_cache_keys_cover_rust_build_inputs(
+    relative_path: Path, uv_cache_key_paths: set[Path]
+) -> None:
     input_path = REPO_ROOT / relative_path
-
-    matched = any(
-        input_path == REPO_ROOT / match
-        for key in cache_keys
-        for match in REPO_ROOT.glob(key["file"])
+    assert input_path in uv_cache_key_paths, (
+        f"{relative_path} must invalidate the Python build cache"
     )
-    assert matched, f"{relative_path} must invalidate the Python build cache"
