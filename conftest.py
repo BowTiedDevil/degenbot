@@ -8,6 +8,7 @@ relative to its path. It is picked up because pyproject.toml includes
 "README.md" in testpaths.
 """
 
+import pathlib
 from collections.abc import Iterable
 
 import pytest
@@ -18,6 +19,8 @@ from sybil.parsers.markdown.codeblock import PythonCodeBlockParser
 from sybil.parsers.markdown.lexers import DirectiveInHTMLCommentLexer
 from sybil.parsers.markdown.skip import SkipParser
 
+from degenbot.bot import _bot as _bot_module
+from degenbot.provider import OfflineProvider
 from tests.offline import is_offline
 
 
@@ -120,3 +123,54 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         item.add_marker(pytest.mark.order(index))
 
     items[:] = readme_items + other_items
+
+
+# --- README offline replay ---------------------------------------------------
+#
+# The README's Bot examples run against a recorded chain cassette instead of a
+# live archive node, so the suite is hermetic and offline (no RPC, no developer
+# DB): every `eth_call`/`eth_getCode`/`eth_getBlockByNumber` the examples issue
+# is replayed from `tests/fixtures/chain_data/1/readme_examples.json` through the
+# `Bot(provider=...)` injection seam. The visible README code is unchanged — it
+# still reads `degenbot.Bot(chain_id=1, node=RPC_URL, ...)`; only the DI seam
+# `get_provider_from_config` is redirected, for README items only.
+#
+# Regenerate the cassette with `just record-readme-cassette`; gate it with
+# `just check-readme-cassette`. See `scripts/record_readme_cassette.py`.
+_README_CASSETTE = (
+    pathlib.Path(__file__).resolve().parent / "tests/fixtures/chain_data/1/readme_examples.json"
+)
+
+# The original `get_provider_from_config` reference is saved here for the
+# duration of a README item and restored in teardown (Sybil items do not run
+# conftest autouse fixtures, so the bind is done from the runtest hooks).
+_README_ORIGINAL_PROVIDER_FACTORY = None
+_README_OFFLINE_PROVIDER = None
+
+
+def _readme_offline_provider():
+    """The cassette-backed provider, built once and reused across README items."""
+    global _README_OFFLINE_PROVIDER  # noqa: PLW0603
+    if _README_OFFLINE_PROVIDER is None:
+        _README_OFFLINE_PROVIDER = OfflineProvider.from_json_file(_README_CASSETTE)
+    return _README_OFFLINE_PROVIDER
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Bind the recorded cassette provider for README items (no-op elsewhere)."""
+    global _README_ORIGINAL_PROVIDER_FACTORY  # noqa: PLW0603
+    if "README.md" not in item.nodeid or not _README_CASSETTE.is_file():
+        return
+
+    _README_ORIGINAL_PROVIDER_FACTORY = _bot_module.get_provider_from_config
+    _bot_module.get_provider_from_config = lambda **_kwargs: _readme_offline_provider()  # ty: ignore[invalid-assignment]
+
+
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:  # noqa: ARG001
+    """Restore the configured provider factory after a README item."""
+    global _README_ORIGINAL_PROVIDER_FACTORY  # noqa: PLW0603
+    if _README_ORIGINAL_PROVIDER_FACTORY is None:
+        return
+
+    _bot_module.get_provider_from_config = _README_ORIGINAL_PROVIDER_FACTORY
+    _README_ORIGINAL_PROVIDER_FACTORY = None

@@ -97,11 +97,12 @@ from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 ```python
 # RPC_URL is any HTTP RPC endpoint for chain 1, for example
 #   "https://eth-mainnet.example.com"
-# Initialize Bot from explicit settings
+# Initialize Bot from explicit settings (in-memory session; a persistent
+# database path is the production default)
 bot = degenbot.Bot(
     chain_id=1,
     node=RPC_URL,
-    database="~/.local/state/degenbot/db/degenbot.db",
+    database=":memory:",
 )
 
 # Bot constructs the RPC provider from the node endpoint and enforces its
@@ -130,7 +131,6 @@ print(f"Output: {amount_out}")
 
 Pool classes are Python companions over **Rust-owned pool state** — direct construction is impossible (any constructor call raises `TypeError`); a pool comes into being only by registering in a `Bot`'s Rust state. Use `Bot.build_pool()` in production (or the `make_*_pool` test helpers in tests):
 
-<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # Do NOT do this — the constructor always raises TypeError:
@@ -145,7 +145,6 @@ except TypeError:
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 ```
 
-<!-- live-rpc: end -->
 
 <!-- clear-namespace -->
 
@@ -190,7 +189,6 @@ bot.provider  # the chain's AlloyProvider (chain_id enforced at construction)
 bot.chain_id  # 1
 ```
 
-<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # All pool/token creation flows through Bot
@@ -202,7 +200,6 @@ balance = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA960
 approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
 ```
 
-<!-- live-rpc: end -->
 
 **Bot properties:**
 - `bot.chain_id` - the configured chain ID for this single-chain session
@@ -335,7 +332,6 @@ bot = degenbot.Bot(
 )
 ```
 
-<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # Build tokens (fetches from DB/RPC, cached in registry)
@@ -361,7 +357,6 @@ amount_out = v3_pool.calculate_tokens_out_from_tokens_in(
 )
 ```
 
-<!-- live-rpc: end -->
 
 ---
 
@@ -1077,7 +1072,7 @@ import degenbot
 bot = degenbot.Bot(
     chain_id=1,
     node=RPC_URL,
-    database="~/.local/state/degenbot/db/degenbot.db",
+    database=":memory:",
 )
 # The RPC provider is built from the node endpoint and its eth_chainId is
 # enforced to equal chain_id at construction — no manual registration needed.
@@ -1085,7 +1080,6 @@ bot = degenbot.Bot(
 
 ### Universal Pool Builder
 
-<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # Universal builder — auto-resolves pool type from DB, registry, or on-chain probing
@@ -1095,7 +1089,6 @@ pool = bot.build_pool(
 )
 ```
 
-<!-- live-rpc: end -->
 
 <!-- skip: start "requires Base chain RPC node" -->
 
@@ -1111,7 +1104,6 @@ pool = bot.build_managed_pool(
 
 ### Pool Construction by Type
 
-<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # V2 pool (auto-detected from factory)
@@ -1131,7 +1123,6 @@ pool = bot.build_pool(
 )
 ```
 
-<!-- live-rpc: end -->
 
 <!-- skip: start "requires Base chain RPC node" -->
 
@@ -1151,7 +1142,6 @@ pool = bot.build_managed_pool(
 
 ### Token Factory
 
-<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # ERC-20 token (fetches name, symbol, decimals from DB/RPC)
@@ -1161,11 +1151,9 @@ token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 token = bot.get_token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 ```
 
-<!-- live-rpc: end -->
 
 ### Token Utilities (With Caching)
 
-<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # Get balance at block (cached per-bot)
@@ -1182,7 +1170,6 @@ total_supply = bot.get_token_total_supply(token)
 eth_balance = bot.get_ether_balance(address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 ```
 
-<!-- live-rpc: end -->
 
 ### Accessing Bot Components
 

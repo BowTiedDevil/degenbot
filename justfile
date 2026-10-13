@@ -483,6 +483,24 @@ record-golden *args:
 live-drift *args:
     uv run --no-sync pytest -m live_drift -q --no-header tests/golden/test_live_drift.py {{ args }}
 
+
+# Record the README examples' chain surface into the offline replay cassette
+# (`tests/fixtures/chain_data/1/readme_examples.json`). Drives the real
+# `Bot.build_pool` / token-utility surface through a head-pinned recording proxy
+# in front of the archive node, so regeneration is byte-identical (the head is
+# pinned at `scripts/record_readme_cassette.py`'s `PIN`, and every "latest" tag
+# is rewritten to it). The README suite then replays offline via the
+# `Bot(provider=...)` seam (conftest.py). Requires a reachable archive node.
+record-readme-cassette:
+    uv run --no-sync python scripts/record_readme_cassette.py
+
+
+# Drift gate for the README cassette: re-record and require byte-identity with
+# the committed file. Needs a reachable archive node (not a CI gate — CI replays
+# the committed cassette offline).
+check-readme-cassette:
+    uv run --no-sync python scripts/record_readme_cassette.py --check
+
 # Verify every shipped deployment address is actually deployed on-chain (cast).
 # Tier 1 (bytecode presence) by default; escalate via the env var:
 #   DEGENBOT_VERIFY_DEPLOYMENTS=2 just verify-deployments   # +selector fingerprint

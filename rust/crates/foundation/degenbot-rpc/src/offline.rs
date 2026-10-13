@@ -62,6 +62,9 @@ pub struct RecordedBlock {
     /// `to_lower` → bytecode hex (**without** `0x` prefix).
     #[serde(default)]
     pub code: HashMap<String, String>,
+    /// `to_lower` → account balance in wei, hex (**without** `0x` prefix).
+    #[serde(default)]
+    pub balances: HashMap<String, String>,
 }
 
 /// Loose wire format for recorded chain data — accepts both the single-block
@@ -78,6 +81,8 @@ struct RecordedData {
     calls: Option<HashMap<String, Option<String>>>,
     #[serde(default)]
     code: Option<HashMap<String, String>>,
+    #[serde(default)]
+    balances: Option<HashMap<String, String>>,
     #[serde(default)]
     blocks: Option<HashMap<String, RecordedBlock>>,
 }
@@ -131,6 +136,7 @@ impl OfflineProvider {
                     timestamp: data.timestamp.unwrap_or(0),
                     calls: data.calls.unwrap_or_default(),
                     code: data.code.unwrap_or_default(),
+                    balances: data.balances.unwrap_or_default(),
                 },
             );
         }
@@ -243,6 +249,7 @@ impl OfflineTransport {
             "eth_blockNumber" => self.block_number(),
             "eth_getCode" => self.get_code(&params),
             "eth_call" => self.eth_call(&params),
+            "eth_getBalance" => self.get_balance(&params),
             "eth_getBlockByNumber" => self.get_block_by_number(&params),
             _ => Err(method_not_found(req.method())),
         };
@@ -280,6 +287,31 @@ impl OfflineTransport {
         // GetCode returns an empty `0x` when the address has no code.
         let code = block_data.code.get(&key).cloned().unwrap_or_default();
         success(&format!("0x{code}"))
+    }
+
+    fn get_balance(&self, params: &serde_json::Value) -> Result<ResponsePayload, ErrorPayload> {
+        let arr = params
+            .as_array()
+            .ok_or_else(|| invalid_params("eth_getBalance params"))?;
+        let addr = arr
+            .first()
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| invalid_params("eth_getBalance address"))?;
+        let block = self
+            .data
+            .resolve_block(arr.get(1))
+            .ok_or_else(|| block_not_recorded_msg(arr.get(1)))?;
+        let key = match address_utils::parse_address(addr) {
+            Ok(a) => a.to_checksum(None).to_lowercase(),
+            Err(_) => addr.to_lowercase(),
+        };
+        let Some(block_data) = self.data.blocks.get(&block) else {
+            return Err(block_not_recorded(block));
+        };
+        match block_data.balances.get(&key) {
+            Some(balance) => success(&format!("0x{balance}")),
+            None => Err(unrecorded_balance(addr)),
+        }
     }
 
     fn eth_call(&self, params: &serde_json::Value) -> Result<ResponsePayload, ErrorPayload> {
@@ -420,6 +452,10 @@ fn revert(to: &str, data: &str) -> ErrorPayload {
         message: Cow::Borrowed("execution reverted"),
         data: revert_data(to, data),
     }
+}
+
+fn unrecorded_balance(address: &str) -> ErrorPayload {
+    internal_err(format!("offline: unrecorded balance for {address}"))
 }
 
 fn unrecorded_call(to: &str, data: &str) -> ErrorPayload {
