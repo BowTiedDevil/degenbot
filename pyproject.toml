@@ -237,7 +237,6 @@ dev = [
     "pytest-order",
     "pytest-randomly",
     "pytest-timeout",
-    "pytest-xdist",
     "pytest",
     "python-dotenv",
     "ruff",
