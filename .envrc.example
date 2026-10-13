@@ -1,0 +1,12 @@
+# Template for a HOST direnv setup. Copy to `.envrc` (gitignored) and run
+# `direnv allow`. Inside the devcontainer this is unnecessary: containerEnv in
+# .devcontainer/devcontainer.json already sets the equivalents.
+#
+# Why: the repo is bind-mounted between host and container, so the venv, the
+# bytecode cache, and the cargo target dir must live OUT of the mounted tree on
+# the host (host-absolute co_filename paths in __pycache__ break Sybil's pytest
+# collection in the container, and a shared cargo target dir makes the two sides
+# fight over fingerprints). Values are $HOME-relative so the file is portable.
+export UV_PROJECT_ENVIRONMENT="$HOME/.venvs/degenbot"
+export PYTHONPYCACHEPREFIX=/tmp/degenbot-pycache-host
+export CARGO_TARGET_DIR="$HOME/.cache/degenbot-target"

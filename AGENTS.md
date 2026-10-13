@@ -199,6 +199,12 @@ variable (`uv run --no-sync`), so recipes never hand-write the flag; `just venv`
 prints the active venv path, and `just py <cmd>` runs an ad-hoc command against
 it.
 
+On the host, direnv loads a gitignored `.envrc` that redirects the venv
+(`UV_PROJECT_ENVIRONMENT`), the bytecode cache (`PYTHONPYCACHEPREFIX`), and the
+cargo target dir (`CARGO_TARGET_DIR`) out of the bind-mounted tree; the tracked
+`.envrc.example` is the template. The devcontainer sets the equivalents in
+`containerEnv`.
+
 Python linters run through `uvx` (ephemeral, latest), so their recipes carry no
 `--no-sync`: `just lint-python` / `lint-python-check` use `uvx ruff`, `dead-code`
 uses `uvx vulture`. The exception is `ty`: it resolves third-party imports and
