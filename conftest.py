@@ -9,7 +9,6 @@ relative to its path. It is picked up because pyproject.toml includes
 """
 
 import functools
-import os
 import pathlib
 from collections.abc import Iterable
 
@@ -20,17 +19,6 @@ from sybil.parsers.markdown.clear import ClearNamespaceParser
 from sybil.parsers.markdown.codeblock import PythonCodeBlockParser
 from sybil.parsers.markdown.lexers import DirectiveInHTMLCommentLexer
 from sybil.parsers.markdown.skip import SkipParser
-
-# Pin the suite-wide ambient typed BotConfig BEFORE the first degenbot import.
-# The FFI module init installs the process-wide holder config, first-wins, so
-# whichever `DEGENBOT_CONFIG` is present at the FIRST `degenbot` import decides
-# the whole process. This root conftest is imported before tests/conftest.py (it
-# is the rootdir conftest) and imports degenbot, so the pin must live here too or
-# the ambient file's `[session] chain_id` never applies. Mirrors tests/conftest.py.
-os.environ.setdefault(
-    "DEGENBOT_CONFIG",
-    str(pathlib.Path(__file__).resolve().parent / "tests" / "ambient_config.toml"),
-)
 
 from degenbot.bot import _bot as _bot_module
 from degenbot.provider import OfflineProvider
