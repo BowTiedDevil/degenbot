@@ -268,6 +268,15 @@ cache-keys = [
     {file = ".cargo/**"},
 ]
 
+# A dev-env project build (`uv sync` / `uv run` without `--no-sync`) must
+# produce the SAME dev-features extension `just dev` installs, so a plain
+# `uv sync` cannot clobber it with a default-features wheel. maturin reads this
+# from the PEP 517 config settings (`maturin.build-args`); the
+# `cfg(tokio_unstable)` it also needs comes from `.cargo/config.toml`. CI builds
+# with `--no-install-project` and release uses maturin-action, so neither reads
+# this.
+config-settings = { "maturin.build-args" = "--features dev-features" }
+
 [tool.maturin]
 manifest-path = "rust/crates/shells/degenbot-python/Cargo.toml"
 python-source = "src"

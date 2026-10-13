@@ -16,9 +16,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 manifest="rust/Cargo.toml"
 crate="degenbot_rs"
 
-# tokio's full RuntimeMetrics getters sit behind the unstable API, and the repo
-# deliberately carries no global rustflag, so the cfg is scoped to the builds
-# that enable hotpath (the dev and coverage feature sets both do).
+# tokio's full RuntimeMetrics getters sit behind the unstable API. The cfg is
+# declared once in `.cargo/config.toml` (`[target.'cfg(all())'] rustflags`), so
+# every cargo/uv build — including uv's PEP 517 project build — gets it, and the
+# `hotpath` feature sets (dev, coverage) no longer rely on an ad-hoc rustflag.
+# The prefix below is kept only for modes that set `RUSTFLAGS` (which overrides
+# the config): coverage's `-C instrument-coverage`.
 hotpath="--cfg tokio_unstable"
 
 mode="${1:-}"

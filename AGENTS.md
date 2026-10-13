@@ -131,12 +131,14 @@ CI runs the default, consumer, binding-default, development-only, and release
 feature checks before the all-features diagnostic. The default gate therefore
 remains meaningful even when the diagnostic is enabled.
 
-Hotpath's full Tokio `RuntimeMetrics` getters are behind Tokio's unstable API.
-The repository ships no global rustflag (there is no committed `.cargo/config.toml`);
-`just check-rust-dev-features`, `just check-rust-all-features`, `just dev`, and
-`just test-hotpath` set `RUSTFLAGS=--cfg tokio_unstable` on those hotpath build
-paths. Direct hotpath Cargo/maturin builds must set the same environment
-explicitly — use `just test-hotpath` instead of hand-typing it.
+Hotpath's full Tokio `RuntimeMetrics` getters are behind Tokio's unstable API
+(`cfg(tokio_unstable)`). The cfg is declared once in `.cargo/config.toml`
+(`[target.'cfg(all())'] rustflags`), so every cargo and uv build — including
+uv's PEP 517 project build and the `just check-rust-*` / `just dev` /
+`just test-hotpath` recipes — gets it without an ad-hoc `RUSTFLAGS=`. The
+binding layer's `dev-features` set (which enables `hotpath`) is applied to uv
+project builds via `[tool.uv] config-settings` (`maturin.build-args`), so a
+plain `uv sync` builds the same extension `just dev` installs.
 
 ## Rust test scope
 

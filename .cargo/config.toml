@@ -1,0 +1,14 @@
+# tokio's full RuntimeMetrics getters sit behind the unstable API
+# (`cfg(tokio_unstable)`), and the `hotpath` feature (in the binding layer's
+# `dev-features` set) requires it — see the compile_error! guards in
+# degenbot-bot / degenbot-solvers. Declaring it here, instead of via an ad-hoc
+# `RUSTFLAGS=` on individual recipes, makes the cfg available to EVERY cargo
+# build — including uv's PEP 517 project build — so `uv sync` / `uv run` build
+# the dev-features extension rather than silently degrading to a metrics-less
+# one. The cfg is inert for builds that do not enable `hotpath`.
+#
+# `cfg(all())` matches every target (build scripts and proc-macros included).
+# A `RUSTFLAGS` env var still overrides this — scripts/coverage.sh relies on
+# that to add `-C instrument-coverage`.
+[target.'cfg(all())']
+rustflags = ["--cfg", "tokio_unstable"]
