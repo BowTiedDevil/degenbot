@@ -18,8 +18,6 @@ use std::sync::Arc;
 use alloy::primitives::{Address, U256};
 
 use crate::cl::{ClWordProfile, IntTickRangeCrossing, IntV3TickRangeSequence, PreparedClHop};
-use degenbot_math::balancer::PowVersion;
-use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::{
     BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
@@ -188,107 +186,6 @@ pub struct PoolHop {
 #[derive(Clone, Debug)]
 pub struct MixedPath {
     pub pools: Vec<MixedPoolRef>,
-}
-
-/// Resolved state for a Balancer V2 weighted pool hop, ready for the
-/// weighted solve branch. Carries everything the
-/// `degenbot-balancer-math::weighted_math::calc_out_given_in` leaf needs.
-///
-/// The fee is stored as a fraction of `ONE = 1e18` (the Balancer fixed-point
-/// convention): `amount_in_after_fee = amount_in - amount_in * swap_fee / ONE`.
-/// The `PowVersion` selects `FixedPoint::pow` fast paths (V1 general / V2
-/// fast paths for y ∈ {1, 2, 4}).
-///
-/// For the V2-equivalent Möbius precheck, `gamma_numer` / `fee_denom` give
-/// the retained fraction `gamma_numer / fee_denom` = `(ONE - swap_fee) / ONE`
-/// scaled to a `u64` pair (the `IntHopState` fee convention).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BalancerWeightedHopState {
-    /// Balance of the input token (upscaled to 18-decimal fixed-point).
-    pub balance_in: U256,
-    /// Balance of the output token (upscaled to 18-decimal fixed-point).
-    pub balance_out: U256,
-    /// Normalized weight of the input token (18-decimal, e.g. 5e17 for 50%).
-    pub weight_in: U256,
-    /// Normalized weight of the output token (18-decimal).
-    pub weight_out: U256,
-    /// Swap fee as a fraction of `ONE = 1e18` (e.g. 3e15 for 0.3%).
-    pub swap_fee: U256,
-    /// `PowVersion` discriminator — selects `FixedPoint::pow` fast paths.
-    pub pow_version: PowVersion,
-    /// Scaling factor for the input token (`10^(18 - decimals_in)`).
-    /// The input amount (in native decimals) is multiplied by this before
-    /// passing to the math leaf, and the math result is divided by the
-    /// output's scaling factor to downscale back to native decimals.
-    pub scaling_factor_in: U256,
-    /// Scaling factor for the output token (`10^(18 - decimals_out)`).
-    pub scaling_factor_out: U256,
-}
-
-/// Resolved state for a Balancer V2 stable pool hop (`StableSwap` invariant),
-/// ready for the stable solve branch.
-///
-/// Balances are upscaled to 18-decimal fixed-point and BPT-skipped (for
-/// `ComposableStablePools`). The invariant `D` is pre-computed at resolve
-/// time (one-shot under the core lock) — never recomputed per search
-/// iteration.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BalancerStableHopState {
-    /// Amplification coefficient `amp` (deployed convention, includes
-    /// `AMP_PRECISION=1000`).
-    pub amp: U256,
-    /// BPT-skipped upscaled balances (all non-BPT tokens).
-    pub balances: Vec<U256>,
-    /// Token index of the input (in the BPT-skipped list).
-    pub token_index_in: usize,
-    /// Token index of the output (in the BPT-skipped list).
-    pub token_index_out: usize,
-    /// Pre-computed invariant `D` (via `calculate_invariant` or
-    /// `calculate_invariant_deployed`).
-    pub invariant: U256,
-    /// Swap fee as a fraction of `ONE = 1e18`.
-    pub swap_fee: U256,
-    /// Scaling factor for the input token (`10^(18 - decimals_in)`).
-    pub scaling_factor_in: U256,
-    /// Scaling factor for the output token.
-    pub scaling_factor_out: U256,
-}
-
-/// Resolved state for a Curve stableswap pool hop, ready for the curve
-/// solve branch.
-///
-/// Carries everything needed to simulate a swap: the rate-adjusted XP
-/// array, the input/output token indices, amp (with `A_PRECISION` baked in),
-/// fee, and the y/d variant discriminators.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CurveStableswapHopState {
-    /// `amp = a_coefficient * A_PRECISION` (Curve convention).
-    pub amp: U256,
-    /// `A_PRECISION` (100 for standard pools).
-    pub a_precision: U256,
-    /// Rate-adjusted balances `xp[i] = balances[i] * rate_multipliers[i] / PRECISION`.
-    /// Pre-computed at resolve time.
-    pub xp: Vec<U256>,
-    /// Token index of the input.
-    pub token_index_in: usize,
-    /// Token index of the output.
-    pub token_index_out: usize,
-    /// Number of coins (== `xp.len()`).
-    pub n_coins: U256,
-    /// Swap fee in `FEE_DENOMINATOR = 1e10` units.
-    pub fee: U256,
-    /// `FEE_DENOMINATOR = 10^10`.
-    pub fee_denom: U256,
-    /// `PRECISION = 10^18`.
-    pub precision: U256,
-    /// Rate multiplier for the input token.
-    pub rate_multiplier_in: U256,
-    /// Rate multiplier for the output token.
-    pub rate_multiplier_out: U256,
-    /// y-iteration variant.
-    pub y_variant: YVariant,
-    /// d-iteration variant.
-    pub d_variant: DVariant,
 }
 
 /// Resolved state for a single hop in a mixed path.
@@ -497,9 +394,12 @@ pub(crate) mod families;
 
 // Re-export the solve dispatcher + the simulate entry points reached by the
 // orchestrator/tests so callers can use `degenbot_solvers::mixed::solve_path`
-// without descending into `solve`. The Solidly simulate entry and its resolved
-// state slice are owned by the family module (ADR-071 D1); the dispatcher stays
-// in `solve`.
+// without descending into `solve`. Each family module owns its resolved state
+// slice (ADR-071 D1); the Solidly simulate entry is re-exported here too. The
+// dispatcher stays in `solve`.
+pub use families::balancer_stable::BalancerStableHopState;
+pub use families::balancer_weighted::BalancerWeightedHopState;
+pub use families::curve_stableswap::CurveStableswapHopState;
 pub use families::solidly::{simulate_solidly_path, SolidlyHopState};
 pub use solve::{solve_path, solve_path_with_min_profit};
 

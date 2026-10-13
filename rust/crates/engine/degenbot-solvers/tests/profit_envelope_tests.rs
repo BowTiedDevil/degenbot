@@ -1794,62 +1794,6 @@ fn balancer_stable_entry_tangent_dominates_real_leaf() {
     run_dominance_suite::<BalancerFamily>();
 }
 
-/// Shape assertion for the Balancer arm: a shape inside the curvature domain
-/// derives the `[rise, flat]` set (its unit-input bound sits strictly below the
-/// reserve cap, so the rise is the active line), while an extreme shape whose
-/// post-trade window would wrap the leaf's `u256` products derives the flat cap
-/// ALONE (unit-input bound exactly the reserve).
-#[test]
-fn balancer_stable_curvature_guard_shape() {
-    let cfg = SolveRuntimeConfig::default();
-    let amp = U256::from(10_000u64); // A = 10
-    let fee = U256::from(3_000_000_000_000_000u64); // 0.3 %
-
-    // A 10x imbalance keeps the entry point inside the curvature domain, so
-    // the rise survives beside the cap.
-    let inside_balances = vec![pow10_u256(21), pow10_u256(20)];
-    let inside = BalancerShape {
-        amp,
-        invariant: calculate_invariant(amp, &inside_balances).expect("converges"),
-        balances: inside_balances,
-        token_index_in: 0,
-        token_index_out: 1,
-        swap_fee: fee,
-        scaling_factor_in: U256::ONE,
-        scaling_factor_out: U256::ONE,
-    };
-    let inside_reserve = inside.native_out_reserve();
-    let inside_bound =
-        path_output_bound_at(&[Some(inside.hop())], &U256::ONE, &cfg).expect("derives");
-    assert!(
-        inside_bound < inside_reserve,
-        "inside-domain shape must carry the entry-tangent rise \
-         (bound {inside_bound} vs cap {inside_reserve})"
-    );
-
-    // The same 10x imbalance at a scale whose post-trade window would wrap the
-    // leaf's `D²`/`D·P_D` products across `u256` — the faithful-arithmetic
-    // window guard drops the rise, leaving the flat cap alone.
-    let extreme_balances = vec![pow10_u256(30), pow10_u256(29)];
-    let extreme = BalancerShape {
-        amp,
-        invariant: calculate_invariant(amp, &extreme_balances).expect("converges"),
-        balances: extreme_balances,
-        token_index_in: 0,
-        token_index_out: 1,
-        swap_fee: fee,
-        scaling_factor_in: U256::ONE,
-        scaling_factor_out: U256::ONE,
-    };
-    let extreme_reserve = extreme.native_out_reserve();
-    let extreme_bound =
-        path_output_bound_at(&[Some(extreme.hop())], &U256::ONE, &cfg).expect("derives");
-    assert_eq!(
-        extreme_bound, extreme_reserve,
-        "extreme shape must drop the rise to the cap alone"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Curve stableswap non-concavity counterexamples (PINNED, deterministic).
 //

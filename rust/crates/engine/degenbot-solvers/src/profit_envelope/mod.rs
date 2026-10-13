@@ -57,13 +57,12 @@ pub use crate::mixed::families::cl::ClHop;
 pub(crate) use derive::content_mix_u256;
 pub(crate) use gate::record_gate;
 
-// The per-family envelope line builders the `FAMILY_DISPATCH` rows register
-// (ADR-071 D3): the former `hop_lines_and_cap_cached` match arms, now named
-// entry points referenced by fn pointer from `mixed::solve`.
-pub(crate) use derive::{
-    balancer_stable_hop_lines, curve_hop_lines, refuse_lines, reserve_cap_hop_lines, v2_hop_lines,
-    weighted_hop_lines,
-};
+// The shared / residual envelope line builders the `FAMILY_DISPATCH` rows
+// register (ADR-071 D3): the V2 constant-product builder, the gate-only
+// `ReserveCap` pseudo-family, and the refusal / walkable stub. The per-family
+// builders (weighted / balancer-stable / curve) now live in their family modules
+// (`mixed::families::*`).
+pub(crate) use derive::{refuse_lines, reserve_cap_hop_lines, v2_hop_lines};
 // The shared constant-product rise builder: V2 and Solidly-volatile both call
 // it, so the family modules reach it through this re-export.
 pub(crate) use derive::mobius_lines;
