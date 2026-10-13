@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import filecmp
 import pathlib
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
+import sys
 
 import pytest
 
@@ -140,15 +142,25 @@ def test_heal_round_trips_through_seam(tmp_path: pathlib.Path, monkeypatch: pyte
     assert fetched.id == row.id
 
 
-def test_console_inspect_renders_legacy_state(tmp_path: pathlib.Path, capfd):
-    import degenbot._ffi as ffi
+def test_console_inspect_renders_legacy_state(tmp_path: pathlib.Path) -> None:
+    """The Rust console renders a legacy DB's schema state.
 
+    Run as a subprocess (like ``tests/test_cli_console.py``): the in-process
+    ``cli_main`` path shares the interpreter's global tracing subscriber, so an
+    earlier test that installs one can starve the console and flake this under
+    ``pytest-randomly`` ordering.
+    """
     db_path = tmp_path / "legacy_cli.db"
     db_upgrade_database(str(db_path))
     _mark_legacy(db_path)
 
-    code = ffi.cli_main(["--database", str(db_path), "database", "inspect"])
-    captured = capfd.readouterr()
-    assert code == 0
-    assert "legacy_alembic" in captured.out + captured.err
-    assert "Traceback" not in captured.err
+    proc = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [sys.executable, "-m", "degenbot", "--database", str(db_path), "database", "inspect"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "legacy_alembic" in proc.stdout + proc.stderr
+    assert "Traceback" not in proc.stderr
