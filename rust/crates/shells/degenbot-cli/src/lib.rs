@@ -24,7 +24,6 @@
 //! dependency (asserted by `just check-cli-shell-purity`).
 
 pub mod argv;
-pub mod build_info;
 pub mod progress;
 pub mod prompt;
 pub mod render;
@@ -38,20 +37,8 @@ use std::io::Write as _;
 use degenbot_cli_core::CancelHandle;
 use degenbot_config::ProcessEnv;
 
-/// The banner `--version` prints: the workspace version (ADR-009 lockstep) plus
-/// the shared build receipt, embedded by `build.rs`.
-///
-/// The fingerprint half is byte-identical to the Python FFI's
-/// `degenbot._ffi.build_fingerprint()`, so the two entry surfaces can be
-/// compared directly rather than trusted.
-pub const VERSION_LINE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (build ",
-    env!("DEGENBOT_CLI_BUILD_NUMBER"),
-    " ",
-    env!("DEGENBOT_CLI_BUILD_FINGERPRINT"),
-    ")"
-);
+/// The banner `--version` prints: the workspace version (ADR-009 lockstep).
+pub const VERSION_LINE: &str = env!("CARGO_PKG_VERSION");
 
 /// Parse `args` (argv WITHOUT the program name), boot the sinks, resolve the
 /// argv into a [`Command`](degenbot_cli_core::Command), run it and render the
@@ -98,11 +85,6 @@ where
         argv::write_missing_subcommand_error();
         return 2;
     }
-
-    // Startup freshness gate: warn (never refuse) when the console inside the
-    // loaded extension predates the source tree — the stale cached cdylib has
-    // repeatedly made committed console fixes invisible to a whole drive.
-    build_info::warn_if_extension_stale();
 
     // Sinks before anything that emits, exactly like the Python module init.
     let _telemetry = match sinks::boot() {

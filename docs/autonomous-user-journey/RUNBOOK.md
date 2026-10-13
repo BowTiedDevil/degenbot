@@ -103,7 +103,6 @@ git diff HEAD                    > logs/user-journey/observer/repo.diff
 git rev-parse HEAD               > logs/user-journey/observer/base-commit.txt
 deep=$(cast block-number --rpc-url "$DEGENBOT_RPC_HTTP_CHAINID_1"); echo "$deep" > logs/user-journey/observer/end-block.txt
 cp logs/bot_run.log logs/user-journey/observer/ 2>/dev/null || true
-uv run --no-sync python -m degenbot.build_info > logs/user-journey/observer/build-info.txt 2>&1 || true
 ```
 
 Then collect all `<OP>` transactions in the run's block range and compute

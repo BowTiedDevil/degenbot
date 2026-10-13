@@ -80,13 +80,6 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/engine/degenbot-bot/src/telemetry.rs",
             &["RUST_LOG"][..],
         );
-        // Build scripts: cargo-provided manifest dir + the build-receipt
-        // override (ADR-051 D2 build identity). Compile-time plumbing, not
-        // runtime config.
-        m.insert(
-            "crates/shells/degenbot-cli/build.rs",
-            &["CARGO_MANIFEST_DIR", "DEGENBOT_BUILD_NUMBER_FILE"][..],
-        );
         // (2) Dev-test knobs in library code (offline tooling only).
         m.insert(
             "crates/engine/degenbot-bot/src/profiling.rs",
@@ -154,12 +147,6 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
         m.insert(
             "crates/foundation/degenbot-db/src/migrate.rs",
             &["AUTO_HEAL_ENV"][..],
-        );
-        m.insert(
-            "crates/shells/degenbot-python/build.rs",
-            // The build-receipt work (1e1c0ddf7): the build script locates
-            // the repo receipt file itself (a build-time path, not config).
-            &["CARGO_MANIFEST_DIR", "DEGENBOT_BUILD_NUMBER_FILE"][..],
         );
         // The backrun sidecar's configuration now loads through the typed
         // per-ecosystem backrun facets; the one

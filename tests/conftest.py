@@ -43,16 +43,6 @@ os.environ.setdefault(
     str(Path(_pytest_state_dir) / "degenbot.db"),
 )
 
-# The receipt gate: a cargo workspace build advances `.build-number` without
-# touching the venv's installed extension, so any Rust-side rebuild (even a
-# test-binary-only one) leaves the installed `.so` silently stale. Fail at
-# collection with the remedy instead of letting the suite report confusing
-# behavior from old core code. The no-receipt case — a fresh checkout —
-# stays a no-op (absence of evidence is not staleness).
-from degenbot.build_info import verify_build_fresh
-
-verify_build_fresh()
-
 from degenbot._ffi import reinstall_config_holder_for_tests, shutdown_log_drainer
 from degenbot.bot import Bot
 from degenbot.fork import AnvilFork, ForkLaunchConfig

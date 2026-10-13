@@ -125,7 +125,7 @@ net     = v_end − v_start        # gas already netted: it leaves <OP>'s balanc
   trap*, *cryptic error*, *build/tooling trap*, *code defect*,
   *works-as-documented*.
 - [ ] **F3.** Every repo modification enumerated with reason; each either
-  reverted or landed with `just verify-build-fresh` exit 0 at bot-run time.
+  reverted or landed with a fresh extension build (`just dev`) at bot-run time.
 - [ ] **F4.** `summary.md` contains "what I'd tell the next person."
 - [ ] **F5 — Leak audit clean.** (New with the seal: enumerated in
   OBSERVER_BRIEF §"At scoring time".) No sealed-marker access found in the

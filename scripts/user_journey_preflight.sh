@@ -46,12 +46,9 @@ else
   ok "no bot running"
 fi
 
-# 5. build freshness (installed .so matches sources)
-if uv run --no-sync python -m degenbot.build_info >/dev/null 2>&1; then
-  ok "build fresh (receipt matches)"
-else
-  bad "stale build — run: just dev"
-fi
+# 5. build freshness — guaranteed by the build-on-run entrypoints (`just dev` /
+#    `just test-python` build the extension before use), so there is no separate
+#    receipt to verify here.
 
 # 6. DB warm + gap modest
 DB="$HOME/.config/degenbot/degenbot.db"

@@ -18,8 +18,8 @@ Two gates must both be on:
    includes `degenbot-bot/hotpath-prometheus`; `just bootstrap` and `just dev`
    select it explicitly. Release wheels use only
    `--release --features pyo3/extension-module`, so shipped artifacts have
-   zero hotpath footprint. After any Rust-source change run `just dev`, then
-   `just verify-build-fresh` (see AGENTS.md).
+   zero hotpath footprint. After any Rust-source change run `just dev` (or
+   `just test-python`, which builds first) — see AGENTS.md.
 2. **Runtime gate**: `DEGENBOT_HOTPATH=1`. The guard is constructed by
    `BlockPump::run_with_stream` (`rust/crates/engine/degenbot-bot/src/profiling.rs`);
    hotpath starts the exporter automatically with the guard — there is no

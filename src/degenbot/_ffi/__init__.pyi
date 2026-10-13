@@ -4187,19 +4187,6 @@ class UnregistrablePoolRecord:
         The bounded outcome tag.
         """
 
-def build_fingerprint() -> str:
-    """
-    Pyfunction: the source fingerprint hex string baked into this compiled
-    extension (empty string when build.rs did not run).
-    """
-
-def build_number() -> int:
-    """
-    Pyfunction: the build counter baked into this compiled extension.
-    Registered on the root `degenbot._ffi` module (unconditional — the
-    staleness check must work in every feature configuration).
-    """
-
 def build_path_graph(
     database_path: str,
     chain_id: int,
@@ -4933,8 +4920,6 @@ __all__ = [
     "UnsupportedPoolFamilyError",
     "VerificationMismatchError",
     "VerificationRpcError",
-    "build_fingerprint",
-    "build_number",
     "build_path_graph",
     "call_blocking_on_ambient_runtime",
     "call_on_ambient_runtime",

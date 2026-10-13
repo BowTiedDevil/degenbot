@@ -39,21 +39,6 @@ const SWEEP_ARTIFACTS: &[&str] = &[
     "DEGENBOT_CHUNK_SIZE",
 ];
 
-/// Build-receipt keys (commit 1e1c0ddf7): compile-time build-artifact
-/// variables around `degenbot-python/build.rs` — `DEGENBOT_BUILD_NUMBER_FILE`
-/// locates the receipt file at build time, and `DEGENBOT_BUILD_NUMBER` /
-/// `DEGENBOT_BUILD_FINGERPRINT` are `cargo:rustc-env` outputs consumed by
-/// `build_info`. They are not runtime configuration keys.
-const BUILD_ARTIFACT_KEYS: &[&str] = &[
-    "DEGENBOT_BUILD_FINGERPRINT",
-    "DEGENBOT_BUILD_NUMBER",
-    "DEGENBOT_BUILD_NUMBER_FILE",
-    // ADR-051 D2: the console cargo:rustc-env build-identity outputs
-    // (degenbot-cli/build.rs), the same class as the Python build receipt.
-    "DEGENBOT_CLI_BUILD_FINGERPRINT",
-    "DEGENBOT_CLI_BUILD_NUMBER",
-];
-
 /// Real static env keys the config crate reads BEFORE/OUTSIDE the schema:
 /// `DEGENBOT_CONFIG` selects the config FILE layer (see
 /// `with_standard_file_paths` in `loader.rs`) — chicken-and-egg, it cannot
@@ -196,7 +181,6 @@ fn schema_covers_the_full_key_inventory() {
         .filter(|k| {
             !SWEEP_ARTIFACTS.contains(&k.as_str())
                 && !BOOTSTRAP_KEYS.contains(&k.as_str())
-                && !BUILD_ARTIFACT_KEYS.contains(&k.as_str())
                 && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
                 && !DB_OPEN_KEYS.contains(&k.as_str())
                 && !TEST_HARNESS_KEYS.contains(&k.as_str())
@@ -239,7 +223,6 @@ fn snapshot_fallback_agrees_with_schema() {
         .filter(|k| {
             !SWEEP_ARTIFACTS.contains(&k.as_str())
                 && !BOOTSTRAP_KEYS.contains(&k.as_str())
-                && !BUILD_ARTIFACT_KEYS.contains(&k.as_str())
                 && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
                 && !DB_OPEN_KEYS.contains(&k.as_str())
                 && !TEST_HARNESS_KEYS.contains(&k.as_str())

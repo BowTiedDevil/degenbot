@@ -229,11 +229,11 @@ Known incident class, not a bot bug:
    busy solves emit thousands. Fixed at u32::MAX in otel.rs (04637eacf,
    c9dfeb4f1). Symptom if regressed: exactly ≤128 logs per solve span and no
    phase tail.
-2. **Stale binary**: use `just dev` after Rust edits, then restart.
-   Verify the installed build first with `just verify-build-fresh` (it exits 1
-   on a stale `.so`; see AGENTS.md "Verifying freshness with the build
-   receipt"). The `code.line.number` tag comparison in traces remains only as
-   a forensic fallback, not the primary check.
+2. **Stale binary**: use `just dev` after Rust edits, then restart (the test
+   entrypoints build first, so `just test-python` is always current; see
+   AGENTS.md "Building the Rust extension"). The `code.line.number` tag
+   comparison in traces remains only as a forensic fallback, not the primary
+   check.
 3. Batch-exporter lag: last spans of a killed process are lost. Don't trust a
    trace count drop right after a restart as a regression.
 

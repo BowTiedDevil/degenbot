@@ -15,7 +15,7 @@ Check for other agents working concurrently before you begin work and any time y
 Every build and test command goes through the justfile. **Never hand-type `cargo test`, `cargo build`, `maturin develop`, or `uv run pytest`.** The recipes are the only commands that carry the full contract — `--locked`, the Python libdir export for the libpython-linking harnesses, the canonical feature aliases, `RUSTFLAGS`, the nextest profile, the pytest marker filters — and they are what CI and the hooks run. A hand-typed equivalent silently drops part of that contract, so its result does not mean what a green recipe means.
 
 - **Run everything, not a slice.** `just test` is the default gate: the standalone smoke plus the whole cargo workspace suite under nextest plus the full pytest suite, in one command. Run the full suites rather than picking files: they surface cross-module breakage (signature changes rippling into dependent crates, PyO3 seam drift, registry/vendor fallout) immediately. The nextest track is fast (~20s warm wall) and the full pytest suite is fast too, so there is no cost argument for a scoped run before you are done.
-- **Build through the recipes.** `just dev` (or `just rebuild-if-stale` after Rust edits) is the sole editable-extension build path; `just build-rust-extension` builds the release-equivalent extension set. A bare `cargo build` or `maturin develop` can serve a stale `.so` or the wrong feature set — verify with `just verify-build-fresh`.
+- **Build through the recipes.** `just dev` is the sole editable-extension build path; `just build-rust-extension` builds the release-equivalent extension set. `just test-python` / `just test` build the extension first (incremental `maturin develop`), so a test run never exercises a stale `.so`. A bare `cargo build` or `maturin develop` can still serve the wrong feature set.
 - **Tight red-green loops only.** Inside a tight loop you may narrow with the recipe's argument forwarding — `just test-rust-nextest -p <crate>` or `just test-rust-nextest -E 'test(name)'` — and then re-run `just test` whole before declaring work done. Narrow Rust runs still go through the recipe, not `cargo test`.
 - **Before pushing**, check the gates with `just pre-push`, which mirrors the prek pre-push hook in order and fail-fast.
 
@@ -132,7 +132,7 @@ feature checks before the all-features diagnostic. The default gate therefore
 remains meaningful even when the diagnostic is enabled.
 
 Hotpath's full Tokio `RuntimeMetrics` getters are behind Tokio's unstable API.
-The repository `.cargo/config.toml` intentionally has no global rustflag;
+The repository ships no global rustflag (there is no committed `.cargo/config.toml`);
 `just check-rust-dev-features`, `just check-rust-all-features`, `just dev`, and
 `just test-hotpath` set `RUSTFLAGS=--cfg tokio_unstable` on those hotpath build
 paths. Direct hotpath Cargo/maturin builds must set the same environment
@@ -140,7 +140,7 @@ explicitly — use `just test-hotpath` instead of hand-typing it.
 
 ## Rust test scope
 
-For whole-workspace runs, use `just test-rust-nextest` — never a hand-typed `cargo test`. It runs the identical workspace artifacts under nextest's process-per-test scheduler (measured ~20s warm wall vs ~90s for `cargo test --workspace`) and records per-test durations as JUnit XML at `rust/target/nextest/ci/nextest-ci.junit.xml`; rank slowest tests with `just test-timing [top]`. The recipe pins `--locked`, exports the Python libdir the libpython-linking harnesses need, and sets `--no-fail-fast` because a tree-wide rebuild advances `.build-number` after degenbot-cli embeds it — the receipt gate fails once on the next compile, and one such failure must not abort the run. `just test-rust` (cargo) remains the canonical gate before declaring work done: nextest skips doc-tests, and CI runs cargo. Per-crate narrowing inside a tight red-green loop goes through the recipe too — `just test-rust-nextest -p <crate>` (or `-E 'test(name)'`) — but re-run the whole workspace suite through the recipe before declaring work done.
+For whole-workspace runs, use `just test-rust-nextest` — never a hand-typed `cargo test`. It runs the identical workspace artifacts under nextest's process-per-test scheduler (measured ~20s warm wall vs ~90s for `cargo test --workspace`) and records per-test durations as JUnit XML at `rust/target/nextest/ci/nextest-ci.junit.xml`; rank slowest tests with `just test-timing [top]`. The recipe pins `--locked`, exports the Python libdir the libpython-linking harnesses need, and sets `--no-fail-fast` so one failing test never aborts the whole run. `just test-rust` (cargo) remains the canonical gate before declaring work done: nextest skips doc-tests, and CI runs cargo. Per-crate narrowing inside a tight red-green loop goes through the recipe too — `just test-rust-nextest -p <crate>` (or `-E 'test(name)'`) — but re-run the whole workspace suite through the recipe before declaring work done.
 
 Why: resolver v3 unifies features for `--workspace`, so its artifacts are the one warm, canonical set in `rust/target`. A `-p <crate>` selection unifies features differently (core crates lose the `pyo3` feature the binding layer enables; dep features like tokio's shrink), so cargo stores a second rlib set under different metadata hashes — alternating between the two rebuilds shared dependencies on every shared edit (measured: `-p degenbot-simulation` recompiled 6 just-built crates in ~1m; a leaf crate pays nothing). The workspace run also executes every crate's suite, catching cross-crate fallout (signature changes rippling into dependents, e.g. examples/settlement_bot) that a scoped run never sees.
 
@@ -161,30 +161,38 @@ AGE=7 just gc-target            # destructive seven-day sweep
 ```
 
 `AGE=N` uses `find -mtime +N`, so `AGE=0` means older than one day rather than
-literally every file. `target/maturin` and the repository-root `.build-number`
-receipt are always outside the deletion boundary.
+literally every file. `target/maturin` is always outside the deletion boundary.
 
-## Rebuilding the Rust `.so` after edits
+## Building the Rust extension
+
 Maturin and Cargo can serve cached artifacts, so an apparently successful
-rebuild can still ship a **stale `.so`**. Verify with the build receipt rather
-than inferring freshness from command output:
+rebuild can still ship a **stale `.so`**. This repository does not run a runtime
+build-receipt/staleness gate; the build is instead a mandatory, incremental step
+of the test entrypoints:
 
-```
-just rebuild-if-stale
-```
+- `just dev` is the sole editable-extension build path (incremental
+  `maturin develop`); `just build-rust-extension` builds the release-equivalent
+  feature set.
+- `just test-python` (and therefore `just test`) depends on `just dev`, so the
+  Python suite always rebuilds the extension first and can never test a stale
+  `.so`.
+- After a Rust edit that a running bot must reflect, run `just dev` before it.
 
-The recipe checks the installed extension against current sources and runs
-`just dev` only when stale. Only trust a bot run (or a pytest suite) once the
-check exits 0. The receipt mechanics and failure modes: `/skill:rust-rebuild`.
-
-The console also self-reports at startup: a `console may be stale` warning on
-stderr means the loaded extension's build identity no longer matches the repo
-— stop, `just dev`, re-run the command. Never continue a drive past it: a
-stale console's observations are untrusted. A warning that survives a clean
-rebuild is a defect to file, not a signal to rebuild again.
+A bare `cargo build` or `maturin develop` can still serve the wrong feature set;
+prefer the recipes.
 
 ## Python Environment
 Use `uv`.
+
+Python linters run through `uvx` (ephemeral, latest), so their recipes carry no
+`--no-sync`: `just lint-python` / `lint-python-check` use `uvx ruff`, `dead-code`
+uses `uvx vulture`. The exception is `ty`: it resolves third-party imports and
+the `degenbot` stubs from the project environment, so it cannot run under `uvx`
+(that resolves against uvx's ephemeral site-packages and reports spurious
+errors). The recipe uses `uv run --no-sync --with ty ty check` — latest `ty`, but
+run under the project venv. `maturin` likewise needs the project venv
+(`maturin develop` installs into the *current* virtualenv), so it stays on
+`uv run --no-sync`.
 
 ## Node access
 

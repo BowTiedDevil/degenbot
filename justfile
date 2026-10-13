@@ -140,10 +140,8 @@ test-rust: test-standalone
 
 # Run the cargo workspace suite under cargo-nextest: per-process test
 # isolation, cross-binary parallelism, and per-test durations as JUnit XML at
-# rust/target/nextest/ci/nextest-ci.junit.xml. `--no-fail-fast` because a
-# tree-wide rebuild advances `.build-number` mid-build, after degenbot-cli
-# embedded the older receipt — the build-receipt gate then fails once until
-# the next compile re-embeds it (fail-fast would abort the whole run there).
+# rust/target/nextest/ci/nextest-ci.junit.xml. `--no-fail-fast` so one failing
+# test never aborts the whole run.
 # Requires cargo-nextest: cargo install --locked cargo-nextest
 # Extra args forward to `cargo nextest run` (e.g. `just test-rust-nextest -E 'test(foo)'`).
 # Via {{ args }} interpolation, not "$@": just never passes recipe arguments as
@@ -348,15 +346,6 @@ check-config-derived-statics:
 build-rust-extension:
     cargo build --locked -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 
-# Verify the installed degenbot._ffi extension was built from the current
-# Rust sources: compares the monotonic build number build.rs bakes into the
-# compiled library against the repo counter file (.build-number). The primary
-# stale-.so detector - run this instead of trusting a silent maturin/uv
-# "rebuild" (see AGENTS.md "Rebuilding the Rust .so after edits"). Exit 1 on a
-# stale library:
-verify-build-fresh:
-    uv run --no-sync python -m degenbot.build_info
-
 # ========== Build-Artifact Housekeeping ==========
 
 # Reclaim disk space under the Cargo target root. Preview first; both modes
@@ -368,8 +357,7 @@ verify-build-fresh:
 # Normal Cargo caches age-sweep deps/examples/build/.fingerprint, always drop
 # incremental state, and dedupe old large test binaries. Separate rebuildable
 # families are age-swept too: coverage reports/builds, LLVM coverage, Criterion,
-# wheels, and rustdoc output. `target/maturin` is always protected, as is the
-# repository-root `.build-number` receipt outside the target root. The family
+# wheels, and rustdoc output. `target/maturin` is always protected. The family
 # policy is this script.
 gc-target:
     scripts/gc-target.sh
@@ -391,26 +379,17 @@ bootstrap:
 dev:
     RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" uv run --no-sync maturin develop --features dev-features
 
-# Verify the installed extension against current sources; rebuild (just dev)
-# only when stale.
-# The canonical post-Rust-edit step. Receipt mechanics: /skill:rust-rebuild
-rebuild-if-stale:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    if just verify-build-fresh; then
-        echo "✓ installed extension is fresh"
-    else
-        echo "→ installed extension is stale; rebuilding via just dev"
-        just dev
-        just verify-build-fresh
-    fi
-
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the
 # default offline marker filter (`-m "not slow and not base and not online_rpc and not stub_drift"`)
 # this covers the PyO3 seam, golden on-chain-oracle replay, AND the relocated
 # seam suites. A focused parity-only run is `uv run --no-sync pytest -m onchain_oracle`.
-test-python:
+#
+# The `dev` prerequisite builds + installs the extension (incremental `maturin
+# develop`) so the suite always exercises the current Rust sources. This replaces
+# the retired runtime build-receipt/staleness gate: freshness is guaranteed by
+# building the thing we test, not by inspecting whether a build happened.
+test-python: dev
     uv run --no-sync pytest -x -q --no-header
 
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
@@ -440,7 +419,7 @@ test-python:
 # pre-push hook in prek.toml also arms it (`python-test` -> this recipe), so a
 # local push runs the same tripwire; the bare `just test-python` recipe stays
 # for callers that only want the suite's exit code.
-test-python-noise-gate kw="" *args:
+test-python-noise-gate kw="" *args: dev
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{ kw }}" ]; then
@@ -855,8 +834,11 @@ lint-markdown:
 
 # Lint Python files
 lint-python:
-    uv run --no-sync ruff check --fix src/ examples/
-    uv run --no-sync ty check --fix --no-progress src/
+    uvx ruff check --fix src/ examples/
+    # ty must run under the project environment (it resolves third-party imports
+    # and the degenbot stubs from the venv), so `uvx ty` cannot work; `--with ty`
+    # gives the latest ty without pinning it into the venv.
+    uv run --no-sync --with ty ty check --fix --no-progress src/
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -865,8 +847,8 @@ lint-comment-hygiene:
     scripts/hooks/comment-hygiene.sh
 
 lint-python-check:
-    uv run --no-sync ruff check src/ examples/
-    uv run --no-sync ty check --no-progress src/
+    uvx ruff check src/ examples/
+    uv run --no-sync --with ty ty check --no-progress src/
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see
@@ -877,7 +859,7 @@ lint-python-check:
 # Complements ruff: ruff's F401 rule exempts `if TYPE_CHECKING:` imports
 # and there is no ruff unreachable-code rule, so vulture catches both.
 dead-code:
-    uv run --no-sync vulture src/degenbot vulture_whitelist.py --min-confidence 80
+    uvx vulture src/degenbot vulture_whitelist.py --min-confidence 80
 
 # Deeper dead-code sweep — catches unused functions/methods/classes too
 # (the 80% tier only catches unused variables, imports, unreachable code).
@@ -886,11 +868,11 @@ dead-code:
 # for intentional dead-code audits; not a routine gate. Generate whitelist
 # candidates with: vulture src/degenbot --min-confidence 60 --make-whitelist
 dead-code-deep:
-    uv run --no-sync vulture src/degenbot --min-confidence 60 --make-whitelist
+    uvx vulture src/degenbot --min-confidence 60 --make-whitelist
 
 # Check Python formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check-python:
-    uv run --no-sync ruff format --check src/
+    uvx ruff format --check src/
 
 # Lint commit messages across a range (default: everything not yet pushed).
 # Examples: just lint-commits              # @{push}..HEAD
@@ -915,7 +897,7 @@ lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
 
 # Format all code
 format:
-    uv run --no-sync ruff format src/
+    uvx ruff format src/
     cargo fmt --manifest-path rust/Cargo.toml --all
 
 # ========== Dependency Updates ==========
@@ -1131,8 +1113,8 @@ gen-stubs check="":
     # and the tree would not be reproducible. The generated-stub rules the
     # check pass cannot fix (Rust doc-comment prose) are exempted under the
     # bare `"*.pyi"` per-file-ignores key, which matches the temp dir too.
-    uv run --no-sync ruff format --config pyproject.toml "$out"
-    uv run --no-sync ruff check --fix --config pyproject.toml "$out"
+    uvx ruff format --config pyproject.toml "$out"
+    uvx ruff check --fix --config pyproject.toml "$out"
     if [ "$check" = 1 ] && [ -z "${REGEN_STUBS:-}" ]; then
         if diff -ru src/degenbot/_ffi "$out"; then
             echo "✓ committed stubs match generator output"
@@ -1171,8 +1153,8 @@ lint-stubtest:
     set -euo pipefail
     # --ignore-disjoint-bases: PEP 800 disjoint-base flags on every #[pyclass]
     # are PyO3-synthetic runtime semantics, not stub drift. Staleness of the
-    # introspected .so is owned by the receipt gates (verify-build-fresh,
-    # AGENTS.md) — stubtest simply checks whatever is installed.
+    # introspected .so is owned by the build step (the test tracks depend on
+    # `dev`) — stubtest simply checks whatever is installed.
     uv run --no-sync stubtest --ignore-disjoint-bases \
         --allowlist tests/ffi/stubtest_allowlist.txt degenbot._ffi
 

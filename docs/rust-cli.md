@@ -46,7 +46,7 @@ Accepted before **or** after the subcommand (clap `global = true`).
 | `--chain-id <CHAIN_ID>` | Session chain id: `--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID` |
 | `--node <URI>` (repeatable) | Node RPC endpoint. The value classifies its own transport: `ws://`/`wss://` → `nodes.ws`, `http://`/`https://` → `nodes.http`, `ipc://` or a socket path → `nodes.ipc`. A value no transport can serve (e.g. `ftp://host`) is a usage error, exit 2. The explicit layer outranks the per-chain `DEGENBOT_RPC_*_CHAINID_<id>` env families and the `nodes.*` file tables. |
 | `-h, --help` | Print help and exit 0. |
-| `-V, --version` | Print the workspace version plus the shared build receipt and exit 0. |
+| `-V, --version` | Print the workspace version and exit 0. |
 
 These value options are the **driver-domain resolvers** (ADR-051 D8), owned
 by `degenbot-config` (`rust/crates/foundation/degenbot-config/src/resolvers.rs`): each is a

@@ -55,7 +55,6 @@ def test_dry_run_reports_complete_families_without_deleting(tmp_path: Path) -> N
     for path in selected:
         _write(path, f"artifact:{path.name}\n", old=True)
 
-    _write(repo / ".build-number", "42 deadbeef\n")
     _write(target / "maturin" / "libdegenbot_rs.so", "warm extension\n")
     _write(target / "debug" / "fresh", "keep me\n")
     before = _snapshot(repo)
@@ -103,5 +102,4 @@ def test_dry_run_reports_complete_families_without_deleting(tmp_path: Path) -> N
         assert int(families[family]["reclaimable-bytes"]) > 0
 
     protected = _fields(result.stdout, "protected")
-    assert any(path.endswith("/.build-number") for path in protected)
     assert any(path.endswith("/rust/target/maturin") for path in protected)

@@ -54,9 +54,6 @@ pub mod ambient_runtime;
 pub mod balancer_math;
 #[cfg(feature = "bot")]
 pub mod bot;
-/// Build identity: monotonic build counter baked by `build.rs` (stale-
-/// `.so` detector, AGENTS.md). Unconditional — see `build_info.rs`.
-pub mod build_info;
 /// `CancelHandle` — the cooperative cancel flag for the updater loops.
 /// Gated on `any(pool, aave-updater)` (whichever seam needs it).
 #[cfg(any(feature = "pool", feature = "aave-updater"))]
@@ -303,12 +300,6 @@ mod _ffi {
     // `PythonLogLayer::register_pyfunction`).
     #[pymodule_export]
     use crate::python_log_layer::{flush_telemetry, shutdown_log_drainer};
-
-    // Build identity (stale-.so detector, AGENTS.md): the monotonic build
-    // counter `build.rs` bakes into every compile of this cdylib.
-    // Unconditional — the freshness check must work in every configuration.
-    #[pymodule_export]
-    use crate::build_info::{build_fingerprint, build_number};
 
     // ADR-051 D3: the Python console entry (degenbot._cli:main) forwards argv
     // verbatim into the Rust console. Registered unconditionally - the console

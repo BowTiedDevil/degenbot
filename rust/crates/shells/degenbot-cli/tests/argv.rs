@@ -572,18 +572,13 @@ fn group_help_renders_the_leaf_commands() {
 }
 
 #[test]
-fn version_reports_the_workspace_version_and_the_receipt_fingerprint() {
+fn version_reports_the_workspace_version() {
     let rendered = match Cli::try_parse_from(["degenbot", "--version"]) {
         Ok(_) => String::new(),
         Err(error) => error.to_string(),
     };
     assert!(
         rendered.contains(env!("CARGO_PKG_VERSION")),
-        "version line: {rendered:?}"
-    );
-    assert!(rendered.contains("(build "), "version line: {rendered:?}");
-    assert!(
-        rendered.contains(env!("DEGENBOT_CLI_BUILD_FINGERPRINT")),
         "version line: {rendered:?}"
     );
 }

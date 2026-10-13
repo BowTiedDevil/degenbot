@@ -22,4 +22,4 @@ if [ "$#" -eq 0 ]; then
   echo "python-fmt-staged: empty file list; refusing a vacuous pass" >&2
   exit 1
 fi
-exec uv run --no-sync ruff format --check -- "$@"
+exec uvx ruff format --check -- "$@"

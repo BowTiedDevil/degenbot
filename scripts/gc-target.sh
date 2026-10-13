@@ -6,7 +6,6 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 target_dir="$(realpath -m -- "${GC_TARGET_DIR:-$repo_root/rust/target}")"
 maturin_dir="$target_dir/maturin"
-build_number="$(realpath -m -- "$target_dir/../../.build-number")"
 age="${AGE:-7}"
 
 if [[ ! "$age" =~ ^[0-9]+$ ]]; then
@@ -220,7 +219,6 @@ for family in "${family_names[@]}"; do
 done
 printf 'reclaimable-bytes=%s\n' "$reclaimable_bytes"
 printf 'target-size-before-bytes=%s\n' "$target_before"
-printf 'protected=%s\n' "$build_number"
 printf 'protected=%s\n' "$maturin_dir"
 
 deleted_paths=0

@@ -1625,9 +1625,9 @@ just test-rust
 # development feature set through the canonical extension path.
 just bootstrap
 
-# Rebuild only after Rust edits; verify the receipt before using the .so.
+# Rebuild after Rust edits (incremental `maturin develop`). `just test-python`
+# also builds the extension first, so a test run never uses a stale `.so`.
 just dev
-just verify-build-fresh
 
 # Direct Cargo hotpath test/build (same requirement):
 RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo test --locked \
@@ -1703,7 +1703,7 @@ just test
 
 # Individual tracks:
 just test-rust    # cargo workspace + just test-standalone
-just test-python  # uv run --no-sync pytest
+just test-python  # builds the extension (incremental), then `uv run --no-sync pytest`
 ```
 
 ## License

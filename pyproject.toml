@@ -138,10 +138,6 @@ allow-star-arg-any = true
     "print",     # print
     "module-import-not-at-top-of-file",
 ]
-"src/degenbot/build_info/__init__.py" = [
-    "import-outside-top-level",  # the _ffi import is lazy so the receipt helpers work (and the module imports) even where the extension is stale/broken
-    "print",     # python -m degenbot.build_info prints its summary to stdout/stderr by design
-]
 "src/degenbot/logging.py" = [
     "no-self-use",  # `logging.Formatter.format(self, record)` is the protocol-signature override; the body legitimately ignores `self`
 ]
@@ -234,10 +230,7 @@ dev = [
     "pytest-timeout",
     "pytest",
     "python-dotenv",
-    "ruff",
     "sybil",
-    "ty",
-    "vulture",
 ]
 
 [tool.ty.src]
@@ -263,17 +256,6 @@ paths = ["src/degenbot"]
 [tool.uv]
 exclude-newer = "14 days"
 link-mode = "copy"
-cache-keys = [
-    # Keep this boundary aligned with build_scan::scan_workspace: every Rust
-    # source/build input that can affect the cdylib must invalidate the wheel
-    # cache, while unrelated Python and generated files need not.
-    {file = "rust/**/Cargo.toml"},
-    {file = "rust/Cargo.lock"},
-    {file = "rust/crates/**/src/**/*.rs"},
-    {file = "rust/crates/**/build.rs"},
-    {file = "rust/crates/shells/degenbot-python/build_scan.rs"},
-    {file = ".cargo/config.toml"},
-]
 
 [tool.maturin]
 manifest-path = "rust/crates/shells/degenbot-python/Cargo.toml"

@@ -10,8 +10,6 @@ __pycache__
 # every compile of degenbot_rs (stale-.so detector, see AGENTS.md). Per-clone
 # local state: never commit it, and never put it under rust/target/ (a cargo
 # clean or gc-target sweep must not roll it back).
-.build-number
-.build-number.tmp
 
 # Distribution / packaging
 .Python
