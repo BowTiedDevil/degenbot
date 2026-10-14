@@ -116,3 +116,17 @@ move byte-identical and keep the same dominance tests.
 - Out of scope and unchanged: the envelope composition kernel and its caches
   (shared, family-blind), the Python companion's behavior, and the crate layout
   until the D2 second-consumer condition fires.
+
+## Amendments
+
+- **2026-10-14 — D3's identity check compares fn-item names, never code
+  addresses.** The gate originally asserted `std::ptr::fn_addr_eq` between each
+  row's registered pointers and `expected_entry`'s. A crate-private fn may be
+  instantiated once per codegen unit, so the SAME fn can compare unequal
+  across profile flags: the gate failed in CI under
+  `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0` while passing locally.
+  Registration now wraps each entry fn in `NamedFn`, whose identity is
+  `stringify!`'d from the same token that becomes the pointer, and the gate
+  compares those names — equal iff the same fn item is registered, in every
+  build layout. A seeded cross-wire (`to_math: named_fn!(weighted_to_math)` in
+  the V2 row) still fails the gate with the same message.

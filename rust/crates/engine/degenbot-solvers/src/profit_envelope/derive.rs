@@ -197,7 +197,7 @@ impl<'a> HopMath<'a> {
         fan_cache: Option<(&PrefixCache, u64)>,
         stats: &mut GateStats,
     ) -> Option<(Vec<Line>, U256)> {
-        (self.family_row().lines)(&self, cfg, fan_cache, stats)
+        (self.family_row().lines.f)(&self, cfg, fan_cache, stats)
     }
 
     /// The family label for this hop: the degenerate-path capture row's

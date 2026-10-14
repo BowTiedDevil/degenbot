@@ -140,7 +140,7 @@ pub fn solve_path_with_min_profit(
 /// projection lives in its own fn so the two stableswap arms can BORROW the
 /// leaf's state slices instead of cloning a `Vec` per hop per candidate path.
 fn hop_math_for(hop: &ResolvedHop) -> Option<crate::profit_envelope::HopMath<'_>> {
-    (family_row_for(hop.hop_type()).to_math)(hop)
+    (family_row_for(hop.hop_type()).to_math.f)(hop)
 }
 
 /// The V2 family's gate projection: the resolved constant-product state.
@@ -180,17 +180,49 @@ pub(crate) type LinesFn = fn(
 /// family it must present, and the family's entry surface. The row IS the
 /// registration (ADR-071 D3): adding a family adds a row, not a central
 /// `match` arm.
+/// A registered entry fn together with its identity: the fn ITEM's spelling,
+/// captured by [`named_fn!`] at the ONE site where the item is coerced into
+/// the row's erased fn-pointer field.
+///
+/// WHY the name and not the pointer's code address: a crate-private fn may be
+/// instantiated once per codegen unit, so `std::ptr::fn_addr_eq` on the SAME
+/// fn can compare unequal depending on profile flags (2026-10-14: the ADR-071
+/// D3 identity gate failed in CI under `CARGO_PROFILE_DEV_DEBUG=0
+/// CARGO_INCREMENTAL=0` while passing locally). The name derives from the same
+/// token as the pointer, so it matches iff the same fn item is registered, in
+/// every build layout.
+pub(crate) struct NamedFn<F> {
+    /// The registered entry point.
+    pub(crate) f: F,
+    /// The registration token's spelling (`stringify!` of the fn item ident).
+    /// `cfg(test)`: only the ADR-071 D3 identity gate reads it.
+    #[cfg(test)]
+    pub(crate) name: &'static str,
+}
+
+/// Register an entry fn as [`NamedFn`]: the pointer and its identity come from
+/// the SAME token, so a cross-wired registration cannot keep its old name.
+macro_rules! named_fn {
+    ($f:ident) => {
+        NamedFn {
+            f: $f,
+            #[cfg(test)]
+            name: stringify!($f),
+        }
+    };
+}
+
 pub(crate) struct FamilyRow {
     /// Families the path may contain for this row to match (`None` = any).
     allowed: Option<&'static [HopType]>,
     /// A family the path must contain for this row to match.
     required: Option<HopType>,
     /// The family's path-level solve entry.
-    pub(crate) solve: SolveFn,
+    pub(crate) solve: NamedFn<SolveFn>,
     /// The family's `ResolvedHop -> Option<HopMath>` projection.
-    pub(crate) to_math: ToMathFn,
+    pub(crate) to_math: NamedFn<ToMathFn>,
     /// The family's envelope line builder.
-    pub(crate) lines: LinesFn,
+    pub(crate) lines: NamedFn<LinesFn>,
     /// The family's label token (the `HopMath::family_label` family name).
     pub(crate) label: &'static str,
 }
@@ -210,18 +242,18 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
     FamilyRow {
         allowed: Some(&[HopType::V2]),
         required: None,
-        solve: solve_exact_v2_entry,
-        to_math: v2_to_math,
-        lines: v2_hop_lines,
+        solve: named_fn!(solve_exact_v2_entry),
+        to_math: named_fn!(v2_to_math),
+        lines: named_fn!(v2_hop_lines),
         label: "v2",
     },
     // Concentrated liquidity: every hop V3/V4 → the all-CL walk.
     FamilyRow {
         allowed: Some(&[HopType::V3, HopType::V4]),
         required: None,
-        solve: solve_walkable_path_int,
-        to_math: cl_to_math,
-        lines: cl_hop_lines,
+        solve: named_fn!(solve_walkable_path_int),
+        to_math: named_fn!(cl_to_math),
+        lines: named_fn!(cl_hop_lines),
         label: "cl",
     },
     // Solidly accept row: V2 ∪ Solidly with ≥1 Solidly hop. A lone Solidly
@@ -229,69 +261,69 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
     FamilyRow {
         allowed: Some(&[HopType::V2, HopType::SolidlyStable]),
         required: Some(HopType::SolidlyStable),
-        solve: solve_solidly_entry,
-        to_math: solidly_to_math,
-        lines: solidly_hop_lines,
+        solve: named_fn!(solve_solidly_entry),
+        to_math: named_fn!(solidly_to_math),
+        lines: named_fn!(solidly_hop_lines),
         label: "solidly",
     },
     // Solidly refusal row: Solidly beside a CL hop (or a second non-V2 family).
     FamilyRow {
         allowed: None,
         required: Some(HopType::SolidlyStable),
-        solve: refuse_path,
-        to_math: refuse_to_math,
-        lines: refuse_lines,
+        solve: named_fn!(refuse_path),
+        to_math: named_fn!(refuse_to_math),
+        lines: named_fn!(refuse_lines),
         label: "unsupported",
     },
     // Weighted accept row, then its refusal row beside a CL hop.
     FamilyRow {
         allowed: Some(&[HopType::V2, HopType::BalancerWeighted]),
         required: Some(HopType::BalancerWeighted),
-        solve: solve_balancer_weighted_entry,
-        to_math: weighted_to_math,
-        lines: weighted_hop_lines,
+        solve: named_fn!(solve_balancer_weighted_entry),
+        to_math: named_fn!(weighted_to_math),
+        lines: named_fn!(weighted_hop_lines),
         label: "weighted",
     },
     FamilyRow {
         allowed: None,
         required: Some(HopType::BalancerWeighted),
-        solve: refuse_path,
-        to_math: refuse_to_math,
-        lines: refuse_lines,
+        solve: named_fn!(refuse_path),
+        to_math: named_fn!(refuse_to_math),
+        lines: named_fn!(refuse_lines),
         label: "unsupported",
     },
     // Stable accept row, then its refusal row beside a CL hop / second family.
     FamilyRow {
         allowed: Some(&[HopType::V2, HopType::BalancerStable]),
         required: Some(HopType::BalancerStable),
-        solve: solve_balancer_stable_entry,
-        to_math: stable_to_math,
-        lines: balancer_stable_hop_lines,
+        solve: named_fn!(solve_balancer_stable_entry),
+        to_math: named_fn!(stable_to_math),
+        lines: named_fn!(balancer_stable_hop_lines),
         label: "balancer_stable",
     },
     FamilyRow {
         allowed: None,
         required: Some(HopType::BalancerStable),
-        solve: refuse_path,
-        to_math: refuse_to_math,
-        lines: refuse_lines,
+        solve: named_fn!(refuse_path),
+        to_math: named_fn!(refuse_to_math),
+        lines: named_fn!(refuse_lines),
         label: "unsupported",
     },
     // Curve accept row, then its refusal row beside a CL hop.
     FamilyRow {
         allowed: Some(&[HopType::V2, HopType::CurveStableswap]),
         required: Some(HopType::CurveStableswap),
-        solve: solve_curve_entry,
-        to_math: curve_to_math,
-        lines: curve_hop_lines,
+        solve: named_fn!(solve_curve_entry),
+        to_math: named_fn!(curve_to_math),
+        lines: named_fn!(curve_hop_lines),
         label: "curve_stableswap",
     },
     FamilyRow {
         allowed: None,
         required: Some(HopType::CurveStableswap),
-        solve: refuse_path,
-        to_math: refuse_to_math,
-        lines: refuse_lines,
+        solve: named_fn!(refuse_path),
+        to_math: named_fn!(refuse_to_math),
+        lines: named_fn!(refuse_lines),
         label: "unsupported",
     },
 ];
@@ -301,9 +333,9 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
 static WALKABLE_ROW: FamilyRow = FamilyRow {
     allowed: None,
     required: None,
-    solve: solve_walkable_path_int,
-    to_math: refuse_to_math,
-    lines: refuse_lines,
+    solve: named_fn!(solve_walkable_path_int),
+    to_math: named_fn!(refuse_to_math),
+    lines: named_fn!(refuse_lines),
     label: "walkable",
 };
 
@@ -314,9 +346,9 @@ static WALKABLE_ROW: FamilyRow = FamilyRow {
 pub(crate) static RESERVE_CAP_ROW: FamilyRow = FamilyRow {
     allowed: None,
     required: None,
-    solve: refuse_path,
-    to_math: refuse_to_math,
-    lines: reserve_cap_hop_lines,
+    solve: named_fn!(refuse_path),
+    to_math: named_fn!(refuse_to_math),
+    lines: named_fn!(reserve_cap_hop_lines),
     label: "reserve_cap",
 };
 
@@ -420,7 +452,7 @@ pub fn solve_path_inner(
 
     // The row lookup IS the dispatch (ADR-071 D3): the selected family's path
     // entry is a fn pointer on the row, so no central `match` arm names it.
-    let arm = (family_row(&families).solve)(resolved, gate, walk_env);
+    let arm = (family_row(&families).solve.f)(resolved, gate, walk_env);
 
     // V4 int128 guard: reject paths where any V4 hop's consumed input or
     // output exceeds int128_max. V4's toBalanceDelta() calls toInt128() on
@@ -764,33 +796,50 @@ mod gate_tests {
     /// table cannot carry: it has NO wildcard arm, so adding a `HopType`
     /// variant fails compilation of the test until the new variant's
     /// registration is named here.
-    fn expected_entry(ht: HopType) -> (&'static str, ToMathFn, LinesFn, SolveFn) {
+    fn expected_entry(
+        ht: HopType,
+    ) -> (
+        &'static str,
+        NamedFn<ToMathFn>,
+        NamedFn<LinesFn>,
+        NamedFn<SolveFn>,
+    ) {
         match ht {
-            HopType::V2 => ("v2", v2_to_math, v2_hop_lines, solve_exact_v2_entry),
-            HopType::V3 | HopType::V4 => ("cl", cl_to_math, cl_hop_lines, solve_walkable_path_int),
+            HopType::V2 => (
+                "v2",
+                named_fn!(v2_to_math),
+                named_fn!(v2_hop_lines),
+                named_fn!(solve_exact_v2_entry),
+            ),
+            HopType::V3 | HopType::V4 => (
+                "cl",
+                named_fn!(cl_to_math),
+                named_fn!(cl_hop_lines),
+                named_fn!(solve_walkable_path_int),
+            ),
             HopType::SolidlyStable => (
                 "solidly",
-                solidly_to_math,
-                solidly_hop_lines,
-                solve_solidly_entry,
+                named_fn!(solidly_to_math),
+                named_fn!(solidly_hop_lines),
+                named_fn!(solve_solidly_entry),
             ),
             HopType::BalancerWeighted => (
                 "weighted",
-                weighted_to_math,
-                weighted_hop_lines,
-                solve_balancer_weighted_entry,
+                named_fn!(weighted_to_math),
+                named_fn!(weighted_hop_lines),
+                named_fn!(solve_balancer_weighted_entry),
             ),
             HopType::BalancerStable => (
                 "balancer_stable",
-                stable_to_math,
-                balancer_stable_hop_lines,
-                solve_balancer_stable_entry,
+                named_fn!(stable_to_math),
+                named_fn!(balancer_stable_hop_lines),
+                named_fn!(solve_balancer_stable_entry),
             ),
             HopType::CurveStableswap => (
                 "curve_stableswap",
-                curve_to_math,
-                curve_hop_lines,
-                solve_curve_entry,
+                named_fn!(curve_to_math),
+                named_fn!(curve_hop_lines),
+                named_fn!(solve_curve_entry),
             ),
         }
     }
@@ -906,6 +955,15 @@ mod gate_tests {
         // the CL row pointing at `weighted_hop_lines`) fails here: the check
         // is POSITIVE identity, not merely "not the refusal stub".
         //
+        // Identity is the fn ITEM's spelling, captured by `named_fn!` at the
+        // registration site from the same token that becomes the pointer —
+        // never the fn's code ADDRESS. `ptr::fn_addr_eq` compares addresses of
+        // crate-private fns, which rustc may instantiate once per codegen
+        // unit; the same fn then compares unequal across profile flags
+        // (2026-10-14: this gate failed in CI under `CARGO_PROFILE_DEV_DEBUG=0
+        // CARGO_INCREMENTAL=0` while passing locally). Names match iff the
+        // same ident is registered, in every build layout.
+        //
         // The compiler's nag is restored by `expected_entry`, whose exhaustive
         // `match` fails compilation on a new `HopType` variant until its
         // registration is named; `assert_all_variants_listed` guards that
@@ -915,20 +973,17 @@ mod gate_tests {
             let (label, to_math, lines, solve) = expected_entry(hop_type);
             let row = family_row_for(hop_type);
             assert_eq!(row.label, label, "{hop_type:?} entry row label");
-            assert!(
-                std::ptr::fn_addr_eq(row.to_math, to_math),
-                "{hop_type:?} entry row must register the family's projection, not a \
-                 cross-wired or refusal pointer"
+            assert_eq!(
+                row.to_math.name, to_math.name,
+                "{hop_type:?} entry row must register the family's projection, not a cross-wired or refusal pointer"
             );
-            assert!(
-                std::ptr::fn_addr_eq(row.lines, lines),
-                "{hop_type:?} entry row must register the family's line builder, not a \
-                 cross-wired or refusal pointer"
+            assert_eq!(
+                row.lines.name, lines.name,
+                "{hop_type:?} entry row must register the family's line builder, not a cross-wired or refusal pointer"
             );
-            assert!(
-                std::ptr::fn_addr_eq(row.solve, solve),
-                "{hop_type:?} entry row must register the family's path solve, not a \
-                 cross-wired or refusal pointer"
+            assert_eq!(
+                row.solve.name, solve.name,
+                "{hop_type:?} entry row must register the family's path solve, not a cross-wired or refusal pointer"
             );
         }
     }
