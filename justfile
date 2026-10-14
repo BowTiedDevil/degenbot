@@ -166,7 +166,7 @@ pre-push:
     run_gate "Python build (maturin)"      just dev
     run_gate "Python tests"                just test-python-noise-gate
     run_gate "CLI no-Python gate"        just ci-no-python-cli-gate
-    run_gate "Python no-anvil tests"     just test-python-no-anvil
+    run_gate "Python no-anvil (spawn surface)" just test-python-no-anvil-spawn-surface
 
     echo
     echo "✓ all pre-push gates passed."
@@ -535,30 +535,39 @@ test-python-noise-gate kw="" *args: dev
 # Mirror of the CI python job's NON-floor legs: the suite with `anvil` NOT
 # reachable (CI installs Foundry only on the 3.12 floor leg). Guarded tests
 # must skip cleanly -- an unguarded spawn fails at `AnvilFork(...)`, exactly
-# the regression class this caught once (2026-10-14). The simulation FAILS
-# CLOSED: if anvil is still reachable after the PATH filter, this recipe
-# errors rather than silently running the ordinary suite.
+# the regression class this caught once (2026-10-14). The simulation + its
+# fail-closed reachability check live in scripts/no_anvil_run.sh. This full
+# suite is the manual mirror of those CI legs; the pre-push gate runs the
+# spawn-surface slice below instead (~1s vs ~9min: without the binary the
+# anvil-dependent tests skip instantly).
 test-python-no-anvil kw="" *args: dev
     #!/usr/bin/env bash
     set -euo pipefail
-    stripped=""
-    IFS=:
-    for dir in $PATH; do
-        case "$dir" in
-            *[Ff][Oo][Uu][Nn][Dd][Rr][Yy]*) continue ;;
-        esac
-        stripped="${stripped:+$stripped:}$dir"
-    done
-    unset IFS
-    if PATH="$stripped" command -v anvil >/dev/null 2>&1; then
-        echo "ERROR: cannot simulate a no-anvil run: anvil is still reachable after the foundry PATH filter" >&2
-        echo "Extend the filter in the test-python-no-anvil recipe to cover its install dir." >&2
+    if [ -n "{{ kw }}" ]; then
+        exec bash scripts/no_anvil_run.sh -k "{{ kw }}" {{ args }}
+    fi
+    exec bash scripts/no_anvil_run.sh {{ args }}
+
+
+# The no-anvil dimension's pre-push slice: the same simulation scoped to the
+# SPAWN SURFACE -- every test file mentioning AnvilFork / standalone_anvil /
+# anvil_factory, discovered from the tree at invocation time. Self-maintaining:
+# a new spawn site joins automatically, because spawning means mentioning one
+# of those tokens. An unguarded spawn anywhere in the surface fails at
+# construction; guarded tests skip. Discovery failing closed matters: an empty
+# selection would make this gate vacuous.
+test-python-no-anvil-spawn-surface kw="" *args: dev
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mapfile -t files < <(rg -l "AnvilFork|standalone_anvil|anvil_factory" tests/ --glob '**/test_*.py')
+    if [ "${#files[@]}" -eq 0 ]; then
+        echo "ERROR: spawn-surface discovery found nothing -- the pattern or the tree moved" >&2
         exit 1
     fi
     if [ -n "{{ kw }}" ]; then
-        exec env PATH="$stripped" bash scripts/pytest_noise_gate.sh run -k "{{ kw }}" {{ args }}
+        exec bash scripts/no_anvil_run.sh -k "{{ kw }}" {{ args }} "${files[@]}"
     fi
-    exec env PATH="$stripped" bash scripts/pytest_noise_gate.sh run {{ args }}
+    exec bash scripts/no_anvil_run.sh {{ args }} "${files[@]}"
 
 
 test-flake-probe:

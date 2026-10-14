@@ -224,5 +224,5 @@ hooks = [
   # the bare suite for callers that only want the exit code.
   { id = "python-test",  name = "Python tests",            language = "system", entry = "just test-python-noise-gate", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "cli-no-python", name = "CLI no-Python gate", language = "system", entry = "just ci-no-python-cli-gate", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-  { id = "python-no-anvil", name = "Python no-anvil tests", language = "system", entry = "just test-python-no-anvil", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "python-no-anvil", name = "Python no-anvil (spawn surface)", language = "system", entry = "just test-python-no-anvil-spawn-surface", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 ]
