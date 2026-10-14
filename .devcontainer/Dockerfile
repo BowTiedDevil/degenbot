@@ -97,6 +97,14 @@ ENV HOME=/home/${USERNAME}
 # invoked by the agent) inherit image ENV instead, so bake it here.
 ENV PATH="/home/${USERNAME}/go/bin:/home/${USERNAME}/.foundry/bin:/home/${USERNAME}/.local/bin:/home/${USERNAME}/.cargo/bin:${PATH}"
 
+# pydantic-core must be a LOCAL source build on this base: the PyPI manylinux
+# wheel links a libstdc++ built with the pre-C++11 ABI (`_GLIBCXX_USE_CXX11_ABI`
+# mismatch) and Python runs segfault. This drives `uv sync` (the bootstrap
+# path) to build it from source instead of installing the prebuilt wheel; for
+# `uv pip install`, pass `--no-binary pydantic-core` explicitly. Image-scoped:
+# CI's runners are manylinux-compatible and keep the wheel.
+ENV UV_NO_BINARY_PACKAGE=pydantic-core
+
 # Configure npm's global prefix to a user-writable dir so `npm i -g`
 # (agent-browser, below) needs no sudo, and the bins land in ~/.local/bin
 # (already on PATH via ENV above).
