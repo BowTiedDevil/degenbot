@@ -7,8 +7,11 @@ profiling and observability features are selected only through the canonical
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
+
+import degenbot
 
 REPO_ROOT = Path(__file__).parents[1]
 BINDING_MANIFEST = REPO_ROOT / "rust/crates/shells/degenbot-python/Cargo.toml"
@@ -46,3 +49,24 @@ def test_development_features_have_one_canonical_alias() -> None:
         "rust/Cargo.toml --features dev-features"
     )
     assert cargo_check in justfile
+
+
+def test_installed_version_matches_the_cargo_workspace_single_source():
+    """The installed dist metadata must equal the Cargo workspace version (ADR-009).
+
+    maturin derives the wheel version from the binding crate's inherited
+    `[workspace.package]` version and normalizes it to PEP 440
+    (`0.6.0-alpha.15` -> `0.6.0a15`). Drift here means an artifact built from a
+    different tree than the one checked out.
+    """
+    cargo_toml = (Path(__file__).resolve().parents[1] / "rust" / "Cargo.toml").read_text()
+    workspace_pkg = cargo_toml[cargo_toml.index("[workspace.package]") :]
+    match = re.search(r'^version = "([^"]+)', workspace_pkg, re.MULTILINE)
+    assert match, "rust/Cargo.toml has no [workspace.package] version"
+    cargo_version = match.group(1)
+    normalized = re.sub(
+        r"-(alpha|beta|rc)\.",
+        lambda m: {"alpha": "a", "beta": "b", "rc": "c"}[m.group(1)],
+        cargo_version,
+    )
+    assert degenbot.__version__ == normalized
