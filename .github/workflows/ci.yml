@@ -136,8 +136,11 @@ jobs:
           workspaces: rust
           shared-key: ci-rust-msrv
 
+      - name: Install just
+        uses: extractions/setup-just@v4
+
       - name: Compile workspace at MSRV
-        run: cargo +1.97.0 check --manifest-path rust/Cargo.toml --workspace --all-targets --locked
+        run: just check-msrv
 
   rust:
     # Consolidation of the former rust-check / rust-test /
@@ -220,34 +223,11 @@ jobs:
       # outcome-corpus identity) run as a NAMED step so a fleet-tier
       # regression is readable in the check log, not buried in the suite.
       - name: Run fleet budget-algebra + binding parity gates (FF-T5)
-        run: |
-          cd rust
-          cargo test --locked -p degenbot-workers -- plan budget
-          cargo test --locked -p degenbot-bot -- the_outcome_corpus lane_death
+        run: just test-fleet-parity
 
-      # Former standalone "Solver Golden Replay (F2 gate)" job; the golden
-      # regression now fails the `rust` job.
       - name: Run two-sided golden replay gate (offline, blocks merge)
-        run: |
-          cd rust
-          # Fail (nonzero exit) if any path regresses: profit under-shoot above
-          # PROFIT_EPS, profit over-shoot past the few-wei tolerance in either
-          # direction, or nondeterminism across reps. No RPC/DB needed.
-          # Loop-18: the exact-wei goldens are re-anchored to blocks
-          # 25879435..25879446 by cl_capture_gen (see sidecars *.jsonl.block);
-          # both the single-block offline anchor and the 156-row heavy corpus
-          # gate here (2s combined).
-          cargo run --locked -q -p degenbot-solvers --example cl_solve_replay -- \
-            crates/engine/degenbot-solvers/tests/fixtures/cl_capture_offline.jsonl
-          cargo run --locked -q -p degenbot-solvers --example cl_solve_replay -- \
-            crates/engine/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl
+        run: just test-golden-replay
 
-        # NOTE: make THIS `rust` job the required check in branch protection
-        # (it replaces the former "Solver Golden Replay (F2 gate)" check — see
-        # docs/handoffs/ci-consolidation-required-checks.md) so a golden
-        # regression blocks merges.
-
-      # Former rust-build job: near-free after the clippy/test build.
       - name: Build extension
         run: just build-rust-extension
 
@@ -258,7 +238,7 @@ jobs:
       # pre-publish step plus the real `cargo publish` (always verified —
       # release policy forbids --no-verify on publishes).
       - name: Dry-run publish of all publishable members
-        run: cargo publish --locked --workspace --dry-run --no-verify --allow-dirty --manifest-path rust/Cargo.toml
+        run: just publish-dry-run --no-verify
 
   cli-no-python:
     # ADR-051 D10 / ergo EA6DY7: the console must build and run with NO Python
@@ -383,7 +363,7 @@ jobs:
     # Consolidation of the former python-lint / python-test matrix /
     # python-test-anvil jobs, which were byte-identical environments (uv +
     # Rust toolchain + maturin develop) differing only in their final
-    # commands. The 3.12 floor leg absorbs the lint steps and the anvil tier; the other versions run a limited set of testsW;
+    # commands. The 3.12 floor leg absorbs the lint steps and the anvil tier; the other versions run a limited set of tests;
     # 3.14 is the ceiling leg. 3.13 was dropped as a mid-endpoint.
     name: Python ${{ matrix.python-version }} (fleet ${{ matrix.fleet-profile }})
     needs: changes

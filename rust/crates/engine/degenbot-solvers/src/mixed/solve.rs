@@ -796,6 +796,55 @@ mod gate_tests {
     /// table cannot carry: it has NO wildcard arm, so adding a `HopType`
     /// variant fails compilation of the test until the new variant's
     /// registration is named here.
+    /// The entry-row identity comparison (ADR-071 D3 amendment), shared by the
+    /// gate above and its teeth check below so the two cannot diverge: `None`
+    /// when the row registers exactly the family's own entry fns, otherwise
+    /// the first offending field as (field, registered, expected).
+    fn entry_identity_mismatch(
+        row: &FamilyRow,
+        expected: &(
+            &'static str,
+            NamedFn<ToMathFn>,
+            NamedFn<LinesFn>,
+            NamedFn<SolveFn>,
+        ),
+    ) -> Option<(&'static str, &'static str, &'static str)> {
+        if row.to_math.name != expected.1.name {
+            return Some(("to_math", row.to_math.name, expected.1.name));
+        }
+        if row.lines.name != expected.2.name {
+            return Some(("lines", row.lines.name, expected.2.name));
+        }
+        if row.solve.name != expected.3.name {
+            return Some(("solve", row.solve.name, expected.3.name));
+        }
+        None
+    }
+
+    /// Teeth for [`entry_identity_mismatch`]: the seeded cross-wire
+    /// `to_math: named_fn!(weighted_to_math)` in the V2 row must fail the
+    /// identity comparison, naming the offending field. Built from the same
+    /// `named_fn!`/`expected_entry` pair the gate uses, so a registration that
+    /// stops being distinguishable cannot keep a green gate.
+    #[test]
+    fn family_dispatch_identity_gate_rejects_a_cross_wired_registration() {
+        let cross_wired = FamilyRow {
+            allowed: Some(&[HopType::V2]),
+            required: None,
+            solve: named_fn!(solve_exact_v2_entry),
+            to_math: named_fn!(weighted_to_math), // the seeded cross-wire
+            lines: named_fn!(v2_hop_lines),
+            label: "v2",
+        };
+        let expected = expected_entry(HopType::V2);
+        assert_eq!(cross_wired.label, expected.0);
+        assert_eq!(
+            entry_identity_mismatch(&cross_wired, &expected).map(|(field, ..)| field),
+            Some("to_math"),
+            "the seeded cross-wire must fail the entry-row identity gate"
+        );
+    }
+
     fn expected_entry(
         ht: HopType,
     ) -> (
@@ -970,20 +1019,13 @@ mod gate_tests {
         // `HopType::ALL` carries every variant.
         assert_all_variants_listed();
         for &hop_type in HopType::ALL {
-            let (label, to_math, lines, solve) = expected_entry(hop_type);
+            let expected = expected_entry(hop_type);
             let row = family_row_for(hop_type);
-            assert_eq!(row.label, label, "{hop_type:?} entry row label");
+            assert_eq!(row.label, expected.0, "{hop_type:?} entry row label");
             assert_eq!(
-                row.to_math.name, to_math.name,
-                "{hop_type:?} entry row must register the family's projection, not a cross-wired or refusal pointer"
-            );
-            assert_eq!(
-                row.lines.name, lines.name,
-                "{hop_type:?} entry row must register the family's line builder, not a cross-wired or refusal pointer"
-            );
-            assert_eq!(
-                row.solve.name, solve.name,
-                "{hop_type:?} entry row must register the family's path solve, not a cross-wired or refusal pointer"
+                entry_identity_mismatch(row, &expected),
+                None,
+                "{hop_type:?} entry row must register the family's own entry fns, not a cross-wired or refusal pointer (mismatch is (field, registered, expected))"
             );
         }
     }

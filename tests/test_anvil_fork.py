@@ -12,7 +12,7 @@ from .conftest import (
     TEST_BASE_FULL_NODE_HTTP_URI,
     TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
     TEST_ETHEREUM_FULL_NODE_HTTP_URI,
-    _require_anvil,
+    AnvilFactory,
 )
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -29,10 +29,9 @@ def test_web3_endpoints(standalone_anvil: AnvilFork):
     assert AlloyProvider(fork.ws_url).block_number == current_block
 
 
-def test_set_bytecode():
-    _require_anvil()
+def test_set_bytecode(anvil_factory: AnvilFactory):
     fake_bytecode = to_bytes("0x42069")
-    fork = AnvilFork(
+    fork = anvil_factory(
         launch=ForkLaunchConfig(
             chain_id=seed_catalog.CHAIN_ID,
             bytecode_overrides=[
@@ -41,10 +40,9 @@ def test_set_bytecode():
         ),
     )
     assert fork.provider.get_code(VITALIK_ADDRESS) == fake_bytecode
-    fork.close()
 
 
-def test_set_storage(standalone_anvil: AnvilFork):
+def test_set_storage(standalone_anvil: AnvilFork, anvil_factory: AnvilFactory):
     storage_position = 0
     new_storage_value = to_bytes("0x42069")
     new_storage_value_padded = new_storage_value.hex().zfill(64)
@@ -61,7 +59,7 @@ def test_set_storage(standalone_anvil: AnvilFork):
         position=storage_position,
     ) == to_bytes(new_storage_value_padded)
 
-    fork = AnvilFork(
+    fork = anvil_factory(
         launch=ForkLaunchConfig(
             chain_id=seed_catalog.CHAIN_ID,
             storage_overrides=[(WETH_ADDRESS, storage_position, new_storage_value)],
@@ -71,7 +69,6 @@ def test_set_storage(standalone_anvil: AnvilFork):
         address=WETH_ADDRESS,
         position=storage_position,
     ) == to_bytes(new_storage_value_padded)
-    fork.close()
 
 
 def test_rpc_methods(standalone_anvil: AnvilFork):
@@ -102,8 +99,8 @@ def test_rpc_methods(standalone_anvil: AnvilFork):
 
 
 @pytest.mark.online_rpc
-def test_mine_and_reset():
-    fork = AnvilFork(
+def test_mine_and_reset(anvil_factory: AnvilFactory):
+    fork = anvil_factory(
         fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
@@ -117,8 +114,8 @@ def test_mine_and_reset():
 
 
 @pytest.mark.online_rpc
-def test_fork_from_transaction_hash():
-    fork = AnvilFork(
+def test_fork_from_transaction_hash(anvil_factory: AnvilFactory):
+    fork = anvil_factory(
         fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         launch=ForkLaunchConfig(
             fork_transaction_hash=(
@@ -137,21 +134,19 @@ def test_set_next_block_base_fee(standalone_anvil: AnvilFork):
     assert standalone_anvil.provider.get_block("latest")["base_fee_per_gas"] == base_fee_override
 
 
-def test_set_next_block_base_fee_in_constructor():
-    _require_anvil()
+def test_set_next_block_base_fee_in_constructor(anvil_factory: AnvilFactory):
     base_fee_override = 69 * 10**9
 
-    fork = AnvilFork(
+    fork = anvil_factory(
         launch=ForkLaunchConfig(chain_id=seed_catalog.CHAIN_ID, base_fee=base_fee_override),
     )
     fork.mine()
     assert fork.provider.get_block("latest")["base_fee_per_gas"] == base_fee_override
-    fork.close()
 
 
 @pytest.mark.online_rpc
-def test_reset_and_set_next_block_base_fee():
-    fork = AnvilFork(
+def test_reset_and_set_next_block_base_fee(anvil_factory: AnvilFactory):
+    fork = anvil_factory(
         fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
@@ -166,8 +161,8 @@ def test_reset_and_set_next_block_base_fee():
 
 
 @pytest.mark.base
-def test_reset_to_new_endpoint():
-    fork = AnvilFork(
+def test_reset_to_new_endpoint(anvil_factory: AnvilFactory):
+    fork = anvil_factory(
         fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
@@ -178,8 +173,8 @@ def test_reset_to_new_endpoint():
 
 
 @pytest.mark.online_rpc
-def test_reset_to_new_transaction_hash():
-    fork = AnvilFork(
+def test_reset_to_new_transaction_hash(anvil_factory: AnvilFactory):
+    fork = anvil_factory(
         fork_url=TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
     )
     fork.reset(
@@ -189,19 +184,18 @@ def test_reset_to_new_transaction_hash():
 
 
 @pytest.mark.online_rpc
-def test_ipc_kwargs() -> None:
+def test_ipc_kwargs(anvil_factory: AnvilFactory) -> None:
     # IPCProvider type check retired — AnvilFork now uses Rust DynProvider
     # timeout check retired — Rust provider manages its own timeouts
-    AnvilFork(
+    anvil_factory(
         fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(localhost="127.0.0.1", storage_caching=False),
     )
 
 
-def test_balance_overrides_in_constructor():
-    _require_anvil()
+def test_balance_overrides_in_constructor(anvil_factory: AnvilFactory):
     fake_balance = 100 * 10**18
-    fork = AnvilFork(
+    fork = anvil_factory(
         launch=ForkLaunchConfig(
             chain_id=seed_catalog.CHAIN_ID,
             balance_overrides=[
@@ -210,13 +204,11 @@ def test_balance_overrides_in_constructor():
         ),
     )
     assert fork.provider.get_balance(VITALIK_ADDRESS) == fake_balance
-    fork.close()
 
 
-def test_nonce_overrides_in_constructor():
-    _require_anvil()
+def test_nonce_overrides_in_constructor(anvil_factory: AnvilFactory):
     fake_nonce = 69
-    fork = AnvilFork(
+    fork = anvil_factory(
         launch=ForkLaunchConfig(
             chain_id=seed_catalog.CHAIN_ID,
             nonce_overrides=[
@@ -225,32 +217,27 @@ def test_nonce_overrides_in_constructor():
         ),
     )
     assert fork.provider.get_transaction_count(VITALIK_ADDRESS) == fake_nonce
-    fork.close()
 
 
-def test_bytecode_overrides_in_constructor():
-    _require_anvil()
+def test_bytecode_overrides_in_constructor(anvil_factory: AnvilFactory):
     fake_address = get_checksum_address("0x6969696969696969696969696969696969696969")
     fake_bytecode = to_bytes("0x0420")
 
-    fork = AnvilFork(
+    fork = anvil_factory(
         launch=ForkLaunchConfig(
             chain_id=seed_catalog.CHAIN_ID,
             bytecode_overrides=[(fake_address, fake_bytecode)],
         ),
     )
     assert fork.provider.get_code(fake_address) == fake_bytecode
-    fork.close()
 
 
-def test_coinbase_override_in_constructor():
-    _require_anvil()
+def test_coinbase_override_in_constructor(anvil_factory: AnvilFactory):
     fake_coinbase = get_checksum_address("0x6969696969696969696969696969696969696969")
 
-    fork = AnvilFork(
+    fork = anvil_factory(
         launch=ForkLaunchConfig(chain_id=seed_catalog.CHAIN_ID, coinbase=fake_coinbase),
     )
     fork.mine()
     block = fork.provider.get_block("latest")
     assert block["miner"] == fake_coinbase
-    fork.close()

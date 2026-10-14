@@ -305,11 +305,58 @@ TEST_ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc("TEST_ETHEREUM_FULL_NODE_HTTP_URI")
 TEST_ETHEREUM_FULL_NODE_WS_URI: str = _rpc("TEST_ETHEREUM_FULL_NODE_WS_URI")
 
 
+class AnvilFactory:
+    """Build :class:`degenbot.fork.AnvilFork` instances and own their teardown.
+
+    See the ``anvil_factory`` fixture. Every fork built through the call is
+    closed at fixture teardown, even when the test body raised -- a manual
+    ``fork.close()`` placed after the assertions never ran on failure and
+    leaked the anvil subprocess.
+    """
+
+    def __init__(self) -> None:
+        self._forks: list[AnvilFork] = []
+
+    def __call__(
+        self,
+        fork_url: str | None = None,
+        *,
+        launch: ForkLaunchConfig | None = None,
+    ) -> AnvilFork:
+        fork = AnvilFork(fork_url=fork_url, launch=launch)
+        self._forks.append(fork)
+        return fork
+
+    def close(self) -> None:
+        """Close every fork this factory built (idempotent)."""
+        for fork in self._forks:
+            fork.close()
+        self._forks.clear()
+
+
+@pytest.fixture
+def anvil_factory() -> Generator[AnvilFactory, None, None]:
+    """Factory for tests that spawn their OWN anvil launch configuration.
+
+    Constructor-override and fork-URL tests cannot use the ``standalone_anvil``
+    fixture; this gives them the same contract: presence is guarded ONCE here
+    (skip cleanly in the no-anvil job instead of failing at spawn), and every
+    fork the test built is closed at teardown even when the body raised.
+
+    Usage: ``fork = anvil_factory(fork_url=..., launch=ForkLaunchConfig(...))``
+    with the same keyword arguments as :class:`AnvilFork`.
+    """
+    _require_anvil()
+    factory = AnvilFactory()
+    yield factory
+    factory.close()
+
+
 def _require_anvil() -> None:
     """Skip a test that spawns the `anvil` binary when it is not installed.
 
-    Guards the ``standalone_anvil`` fixture and the tests that spawn their own
-    launch configuration (``tests/test_anvil_fork.py``), so anvil-dependent
+    Guards the ``standalone_anvil`` and ``anvil_factory`` fixtures (the
+    latter covers every test that spawns its own launch configuration), so
     tests skip cleanly in the no-anvil CI job instead of failing at spawn.
     """
     if shutil.which("anvil") is None:

@@ -29,7 +29,7 @@ anvil process. Former callers using `fork.w3.eth.X` are migrated to
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import validate_call
 
@@ -348,6 +348,24 @@ class AnvilFork:
         # closes the IPC transport). Any subsequent call surfaces a clear
         # `AnvilError` via the `ipc_path` getter / dev-method calls.
         self._fork = None
+
+    def __enter__(self) -> Self:
+        """Enter the context manager.
+
+        Teardown parity with the rust core's ``Drop``: the block exit closes
+        the fork even when the body raised, so a failed assertion cannot leak
+        the anvil subprocess. The sibling handles (Bot, SyncProvider, the
+        snapshot readers) all carry the same pair.
+
+        Returns:
+            This fork, so callers can bind it: ``with AnvilFork(...) as fork:``.
+
+        """
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """Close on block exit, failure or not."""
+        self.close()
 
     def __del__(self) -> None:
         """Drop the rust core handle on instance finalization (best-effort).

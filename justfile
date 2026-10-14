@@ -77,7 +77,7 @@ tauri-appimage:
 
 # Print the active Rust toolchain and the repository policy. The root
 # rust-toolchain.toml pins development and release builds to Rust 1.98.1;
-# the workspace MSRV is Rust 1.97 and is checked separately in CI.
+# the workspace MSRV is Rust 1.97, checked by `just check-msrv` (CI's msrv job).
 toolchain:
     @echo "Pinned Rust policy: 1.98.1 (workspace MSRV: 1.97)"
     @rustc --version
@@ -148,6 +148,7 @@ pre-push:
 
     run_gate "Object DB GC"                scripts/hooks/object-gc.sh
     run_gate "Pre-push gate drift"         scripts/hooks/pre-push-gate-drift.sh
+    run_gate "CI job parity"           scripts/hooks/ci-parity.sh
     run_gate "commitlint (push range)"     scripts/hooks/commitlint-push.sh
     run_gate "Rust fmt check"              just fmt-check
     run_gate "Python fmt check"            just fmt-check-python
@@ -160,8 +161,12 @@ pre-push:
     run_gate "Rust config-derived-static gate" just check-config-derived-statics
     run_gate "Rust build"                  just build-rust-extension
     run_gate "Rust tests"                  just test-rust
+    run_gate "Fleet parity (FF-T5)"      just test-fleet-parity
+    run_gate "Solver golden replay (F2)" just test-golden-replay
     run_gate "Python build (maturin)"      just dev
     run_gate "Python tests"                just test-python-noise-gate
+    run_gate "CLI no-Python gate"        just ci-no-python-cli-gate
+    run_gate "Python no-anvil tests"     just test-python-no-anvil
 
     echo
     echo "✓ all pre-push gates passed."
@@ -170,13 +175,51 @@ pre-push:
 # job and the pre-push hook call this subunit directly; humans use `just test`.
 test-rust: test-standalone
     #!/usr/bin/env bash
-    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    set -euo pipefail
+
+    # The venv python's LIBDIR for LD_LIBRARY_PATH (dep-crate test binaries
+    # link libpython). BEST-EFFORT BY CONTRACT, unlike the rest of this recipe
+    # (which fails closed): this is the CI rust job's entrypoint and that job
+    # has no `uv`; an omitted probe just lets rust-lld autoprobe a LIBDIR.
+    # Tolerated ONLY here -- `test-rust-nextest` and the coverage recipe are
+    # uv-required by design and stay strict.
+    python_libdir=""
+    if command -v uv >/dev/null 2>&1; then
+        python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))' || true)"
+    else
+        echo "note: uv not found; skipping the python-libdir probe (best-effort)" >&2
+    fi
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     # vendored deployments.json (degenbot-uniswap) must match the canonical
     # Python-tree registry file byte-for-byte: a crate can only embed
     # in-tarball files, so the embed uses the in-crate mirror
     cmp -s src/degenbot/registry/deployments.json rust/crates/foundation/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
     cargo test --locked --manifest-path rust/Cargo.toml --workspace
+
+# Reproduce CI's test-binary build exactly (ci.yml sets these two globally):
+# a crate-private fn's LAYOUT can depend on profile flags -- the ADR-071 D3
+# entry-row identity gate failed in CI under exactly these while passing
+# locally (2026-10-14). Any "passes here, fails in CI" suspicion gets
+# reproduced with this recipe before anything else is theorized.
+test-rust-ci:
+    CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 just test-rust
+
+
+# FF-T5 (NT7HJC): the fleet budget-algebra (pure plan/budget tiering) and the
+# binding-parity gates (pinned-vs-serial outcome-corpus identity). NAMED so a
+# fleet-tier regression is readable in any check log, CI's or the hook's.
+test-fleet-parity:
+    cd rust && cargo test --locked -p degenbot-workers -- plan budget
+    cd rust && cargo test --locked -p degenbot-bot -- the_outcome_corpus lane_death
+
+
+# Two-sided golden replay gate (offline, seconds): profit under/over-shoot and
+# nondeterminism across reps, on the single-block anchor + the 156-row heavy
+# corpus. Blocks merge in CI; named here so the pre-push gate runs it too.
+test-golden-replay:
+    cd rust && cargo run --locked -q -p degenbot-solvers --example cl_solve_replay -- crates/engine/degenbot-solvers/tests/fixtures/cl_capture_offline.jsonl
+    cd rust && cargo run --locked -q -p degenbot-solvers --example cl_solve_replay -- crates/engine/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl
+
 
 # Run the cargo workspace suite under cargo-nextest: per-process test
 # isolation, cross-binary parallelism, and per-test durations as JUnit XML at
@@ -240,11 +283,11 @@ check-aave-captures:
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every publishable workspace member in dependency order.
 # ~20-40 min cold. CI's PR gate (check-publish) runs the clean-tree form.
-publish-dry-run:
+publish-dry-run *args:
     #!/usr/bin/env bash
     set -euo pipefail
     cd rust
-    cargo publish --locked --workspace --dry-run --allow-dirty
+    cargo publish --locked --workspace --dry-run --allow-dirty {{ args }}
 
 # Authoritative CI/pre-push Clippy gate. It deliberately checks default
 # features without `--all-features`, so test-only and mutually exclusive build
@@ -311,6 +354,22 @@ test-hotpath *args:
 # outer #[allow] form; this closes the historical inner-attribute loophole it
 # misses. One reasoned outer #[allow(..., reason = "...")] remains permitted for
 # the legitimate cross-target conditional suppressions #[expect] cannot express.
+# The MSRV compile check CI runs (the `msrv` job): the whole workspace at the
+# `rust-version` floor, all targets. Local name for the job's raw command.
+check-msrv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Fail CLOSED with a clear reason when `cargo +toolchain` cannot work
+    # (cargo not proxied by rustup). Never fall back to the active toolchain:
+    # compiling at 1.98.1 and calling it the MSRV would report a false green.
+    if ! cargo +1.97.0 --version >/dev/null 2>&1; then
+        echo "ERROR: the MSRV check needs rustup with the 1.97.0 toolchain (rustup toolchain install 1.97.0);" >&2
+        echo "this cargo does not accept +toolchain directives. CI's msrv job runs this check." >&2
+        exit 1
+    fi
+    cargo +1.97.0 check --manifest-path rust/Cargo.toml --workspace --all-targets --locked
+
+
 check-no-inner-allow:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
@@ -473,6 +532,35 @@ test-python-noise-gate kw="" *args: dev
 # the recipe. Each invocation is `timeout`-bounded as a process-level backstop
 # beside pytest-timeout's in-process guard, so the probe completes or fails —
 # never hangs.
+# Mirror of the CI python job's NON-floor legs: the suite with `anvil` NOT
+# reachable (CI installs Foundry only on the 3.12 floor leg). Guarded tests
+# must skip cleanly -- an unguarded spawn fails at `AnvilFork(...)`, exactly
+# the regression class this caught once (2026-10-14). The simulation FAILS
+# CLOSED: if anvil is still reachable after the PATH filter, this recipe
+# errors rather than silently running the ordinary suite.
+test-python-no-anvil kw="" *args: dev
+    #!/usr/bin/env bash
+    set -euo pipefail
+    stripped=""
+    IFS=:
+    for dir in $PATH; do
+        case "$dir" in
+            *[Ff][Oo][Uu][Nn][Dd][Rr][Yy]*) continue ;;
+        esac
+        stripped="${stripped:+$stripped:}$dir"
+    done
+    unset IFS
+    if PATH="$stripped" command -v anvil >/dev/null 2>&1; then
+        echo "ERROR: cannot simulate a no-anvil run: anvil is still reachable after the foundry PATH filter" >&2
+        echo "Extend the filter in the test-python-no-anvil recipe to cover its install dir." >&2
+        exit 1
+    fi
+    if [ -n "{{ kw }}" ]; then
+        exec env PATH="$stripped" bash scripts/pytest_noise_gate.sh run -k "{{ kw }}" {{ args }}
+    fi
+    exec env PATH="$stripped" bash scripts/pytest_noise_gate.sh run {{ args }}
+
+
 test-flake-probe:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -175,6 +175,7 @@ hooks = [
   { id = "object-gc", name = "Object DB GC", language = "system", entry = "scripts/hooks/object-gc.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   { id = "pre-push-gate-drift", name = "Pre-push gate drift", language = "system", entry = "scripts/hooks/pre-push-gate-drift.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "ci-parity", name = "CI job parity", language = "system", entry = "scripts/hooks/ci-parity.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
@@ -210,6 +211,8 @@ hooks = [
   # Rust track (mirrors ci.yml: rust-build, rust-test).
   { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "rust-test",  name = "Rust tests", language = "system", entry = "just test-rust",             stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "fleet-parity", name = "Fleet parity (FF-T5)", language = "system", entry = "just test-fleet-parity", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "golden-replay", name = "Solver golden replay (F2)", language = "system", entry = "just test-golden-replay", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # Python track: build (maturin develop) then test.
   { id = "python-build", name = "Python build (maturin)", language = "system", entry = "just dev",         stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
@@ -220,4 +223,6 @@ hooks = [
   # stdout with exit 0. CI arms the same recipe; `just test-python` stays as
   # the bare suite for callers that only want the exit code.
   { id = "python-test",  name = "Python tests",            language = "system", entry = "just test-python-noise-gate", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "cli-no-python", name = "CLI no-Python gate", language = "system", entry = "just ci-no-python-cli-gate", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "python-no-anvil", name = "Python no-anvil tests", language = "system", entry = "just test-python-no-anvil", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 ]

@@ -115,6 +115,14 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
+"src/degenbot/fork/__init__.py" = [
+    # AnvilFork is the deliberate legacy facade (ADR-005 Python shell): it
+    # carries the pre-0.7 constructor knobs + dev-method names on purpose,
+    # and the with-block pair (`__enter__`/`__exit__`, teardown parity with
+    # the rust core's Drop) puts it one method past the default cap.
+    # Shrinking the surface is an API decision, not a lint decision.
+    "too-many-public-methods",
+]
 "tests/pathfinding/fixtures/generate_mainnet_snapshot.py" = [
     # The snapshot generator copies rows verbatim out of the live operator DB
     # with raw sql (ATTACH + INSERT SELECT): ORM re-inserts would
