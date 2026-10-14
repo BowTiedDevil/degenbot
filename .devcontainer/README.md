@@ -16,9 +16,9 @@ no Fedora package: `foundry`. (uv, unlike on Ubuntu, IS packaged by Fedora.)
 `fedora:latest` over the prior `mcr.microsoft.com/devcontainers/base:ubuntu` for
 three reasons:
 
-1. **More tools packaged, newer versions** — Fedora 44 ships rust 1.96 (vs
-   Ubuntu's 1.93), uv directly (Ubuntu has no package), and nodejs24 Active LTS
-   as a clean metapackage.
+1. **More tools packaged, newer versions** — Fedora 44 ships uv directly
+   (Ubuntu has no package) and nodejs24 Active LTS as a clean metapackage.
+   Rust is rustup-managed (see the tool table), not dnf.
 2. **Host parity** — the development host runs Fedora, so the container mirrors
    the host's toolchain versions and behavior.
 3. **No features needed** — on the prior Ubuntu base we relied on the `node`
@@ -88,7 +88,7 @@ time):
 | Tool        | dnf package(s)                            | Notes                                            |
 |-------------|-------------------------------------------|--------------------------------------------------|
 | Python 3.14 | `python3`, `python3-devel`, `python3-pip` | `python3-devel` ships `libpython3.14.so` in `/usr/lib64` — required by PyO3. |
-| Rust 1.96   | `rust`, `cargo`, `rustfmt`, `clippy`      | No rustup — Fedora's packaged rustc matches stable. Tradeoff: no toolchain switching / `rustup target add`. |
+| Rust 1.98.1 (+ 1.97 MSRV) | rustup (`sh.rustup.rs`) | Pinned by `rust-toolchain.toml` (1.98.1, minimal + clippy/rustfmt/rust-src/llvm-tools-preview); the MSRV toolchain behind `just check-msrv` tracks `rust/Cargo.toml`'s `rust-version`. Same upstream toolchain binary CI installs. |
 | Node 24 LTS | `nodejs24`                                | Active LTS (EOL 2028-04). Provides node + npm in one package; npm installs the global `agent-browser` in the Dockerfile. |
 | `just`      | `just`                                    |                                                  |
 | `direnv`    | `direnv`                                  | Hooked into `/etc/bashrc` at build time. The repo `.envrc` is a deliberate no-op inside the container (guarded on `/run/.containerenv`; `containerEnv` owns those vars) — it exists for the host side of the bind mount. |
@@ -173,15 +173,18 @@ tmux show -gv terminal-overrides         # expect *:Tc present
 
 ## Notes / caveats
 
-- **No devcontainer features**: python, rust, node, just, uv, and tmux are all in
-  the Dockerfile via dnf. If you want to re-add the `python` feature, do NOT
+- **No devcontainer features**: python, node, just, uv, and tmux are all in
+  the Dockerfile via dnf (Rust via rustup; Foundry/pi via their installers). If you want to re-add the `python` feature, do NOT
   do so without also ensuring a shared `libpython.so` is on the link path —
   the feature installs a static-only build that breaks PyO3. dnf's
   `python3-devel` is the safe shared-lib variant.
-- **Rust is dnf-managed, not rustup**: you get `rustc`/`cargo`/`rustfmt`/`clippy`
-  but no `rustup`, so `rustup target add ...` / toolchain pinning don't work. If
-  you need cross-compilation targets or pinned toolchains, re-introduce rustup
-  (drop the dnf rust packages) in the Dockerfile.
+- **Rust is rustup-managed, not dnf** (changed 2026-10-14): the dnf
+  `rust`/`cargo` stack ignored `rust-toolchain.toml`, so the channel pin was
+  inert and the toolchain moved underneath it (this README documented 1.96
+  while `rustc --version` had drifted to Fedora's 1.98.1 rebuild) — and a
+  distro rebuild is not the binary CI installs, one more local/CI codegen
+  divergence. rustup enforces the pin, provides the MSRV toolchain behind
+  `just check-msrv`, and matches CI's toolchain.
 - **mold linker is the devcontainer default** via the user-level
   `~/.cargo/config.toml` baked into the image (NOT a committed
   `rust/.cargo/config.toml`). This is deliberate: a repo-local config would

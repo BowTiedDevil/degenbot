@@ -5,7 +5,6 @@ FROM fedora:latest
 RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
         uv python3 python3-devel python3-pip \
-        rust rust-src cargo rustfmt clippy \
         gh \
         golang \
         nodejs24 \
@@ -90,12 +89,13 @@ RUN mkdir -p /home/dev/.config/direnv && \
 USER ${USERNAME}
 ENV HOME=/home/${USERNAME}
 
-# Put foundry (~/.foundry/bin) and pi (~/.local/bin) on PATH for EVERY
+# Put foundry (~/.foundry/bin), pi (~/.local/bin), and rustup's proxies +
+# cargo subcommands (~/.cargo/bin) on PATH for EVERY
 # process spawned in the image — both curl-installed below — not
 # just interactive shells. devcontainer.json's remoteEnv only reaches
 # VSCode-launched shells; non-interactive subshells (e.g. `just`/`cargo`
 # invoked by the agent) inherit image ENV instead, so bake it here.
-ENV PATH="/home/${USERNAME}/go/bin:/home/${USERNAME}/.foundry/bin:/home/${USERNAME}/.local/bin:${PATH}"
+ENV PATH="/home/${USERNAME}/go/bin:/home/${USERNAME}/.foundry/bin:/home/${USERNAME}/.local/bin:/home/${USERNAME}/.cargo/bin:${PATH}"
 
 # Configure npm's global prefix to a user-writable dir so `npm i -g`
 # (agent-browser, below) needs no sudo, and the bins land in ~/.local/bin
@@ -153,6 +153,24 @@ RUN go install github.com/sandover/ergo/v6/cmd/ergo@latest
 # the global uv tool (not the project venv) keeps the hooks prek generates
 # from pinning a throwaway .venv path; they fall back to `prek` on PATH.
 RUN uv tool install prek
+
+# rustup is the toolchain manager (replacing the dnf `rust`/`cargo` stack).
+# WHY: distro cargo ignores rust-toolchain.toml, so the channel pin was inert
+# here and the toolchain moved underneath it with a routine image rebuild (
+# this README documented 1.96 while `rustc --version` had drifted to Fedora's
+# 1.98.1 rebuild) -- and a distro rebuild is a different binary than CI's
+# upstream toolchain, one more local/CI codegen divergence (the 2026-10-14
+# ADR-071 D3 identity-gate failure was exactly a codegen-layout sensitivity).
+# rustup enforces the pin, provides the MSRV toolchain behind `just check-msrv`
+# and gives local builds the same upstream toolchain binary CI installs.
+# Versions track rust-toolchain.toml (channel) and rust/Cargo.toml's
+# `rust-version` (MSRV) -- bump them together. Components cover the lint/format
+# gates, rust-src (rust-analyzer), and llvm-tools-preview (cargo-llvm-cov finds
+# it by itself under a rustup toolchain; the coverage recipe says as much).
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.98.1 \
+    && rustup component add --toolchain 1.98.1 clippy rustfmt rust-src llvm-tools-preview \
+    && rustup toolchain install 1.97.0 --profile minimal
 
 # `cargo-edit` provides `cargo upgrade` (rewrites Cargo.toml version requirements
 # to latest published, across semver majors — `cargo update` alone can't cross
