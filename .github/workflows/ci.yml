@@ -117,7 +117,7 @@ jobs:
           node-version: 22
 
       - name: Lint Markdown
-        run: npx markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.venv/**" "!logs/**"
+        run: npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**"
 
   msrv:
     name: MSRV (Rust 1.97)

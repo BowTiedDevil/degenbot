@@ -958,7 +958,7 @@ coverage *args:
 
 # Lint Markdown files
 lint-markdown:
-    npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**"
+    npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**"
 
 # Lint Python files
 lint-python:
