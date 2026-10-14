@@ -478,6 +478,13 @@ bootstrap:
 dev:
     scripts/build_extension.sh develop
 
+
+# `uv.lock` must match `pyproject.toml` -- the uv mirror of the rust side's
+# `cargo metadata --locked` check (the `test-rust` job's first gate). Runs in
+# the CI `python` job; run it locally after editing dependencies.
+check-uv-lock:
+    uv lock --check
+
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the
 # default offline marker filter (`-m "not slow and not base and not online_rpc and not stub_drift"`)

@@ -92,7 +92,7 @@ cli-no-python|local|just ci-no-python-cli-gate (in just pre-push)
 
 tier3-oracle|local|just verify-tier3-artifacts, just verify-tier3-executor-artifact
 
-python|local|just fmt-check-python, just lint-python, just test-python-noise-gate
+python|local|just check-uv-lock, just fmt-check-python, just lint-python, just test-python-noise-gate
 python|local|just test-python-no-anvil-spawn-surface (in just pre-push)
 python|local|full-suite no-anvil mirror of the CI non-floor legs (manual): just test-python-no-anvil
 

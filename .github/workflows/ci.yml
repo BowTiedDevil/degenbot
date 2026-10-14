@@ -425,7 +425,7 @@ jobs:
       # Former python-lint job (same pinned 3.12 uv environment as this leg).
       - name: Check Python formatting
         if: matrix.python-version == '3.12'
-        run: just fmt-check-python
+        run: just check-uv-lock && just fmt-check-python
 
       - name: Run Python linters
         if: matrix.python-version == '3.12'
