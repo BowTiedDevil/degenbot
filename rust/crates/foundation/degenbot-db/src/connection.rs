@@ -142,6 +142,16 @@ impl DegenbotDb {
     ///
     /// The explicit-init open: `auto_heal` is the caller's declared intent —
     /// the plain `open*` constructors never heal (opening never mutates).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a connection/PRAGMA/DDL failure, or
+    /// [`DbError::UnrecognizedSchema`] if the file is neither a legacy-marker
+    /// DB nor a fresh standalone file. With `auto_heal = true`, the heal and its
+    /// forward version-lock inside [`ensure_schema_at_open`] additionally
+    /// surface [`DbError::Io`], [`DbError::HealVerificationFailed`],
+    /// [`DbError::SchemaAhead`], [`DbError::MissingMigrationStep`], and
+    /// [`DbError::MigrationStepFailed`].
     pub fn open_with(
         path: &Path,
         auto_heal: bool,
