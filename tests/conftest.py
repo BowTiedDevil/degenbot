@@ -1,8 +1,8 @@
 """Fixtures, suite-wide gates, and the declared environment for the Python suite.
 
-Sections, top to bottom: the suite environment (the ``DEGENBOT_*`` pins every
-construction observes, sealed by the config-holder re-govern, with the per-test
-``governed_holder`` seam beside it); collection gates and hooks; the RPC
+Sections, top to bottom: the suite environment (the captured environment every
+construction observes, installed through the config-holder seam, with the
+per-test ``governed_holder`` companion beside it); collection gates and hooks; the RPC
 vocabulary with the anvil/fork/Bot fixtures; the golden record/replay
 factories. The README doctest harness lives in the root ``conftest.py``;
 offline detection lives in ``tests/offline.py``.
@@ -16,50 +16,43 @@ import tempfile
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
-import dotenv
 import pytest
 from _pytest.config import Config, Parser
 from _pytest.nodes import Item
 from hypothesis import settings
 
-# THE SUITE ENVIRONMENT, DECLARED IN ONE PLACE. The Rust FFI module init
-# installs the process-wide typed BotConfig at import (env >
-# $XDG_CONFIG_HOME/$HOME/.config/degenbot/config.toml), and the runner's
-# activation gate refuses a boot whose fleet has no active facet. A developer's
-# ambient operator config therefore leaks into the suite (one machine fails CI,
-# another silently misses the refusal). Because the root conftest (imported
-# before this file, for the README harness) imports degenbot, the holder boots
-# from whatever the process env held before this file ran — so every pin is
-# applied to `os.environ` BEFORE the degenbot imports below, and the holder
-# re-govern after them seals the declared environment as the process snapshot.
-# Fail-closed: if a declared file does not load, collection errors here rather
-# than tests resolving against a bare-env snapshot.
+# THE SUITE ENVIRONMENT, DECLARED AS DATA. The FFI module init boots the
+# process-wide typed BotConfig from whatever the AMBIENT environment holds at
+# the first `degenbot` import — which the root conftest (imported before this
+# file, for the README harness) triggers. Instead of pinning `DEGENBOT_*` names
+# on `os.environ` (an ambient-shape race this suite has already lost twice),
+# the suite declares its environment HERE and installs it through the
+# config-holder test seam: the captured environment governs every construction
+# regardless of what the developer's shell exports. Fail-closed: if the
+# declared file does not load, collection errors here rather than tests
+# resolving against a bare-env snapshot.
 #
-# Pin ONE suite-wide ambient config; `setdefault` honors an explicit operator
-# override. `tests/ambient_config.toml` activates the mevblocker backrun facet
-# only — every other schema key keeps its default.
-os.environ.setdefault(
-    "DEGENBOT_CONFIG",
-    str(Path(__file__).resolve().parent / "ambient_config.toml"),
-)
-
+# `tests/ambient_config.toml` activates the mevblocker backrun facet only —
+# every other schema key keeps its default.
+#
 # Hermetic state: the declared default database is the developer's real
 # ``~/.local/state/degenbot/db/degenbot.db`` (hundreds of MB). Booting an
 # engine reads it, so tests that only need an offline engine pay disk/CPU for
 # user state, and the connector-index load runs as a background thread that
 # can emit records after pytest closes its capture stream (a swallowed
-# ``ValueError: I/O operation on closed file``). Pin an absent, per-session
-# path so the connector lane takes its discovery-shut branch; an operator who
-# wants the real DB for an on-demand run sets ``DEGENBOT_DB_PATH`` explicitly
-# (``setdefault`` honors it). The directory is removed at exit so repeated
-# runs leave no state behind.
+# ``ValueError: I/O operation on closed file``). The declared environment
+# points at an absent, per-session path so the connector lane takes its
+# discovery-shut branch; an operator who wants the real DB for an on-demand run
+# extends ``SUITE_ENV`` explicitly. The directory is removed at exit so
+# repeated runs leave no state behind.
 _pytest_state_dir_ctx = tempfile.TemporaryDirectory(prefix="degenbot-pytest-state-")
 atexit.register(_pytest_state_dir_ctx.cleanup)
 _pytest_state_dir = _pytest_state_dir_ctx.name
-os.environ.setdefault(
-    "DEGENBOT_DB_PATH",
-    str(Path(_pytest_state_dir) / "degenbot.db"),
-)
+
+SUITE_ENV: dict[str, str] = {
+    "DEGENBOT_CONFIG": str(Path(__file__).resolve().parent / "ambient_config.toml"),
+    "DEGENBOT_DB_PATH": str(Path(_pytest_state_dir) / "degenbot.db"),
+}
 
 from degenbot._ffi import reinstall_config_holder_for_tests, shutdown_log_drainer
 from degenbot.bot import Bot
@@ -71,60 +64,54 @@ from tests.helpers.bot_factory import make_bot_with_provider
 from tests.offline import is_offline
 from tests.standalone_anvil import seed as seed_catalog
 
-# Seal the declared environment: the imports above booted the holder from
-# whatever the process env held at that first degenbot import (before this
-# file's pins), so re-govern once here through the sanctioned test seam — from
-# now on, every construction observes the pins above.
-reinstall_config_holder_for_tests()
+# Install the declared environment through the sanctioned test seam: the
+# imports above booted the holder from the ambient process env (the first
+# `degenbot` import lives in the root conftest), so replace that snapshot with
+# the suite's declaration. From here on, every construction observes
+# `SUITE_ENV`.
+reinstall_config_holder_for_tests(SUITE_ENV)
 
 # ADR-052 D1: a legacy `alembic_version`-marked DB heals itself at open. The
 # committed `rust/crates/**/fixtures/*.db` parity fixtures are read-only
 # references shared by many tests, so pin the killswitch for the Python suite:
 # the Rust `auto_heal_matrix` tests own the heal-at-open behavior. (A test that
-# needs the heal can still override the var explicitly.) Unlike the pins above,
-# the DB layer reads this name at open time — not the loader at boot — so its
-# position relative to the re-govern is free; it lives here to keep the
-# declared environment in one place.
+# needs the heal can still override the var explicitly.) The DB layer reads
+# this name from the PROCESS env at open time — not through the config loader —
+# so this is the suite's last `os.environ` write; it retires when heal-at-open
+# becomes an explicit open parameter.
 os.environ.setdefault("DEGENBOT_DB_AUTO_HEAL", "0")
 
 
-# The per-test counterpart of the re-govern above: import-time governance is
+# The per-test counterpart of the install above: import-time governance is
 # process-wide and one-shot; this fixture re-governs around individual tests.
 @pytest.fixture
 def governed_holder() -> Iterator[Callable[[dict[str, str]], None]]:
-    """Per-test ``DEGENBOT_*`` override that re-governs the process config holder.
+    """Per-test captured-environment override that re-governs the config holder.
 
-    ``govern({name: value})`` sets the env names, re-loads env+file, and
-    reinstalls the process-wide typed-config holder (and the shell's published
-    verdict). Teardown restores the process environment EXACTLY and re-governs
-    the holder back to the ambient snapshot, so tests that do not opt in keep
-    the ``tests/ambient_config.toml`` behavior unchanged.
+    ``govern({name: value})`` merges the overrides over ``SUITE_ENV`` and
+    installs that captured environment into the process-wide typed-config
+    holder (and the shell's published verdict). The process environment is
+    never written; teardown re-installs the suite's declared snapshot, so a
+    test that does not opt in keeps the ``tests/ambient_config.toml`` behavior
+    unchanged.
 
     This is the config-holder test seam: production first-wins is untouched; the seam
-    exists so per-test ``DEGENBOT_RPC_*`` overrides govern the NEXT
+    exists so a per-test ``DEGENBOT_RPC_*`` override governs the NEXT
     construction instead of being silently pinned to the process's first
     resolution.
 
     Yields:
-        ``govern(env)``, which applies the env override and re-governs the
-        holder.
+        ``govern(overrides)``, which installs the merged captured environment.
 
     """
-    saved = dict(os.environ)
 
-    def govern(env: dict[str, str]) -> None:
-        for name, value in env.items():
-            os.environ[name] = value
-        reinstall_config_holder_for_tests()
+    def govern(overrides: dict[str, str]) -> None:
+        reinstall_config_holder_for_tests({**SUITE_ENV, **overrides})
 
     try:
         yield govern
     finally:
-        for name in list(os.environ):
-            if name not in saved:
-                del os.environ[name]
-        os.environ.update(saved)
-        reinstall_config_holder_for_tests()
+        reinstall_config_holder_for_tests(SUITE_ENV)
 
 
 # Hypothesis policy: no per-example wall-clock deadline. Fuzz tests here assert
@@ -146,7 +133,7 @@ def pytest_addoption(parser: Parser):
     parser.addoption(
         "--golden-mode",
         action="store",
-        default=os.environ.get("DEGENBOT_GOLDEN_MODE", "replay"),
+        default="replay",
         choices=("record", "replay"),
         help=(
             "Golden-oracle mode for on-chain parity tests (tests/golden). "
@@ -269,10 +256,6 @@ def _set_degenbot_logging():
     _QUEUED_HANDLER.setLevel(logging.DEBUG)
 
 
-env_file = dotenv.find_dotenv("tests.env")
-env_values = dotenv.dotenv_values(env_file)
-
-
 # The harness's endpoint vocabulary: one row per (env-var name, default URI),
 # resolved through ``_rpc`` and bound below. Archive and full tiers deliberately
 # share a default wherever one public endpoint serves both today (Arbitrum and
@@ -298,13 +281,12 @@ _DEFAULT_RPC_URIS: dict[str, str] = {
 
 
 def _rpc(key: str) -> str:
-    """Resolve an RPC URI with precedence: envvar > tests.env > table default.
+    """Look up a harness endpoint in the declared table.
 
-    ``dotenv.dotenv_values`` reads only the file, so a bare ``env_values.get`` would
-    ignore ``os.environ`` entirely — leaving no way for a user to override an RPC
-    endpoint without editing the (gitignored) ``tests.env``. Checking ``os.environ``
-    first makes ad-hoc overrides (``TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI='…' pytest …``)
-    work across machines and CI without touching any file.
+    No env or ``tests.env`` layer overrides the table: the defaults below are
+    what runs, so a broken endpoint is a visible default fix (or a real runtime
+    knob), not a silent machine-local override. A name absent from the table
+    raises at collection, so the vocabulary cannot drift from its defaults.
 
     The names this resolves are the harness's own vocabulary, deliberately kept
     out of the operator namespace: the suite needs two node tiers per chain
@@ -317,7 +299,7 @@ def _rpc(key: str) -> str:
     ``${TEST_ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
     ``_FULL_`` names outlive the suite that defines them.
     """
-    return os.environ.get(key, env_values.get(key, _DEFAULT_RPC_URIS[key]))
+    return _DEFAULT_RPC_URIS[key]
 
 
 TEST_ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc("TEST_ARBITRUM_FULL_NODE_HTTP_URI")

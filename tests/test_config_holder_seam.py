@@ -2,18 +2,19 @@
 
 Production first-wins is unchanged: the FFI module-init boot installs ONE typed
 config into the process-wide holder, and every later construction observes that
-snapshot. The suite needs the opposite for A/B tests — write an env override,
-re-govern the snapshot, and let the NEXT resolution observe it — so the
-sanctioned raw-FFI seam ``degenbot._ffi.reinstall_config_holder_for_tests()``
-re-loads env+file and reinstalls both the holder and the shell's published
-verdict.
+snapshot. The suite needs the opposite for A/B tests — declare a captured
+environment, install it, and let the NEXT resolution observe it — so the
+sanctioned raw-FFI seam ``degenbot._ffi.reinstall_config_holder_for_tests``
+loads that captured environment and reinstalls both the holder and the shell's
+published verdict.
 
 These tests are RED-CAPABLE: remove the seam and the fixture cannot re-govern
 the holder, so the first construction still resolves the prior (ambient) value
 and the env-A assertions trip.
 
-The fixture lives in ``tests/conftest.py`` (``governed_holder``); it restores
-the process snapshot at teardown, so a test that does not opt in is unaffected.
+The fixture lives in ``tests/conftest.py`` (``governed_holder``); it re-installs
+the suite's declared snapshot at teardown, so a test that does not opt in is
+unaffected.
 """
 
 from __future__ import annotations
@@ -75,9 +76,9 @@ def test_snapshot_without_opt_in_is_not_a_seam_value() -> None:
     """A test that never opts in keeps the ambient cascade, unchanged.
 
     Guards criterion 4: the seam must not alter the default suite's behavior.
-    This environment may export a ``DEGENBOT_RPC_WS_CHAINID_1`` of its own, so
-    the assertion is that the holder and the verdict AGREE and that neither is
-    one of the seam's values — not that a particular layer won.
+    The suite's declared environment carries no seam value, so the assertion is
+    that the holder and the verdict AGREE and that neither is one of the seam's
+    values.
     """
     held = _ffi.resolved_node_uri_for_tests(1, "request")
 
@@ -86,6 +87,6 @@ def test_snapshot_without_opt_in_is_not_a_seam_value() -> None:
 
 
 def test_the_environment_restores_after_a_governed_test() -> None:
-    """Sanity: the fixture's teardown leaves the process env as it found it."""
+    """Sanity: the fixture never writes the process environment."""
     assert os.environ.get(_WS_NODE_ENV) != _ENV_A
     assert os.environ.get(_WS_NODE_ENV) != _ENV_B

@@ -478,7 +478,7 @@ test-flake-probe:
 # the shared file (last-writer-wins, losing keys). Replay is read-only and safe
 # under xdist, but record accumulates writes.
 record-golden *args:
-    DEGENBOT_GOLDEN_MODE=record {{ py_run }} pytest -m onchain_oracle -q --no-header -n0 {{ args }}
+    {{ py_run }} pytest --golden-mode record -m onchain_oracle -q --no-header -n0 {{ args }}
 
 # Live chain-data drift gate (explicit only — never in test/pre-push/CI lanes):
 # re-records every py_oracle corpus twice and requires byte-identity with disk,
@@ -524,7 +524,7 @@ verify-deployments *args:
 # unreachable chains contribute no rows. Tier 4 is asserted live while
 # recording, so a capture is only committed when every recorded row verified.
 record-deployment-golden *args:
-    DEGENBOT_GOLDEN_MODE=record DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ py_run }} pytest -m online_rpc -q --no-header -p no:randomly -n0 {{ args }} tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=4 {{ py_run }} pytest --golden-mode record -m online_rpc -q --no-header -p no:randomly -n0 {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # ========== Tier-3 On-Chain Oracles ==========
 #

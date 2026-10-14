@@ -737,7 +737,7 @@ pub fn resolved_config(py: ::pyo3::Python<'_>) -> PyResult<::pyo3::Py<ResolvedCo
 /// A pure function of its inputs: it reads no `OnceLock`, publishes nothing,
 /// and a refusal is the loader's own typed [`::degenbot_config::ConfigError`]
 /// rather than a process exit.
-fn hypothetical_layers(
+pub(crate) fn hypothetical_layers(
     env: ::std::collections::BTreeMap<String, String>,
     file: Option<&str>,
 ) -> Result<::degenbot_config::LoadedConfig, ::degenbot_config::ConfigError> {

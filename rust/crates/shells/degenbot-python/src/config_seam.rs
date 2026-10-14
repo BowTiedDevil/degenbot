@@ -3,10 +3,12 @@
 //! Production first-wins is unchanged: the module-init boot installs the
 //! env+file-loaded `BotConfig` into `degenbot_config::holder` exactly once, and
 //! every later construction observes that snapshot. This module is the
-//! sanctioned TEST SEAM that lets the Python suite re-govern that snapshot per
-//! test, so a `DEGENBOT_RPC_*` override written between constructions is
-//! honored by the next one instead of being silently pinned to the process's
-//! first resolution.
+//! sanctioned TEST SEAM that lets the Python suite re-govern that snapshot, so
+//! a DECLARED captured environment governs the next construction instead of
+//! the process's first resolution. The suite never writes `DEGENBOT_*` into
+//! the process environment: it declares its environment as data and installs
+//! it through this seam (the installing sibling of the ADR-013 hypothetical
+//! door).
 //!
 //! Convention: like [`crate::config::resolve_hypothetical`] (ADR-013), this is
 //! a raw `_ffi` surface — importing the extension installs nothing, the
@@ -24,21 +26,28 @@
 
 use crate::prelude::*;
 
-/// TEST-ONLY: re-load the process env + operator file and reinstall that
-/// snapshot into the typed-config holder (and the shell's published verdict).
+/// TEST-ONLY: load a CAPTURED environment (`env` + the operator file it names,
+/// or the explicit `file`) and install that snapshot into the typed-config
+/// holder (and the shell's published verdict).
 ///
-/// Call this after mutating `DEGENBOT_*` between constructions; the NEXT
-/// resolution observes the fresh env+file, while engines already built keep
-/// their minted snapshots. See the module docs for the safety contract.
+/// The installing sibling of [`crate::config::resolve_hypothetical`]: pass the
+/// complete captured environment as data and the NEXT resolution observes it,
+/// while engines already built keep their minted snapshots. Nothing reads or
+/// writes the process environment. See the module docs for the safety
+/// contract.
 ///
 /// # Errors
 ///
-/// `ValueError` carrying the loader's fail-closed refusal when the current
-/// env+file do not load (an unparsable value, an unknown key, an unreadable
-/// named file).
+/// `ValueError` carrying the loader's fail-closed refusal when the captured
+/// environment + file do not load (an unparsable value, an unknown key, an
+/// unreadable named file).
 #[pyfunction]
-pub fn reinstall_config_holder_for_tests() -> PyResult<()> {
-    let loaded = ::degenbot_config::load_process_config()
+#[pyo3(signature = (env, file=None))]
+pub fn reinstall_config_holder_for_tests(
+    env: ::std::collections::BTreeMap<String, String>,
+    file: Option<&str>,
+) -> PyResult<()> {
+    let loaded = crate::config::hypothetical_layers(env, file)
         .map_err(|error| ::pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
     let _ =
         ::degenbot_config::holder::reinstall_for_tests(std::sync::Arc::new(loaded.config.clone()));
