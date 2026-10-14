@@ -427,6 +427,14 @@ A family holding a balance vector plus `update_block`, with full-state block del
 **Concentrated liquidity (CL)**:
 A family holding slot0 scalars plus per-tick data, with partial-prior block deltas
 (V3, V4).
+_Naming_: code identifiers spell the family name out — `concentrated_liquidity` /
+`ConcentratedLiquidity…` — matching the names already in force
+(`degenbot-concentrated-liquidity-math`, `concentrated_liquidity_math`); the
+`cl` / `Cl…` abbreviations in code (`cl/`, `cl.rs`, `ClOrchestration`, `ClHop`,
+`PreparedClHop`, `BotState::cl()`) are renamed to the expanded form. "CL" survives
+only as the prose abbreviation defined here, never as a code name.
+_Avoid_: `cl` as a module, type, method, or crate-fragment name; two conventions for
+one family in one tree.
 
 **Hop**:
 The solver's snapshot-and-classifier adapter observed at resolve time: it captures pool
@@ -435,16 +443,32 @@ its variants let the solver pick the algorithm from path composition. Not a pool
 and not math-leaf vocabulary.
 
 **Family module**:
-The solver crate's single module owning everything one hop family contributes to a solve and
-its bound: the state slice, the gate projection (`to_math`), the V2-equivalent projection,
+The solver crate's module owning everything one hop family contributes to a solve and
+its bound: the gate projection (`to_math`), the V2-equivalent projection,
 the simulate triple, the solve entry (built on the shared golden template where the
 stable-family search applies), and the family's envelope lines (its rise line beside its
-cap, or a CL family's tangent fan). The residual central sites are one dispatch row and one
+cap, or a CL family's tangent fan). One of the family's two homes — its read side lives
+in the **Family read module**, which defines the hop payload this module solves over.
+The residual central sites are one dispatch row and one
 enum arm in each of `ResolvedHop` and `HopMath`; the shared kernels — the golden-section template,
 the integer-verification order, the envelope composition and caches — stay monomorphic and
 family-blind (ADR-059 D6).
 _Avoid_: a family's functions scattered across `mixed/mod.rs`, `mixed/solve.rs`, and
 `profit_envelope/derive.rs`; per-family copies of the search template.
+
+**Family read module**:
+The foundation-layer module owning everything one hop family contributes to being read and
+resolved: the state slice, the swap-read arm (every variant, miss-recovery and
+disarm-fetch included), the resolve projection as a pure function of the family state
+slice, and the family-local apply/get/calc behaviour over that slice. It reads no state
+owner and consumes no solver kernel, so the family's read story is one file named for the
+family. The state owner (`BotState`) and the central dispatchers (`simulate_swap`,
+`resolve`, `swap_simulation`) keep one dispatch row per family and no family-shaped
+method set; the solve side is the **Family module**. Both homes carry the family's name,
+so one family is read as `<family>.rs` twice, at two depths, with a fixed layout between
+them.
+_Avoid_: per-family arms inside the central matchers; family behaviour hanging off the
+state owner as inherent methods; a family read module that reaches back into `BotState`.
 
 **Solve anchor**:
 The block at-or-above the pool-state head that a block's solve, verification, and

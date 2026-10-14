@@ -15,6 +15,13 @@ module, one dispatch row, one enum arm per enum, one `HopType::ALL` entry, and
 one glossary entry per new concept.** The old census survives only as the
 superseded record in the appendix; do not reintroduce it.
 
+**Extension in flight (ADR-073, proposed):** the one-module census above is solve-only.
+ADR-073 extends the family seam to the read side — the **family read module** in
+`degenbot-pools` (state slice, swap-read arm, resolve projection, family-local
+apply/get/calc) beside this doc's solve-side **family module**, with dispatch rows at
+the central sites and `concentrated_liquidity` naming throughout. Until it lands, this
+conductor governs the solve half; the read half's conductor is part of the ADR-073 work.
+
 This is the implementer's conductor for the new shape, written from the code that
 exists: every anchor below is a `file:line` copied from the tree, relative to
 `rust/crates/engine/degenbot-solvers`. The *why* behind each obligation — the
