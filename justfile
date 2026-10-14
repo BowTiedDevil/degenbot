@@ -117,12 +117,19 @@ test-standalone:
 test: test-rust-nextest test-python
 
 # Run every pre-push gate manually, in hook order and fail-fast — the
-# object-DB GC brake, the commitlint push-range re-lint, then the Rust/Python
-# code linters (clippy, ruff+ty, stubtest, stub drift), then the Rust and Python build +
-# test tracks, exactly as the installed prek pre-push hook runs them
+# object-DB GC brake, the commitlint push-range re-lint, the whole-tree format
+# sweeps, the Rust/Python code linters (clippy, ruff+ty, stubtest, stub drift),
+# the compiled architecture gates, then the Rust and Python build + test
+# tracks, exactly as the installed prek pre-push hook runs them
 # (prek.toml, stages = ["pre-push"]). The installed hook and ci.yml stay
 # authoritative on an actual push; this is for checking the gates with
 # `just pre-push` before `git push`.
+#
+# The list below is a literal transcription of the `stages = ["pre-push"]`
+# entries in prek.toml — same gates, same order, same entries. A gate added,
+# removed, renamed, or re-pointed there must change here in the same commit,
+# because a `just pre-push` that runs a shorter list is a false green: the
+# push then gets blocked by a gate this recipe never ran.
 #
 # Manual pre-push gate check (mirrors prek.toml pre-push stage, fail-fast).
 pre-push:
@@ -139,16 +146,22 @@ pre-push:
         "$@"
     }
 
-    run_gate "Object DB GC"            scripts/hooks/object-gc.sh
-    run_gate "commitlint (push range)" scripts/hooks/commitlint-push.sh
-    run_gate "Rust clippy"             just lint-rust-check
-    run_gate "Python lint"             just lint-python-check
-    run_gate "Stubtest drift gate"     just lint-stubtest
-    run_gate "Stub drift gate"         just lint-stub-drift
-    run_gate "Rust build"              just build-rust-extension
-    run_gate "Rust tests"              just test-rust-nextest
-    run_gate "Python build (maturin)"  just dev
-    run_gate "Python tests"            just test-python
+    run_gate "Object DB GC"                scripts/hooks/object-gc.sh
+    run_gate "Pre-push gate drift"         scripts/hooks/pre-push-gate-drift.sh
+    run_gate "commitlint (push range)"     scripts/hooks/commitlint-push.sh
+    run_gate "Rust fmt check"              just fmt-check
+    run_gate "Python fmt check"            just fmt-check-python
+    run_gate "Rust clippy"                 just lint-rust-check
+    run_gate "Python lint"                 just lint-python-check
+    run_gate "Stubtest drift gate"         just lint-stubtest
+    run_gate "Stub drift gate"             just lint-stub-drift
+    run_gate "Rust no-pyo3 cores"          just check-no-pyo3-in-cores
+    run_gate "Rust engine impl-block gate" just check-engine-impl-blocks
+    run_gate "Rust config-derived-static gate" just check-config-derived-statics
+    run_gate "Rust build"                  just build-rust-extension
+    run_gate "Rust tests"                  just test-rust
+    run_gate "Python build (maturin)"      just dev
+    run_gate "Python tests"                just test-python-noise-gate
 
     echo
     echo "✓ all pre-push gates passed."
