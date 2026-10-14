@@ -146,6 +146,12 @@ For whole-workspace runs, use `just test-rust-nextest` — never a hand-typed `c
 
 Why: resolver v3 unifies features for `--workspace`, so its artifacts are the one warm, canonical set in `rust/target`. A `-p <crate>` selection unifies features differently (core crates lose the `pyo3` feature the binding layer enables; dep features like tokio's shrink), so cargo stores a second rlib set under different metadata hashes — alternating between the two rebuilds shared dependencies on every shared edit (measured: `-p degenbot-simulation` recompiled 6 just-built crates in ~1m; a leaf crate pays nothing). The workspace run also executes every crate's suite, catching cross-crate fallout (signature changes rippling into dependents, e.g. examples/settlement_bot) that a scoped run never sees.
 
+A failure that passes locally and fails in CI gets `just test-rust-ci` first —
+the identical suite under CI's build flags (`CARGO_PROFILE_DEV_DEBUG=0
+`CARGO_INCREMENTAL=0`, which CI sets for cache size). If it reproduces there,
+the bug is real; if it does not, the build config is the story — and the test
+or gate is asserting a layout-level fact it should not (ADR-072).
+
 ## Python test scope
 
 The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly) — never a hand-typed `uv run pytest`. Prefer the whole suite over selecting individual test files: the full run is fast and it is the run that surfaces seam and cross-module regressions. The suite carries pytest-timeout so a hung test fails with a timeout report instead of parking its xdist worker (the 300s timeout budget is set in `pyproject.toml`; no per-test or per-suite headroom exists — a timeout failure is the signal to investigate a slow or hung test; marker-filter enforcement lives in `tests/conftest.py`). The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.

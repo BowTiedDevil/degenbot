@@ -164,6 +164,19 @@ for verification at any point in a release.
   `cargo add degenbot-core` ships, that crate may pin its own semver while
   the binding crate follows the workspace.
 
+## Amendments
+
+- **2026-10-14 — the build receipt stamp retires; freshness is build-on-run.**
+  The per-build receipt stamp (a stamp a Python run checked before exercising
+  the built extension) is gone. Its guarantee — *a Python run always exercises
+  the current extension* — is now structural instead of checked: every
+  entrypoint that executes Python through the extension depends on `dev`, and
+  `dev` runs `scripts/build_extension.sh develop` first, unconditionally.
+  Freshness is a property of the entrypoints, not a claim about an artifact.
+  The stamp table's one remaining job is extension discovery (DEG-37), which
+  `degenbot.cli doctor` automates (DEG-39). There is no stale extension to
+  detect, because no entrypoint runs one.
+
 ## Related
 
 - **ADR-005** (Polars-inspired three-layer architecture) — establishes the
