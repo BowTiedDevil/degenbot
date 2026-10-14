@@ -256,9 +256,8 @@ fn run_binary(discovery_chain_id: Option<&str>) -> String {
     // non-idempotent `CREATE INDEX` (the `CREATE TABLE`s already had
     // `IF NOT EXISTS`). Every `CREATE [UNIQUE] INDEX` in `schema_head.sql` now
     // carries `IF NOT EXISTS`, so replaying the head DDL on a racing fresh open
-    // is safe; the killswitch is retained because a heal's file-rename swap is
-    // a different hazard the DDL idempotence does not address.
-    command.env("DEGENBOT_DB_AUTO_HEAL", "0");
+    // is safe; the plain opens never heal either, so the heal's file-rename
+    // swap — a hazard the DDL idempotence does not address — cannot fire here.
     command.env("DEGENBOT_RPC_HTTP_CHAINID_1", "http://127.0.0.1:1");
     command.env("DEGENBOT_RPC_WS_CHAINID_1", "ws://127.0.0.1:1");
     // The hermetic boot has no config file, so its facets fall to schema

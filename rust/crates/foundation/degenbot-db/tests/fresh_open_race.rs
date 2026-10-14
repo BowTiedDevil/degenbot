@@ -7,7 +7,7 @@
 //! statements lacked `IF NOT EXISTS` (the `CREATE TABLE` statements already
 //! had it). In the wild this bit the xdist pathfinding tier (parallel workers
 //! racing a per-session fresh DB) and the settlement-bot `boot_gate` tests
-//! (worked around there with `DEGENBOT_DB_AUTO_HEAL=0`).
+//! (worked around there with an explicit `auto_heal = false` open).
 //!
 //! Two further fresh-open races surfaced while hardening this one, and the fix
 //! covers all three:

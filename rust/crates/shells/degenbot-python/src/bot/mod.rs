@@ -3041,9 +3041,8 @@ mod tests {
         let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../foundation/degenbot-db/tests/fixtures/parity.db");
         if p.exists() {
-            // Pin the ADR-052 D1 heal-at-open killswitch so this read never
-            // rewrites the committed fixture.
-            std::env::set_var(degenbot_db::AUTO_HEAL_ENV, "0");
+            // The plain opens never heal, so this read cannot rewrite the
+            // committed fixture.
             Some(p)
         } else {
             None

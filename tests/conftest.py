@@ -10,7 +10,6 @@ offline detection lives in ``tests/offline.py``.
 
 import atexit
 import logging
-import os
 import shutil
 import tempfile
 from collections.abc import Callable, Generator, Iterator
@@ -70,16 +69,6 @@ from tests.standalone_anvil import seed as seed_catalog
 # the suite's declaration. From here on, every construction observes
 # `SUITE_ENV`.
 reinstall_config_holder_for_tests(SUITE_ENV)
-
-# ADR-052 D1: a legacy `alembic_version`-marked DB heals itself at open. The
-# committed `rust/crates/**/fixtures/*.db` parity fixtures are read-only
-# references shared by many tests, so pin the killswitch for the Python suite:
-# the Rust `auto_heal_matrix` tests own the heal-at-open behavior. (A test that
-# needs the heal can still override the var explicitly.) The DB layer reads
-# this name from the PROCESS env at open time — not through the config loader —
-# so this is the suite's last `os.environ` write; it retires when heal-at-open
-# becomes an explicit open parameter.
-os.environ.setdefault("DEGENBOT_DB_AUTO_HEAL", "0")
 
 
 # The per-test counterpart of the install above: import-time governance is

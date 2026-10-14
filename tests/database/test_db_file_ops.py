@@ -114,8 +114,8 @@ def test_upgrade_on_legacy_marker_heals(tmp_path: pathlib.Path):
     assert _rust_stamp(db_path) == CURRENT_RUST_SCHEMA_VERSION
 
 
-def test_heal_round_trips_through_seam(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("DEGENBOT_DB_AUTO_HEAL", "0")
+def test_heal_round_trips_through_seam(tmp_path: pathlib.Path) -> None:
+
     db_path = tmp_path / "heal.db"
     db_upgrade_database(str(db_path))
     _mark_legacy(db_path)

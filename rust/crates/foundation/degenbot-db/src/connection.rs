@@ -18,7 +18,7 @@
 //! 4. the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
 //!    version-lock (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB
 //!    (head-stamped OR stale) is healed out-of-place to `RustOwned` unless
-//!    `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture; a fresh standalone file
+//!    an explicit `auto_heal = false` pins the pre-D1 posture; a fresh standalone file
 //!    gets the embedded DDL; an unrecognized file refuses. A Rust-owned DB
 //!    behind the binary applies its pending steps at open; a DB ahead of the
 //!    binary refuses with `DbError::SchemaAhead`; a DB at current is a no-op.
@@ -44,7 +44,7 @@
 //! `query_only` is applied to the FINAL connection (the one the heal reopened
 //! on the Rust-owned file), so binding #2's hard AC holds in the form that
 //! matters: **after `open()` returns, every read connection is read-only.**
-//! The pinned (`DEGENBOT_DB_AUTO_HEAL=0`) `LegacyAlembic` branch writes nothing,
+//! The pinned (`auto_heal = false`) `LegacyAlembic` branch writes nothing,
 //! so its practical effect is identical to setting `query_only` first.
 
 use std::path::Path;
@@ -53,7 +53,7 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 
 use crate::error::DbError;
-use crate::migrate::{auto_heal_enabled, ensure_schema_at_open, SchemaState};
+use crate::migrate::{ensure_schema_at_open, SchemaState};
 use crate::pragma::apply_open_pragmas;
 
 /// The owned read handle wrapping a single pooled [`Connection`].
@@ -74,7 +74,7 @@ impl DegenbotDb {
     /// A legacy `alembic_version`-marked DB is healed out-of-place at open
     /// ([`crate::heal::heal_database`] under the ADR-011 atomic swap,
     /// preserving the original as `*.bak`) and the disposition is
-    /// [`SchemaState::RustOwned`]. With `DEGENBOT_DB_AUTO_HEAL=0` the pre-D1
+    /// [`SchemaState::RustOwned`]. With `auto_heal = false` the pre-D1
     /// posture is restored: the legacy DB opens as
     /// [`SchemaState::LegacyAlembic`] (nothing written). An unrecognized file
     /// still refuses ([`DbError::UnrecognizedSchema`]), and a fresh standalone
@@ -88,7 +88,7 @@ impl DegenbotDb {
     /// [`DbError::UnrecognizedSchema`] if the file is neither a legacy-marker
     /// DB nor a fresh standalone file.
     pub fn open(path: &Path) -> Result<(Self, SchemaState), DbError> {
-        Self::open_with(path, auto_heal_enabled(), true)
+        Self::open_with(path, false, true)
     }
 
     /// Open an in-memory read handle (for tests). Runs the full open sequence
@@ -99,14 +99,14 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on a connection/PRAGMA/DDL failure.
     pub fn open_in_memory() -> Result<(Self, SchemaState), DbError> {
-        Self::open_with(Path::new(":memory:"), auto_heal_enabled(), true)
+        Self::open_with(Path::new(":memory:"), false, true)
     }
 
     /// Open a file-backed **write-capable** handle (the writer substrate).
     /// Same concurrency PRAGMAs ([`crate::pragma::apply_open_pragmas`]) +
     /// ADR-052 D1 heal-at-open as [`Self::open`]
     /// (an Alembic-stamped DB heals to [`SchemaState::RustOwned`]; the
-    /// `DEGENBOT_DB_AUTO_HEAL=0` killswitch restores the pre-D1 posture), but
+    /// `auto_heal = false` restores the pre-D1 posture), but
     /// `query_only` is **NEVER** set — the connection can `INSERT`/`UPDATE`.
     ///
     /// This does NOT violate binding #2 ("every **read** connection
@@ -124,7 +124,7 @@ impl DegenbotDb {
     /// [`DbError::UnrecognizedSchema`] for unrecognized files.
     #[cfg(any(test, feature = "writer"))]
     pub fn open_for_writes(path: &Path) -> Result<(Self, SchemaState), DbError> {
-        Self::open_with(path, auto_heal_enabled(), false)
+        Self::open_with(path, false, false)
     }
 
     /// Open an in-memory **write-capable** handle (for writer-substrate tests).
@@ -135,11 +135,14 @@ impl DegenbotDb {
     /// Returns [`DbError::Sqlite`] on a connection/PRAGMA/DDL failure.
     #[cfg(any(test, feature = "writer"))]
     pub fn open_in_memory_for_writes() -> Result<(Self, SchemaState), DbError> {
-        Self::open_with(Path::new(":memory:"), auto_heal_enabled(), false)
+        Self::open_with(Path::new(":memory:"), false, false)
     }
 
     /// Build the handle from [`Self::open_initialized`] and wrap it.
-    fn open_with(
+    ///
+    /// The explicit-init open: `auto_heal` is the caller's declared intent —
+    /// the plain `open*` constructors never heal (opening never mutates).
+    pub fn open_with(
         path: &Path,
         auto_heal: bool,
         set_query_only: bool,
@@ -253,7 +256,7 @@ mod tests {
 
     #[test]
     fn pinned_open_on_legacy_marker_db_writes_nothing_and_is_read_only() {
-        // The `DEGENBOT_DB_AUTO_HEAL=0` posture (`auto_heal=false`): the
+        // The `auto_heal=false` posture (the default): the
         // legacy-marker DB opens as LegacyAlembic, read-only, no heal.
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("stamped.db");
@@ -303,7 +306,7 @@ mod tests {
         crate::ops::create_new_database(&db_path).unwrap();
         mark_legacy(&db_path);
 
-        let (db, state) = DegenbotDb::open(&db_path).unwrap();
+        let (db, state) = DegenbotDb::open_with(&db_path, true, true).unwrap();
         assert!(
             matches!(state, SchemaState::RustOwned { .. }),
             "auto-heal must land RustOwned, got {state:?}"
@@ -335,7 +338,7 @@ mod tests {
             conn.execute_batch("DROP INDEX ix_erc20_tokens_chain;")
                 .unwrap();
         }
-        let (_db, state) = DegenbotDb::open(&db_path).unwrap();
+        let (_db, state) = DegenbotDb::open_with(&db_path, true, true).unwrap();
         assert!(
             matches!(state, SchemaState::RustOwned { .. }),
             "divergent-legacy auto-heal must land RustOwned, got {state:?}"

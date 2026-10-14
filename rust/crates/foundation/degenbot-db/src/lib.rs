@@ -13,7 +13,7 @@
 //! runs the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
 //! version-lock (`migrate::ensure_schema_at_open`) — a legacy DB carrying the
 //! `alembic_version` marker table is healed out-of-place to `RustOwned` unless
-//! `DEGENBOT_DB_AUTO_HEAL=0` pins the pre-D1 posture, a fresh standalone file
+//! An explicit `auto_heal = false` pins the pre-D1 posture, a fresh standalone file
 //! gets the embedded DDL, an unrecognized file refuses, a Rust-owned DB behind
 //! the binary applies its pending steps, and a DB ahead of the binary refuses
 //! with `DbError::SchemaAhead` — then sets `PRAGMA query_only=on;`: the
@@ -102,7 +102,7 @@ pub use liquidity_updater::{
     derive_liquidity_delta_from_computed, BlockLog, ComputedLiquidityUpdate, LiquidityDelta,
     LiquidityUpdateEvent, PoolUpdateState,
 };
-pub use migrate::{SchemaState, AUTO_HEAL_ENV};
+pub use migrate::SchemaState;
 pub use migrations::{apply_rust_migrations, MigrationOutcome, MigrationStep, RUST_MIGRATIONS};
 pub use ops::{
     backup_database, compact_database, convert_alembic_to_rust_owned, create_new_database,

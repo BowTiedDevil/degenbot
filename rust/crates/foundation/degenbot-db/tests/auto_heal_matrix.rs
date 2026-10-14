@@ -1,85 +1,35 @@
-//! ADR-052 D5 fixture matrix: every **released** Alembic revision self-heals
-//! to current at open.
+//! Heal-at-open matrix (ADR-052 D1): one case pair per committed fixture
+//! revision under `tests/fixtures/alembic_revs`.
 //!
-//! One fixture per released Alembic head, under `tests/fixtures/alembic_revs/`
-//! (provenance in that directory's `README.md`):
+//! Opening never mutates: the plain `open*` constructors run `auto_heal =
+//! false`. Healing is EXPLICIT (`open_with` with `auto_heal = true`), so each
+//! case states its intent as data.
 //!
-//! | fixture | released as |
-//! |---|---|
-//! | `9347bbfcd47a` | the 0.5-era initial revision |
-//! | `756fba1f75f4` | 0.5.0a2 |
-//! | `9c411aeeb15e` | 0.5.1b1 |
-//! | `b0b9e84d5527` | 0.6.0a1 |
-//! | `e0aaad8ad486` | 0.6.0a2 |
-//! | `2606a6c7f5ee` | 0.6.0a3+ (the last released Alembic head) |
+//! 1. **Explicit heal** — the legacy marker is replaced by the Rust stamp
+//!    table, every head table lands, seeded rows survive, retired tables drop,
+//!    and the pre-heal file survives as `.bak` at the released revision.
+//! 2. **The default posture** (`open`) — the pre-D1 posture persists:
+//!    `LegacyAlembic`, read-only, no `.bak`, and the file on disk is
+//!    untouched.
 //!
-//! For every fixture this test runs the two halves of the ADR-052 D5 promise:
-//!
-//! 1. **Auto-heal at open** (the default — `DEGENBOT_DB_AUTO_HEAL` unset):
-//!    `DegenbotDb::open` lands `RustOwned` at the current
-//!    `RUST_SCHEMA_VERSION`, every head table is present, the seeded rows are
-//!    preserved per table, the `alembic_version` stamp is gone and the Rust
-//!    stamp table is written, and the pre-heal file survives as `*.bak`
-//!    (still stamped at the released revision).
-//! 2. **Killswitch** (`DEGENBOT_DB_AUTO_HEAL=0`): the pre-D1 posture persists —
-//!    every fixture opens `LegacyAlembic` read-only with no heal and no
-//!    `*.bak` (the revision is never inspected; ADR-052 D6 presence detection).
-//!
-//! The fixture is always copied to a fresh temp dir first: a committed `.db`
-//! is never mutated by this suite.
-//!
-//! Env is process-global, so the per-fixture tests serialize on `ENV_LOCK`
-//! and restore `DEGENBOT_DB_AUTO_HEAL` on scope exit (RAII), even on panic.
+//! Every case copies its committed fixture into a temp dir first — the
+//! committed files are never mutated.
 
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OpenFlags};
 use tempfile::TempDir;
 
 use degenbot_db::schema::RUST_SCHEMA_VERSION;
-use degenbot_db::{DegenbotDb, SchemaState, AUTO_HEAL_ENV};
+use degenbot_db::{DegenbotDb, SchemaState};
 
 /// Committed fixture directory (never mutated — every case copies out first).
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/alembic_revs");
 
 /// The private Rust-owned stamp table (not re-exported as a constant).
 const RUST_STAMP_TABLE: &str = "_degenbot_db_schema_version";
-
-/// Serializes `DEGENBOT_DB_AUTO_HEAL` mutation across the tests in this binary
-/// (env is process-global; cargo runs these tests on parallel threads).
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-/// RAII env scope: holds the serialization lock for its lifetime and restores
-/// `DEGENBOT_DB_AUTO_HEAL` (removes it) on drop, panic included.
-struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
-}
-
-impl EnvGuard {
-    /// The default ADR-052 D1 posture: heal-at-open enabled (env unset).
-    fn heal_on() -> Self {
-        let lock = ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
-        std::env::remove_var(AUTO_HEAL_ENV);
-        Self { _lock: lock }
-    }
-
-    /// The pinned posture: `DEGENBOT_DB_AUTO_HEAL=0` restores the pre-D1
-    /// semantics (a legacy-marker DB opens `LegacyAlembic`, unhealed).
-    fn killswitch() -> Self {
-        let lock = ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
-        std::env::set_var(AUTO_HEAL_ENV, "0");
-        Self { _lock: lock }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        std::env::remove_var(AUTO_HEAL_ENV);
-    }
-}
 
 /// Every content table the Rust head schema (`SCHEMA_HEAD`) defines. The
 /// healed DB must carry all of them (the D5 "expected table set present").
@@ -179,13 +129,12 @@ fn stamped_rev(conn: &Connection) -> String {
 
 /// One fixture, both halves of the D5 promise.
 fn run_fixture(rev: &str) {
-    // ── 1. Auto-heal at open (default; killswitch unset). ────────────────
+    // ── 1. Explicit heal-at-open (open_with auto_heal = true). ────────────────
     {
-        let _env = EnvGuard::heal_on();
         let (_dir, path) = copy_fixture(rev);
 
-        let (db, state) =
-            DegenbotDb::open(&path).unwrap_or_else(|e| panic!("{rev}: auto-heal open failed: {e}"));
+        let (db, state) = DegenbotDb::open_with(&path, true, true)
+            .unwrap_or_else(|e| panic!("{rev}: explicit heal open failed: {e}"));
         match state {
             SchemaState::RustOwned { schema_version } => assert_eq!(
                 schema_version, RUST_SCHEMA_VERSION,
@@ -247,19 +196,18 @@ fn run_fixture(rev: &str) {
         );
     }
 
-    // ── 2. Killswitch: the pre-D1 posture must persist. ──────────────────
+    // ── 2. The default posture: open never mutates. ──────────────────
     {
-        let _env = EnvGuard::killswitch();
         let (_dir, path) = copy_fixture(rev);
 
         // Legacy marker present → opens LegacyAlembic read-only, writes
         // nothing. The revision is never inspected (ADR-052 D6).
-        let (db, state) = DegenbotDb::open(&path)
-            .unwrap_or_else(|e| panic!("{rev}: killswitch open failed: {e}"));
+        let (db, state) =
+            DegenbotDb::open(&path).unwrap_or_else(|e| panic!("{rev}: default open failed: {e}"));
         assert_eq!(
             state,
             SchemaState::LegacyAlembic,
-            "{rev}: must open LegacyAlembic under the killswitch",
+            "{rev}: must open LegacyAlembic under the default posture",
         );
         let conn = db.lock();
         assert!(has_table(&conn, "alembic_version"));
@@ -268,14 +216,14 @@ fn run_fixture(rev: &str) {
 
         assert!(
             !bak_path(&path).exists(),
-            "{rev}: killswitch must never take a .bak (no heal ran)",
+            "{rev}: default posture must never take a .bak (no heal ran)",
         );
         // The fixture on disk is untouched: still stamped at the revision.
         let conn = open_readonly(&path);
         assert_eq!(
             stamped_rev(&conn),
             rev,
-            "{rev}: killswitch left the DB unchanged"
+            "{rev}: default open left the DB unchanged"
         );
     }
 }

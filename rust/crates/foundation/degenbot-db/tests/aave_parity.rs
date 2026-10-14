@@ -21,15 +21,7 @@ use degenbot_db::{DegenbotDb, SchemaState};
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
-/// Disable auto-heal so fixture-backed parity tests never rewrite committed
-/// files while exercising their existing Rust-owned schema.
-fn pin_auto_heal_off() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| std::env::set_var(degenbot_db::AUTO_HEAL_ENV, "0"));
-}
-
 fn fixture_db_path() -> PathBuf {
-    pin_auto_heal_off();
     PathBuf::from(FIXTURE_DIR).join("aave_parity.db")
 }
 

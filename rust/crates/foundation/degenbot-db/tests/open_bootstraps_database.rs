@@ -115,10 +115,11 @@ fn open_brings_an_existing_empty_file_up_to_the_schema() {
     assert_eq!(rust_stamp(&conn), i64::from(RUST_SCHEMA_VERSION));
 }
 
-/// An Alembic-stamped file heals out-of-place at open (ADR-052 D1), leaving the
-/// pre-heal file as the recoverable `.bak`.
+/// An Alembic-stamped file heals out-of-place when the open explicitly asks
+/// for it (`open_with` with `auto_heal = true`; the plain opens never mutate),
+/// leaving the pre-heal file as the recoverable `.bak` (ADR-052 D1).
 #[test]
-fn open_heals_an_alembic_stamped_file() {
+fn explicit_heal_migrates_an_alembic_stamped_file() {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("legacy.db");
     degenbot_db::create_new_database(&db_path).unwrap();
@@ -132,10 +133,10 @@ fn open_heals_an_alembic_stamped_file() {
         .unwrap();
     }
 
-    let (db, state) = DegenbotDb::open(&db_path).unwrap();
+    let (db, state) = DegenbotDb::open_with(&db_path, true, true).unwrap();
     assert!(
         matches!(state, SchemaState::RustOwned { .. }),
-        "the Alembic-stamped file must heal to Rust-owned, got {state:?}"
+        "the explicit heal must land Rust-owned, got {state:?}"
     );
     let conn = db.lock();
     assert!(!has_table(&conn, "alembic_version"));

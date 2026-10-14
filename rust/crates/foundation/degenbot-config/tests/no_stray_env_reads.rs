@@ -138,16 +138,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/foundation/degenbot-core/src/telemetry.rs",
             &["name"][..],
         );
-        // (5) The ADR-052 D1 heal-at-open killswitch. A DB-open toggle read at
-        // the open path itself (NOT bot config): a `cargo add degenbot-db`
-        // consumer must be able to pin the pre-D1 posture without a BotConfig,
-        // and the name is a DB-open contract, not a tunable. Unset => heal on;
-        // only an explicit falsey word disables. (The scanner reports the
-        // computed-name const identifier, hence "AUTO_HEAL_ENV".)
-        m.insert(
-            "crates/foundation/degenbot-db/src/migrate.rs",
-            &["AUTO_HEAL_ENV"][..],
-        );
+
         // The backrun sidecar's configuration now loads through the typed
         // per-ecosystem backrun facets; the one
         // remaining env read is the pre-typed executor-owner fallback the

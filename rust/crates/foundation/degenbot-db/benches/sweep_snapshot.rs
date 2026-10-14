@@ -23,9 +23,7 @@ use degenbot_db::DegenbotDb;
 use degenbot_pathfinding::{PathGraph, PoolKind, SearchSpec};
 
 fn snapshot_db_path() -> PathBuf {
-    // Read-only fixture: never auto-heal it (mirrors degenbot-db's parity harness).
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| std::env::set_var(degenbot_db::AUTO_HEAL_ENV, "0"));
+    // Read-only fixture: the plain opens never heal (opening never mutates).
     match std::env::var_os("DEGENBOT_SNAPSHOT_DB") {
         Some(override_path) => PathBuf::from(override_path),
         None => PathBuf::from(concat!(

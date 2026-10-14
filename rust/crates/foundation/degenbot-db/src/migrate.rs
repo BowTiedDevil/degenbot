@@ -11,7 +11,7 @@
 //! 1. If the `alembic_version` table exists the DB is LEGACY (ADR-052 D6: a
 //!    pure presence detector — the revision is never inspected). It is HEALED
 //!    at open by `ensure_schema_at_open` (ADR-052 D1): the out-of-place
-//!    rebuild lands `RustOwned`, unless `DEGENBOT_DB_AUTO_HEAL=0` pins the
+//!    rebuild lands `RustOwned`, unless an explicit `auto_heal = false` pins the
 //!    pre-D1 posture (the legacy DB opens read-only, unhealed);
 //! 2. If `alembic_version` is absent but the file already has tables (a foreign
 //!    `SQLite` file passed by mistake) → [`SchemaState::Unrecognized`], refuse;
@@ -49,7 +49,7 @@ pub enum SchemaState {
     /// A LEGACY DB: the `alembic_version` marker table is present. The
     /// revision is never inspected (ADR-052 D6 — presence detection only). The
     /// Rust core wrote nothing; the D1 open path heals this unless the
-    /// `DEGENBOT_DB_AUTO_HEAL=0` killswitch pins it read-only.
+    /// An explicit `auto_heal = false` open pins it read-only.
     LegacyAlembic,
     /// A fresh standalone DB (no Alembic history) — the embedded DDL was applied
     /// and [`SCHEMA_VERSION_TABLE`] was stamped with [`RUST_SCHEMA_VERSION`].
@@ -104,36 +104,6 @@ pub fn ensure_schema(conn: &Connection) -> Result<SchemaState, DbError> {
         apply_fresh_standalone(conn)?;
     }
     Ok(state)
-}
-
-/// The ADR-052 D1 heal-at-open killswitch: `DEGENBOT_DB_AUTO_HEAL=0`
-/// restores the pre-D1 posture (a legacy `alembic_version`-marked DB opens
-/// [`SchemaState::LegacyAlembic`] read-only, unhealed) so pinned-test
-/// environments — e.g. the checked-in `tests/fixtures/*.db` parity databases —
-/// are never rewritten.
-pub const AUTO_HEAL_ENV: &str = "DEGENBOT_DB_AUTO_HEAL";
-
-/// Decide the heal-at-open policy from the raw [`AUTO_HEAL_ENV`] value,
-/// mirroring `degenbot_config`'s boolean word lists (truthy:
-/// 1/true/yes/on/y; falsey: 0/false/off/no/n, case-insensitive + trimmed):
-/// only an explicit falsey token disables the heal. `None` (unset) and every
-/// other value (including the empty string) leave it enabled. Split from the
-/// env read so the policy is unit-testable without mutating process state.
-#[must_use]
-pub fn auto_heal_enabled_from(raw: Option<&str>) -> bool {
-    !matches!(
-        raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
-        Some("0" | "false" | "off" | "no" | "n")
-    )
-}
-
-/// Read [`AUTO_HEAL_ENV`] and return the heal-at-open policy (`true` when
-/// unset). The ONE env read on the open path; it is enumerated in
-/// `degenbot-config`'s `no_stray_env_reads` gate as a sanctioned DB-open
-/// toggle.
-#[must_use]
-pub fn auto_heal_enabled() -> bool {
-    auto_heal_enabled_from(std::env::var(AUTO_HEAL_ENV).ok().as_deref())
 }
 
 /// The path-aware open entry point (ADR-052 D1 + D2): classify `path` via
@@ -191,7 +161,7 @@ where
 ///    [`RUST_SCHEMA_VERSION`]) — the same code path, so a heal never leaves
 ///    pending work;
 /// 2. a Rust-owned open that did not heal (the steady-state reopen), including
-///    under the `DEGENBOT_DB_AUTO_HEAL=0` killswitch (ownership is orthogonal
+///    under an explicit `auto_heal = false` open (ownership is orthogonal
 ///    to heal policy).
 ///
 /// `FreshStandalone` is skipped: [`ensure_schema`] already applied
@@ -213,7 +183,7 @@ where
     let state = ensure_schema(&conn)?;
 
     // Heal only the legacy-marker disposition, and only when enabled (the
-    // `DEGENBOT_DB_AUTO_HEAL=0` killswitch pins the pre-D1 behavior).
+    // an explicit `auto_heal = false` open pins the pre-D1 behavior).
     if !auto_heal || !matches!(state, SchemaState::LegacyAlembic) {
         // Non-heal path: a genuine Rust-owned DB is brought forward under the D2
         // lock; every other disposition passes through untouched.
@@ -682,7 +652,7 @@ mod tests {
 }
 
 /// ADR-052 D1 heal-at-open tests: the path-aware open cycle (head + stale
-/// auto-heal), the `DEGENBOT_DB_AUTO_HEAL=0` killswitch policy, idempotence,
+/// auto-heal), the `auto_heal` policy, idempotence,
 /// the D2 forward-lock no-op, and the ADR-011 failure guarantee.
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
@@ -731,18 +701,6 @@ mod open_tests {
     }
 
     #[test]
-    fn killswitch_env_policy_matches_falsey_words() {
-        assert!(auto_heal_enabled_from(None), "unset -> heal on");
-        assert!(auto_heal_enabled_from(Some("1")));
-        assert!(auto_heal_enabled_from(Some("")));
-        assert!(auto_heal_enabled_from(Some("  ")));
-        for off in ["0", "false", "off", "no", "n", " FALSE "] {
-            assert!(!auto_heal_enabled_from(Some(off)), "{off:?} must disable");
-        }
-        assert_eq!(AUTO_HEAL_ENV, "DEGENBOT_DB_AUTO_HEAL");
-    }
-
-    #[test]
     fn head_stamped_db_auto_heals_at_open() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("head.db");
@@ -780,7 +738,7 @@ mod open_tests {
 
     #[test]
     fn killswitch_disabled_leaves_legacy_db_untouched() {
-        // `auto_heal=false` is the `DEGENBOT_DB_AUTO_HEAL=0` path.
+        // `auto_heal=false` is the explicit no-heal path.
         let dir = tempfile::tempdir().unwrap();
         let legacy = dir.path().join("legacy.db");
         build_legacy_fixture(&legacy);

@@ -31,7 +31,7 @@ use rusqlite::Connection;
 
 use crate::discovery_read::{fetch_discovery_rows_on_conn, DiscoveryPoolRow};
 use crate::error::DbError;
-use crate::migrate::{auto_heal_enabled, ensure_schema_at_open, SchemaState};
+use crate::migrate::{ensure_schema_at_open, SchemaState};
 use crate::pragma::apply_open_pragmas;
 use crate::read::{fetch_newest_update_block_on_conn, ExchangeFamily};
 use crate::snapshot::{
@@ -126,7 +126,7 @@ impl SnapshotDb {
     /// PRAGMAs + ADR-052 D1 heal-at-open + `query_only=on` + `BEGIN`. Mirrors
     /// `DegenbotDb`'s open tail then issues the held read tx.
     fn finish_open(path: &Path) -> Result<(Connection, SchemaState), DbError> {
-        let (conn, state) = ensure_schema_at_open(path, auto_heal_enabled(), Self::open_primed)?;
+        let (conn, state) = ensure_schema_at_open(path, false, Self::open_primed)?;
         conn.pragma_update(None, "query_only", "on")?;
         // Begin the held deferred read tx. `query_only=on` blocks
         // INSERT/UPDATE/DELETE but NOT transaction control (BEGIN/COMMIT) —

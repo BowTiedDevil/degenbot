@@ -224,9 +224,8 @@ mod tests {
             eprintln!("skipping: parity fixture not at {}", fixture.display());
             return;
         }
-        // Pin the ADR-052 D1 heal-at-open killswitch so this read never
-        // rewrites the committed fixture.
-        std::env::set_var(degenbot_db::AUTO_HEAL_ENV, "0");
+        // The plain opens never heal, so this read cannot rewrite the
+        // committed fixture.
         let bot = Bot::new(8453);
         let snap = bot
             .load_snapshot_from_db_path(fixture.to_str().expect("test fixture: utf8 path"), 8453)

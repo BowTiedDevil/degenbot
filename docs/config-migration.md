@@ -165,10 +165,10 @@ environment will shadow the write (`Shadowed { env: DEGENBOT_RPC_HTTP_CHAINID_<i
 
 ## Database upgrades
 
-A stale Alembic-marked database now heals **automatically at open** (ADR-052):
+A stale Alembic-marked database now heals **on explicit request** (ADR-052, amended):
 `ensure_schema` runs the ADR-011 out-of-place heal on any `alembic_version`
 database — head-stamped or stale — preserves the old file as `*.bak`, and
 proceeds Rust-owned. There is no `degenbot database upgrade` command: it renders
 a pointed retirement error and exits non-zero, while `degenbot database heal`
-remains the explicit repair entry point. Set `DEGENBOT_DB_AUTO_HEAL=0` to
-disable heal-at-open for pinned environments.
+remains the explicit repair entry point, and `open_with(..., auto_heal = true)`
+is its programmatic form. The plain opens never mutate a database.

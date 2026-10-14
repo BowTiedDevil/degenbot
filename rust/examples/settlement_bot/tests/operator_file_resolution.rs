@@ -50,9 +50,8 @@ fn endpoints_and_db_resolve_from_the_operator_file_ipc_entry() {
     // The file is the endpoint + database source: no DEGENBOT_RPC_* /
     // DEGENBOT_DB_PATH exports. DEGENBOT_CONFIG only POINTS at the file.
     command.env("DEGENBOT_CONFIG", &operator);
-    // The committed chain-8453 fixture is Alembic-head-stamped; pin the heal
-    // killswitch so this read-only probe never rewrites the shared file.
-    command.env("DEGENBOT_DB_AUTO_HEAL", "0");
+    // The committed chain-8453 fixture is Alembic-head-stamped; the plain
+    // opens never heal, so this read-only probe cannot rewrite the shared file.
     command.env("DEGENBOT_DISCOVERY_CHAIN_ID", "8453");
     command.env("DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE", "1");
     command.env("DEGENBOT_METRICS_ADDR", "127.0.0.1:0");
