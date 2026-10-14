@@ -305,6 +305,17 @@ TEST_ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc("TEST_ETHEREUM_FULL_NODE_HTTP_URI")
 TEST_ETHEREUM_FULL_NODE_WS_URI: str = _rpc("TEST_ETHEREUM_FULL_NODE_WS_URI")
 
 
+def _require_anvil() -> None:
+    """Skip a test that spawns the `anvil` binary when it is not installed.
+
+    Guards the ``standalone_anvil`` fixture and the tests that spawn their own
+    launch configuration (``tests/test_anvil_fork.py``), so anvil-dependent
+    tests skip cleanly in the no-anvil CI job instead of failing at spawn.
+    """
+    if shutil.which("anvil") is None:
+        pytest.skip("requires the anvil binary (not present in the no-anvil CI job)")
+
+
 @pytest.fixture
 def standalone_anvil() -> Generator[AnvilFork, None, None]:
     """A non-forking standalone anvil seeded with canonical contracts (no upstream RPC).
@@ -316,8 +327,7 @@ def standalone_anvil() -> Generator[AnvilFork, None, None]:
     job with no external network. See ``tests/standalone_anvil/seed.py`` for the
     fixed addresses.
     """
-    if shutil.which("anvil") is None:
-        pytest.skip("requires the anvil binary (not present in the no-anvil CI job)")
+    _require_anvil()
     # A default funded dev account (anvil account 0) is kept so tests that need
     # to send a real transaction (e.g. emitting a log) can: anvil unlocks dev
     # accounts server-side, so eth_sendTransaction needs no client-side signing

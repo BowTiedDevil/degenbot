@@ -131,12 +131,14 @@ actual_raw="$workdir/actual.raw"
 } > "$actual_raw"
 
 # Normalize the two volatile fields so the oracle is stable across machines and
-# builds: the scratch path and the version/build receipt (ADR-009 makes the
-# version single-sourced; the receipt advances with every source edit).
+# versions: the scratch path and the version line (ADR-009 makes the version
+# single-sourced). The version pattern is deliberately strict: only a bare
+# `degenbot <version>` line normalizes, so any added suffix renders raw and
+# fails the diff.
 actual="$workdir/actual.txt"
 sed -E \
     -e "s|$workdir|<tmp>|g" \
-    -e 's/^(degenbot )[^ ]+( \(build ).*(\))$/\1<semver>\2<receipt>\3/' \
+    -e 's/^(degenbot )[^ ]+$/\1<semver>/' \
     "$actual_raw" > "$actual"
 
 if [ "${DEGENBOT_CLI_GATE_DUMP_ACTUAL:-}" = "1" ]; then

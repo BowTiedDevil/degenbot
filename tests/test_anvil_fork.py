@@ -12,6 +12,7 @@ from .conftest import (
     TEST_BASE_FULL_NODE_HTTP_URI,
     TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI,
     TEST_ETHEREUM_FULL_NODE_HTTP_URI,
+    _require_anvil,
 )
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -29,6 +30,7 @@ def test_web3_endpoints(standalone_anvil: AnvilFork):
 
 
 def test_set_bytecode():
+    _require_anvil()
     fake_bytecode = to_bytes("0x42069")
     fork = AnvilFork(
         launch=ForkLaunchConfig(
@@ -136,6 +138,7 @@ def test_set_next_block_base_fee(standalone_anvil: AnvilFork):
 
 
 def test_set_next_block_base_fee_in_constructor():
+    _require_anvil()
     base_fee_override = 69 * 10**9
 
     fork = AnvilFork(
@@ -196,6 +199,7 @@ def test_ipc_kwargs() -> None:
 
 
 def test_balance_overrides_in_constructor():
+    _require_anvil()
     fake_balance = 100 * 10**18
     fork = AnvilFork(
         launch=ForkLaunchConfig(
@@ -210,6 +214,7 @@ def test_balance_overrides_in_constructor():
 
 
 def test_nonce_overrides_in_constructor():
+    _require_anvil()
     fake_nonce = 69
     fork = AnvilFork(
         launch=ForkLaunchConfig(
@@ -224,6 +229,7 @@ def test_nonce_overrides_in_constructor():
 
 
 def test_bytecode_overrides_in_constructor():
+    _require_anvil()
     fake_address = get_checksum_address("0x6969696969696969696969696969696969696969")
     fake_bytecode = to_bytes("0x0420")
 
@@ -238,6 +244,7 @@ def test_bytecode_overrides_in_constructor():
 
 
 def test_coinbase_override_in_constructor():
+    _require_anvil()
     fake_coinbase = get_checksum_address("0x6969696969696969696969696969696969696969")
 
     fork = AnvilFork(

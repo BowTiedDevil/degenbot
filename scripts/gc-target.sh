@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Report and reclaim rebuildable Rust target artifacts without touching the
-# warm maturin link cache or the repository-root extension build receipt.
+# warm maturin link cache or anything outside the Cargo target root.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -96,8 +96,8 @@ add_candidate() {
     local path
     path="$(realpath -m -- "$2")"
 
-    # The deletion boundary is the Cargo target root. In particular, the
-    # repository-root build receipt is outside it and cannot enter this list.
+    # The deletion boundary is the Cargo target root: anything outside it
+    # cannot enter this list.
     case "$path" in
         "$target_dir"/*) ;;
         *) return ;;

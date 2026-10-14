@@ -23,7 +23,7 @@ Options:
 exit 0
 
 $ degenbot --version
-degenbot <semver> (build <receipt>)
+degenbot <semver>
 exit 0
 
 $ degenbot database inspect --database <head.db>
