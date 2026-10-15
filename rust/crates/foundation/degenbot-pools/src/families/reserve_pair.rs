@@ -64,6 +64,8 @@ use alloy::primitives::{aliases::U112, U256};
 use degenbot_math::solidly;
 use degenbot_math::v2::IntHopState;
 
+use crate::families::solidly as solidly_read;
+
 use crate::state_history::ReservePairPoolState;
 use crate::v3_state::SimulateSwapError;
 
@@ -204,6 +206,35 @@ pub enum SwapReadRequest {
     },
 }
 
+/// The Aerodrome volatile design's resolve projection: the orientation-
+/// selected reserves plus the unidirectional FEE fraction converted to the
+/// retained fraction the V2 hop payload carries (`gamma = denom − fee`;
+/// algebraically the same constant-product read — the V2 form folds the
+/// retained fraction into the input-side term, the fee-fraction form into
+/// the amount, and the quotients coincide). The V2 solve lane's one wrap
+/// for the lane's second entry arm (ADR-059 D6). A `stable` identity never
+/// reaches this projection — the Solidly family's [`solidly_read`]
+/// `capture_hop` owns it and the central rows route it there.
+#[must_use]
+pub fn capture_aerodrome_hop(
+    state: &AerodromeV2PoolState,
+    identity: &AerodromeV2PoolIdentity,
+    zero_for_one: bool,
+) -> IntHopState {
+    let (reserve_in, reserve_out) = if zero_for_one {
+        (state.reserve0.to::<U256>(), state.reserve1.to::<U256>())
+    } else {
+        (state.reserve1.to::<U256>(), state.reserve0.to::<U256>())
+    };
+    let (fee_numer, fee_denom) = identity.fee;
+    IntHopState::new(
+        reserve_in,
+        reserve_out,
+        fee_denom.saturating_sub(fee_numer),
+        fee_denom,
+    )
+}
+
 /// The swap-read door — ALL variants behind one entry. The V2 retained-
 /// fraction convention and the Aerodrome fee-fraction convention are the
 /// design-private arms' own; callers never map fees.
@@ -212,11 +243,14 @@ pub enum SwapReadRequest {
 ///
 /// [`SimulateSwapError::NotComputable`] on arithmetic overflow / invariant
 /// violation (mirroring the on-chain `SafeMath` revert contract), on an
-/// exact-output refusal (see [`SwapReadRequest::ExactOut`]), and when an
+/// exact-output refusal (see [`SwapReadRequest::ExactOut`]), when an
 /// Aerodrome design carries a `stable` identity (the Solidly family's read
-/// arm owns that invariant — refusing beats mis-pricing with volatile math).
-/// (The family carries no sparse-map miss — a reserve-pair slice has no tick
-/// words to miss.)
+/// arm owns that invariant — refusing beats mis-pricing with volatile math),
+/// and when a V2 design carries a `stable_swap` identity WITHOUT its
+/// construction-time decimal scales (see [`read_v2_swap`] — the behavioral
+/// axis routes the Camelot arm, and a scale-less stable identity refuses
+/// rather than guess). (The family carries no sparse-map miss — a
+/// reserve-pair slice has no tick words to miss.)
 pub fn read_swap(
     design: ReservePairState<'_>,
     request: SwapReadRequest,
@@ -279,6 +313,45 @@ fn read_v2_swap(
     identity: &V2PoolIdentity,
     request: SwapReadRequest,
 ) -> Result<U256, SimulateSwapError> {
+    // Behavioral-axis routing (ADR-073): a `stable_swap = true` identity's
+    // math family is the Solidly door's Camelot arm — the constant product
+    // would mis-price it. The `10**decimals` scales ride the identity
+    // (captured at construction from the token registry, ADR-003 — the
+    // C5 variant-carried-scales precedent); a stable identity WITHOUT them
+    // answers the typed refusal here — never a guessed scale, never CP math.
+    if identity.stable_swap {
+        let Some((d0, d1)) = identity.token0_decimals.zip(identity.token1_decimals) else {
+            return Err(SimulateSwapError::NotComputable);
+        };
+        let decimals = (
+            U256::from(10u64).pow(U256::from(d0)),
+            U256::from(10u64).pow(U256::from(d1)),
+        );
+        let solidly_request = match request {
+            SwapReadRequest::ExactIn {
+                zero_for_one,
+                amount_in,
+            } => solidly_read::SwapReadRequest::ExactIn {
+                zero_for_one,
+                amount_in,
+            },
+            SwapReadRequest::ExactOut {
+                zero_for_one,
+                amount_out,
+            } => solidly_read::SwapReadRequest::ExactOut {
+                zero_for_one,
+                amount_out,
+            },
+        };
+        return solidly_read::read_swap(
+            solidly_read::SolidlyState::Camelot {
+                identity,
+                state,
+                decimals,
+            },
+            solidly_request,
+        );
+    }
     match request {
         SwapReadRequest::ExactIn {
             zero_for_one,
@@ -384,6 +457,8 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
             fee_denominator: None,
+            token0_decimals: None,
+            token1_decimals: None,
         };
         let state = V2PoolState {
             reserve0: U112::from(RESERVE0),
@@ -737,6 +812,162 @@ mod tests {
             ),
             Err(SimulateSwapError::NotComputable)
         );
+    }
+
+    // The Camelot-stable routing pin: the frozen Python-oracle snapshot's
+    // SECOND `calc_exact_in_stable_camelot` case (independent oracle — the
+    // constant comes from the Python companion, not from the leaf under
+    // call). The fee fraction the oracle case records is (999, 1000), so the
+    // identity stores the RETAINED gamma (1, 1000); the scales ride the
+    // identity's construction-time decimals (6, 6).
+    const CAM2: [u64; 8] = [
+        29_963,  // amount_in
+        115_634, // reserve0
+        17_204,  // reserve1
+        6,       // token0 decimals
+        6,       // token1 decimals
+        1,       // token0 retained gamma — (denom - fee) of the case's (999, 1000)
+        1_000,   // fee denominator
+        12,      // the recorded Python-oracle output
+    ];
+
+    fn camelot_stable_fixture() -> (V2PoolIdentity, V2PoolState) {
+        let identity = V2PoolIdentity {
+            address: alloy::primitives::Address::repeat_byte(0xc1),
+            token0: alloy::primitives::Address::repeat_byte(0x01),
+            token1: alloy::primitives::Address::repeat_byte(0x02),
+            fee_token0: (CAM2[5], CAM2[6]),
+            fee_token1: (CAM2[5], CAM2[6]),
+            factory: alloy::primitives::Address::repeat_byte(0xfa),
+            deployer: alloy::primitives::Address::ZERO,
+            init_hash: alloy::primitives::B256::ZERO,
+            variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
+            stable_swap: true,
+            fee_denominator: Some(10_000),
+            token0_decimals: Some(6),
+            token1_decimals: Some(6),
+        };
+        let state = V2PoolState {
+            reserve0: U112::from(CAM2[1]),
+            reserve1: U112::from(CAM2[2]),
+            update_block: 19_000_000,
+            state_nonce: 0,
+            journal: ReorgJournal::<V2BlockDelta>::new(8),
+        };
+        (identity, state)
+    }
+
+    #[test]
+    fn camelot_stable_read_routes_to_the_solidly_door_and_matches_the_python_oracle() {
+        // What: a `stable_swap = true` identity read through the reserve-pair
+        // door must answer the Solidly door's Camelot invariant — the Python
+        // companion's output — NOT the constant product (which answers a
+        // different number on this fixture; asserted below). Where CP and the
+        // Camelot invariant differ, the read follows the behavioral axis.
+        let (identity, state) = camelot_stable_fixture();
+        let out = match read_swap(
+            ReservePairState::V2 {
+                identity: &identity,
+                state: &state,
+            },
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(CAM2[0]),
+            },
+        ) {
+            Ok(out) => out,
+            other => panic!("oracle fixture computes, got {other:?}"),
+        };
+        assert_eq!(out, U256::from(CAM2[7]));
+
+        // The same request through the constant product answers a DIFFERENT
+        // number on this fixture — the routing is load-bearing, not cosmetic.
+        let cp_out = match capture_hop(&state, &identity, true).swap(U256::from(CAM2[0])) {
+            Ok(out) => out,
+            other => panic!("CP arithmetic on the fixture fits, got {other:?}"),
+        };
+        assert_ne!(
+            cp_out,
+            U256::from(CAM2[7]),
+            "fixture must sit where CP and the Camelot invariant diverge"
+        );
+    }
+
+    #[test]
+    fn camelot_stable_identity_without_scales_refuses_at_the_door() {
+        // What: a stable identity whose construction-time scales are absent
+        // (token unregistered at registration) answers the typed refusal —
+        // never a guessed scale, never CP math.
+        let (mut identity, state) = camelot_stable_fixture();
+        identity.token0_decimals = None;
+        assert_eq!(
+            read_swap(
+                ReservePairState::V2 {
+                    identity: &identity,
+                    state: &state,
+                },
+                SwapReadRequest::ExactIn {
+                    zero_for_one: true,
+                    amount_in: U256::from(CAM2[0]),
+                },
+            ),
+            Err(SimulateSwapError::NotComputable)
+        );
+        // One side missing is equally refused.
+        identity.token0_decimals = Some(6);
+        identity.token1_decimals = None;
+        assert_eq!(
+            read_swap(
+                ReservePairState::V2 {
+                    identity: &identity,
+                    state: &state,
+                },
+                SwapReadRequest::ExactIn {
+                    zero_for_one: true,
+                    amount_in: U256::from(CAM2[0]),
+                },
+            ),
+            Err(SimulateSwapError::NotComputable)
+        );
+    }
+
+    #[test]
+    fn capture_aerodrome_hop_converts_the_fee_fraction_to_the_retained_gamma() {
+        // What: the V2 lane's Aerodrome volatile projection converts the
+        // unidirectional FEE fraction (3, 1000) to the retained fraction
+        // (997, 1000) the IntHopState payload carries, and the projected hop
+        // answers the SAME getAmountOut the fee-fraction leaf does — the two
+        // forms are algebraically one constant-product read.
+        let (identity, state) = aerodrome_fixture(false);
+        let hop = capture_aerodrome_hop(&state, &identity, true);
+        assert_eq!(hop.reserve_in, U256::from(1_000_000u64));
+        assert_eq!(hop.reserve_out, U256::from(2_000_000u64));
+        assert_eq!(hop.gamma_numer, U256::from(997u64));
+        assert_eq!(hop.fee_denom, U256::from(1000u64));
+
+        // The projected hop's swap == the fee-fraction read's verdict.
+        let via_hop = match hop.swap(U256::from(1000u64)) {
+            Ok(out) => out,
+            other => panic!("hop arithmetic on the fixture fits, got {other:?}"),
+        };
+        let via_read = match read_aerodrome_volatile_swap(
+            &state,
+            &identity,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(1000u64),
+            },
+        ) {
+            Ok(out) => out,
+            other => panic!("volatile fixture computes, got {other:?}"),
+        };
+        assert_eq!(via_hop, via_read);
+
+        // Orientation flips the reserves; the unidirectional fee is shared.
+        let hop = capture_aerodrome_hop(&state, &identity, false);
+        assert_eq!(hop.reserve_in, U256::from(2_000_000u64));
+        assert_eq!(hop.reserve_out, U256::from(1_000_000u64));
+        assert_eq!(hop.gamma_numer, U256::from(997u64));
     }
 
     #[test]

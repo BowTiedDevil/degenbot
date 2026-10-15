@@ -9,7 +9,7 @@ use crate::arb_engine::delivery_policy::{
 };
 use crate::arb_engine::lifecycle::{
     latest_results, path_count, path_dedups, register_and_solve_path, register_path,
-    set_deferred_re_record, set_path_cap, solve_all_paths, v2_pool_count, v3_pool_count,
+    reserve_pair_pool_count, set_deferred_re_record, set_path_cap, solve_all_paths, v3_pool_count,
 };
 use crate::arb_engine::test_harness::{
     finalize_for_test, has_logs_this_block, hop_projection_count, last_solved_block,

@@ -21,6 +21,8 @@ fn make_v2_pool(factory: Address, reserve0: u128, reserve1: u128) -> PoolEntry {
         variant: DexVariant::UniswapV2,
         stable_swap: false,
         fee_denominator: None,
+        token0_decimals: None,
+        token1_decimals: None,
     };
     let state = V2PoolState {
         reserve0: U112::from(reserve0),

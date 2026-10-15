@@ -60,9 +60,9 @@ use super::delivery_policy::{
 use super::inline_sim::InlineSimulator;
 use super::lifecycle::{
     flush_event_buffer, last_processed_block, latest_results, path_count, path_dedups,
-    register_and_solve_path, register_path, set_deferred_re_record, set_event_buffer_max_age,
-    set_last_processed_block, set_path_cap, solve_all_paths, v2_pool_count, v3_pool_count,
-    v4_pool_count,
+    register_and_solve_path, register_path, reserve_pair_pool_count, set_deferred_re_record,
+    set_event_buffer_max_age, set_last_processed_block, set_path_cap, solve_all_paths,
+    v3_pool_count, v4_pool_count,
 };
 use super::path_registry::PathRegistrationError;
 use super::{DiagnosticPathState, ResultBatch};
@@ -310,10 +310,11 @@ impl EngineStages {
         flush_event_buffer(&mut self.engine.lock());
     }
 
-    /// Number of registered V2 pools.
+    /// Number of pools the V2 solve lane admits (the reserve-pair family's
+    /// volatile designs — V2 + Aerodrome volatile; ADR-059 D6).
     #[must_use]
-    pub fn v2_pool_count(&self) -> usize {
-        v2_pool_count(&self.engine.lock())
+    pub fn reserve_pair_pool_count(&self) -> usize {
+        reserve_pair_pool_count(&self.engine.lock())
     }
 
     /// Number of registered V3 pools.

@@ -928,7 +928,7 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
 
         bot_logger.info(
             f"[startup] State trimmed — "
-            f"{registry.engine.v2_pool_count()} V2, "
+            f"{registry.engine.reserve_pair_pool_count()} reserve-pair, "
             f"{registry.engine.v3_pool_count()} V3, "
             f"{registry.engine.v4_pool_count()} V4 pools retained in "
             f"Rust engine; {registry.engine.path_count()} paths registered. "

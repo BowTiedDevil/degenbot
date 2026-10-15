@@ -58,11 +58,23 @@ impl BotState {
         let pool_id = self.registry.next_pool_id;
         self.registry.next_pool_id += 1;
 
+        // Construction I/O (ADR-003 single source): capture the pair's token
+        // decimal scales off the token registry at registration — the same
+        // construction seam that carries `stable_swap`/`fee_denominator` onto
+        // the identity. The Camelot-stable read arm scales from them; an
+        // unregistered token leaves `None` and that arm refuses rather than
+        // guess a scale.
+        let token_decimals = (
+            self.token_entry(&params.token0).map(|t| t.decimals),
+            self.token_entry(&params.token1).map(|t| t.decimals),
+        );
+
         // Construct (identity, state) + genesis journal delta on the state
         // struct (ADR-014 D6/Q7 — V2 joins its 6 siblings; the construction
         // + genesis-delta push moved out of `register_v2_pool` into
         // `V2PoolState::from_params`).
-        let (identity, state) = V2PoolState::from_params(params, self.registry.journal_depth);
+        let (identity, state) =
+            V2PoolState::from_params(params, self.registry.journal_depth, token_decimals);
 
         self.registry
             .pools
@@ -178,10 +190,36 @@ impl BotState {
         Ok(pool_id)
     }
 
+    /// The number of registered pools the V2 solve lane ADMITS: the
+    /// reserve-pair family's volatile designs (a V2 entry with
+    /// `stable_swap = false`, an Aerodrome entry with `stable = false` —
+    /// ADR-059 D6, one dispatch row, two entry arms). A Camelot
+    /// `stable_swap` V2 entry and a stable Aerodrome entry are the Solidly
+    /// lane's designs and must not be counted here.
+    #[must_use]
+    pub fn reserve_pair_pool_count(&self) -> usize {
+        // The family knowledge lives in the type (the `pool_count_of` row's
+        // typed-projection pattern — no central dispatch match here): a
+        // volatile design is what the V2 solve lane admits; the stable flags
+        // ride the identities the typed slices project.
+        self.registry
+            .pools
+            .values()
+            .filter(|entry| {
+                entry
+                    .slice::<degenbot_pools::v2_state::V2PoolIdentity>()
+                    .is_some_and(|i| !i.stable_swap)
+                    || entry
+                        .slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>()
+                        .is_some_and(|i| !i.stable)
+            })
+            .count()
+    }
+
     /// The registered reserve pair's `(reserve0, reserve1, update_block)`
     /// snapshot — the reserves reader the V2 solve lane and the reorg
-    /// coordinator reconcile against (the retired `v2_snapshot`, family-
-    /// neutral name; the returned tuple is the reserve-pair slice's values).
+    /// coordinator reconcile against (the returned tuple is the
+    /// reserve-pair slice's values).
     #[must_use]
     pub fn pool_reserves(&self, pool_id: u64) -> Option<(U256, U256, u64)> {
         let state = self.pool_slice::<V2PoolState>(pool_id)?;

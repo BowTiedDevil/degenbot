@@ -48,7 +48,7 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "stop",
     "strategies",
     "subscribe",
-    "v2_pool_count",
+    "reserve_pair_pool_count",
     "v3_pool_count",
     "v4_pool_count",
 )
@@ -93,7 +93,7 @@ class EngineSeam(Protocol):
     def set_path_cap(self, cap: int | None) -> None: ...
     def release_all_v3_v4_quarantined(self) -> None: ...
     def last_processed_block(self) -> int | None: ...
-    def v2_pool_count(self) -> int: ...
+    def reserve_pair_pool_count(self) -> int: ...
     def v3_pool_count(self) -> int: ...
     def v4_pool_count(self) -> int: ...
     def path_count(self) -> int: ...
@@ -190,7 +190,7 @@ class FakeEngine:
 
     # ── pool / path registry ───────────────────────────────────────
 
-    def v2_pool_count(self) -> int:
+    def reserve_pair_pool_count(self) -> int:
         return 0
 
     def v3_pool_count(self) -> int:

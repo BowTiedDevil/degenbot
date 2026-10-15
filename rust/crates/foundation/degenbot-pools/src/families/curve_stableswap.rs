@@ -5,8 +5,8 @@
 //! GLOSSARY.md "Family read module": this tree owns the state slice (the
 //! I/O-free `crate::curve_state` types, ADR-001), the swap-read arm (the
 //! standard-stableswap exact-input read; the non-`STANDARD` swap styles
-//! answer the typed [`SimulateSwapError::NotComputable`] refusal — the
-//! pre-port `Ok(ZERO)` sentinel is retired (C6; see the read door's docs)),
+//! answer the typed [`SimulateSwapError::NotComputable`] refusal — a zero
+//! output always means a real zero-output swap; see the read door's docs)),
 //! the resolve
 //! projection as a pure function of the family state slice, and the
 //! family-local apply/get/calc behavior over that slice. It reads NO state
@@ -167,18 +167,23 @@ pub fn capture_hop(
 /// descale, `ConversionStyle.FEE_THEN_RATE`) plus the typed refusal for the
 /// non-`STANDARD` swap styles (crypto, live-admin, metapool `get_dy`
 /// base-pool dispatch). Those styles' `get_dy` math is owned by the
-/// calculator path (`curve_dy_calculator`), not this read arm — the retired
-/// pre-port sentinel used to answer `Ok(ZERO)` here, which read as a real
-/// zero-output swap; the typed refusal says "not this door's computation"
-/// instead (C6 retirement; the companion's Curve read path consumes
-/// `curve_get_dy`, never this door, and no consumer distinguishes the old
-/// zero from the refusal).
+/// calculator path (`curve_dy_calculator`), not this read arm — this door
+/// answers typed refusals for non-computable cases, so a zero output must
+/// mean a real zero-output swap; the typed refusal says "not this door's
+/// computation" instead. The companion's Curve read path consumes
+/// `curve_get_dy`, never this door, and no consumer distinguishes a zero
+/// output from the refusal.
 ///
 /// # Errors
 ///
 /// [`SimulateSwapError::NotComputable`] on arithmetic overflow / invariant
-/// violation / non-positive amount. (The family carries no sparse-map miss —
-/// a balance-vector slice has no tick words to miss.)
+/// violation / non-positive amount, and on the degenerate-structure shapes
+/// (`n_coins < 2`, `xp.len() != n_coins`) — both answer the typed refusal,
+/// never a zero output: the companion's Curve read path consumes
+/// `curve_get_dy`, never this door, and no consumer distinguishes a zero
+/// output from a refusal.
+/// (The family carries no sparse-map miss — a balance-vector slice has no
+/// tick words to miss.)
 pub fn read_swap(
     state: &CurvePoolState,
     identity: &CurvePoolIdentity,
@@ -186,10 +191,8 @@ pub fn read_swap(
     amount_in: U256,
 ) -> Result<U256, SimulateSwapError> {
     // Only the standard stableswap path is ported; the other styles answer the
-    // typed refusal (the retired `Ok(U256::ZERO)` not-yet-Rust-side sentinel —
-    // C6 retired it after the companion's Curve read path was verified to
-    // carry no zero-vs-error distinguishing consumer; `curve_get_dy` /
-    // `calculate_dy` remain the Rust surfaces that DO compute those styles).
+    // typed refusal (`curve_get_dy` / `calculate_dy` are the Rust surfaces
+    // that DO compute those styles).
     if identity.swap_style != 1 {
         return Err(SimulateSwapError::NotComputable);
     }
@@ -197,8 +200,10 @@ pub fn read_swap(
         return Ok(U256::ZERO);
     }
     let n_coins = identity.n_coins();
+    // Degenerate structure: fewer than two coins admits no pairwise hop —
+    // a typed refusal, never a zero output that reads as a real swap result.
     if n_coins < 2 {
-        return Ok(U256::ZERO);
+        return Err(SimulateSwapError::NotComputable);
     }
     // 2-token structural convention: zero_for_one → coin (0, 1), else (1, 0).
     let (coin_in, coin_out) = if zero_for_one {
@@ -229,8 +234,10 @@ pub fn read_swap(
                 .map(|v| v / U256::from(CURVE_PRECISION))
         })
         .collect::<Result<_, _>>()?;
+    // Degenerate structure: the rate-adjusted balance vector does not cover
+    // the coin set — a typed refusal, never a zero output.
     if xp.len() != n_coins {
-        return Ok(U256::ZERO);
+        return Err(SimulateSwapError::NotComputable);
     }
 
     // x = xp[coin_in] + (dx * rates[coin_in] // PRECISION)
@@ -526,12 +533,10 @@ mod tests {
     use super::*;
     use crate::curve_state::CurvePoolIdentity;
 
-    // The retired not-yet-Rust-side sentinel: a non-STANDARD Curve swap style
-    // answers the TYPED refusal at the read door, never a zero output (the old
-    // Ok(U256::ZERO) arm read as a real zero-output swap and is gone - C6; the
-    // companion's Curve read path consumes curve_get_dy, which still computes
-    // those styles through the calculator, and no consumer distinguishes the
-    // old zero from the refusal).
+    // A non-STANDARD Curve swap style answers the TYPED refusal at the read
+    // door, never a zero output (the companion's Curve read path consumes
+    // curve_get_dy, which still computes those styles through the calculator,
+    // and no consumer distinguishes a zero output from the refusal).
     #[test]
     fn non_standard_swap_style_answers_the_typed_refusal_not_a_zero() {
         let identity = CurvePoolIdentity {
@@ -576,6 +581,80 @@ mod tests {
         assert!(
             matches!(verdict, Err(SimulateSwapError::NotComputable)),
             "a non-STANDARD style answers the typed refusal, got {verdict:?}"
+        );
+    }
+
+    // The degenerate-structure pins: `n_coins < 2` and
+    // `xp.len() != n_coins` answer the TYPED refusal, never an
+    // `Ok(U256::ZERO)` output that reads as a real zero-output swap. A
+    // one-coin registration IS admission-reachable (the Curve row validates
+    // only vector-length AGREEMENT), so the refusal is live behavior.
+
+    fn degenerate_identity(n_tokens: usize) -> CurvePoolIdentity {
+        CurvePoolIdentity {
+            address: alloy::primitives::Address::ZERO,
+            tokens: vec![alloy::primitives::Address::new([0x21u8; 20]); n_tokens].into(),
+            a_coefficient: 100,
+            a_precision: 100,
+            fee: 4_000_000,
+            admin_fee: 0,
+            rate_multipliers: vec![U256::from(CURVE_PRECISION); n_tokens].into(),
+            swap_style: 1,
+            lending_rate_style: 0,
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 1,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: Box::default(),
+            precision_multipliers: vec![U256::from(CURVE_PRECISION); n_tokens].into(),
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
+        }
+    }
+
+    fn degenerate_state(n_balances: usize) -> CurvePoolState {
+        CurvePoolState {
+            balances: vec![U256::from(1_000_000u64); n_balances].into(),
+            update_block: 1,
+            state_nonce: 1,
+            journal: crate::state_history::ReorgJournal::new(8),
+            data_provider: None,
+        }
+    }
+
+    #[test]
+    fn fewer_than_two_coins_answers_the_typed_refusal_not_a_zero() {
+        let identity = degenerate_identity(1);
+        let state = degenerate_state(1);
+        let verdict = read_swap(&state, &identity, true, U256::from(1_000u64));
+        assert!(
+            matches!(verdict, Err(SimulateSwapError::NotComputable)),
+            "n_coins < 2 answers the typed refusal, got {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn rate_adjusted_vector_shorter_than_the_coin_set_answers_the_typed_refusal() {
+        // xp is built by zipping balances with rate multipliers; a one-element
+        // balance vector against a two-coin identity leaves `xp.len() != n_coins`.
+        let identity = degenerate_identity(2);
+        let state = degenerate_state(1);
+        let verdict = read_swap(&state, &identity, true, U256::from(1_000u64));
+        assert!(
+            matches!(verdict, Err(SimulateSwapError::NotComputable)),
+            "xp.len() != n_coins answers the typed refusal, got {verdict:?}"
         );
     }
 }

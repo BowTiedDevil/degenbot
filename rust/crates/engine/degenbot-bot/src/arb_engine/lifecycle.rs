@@ -212,21 +212,25 @@ pub(crate) fn set_deferred_re_record(
 /// dispatch is the pump's job via `compute_diff_and_send`, driven by the
 /// debounce timer).
 ///
-/// Cold-start / test synchronization entry point (replaces the removed
-/// `initial_solve`). Populates `engine.cycle.results` and advances
+/// Cold-start / test synchronization entry point. Populates
+/// `engine.cycle.results` and advances
 /// `results_block`; leaves `delivered` untouched (Python has not yet
 /// received anything). Callers read results via `latest_results`.
 #[tracing::instrument(name = "degenbot.arb.solve_all", skip(engine), fields(block_number, path_count = engine.registry.len()))]
 pub(crate) fn solve_all_paths(engine: &mut ArbitrageEngine, block_number: u64) {
     engine.cycle.solve_all_paths(block_number, &engine.registry);
 }
-/// Number of registered V2 pools (state lives in `BotState` under ADR-003).
+/// Number of registered pools the V2 solve lane ADMITS — the reserve-pair
+/// family's volatile designs (V2 + Aerodrome volatile; ADR-059 D6, one
+/// dispatch row, two entry arms). A Camelot `stable_swap` V2 entry and a
+/// stable Aerodrome entry are the `SolidlyStable` lane's designs that this
+/// lane refuses; they are not counted here.
 #[must_use]
-pub(crate) fn v2_pool_count(engine: &ArbitrageEngine) -> usize {
+pub(crate) fn reserve_pair_pool_count(engine: &ArbitrageEngine) -> usize {
     engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .pool_count_of::<degenbot_pools::v2_state::V2PoolState>()
+        .reserve_pair_pool_count()
 }
 /// Number of registered V3 pools (state lives in `BotState` under ADR-003).
 #[must_use]
@@ -262,17 +266,4 @@ pub(crate) fn set_path_cap(engine: &mut ArbitrageEngine, cap: Option<usize>) {
 #[must_use]
 pub(crate) fn path_dedups(engine: &ArbitrageEngine) -> u64 {
     engine.registry.dedups()
-}
-/// The detached solve cycle (enqueue-and-return with sidecar merge) is THE
-/// ONLY solve arm since the Hard cutover: the DRIVEN solve path takes
-/// NO engine-level Mutex — the stage-surface (`EngineStages`) solve hold
-/// collapses to enqueue end (µs) and each result merges on the sidecar under
-/// its own short per-item acquisition (the Q1a stale policy makes that safe).
-/// The `DEGENBOT_DETACHED_SOLVES` stance (and its in-cycle opt-out) retired
-/// with the in-cycle arm; backpressure is the admission draw, not the old
-/// in-flight cap.
-#[cfg(test)]
-mod streaming_stance_tests {
-    // the detached-solve stance key retired from the schema; there
-    // is no opt-out — the one solve arm is unconditional.
 }

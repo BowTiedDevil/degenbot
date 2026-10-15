@@ -516,6 +516,8 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
             stable_swap: true,
             fee_denominator: Some(10_000),
+            token0_decimals: Some(6),
+            token1_decimals: Some(6),
         };
         let state = V2PoolState {
             reserve0: U112::from(CAM_SNAPSHOT[1]),

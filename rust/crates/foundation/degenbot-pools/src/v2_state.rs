@@ -53,6 +53,15 @@ pub struct V2PoolIdentity {
     /// Camelot's integer fee scaling (used by the solidly-stable math). `None`
     /// for non-Camelot V2 (the volatile calc ignores it).
     pub fee_denominator: Option<u64>,
+    /// ERC-20 decimal count for token0, captured at CONSTRUCTION from the
+    /// token registry (ADR-003's single source — the same construction I/O
+    /// that seeds the `V2PoolDescriptor`'s `stable_swap`/`fee_denominator`
+    /// precedent). The Camelot-stable read arm scales the invariant with
+    /// these; `None` (token unregistered at registration time) makes the
+    /// read arm answer its typed refusal rather than guess a scale.
+    pub token0_decimals: Option<u8>,
+    /// ERC-20 decimal count for token1. See [`Self::token0_decimals`].
+    pub token1_decimals: Option<u8>,
 }
 
 /// Mutable runtime state for a Uniswap V2-style constant-product pool.
@@ -165,9 +174,15 @@ impl V2PoolState {
     /// the other 6 families. `register_v2_pool` delegates here after
     /// spec-validation + dedup + `pool_id` assignment.
     #[must_use]
+    /// `token_decimals` carries the pair's `(token0, token1)` decimal counts
+    /// resolved from the token registry by the CALLING registration row (the
+    /// construction I/O seam — this constructor stays I/O-free per ADR-001;
+    /// the token registry is ADR-003's single source for the scales the
+    /// Camelot-stable read arm needs).
     pub fn from_params(
         params: &RegisterV2PoolParams,
         journal_depth: usize,
+        token_decimals: (Option<u8>, Option<u8>),
     ) -> (V2PoolIdentity, V2PoolState) {
         let identity = V2PoolIdentity {
             address: params.address,
@@ -181,6 +196,8 @@ impl V2PoolState {
             variant: params.variant,
             stable_swap: params.stable_swap,
             fee_denominator: params.fee_denominator,
+            token0_decimals: token_decimals.0,
+            token1_decimals: token_decimals.1,
         };
         let mut journal = ReorgJournal::<V2BlockDelta>::new(journal_depth);
         journal.push_delta(V2BlockDelta {
@@ -328,13 +345,15 @@ mod apply_inherent_tests {
             ..RegisterV2PoolParams::default()
         };
 
-        let (identity, state) = V2PoolState::from_params(&params, 8);
+        let (identity, state) = V2PoolState::from_params(&params, 8, (Some(6), Some(18)));
 
         // (1) identity matches params.
         assert_eq!(identity.address, params.address);
         assert_eq!(identity.token0, params.token0);
         assert_eq!(identity.token1, params.token1);
         assert_eq!(identity.variant, params.variant);
+        assert_eq!(identity.token0_decimals, Some(6));
+        assert_eq!(identity.token1_decimals, Some(18));
         // (2) state matches params.
         assert_eq!(state.reserve0, U112::from(1_000u64));
         assert_eq!(state.reserve1, U112::from(2_000u64));

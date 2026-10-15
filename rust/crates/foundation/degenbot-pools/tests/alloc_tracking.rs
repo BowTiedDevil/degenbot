@@ -146,10 +146,18 @@ fn pool_lifecycle_alloc_report() {
 
     // V2 registration (journal-twinned scalars, no tick map).
     measure("v2_register_journal8", || {
-        V2PoolState::from_params(&RegisterV2PoolParams::default(), JOURNAL_DEPTH)
+        V2PoolState::from_params(
+            &RegisterV2PoolParams::default(),
+            JOURNAL_DEPTH,
+            (None, None),
+        )
     });
 
     // V2 state clone.
-    let (_, v2_state) = V2PoolState::from_params(&RegisterV2PoolParams::default(), JOURNAL_DEPTH);
+    let (_, v2_state) = V2PoolState::from_params(
+        &RegisterV2PoolParams::default(),
+        JOURNAL_DEPTH,
+        (None, None),
+    );
     measure("v2_state_clone", || v2_state.clone());
 }

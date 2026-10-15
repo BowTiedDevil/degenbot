@@ -337,6 +337,11 @@ class ArbitrageEngine:
         by `register_v3/v4_pool` (path skipped before registration) is released
         to `Live` instead of deferring events to its buffer indefinitely.
         """
+    def reserve_pair_pool_count(self, /) -> int:
+        """
+        Number of pools the V2 solve lane admits (the reserve-pair family's
+        volatile designs — V2 + Aerodrome volatile; ADR-059 D6).
+        """
     def resume(self, /, facets: Sequence[str]) -> None:
         """
         Resume phase: begin normal pump processing.
@@ -569,10 +574,6 @@ class ArbitrageEngine:
 
         `v4_sync_updates`: list of (`pool_manager_str`, `pool_id_hex`, `sqrt_price_x96`, liquidity, tick, `tick_data`)
           where `tick_data` is a dict of {`tick_index`: (`liquidity_gross`, `liquidity_net`)}
-        """
-    def v2_pool_count(self, /) -> int:
-        """
-        Number of registered V2 pools.
         """
     def v3_pool_count(self, /) -> int:
         """

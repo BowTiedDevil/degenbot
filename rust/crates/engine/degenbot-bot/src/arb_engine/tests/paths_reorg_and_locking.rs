@@ -632,7 +632,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
 /// allocated `Arc<RwLock<BotState>>` so one shared `BotState` is read by both the
 /// engine and the `PyBot`/handle tree — dissolving the dual-`BotState` split
 /// (pump mutates `BotState` B; handles read `BotState` A). If the engine held its own
-/// `BotState`, `v2_pool_count()` would return 0 for a pool registered only in
+/// `BotState`, `reserve_pair_pool_count()` would return 0 for a pool registered only in
 /// the shared core.
 #[test]
 fn with_core_adopts_shared_bot_state() {
@@ -666,7 +666,7 @@ fn with_core_adopts_shared_bot_state() {
     let engine = ArbitrageEngine::with_core(Arc::clone(&core));
     // If the engine held a separate `BotState`, this would be 0; shared => 1.
     assert_eq!(
-        v2_pool_count(&engine,),
+        reserve_pair_pool_count(&engine,),
         1,
         "engine must read the shared BotState's pools via with_core"
     );

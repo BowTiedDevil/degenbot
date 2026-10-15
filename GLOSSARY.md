@@ -442,6 +442,8 @@ state (a selective projection for CL) so the solve runs lock-free off a copied v
 its variants let the solver pick the algorithm from path composition. Not a pool concept
 and not math-leaf vocabulary.
 
+**Pool family axes**: two axes a species' family can live on — the **structural** axis (registry entry kind and state/delta shape: V2, Curve, Balancer meta/weighted/stable, CL) and the **behavioral** axis (math family: reserve-pair constant product, Curve, Balancer, Solidly — Camelot/Aerodrome stable — CL). They coincide for every species but two: Camelot-stable (V2-shaped entry, Solidly math) and Aerodrome-volatile (its own entry kind, reserve-pair math). **Reads route at the behavioral axis; state lives at the structural axis** — a `stable_swap` V2 entry reads through the Solidly door's Camelot arm with token scales carried at construction (ADR-003), never through constant-product math (ADR-073, ADR-059 D3).
+
 **Family module**:
 The solver crate's module owning everything one hop family contributes to a solve and
 its bound: the gate projection (`to_math`), the V2-equivalent projection,

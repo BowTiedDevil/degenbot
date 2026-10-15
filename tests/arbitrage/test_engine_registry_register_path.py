@@ -138,9 +138,7 @@ def test_pool_identity_is_derived_from_the_real_shared_bot_state() -> None:
     # A family that is not registered at this address has no id of its own.
     assert registry.engine.pool_id_for_pool("v3", address) is None
     # And the registry holds no per-family identity map or claim table.
-    assert not any(
-        name.endswith(("_keys", "_inflight", "_claims")) for name in vars(registry)
-    )
+    assert not any(name.endswith(("_keys", "_inflight", "_claims")) for name in vars(registry))
 
 
 class _FakeBot:
@@ -168,7 +166,7 @@ def test_bot_supplies_py_bot_to_real_engine() -> None:
     ADR-006 D1: the engine shares the bot's BotState. The live registration path
     is ``Bot.register_v*`` (ADR-006 D3 deleted the unreachable pyo3 engine
     ``register_*`` surface); registering a V2 pool against the bot's py_bot must
-    be visible to the engine's ``v2_pool_count``.
+    be visible to the engine's ``reserve_pair_pool_count``.
     """
     bot = _FakeBot()
     registry = EngineRegistry(bot=bot)
@@ -186,7 +184,7 @@ def test_bot_supplies_py_bot_to_real_engine() -> None:
         fee_denom1=1000,
         factory="0x0000000000000000000000000000000000000004",
     )
-    assert registry.engine.v2_pool_count() == 1
+    assert registry.engine.reserve_pair_pool_count() == 1
 
 
 def test_register_path_dispatches_aerodrome_key() -> None:

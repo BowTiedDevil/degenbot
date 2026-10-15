@@ -46,7 +46,7 @@ fn register_v2_and_v3_pools() {
         fetcher: None,
         ..Default::default()
     });
-    assert_eq!(v2_pool_count(&engine,), 1);
+    assert_eq!(reserve_pair_pool_count(&engine,), 1);
     assert_eq!(v3_pool_count(&engine,), 1);
     // Register a mixed V2→V3 path
     let path_id = register_path(

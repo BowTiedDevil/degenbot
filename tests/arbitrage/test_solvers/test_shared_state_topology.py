@@ -128,7 +128,7 @@ class TestSharedStateTopology:
         # proof it reads the shared BotState, not a private copy.
         path_id, _created = engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
         assert path_id == 1
-        assert engine.v2_pool_count() == 2
+        assert engine.reserve_pair_pool_count() == 2
         assert engine.path_count() == 1
 
     def test_live_state_write_is_visible_to_engine_re_solve(self) -> None:

@@ -62,9 +62,13 @@ impl PyArbEngine {
         );
     }
 
-    /// Number of registered V2 pools.
-    fn v2_pool_count(&self, py: Python<'_>) -> usize {
-        self.with_stages(py, degenbot_bot::arb_engine::EngineStages::v2_pool_count)
+    /// Number of pools the V2 solve lane admits (the reserve-pair family's
+    /// volatile designs — V2 + Aerodrome volatile; ADR-059 D6).
+    fn reserve_pair_pool_count(&self, py: Python<'_>) -> usize {
+        self.with_stages(
+            py,
+            degenbot_bot::arb_engine::EngineStages::reserve_pair_pool_count,
+        )
     }
 
     /// Number of registered V3 pools.

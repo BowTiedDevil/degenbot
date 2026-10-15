@@ -1359,7 +1359,7 @@ async def build_paths(
     bot_logger.info(
         f"[build_paths] Summary: {pipeline.path_count} paths in "
         f"{time.perf_counter() - start:.1f}s — "
-        f"{engine_registry.engine.v2_pool_count()} V2, "
+        f"{engine_registry.engine.reserve_pair_pool_count()} reserve-pair, "
         f"{engine_registry.engine.v3_pool_count()} V3, "
         f"{pipeline.v4_pool_count} V4 pools, "
         f"{pipeline.v4_hook_rejected} V4 hook-rejected, "

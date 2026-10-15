@@ -744,7 +744,8 @@ async fn build_v2_assembles_register_params_from_onchain() {
     assert_eq!(params.update_block, 18_000_000);
     assert!(!params.stable_swap);
     // Proxy preserves the resulting identity/state build.
-    let (identity, state) = degenbot_pools::v2_state::V2PoolState::from_params(&params, 8);
+    let (identity, state) =
+        degenbot_pools::v2_state::V2PoolState::from_params(&params, 8, (None, None));
     assert_eq!(identity.address, pool);
     assert_eq!(state.reserve0, U112::from(123_456_789u64));
 }
