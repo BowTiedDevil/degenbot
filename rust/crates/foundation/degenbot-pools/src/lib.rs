@@ -80,6 +80,7 @@ pub use curve_dy_io::{
 };
 pub mod curve_state;
 pub mod curve_strategies;
+pub mod families;
 #[expect(clippy::doc_markdown)]
 pub mod int_v3_hop;
 pub mod liquidity_event;

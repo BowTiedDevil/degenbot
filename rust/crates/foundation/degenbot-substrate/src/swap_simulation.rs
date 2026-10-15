@@ -21,25 +21,22 @@
 //! `SwapRequest::amount_specified` follows the **user perspective**: positive
 //! = exact-output (the pool delivers that magnitude to the user), negative =
 //! exact-input (the user sends that magnitude). Neither engine's internal
-//! convention is canonical at this seam; [`engine_amount_specified`] maps to
-//! each family in exactly one place (V3 negates both directions vs canonical;
-//! V4 is identity).
+//! convention is canonical at this seam; the family read module maps it to
+//! each design in exactly one place (V3 negates both directions vs canonical;
+//! V4 is identity) — see
+//! `degenbot_pools::families::concentrated_liquidity::{v3,v4}::engine_amount_specified`.
 
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use std::sync::Arc;
+
+use ::degenbot_pools::tick_fetch::TickWordFetcher;
 
 use alloy::primitives::{I256, U256};
 
+use ::degenbot_pools::families::concentrated_liquidity as cl;
 use ::degenbot_pools::registry::PoolEntry;
 use ::degenbot_pools::simulate_swap::simulate_swap;
-use ::degenbot_pools::tick_fetch::{FetchedTickWord, TickWordFetcher};
-use ::degenbot_pools::v3_state::{
-    v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolIdentity,
-    V3PoolState, V3SwapOutcome,
-};
-use ::degenbot_pools::v4_state::{
-    v4_simulate_swap, RegisterV4PoolParams, V4PoolIdentity, V4PoolState,
-};
+use ::degenbot_pools::v3_state::{PoolTickCoverage, V3SwapOutcome};
 
 use super::BotState;
 
@@ -236,24 +233,6 @@ pub struct UnsupportedOverrideFamily {
     pub pool_id: u64,
     /// The registered family tag.
     pub family: &'static str,
-}
-
-/// Which engine a mapped `amountSpecified` feeds (sign-convention table).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum EngineFamily {
-    V3Engine,
-    V4Engine,
-}
-
-/// Map a canonical user-perspective request amount onto an engine's
-/// internal `amountSpecified` convention — THE single mapping site
-/// (ADR-037): V3 negates both directions vs canonical; V4 is identity.
-#[must_use]
-pub(crate) fn engine_amount_specified(request_amount: I256, family: EngineFamily) -> I256 {
-    match family {
-        EngineFamily::V3Engine => -request_amount,
-        EngineFamily::V4Engine => request_amount,
-    }
 }
 
 /// Trust flags implied by a pool's registration-time tick coverage.
@@ -474,242 +453,12 @@ pub struct OverrideSwap {
     pub tick_data: HashMap<i32, ::degenbot_pools::TickInfo>,
 }
 
-/// Which CL family the transient target is.
-#[derive(Clone, Copy, Debug)]
-enum TransientFamily {
-    V3(u32, i32), // fee, tick_spacing
-    V4(u32, i32),
-}
-
-/// One transient (hypothetical) CL target owned by an override sim.
-struct TransientConcentratedLiquidity {
-    family: TransientFamily,
-    inner: TransientInner,
-}
-
-enum TransientInner {
-    V3(Box<::degenbot_pools::v3_state::V3PoolState>),
-    V4(Box<::degenbot_pools::v4_state::V4PoolState>),
-}
-
-impl TransientConcentratedLiquidity {
-    fn simulate(
-        &self,
-        zero_for_one: bool,
-        spec: I256,
-        limit: U256,
-    ) -> Result<V3SwapOutcome, SimulateSwapError> {
-        match (&self.family, &self.inner) {
-            (TransientFamily::V3(fee, ts), TransientInner::V3(st)) => {
-                v3_simulate_swap(st, *fee, *ts, zero_for_one, spec, limit)
-            }
-            (TransientFamily::V4(fee, ts), TransientInner::V4(st)) => {
-                v4_simulate_swap(st, *fee, *ts, zero_for_one, spec, limit)
-            }
-            _ => unreachable!("family/inner mismatch is unconstructible"),
-        }
-    }
-
-    fn merge_word(&mut self, fetched: &FetchedTickWord) {
-        use ::degenbot_pools::registry::ConcentratedLiquidityPoolMut;
-        match &mut self.inner {
-            // Merges land on the TRANSIENT state only — the override is a
-            // hypothetical that cannot pollute registered `BotState`.
-            TransientInner::V3(st) => {
-                st.merge_tick_word(fetched);
-            }
-            TransientInner::V4(st) => {
-                st.merge_tick_word(fetched);
-            }
-        }
-    }
-}
-
-/// `ComputeMerge` adapter over a transient target: identical policy, different
-/// merge destination (this is WHY the policy is generic over its merge target).
-struct OverrideSim<'a> {
-    target: &'a mut TransientConcentratedLiquidity,
-    zero_for_one: bool,
-    spec: I256,
-    limit: U256,
-    fetcher: Option<Arc<dyn TickWordFetcher>>,
-    pool_id: u64,
-    /// miss recovery DISARMED - a fresh missing word
-    /// surfaces as `FetchExhausted` (typed contract) instead of an inline
-    /// fetch under the caller read guard.
-    disarm_fetch: bool,
-}
-
-impl ComputeMerge for OverrideSim<'_> {
-    fn compute(&self) -> Result<V3SwapOutcome, SimulateSwapError> {
-        self.target
-            .simulate(self.zero_for_one, self.spec, self.limit)
-    }
-    fn merge_word(&mut self, fetched: &FetchedTickWord) {
-        self.target.merge_word(fetched);
-    }
-    fn fetch_word(&self, word: i32, block: u64) -> Result<FetchedTickWord, FetchFailure> {
-        if self.disarm_fetch {
-            return Err(FetchFailure::NoFetcher);
-        }
-        let Some(fetcher) = &self.fetcher else {
-            return Err(FetchFailure::NoFetcher);
-        };
-        fetcher
-            .fetch_missing_tick_word(self.pool_id, word, block)
-            .map_err(|_| FetchFailure::Errored)
-    }
-}
-
-/// The policy driver's contract: recompute against a (possibly mutated)
-/// target, merge fetched words into it, and surface its stored fetcher.
-/// Splitting compute/merge/fetch across `&self` / `&mut self` methods keeps
-/// borrows sequenced per call — the reentrancy discipline the old tripled
-/// loops encoded by hand (fetcher cloned off the entry before looping).
-pub(crate) trait ComputeMerge {
-    /// One simulation attempt against the current target state.
-    fn compute(&self) -> Result<V3SwapOutcome, SimulateSwapError>;
-    /// Merge a fetched word into the target state (registered OR transient —
-    /// the override path never merges into registered `BotState`).
-    fn merge_word(&mut self, fetched: &FetchedTickWord);
-    /// Attempt the RPC-side recovery for `word`. `Err(NoFetcher)` means no
-    /// fetcher is registered (⇒ [`SwapRead::FetchExhausted`]); `Err(Errored)`
-    /// means the recovery itself failed (⇒ [`SwapRead::FetchFailed`]).
-    fn fetch_word(&self, word: i32, block: u64) -> Result<FetchedTickWord, FetchFailure>;
-}
-
-/// Why a missing-word recovery could not run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FetchFailure {
-    /// No fetcher registered for this pool.
-    NoFetcher,
-    /// The fetcher ran and failed.
-    Errored,
-}
-
-/// Internal drive result before payload assembly.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PolicyAttempt {
-    Computed(V3SwapOutcome, Vec<i32>),
-    NotComputable,
-    FetchFailed(i32),
-    FetchExhausted(i32),
-}
-
-/// THE fetch → merge → retry loop (formerly copy-pasted three times).
-///
-/// Dedup rule: a second miss on the SAME word means the previous merge did
-/// not satisfy the walker — give up rather than loop forever. No-fetcher
-/// and exhausted-miss collapse to `FetchExhausted`; a fetcher error is
-/// `FetchFailed`. All four legacy failure collapses are observable here.
-///
-/// Fetch errors are deliberately single-strike (decision 2026-10): the
-/// abort surfaces honestly (`MissingTickWord` → the python seam's
-/// `MissingLiquidityData(word)`) and the CALLER owns its retry budget —
-/// the record recipe (`scripts/record_v3_golden.py`) retries the walk and
-/// converges because failed words stay unmarked (words 15→12→8 advanced
-/// per retry under the rate governor during the WBTC/WETH full-range
-/// capture). Embedding engine-side backoff would renegotiate ADR-040's
-/// failure buckets and make swap latency policy-dependent; revisit only
-/// if live-bot telemetry shows the policy gating walks under rate
-/// pressure.
-pub(crate) fn drive(sim: &mut impl ComputeMerge, block: u64) -> PolicyAttempt {
-    let mut attempted: HashSet<i32> = HashSet::new();
-    let mut fetched_words: Vec<i32> = Vec::new();
-    loop {
-        match sim.compute() {
-            Ok(outcome) => return PolicyAttempt::Computed(outcome, fetched_words),
-            Err(SimulateSwapError::NotComputable) => return PolicyAttempt::NotComputable,
-            Err(SimulateSwapError::MissingTickWord(word)) => {
-                if !attempted.insert(word) {
-                    return PolicyAttempt::FetchExhausted(word);
-                }
-                match sim.fetch_word(word, block) {
-                    Ok(data) => {
-                        sim.merge_word(&data);
-                        fetched_words.push(word);
-                    }
-                    Err(FetchFailure::NoFetcher) => return PolicyAttempt::FetchExhausted(word),
-                    Err(FetchFailure::Errored) => return PolicyAttempt::FetchFailed(word),
-                }
-            }
-        }
-    }
-}
-
-/// One simulation attempt against REGISTERED pool state (`pool_id`). The
-/// compute re-resolves the entry each call so a mid-loop fetch-merge is
-/// visible on the next attempt; borrows are sequenced through `&self` /
-/// `&mut self` rather than competing closures.
-pub(crate) struct RegisteredConcentratedLiquiditySim<'a> {
-    pub state: &'a mut BotState,
-    pub pool_id: u64,
-    pub zero_for_one: bool,
-    /// Engine-mapped `amountSpecified` (see [`engine_amount_specified`]).
-    pub spec: I256,
-    pub limit: U256,
-    /// when set, miss recovery is DISARMED — a fresh missing
-    /// word surfaces as `FetchExhausted` (additive, in-contract) instead of
-    /// fetching under the caller's write guard. The python seams arm the
-    /// staged pre-pass instead and enter this arm with words preinstalled.
-    pub disarm_fetch: bool,
-}
-
-impl ComputeMerge for RegisteredConcentratedLiquiditySim<'_> {
-    fn compute(&self) -> Result<V3SwapOutcome, SimulateSwapError> {
-        let Some(entry) = self.state.registry.pools.get(&self.pool_id) else {
-            return Err(SimulateSwapError::NotComputable);
-        };
-        match entry {
-            PoolEntry::V3(p) => v3_simulate_swap(
-                &p.1,
-                p.0.fee,
-                p.0.tick_spacing,
-                self.zero_for_one,
-                self.spec,
-                self.limit,
-            ),
-            PoolEntry::V4(p) => v4_simulate_swap(
-                &p.1,
-                p.0.pool_key.fee,
-                p.0.pool_key.tick_spacing,
-                self.zero_for_one,
-                self.spec,
-                self.limit,
-            ),
-            _ => Err(SimulateSwapError::NotComputable),
-        }
-    }
-
-    fn merge_word(&mut self, fetched: &FetchedTickWord) {
-        self.state.merge_tick_word(self.pool_id, fetched);
-    }
-
-    fn fetch_word(&self, word: i32, block: u64) -> Result<FetchedTickWord, FetchFailure> {
-        // disarmed sims never fetch — their callers staged
-        // the missing words beforehand (lock-free) and the typed contract
-        // answers FetchExhausted for any residual miss.
-        if self.disarm_fetch {
-            return Err(FetchFailure::NoFetcher);
-        }
-        // Clone the stored fetcher off the registered V3/V4 state BEFORE any
-        // mutation (avoids the self-referential borrow hazard the legacy
-        // loops documented at bot_core/mod.rs:811).
-        let fetcher: Option<Arc<dyn TickWordFetcher>> =
-            match self.state.registry.pools.get(&self.pool_id) {
-                Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
-                Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
-                _ => None,
-            };
-        let Some(fetcher) = fetcher else {
-            return Err(FetchFailure::NoFetcher);
-        };
-        fetcher
-            .fetch_missing_tick_word(self.pool_id, word, block)
-            .map_err(|_| FetchFailure::Errored)
-    }
-}
-
+// The transient (hypothetical) CL target machinery, the per-family compute
+// arms, the engine sign mapping, and the fetch→merge→retry policy moved to
+// the family read module (ADR-073 D1):
+// degenbot_pools::families::concentrated_liquidity — the swap-read door owns
+// ALL variants (registered stateless / armed / disarm-fetch / override /
+// discovery) behind `read_swap`.
 impl BotState {
     /// the missing bitmap words a CL swap
     /// would need, WITHOUT fetching and WITHOUT mutating registered state
@@ -726,175 +475,46 @@ impl BotState {
         if request.amount_specified.is_zero() {
             return Some(Vec::new());
         }
+        // One CL dispatch row (ADR-073 D2): the discovery pass is the
+        // family read module's read_swap door in Discovery mode over a
+        // transient the door builds; the door never fetches and never
+        // touches registered state.
+        let _ = block;
         let entry = self.registry.pools.get(&pool_id)?;
-        match entry {
+        let source = match entry {
             // Non-CL families never fetch: nothing to stage.
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => Some(Vec::new()),
-            PoolEntry::V3(p) => {
-                let (identity, st) = (&p.0, &p.1);
-                let mut missing = Vec::new();
-                let mut transient = self.v3_discovery_transient(identity, st);
-                let spec =
-                    engine_amount_specified(request.amount_specified, EngineFamily::V3Engine);
-                let limit = request
-                    .sqrt_price_limit
-                    .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
-                Self::drive_missing(
-                    &mut transient,
-                    request.zero_for_one,
-                    spec,
-                    limit,
-                    &mut missing,
-                );
-                Some(missing)
-            }
-            PoolEntry::V4(p) => {
-                let (identity, st) = (&p.0, &p.1);
-                let mut missing = Vec::new();
-                let mut transient = self.v4_discovery_transient(identity, st);
-                let spec =
-                    engine_amount_specified(request.amount_specified, EngineFamily::V4Engine);
-                let limit = request
-                    .sqrt_price_limit
-                    .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
-                let _ = block;
-                Self::drive_missing(
-                    &mut transient,
-                    request.zero_for_one,
-                    spec,
-                    limit,
-                    &mut missing,
-                );
-                Some(missing)
-            }
-        }
-    }
-
-    /// Build the V3 discovery transient for a registered pool: it mirrors
-    /// the REGISTERED pool's coverage (a Tracked pool never raises
-    /// `MissingTickWord`, so the staging walk must not invent fetch work
-    /// for one) AND its checked-word set (`from_params` seeds
-    /// known words from tick ROWS only — a caller-CHECKED empty word has no
-    /// rows yet must never become a fetch target).
-    fn v3_discovery_transient(
-        &self,
-        identity: &V3PoolIdentity,
-        st: &V3PoolState,
-    ) -> TransientConcentratedLiquidity {
-        let mut v3_transient = V3PoolState::from_params(
-            RegisterV3PoolParams {
-                address: identity.address,
-                token0: identity.token0,
-                token1: identity.token1,
-                fee: identity.fee,
-                tick_spacing: identity.tick_spacing,
-                factory: identity.factory,
-                deployer: identity.deployer,
-                init_hash: identity.init_hash,
-                sqrt_price_x96: st.sqrt_price_x96,
-                liquidity: st.liquidity,
-                tick: st.tick,
-                tick_data: st.tick_data.clone(),
-                update_block: st.update_block,
-                tick_data_block: None,
-                coverage: st.coverage,
-                fetcher: None,
-                slot_layout: identity.slot_layout,
-            },
-            self.registry.journal_depth,
+            | PoolEntry::AerodromeV2(..) => return Some(Vec::new()),
+            PoolEntry::V3(p) => cl::SwapReadSource::Discovery(
+                cl::ConcentratedLiquidityTransientSource::V3 {
+                    identity: &p.0,
+                    state: &p.1,
+                },
+                self.registry.journal_depth,
+            ),
+            PoolEntry::V4(p) => cl::SwapReadSource::Discovery(
+                cl::ConcentratedLiquidityTransientSource::V4 {
+                    identity: &p.0,
+                    state: &p.1,
+                },
+                self.registry.journal_depth,
+            ),
+        };
+        Some(
+            cl::read_swap(
+                source,
+                cl::SwapReadRequest {
+                    zero_for_one: request.zero_for_one,
+                    amount_specified: request.amount_specified,
+                    sqrt_price_limit: request.sqrt_price_limit,
+                },
+                cl::FetchMode::Discovery,
+            )
+            .missing_words(),
         )
-        .1;
-        v3_transient
-            .known_bitmap_words
-            .extend(st.known_bitmap_words.iter().copied());
-        TransientConcentratedLiquidity {
-            family: TransientFamily::V3(identity.fee, identity.tick_spacing),
-            inner: TransientInner::V3(Box::new(v3_transient)),
-        }
-    }
-
-    /// V4 twin of [`Self::v3_discovery_transient`] — the same coverage +
-    /// checked-word mirroring discipline (see that doc).
-    fn v4_discovery_transient(
-        &self,
-        identity: &V4PoolIdentity,
-        st: &V4PoolState,
-    ) -> TransientConcentratedLiquidity {
-        let mut v4_transient = V4PoolState::from_params(
-            RegisterV4PoolParams {
-                pool_manager: identity.pool_manager,
-                pool_id: identity.pool_id,
-                pool_key: identity.pool_key.clone(),
-                hook_flags: 0,
-                protocol_fee: 0,
-                sqrt_price_x96: st.sqrt_price_x96,
-                liquidity: st.liquidity,
-                tick: st.tick,
-                tick_data: st.tick_data.clone(),
-                update_block: st.update_block,
-                tick_data_block: None,
-                coverage: st.coverage,
-                fetcher: None,
-            },
-            self.registry.journal_depth,
-        )
-        .1;
-        v4_transient
-            .known_bitmap_words
-            .extend(st.known_bitmap_words.iter().copied());
-        TransientConcentratedLiquidity {
-            family: TransientFamily::V4(identity.pool_key.fee, identity.pool_key.tick_spacing),
-            inner: TransientInner::V4(Box::new(v4_transient)),
-        }
-    }
-
-    /// The stored word fetcher for a registered pool, if any — the staged
-    /// pre-pass fetches through it OUTSIDE any state lock.
-    #[must_use]
-    pub fn stored_fetcher_for_pool(&self, pool_id: u64) -> Option<Arc<dyn TickWordFetcher>> {
-        match self.registry.pools.get(&pool_id) {
-            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
-            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
-            _ => None,
-        }
-    }
-
-    /// one compute-walk over a TRANSIENT pool
-    /// state recording every missing word instead of fetching. Forged empty
-    /// fills land on the TRANSIENT (never registered state), so the walker
-    /// steps past each discovered word and surfaces ALL of a pass missing
-    /// words (pair-review condition 5).
-    fn drive_missing(
-        target: &mut TransientConcentratedLiquidity,
-        zero_for_one: bool,
-        spec: I256,
-        limit: U256,
-        missing: &mut Vec<i32>,
-    ) {
-        let mut attempted: HashSet<i32> = HashSet::new();
-        loop {
-            match target.simulate(zero_for_one, spec, limit) {
-                Ok(_) | Err(SimulateSwapError::NotComputable) => return,
-                Err(SimulateSwapError::MissingTickWord(word)) => {
-                    if !attempted.insert(word) {
-                        return;
-                    }
-                    if !missing.contains(&word) {
-                        missing.push(word);
-                    }
-                    // Forged empty fill on the TRANSIENT: the walker steps
-                    // past the word; registered state is untouched.
-                    target.merge_word(&FetchedTickWord {
-                        word,
-                        ticks: HashMap::new(),
-                    });
-                }
-            }
-        }
     }
 
     /// Simulate a swap over a HYPOTHETICAL (override) pool state with the
@@ -911,6 +531,20 @@ impl BotState {
     /// through [`Self::override_missing_words`] + the lock-free fetch
     /// choreography before entering.
     ///
+    /// The stored word fetcher for a registered pool, if any — the staged
+    /// pre-pass fetches through it OUTSIDE any state lock. The registry seam
+    /// for the family door's [`cl::FetchMode::Armed`] mode (the fetcher is a
+    /// registration-time fact on the slice; cloning it here keeps the read
+    /// lock-free).
+    #[must_use]
+    pub fn stored_fetcher_for_pool(&self, pool_id: u64) -> Option<Arc<dyn TickWordFetcher>> {
+        match self.registry.pools.get(&pool_id) {
+            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
+            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
+            _ => None,
+        }
+    }
+
     /// # Errors
     ///
     /// [`UnsupportedOverrideFamily`] when the pool is registered under a
@@ -934,98 +568,54 @@ impl BotState {
             return Some(Vec::new());
         }
         let entry = self.registry.pools.get(&over.pool_id)?;
-        match entry {
-            PoolEntry::V3(p) => {
-                let (identity, state) = (&p.0, &p.1);
-                let mut missing = Vec::new();
-                let mut transient = TransientConcentratedLiquidity {
-                    family: TransientFamily::V3(identity.fee, identity.tick_spacing),
-                    inner: TransientInner::V3(Box::new(
-                        V3PoolState::from_params(
-                            RegisterV3PoolParams {
-                                address: identity.address,
-                                token0: identity.token0,
-                                token1: identity.token1,
-                                fee: identity.fee,
-                                tick_spacing: identity.tick_spacing,
-                                factory: identity.factory,
-                                deployer: identity.deployer,
-                                init_hash: identity.init_hash,
-                                sqrt_price_x96: over.sqrt_price_x96,
-                                liquidity: over.liquidity,
-                                tick: over.tick,
-                                tick_data: over.tick_data.clone(),
-                                update_block: state.update_block,
-                                tick_data_block: None,
-                                coverage: PoolTickCoverage::Sparse,
-                                fetcher: None,
-                                slot_layout: identity.slot_layout,
-                            },
-                            self.registry.journal_depth,
-                        )
-                        .1,
-                    )),
-                };
-                let spec =
-                    engine_amount_specified(over.request.amount_specified, EngineFamily::V3Engine);
-                let limit = over.request.sqrt_price_limit.unwrap_or_else(|| {
-                    V3PoolState::default_sqrt_price_limit(over.request.zero_for_one)
-                });
-                Self::drive_missing(
-                    &mut transient,
-                    over.request.zero_for_one,
-                    spec,
-                    limit,
-                    &mut missing,
-                );
-                Some(missing)
-            }
-            PoolEntry::V4(p) => {
-                let (identity, state) = (&p.0, &p.1);
-                let mut missing = Vec::new();
-                let mut transient = TransientConcentratedLiquidity {
-                    family: TransientFamily::V4(
-                        identity.pool_key.fee,
-                        identity.pool_key.tick_spacing,
-                    ),
-                    inner: TransientInner::V4(Box::new(
-                        V4PoolState::from_params(
-                            RegisterV4PoolParams {
-                                pool_manager: identity.pool_manager,
-                                pool_id: identity.pool_id,
-                                pool_key: identity.pool_key.clone(),
-                                hook_flags: 0,
-                                protocol_fee: 0,
-                                sqrt_price_x96: over.sqrt_price_x96,
-                                liquidity: over.liquidity,
-                                tick: over.tick,
-                                tick_data: over.tick_data.clone(),
-                                update_block: state.update_block,
-                                tick_data_block: None,
-                                coverage: PoolTickCoverage::Sparse,
-                                fetcher: None,
-                            },
-                            self.registry.journal_depth,
-                        )
-                        .1,
-                    )),
-                };
-                let spec =
-                    engine_amount_specified(over.request.amount_specified, EngineFamily::V4Engine);
-                let limit = over.request.sqrt_price_limit.unwrap_or_else(|| {
-                    V3PoolState::default_sqrt_price_limit(over.request.zero_for_one)
-                });
-                Self::drive_missing(
-                    &mut transient,
-                    over.request.zero_for_one,
-                    spec,
-                    limit,
-                    &mut missing,
-                );
-                Some(missing)
-            }
-            _ => Some(Vec::new()),
-        }
+        // One CL dispatch row (ADR-073 D2): the override discovery pass is
+        // the family read module's read_swap door in Discovery mode over a
+        // Sparse transient the door builds from the override scalars. The
+        // checked-word set is NOT mirrored (a hypothetical has no
+        // established words) and registered state is never touched.
+        let source = match entry {
+            PoolEntry::V3(p) => cl::SwapReadSource::Override(
+                cl::ConcentratedLiquidityTransientSource::V3 {
+                    identity: &p.0,
+                    state: &p.1,
+                },
+                cl::OverrideScalars {
+                    sqrt_price_x96: over.sqrt_price_x96,
+                    liquidity: over.liquidity,
+                    tick: over.tick,
+                    tick_data: &over.tick_data,
+                },
+                p.1.update_block,
+                self.registry.journal_depth,
+            ),
+            PoolEntry::V4(p) => cl::SwapReadSource::Override(
+                cl::ConcentratedLiquidityTransientSource::V4 {
+                    identity: &p.0,
+                    state: &p.1,
+                },
+                cl::OverrideScalars {
+                    sqrt_price_x96: over.sqrt_price_x96,
+                    liquidity: over.liquidity,
+                    tick: over.tick,
+                    tick_data: &over.tick_data,
+                },
+                p.1.update_block,
+                self.registry.journal_depth,
+            ),
+            _ => return Some(Vec::new()),
+        };
+        Some(
+            cl::read_swap(
+                source,
+                cl::SwapReadRequest {
+                    zero_for_one: over.request.zero_for_one,
+                    amount_specified: over.request.amount_specified,
+                    sqrt_price_limit: over.request.sqrt_price_limit,
+                },
+                cl::FetchMode::Discovery,
+            )
+            .missing_words(),
+        )
     }
 
     /// # Errors
@@ -1040,7 +630,6 @@ impl BotState {
         self.simulate_override_ext(over, block, false)
     }
 
-    #[expect(clippy::too_many_lines)]
     fn simulate_override_ext(
         &self,
         over: &OverrideSwap,
@@ -1053,91 +642,48 @@ impl BotState {
         let Some(entry) = self.registry.pools.get(&over.pool_id) else {
             return Ok(None);
         };
-        let Some(spec) = I256::try_from(over.request.amount_specified).ok() else {
-            return Ok(None);
-        };
-        // Clone the stored fetcher off the registered state (the override
-        // state is a transient copy — the fetcher itself is shared via Arc).
-        let fetcher: Option<Arc<dyn TickWordFetcher>> = match entry {
-            PoolEntry::V3(p) => p.1.fetcher.clone(),
-            PoolEntry::V4(p) => p.1.fetcher.clone(),
-            _ => None,
-        };
-        let limit = over
-            .request
-            .sqrt_price_limit
-            .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(over.request.zero_for_one));
-        let spec = engine_amount_specified(
-            spec,
-            match entry {
-                PoolEntry::V3(..) => EngineFamily::V3Engine,
-                PoolEntry::V4(..) => EngineFamily::V4Engine,
-                _ => {
-                    return Err(UnsupportedOverrideFamily {
-                        pool_id: over.pool_id,
-                        family: super::entry_family(entry),
-                    });
-                }
-            },
-        );
-
-        // Build the transient target (registered params + override scalars).
-        // Registered pools passed the hook/dynamic-fee admission gate, so
-        // zeroing hook_flags on the transient copy is safe by construction.
-        let mut target = match entry {
-            PoolEntry::V3(p) => {
-                let (identity, state) = (&p.0, &p.1);
-                let params = RegisterV3PoolParams {
-                    address: identity.address,
-                    token0: identity.token0,
-                    token1: identity.token1,
-                    fee: identity.fee,
-                    tick_spacing: identity.tick_spacing,
-                    factory: identity.factory,
-                    deployer: identity.deployer,
-                    init_hash: identity.init_hash,
-                    sqrt_price_x96: over.sqrt_price_x96,
-                    liquidity: over.liquidity,
-                    tick: over.tick,
-                    tick_data: over.tick_data.clone(),
-                    update_block: state.update_block,
-                    tick_data_block: None,
-                    coverage: PoolTickCoverage::Sparse,
-                    fetcher: None,
-                    slot_layout: identity.slot_layout,
-                };
-                let (_id, st) = V3PoolState::from_params(params, self.registry.journal_depth);
-                TransientConcentratedLiquidity {
-                    family: TransientFamily::V3(identity.fee, identity.tick_spacing),
-                    inner: TransientInner::V3(Box::new(st)),
-                }
-            }
-            PoolEntry::V4(p) => {
-                let (identity, state) = (&p.0, &p.1);
-                let params = RegisterV4PoolParams {
-                    pool_manager: identity.pool_manager,
-                    pool_id: identity.pool_id,
-                    pool_key: identity.pool_key.clone(),
-                    hook_flags: 0,
-                    protocol_fee: 0,
-                    sqrt_price_x96: over.sqrt_price_x96,
-                    liquidity: over.liquidity,
-                    tick: over.tick,
-                    tick_data: over.tick_data.clone(),
-                    update_block: state.update_block,
-                    tick_data_block: None,
-                    coverage: PoolTickCoverage::Sparse,
-                    fetcher: None,
-                };
-                let (_id, st) = V4PoolState::from_params(params, self.registry.journal_depth);
-                TransientConcentratedLiquidity {
-                    family: TransientFamily::V4(
-                        identity.pool_key.fee,
-                        identity.pool_key.tick_spacing,
-                    ),
-                    inner: TransientInner::V4(Box::new(st)),
-                }
-            }
+        // One CL dispatch row (ADR-073 D2): the override sim is the family
+        // read module's read_swap door over a Sparse transient the door
+        // builds from the override scalars. Registered pools passed the
+        // hook/dynamic-fee admission gate, so the transient's zeroed
+        // hook_flags/protocol_fee are safe by construction. Fetched words
+        // merge into the TRANSIENT only — the override is a hypothetical
+        // that cannot pollute registered `BotState`.
+        let (fetcher, source) = match entry {
+            PoolEntry::V3(p) => (
+                p.1.fetcher.clone(),
+                cl::SwapReadSource::Override(
+                    cl::ConcentratedLiquidityTransientSource::V3 {
+                        identity: &p.0,
+                        state: &p.1,
+                    },
+                    cl::OverrideScalars {
+                        sqrt_price_x96: over.sqrt_price_x96,
+                        liquidity: over.liquidity,
+                        tick: over.tick,
+                        tick_data: &over.tick_data,
+                    },
+                    p.1.update_block,
+                    self.registry.journal_depth,
+                ),
+            ),
+            PoolEntry::V4(p) => (
+                p.1.fetcher.clone(),
+                cl::SwapReadSource::Override(
+                    cl::ConcentratedLiquidityTransientSource::V4 {
+                        identity: &p.0,
+                        state: &p.1,
+                    },
+                    cl::OverrideScalars {
+                        sqrt_price_x96: over.sqrt_price_x96,
+                        liquidity: over.liquidity,
+                        tick: over.tick,
+                        tick_data: &over.tick_data,
+                    },
+                    p.1.update_block,
+                    self.registry.journal_depth,
+                ),
+            ),
             _ => {
                 return Err(UnsupportedOverrideFamily {
                     pool_id: over.pool_id,
@@ -1145,22 +691,33 @@ impl BotState {
                 });
             }
         };
-
-        let mut sim = OverrideSim {
-            target: &mut target,
-            zero_for_one: over.request.zero_for_one,
-            spec,
-            limit,
-            fetcher,
-            pool_id: over.pool_id,
-            disarm_fetch,
+        let mode = match &fetcher {
+            Some(f) if !disarm_fetch => cl::FetchMode::Armed {
+                fetcher: f,
+                pool_id: over.pool_id,
+                block,
+            },
+            _ => cl::FetchMode::Disarmed,
         };
-        Ok(match drive(&mut sim, block) {
-            PolicyAttempt::Computed(outcome, _) => Some(outcome),
-            PolicyAttempt::NotComputable
-            | PolicyAttempt::FetchFailed(..)
-            | PolicyAttempt::FetchExhausted(..) => None,
-        })
+        Ok(
+            match cl::read_swap(
+                source,
+                cl::SwapReadRequest {
+                    zero_for_one: over.request.zero_for_one,
+                    amount_specified: over.request.amount_specified,
+                    sqrt_price_limit: over.request.sqrt_price_limit,
+                },
+                mode,
+            ) {
+                cl::SwapReadOutcome::Computed { outcome, .. } => Some(outcome),
+                cl::SwapReadOutcome::NotComputable
+                | cl::SwapReadOutcome::FetchFailed { .. }
+                | cl::SwapReadOutcome::FetchExhausted { .. } => None,
+                cl::SwapReadOutcome::Stateless(_) | cl::SwapReadOutcome::MissingWords(_) => {
+                    unreachable!("override reads run armed or disarmed, never stateless/discovery")
+                }
+            },
+        )
     }
 }
 
@@ -1189,10 +746,6 @@ impl BotState {
         self.swap_simulation_ext(block, pool_id, request, true)
     }
 
-    // TODO(extract-per-family-arms): extract the per-family arms once the hook
-    // caveat plumbing settles; the body is 114 lines against a 100-line
-    // clippy::too_many_lines budget.
-    #[expect(clippy::too_many_lines)]
     fn swap_simulation_ext(
         &mut self,
         block: u64,
@@ -1273,60 +826,151 @@ impl BotState {
                     family: super::entry_family(entry),
                 },
             },
-            PoolEntry::V3(p) => {
-                let (_, v3_state) = (&p.0, &p.1);
-                let coverage = v3_state.coverage;
-                let family = EngineFamily::V3Engine;
-                let limit = request
-                    .sqrt_price_limit
-                    .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
-                let mut sim = RegisteredConcentratedLiquiditySim {
-                    state: self,
-                    pool_id,
-                    zero_for_one: request.zero_for_one,
-                    spec: engine_amount_specified(request.amount_specified, family),
-                    limit,
-                    disarm_fetch,
-                };
-                finish_concentrated_liquidity(
-                    &mut sim,
-                    block,
-                    SwapOutcomeFamily::V3,
-                    coverage,
-                    *request,
-                    Caveats::default(),
-                )
+            // One CL dispatch row (ADR-073 D2): the swap-read goes through
+            // the family read module's read_swap door — registered state,
+            // armed or disarmed miss recovery, engine sign mapping and
+            // per-design compute all behind the door.
+            PoolEntry::V3(..) | PoolEntry::V4(..) => {
+                self.concentrated_liquidity_swap_read(pool_id, request, block, disarm_fetch)
             }
-            PoolEntry::V4(p) => {
-                let (identity, v4_state) = (&p.0, &p.1);
-                let coverage = v4_state.coverage;
-                let family = EngineFamily::V4Engine;
-                let hooked =
-                    ::degenbot_pools::v4_state::has_amount_modifying_hook(identity.pool_key.hooks);
-                let extra_caveats = if hooked {
-                    Caveats::HOOKED_POOL
-                } else {
-                    Caveats::default()
-                };
-                let limit = request
-                    .sqrt_price_limit
-                    .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
-                let mut sim = RegisteredConcentratedLiquiditySim {
-                    state: self,
-                    pool_id,
-                    zero_for_one: request.zero_for_one,
-                    spec: engine_amount_specified(request.amount_specified, family),
-                    limit,
-                    disarm_fetch,
-                };
-                finish_concentrated_liquidity(
-                    &mut sim,
-                    block,
-                    SwapOutcomeFamily::V4,
-                    coverage,
-                    *request,
-                    extra_caveats,
-                )
+        }
+    }
+
+    /// The ONE registered-state CL swap-read row: classify the entry (the
+    /// registry seam), then everything design-specific happens behind the
+    /// family read module's [`cl::read_swap`] door. Caveats assembly (the
+    /// outcome-shape adapter) stays here because [`Caveats`] is this crate's
+    /// type; the door supplies every per-design fact the caveats need
+    /// (coverage via [`cl::observe`], V4 hooks included).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the length is the row's dispatch shape (classify the registry \
+         entry for both designs, one read_swap door call, then adapt the \
+         outcome to this crate's Caveats/SwapRead); the compute leaves already \
+         live behind the family door, and per-arm extraction would drag \
+         substrate types across that seam"
+    )]
+    fn concentrated_liquidity_swap_read(
+        &mut self,
+        pool_id: u64,
+        request: &SwapRequest,
+        block: u64,
+        disarm_fetch: bool,
+    ) -> SwapRead {
+        let (coverage, extra_caveats, outcome_family, fetcher, scalars, hooks) = {
+            let Some(entry) = self.registry.pools.get(&pool_id) else {
+                return SwapRead::NotComputable;
+            };
+            match entry {
+                PoolEntry::V3(p) => {
+                    let design = cl::ConcentratedLiquidityState::V3 {
+                        state: &p.1,
+                        scalars: cl::DesignScalars::new(p.0.fee, p.0.tick_spacing),
+                    };
+                    let cl::Observed::Coverage(coverage) =
+                        cl::observe(design, cl::Observe::Coverage)
+                    else {
+                        unreachable!("coverage probe answers")
+                    };
+                    (
+                        coverage,
+                        Caveats::default(),
+                        SwapOutcomeFamily::V3,
+                        p.1.fetcher.clone(),
+                        cl::DesignScalars::new(p.0.fee, p.0.tick_spacing),
+                        None,
+                    )
+                }
+                PoolEntry::V4(p) => {
+                    let hooks = p.0.pool_key.hooks;
+                    let design = cl::ConcentratedLiquidityState::V4 {
+                        state: &p.1,
+                        scalars: cl::DesignScalars::new(
+                            p.0.pool_key.fee,
+                            p.0.pool_key.tick_spacing,
+                        ),
+                        hooks,
+                    };
+                    let cl::Observed::Coverage(coverage) =
+                        cl::observe(design, cl::Observe::Coverage)
+                    else {
+                        unreachable!("coverage probe answers")
+                    };
+                    let cl::Observed::Hooked(hooked) = cl::observe(design, cl::Observe::Hooked)
+                    else {
+                        unreachable!("hooked probe answers")
+                    };
+                    let extra_caveats = if hooked {
+                        Caveats::HOOKED_POOL
+                    } else {
+                        Caveats::default()
+                    };
+                    (
+                        coverage,
+                        extra_caveats,
+                        SwapOutcomeFamily::V4,
+                        p.1.fetcher.clone(),
+                        cl::DesignScalars::new(p.0.pool_key.fee, p.0.pool_key.tick_spacing),
+                        Some(hooks),
+                    )
+                }
+                _ => return SwapRead::NotComputable,
+            }
+        };
+        let mode = match &fetcher {
+            Some(f) if !disarm_fetch => cl::FetchMode::Armed {
+                fetcher: f,
+                pool_id,
+                block,
+            },
+            _ => cl::FetchMode::Disarmed,
+        };
+        let Some(state_mut) = self.registry.pools.get_mut(&pool_id) else {
+            return SwapRead::NotComputable;
+        };
+        let target = match state_mut {
+            PoolEntry::V3(p) => cl::ConcentratedLiquidityStateMut::V3 {
+                state: &mut p.1,
+                scalars,
+            },
+            PoolEntry::V4(p) => cl::ConcentratedLiquidityStateMut::V4 {
+                state: &mut p.1,
+                scalars,
+                hooks: hooks.unwrap_or_default(),
+            },
+            _ => return SwapRead::NotComputable,
+        };
+        let read = cl::read_swap(
+            cl::SwapReadSource::Slice(target),
+            cl::SwapReadRequest {
+                zero_for_one: request.zero_for_one,
+                amount_specified: request.amount_specified,
+                sqrt_price_limit: request.sqrt_price_limit,
+            },
+            mode,
+        );
+        match read {
+            cl::SwapReadOutcome::Computed {
+                outcome,
+                fetched_words,
+            } => {
+                let caveats = caveats_for_coverage(coverage).union(extra_caveats);
+                let payload = concentrated_liquidity_payload(
+                    &outcome,
+                    request.zero_for_one,
+                    caveats,
+                    fetched_words,
+                );
+                SwapRead::Computed(match outcome_family {
+                    SwapOutcomeFamily::V3 => SwapOutcome::V3(payload),
+                    SwapOutcomeFamily::V4 => SwapOutcome::V4(payload),
+                })
+            }
+            cl::SwapReadOutcome::NotComputable => SwapRead::NotComputable,
+            cl::SwapReadOutcome::FetchFailed { word } => SwapRead::FetchFailed { word },
+            cl::SwapReadOutcome::FetchExhausted { word } => SwapRead::FetchExhausted { word },
+            cl::SwapReadOutcome::Stateless(_) | cl::SwapReadOutcome::MissingWords(_) => {
+                unreachable!("registered reads run armed or disarmed, never stateless/discovery")
             }
         }
     }
@@ -1339,46 +983,20 @@ enum SwapOutcomeFamily {
     V4,
 }
 
-fn finish_concentrated_liquidity(
-    sim: &mut impl ComputeMerge,
-    block: u64,
-    family: SwapOutcomeFamily,
-    coverage: PoolTickCoverage,
-    request: SwapRequest,
-    extra_caveats: Caveats,
-) -> SwapRead {
-    match drive(sim, block) {
-        PolicyAttempt::Computed(outcome, fetched_words) => {
-            let caveats = caveats_for_coverage(coverage).union(extra_caveats);
-            let payload = concentrated_liquidity_payload(
-                &outcome,
-                request.zero_for_one,
-                caveats,
-                fetched_words,
-            );
-            SwapRead::Computed(match family {
-                SwapOutcomeFamily::V3 => SwapOutcome::V3(payload),
-                SwapOutcomeFamily::V4 => SwapOutcome::V4(payload),
-            })
-        }
-        PolicyAttempt::NotComputable => SwapRead::NotComputable,
-        PolicyAttempt::FetchFailed(word) => SwapRead::FetchFailed { word },
-        PolicyAttempt::FetchExhausted(word) => SwapRead::FetchExhausted { word },
-    }
-}
+// finish_concentrated_liquidity retired with the drive policy: the payload
+// assembly now runs at the ONE CL row ([`BotState::concentrated_liquidity_swap_read`])
+// directly over the family door's outcome.
 
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::panic,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::used_underscore_binding
-    )]
+    #![expect(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
     use hashbrown::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use ::degenbot_pools::v3_state::RegisterV3PoolParams;
 
     // ---------------------------------------------------------------------
     // the staged pre-pass + DISARMED sim contract.
@@ -1468,32 +1086,9 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 0, "discovery never fetches");
     }
 
-    // ---------------------------------------------------------------------
-    // Sign-convention table (ADR-037): THE pinning test. Canonical request
-    // sign -> engine amountSpecified, for all four shapes x both engines.
-    #[test]
-    fn sign_mapping_table() {
-        let in_pos = I256::try_from(1_000_u64).unwrap();
-        let out_neg = -I256::try_from(2_000_u64).unwrap();
-        // exact-input request (negative, user sends 2000):
-        assert_eq!(
-            engine_amount_specified(out_neg, EngineFamily::V3Engine),
-            I256::try_from(2_000_u64).unwrap()
-        );
-        assert_eq!(
-            engine_amount_specified(out_neg, EngineFamily::V4Engine),
-            out_neg
-        );
-        // exact-output request (positive, pool delivers 1000):
-        assert_eq!(
-            engine_amount_specified(in_pos, EngineFamily::V3Engine),
-            -in_pos
-        );
-        assert_eq!(
-            engine_amount_specified(in_pos, EngineFamily::V4Engine),
-            in_pos
-        );
-    }
+    // (The ADR-037 sign-convention table moved WITH the family:
+    // degenbot_pools::families::concentrated_liquidity::{v3,v4} pin the
+    // per-design mapping rows.)
 
     // ---------------------------------------------------------------------
     // Caveats: empty-means-exact, additive union.
@@ -1535,138 +1130,6 @@ mod tests {
 
         let ofz = concentrated_liquidity_payload(&outcome, false, Caveats::default(), Vec::new());
         assert_eq!(ofz.delivered, I256::try_from(500_u64).unwrap());
-    }
-
-    // ---------------------------------------------------------------------
-    // Policy drive: a scripted ComputeMerge exercises every branch without
-    // constructing real pools.
-    struct ScriptedSim {
-        script: Vec<Result<V3SwapOutcome, SimulateSwapError>>,
-        call: AtomicUsize,
-        fetcher_ok: bool,
-        has_fetcher: bool,
-        fetched: Vec<FetchedTickWord>,
-    }
-
-    impl ScriptedSim {
-        fn word(word: i32) -> FetchedTickWord {
-            FetchedTickWord {
-                word,
-                ticks: HashMap::new(),
-            }
-        }
-    }
-
-    impl ComputeMerge for ScriptedSim {
-        fn compute(&self) -> Result<V3SwapOutcome, SimulateSwapError> {
-            let idx = self.call.load(Ordering::SeqCst);
-            self.call.store(idx + 1, Ordering::SeqCst);
-            self.script
-                .get(idx)
-                .cloned()
-                .unwrap_or(Err(SimulateSwapError::NotComputable))
-        }
-        fn merge_word(&mut self, fetched: &FetchedTickWord) {
-            self.fetched.push(fetched.clone());
-        }
-        fn fetch_word(&self, _word: i32, _block: u64) -> Result<FetchedTickWord, FetchFailure> {
-            if !self.has_fetcher {
-                Err(FetchFailure::NoFetcher)
-            } else if self.fetcher_ok {
-                Ok(Self::word(_word))
-            } else {
-                Err(FetchFailure::Errored)
-            }
-        }
-    }
-
-    fn outcome_stub() -> V3SwapOutcome {
-        V3SwapOutcome::default()
-    }
-
-    #[test]
-    fn drive_immediate_success() {
-        let mut sim = ScriptedSim {
-            script: vec![Ok(outcome_stub())],
-            call: AtomicUsize::new(0),
-            fetcher_ok: true,
-            has_fetcher: true,
-            fetched: Vec::new(),
-        };
-        match drive(&mut sim, 17) {
-            PolicyAttempt::Computed(_, words) => assert!(words.is_empty()),
-            other => panic!("expected Computed, got {other:?}"),
-        }
-        assert!(sim.fetched.is_empty());
-    }
-
-    #[test]
-    fn drive_miss_then_fetch_then_success_records_words() {
-        let mut sim = ScriptedSim {
-            script: vec![
-                Err(SimulateSwapError::MissingTickWord(-4)),
-                Ok(outcome_stub()),
-            ],
-            call: AtomicUsize::new(0),
-            fetcher_ok: true,
-            has_fetcher: true,
-            fetched: Vec::new(),
-        };
-        match drive(&mut sim, 17) {
-            PolicyAttempt::Computed(_, words) => assert_eq!(words, vec![-4]),
-            other => panic!("expected Computed, got {other:?}"),
-        }
-        assert_eq!(sim.fetched.len(), 1);
-    }
-
-    #[test]
-    fn drive_repeated_miss_is_exhausted() {
-        let miss = Err(SimulateSwapError::MissingTickWord(9));
-        let mut sim = ScriptedSim {
-            script: vec![miss.clone(), miss, Ok(outcome_stub())],
-            call: AtomicUsize::new(0),
-            fetcher_ok: true,
-            has_fetcher: true,
-            fetched: Vec::new(),
-        };
-        assert_eq!(drive(&mut sim, 17), PolicyAttempt::FetchExhausted(9));
-    }
-
-    #[test]
-    fn drive_no_fetcher_is_exhausted() {
-        // The legacy path collapsed "no fetcher registered" into the same
-        // silent give-up as a failed fetch; the gate keeps them distinct:
-        // NoFetcher => FetchExhausted (nothing was attempted), while a real
-        // fetcher error => FetchFailed.
-        let mut sim = ScriptedSim {
-            script: vec![Err(SimulateSwapError::MissingTickWord(2))],
-            call: AtomicUsize::new(0),
-            fetcher_ok: false,
-            has_fetcher: false,
-            fetched: Vec::new(),
-        };
-        assert_eq!(drive(&mut sim, 17), PolicyAttempt::FetchExhausted(2));
-
-        let mut errored = ScriptedSim {
-            script: vec![Err(SimulateSwapError::MissingTickWord(2))],
-            call: AtomicUsize::new(0),
-            fetcher_ok: false,
-            has_fetcher: true,
-            fetched: Vec::new(),
-        };
-        assert_eq!(drive(&mut errored, 17), PolicyAttempt::FetchFailed(2));
-    }
-
-    #[test]
-    fn drive_not_computable_short_circuits() {
-        let mut sim = ScriptedSim {
-            script: vec![Err(SimulateSwapError::NotComputable)],
-            call: AtomicUsize::new(0),
-            fetcher_ok: true,
-            has_fetcher: true,
-            fetched: Vec::new(),
-        };
-        assert_eq!(drive(&mut sim, 17), PolicyAttempt::NotComputable);
     }
 
     // ---------------------------------------------------------------------

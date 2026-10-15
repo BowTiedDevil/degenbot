@@ -1,11 +1,19 @@
-//! CL family projections (V3 + V4) — two SELF-CONTAINED entries.
+//! CL family resolve rows (V3 + V4) — the registry-lookup + solver-vocabulary
+//! wrap seam. ONE dispatch row in [`super::resolve_hops`]
+//! (`HopType::V3 | HopType::V4`) routes here; the two entries below share
+//! only that row, the thin `ResolvedHop::V3/V4` wrap, and the nonce return.
 //!
-//! GUARDRAIL (load-bearing, do not fuse): `project_v3` and `project_v4` share
-//! only this file, the thin `ResolvedHop::V3/V4` wrap, and the nonce return.
-//! The `build_int_v*_sequence` builders in `degenbot-pools` own the three
-//! load-bearing differences — fee convention (V3 `gamma = 1e6 − lp_fee` vs V4
-//! combined `swapFee`), current-tick drain framing (V3 leading hop vs V4
-//! `base_liquidity` fold), and per-range net-sign direction (V4 only).
+//! GUARDRAIL (load-bearing, do not fuse): the projections themselves are the
+//! family read module's door —
+//! `degenbot_pools::families::concentrated_liquidity::capture_hop` — where the
+//! design-private halves (`families/concentrated_liquidity/{v3.rs,v4.rs}`)
+//! deliberately share NO code. The `build_int_v*_sequence` builders own the
+//! three load-bearing differences — fee convention (V3 `gamma = 1e6 − lp_fee`
+//! vs V4 combined `swapFee`), current-tick drain framing (V3 leading hop vs
+//! V4 `base_liquidity` fold), and per-range net-sign direction (V4 only).
+//! This file keeps ONLY the state-owner seam: the registry lookups, the ADR-037
+//! hook refusal (V4's identity-side fact), the nonce, and the one
+//! `ResolvedHop` wrap per variant.
 //!
 //! TABLE DERIVATION (shared, still downstream of the per-family sequence
 //! builders): the promoted fused-epoch pair (cache-lab winner S1) lives in
@@ -15,15 +23,32 @@
 //! current-tick drain framing, or net-sign direction; only the (identical for
 //! both families) table derivation is shared.
 
+use degenbot_pools::families::concentrated_liquidity as cl_read;
 use degenbot_solvers::concentrated_liquidity::PreparedConcentratedLiquidityHop;
-use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
+use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
-use crate::PoolTickCoverage;
 
-/// V3 projection: read pool state + identity off `core` (ADR-003) and build
-/// the integer tick-range sequence the CL solver consumes lock-free.
+/// The ONE CL resolve row (ADR-073 D2): both designs route here from the
+/// dispatcher; the design match happens on the hop type and each arm keeps
+/// its own thin wrap.
+pub(crate) fn project(
+    core: &BotState,
+    pool_ref: &MixedPoolRef,
+) -> Result<(ResolvedHop, u64), MissingHopReason> {
+    match pool_ref.hop_type {
+        HopType::V3 => project_v3(core, pool_ref),
+        HopType::V4 => project_v4(core, pool_ref),
+        _ => Err(MissingHopReason::MissingState),
+    }
+}
+
+/// V3 resolve row: read pool state + identity off `core` (ADR-003), then the
+/// family read module's [`cl_read::capture_hop`] door builds the integer
+/// tick-range sequence the CL solver consumes lock-free. The row wraps the
+/// solver-vocabulary hop (`ResolvedHop::V3`) — the hop is solver vocabulary,
+/// so the wrapper stays at the row.
 pub(crate) fn project_v3(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -31,34 +56,31 @@ pub(crate) fn project_v3(
     let pool_state = core
         .get_v3_pool(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
-    // Directional viability gate (archived-Python port): reject a dead
-    // direction with an O(1) extremes check BEFORE the O(tick_data) walk in
-    // `build_int_v3_sequence`. Sparse-coverage pools default viable (no data
-    // to judge — mirrors Python's `sparse_liquidity_map` early-True).
-    if pool_state.coverage == PoolTickCoverage::Tracked
-        && !pool_state.swap_is_viable(pool_ref.zero_for_one)
-    {
-        return Err(MissingHopReason::NotViable);
-    }
     let identity = core
         .get_v3_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
-    // Build the sequence ONCE and Arc-share it - every path
-    // reusing this (pool, direction) clones an Arc, not the ranges Vec.
-    let int_seq = pool_state
-        .build_int_v3_sequence(identity.tick_spacing, identity.fee, pool_ref.zero_for_one)
-        .ok_or(MissingHopReason::SequenceUnavailable)?;
-    let int_seq = std::sync::Arc::new(int_seq);
+    // Build the sequence ONCE through the family door and Arc-share it -
+    // every path reusing this (pool, direction) clones an Arc, not the
+    // ranges Vec.
+    let int_seq = cl_read::capture_hop(
+        cl_read::ConcentratedLiquidityState::V3 {
+            state: pool_state,
+            scalars: cl_read::DesignScalars::new(identity.fee, identity.tick_spacing),
+        },
+        pool_ref.zero_for_one,
+    )
+    .map_err(cl_refusal)?;
 
     // Derive the crossing table + word profiles + fingerprint ONCE (the fused
-    // S1 derivation) — the projection constructs the carried value here.
+    // S1 derivation) — the row constructs the carried solver value here.
     let prepared = PreparedConcentratedLiquidityHop::derive(int_seq);
     Ok((ResolvedHop::V3 { prepared }, pool_state.state_nonce))
 }
 
-/// V4 projection: identical CL math as V3 (BotState-owned, ADR-003), with
-/// V4's own fee/protocol-fee convention handled inside
-/// `build_int_v4_sequence`.
+/// V4 resolve row: identical CL math as V3 (BotState-owned, ADR-003), with
+/// V4's own fee/protocol-fee convention handled behind the door (inside
+/// `build_int_v4_sequence`), plus the ADR-037 hook refusal at the row (the
+/// hook permission bits live on V4's registration identity).
 pub(crate) fn project_v4(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -66,39 +88,45 @@ pub(crate) fn project_v4(
     let pool_state = core
         .get_v4_pool(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
-    // Directional viability gate — V4 twin of the V3 site above.
-    if pool_state.coverage == PoolTickCoverage::Tracked
-        && !pool_state.swap_is_viable(pool_ref.zero_for_one)
-    {
-        return Err(MissingHopReason::NotViable);
-    }
-    // ADR-037: hooked pools are ADMITTED at registration but are
-    // not solvable — the CL math assumes no hook intervention. Paths that
-    // would traverse one die here with a named reason so the existing
-    // invalidation telemetry counts them.
     let identity = core
         .get_v4_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     // ADR-037: hooked pools are ADMITTED at registration but are
     // not solvable — the CL math assumes no hook intervention. Paths that
     // would traverse one die here with a named reason so the existing
-    // invalidation telemetry counts them.
+    // invalidation telemetry counts them. The door re-checks in capture
+    // order (viability, then hook, then walk) — this row-side check keeps
+    // the hook refusal ahead of the stateless-mode compute path.
     if ::degenbot_pools::v4_state::has_amount_modifying_hook(identity.pool_key.hooks) {
         return Err(MissingHopReason::HookedPool);
     }
-    let int_seq = pool_state
-        .build_int_v4_sequence(
-            identity.pool_key.tick_spacing,
-            identity.pool_key.fee,
-            pool_ref.zero_for_one,
-        )
-        .ok_or(MissingHopReason::SequenceUnavailable)?;
-    let int_seq = std::sync::Arc::new(int_seq);
+    let int_seq = cl_read::capture_hop(
+        cl_read::ConcentratedLiquidityState::V4 {
+            state: pool_state,
+            scalars: cl_read::DesignScalars::new(
+                identity.pool_key.fee,
+                identity.pool_key.tick_spacing,
+            ),
+            hooks: identity.pool_key.hooks,
+        },
+        pool_ref.zero_for_one,
+    )
+    .map_err(cl_refusal)?;
 
-    // Derive as the V3 site: ONE crossing build, word profiles from it, the
+    // Derive as the V3 row: ONE crossing build, word profiles from it, the
     // sequence's fingerprint folded once at derivation.
     let prepared = PreparedConcentratedLiquidityHop::derive(int_seq);
     Ok((ResolvedHop::V4 { prepared }, pool_state.state_nonce))
+}
+
+/// Map the family read module's capture refusal onto the resolve
+/// invalidation vocabulary — the row's one mapping site.
+fn cl_refusal(refusal: cl_read::CaptureRefusal) -> MissingHopReason {
+    match refusal {
+        cl_read::CaptureRefusal::NotViable => MissingHopReason::NotViable,
+        cl_read::CaptureRefusal::SequenceUnavailable => MissingHopReason::SequenceUnavailable,
+        cl_read::CaptureRefusal::HookedPool => MissingHopReason::HookedPool,
+    }
 }
 
 #[cfg(test)]

@@ -8,7 +8,11 @@ fn conservative_bot_flag_default_on() {
     // verbosity flags; this asserts the holder's test-default stance on a
     // surviving default-ON behavior key.
     assert!(!crate::stance::installed());
-    assert!(crate::stance::config().solve.cl_projection_cache);
+    assert!(
+        crate::stance::config()
+            .solve
+            .concentrated_liquidity_projection_cache
+    );
 }
 
 #[test]

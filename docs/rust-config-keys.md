@@ -133,7 +133,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES` | `solve.envelope_sampled_compose_lines` | `usize` | `48` | Profit-envelope sampled-compose lines cap. |
 | `DEGENBOT_SOLVER_WALK_MEMO` | `solve.solver_walk_memo` | `bool` | `false` | CL-solver walk memo (result caching) (`1` enables). |
 | `DEGENBOT_SOLVER_WALK_MEMO_STATS` | `solve.solver_walk_memo_stats` | `bool` | `false` | Walk-memo recomposition census (`1` enables). |
-| `DEGENBOT_CL_PROJECTION_CACHE` | `solve.cl_projection_cache` | `bool` | `true` | CL projection memo cache; `0`/`off`/`false`/`disabled` disables. |
+| `DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE` | `solve.concentrated_liquidity_projection_cache` | `bool` | `true` | Concentrated-liquidity projection memo cache; `0`/`off`/`false`/`disabled` disables. |
 ## `fleet`
 
 | Env var | TOML key | Type | Default | Description |

@@ -47,7 +47,7 @@ p95 is back under the 12s block-time threshold in the comparable high-load windo
 
 The cache-lab sweep (Z5NOPD, docs/cache-lab-report.md) named S1_fused_epoch the
 winner; KGXFT7 wired the promotion in behind the default-on cutover gate
-`DEGENBOT_CL_PROJECTION_CACHE` (`0`/off/false disables; resolved once at
+`DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE` (`0`/off/false disables; resolved once at
 engine construction). The parity gates
 `memo_off_all_concentrated_liquidity_solve_is_byte_exact_v3_v4` and
 `memo_off_mixed_v2_concentrated_liquidity_solve_is_byte_exact` prove byte-exact solver intake
@@ -90,7 +90,7 @@ paths in the same window with byte-identical results. Solve-span p95 with the
 gate on sits under the 12s block-time threshold in this environment
 (11.87s vs 15.94s off); drain p95s are inventory-conditioned post-trim and
 higher in both A/B legs than the pre-trim 902s baseline. The flag is the
-cutover: `DEGENBOT_CL_PROJECTION_CACHE=0` reinstates the rebuild cost.
+cutover: `DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE=0` reinstates the rebuild cost.
 
 ### Artifacts
 

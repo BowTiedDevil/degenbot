@@ -27,9 +27,12 @@ use degenbot_math::balancer::PowVersion;
 use degenbot_math::curve::stableswap::{stableswap_get_y, DVariant, YVariant};
 use degenbot_math::v2::IntHopState;
 
+use crate::families::concentrated_liquidity::{
+    read_swap, ConcentratedLiquidityState, DesignScalars, SwapReadOutcome, SwapReadRequest,
+    SwapReadSource,
+};
 use crate::registry::PoolEntry;
-use crate::v3_state::{v3_simulate_swap, SimulateSwapError, V3PoolState};
-use crate::v4_state::v4_simulate_swap;
+use crate::v3_state::SimulateSwapError;
 
 // Curve stableswap structural constants (Vyper contract literal values).
 /// Curve native precision scale (1e18).
@@ -54,12 +57,6 @@ const CURVE_FEE_DENOMINATOR: u64 = 10_000_000_000;
 /// pool's walk enters an unfetched tick-bitmap word (the caller fetches +
 /// retries), or [`SimulateSwapError::NotComputable`] on arithmetic overflow /
 /// invariant violation / non-positive amount.
-#[expect(
-    clippy::too_many_lines,
-    reason = "ADR-014/KO3SBO boxing adds one binding line per family arm; \
-     the arms stay deliberately uniform (p.0/p.1 destructure) over rustic \
-     compression"
-)]
 pub fn simulate_swap(
     entry: &PoolEntry,
     zero_for_one: bool,
@@ -90,56 +87,52 @@ pub fn simulate_swap(
             hop.swap(amount_in)
                 .map_err(|_| SimulateSwapError::NotComputable)
         }
-        // V3 concentrated-liquidity math. Exact-input swap: amount_specified
-        // > 0 (V3 convention). Output is token1 for zfo, token0 for ofz
-        // (matches the V3 Swap callback: zfo pays token0, receives token1).
+        // V3 concentrated-liquidity math. Exact-input swap: the unsigned
+        // amount enters as a canonical NEGATIVE request (exact input); the
+        // design's fee + sign conventions live behind the family read
+        // module's door. Output is token1 for zfo, token0 for ofz (matches
+        // the V3 Swap callback: zfo pays token0, receives token1).
         PoolEntry::V3(p) => {
             let (identity, state) = (&p.0, &p.1);
             if amount_in.is_zero() {
                 return Ok(U256::ZERO);
             }
-            let Some(spec) = I256::try_from(amount_in).ok() else {
+            let Ok(spec) = I256::try_from(amount_in) else {
                 return Err(SimulateSwapError::NotComputable);
             };
-            let outcome = v3_simulate_swap(
-                state,
-                identity.fee,
-                identity.tick_spacing,
+            cl_stateless_row(
+                ConcentratedLiquidityState::V3 {
+                    state,
+                    scalars: DesignScalars::new(identity.fee, identity.tick_spacing),
+                },
                 zero_for_one,
-                spec,
-                V3PoolState::default_sqrt_price_limit(zero_for_one),
-            )?;
-            Ok(if zero_for_one {
-                outcome.amount1
-            } else {
-                outcome.amount0
-            })
+                -spec,
+            )
         }
-        // V4 concentrated-liquidity math. Same CL math as V3; sign
-        // convention: V4 exact-input is `amountSpecified < 0` (negative),
-        // opposite to V3. The caller flips so the simulator sees the
-        // V4-native sign.
+        // V4 concentrated-liquidity math. Same CL math as V3, one dispatch
+        // row: the V4-native sign convention (`amountSpecified < 0` for
+        // exact input) is the design mapping behind the door — the canonical
+        // request is the SAME negative exact-input amount.
         PoolEntry::V4(p) => {
             let (identity, state) = (&p.0, &p.1);
             if amount_in.is_zero() {
                 return Ok(U256::ZERO);
             }
-            let Some(spec) = I256::try_from(amount_in).ok() else {
+            let Ok(spec) = I256::try_from(amount_in) else {
                 return Err(SimulateSwapError::NotComputable);
             };
-            let outcome = v4_simulate_swap(
-                state,
-                identity.pool_key.fee,
-                identity.pool_key.tick_spacing,
+            cl_stateless_row(
+                ConcentratedLiquidityState::V4 {
+                    state,
+                    scalars: DesignScalars::new(
+                        identity.pool_key.fee,
+                        identity.pool_key.tick_spacing,
+                    ),
+                    hooks: identity.pool_key.hooks,
+                },
                 zero_for_one,
                 -spec,
-                V3PoolState::default_sqrt_price_limit(zero_for_one),
-            )?;
-            Ok(if zero_for_one {
-                outcome.amount1
-            } else {
-                outcome.amount0
-            })
+            )
         }
         PoolEntry::AerodromeV2(p) => {
             let (id, state) = (&p.0, &p.1);
@@ -185,6 +178,36 @@ pub fn simulate_swap(
             let (id, state) = (&p.0, &p.1);
             simulate_curve_stableswap_swap(id, state, zero_for_one, amount_in)
         }
+    }
+}
+
+/// The ONE concentrated-liquidity dispatch row of the stateless swap
+/// dispatch (ADR-073 D2): the arm hands the family read module the design's
+/// state slice, and the V3/V4 fee + sign conventions live behind the
+/// [`read_swap`] door. Stateless Pattern-B contract preserved: a sparse-map
+/// miss surfaces as [`SimulateSwapError::MissingTickWord`] data for the
+/// caller's fetch + retry shell.
+fn cl_stateless_row(
+    design: ConcentratedLiquidityState<'_>,
+    zero_for_one: bool,
+    amount_specified: alloy::primitives::I256,
+) -> Result<U256, SimulateSwapError> {
+    match read_swap(
+        SwapReadSource::Shared(design),
+        SwapReadRequest {
+            zero_for_one,
+            amount_specified,
+            sqrt_price_limit: None,
+        },
+        crate::families::concentrated_liquidity::FetchMode::Stateless,
+    ) {
+        SwapReadOutcome::Stateless(Ok(outcome)) => Ok(if zero_for_one {
+            outcome.amount1
+        } else {
+            outcome.amount0
+        }),
+        SwapReadOutcome::Stateless(Err(err)) => Err(err),
+        _ => unreachable!("stateless read returns the stateless verdict"),
     }
 }
 

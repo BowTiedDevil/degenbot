@@ -251,7 +251,7 @@ impl HopProjectionCache {
 /// Runtime gate for the fused hop-projection memo (winner promotion:
 /// the lab's S1 fused-epoch strategy, production-framed as whole-pool nonce
 /// invalidation + Arc-shared fused tables). Default-ON: env unset → enabled.
-/// `DEGENBOT_CL_PROJECTION_CACHE=0` (or off/false/disabled) disables the
+/// `DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE=0` (or off/false/disabled) disables the
 /// memo so every path re-projects its hops fresh — the A/B cutover switch for
 /// the promotion; solver intake is byte-exact either way (parity tests).
 ///
@@ -264,7 +264,7 @@ pub fn projection_memo_enabled() -> bool {
 }
 
 /// The parsed stance (T4: the engine installer parses
-/// `DEGENBOT_CL_PROJECTION_CACHE` once at construction; default ON).
+/// `DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE` once at construction; default ON).
 pub fn install_projection_memo_stance(enabled: bool) {
     let _ = PROJECTION_MEMO_STANCE.set(enabled);
 }
@@ -459,8 +459,10 @@ pub fn resolve_hops(
 
         let project_family = || match pool_ref.hop_type {
             HopType::V2 => v2::project_v2(core, pool_ref),
-            HopType::V3 => concentrated_liquidity::project_v3(core, pool_ref),
-            HopType::V4 => concentrated_liquidity::project_v4(core, pool_ref),
+            // ONE CL dispatch row (ADR-073 D2): both CL designs route
+            // through the family read module's capture_hop door; the row
+            // does the registry lookup and the ResolvedHop wrap.
+            HopType::V3 | HopType::V4 => concentrated_liquidity::project(core, pool_ref),
             HopType::SolidlyStable => solidly::project_solidly(core, pool_ref),
             HopType::BalancerWeighted => {
                 balancer_weighted::project_balancer_weighted(core, pool_ref)

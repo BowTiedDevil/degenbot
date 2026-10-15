@@ -77,7 +77,9 @@ pub(crate) fn install_engine_stances(
     // C2: the cycle's stance values are ENGINE instance values now
     // (`SolveCycle::min_profit_floor` / `::inline_sim_enabled`, packed at
     // construction) — no process statics remain for the solve cycle.
-    degenbot_substrate::resolve::install_projection_memo_stance(cfg.solve.cl_projection_cache);
+    degenbot_substrate::resolve::install_projection_memo_stance(
+        cfg.solve.concentrated_liquidity_projection_cache,
+    );
     // the chunked parallel resolve stance is an ENGINE
     // instance value now — packed per construction from
     // cfg.solve.solve_resolve_par (the construction-stance

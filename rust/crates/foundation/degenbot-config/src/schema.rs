@@ -456,8 +456,8 @@ crate::config_schema! {
             doc = "CL-solver walk memo (result caching) (`1` enables).";
         solver_walk_memo_stats [bool] = false, env = "DEGENBOT_SOLVER_WALK_MEMO_STATS", def = "false",
             doc = "Walk-memo recomposition census (`1` enables).";
-        cl_projection_cache [bool] = true, env = "DEGENBOT_CL_PROJECTION_CACHE", def = "true",
-            doc = "CL projection memo cache; `0`/`off`/`false`/`disabled` disables.";
+        concentrated_liquidity_projection_cache [bool] = true, env = "DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE", def = "true",
+            doc = "Concentrated-liquidity projection memo cache; `0`/`off`/`false`/`disabled` disables.";
     }
 
     fleet FleetConfig {

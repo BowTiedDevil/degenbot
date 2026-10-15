@@ -20,6 +20,8 @@ use degenbot_core::diag;
 use degenbot_core::op_warn;
 use hashbrown::HashMap;
 
+use ::degenbot_pools::families::concentrated_liquidity as cl;
+
 use alloy::primitives::{Address, U256};
 
 use crate::concentrated_liquidity_route::{
@@ -859,22 +861,14 @@ impl ConcentratedLiquidityOrchestration {
     /// ([`apply_backfill_buffer_v3`] / [`apply_pump_buffer_v3`]) dispatch
     /// through here so cross-type arrival order within a block is preserved
     /// (a `Swap` at logIdx 1433 lands after a `Mint` at logIdx 120 if it
-    /// arrived after). Mirrors the live-path apply methods:
-    /// `Liquidity` → `state.apply_liquidity_update`, `Swap` →
-    /// `state.apply_swap` (with `tick_priors: &[]` — the pump path never
-    /// carries tick priors).
+    /// arrived after). The slice mutation is the family read module's
+    /// [`cl::apply_event`] door (V3 arm) — the capability owns the routing,
+    /// the door owns the family behavior.
     fn apply_buffered_v3_event(state: &mut V3PoolState, event: BufferedV3PoolEvent) {
-        match event {
-            BufferedV3PoolEvent::Liquidity(u) => state.apply_liquidity_update(
-                u.tick_lower,
-                u.tick_upper,
-                u.liquidity_delta,
-                u.block_number,
-            ),
-            BufferedV3PoolEvent::Swap(s) => {
-                state.apply_swap(s.sqrt_price_x96, s.liquidity, s.tick, s.block_number, &[]);
-            }
-        }
+        cl::apply_event(
+            cl::ConcentratedLiquidityApplyTarget::V3(state),
+            cl::ConcentratedLiquidityEvent::V3(event),
+        );
     }
     /// Mark `block` as fully processed by the pump (every V3 log for `block`
     /// Read a registered V3 pool's state by `pool_id`.
@@ -1151,18 +1145,24 @@ impl ConcentratedLiquidityOrchestration {
         reg: &RegistryCore,
         pool_id: u64,
     ) -> Option<(u64, usize, u64)> {
-        match reg.pools.get(&pool_id) {
-            Some(PoolEntry::V3(p)) => Some((
-                p.1.update_block,
-                p.1.tick_data.len(),
-                p.1.tick_data.values().map(|t| t.block).sum(),
-            )),
-            Some(PoolEntry::V4(p)) => Some((
-                p.1.update_block,
-                p.1.tick_data.len(),
-                p.1.tick_data.values().map(|t| t.block).sum(),
-            )),
-            _ => None,
+        // One CL row (ADR-073 D2): the slice observation is the family read
+        // module's observe door (TickFingerprint probe); this method keeps
+        // the registry lookup.
+        let design = match reg.pools.get(&pool_id) {
+            Some(PoolEntry::V3(p)) => cl::ConcentratedLiquidityState::V3 {
+                state: &p.1,
+                scalars: cl::DesignScalars::new(p.0.fee, p.0.tick_spacing),
+            },
+            Some(PoolEntry::V4(p)) => cl::ConcentratedLiquidityState::V4 {
+                state: &p.1,
+                scalars: cl::DesignScalars::new(p.0.pool_key.fee, p.0.pool_key.tick_spacing),
+                hooks: p.0.pool_key.hooks,
+            },
+            _ => return None,
+        };
+        match cl::observe(design, cl::Observe::TickFingerprint) {
+            cl::Observed::TickFingerprint(fingerprint) => fingerprint,
+            _ => unreachable!("the fingerprint probe answers"),
         }
     }
     /// Stage half of the word backfill: clone the stored fetcher +
@@ -1810,21 +1810,10 @@ impl ConcentratedLiquidityOrchestration {
     /// the int256 delta to i128 at the drain→apply seam (ADR-014 D4, matching
     /// the live `apply_v4_liquidity_update_by_pool_id` path).
     fn apply_buffered_v4_event(state: &mut V4PoolState, event: BufferedV4PoolEvent) {
-        match event {
-            BufferedV4PoolEvent::Liquidity(u) => {
-                if let Ok(delta_i128) = i128::try_from(u.liquidity_delta) {
-                    state.apply_liquidity_update(
-                        u.tick_lower,
-                        u.tick_upper,
-                        delta_i128,
-                        u.block_number,
-                    );
-                }
-            }
-            BufferedV4PoolEvent::Swap(s) => {
-                state.apply_swap(s.sqrt_price_x96, s.liquidity, s.tick, s.block_number, &[]);
-            }
-        }
+        cl::apply_event(
+            cl::ConcentratedLiquidityApplyTarget::V4(state),
+            cl::ConcentratedLiquidityEvent::V4(event),
+        );
     }
     /// Set a V3 pool's registration lifecycle to `Quarantined`. The
     /// live pump then defers the pool's `Swap`/`Mint`/`Burn` events to the
