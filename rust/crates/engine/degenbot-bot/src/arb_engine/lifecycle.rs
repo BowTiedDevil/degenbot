@@ -247,7 +247,7 @@ pub(crate) fn v4_pool_count(engine: &ArbitrageEngine) -> usize {
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
         .concentrated_liquidity()
-        .v4_pool_count()
+        .registered_pool_count()
 }
 /// Number of registered mixed paths.
 #[must_use]

@@ -953,16 +953,12 @@ impl BotState {
     // -----------------------------------------------------------------------
 
     /// Family-dispatching Swap apply. The single entry point
-    /// `PyLiquidityPool.apply_swap` calls — routes V3 pools to
-    /// `apply_v3_swap_by_pool_id` and V4 pools to
-    /// `apply_v4_swap_by_pool_id`. V2/unregistered → `None` (no-op, matching
-    /// the V3 sibling). This preserves the single Python `apply_swap` API
-    /// while correcting the prior unconditional V3 routing that silently
-    /// dropped every V4 update.
-    ///
-    /// The family probe is a `matches!` (Copy discriminant) so the immutable
-    /// borrow of `self.registry.pools` ends before the `&mut self` apply call — one
-    /// held write guard throughout, two O(1) `HashMap` lookups (probe + apply).
+    /// `PyLiquidityPool.apply_swap` calls — the registered pool's entry
+    /// selects the design (ADR-073 D3: the surface name is family-neutral).
+    /// V2/unregistered → `None` (no-op, matching the liquidity-update
+    /// sibling). This preserves the single Python `apply_swap` API while
+    /// routing V4 updates correctly (the prior unconditional V3 routing
+    /// silently dropped every V4 update).
     pub fn apply_swap_by_pool_id(
         &mut self,
         pool_id: u64,
@@ -972,26 +968,16 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        if matches!(self.registry.pools.get(&pool_id), Some(PoolEntry::V4(..))) {
-            self.concentrated_liquidity.apply_v4_swap_by_pool_id(
-                &mut self.registry,
-                pool_id,
-                sqrt_price_x96,
-                liquidity,
-                tick,
-                block_number,
-                tick_priors,
-            )
-        } else {
-            self.concentrated_liquidity.apply_v3_swap_by_pool_id(
-                &mut self.registry,
-                pool_id,
-                sqrt_price_x96,
-                liquidity,
-                tick,
-                block_number,
-                tick_priors,
-            )
+        match self.registry.pools.get_mut(&pool_id) {
+            Some(PoolEntry::V3(p)) => {
+                p.1.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
+                Some(pool_id)
+            }
+            Some(PoolEntry::V4(p)) => {
+                p.1.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
+                Some(pool_id)
+            }
+            _ => None,
         }
     }
 
@@ -1053,9 +1039,8 @@ impl BotState {
 
     /// Family-dispatching liquidity update. The single entry point
     /// `PyLiquidityPool.apply_liquidity_update` calls — the CL dispatch
-    /// bucket routes V3/V4 onto the capability's design-keyed rows (ADR-073
-    /// D3: the surface name is family-neutral; the design selection is the
-    /// entry's). A non-CL family is refused
+    /// bucket selects the design by the entry (ADR-073 D3: the surface name
+    /// is family-neutral). A non-CL family is refused
     /// with [`ConcentratedLiquidityApplyError::UnsupportedFamily`] instead of falling into the
     /// V3 path.
     ///
@@ -1072,28 +1057,20 @@ impl BotState {
         block_number: u64,
     ) -> Result<u64, ConcentratedLiquidityApplyError> {
         match self.concentrated_liquidity_kind(pool_id) {
-            ConcentratedLiquidityKind::V3 => self
-                .concentrated_liquidity
-                .apply_v3_liquidity_update_by_pool_id(
-                    &mut self.registry,
-                    pool_id,
-                    tick_lower,
-                    tick_upper,
-                    liquidity_delta,
-                    block_number,
-                )
-                .ok_or(ConcentratedLiquidityApplyError::NotRegistered { pool_id }),
-            ConcentratedLiquidityKind::V4 => self
-                .concentrated_liquidity
-                .apply_v4_liquidity_update_by_pool_id(
-                    &mut self.registry,
-                    pool_id,
-                    tick_lower,
-                    tick_upper,
-                    liquidity_delta,
-                    block_number,
-                )
-                .ok_or(ConcentratedLiquidityApplyError::NotRegistered { pool_id }),
+            ConcentratedLiquidityKind::V3 => {
+                let Some(PoolEntry::V3(p)) = self.registry.pools.get_mut(&pool_id) else {
+                    return Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id });
+                };
+                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
+                Ok(pool_id)
+            }
+            ConcentratedLiquidityKind::V4 => {
+                let Some(PoolEntry::V4(p)) = self.registry.pools.get_mut(&pool_id) else {
+                    return Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id });
+                };
+                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
+                Ok(pool_id)
+            }
             ConcentratedLiquidityKind::Missing => {
                 Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id })
             }
@@ -1108,7 +1085,7 @@ impl BotState {
     }
 
     /// solving. Applies each decoded event via the same
-    /// `apply_v3_swap` / `buffer_backfill_*_liquidity_update` / `apply_v4_swap`
+    /// `apply_swap` / `buffer_backfill_*_liquidity_update` / `apply_swap_update`
     /// path the live loop uses; decode selection lives in the dispatcher
     /// registry, never here. After the chunk,
     /// `expire_v3/v4_buffered(chunk_end)` advances the liquidity buffers. No

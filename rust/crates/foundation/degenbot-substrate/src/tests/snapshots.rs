@@ -189,7 +189,7 @@ fn seed_genesis_anchors_journal_without_advancing_clocks() {
 /// `tick_data`; without a pinned seed, step-1 reads engine-current (seed +
 /// journal) vs on-chain@snapshot (pre-journal) → false mismatch on every
 /// active pool (logs/perm-V2-V3-V2.log). The seed is pinned at registration
-/// and never mutated by `apply_v3_liquidity_update`.
+/// and never mutated by `apply_liquidity_update`.
 #[test]
 fn v3_snapshot_seed_survives_pump_liquidity_update() {
     use alloy::primitives::U128;
@@ -443,7 +443,7 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
     // snapshot→backfill window) and a pump Mint at `pump_block` (past the
     // backfill boundary — the pump was already running during `build_paths`,
     // so the pool's Mint at `pump_block` landed in the unregistered-pool
-    // pump buffer via `apply_v3_liquidity_update`).
+    // pump buffer via `apply_liquidity_update`).
     core.buffer_backfill_liquidity_update(v3_addr, -60, 60, 500_i128, snapshot_block + 1);
     core.apply_liquidity_update(v3_addr, -60, 60, 750_i128, pump_block);
 

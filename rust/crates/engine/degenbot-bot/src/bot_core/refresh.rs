@@ -12,8 +12,8 @@
 //! fetch half composes the core construction-I/O choreography
 //! (`pool_builder::choreography`) over the shared [`ConstructionIo`], and the
 //! apply half drives the state owner's typed dispatchers
-//! (`apply_sync_by_pool_id` / `apply_v3_swap_by_pool_id` /
-//! `apply_v4_swap_by_pool_id` / `apply_balance_update_by_pool_id`).
+//! (`apply_sync_by_pool_id` / `apply_swap_by_pool_id` /
+//! `apply_balance_update_by_pool_id`).
 //!
 //! # Block discipline
 //!

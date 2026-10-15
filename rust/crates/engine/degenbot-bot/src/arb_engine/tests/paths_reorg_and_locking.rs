@@ -514,7 +514,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     // registration values, the Mint's active-liquidity bump is unwound,
     // and the Mint-initialized tick is removed from tick_data.
     // Why: ADR-003 — V3 reorg rollback reaches the live hot path for the
-    // first time (S2b). apply_v3_swap journals scalars; the restore path
+    // first time (S2b). apply_swap journals scalars; the restore path
     // pops them + reverse-applies tick priors. An in-range Mint journals
     // scalar_priors: Some so the bump rolls back too.
     use crate::arb_engine::PoolTickCoverage;

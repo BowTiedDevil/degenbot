@@ -128,7 +128,7 @@ pub enum RouteAction {
 ///
 /// Row notes:
 /// - Backfill × Quarantined × `ScalarRefresh` routes to the PUMP buffer (not
-///   backfill): it mirrors the historical behavior of `apply_v3_swap`'s
+///   backfill): it mirrors the historical behavior of the live swap apply's
 ///   quarantine arm, which buffers via `buffer_pump`. Preserved verbatim;
 ///   revisit only with a soak-backed reason.
 /// - Backfill × {Unregistered, Quarantined} × `TickMutation` stages into the

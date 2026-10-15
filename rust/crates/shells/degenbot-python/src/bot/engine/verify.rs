@@ -105,11 +105,11 @@ impl PyArbEngine {
         // GIL hygiene: engine Mutex + read guard acquired inside py.detach;
         // owned pool data comes out, the PyErr (if any) is built under the GIL.
         // ADR-003: single V4 entry per `(pool_manager, pool_id)` — no dual
-        // forward/reverse keys. v4_pool_id_by_key returns Option<u64>.
+        // forward/reverse keys. pool_id_by_key returns Option<u64>.
         let v4_pools = self.with_core(py, |core| {
             let v4_key = core
                 .concentrated_liquidity()
-                .v4_pool_id_by_key(Address::ZERO, &pool_id)
+                .pool_id_by_key(Address::ZERO, &pool_id)
                 .or_else(|| {
                     // V4 pools are registered with the actual pool_manager address,
                     // not ZERO. Fallback: scan all V4 pools for matching pool_id.

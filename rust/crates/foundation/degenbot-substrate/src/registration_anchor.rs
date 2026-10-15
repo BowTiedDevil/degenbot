@@ -88,7 +88,7 @@ mod tests {
     // ── Fused single-acquisition lookups ────────────────────────
     //
     // The two seed-anchor sites used to compose
-    // `pool_id_by_address`/`v4_pool_id_by_key` with `pool_tick_data_block`
+    // `pool_id_by_address`/`pool_id_by_key` with `pool_tick_data_block`
     // in ONE expression, holding read#1 as the expression temporary while the
     // closure requested read#2 on the same `StateLock`. With a writer queued
     // between them that is a cycle (soak-2026-08-22: read#2 parks behind the

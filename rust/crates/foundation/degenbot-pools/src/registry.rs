@@ -498,7 +498,7 @@ fn some_concentrated_liquidity_mut(
 /// Projects only mutable runtime scalars (`sqrt_price_x96`/`liquidity`/`tick`/
 /// `update_block`/`tick_data`) — the values a swap calc consumes. Immutable
 /// config (`fee`/`tick_spacing`) lives on `V3PoolIdentity`/`V4PoolIdentity`;
-/// read it via [`BotState::get_v3_identity`]/[`BotState::get_v4_identity`].
+/// read it via `BotState::pool_slice`.
 /// The dyn-dispatch surface is a `&VxPoolState` borrowed from the registry.
 pub trait ConcentratedLiquidityPool {
     fn sqrt_price_x96(&self) -> U256;

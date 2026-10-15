@@ -211,7 +211,7 @@ impl DecodedPoolEvent {
                 liquidity,
                 tick,
                 block_number,
-            } => bot_state.concentrated_liquidity.route_v3_event(
+            } => bot_state.concentrated_liquidity.route_event(
                 &mut bot_state.registry,
                 phase,
                 pool_address,
@@ -229,7 +229,7 @@ impl DecodedPoolEvent {
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            } => bot_state.concentrated_liquidity.route_v3_event(
+            } => bot_state.concentrated_liquidity.route_event(
                 &mut bot_state.registry,
                 phase,
                 pool_address,
@@ -250,7 +250,7 @@ impl DecodedPoolEvent {
                 liquidity,
                 tick,
                 block_number,
-            } => bot_state.concentrated_liquidity.route_v4_event(
+            } => bot_state.concentrated_liquidity.route_event_by_key(
                 &mut bot_state.registry,
                 phase,
                 pool_manager,
@@ -270,7 +270,7 @@ impl DecodedPoolEvent {
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            } => bot_state.concentrated_liquidity.route_v4_event(
+            } => bot_state.concentrated_liquidity.route_event_by_key(
                 &mut bot_state.registry,
                 phase,
                 pool_manager,
@@ -348,7 +348,7 @@ impl LogDecoder for V3SwapDecoder {
 /// Decode PancakeSwap V3 `Swap` events (a forked V3 Swap with a non-canonical
 /// topic0 — see `v3_pancakeswap_swap_decoder`). Same `DecodedPoolEvent::V3Swap`
 /// shape as the canonical V3 decoder; only `topic0` and the trailing words
-/// differ, so the decoded state feeds `apply_v3_swap` unchanged.
+/// differ, so the decoded state feeds the live swap path unchanged.
 struct V3PancakeSwapDecoder;
 impl LogDecoder for V3PancakeSwapDecoder {
     fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent> {

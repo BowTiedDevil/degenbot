@@ -1,6 +1,6 @@
 use super::*;
 
-/// Staged-router contract (`concentrated_liquidity_route)`: `route_v3_event` is THE decision
+/// Staged-router contract (`concentrated_liquidity_route)`: `route_event` is THE decision
 /// point — a live-phase tick mutation for an unregistered pool must
 /// stage into the pump buffer (not drop), and the buffered event lands
 /// in `v3_buffer` keyed by address for the registration drain+pin seam.
@@ -26,7 +26,7 @@ fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
     // event horizon advances at ARRIVAL time (parity with V4) so the
     // pin's stamp-provenance verdict sees the true witnessed span after
     // the staged drain, not just ApplyDirect-routed events.
-    assert_eq!(core.concentrated_liquidity().v3_event_horizon(&addr), 10);
+    assert_eq!(core.concentrated_liquidity().event_horizon(&addr), 10);
 }
 
 /// the event horizon tracks the MAX block across multiple buffered
@@ -64,7 +64,7 @@ fn v3_event_horizon_tracks_max_block_across_buffered_events() {
         &[],
     );
     assert_eq!(core.buffered_event_count(&addr), 3);
-    assert_eq!(core.concentrated_liquidity().v3_event_horizon(&addr), 50);
+    assert_eq!(core.concentrated_liquidity().event_horizon(&addr), 50);
 }
 
 #[test]
@@ -732,14 +732,14 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
 }
 
 /// Regression: `PyLiquidityPool.apply_swap` routed V4 pools into
-/// `apply_v3_swap_by_pool_id`, which matches `PoolEntry::V3` only and
+/// the V3-only apply path, which matches `PoolEntry::V3` only and
 /// silently no-op'd on `PoolEntry::V4` — a Python-side V4 update path
 /// (snapshots, regression tests, manual `external_update`) dropped every
 /// update. The fix is a family-dispatching `apply_swap_by_pool_id` on
 /// `BotState` that `PyLiquidityPool.apply_swap` calls (the preferred
 /// "existing methods do family dispatch internally" option). This test
 /// pins both halves of the AC: V4 scalars actually change (not a no-op),
-/// and they match a direct `apply_v4_swap` on the same scalar inputs.
+/// and they match a direct `apply_swap_update` on the same scalar inputs.
 #[test]
 fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
     use crate::PoolTickCoverage;
@@ -772,7 +772,7 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
     };
 
     // Twin pools: A updated via the family dispatcher, B via the
-    // dedicated V4 path (`apply_v4_swap`). Both start identical.
+    // dedicated V4 path (`apply_swap_update`). Both start identical.
     let mut core_a = BotState::new();
     let id_a = core_a
         .register_v4_pool(&make_params())
@@ -796,11 +796,11 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
     assert_eq!(
         s_a.journal.len(),
         1,
-        "the dispatcher must journal a scalar delta like apply_v4_swap"
+        "the dispatcher must journal a scalar delta like apply_swap_update"
     );
 
-    // AC parity: same scalar inputs via `apply_v4_swap` produce identical
-    // post-state. The dispatcher's V4 branch mirrors `apply_v4_swap`'s
+    // AC parity: same scalar inputs via `apply_swap_update` produce identical
+    // post-state. The dispatcher's V4 branch mirrors `apply_swap_update`'s
     // body (same tick_priors=[], same journal shape).
     let _ = core_b.apply_swap_update(
         &V4SwapUpdate {
@@ -827,7 +827,7 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
 /// update previously routed V4 pools into `apply_v3_liquidity_update_by_pool
 /// _id` (V3-only, no-op on V4). The family dispatcher must apply a V4
 /// `ModifyLiquidity` to the tick range and journal it, matching
-/// `apply_v4_liquidity_update` on the same inputs.
+/// `apply_liquidity_update_by_key` on the same inputs.
 #[test]
 fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
     use crate::PoolTickCoverage;
@@ -870,7 +870,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
         fetcher: None,
     };
 
-    // Twin pools: A via the dispatcher, B via apply_v4_liquidity_update.
+    // Twin pools: A via the dispatcher, B via apply_liquidity_update_by_key.
     let mut core_a = BotState::new();
     let id_a = core_a.register_v4_pool(&params).expect("V4 A registers");
     let mut core_b = BotState::new();
@@ -899,7 +899,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
     // slot0 scalars unchanged (tick-only event per ADR-004).
     assert_eq!(s_a.sqrt_price_x96, U256::from(1u128) << 96);
 
-    // Parity: direct apply_v4_liquidity_update on B produces the same state.
+    // Parity: direct apply_liquidity_update_by_key on B produces the same state.
     assert_eq!(
         core_b.apply_liquidity_update_by_key(
             pool_manager,
@@ -929,7 +929,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
 /// family-dispatching `BotState::get_v3_or_v4_pool` accessor returning a
 /// `&dyn ConcentratedLiquidityPool`. This pins both halves of the AC: a V4 pool
 /// returns a non-`None` scalar view, and the scalars match a direct
-/// `apply_v4_swap` on the same inputs.
+/// `apply_swap_update` on the same inputs.
 #[test]
 fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
     use crate::PoolTickCoverage;
@@ -962,7 +962,7 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
     };
 
     // Twin V4 pools: A read via the family accessor after a dispatcher
-    // apply; B updated via the dedicated `apply_v4_swap`. Both start
+    // apply; B updated via the dedicated `apply_swap_update`. Both start
     // identical.
     let mut core_a = BotState::new();
     let id_a = core_a
@@ -987,15 +987,15 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
     assert_eq!(view_a.update_block(), block_b);
     // Immutable V4 key fields surface from `pool_key` (the ConcentratedLiquidityPool
     // reader trait was slimmed to mutable-only scalars in the V3/V4
-    // identity/state split; identity reads go through the family-specific
-    // getter rather than the dyn-dispatch view).
+    // identity/state split; identity reads go through the typed
+    // `pool_slice` lens rather than the dyn-dispatch view).
     let v4_id_a = core_a
         .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(id_a)
-        .expect("registered V4 pool surfaces an identity via get_v4_identity");
+        .expect("registered V4 pool surfaces an identity via pool_slice");
     assert_eq!(v4_id_a.pool_key.fee, 500);
     assert_eq!(v4_id_a.pool_key.tick_spacing, 10);
 
-    // AC parity: identical scalar inputs via `apply_v4_swap` produce the
+    // AC parity: identical scalar inputs via `apply_swap_update` produce the
     // same values read through the accessor.
     let _ = core_b.apply_swap_update(
         &V4SwapUpdate {
@@ -1021,7 +1021,7 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
 /// `tick_bitmap_snapshot` routed through `get_v3_pool`, returning an
 /// empty dict for V4 pools. The family `get_v3_or_v4_pool` accessor's
 /// `tick_data()` must surface a V4 pool's tick map (post-Mint/Burn) — and
-/// it must match `apply_v4_liquidity_update` on the same inputs.
+/// it must match `apply_liquidity_update_by_key` on the same inputs.
 #[test]
 fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
     use crate::PoolTickCoverage;
@@ -1064,7 +1064,7 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
         fetcher: None,
     };
 
-    // Twin pools: A via the dispatcher, B via apply_v4_liquidity_update.
+    // Twin pools: A via the dispatcher, B via apply_liquidity_update_by_key.
     let mut core_a = BotState::new();
     let id_a = core_a.register_v4_pool(&params).expect("V4 A registers");
     let mut core_b = BotState::new();

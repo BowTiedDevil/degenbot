@@ -61,7 +61,7 @@ degenbot-math.workspace = true
 # consume. The `SimulateContext.provider` field holds a borrowed `&AlloyProvider`.
 degenbot-rpc.workspace = true
 # `BotState` (ADR-003 state owner; ADR-005 standalone-core) — the snapshot
-# surface (`v3_pools_snapshot` / `v4_pools_snapshot`) + the typed pool-state
+# surface (`registered_pools_snapshot`) + the typed pool-state
 # structs BotStateDb reads. Depends on `degenbot-pools` (state structs) +
 # `degenbot-uniswap` (DexIdentity). Added in EGMSNS (option B).
 degenbot-bot.workspace = true

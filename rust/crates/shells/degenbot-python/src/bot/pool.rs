@@ -1638,11 +1638,11 @@ impl PyLiquidityPool {
     ) -> PyResult<()> {
         let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
-        // family-dispatching apply. Routes V4 pools to the V4 apply
-        // path (previously this called `apply_v3_swap_by_pool_id`
-        // unconditionally, which no-op'd on `PoolEntry::V4` and silently
-        // dropped every Python-side V4 update). The dispatcher is one write
-        // guard + two O(1) lookups; the single Python `apply_swap` API is
+        // family-dispatching apply. The registered entry selects the
+        // design; a V4 pool routes to the V4 apply path (an unconditional
+        // V3-routed apply would no-op on `PoolEntry::V4` and silently
+        // drop every Python-side V4 update). The dispatcher is one write
+        // guard + one O(1) lookup; the single Python `apply_swap` API is
         // preserved.
         let _ = self.with_state_mut(py, |s| {
             s.apply_swap_by_pool_id(self.pool_id, spx, liq, tick, block_number, &[])

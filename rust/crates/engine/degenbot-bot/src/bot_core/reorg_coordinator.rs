@@ -12,7 +12,7 @@
 //!   at the next drained-settle gate from the freshly recorded `EpochDelta`.
 //! - `ReorgCoordinator::dispatch_reorg_log` decodes the log to resolve the
 //!   target `pool_id` (V2/V3 via `pool_id_by_address`, V4 via
-//!   `v4_pool_id_by_key`), RESTORES that pool's state via
+//!   `pool_id_by_key`), RESTORES that pool's state via
 //!   `BotState::restore_before_block` (V2 path returns `Result`; V3/V4 via
 //!   pre-checked `*_restore_before_block`), releases the write guard, then
 //!   records the pool into the `EpochDelta` (the sole dirt owner).

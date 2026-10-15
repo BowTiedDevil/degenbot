@@ -397,8 +397,8 @@ pub struct V3PoolIdentity {
 /// Carries authoritative mutable state plus a per-pool reorg journal. Swap
 /// calculations read current mutable fields directly (never touch the journal);
 /// `apply_swap`/`apply_liquidity_update` push reverse-apply deltas. Immutable
-/// identity lives on [`V3PoolIdentity`]; look it up via
-/// [`crate::BotState::get_v3_identity`].
+/// identity lives on [`V3PoolIdentity`]; look it up via the
+/// typed `BotState::pool_slice` lens.
 #[derive(Debug)]
 pub struct V3PoolState {
     // --- Mutable state (authoritative) ---
@@ -457,8 +457,8 @@ pub struct V3PoolState {
     pub tick_data: HashMap<i32, TickInfo>,
 
     /// The pinned snapshot seed: a copy of the `tick_data` supplied
-    /// at registration, NEVER mutated by `apply_v3_liquidity_update` /
-    /// `apply_v3_swap`. Retained so step-1 verify can compare the **seed**
+    /// at registration, NEVER mutated by `apply_liquidity_update` /
+    /// `apply_swap`. Retained so step-1 verify can compare the **seed**
     /// against on-chain@snapshot_block — NOT the pump-mutated `tick_data`
     /// current. During a rolling start (`resume()` precedes `build_paths`)
     /// the live pump applies Mint/Burn journals onto `tick_data`; without a

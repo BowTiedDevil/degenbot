@@ -408,7 +408,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
 /// completed and pins pre-Mint DB data (`tick_data_block = N` with stale
 /// gross). The dual buffer exists precisely for staged application at
 /// registration — but `LogDispatcher::dispatch`'s APPLY-MISS funnel
-/// early-returns BEFORE reaching `apply_v3_liquidity_update`'s
+/// early-returns BEFORE reaching the live liquidity-update apply's
 /// unregistered-buffering arm, so the event never reaches the buffer and
 /// the pool goes Live permanently missing it (the desync class).
 /// Uses the exact on-chain numbers from the trip: pool 0x88e6A0c2 tick

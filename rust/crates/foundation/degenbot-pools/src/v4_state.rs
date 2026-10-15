@@ -304,8 +304,8 @@ pub struct V4PoolIdentity {
 /// Carries authoritative mutable state plus a per-pool reorg journal (same
 /// `V3BlockDelta` shape — V4 `ModifyLiquidity` carries a signed liquidity
 /// delta, but the journal records the same scalar + per-tick priors as V3).
-/// Immutable identity lives on [`V4PoolIdentity`]; look it up via
-/// [`crate::BotState::get_v4_identity`].
+/// Immutable identity lives on [`V4PoolIdentity`]; look it up via the
+/// typed `BotState::pool_slice` lens.
 #[derive(Debug)]
 pub struct V4PoolState {
     // --- Mutable state (authoritative) ---
@@ -401,7 +401,7 @@ impl Clone for V4PoolState {
             known_bitmap_words: self.known_bitmap_words.clone(),
             fetcher: self.fetcher.clone(),
             journal: self.journal.clone(),
-            // Clones (e.g. `v4_pools_snapshot()`) do NOT carry the pinned seed or
+            // Clones (e.g. `registered_pools_snapshot()`) do NOT carry the pinned seed or
             // the pinned post-drain snapshot (step-2 race fix — see
             // V3PoolState::Clone).
             snapshot_seed: None,
