@@ -1,17 +1,25 @@
-//! V2 (reserve-pair family) projection.
+//! V2 (reserve-pair family) resolve row — the registry-lookup +
+//! solver-vocabulary wrap seam (ADR-073 D2).
+//!
+//! The projection itself is the family read module's door —
+//! `degenbot_pools::families::reserve_pair::capture_hop` — a pure function of
+//! the family state slice (orientation-selected reserves + the per-direction
+//! retained-fee fraction, as the math leaf's hop payload). This file keeps
+//! ONLY the state-owner seam: the registry lookups, the nonce, and the one
+//! `ResolvedHop` wrap.
 
-use alloy::primitives::U256;
-
-use degenbot_math::v2::IntHopState;
+use degenbot_pools::families::reserve_pair as reserve_pair_read;
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
 
-/// V2 projection: read the reserve-pair state + identity off `core` (ADR-003)
-/// and build the orientation-specific `IntHopState` at resolve time from
-/// `zero_for_one` (ADR-003 "Swap Orientation": single `PoolEntry` per address,
-/// orientation derived at solve — the engine never mutates this state).
+/// V2 resolve row: read the reserve-pair state + identity off `core`
+/// (ADR-003), then the family read module's [`reserve_pair_read::capture_hop`]
+/// door derives the orientation-specific hop payload from `zero_for_one`
+/// (ADR-003 "Swap Orientation": single `PoolEntry` per address, orientation
+/// derived at solve — the engine never mutates this state). The row wraps the
+/// math leaf's hop into the solver vocabulary (`ResolvedHop::V2`).
 pub(crate) fn project_v2(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -22,22 +30,7 @@ pub(crate) fn project_v2(
     let identity = core
         .get_v2_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
-    let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one {
-        (
-            state.reserve0.to::<U256>(),
-            state.reserve1.to::<U256>(),
-            identity.fee_token0.0,
-            identity.fee_token0.1,
-        )
-    } else {
-        (
-            state.reserve1.to::<U256>(),
-            state.reserve0.to::<U256>(),
-            identity.fee_token1.0,
-            identity.fee_token1.1,
-        )
-    };
-    let hop_state = IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom);
+    let hop_state = reserve_pair_read::capture_hop(state, identity, pool_ref.zero_for_one);
     Ok((ResolvedHop::V2 { state: hop_state }, state.state_nonce))
 }
 

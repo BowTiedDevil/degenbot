@@ -226,7 +226,7 @@ fn update_v2_pool_changes_calculation_result() {
     assert_eq!(before, U256::from(181));
 
     // Update reserves: now reserve0=2000, reserve1=1000
-    core.update_v2_pool(make_pool_addr(), U112::from(2000), U112::from(1000), 42);
+    let _ = core.apply_sync_by_address(make_pool_addr(), U112::from(2000), U112::from(1000), 42);
 
     // After update: Python: constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
     let after = tokens_out(&mut core, pool_id, true, U256::from(100));

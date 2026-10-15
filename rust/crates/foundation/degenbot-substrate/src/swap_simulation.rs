@@ -34,6 +34,7 @@ use ::degenbot_pools::tick_fetch::TickWordFetcher;
 use alloy::primitives::{I256, U256};
 
 use ::degenbot_pools::families::concentrated_liquidity as cl;
+use ::degenbot_pools::families::reserve_pair;
 use ::degenbot_pools::families::{balancer_stable, balancer_weighted};
 use ::degenbot_pools::registry::PoolEntry;
 use ::degenbot_pools::simulate_swap::simulate_swap;
@@ -370,47 +371,6 @@ pub fn simulate_pair_out(
         .ok(),
         _ => None,
     }
-}
-
-fn v2_reserves(entry: &PoolEntry, zero_for_one: bool) -> Option<(U256, U256)> {
-    match entry {
-        PoolEntry::V2(p) => {
-            let state = &p.1;
-            let r0 = state.reserve0.to::<U256>();
-            let r1 = state.reserve1.to::<U256>();
-            Some(if zero_for_one { (r0, r1) } else { (r1, r0) })
-        }
-        _ => None,
-    }
-}
-
-/// Closed-form `constant_product_calc_exact_out`: the input required so that
-/// after fee, the pool's output-side reserve loses exactly `amount_out`.
-///
-/// Returns `None` on overdraw (`amount_out >= reserve_out`) or a vanishing
-/// denominator — the two legacy ZERO-sentinel cases.
-#[must_use]
-fn v2_required_input(
-    reserve_in: U256,
-    reserve_out: U256,
-    gamma_numer: u64,
-    fee_denom: u64,
-    amount_out: U256,
-) -> Option<U256> {
-    if amount_out.is_zero() || amount_out >= reserve_out {
-        return None;
-    }
-    // amount_in = 1 + (reserve_in * amount_out * fee_denom)
-    //                / ((reserve_out - amount_out) * gamma_numer)
-    let numerator = U256::from(reserve_in)
-        .saturating_mul(amount_out)
-        .saturating_mul(U256::from(fee_denom));
-    let denominator =
-        (reserve_out.saturating_sub(amount_out)).saturating_mul(U256::from(gamma_numer));
-    if denominator.is_zero() {
-        return None;
-    }
-    Some(U256::from(1) + numerator / denominator)
 }
 
 /// Hypothetical (override) pool scalars: "what if the pool were at state X?"
@@ -764,34 +724,29 @@ impl BotState {
                     })),
                     Err(_) => SwapRead::NotComputable,
                 },
-                // Exact-output for V2: the closed-form
+                // Exact-output for V2: the family read module's read_swap
+                // door (ADR-073 D2) — the closed-form
                 // `constant_product_calc_exact_out` (formerly buried in
-                // `calculate_tokens_in`). Overdraw (amount_out >= reserve_out)
-                // is NotComputable — the legacy ZERO sentinel becomes typed.
+                // `calculate_tokens_in`) lives there, refusals included
+                // (zero request, overdraw, vanishing denominator →
+                // NotComputable — the retired helper's `None` mapping).
                 (true, PoolEntry::V2(p)) => {
-                    let identity = &p.0;
-                    let Some((reserve_in, reserve_out)) = v2_reserves(entry, request.zero_for_one)
-                    else {
-                        return SwapRead::NotComputable;
-                    };
-                    let (gamma_numer, fee_denom) = if request.zero_for_one {
-                        identity.fee_token0
-                    } else {
-                        identity.fee_token1
-                    };
-                    match v2_required_input(
-                        reserve_in,
-                        reserve_out,
-                        gamma_numer,
-                        fee_denom,
-                        magnitude,
+                    match reserve_pair::read_swap(
+                        reserve_pair::ReservePairState::V2 {
+                            identity: &p.0,
+                            state: &p.1,
+                        },
+                        reserve_pair::SwapReadRequest::ExactOut {
+                            zero_for_one: request.zero_for_one,
+                            amount_out: magnitude,
+                        },
                     ) {
-                        Some(required) => SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                        Ok(required) => SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
                             consumed: -unsigned_to_user_delta(required),
                             delivered: unsigned_to_user_delta(magnitude),
                             caveats: Caveats::default(),
                         })),
-                        None => SwapRead::NotComputable,
+                        Err(_) => SwapRead::NotComputable,
                     }
                 }
                 // Curve/Balancer/Aerodrome exact-output: the family is

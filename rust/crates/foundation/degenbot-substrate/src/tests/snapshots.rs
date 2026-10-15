@@ -22,7 +22,7 @@ fn pool_update_block_tracks_forward_sync_and_returns_zero_for_unknown() {
         0,
         "an unregistered pool_id reports update_block 0 (stale sentinel)"
     );
-    core.apply_v2_sync(make_pool_addr(), U112::from(900), U112::from(2222), 7)
+    core.apply_sync_by_address(make_pool_addr(), U112::from(900), U112::from(2222), 7)
         .expect("forward Sync at block 7 applies");
     assert_eq!(
         core.pool_update_block(pool_id),
@@ -47,7 +47,7 @@ fn pool_state_head_is_max_update_block_across_all_pools() {
     let a = core
         .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
         .expect("setup: pool A");
-    core.apply_v2_sync(make_pool_addr(), U112::from(900), U112::from(2222), 5)
+    core.apply_sync_by_address(make_pool_addr(), U112::from(900), U112::from(2222), 5)
         .expect("forward Sync at block 5 applies");
     // Pool B on a distinct address (shared tokens): its update_block 12
     // overtakes pool A's 5, so the head tracks B.
@@ -59,7 +59,7 @@ fn pool_state_head_is_max_update_block_across_all_pools() {
         })
         .expect("setup: pool B");
     let _ = b;
-    core.apply_v2_sync(b_addr, U112::from(3300), U112::from(4400), 12)
+    core.apply_sync_by_address(b_addr, U112::from(3300), U112::from(4400), 12)
         .expect("forward Sync at block 12 applies");
     assert_eq!(core.pool_update_block(a), 5);
     assert_eq!(core.pool_state_head(), 12, "head = max update_block");

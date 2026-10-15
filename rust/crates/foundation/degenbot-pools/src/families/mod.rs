@@ -13,9 +13,13 @@
 //! The balance-vector structural family (Curve stableswap, Balancer weighted,
 //! Balancer stable) shares its family-blind event/probe vocabulary in
 //! [`balance_vector`] (ADR-059 D6) — the per-family projections, swap reads,
-//! and calc behavior never cross.
+//! and calc behavior never cross. The reserve-pair structural family (V2 +
+//! Aerodrome V2 volatile) is one module carrying its own event/probe
+//! vocabulary — both designs' apply bodies are the ADR-017 D3 collapse, so
+//! nothing sits beside it.
 pub mod balance_vector;
 pub mod balancer_stable;
 pub mod balancer_weighted;
 pub mod concentrated_liquidity;
 pub mod curve_stableswap;
+pub mod reserve_pair;

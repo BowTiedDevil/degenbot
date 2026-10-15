@@ -473,7 +473,7 @@ impl Workspace {
         let Ok(r1) = U112::try_from(reserve1) else {
             return;
         };
-        let _ = self.state.apply_v2_sync(address, r0, r1, block);
+        let _ = self.state.apply_sync_by_address(address, r0, r1, block);
     }
 
     /// The V2 reserves + update stamp the scope sees at `pool_id` — the

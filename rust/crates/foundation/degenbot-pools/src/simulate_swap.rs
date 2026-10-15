@@ -23,14 +23,13 @@
 
 use alloy::primitives::{I256, U256};
 use degenbot_math::solidly;
-use degenbot_math::v2::IntHopState;
 
 use crate::families::concentrated_liquidity::{
     ConcentratedLiquidityState, DesignScalars, FetchMode, SwapReadOutcome, SwapReadRequest,
     SwapReadSource,
 };
 use crate::families::{
-    balancer_stable, balancer_weighted, concentrated_liquidity, curve_stableswap,
+    balancer_stable, balancer_weighted, concentrated_liquidity, curve_stableswap, reserve_pair,
 };
 use crate::registry::PoolEntry;
 use crate::v3_state::SimulateSwapError;
@@ -52,43 +51,25 @@ use crate::v3_state::SimulateSwapError;
 /// pool's walk enters an unfetched tick-bitmap word (the caller fetches +
 /// retries), or [`SimulateSwapError::NotComputable`] on arithmetic overflow /
 /// invariant violation / non-positive amount.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the length is the dispatch shape (one row per family, ADR-073 \
-     D2); the per-family math already lives behind the family read modules' \
-     read doors, and splitting the rows out would scatter the ONE central \
-     row contract across helpers"
-)]
 pub fn simulate_swap(
     entry: &PoolEntry,
     zero_for_one: bool,
     amount_in: U256,
 ) -> Result<U256, SimulateSwapError> {
     match entry {
-        PoolEntry::V2(p) => {
-            let (identity, state) = (&p.0, &p.1);
-            if amount_in.is_zero() {
-                return Ok(U256::ZERO);
-            }
-            let (reserve_in, reserve_out, gamma_numer, fee_denom) = if zero_for_one {
-                (
-                    state.reserve0.to::<U256>(),
-                    state.reserve1.to::<U256>(),
-                    identity.fee_token0.0,
-                    identity.fee_token0.1,
-                )
-            } else {
-                (
-                    state.reserve1.to::<U256>(),
-                    state.reserve0.to::<U256>(),
-                    identity.fee_token1.0,
-                    identity.fee_token1.1,
-                )
-            };
-            let hop = IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom);
-            hop.swap(amount_in)
-                .map_err(|_| SimulateSwapError::NotComputable)
-        }
+        // Reserve-pair rows (ADR-073 D2): the constant-product read + the
+        // orientation/fee conventions live behind the family read module's
+        // read_swap door (the zero-amount sentinel rides with the arm).
+        PoolEntry::V2(p) => reserve_pair::read_swap(
+            reserve_pair::ReservePairState::V2 {
+                identity: &p.0,
+                state: &p.1,
+            },
+            reserve_pair::SwapReadRequest::ExactIn {
+                zero_for_one,
+                amount_in,
+            },
+        ),
         // V3 concentrated-liquidity math. Exact-input swap: the unsigned
         // amount enters as a canonical NEGATIVE request (exact input); the
         // design's fee + sign conventions live behind the family read
@@ -138,28 +119,23 @@ pub fn simulate_swap(
         }
         PoolEntry::AerodromeV2(p) => {
             let (id, state) = (&p.0, &p.1);
-            if amount_in.is_zero() {
-                return Ok(U256::ZERO);
-            }
-            // Solidly volatile (constant-product) math — direct port via
-            // `calc_exact_in_volatile`. The Aerodrome fee is a unidirectional
-            // ``(fee_numer, fee_denom)`` fraction (the fee taken from the
-            // input), matching `calc_exact_in_volatile`'s convention exactly.
+            // Volatile mode: the reserve-pair family's read door (the
+            // fee-fraction convention + the zero-amount sentinel live there).
             if !id.stable {
-                let token_in: u8 = u8::from(!zero_for_one);
-                let (fee_numer, fee_denom) = id.fee;
-                return solidly::calc_exact_in_volatile(
-                    amount_in,
-                    token_in,
-                    state.reserve0.to::<U256>(),
-                    state.reserve1.to::<U256>(),
-                    U256::from(fee_numer),
-                    U256::from(fee_denom),
-                )
-                .map_err(|_| SimulateSwapError::NotComputable);
+                return reserve_pair::read_swap(
+                    reserve_pair::ReservePairState::Aerodrome {
+                        identity: id,
+                        state,
+                    },
+                    reserve_pair::SwapReadRequest::ExactIn {
+                        zero_for_one,
+                        amount_in,
+                    },
+                );
             }
             // Stable mode: Solidly stable invariant (`x^3y + y^3x >= k`)
             // via `calc_exact_in_stable_solidly` (decimals carried on identity).
+            // The Solidly family's read arm — not the reserve-pair module's.
             simulate_aerodrome_stable_swap(id, state, zero_for_one, amount_in)
         }
         // One balance-vector row per family (ADR-073 D2): the exact-input

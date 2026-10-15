@@ -669,9 +669,10 @@ impl Bot {
         reserve1: alloy::primitives::aliases::U112,
         block_number: u64,
     ) {
-        self.state_arc()
+        let _ = self
+            .state_arc()
             .write_at(LockSite::Orchestrator)
-            .update_v2_pool(address, reserve0, reserve1, block_number);
+            .apply_sync_by_address(address, reserve0, reserve1, block_number);
     }
 
     /// Apply a V3 `Swap` event (scalars + reorg journal priors; no per-tick

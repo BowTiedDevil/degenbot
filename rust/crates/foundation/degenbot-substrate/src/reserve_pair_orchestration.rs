@@ -1,9 +1,14 @@
 //! Reserve-pair structural family — `impl BotState` orchestration (`V2` + `AerodromeV2`).
 //!
 //! Carved out of `bot_core/mod.rs` (the `BotState` god-file). This module owns the reserve-pair
-//! `BotState` method set — `V2`/`AerodromeV2` registration, sync/apply, snapshots,
-//! and identity/state getters. Pure `impl BotState` orchestration: the family
-//! state types live in `degenbot-pools` (I/O-free, ADR-001).
+//! capability's LIVE-STATE surfaces — `V2`/`AerodromeV2` registration, the unified
+//! sync-apply row, and the identity/state getters. State ownership is NOT family
+//! behavior (GLOSSARY "CL orchestration capability" pattern): the registration
+//! entries and the family-neutral apply/get rows stay here (ADR-073 D3 keeps the
+//! named seams), while the family behavior — the swap reads and the resolve
+//! projection — folds through the family read module's intent doors
+//! (`degenbot_pools::families::reserve_pair`, ADR-073 D1). The family state
+//! types live in `degenbot-pools` (I/O-free, ADR-001).
 //!
 //! Child-module impl blocks reach `BotState`'s private fields directly (same
 //! pattern as `divergence_probe.rs`); the public surface is unchanged because
@@ -70,53 +75,37 @@ impl BotState {
         Ok(pool_id)
     }
 
-    /// Apply a V2 `Sync` event to a registered pool's state.
-    ///
-    /// This is the live-path mutation method (ADR-003): journals the prior
-    /// reserves, then updates `reserve0`/`reserve1`/`update_block` in place.
-    /// Returns the affected `pool_id` so the engine can mark the right path set
-    /// dirty; returns `None` if the pool is not registered (a no-op).
+    /// Apply a reserve-pair `Sync` event keyed by the pool's contract
+    /// ADDRESS — the address-keyed twin of [`Self::apply_sync_by_pool_id`]
+    /// (ADR-073 D3: the former `apply_v2_sync` wrapper name was V2-shaped, but
+    /// the row is family-neutral — an Aerodrome pool's `Sync(uint112,
+    /// uint112)` lands here identically, resolved to its `pool_id` then
+    /// dispatched through `ReservePairPoolState::apply_sync`). Journals the
+    /// prior reserves, then updates `reserve0`/`reserve1`/`update_block` in
+    /// place. Returns the affected `pool_id` so the engine can mark the right
+    /// path set dirty; returns `None` if the address is not registered (a
+    /// no-op).
     ///
     /// # Panics
     ///
     /// Panics if a `pool_id` is found in `pool_addresses` but not in `pools`
     /// (should never happen — they are inserted together).
     #[must_use]
-    pub fn apply_v2_sync(
+    pub fn apply_sync_by_address(
         &mut self,
         pool_address: Address,
         reserve0: U112,
         reserve1: U112,
         block_number: u64,
     ) -> Option<u64> {
-        // ADR-014 D1: delegate to the pool_id-keyed dispatcher (the V3
+        // ADR-014 D1: delegate to the pool_id-keyed row (the V3
         // address-keyed wrapper pattern). The inline body that previously
         // lived here was byte-identical to `V2PoolState::apply_sync`, which the
         // twin reaches via `as_reserve_pair_mut()?.apply_sync(...)` — the
         // duplication (the bug-hiding class D1 was written to kill) is removed;
-        // the address→pool_id resolution is what this wrapper owns.
+        // the address→pool_id resolution is what this row owns.
         let &pool_id = self.registry.pool_addresses.get(&pool_address)?;
         self.apply_sync_by_pool_id(pool_id, reserve0, reserve1, block_number)
-    }
-
-    /// Update a V2 pool's reserves from a Sync event.
-    ///
-    /// Looks up the pool by contract address. No-op if the pool is not registered.
-    /// Thin wrapper over [`apply_v2_sync`](Self::apply_v2_sync) that discards
-    /// the returned `pool_id` (kept for the `PyBot` surface).
-    ///
-    /// # Panics
-    ///
-    /// Panics if a `pool_id` is found in `pool_addresses` but not in `pools`
-    /// (should never happen — they are inserted together).
-    pub fn update_v2_pool(
-        &mut self,
-        pool_address: Address,
-        reserve0: U112,
-        reserve1: U112,
-        block_number: u64,
-    ) {
-        let _ = self.apply_v2_sync(pool_address, reserve0, reserve1, block_number);
     }
 
     /// Apply a V2 `Sync` by `pool_id` — the `PyLiquidityPool.sync_reserves`

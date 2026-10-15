@@ -194,7 +194,12 @@ impl DecodedPoolEvent {
                 reserve0,
                 reserve1,
                 block_number,
-            } => match bot_state.apply_v2_sync(pool_address, reserve0, reserve1, block_number) {
+            } => match bot_state.apply_sync_by_address(
+                pool_address,
+                reserve0,
+                reserve1,
+                block_number,
+            ) {
                 Some(pool_id) => ApplyOutcome::Applied(pool_id),
                 None => ApplyOutcome::NoOp(
                     crate::concentrated_liquidity_route::NoOpReason::ScalarReseedAtRegistration,

@@ -101,7 +101,7 @@ mod tests {
             ..Default::default()
         })
         .expect("setup: V2 pool registration");
-        core.apply_v2_sync(addr, U112::from(1_000), U112::from(1_000), block)
+        core.apply_sync_by_address(addr, U112::from(1_000), U112::from(1_000), block)
             .expect("setup: forward Sync at block");
         assert_eq!(
             core.pool_state_head(),
