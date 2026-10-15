@@ -16,7 +16,7 @@
 //! `debug` so "why was this path rejected" is answerable on demand but
 //! invisible in normal runs.
 //!
-//! CL guardrail: [`cl`] holds two SELF-CONTAINED entries. There is deliberately
+//! CL guardrail: [`concentrated_liquidity`] holds two SELF-CONTAINED entries. There is deliberately
 //! no shared V3/V4 constructor — fee convention, current-tick drain framing,
 //! and net-sign direction differ (GLOSSARY.md "CL-projection guardrail"); the
 //! shared surface is only the file + the thin `ResolvedHop` wrap + nonce
@@ -26,7 +26,7 @@ use degenbot_core::diag;
 use degenbot_core::op_error;
 pub mod balancer_stable;
 pub mod balancer_weighted;
-pub mod cl;
+pub mod concentrated_liquidity;
 pub mod curve;
 pub mod solidly;
 pub mod v2;
@@ -459,8 +459,8 @@ pub fn resolve_hops(
 
         let project_family = || match pool_ref.hop_type {
             HopType::V2 => v2::project_v2(core, pool_ref),
-            HopType::V3 => cl::project_v3(core, pool_ref),
-            HopType::V4 => cl::project_v4(core, pool_ref),
+            HopType::V3 => concentrated_liquidity::project_v3(core, pool_ref),
+            HopType::V4 => concentrated_liquidity::project_v4(core, pool_ref),
             HopType::SolidlyStable => solidly::project_solidly(core, pool_ref),
             HopType::BalancerWeighted => {
                 balancer_weighted::project_balancer_weighted(core, pool_ref)
@@ -530,7 +530,9 @@ mod tests {
     };
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U128, U256};
-    use degenbot_solvers::cl::{ClWordProfile, IntTickRangeCrossing};
+    use degenbot_solvers::concentrated_liquidity::{
+        ConcentratedLiquidityWordProfile, IntTickRangeCrossing,
+    };
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
 
     fn ref_v3(pool_key: u64) -> MixedPoolRef {
@@ -584,7 +586,7 @@ mod tests {
     fn profile_ptr(
         cache: &HopProjectionCache,
         key: &(HopType, u64, bool),
-    ) -> *const Vec<Option<Arc<ClWordProfile>>> {
+    ) -> *const Vec<Option<Arc<ConcentratedLiquidityWordProfile>>> {
         match &cache.get_entry(key).expect("entry") {
             (CachedProjection::Hop(arc), _) => match arc.as_ref() {
                 ResolvedHop::V3 { prepared, .. } => Arc::as_ptr(&prepared.profiles),
@@ -920,19 +922,19 @@ mod tests {
     }
 
     /// The all-CL intake: resolve -> prepared hops -> the forwarding all-CL
-    /// convenience (`solve_cl_piecewise`, which builds views and calls the one
+    /// convenience (`solve_concentrated_liquidity_piecewise`, which builds views and calls the one
     /// solve body).
-    fn all_cl_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
+    fn all_concentrated_liquidity_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
         // The projection's derivation value rides each CL hop and IS the
         // intake's shape: clone the hop (three `Arc` bumps) as the caller side
         // of callers that own prepared hops.
         let prepared: Vec<_> = r
             .hops
             .iter()
-            .filter_map(ResolvedHop::as_prepared_cl_hop)
+            .filter_map(ResolvedHop::as_prepared_concentrated_liquidity_hop)
             .cloned()
             .collect();
-        degenbot_solvers::cl::solve_cl_piecewise(
+        degenbot_solvers::concentrated_liquidity::solve_concentrated_liquidity_piecewise(
             &prepared,
             None,
             None,
@@ -946,20 +948,22 @@ mod tests {
     fn mixed_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
         // One borrowed view per position: V2 borrows the resolved state; CL
         // borrows the projection's prepared value (sequence + `Arc` tables).
-        let mut hops: Vec<degenbot_solvers::cl::MixedHopView<'_>> =
+        let mut hops: Vec<degenbot_solvers::concentrated_liquidity::MixedHopView<'_>> =
             Vec::with_capacity(r.hops.len());
         for h in &r.hops {
             match h {
                 ResolvedHop::V2 { state } => {
-                    hops.push(degenbot_solvers::cl::MixedHopView::V2(state));
+                    hops.push(degenbot_solvers::concentrated_liquidity::MixedHopView::V2(
+                        state,
+                    ));
                 }
                 ResolvedHop::V3 { prepared } | ResolvedHop::V4 { prepared } => {
-                    hops.push(degenbot_solvers::cl::MixedHopView::Cl(prepared));
+                    hops.push(degenbot_solvers::concentrated_liquidity::MixedHopView::ConcentratedLiquidity(prepared));
                 }
                 _ => return None,
             }
         }
-        degenbot_solvers::cl::solve_piecewise(
+        degenbot_solvers::concentrated_liquidity::solve_piecewise(
             &hops,
             None,
             None,
@@ -973,7 +977,7 @@ mod tests {
     /// through cache hits or freshly built tables differs in build cost only —
     /// the crossing tables and the solved result are byte-identical.
     #[test]
-    fn memo_off_all_cl_solve_is_byte_exact_v3_v4() {
+    fn memo_off_all_concentrated_liquidity_solve_is_byte_exact_v3_v4() {
         let mut core = BotState::new();
         // V3 at 0.9 vs V4 at 1.0: buy token1 cheap (0.9) and sell at 1.0.
         let a = register_v3_at(
@@ -1007,8 +1011,8 @@ mod tests {
             "memo ON vs OFF derive identical crossing tables"
         );
 
-        let on = all_cl_solve(&r2);
-        let off = all_cl_solve(&r3);
+        let on = all_concentrated_liquidity_solve(&r2);
+        let off = all_concentrated_liquidity_solve(&r3);
         assert!(on.is_some(), "fixture must be profitable for all-CL solve");
         assert_eq!(
             on, off,
@@ -1021,7 +1025,7 @@ mod tests {
     /// through this intake — and the intake's unified contract refuses one
     /// regardless (the retired all-CL body used to solve single hops).
     #[test]
-    fn all_cl_solve_refuses_a_single_hop_path() {
+    fn all_concentrated_liquidity_solve_refuses_a_single_hop_path() {
         let mut core = BotState::new();
         let a = register_v3_at(
             &mut core,
@@ -1034,13 +1038,16 @@ mod tests {
         let mut pc = 0u64;
         assert!(resolve_hops(&core, &refs, &mut r, &cache, Some(&mut pc), true).is_empty());
         assert_eq!(pc, 0, "a single hop is not a projectable path");
-        assert!(all_cl_solve(&r).is_none(), "single-hop inputs never solve");
+        assert!(
+            all_concentrated_liquidity_solve(&r).is_none(),
+            "single-hop inputs never solve"
+        );
     }
 
     /// Memo ON vs OFF parity on a mixed V2 + V4 path (V4 zfo=true buys
     /// token1 at 1.0; V2 sells it at its 1.2 token0 premium).
     #[test]
-    fn memo_off_mixed_v2_cl_solve_is_byte_exact() {
+    fn memo_off_mixed_v2_concentrated_liquidity_solve_is_byte_exact() {
         let mut core = BotState::new();
         let b = register_v4_at(&mut core, U256::from(1u128) << 96);
         let w = register_v2_skew(&mut core);

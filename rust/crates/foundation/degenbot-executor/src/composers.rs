@@ -370,7 +370,7 @@ impl EncodeContext {
 /// to this value**: `consumed_inputs[i]` is the *executable* input fed to hop
 /// `i`. For a non-over-fed CL hop (and for V2/Balancer/Curve/Solidly hops) it
 /// equals `hop_outputs[i − 1]`; for an over-fed CL hop the producer clamps it
-/// to `input_consumed − 1` (the solver's `clamp_cl_hop_capacity`, whose bound
+/// to `input_consumed − 1` (the solver's `clamp_concentrated_liquidity_hop_capacity`, whose bound
 /// is the pools-layer `exact_input_clamp_bound` rule) so the on-chain
 /// exact-in loop terminates on `amountRemaining == 0` instead of marching
 /// empty bitmap words. Building the request is where that invariant is owned;

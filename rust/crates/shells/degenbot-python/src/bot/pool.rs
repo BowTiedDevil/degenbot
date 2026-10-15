@@ -2603,14 +2603,14 @@ impl PyLiquidityPool {
     /// Structural concentrated-liquidity snapshot. Family mismatch is a loud refusal.
     fn concentrated_liquidity(&self, py: Python<'_>) -> PyResult<PyConcentratedLiquidityView> {
         let values = self.with_state(py, |core| match core.pool_entry(self.pool_id) {
-            Some(PoolEntry::V3(pool)) => Some(cl_snapshot_fields(
+            Some(PoolEntry::V3(pool)) => Some(concentrated_liquidity_snapshot_fields(
                 address_utils::address_to_checksum_string(&pool.0.token0),
                 address_utils::address_to_checksum_string(&pool.0.token1),
                 pool.0.fee,
                 pool.0.tick_spacing,
                 &pool.1,
             )),
-            Some(PoolEntry::V4(pool)) => Some(cl_snapshot_fields(
+            Some(PoolEntry::V4(pool)) => Some(concentrated_liquidity_snapshot_fields(
                 address_utils::address_to_checksum_string(&pool.0.pool_key.currency0),
                 address_utils::address_to_checksum_string(&pool.0.pool_key.currency1),
                 pool.0.pool_key.fee,
@@ -2846,7 +2846,7 @@ impl PyLiquidityPool {
     }
 }
 
-type ClSnapshotFields = (
+type ConcentratedLiquiditySnapshotFields = (
     String,
     String,
     u32,
@@ -2861,13 +2861,13 @@ type ClSnapshotFields = (
     PyPoolTickCoverage,
 );
 
-fn cl_snapshot_fields(
+fn concentrated_liquidity_snapshot_fields(
     token0: String,
     token1: String,
     fee: u32,
     tick_spacing: i32,
     state: &dyn degenbot_bot::bot_core::ConcentratedLiquidityPool,
-) -> ClSnapshotFields {
+) -> ConcentratedLiquiditySnapshotFields {
     use degenbot_bot::bot_core::PoolTickCoverage;
     let tick_data = state
         .tick_data()

@@ -255,7 +255,7 @@ impl Harness {
     /// ADR-033 (D7) variant of [`Self::run_chain_with_opts`] with CALLER-supplied
     /// per-hop amounts: `hop_outputs` (the predicted per-hop outputs) and
     /// `consumed_inputs` (the committed per-hop inputs — the shape the
-    /// production solver commits after `clamp_cl_hop_capacity`). Same universal
+    /// production solver commits after `clamp_concentrated_liquidity_hop_capacity`). Same universal
     /// funding + approvals + measurement as [`Self::run_chain_with_opts`];
     /// funding buffers cover `max(derived, committed)` per hop.
     pub fn run_chain_with_consumed(

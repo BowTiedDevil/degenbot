@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol_types::SolCall;
-use degenbot_math::cl::tick_math::{max_usable_tick, min_usable_tick};
+use degenbot_math::concentrated_liquidity::tick_math::{max_usable_tick, min_usable_tick};
 use degenbot_rpc::multicall3::{
     decode_aggregate3_results, encode_aggregate3, encode_try_aggregate, MulticallResult,
     MULTICALL3_ADDRESS, MULTICALL3_BATCH_SIZE,

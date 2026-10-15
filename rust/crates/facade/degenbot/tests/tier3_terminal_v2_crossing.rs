@@ -7,7 +7,7 @@
 //! output was 1 wei of input worth above the byte-exact `getAmountOut` at the
 //! delivered input — the upstream CL hop's twin-aligned FORWARD CLAMP reduced
 //! the V2 hop's committed input without re-deriving the walk-frozen V2 output
-//! (`clamp_cl_hop_capacity`'s V2 branch was a bare `continue`). The stale
+//! (`clamp_concentrated_liquidity_hop_capacity`'s V2 branch was a bare `continue`). The stale
 //! prediction reached the executor, was encoded as the V2 exact-OUT
 //! `amountOut`, and the exact-out swap needed 1 more input wei than the path
 //! delivered → K reverts.

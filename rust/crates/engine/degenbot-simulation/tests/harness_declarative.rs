@@ -369,7 +369,7 @@ fn harness_encode_context_projects_deployed_addresses() {
 
 /// ADR-033 D7 deepening: `run_chain_with_consumed` is the first declarative
 /// entry that takes CALLER-supplied per-hop amounts — the shape the
-/// production solver commits after `clamp_cl_hop_capacity` re-aligns
+/// production solver commits after `clamp_concentrated_liquidity_hop_capacity` re-aligns
 /// `hop_outputs[i]`/`consumed_inputs[i+1]` (path-73385) — instead of the
 /// harness re-deriving a full-consumption chain. These fixtures drive that
 /// entry through the production `encode_cmd_stream` intake against the real
@@ -392,11 +392,11 @@ fn harness_encode_context_projects_deployed_addresses() {
 ///
 /// The aligned-shape fixture: a V2→V3 chain where the CL hop's committed
 /// input is a fraction of the V2 hop's natural output — the shape
-/// `clamp_cl_hop_capacity` engineers (the previous hop's output re-aligned
+/// `clamp_concentrated_liquidity_hop_capacity` engineers (the previous hop's output re-aligned
 /// to the committed CL input, both clamped consistently). The amounts must
 /// still encode + execute with the measured delta matching the prediction.
 #[test]
-fn cl_hop_aligned_clamp_shape_executes_with_consistent_delta() {
+fn concentrated_liquidity_hop_aligned_clamp_shape_executes_with_consistent_delta() {
     let mut h = Harness::new().unwrap();
     let t1 = h.add_token().unwrap();
     let r0: u128 = 1_000_000_000_000;
@@ -435,7 +435,7 @@ fn cl_hop_aligned_clamp_shape_executes_with_consistent_delta() {
     // The clamped shape: the V2 hop commits enough for 70% of the natural
     // output, and the CL hop's committed input equals that re-aligned
     // output (consumed_inputs[1] == hop_outputs[0] — the alignment
-    // clamp_cl_hop_capacity enforces, with both sides clamped).
+    // clamp_concentrated_liquidity_hop_capacity enforces, with both sides clamped).
     let clamped_v2_out = v2_out(natural_in * 70 / 100);
     assert!(
         clamped_v2_out < natural_v2_out,

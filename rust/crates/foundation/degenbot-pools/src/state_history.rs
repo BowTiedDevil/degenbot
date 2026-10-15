@@ -199,7 +199,7 @@ impl BlockDelta for BalancesBlockDelta {
 /// (Mint/Burn V3, `ModifyLiquidity` V4) — those don't change the slot0 head
 /// scalars, so the journal carries no scalar priors for them and
 /// `restore_before_block` skips the scalar write-back (the current scalars are
-/// already correct). See `docs/adr/ADR-004-cl-tickmap-typed-boundary.md`.
+/// already correct). See `docs/adr/ADR-004-concentrated_liquidity-tickmap-typed-boundary.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScalarPriors {
     /// Sqrt price X96 *before* this block's update.
@@ -225,7 +225,7 @@ pub struct V3BlockDelta {
     pub block: u64,
     /// Slot0 scalar priors (`sqrt_price_x96`, `liquidity`, `tick`) **before**
     /// this block's update; `None` for tick-only events (the slot0 head wasn't
-    /// touched). See `docs/adr/ADR-004-cl-tickmap-typed-boundary.md`.
+    /// touched). See `docs/adr/ADR-004-concentrated_liquidity-tickmap-typed-boundary.md`.
     pub scalar_priors: Option<ScalarPriors>,
     /// The `update_block` (**price** clock) value *before* this delta's event,
     /// so a reorg restore rewinds the price clock to its exact pre-target

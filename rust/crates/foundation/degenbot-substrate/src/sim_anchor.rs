@@ -411,7 +411,7 @@ mod tests {
     /// of the source state survives the call.
     #[test]
     #[expect(clippy::expect_used)]
-    fn snapshot_is_owned_and_covers_cl_scalars() {
+    fn snapshot_is_owned_and_covers_concentrated_liquidity_scalars() {
         let mut state = BotState::new();
         state
             .register_v3_pool(&RegisterV3PoolParams {
@@ -495,7 +495,7 @@ mod tests {
             address: V3,
             fee: 3000,
             tick_spacing: 60,
-            layout: degenbot_pools::v3_state::ClSlotLayout::UniswapV3,
+            layout: degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
         });
         let registry = RouteRegistry::new(index);
 

@@ -15,8 +15,8 @@ use hashbrown::HashMap;
 
 use alloy::primitives::{U128, U256};
 
-use degenbot_math::cl::functions::tick_position;
-use degenbot_math::cl::tick_math::{MAX_TICK, MIN_TICK};
+use degenbot_math::concentrated_liquidity::functions::tick_position;
+use degenbot_math::concentrated_liquidity::tick_math::{MAX_TICK, MIN_TICK};
 
 use crate::TickInfo;
 
@@ -542,9 +542,15 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         );
 
         let sqrt_price_lower =
-            degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(tick_lower).ok()?;
+            degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal(
+                tick_lower,
+            )
+            .ok()?;
         let sqrt_price_upper =
-            degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(tick_upper).ok()?;
+            degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal(
+                tick_upper,
+            )
+            .ok()?;
 
         debug_assert!(
             tick_lower < tick_upper,

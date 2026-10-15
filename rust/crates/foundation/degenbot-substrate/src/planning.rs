@@ -32,7 +32,7 @@
 use alloy::primitives::{aliases::U112, Address, B256, U256};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
-use degenbot_pools::v3_state::ClSlotLayout;
+use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
 use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_pools::TickInfo;
@@ -210,7 +210,7 @@ pub enum ExplicitPoolState {
         /// The fork's storage-slot family — the layout the producer READ;
         /// registration stores it on the identity so every later slot-index
         /// consumer agrees. Never defaulted.
-        slot_layout: ClSlotLayout,
+        slot_layout: ConcentratedLiquiditySlotLayout,
     },
     /// V4 CL state with its manager-keyed identity: the shared
     /// [`PlanningPoolParams`] carries the generic `address` + token pair,

@@ -152,8 +152,8 @@ struct ResolveChunkOut {
 /// in one place.
 #[derive(Clone)]
 pub(crate) struct BlockScope {
-    walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>,
-    walk_telemetry: Arc<::degenbot_solvers::cl::WalkTelemetry>,
+    walk_memo: Arc<::degenbot_solvers::concentrated_liquidity::WalkMemo>,
+    walk_telemetry: Arc<::degenbot_solvers::concentrated_liquidity::WalkTelemetry>,
     prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
     epoch: u64,
 }
@@ -162,8 +162,8 @@ impl BlockScope {
     /// A fresh scope at epoch 0 over the given walk-composition memo and
     /// walk-telemetry collector handles.
     pub(crate) fn new(
-        walk_memo: Arc<::degenbot_solvers::cl::WalkMemo>,
-        walk_telemetry: Arc<::degenbot_solvers::cl::WalkTelemetry>,
+        walk_memo: Arc<::degenbot_solvers::concentrated_liquidity::WalkMemo>,
+        walk_telemetry: Arc<::degenbot_solvers::concentrated_liquidity::WalkTelemetry>,
     ) -> Self {
         Self {
             walk_memo,
@@ -178,7 +178,10 @@ impl BlockScope {
     /// boundary. The scope's epoch — read by every per-path
     /// `GateDeps::per_block` — is the same `block`.
     #[must_use]
-    pub(crate) fn advance(&mut self, block: u64) -> ::degenbot_solvers::cl::WalkMemoStats {
+    pub(crate) fn advance(
+        &mut self,
+        block: u64,
+    ) -> ::degenbot_solvers::concentrated_liquidity::WalkMemoStats {
         self.epoch = block;
         self.walk_memo.begin_block(block)
     }
@@ -191,13 +194,15 @@ impl BlockScope {
 
     /// The engine-owned walk-composition memo handle.
     #[must_use]
-    pub(crate) fn walk_memo(&self) -> &Arc<::degenbot_solvers::cl::WalkMemo> {
+    pub(crate) fn walk_memo(&self) -> &Arc<::degenbot_solvers::concentrated_liquidity::WalkMemo> {
         &self.walk_memo
     }
 
     /// The engine-owned walk telemetry collector handle.
     #[must_use]
-    pub(crate) fn walk_telemetry(&self) -> &Arc<::degenbot_solvers::cl::WalkTelemetry> {
+    pub(crate) fn walk_telemetry(
+        &self,
+    ) -> &Arc<::degenbot_solvers::concentrated_liquidity::WalkTelemetry> {
         &self.walk_telemetry
     }
 
@@ -285,8 +290,12 @@ impl SolveCycleShared {
             metadata,
             gate_capture: None,
             scope: BlockScope::new(
-                std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(false, false)),
-                std::sync::Arc::new(::degenbot_solvers::cl::WalkTelemetry::new()),
+                std::sync::Arc::new(::degenbot_solvers::concentrated_liquidity::WalkMemo::new(
+                    false, false,
+                )),
+                std::sync::Arc::new(
+                    ::degenbot_solvers::concentrated_liquidity::WalkTelemetry::new(),
+                ),
             ),
             min_profit: U256::ZERO,
             clamp_margin: U256::from(1u128),
@@ -428,7 +437,7 @@ pub(crate) struct SolveCycle {
     pub(crate) hop_projection_count: u64,
     /// Fused hop-projection memo switch: resolved
     /// ONCE at construction.
-    pub(crate) cl_projection_memo: bool,
+    pub(crate) concentrated_liquidity_projection_memo: bool,
     /// Telemetry string cache: path id -> formatted hop description, built
     /// once at first emission (paths are immutable after registration).
     pub(crate) path_description_cache: parking_lot::Mutex<HashMap<u64, Arc<str>>>,
@@ -653,7 +662,7 @@ pub(crate) struct Registration {
 // ===========================================================================
 // the CL-hop clamp and its profit recompute, moved off the
 // deleted `ArbitrageEngine` twins onto their real owner. `SolveCycle::
-// clamp_cl_hop_capacity` and the worker-side `lane_walk::clamp_result_in_
+// clamp_concentrated_liquidity_hop_capacity` and the worker-side `lane_walk::clamp_result_in_
 // worker` both drive the same `clamp_result_with_state`; there is exactly
 // one clamp body (ADR-046 "no inherent twins").
 // ===========================================================================
@@ -693,7 +702,7 @@ pub(crate) fn clamp_skip_kind(hop: HopType) -> Option<&'static str> {
 /// worst observed over-prediction is **0 wei**. The historical live `+1..+3`
 /// wei residuals (fee-1, ts=1) were localized to crossing-math rounding and
 /// fixed (the zfo step-0 current-tick flooring), not absorbed by margin. A
-/// dedicated sweep (`cl_hop_clamp_margin_exceeds_worst_solver_over_prediction`)
+/// dedicated sweep (`concentrated_liquidity_hop_clamp_margin_exceeds_worst_solver_over_prediction`)
 /// measures the strict over-prediction direction across the corpus and asserts
 /// `margin > worst`, guarding the choice against regression. 1 wei is the
 /// smallest positive integer > 0, giving zero extraction loss (path-5000
@@ -994,7 +1003,7 @@ impl SolveCycle {
         let twins = if worker_clamp_twins > 0 {
             worker_clamp_twins
         } else {
-            self.clamp_cl_hop_capacity(pid, &mut result, registry)
+            self.clamp_concentrated_liquidity_hop_capacity(pid, &mut result, registry)
         };
         // Telemetry: profitable solves are the signal in the noise -
         // emit the economics + the concrete hop list on the solve span.
@@ -1297,7 +1306,7 @@ impl SolveCycle {
             }
         }
     }
-    pub(crate) fn clamp_cl_hop_capacity(
+    pub(crate) fn clamp_concentrated_liquidity_hop_capacity(
         &self,
         path_id: u64,
         result: &mut SolvePathResult,
@@ -1642,7 +1651,7 @@ impl SolveCycle {
                         &mut resolved,
                         &self.hop_projection_cache,
                         Some(&mut chunk_projections),
-                        self.cl_projection_memo,
+                        self.concentrated_liquidity_projection_memo,
                     );
                     out.projections = chunk_projections;
                     for d in &deficits {
@@ -1915,12 +1924,15 @@ impl SolveCycle {
         // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
         // the exact all-CL pool state the solver consumed for heavy paths so
         // the CL solver can be optimized offline. None (no-op) unless gated.
-        let capture = HeavyPathCapture::from_capture(&self.cfg.capture, CaptureVariant::HeavyCl);
+        let capture = HeavyPathCapture::from_capture(
+            &self.cfg.capture,
+            CaptureVariant::HeavyConcentratedLiquidity,
+        );
         // Optional mixed V2+CL solver capture (same gate): heavy
         // mixed paths (e.g. path 7042 V2->V3->V3) dispatch to
         // `solve_piecewise_cached`, which the all-CL capture skips.
         // Defaults OUT of the fixtures dir (loop-18: working rows never
-        // accrete there; goldens are produced only by cl_capture_gen).
+        // accrete there; goldens are produced only by concentrated_liquidity_capture_gen).
         let capture_mixed =
             HeavyPathCapture::from_capture(&self.cfg.capture, CaptureVariant::HeavyMixed);
         // SIMPIPE2 T2: pool-ref snapshot aligned to `to_solve` order (the
@@ -2438,7 +2450,7 @@ impl SolveCycle {
                 &mut resolved,
                 &self.hop_projection_cache,
                 Some(&mut self.hop_projection_count),
-                self.cl_projection_memo,
+                self.concentrated_liquidity_projection_memo,
             )
         };
         if let Some(unroutable) = deficits
@@ -2552,7 +2564,11 @@ impl SolveCycle {
                 .result
                 {
                     if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
-                        self.clamp_cl_hop_capacity(path_id, &mut solve_result, registry);
+                        self.clamp_concentrated_liquidity_hop_capacity(
+                            path_id,
+                            &mut solve_result,
+                            registry,
+                        );
                         self.results.insert(path_id, solve_result);
                         self.transients.pending_new_paths.insert(path_id);
                     }
@@ -2576,7 +2592,7 @@ impl SolveCycle {
                     &mut resolved,
                     &self.hop_projection_cache,
                     Some(&mut self.hop_projection_count),
-                    self.cl_projection_memo,
+                    self.concentrated_liquidity_projection_memo,
                 );
                 self.path_resolved
                     .insert(path_id, std::sync::Arc::new(resolved));
@@ -3103,7 +3119,7 @@ mod clamp_recompute_tests {
     /// be recomputed from the clamped values: the round trip nets
     /// -173,150,825 wei -> saturates to 0 -> dropped by the `profit > min_profit`
     /// delivery gate instead of being selected and executing to a `no-profit`
-    /// trap. (Regression for the BUG-B fix in `clamp_cl_hop_capacity`.)
+    /// trap. (Regression for the BUG-B fix in `clamp_concentrated_liquidity_hop_capacity`.)
     #[test]
     fn post_clamp_last_hop_loss_saturates_profit_to_zero() {
         let mut r = SolvePathResult {

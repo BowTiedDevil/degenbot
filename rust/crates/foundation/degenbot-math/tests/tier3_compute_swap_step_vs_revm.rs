@@ -61,7 +61,9 @@ use revm::primitives::TxKind;
 use revm::state::AccountInfo;
 use revm::{ExecuteEvm, MainBuilder, MainContext};
 
-use degenbot_math::cl::swap_math::{compute_swap_step_v3, compute_swap_step_v4, SwapStepResult};
+use degenbot_math::concentrated_liquidity::swap_math::{
+    compute_swap_step_v3, compute_swap_step_v4, SwapStepResult,
+};
 
 /// `computeSwapStep(uint160,uint160,uint128,int256,uint24)` selector
 /// (`cast sig` → `0x100d3f74`). Identical for the V3 + V4 harnesses (same
@@ -355,7 +357,7 @@ fn v4_compute_swap_step_pinned_fee1_tiny_liquidity_first_step() {
     //   tick_spacing=1, current_tick=0 → first ofz target = tick +1
     //   liquidity = 94294142, amount = -20000 (exact-in), fee = 1 pip.
     // Isolates compute_swap_step_v4 from the v4_simulate_swap loop.
-    use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 
     let sqrt_current = U256::from(79_231_869_042_278_935_382_727_675_145u128);
     let sqrt_target = U256::from(get_sqrt_ratio_at_tick_internal(1).unwrap());

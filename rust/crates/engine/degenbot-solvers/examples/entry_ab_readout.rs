@@ -6,7 +6,7 @@
 //! Entry-level A/B readout: the retained `all-CL` intake convenience vs
 //! the unified solve entry directly, on real captured paths. This harness
 //! was the entry-level bench input for the solve-entry unification decision
-//! (the other was the functions-timing run over the `cl_solve.*` labels —
+//! (the other was the functions-timing run over the `concentrated_liquidity_solve.*` labels —
 //! same binary under `--features hotpath`, see the usage block); post-
 //! unification the two arms share ONE solve body, so the ratio measures the
 //! intake shape alone and the parity gate pins the forwarding contract.
@@ -19,7 +19,7 @@
 //!   DR_AB_ITERS=49 ...   // reps per path per arm (default 25)
 //!   DR_AB_MEMO=1 ...     // memo stance ON (default 0 = handle present, inactive)
 //!
-//!   Telemetry run (functions-timing over the cl_solve.* labels):
+//!   Telemetry run (functions-timing over the concentrated_liquidity_solve.* labels):
 //!   cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers \
 //!     --features hotpath --example entry_ab_readout
 //!   HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH=hp.json \
@@ -31,8 +31,8 @@
 //!
 //! - Arm "intake": the retained `all-CL` convenience route — the prepared
 //!   hops CLONED (three `Arc` bumps per hop, the caller shape this harness
-//!   models) and handed to the forwarding `solve_cl_piecewise`.
-//! - Arm "direct": one borrowed `MixedHopView::Cl` per position handed to
+//!   models) and handed to the forwarding `solve_concentrated_liquidity_piecewise`.
+//! - Arm "direct": one borrowed `MixedHopView::ConcentratedLiquidity` per position handed to
 //!   `solve_piecewise`, the ONE solve body both routes share.
 //!
 //! Parity gate: both arms must return byte-equal
@@ -46,18 +46,19 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solvers::cl::{
-    solve_cl_piecewise, solve_piecewise, MixedHopView, PreparedClHop, WalkMemo,
+use degenbot_solvers::concentrated_liquidity::{
+    solve_concentrated_liquidity_piecewise, solve_piecewise, MixedHopView,
+    PreparedConcentratedLiquidityHop, WalkMemo,
 };
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 use serde_json::Value;
 
-#[path = "common/cl_rows.rs"]
-mod cl_rows;
 #[path = "common/mod.rs"]
 mod common;
+#[path = "common/concentrated_liquidity_rows.rs"]
+mod concentrated_liquidity_rows;
 
-use cl_rows::parse_cl_hops;
+use concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
 
 /// Median of a mutable slice of microsecond samples (sorts in place).
 fn median_us(samples: &mut [u128]) -> u128 {
@@ -88,7 +89,7 @@ fn p95_us(samples: &mut [u128]) -> u128 {
 #[derive(Clone, Copy)]
 enum Route {
     /// Every hop carries an int sequence: the all-CL entry.
-    AllCl,
+    AllConcentratedLiquidity,
     /// Any V2 hop: the mixed entry.
     Mixed,
     /// Foreign family or unparseable row: the dispatch arm refuses it.
@@ -103,7 +104,7 @@ fn route_of(doc: &Value) -> Route {
     };
     if doc.get("hop_order").is_some() {
         // Mixed-schema row: per-hop `kind` discriminant.
-        let all_cl = hops
+        let all_concentrated_liquidity = hops
             .iter()
             .all(|h| h.get("kind").and_then(Value::as_str) == Some("CL"));
         let any_foreign = hops.iter().any(
@@ -111,15 +112,15 @@ fn route_of(doc: &Value) -> Route {
         );
         if any_foreign {
             Route::Other
-        } else if all_cl {
-            Route::AllCl
+        } else if all_concentrated_liquidity {
+            Route::AllConcentratedLiquidity
         } else {
             Route::Mixed
         }
     } else {
         // Pure-CL-schema row: hops are arrays of CL ranges.
-        match parse_cl_hops(hops) {
-            Ok(_) => Route::AllCl,
+        match parse_concentrated_liquidity_hops(hops) {
+            Ok(_) => Route::AllConcentratedLiquidity,
             Err(_) => Route::Other,
         }
     }
@@ -130,7 +131,7 @@ fn route_of(doc: &Value) -> Route {
 /// mixed-schema rows are measured only when every hop is `kind = "CL"`
 /// (the branch's exact test) — anything else is the mixed entry's own
 /// traffic, unaffected by the unification question.
-fn all_cl_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeSequence>> {
+fn all_concentrated_liquidity_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeSequence>> {
     let hops = doc.get("hops").and_then(Value::as_array)?;
     if doc.get("hop_order").is_some() {
         let mut seqs = Vec::with_capacity(hops.len());
@@ -148,7 +149,7 @@ fn all_cl_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeSequence>> {
         }
         Some(seqs)
     } else {
-        parse_cl_hops(hops).ok()
+        parse_concentrated_liquidity_hops(hops).ok()
     }
 }
 
@@ -156,12 +157,12 @@ fn main() {
     // Hotpath instrumentation is a compile-time opt-in; with the feature on,
     // this single guard's lifetime spans the run and its drop writes the
     // report (functions-timing over every `#[hotpath::measure]` label the run
-    // touched — the `cl_solve.*` entry labels included).
+    // touched — the `concentrated_liquidity_solve.*` entry labels included).
     #[cfg(feature = "hotpath")]
     let _guard = hotpath::HotpathGuardBuilder::new("entry_ab_readout").build();
 
     let args: Vec<String> = std::env::args().collect();
-    let path = common::capture_arg(&args, "heavy_cl_solve_captures.jsonl");
+    let path = common::capture_arg(&args, "heavy_concentrated_liquidity_solve_captures.jsonl");
     let iters: usize = std::env::var("DR_AB_ITERS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -189,7 +190,8 @@ fn main() {
     }
 
     // ---- Census + per-path A/B --------------------------------------------
-    let (mut n_rows, mut n_all_cl, mut n_mixed, mut n_other) = (0u64, 0u64, 0u64, 0u64);
+    let (mut n_rows, mut n_all_concentrated_liquidity, mut n_mixed, mut n_other) =
+        (0u64, 0u64, 0u64, 0u64);
     let mut n_paths = 0u64;
     let mut parity_fail = 0u64;
     let mut sims_intake = 0u64;
@@ -214,12 +216,12 @@ fn main() {
         };
         n_rows += 1;
         match route_of(&doc) {
-            Route::AllCl => n_all_cl += 1,
+            Route::AllConcentratedLiquidity => n_all_concentrated_liquidity += 1,
             Route::Mixed => n_mixed += 1,
             Route::Other => n_other += 1,
         }
         let pid: u64 = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
-        let Some(seqs) = all_cl_seqs_of(&doc) else {
+        let Some(seqs) = all_concentrated_liquidity_seqs_of(&doc) else {
             // Mixed-route or foreign-family row: the unification question does
             // not touch it (silent skip; the census above counted it).
             continue;
@@ -230,9 +232,13 @@ fn main() {
         n_paths += 1;
         // Production shape: derive the prepared hops ONCE per path (the
         // projection hands the branch a prepared value per CL hop).
-        let prepared: Vec<PreparedClHop> = seqs
+        let prepared: Vec<PreparedConcentratedLiquidityHop> = seqs
             .iter()
-            .map(|s| PreparedClHop::derive(std::sync::Arc::new(IntV3TickRangeSequence::clone(s))))
+            .map(|s| {
+                PreparedConcentratedLiquidityHop::derive(std::sync::Arc::new(
+                    IntV3TickRangeSequence::clone(s),
+                ))
+            })
             .collect();
 
         let mut times_intake: Vec<u128> = Vec::with_capacity(iters);
@@ -248,8 +254,14 @@ fn main() {
                     // The intake route: clone (three Arc bumps per hop),
                     // then the forwarding all-CL convenience.
                     let t0 = std::time::Instant::now();
-                    let cloned: Vec<PreparedClHop> = prepared.clone();
-                    let out = solve_cl_piecewise(&cloned, Some(&memo), None, &cfg, None);
+                    let cloned: Vec<PreparedConcentratedLiquidityHop> = prepared.clone();
+                    let out = solve_concentrated_liquidity_piecewise(
+                        &cloned,
+                        Some(&memo),
+                        None,
+                        &cfg,
+                        None,
+                    );
                     times_intake.push(t0.elapsed().as_micros());
                     sims_intake += out.stats.sims as u64;
                     match &parity_ref {
@@ -268,8 +280,10 @@ fn main() {
                     // The direct route: one borrowed view per hop, then the
                     // one solve body.
                     let t0 = std::time::Instant::now();
-                    let views: Vec<MixedHopView<'_>> =
-                        prepared.iter().map(MixedHopView::Cl).collect();
+                    let views: Vec<MixedHopView<'_>> = prepared
+                        .iter()
+                        .map(MixedHopView::ConcentratedLiquidity)
+                        .collect();
                     let out = solve_piecewise(&views, Some(&memo), None, &cfg, None);
                     times_direct.push(t0.elapsed().as_micros());
                     sims_direct += out.stats.sims as u64;
@@ -302,23 +316,34 @@ fn main() {
             .lines()
             .find(|l| !l.trim().is_empty())
             .and_then(|l| serde_json::from_str(l).ok());
-        doc.as_ref().and_then(all_cl_seqs_of).map(|mut s| {
-            s.truncate(1);
-            s
-        })
+        doc.as_ref()
+            .and_then(all_concentrated_liquidity_seqs_of)
+            .map(|mut s| {
+                s.truncate(1);
+                s
+            })
     };
     let (one_intake, one_direct) = match one_hop_seq {
         Some(seq) => {
-            let prepared: Vec<PreparedClHop> = seq
+            let prepared: Vec<PreparedConcentratedLiquidityHop> = seq
                 .iter()
                 .map(|s| {
-                    PreparedClHop::derive(std::sync::Arc::new(IntV3TickRangeSequence::clone(s)))
+                    PreparedConcentratedLiquidityHop::derive(std::sync::Arc::new(
+                        IntV3TickRangeSequence::clone(s),
+                    ))
                 })
                 .collect();
-            let cl = solve_cl_piecewise(&prepared, None, None, &cfg, None);
-            let views: Vec<MixedHopView<'_>> = prepared.iter().map(MixedHopView::Cl).collect();
+            let concentrated_liquidity =
+                solve_concentrated_liquidity_piecewise(&prepared, None, None, &cfg, None);
+            let views: Vec<MixedHopView<'_>> = prepared
+                .iter()
+                .map(MixedHopView::ConcentratedLiquidity)
+                .collect();
             let mx = solve_piecewise(&views, None, None, &cfg, None);
-            (cl.result.map(|(_, p, _)| p), mx.result.map(|(_, p, _)| p))
+            (
+                concentrated_liquidity.result.map(|(_, p, _)| p),
+                mx.result.map(|(_, p, _)| p),
+            )
         }
         None => (None, None),
     };
@@ -332,7 +357,7 @@ fn main() {
     let mut p95_direct = path_med_direct;
     println!();
     println!("== Row census (production branch route) ==");
-    println!("rows={n_rows} route_all_cl={n_all_cl} route_mixed={n_mixed} route_other={n_other}");
+    println!("rows={n_rows} route_all_concentrated_liquidity={n_all_concentrated_liquidity} route_mixed={n_mixed} route_other={n_other}");
     println!();
     println!("== Entry A/B over {n_paths} all-CL path(s), {iters} reps per arm (interleaved) ==");
     println!("parity: {parity_fail} divergence(s); sims intake={sims_intake} direct={sims_direct}");

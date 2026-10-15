@@ -15,7 +15,7 @@
 )]
 
 //! Offline heavy mixed V2+CL path replay harness with N-repeat stable timing.
-//! Mirrors `cl_solve_replay.rs` for paths that dispatch to
+//! Mirrors `concentrated_liquidity_solve_replay.rs` for paths that dispatch to
 //! `solve_piecewise` (V2→V3→V3, V2→V3→V4, …).
 //!
 //! Usage:
@@ -54,7 +54,9 @@ use std::sync::Arc;
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solvers::cl::{solve_piecewise, MixedHopView, PreparedClHop, WalkStats};
+use degenbot_solvers::concentrated_liquidity::{
+    solve_piecewise, MixedHopView, PreparedConcentratedLiquidityHop, WalkStats,
+};
 use serde_json::Value;
 
 #[path = "common/mod.rs"]
@@ -66,7 +68,7 @@ const PROFIT_EPS: u128 = 100_000;
 const OVER_SHOOT_TOLERANCE_WEI: u128 = 8;
 
 /// Parse the captured per-hop discriminant into the decomposed-solver inputs.
-/// Returns `(v2_hops, cl_sequences, hop_order)`.
+/// Returns `(v2_hops, concentrated_liquidity_sequences, hop_order)`.
 fn parse_path(
     doc: &Value,
 ) -> Result<
@@ -93,7 +95,7 @@ fn parse_path(
         ));
     }
     let mut v2_hops = Vec::with_capacity(hops.len());
-    let mut cl_seqs = Vec::with_capacity(hops.len());
+    let mut concentrated_liquidity_seqs = Vec::with_capacity(hops.len());
     for hop in hops {
         let kind = hop.get("kind").and_then(Value::as_str).ok_or("kind")?;
         match kind {
@@ -112,7 +114,7 @@ fn parse_path(
                     g,
                     d,
                 )));
-                cl_seqs.push(None);
+                concentrated_liquidity_seqs.push(None);
             }
             "CL" => {
                 let ranges = hop
@@ -123,12 +125,12 @@ fn parse_path(
                     .map(range)
                     .collect::<Result<Vec<_>, _>>()?;
                 v2_hops.push(None);
-                cl_seqs.push(Some(IntV3TickRangeSequence { ranges }));
+                concentrated_liquidity_seqs.push(Some(IntV3TickRangeSequence { ranges }));
             }
             other => return Err(format!("unknown hop kind {other}")),
         }
     }
-    Ok((v2_hops, cl_seqs, hop_order))
+    Ok((v2_hops, concentrated_liquidity_seqs, hop_order))
 }
 
 fn pct(sorted: &[u128], p: f64) -> u128 {
@@ -194,7 +196,7 @@ fn main() {
             })
             .unwrap_or_else(|| "?".into());
 
-        let (v2_hops, cl_seqs, hop_order) = match parse_path(&doc) {
+        let (v2_hops, concentrated_liquidity_seqs, hop_order) = match parse_path(&doc) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("path {pid}: skip ({e})");
@@ -204,13 +206,14 @@ fn main() {
 
         // One borrowed hop view per position (the projection's shape), built
         // once per path so the rep loop measures the solve, not derivation.
-        let cl_prepared: Vec<Option<PreparedClHop>> = cl_seqs
-            .iter()
-            .map(|o| {
-                o.as_ref()
-                    .map(|s| PreparedClHop::derive(Arc::new(s.clone())))
-            })
-            .collect();
+        let concentrated_liquidity_prepared: Vec<Option<PreparedConcentratedLiquidityHop>> =
+            concentrated_liquidity_seqs
+                .iter()
+                .map(|o| {
+                    o.as_ref()
+                        .map(|s| PreparedConcentratedLiquidityHop::derive(Arc::new(s.clone())))
+                })
+                .collect();
         let views: Option<Vec<MixedHopView<'_>>> = hop_order
             .iter()
             .enumerate()
@@ -218,7 +221,9 @@ fn main() {
                 if is_v2 {
                     v2_hops[i].as_ref().map(MixedHopView::V2)
                 } else {
-                    cl_prepared[i].as_ref().map(MixedHopView::Cl)
+                    concentrated_liquidity_prepared[i]
+                        .as_ref()
+                        .map(MixedHopView::ConcentratedLiquidity)
                 }
             })
             .collect();

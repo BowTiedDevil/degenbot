@@ -28,7 +28,7 @@
 //!   `kind` string `aerodrome_v2` projects to the V2 graph kind.
 //! - Backrun V3 discovery admits every `pancakeswap_v3` / `aerodrome_v3` row
 //!   the connector index loads, but the frame descriptor hardcodes the
-//!   canonical `ClSlotLayout::UniswapV3`. `aerodrome_v3` shares that layout;
+//!   canonical `ConcentratedLiquiditySlotLayout::UniswapV3`. `aerodrome_v3` shares that layout;
 //!   `pancakeswap_v3` does not (two-word `slot0`, liquidity@5, ticks@6), so its
 //!   rows decode under the wrong slots — a documented extraction gap, not a
 //!   capability claim.

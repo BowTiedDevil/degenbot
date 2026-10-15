@@ -1,6 +1,6 @@
 //! The per-epoch `WalkMemoStats` tap (observation only).
 //!
-//! [`WalkMemo`](::degenbot_solvers::cl::WalkMemo) has been fully instrumented
+//! [`WalkMemo`](::degenbot_solvers::concentrated_liquidity::WalkMemo) has been fully instrumented
 //! since the memo landed (probes, hits, distinct, cache plays, negatives,
 //! per-probe/per-hit sims), but nothing in the engine drained it: `take_stats`
 //! existed with no engine-side caller. This module is the drain. It owns:
@@ -86,7 +86,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ::degenbot_solvers::cl::{WalkMemo, WalkMemoStats};
+use ::degenbot_solvers::concentrated_liquidity::{WalkMemo, WalkMemoStats};
 use degenbot_core::op_warn;
 
 /// The production JSONL path, relative to the process CWD. `run_bot.sh` cds
@@ -300,7 +300,9 @@ mod tests {
     use super::*;
     use ::alloy::primitives::U256;
     use ::degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-    use ::degenbot_solvers::cl::{solve_cl_piecewise, PreparedClHop};
+    use ::degenbot_solvers::concentrated_liquidity::{
+        solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop,
+    };
     use ::degenbot_solvers::runtime::SolveRuntimeConfig;
     use parking_lot::Mutex;
 
@@ -356,13 +358,13 @@ mod tests {
     /// `active()` (the only outside-reachable probe/store drive — probe,
     /// `note_cost`, store are `pub(super)` in the solvers crate), so one call
     /// is exactly one probe + one cache consult + a commit.
-    fn solve_once(memo: &WalkMemo, prepared: &PreparedClHop) {
+    fn solve_once(memo: &WalkMemo, prepared: &PreparedConcentratedLiquidityHop) {
         let cfg = SolveRuntimeConfig::default();
         // TWO hops: the unified entry's contract refuses paths shorter than
         // two hops (the all-CL intake forwards that same contract), and one
         // call must stay exactly one probe + one cache consult + a commit.
         let two = [prepared.clone(), prepared.clone()];
-        let _ = solve_cl_piecewise(&two, Some(memo), None, &cfg, None);
+        let _ = solve_concentrated_liquidity_piecewise(&two, Some(memo), None, &cfg, None);
     }
 
     #[test]
@@ -398,7 +400,7 @@ mod tests {
         let sink = VecSink::default();
         let memo = WalkMemo::new(true, true);
         let seq = one_hop_sequence();
-        let prepared = PreparedClHop::derive(std::sync::Arc::new(seq.clone()));
+        let prepared = PreparedConcentratedLiquidityHop::derive(std::sync::Arc::new(seq.clone()));
 
         // --- epoch 100: two solves of the same composition ---------------
         let stats = memo.begin_block(100); // boot: silent
@@ -444,7 +446,7 @@ mod tests {
         let sink = VecSink::default();
         let memo = WalkMemo::new(true, true);
         let seq = one_hop_sequence();
-        let prepared = PreparedClHop::derive(std::sync::Arc::new(seq.clone()));
+        let prepared = PreparedConcentratedLiquidityHop::derive(std::sync::Arc::new(seq.clone()));
 
         memo.begin_block(500);
         solve_once(&memo, &prepared);
@@ -477,7 +479,7 @@ mod tests {
         let sink = VecSink::default();
         let memo = WalkMemo::new(true, true);
         let seq = one_hop_sequence();
-        let prepared = PreparedClHop::derive(std::sync::Arc::new(seq.clone()));
+        let prepared = PreparedConcentratedLiquidityHop::derive(std::sync::Arc::new(seq.clone()));
 
         memo.begin_block(7);
         solve_once(&memo, &prepared);

@@ -27,15 +27,16 @@ use std::sync::Arc;
 
 use alloy::primitives::{address, Address, Bytes, B256, U256};
 use degenbot_pools::slot_layout::{
-    cl_liquidity_tracked_word, cl_slot0_tracked_word, decode_tick_word, decode_v2_reserves_word,
-    pack_v2_reserves_word, tick_mapping_slot_at_base, tick_word_of, V2ReservesParts,
+    concentrated_liquidity_liquidity_tracked_word, concentrated_liquidity_slot0_tracked_word,
+    decode_tick_word, decode_v2_reserves_word, pack_v2_reserves_word, tick_mapping_slot_at_base,
+    tick_word_of, V2ReservesParts,
 };
 use degenbot_pools::v3_storage_slots::decode_v3_slot0;
 use degenbot_pools::v4_storage_slots::{
     encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
     v4_slot0_slot, v4_tick_mapping_slot, V4Slot0Parts,
 };
-use degenbot_pools::ClSlotLayout;
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::frame_replay::{
     ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm,
 };
@@ -319,8 +320,9 @@ fn v3_pack_decode_round_trip_recovers_tick_indices_from_preimages() {
     let (gross, net) = (7_000u128, -250i128);
     let spacing = 60;
 
-    let word0 = U256::from_be_bytes(cl_slot0_tracked_word(sqrt_price_x96, tick_post).0);
-    let word4 = U256::from_be_bytes(cl_liquidity_tracked_word(liquidity).0);
+    let word0 =
+        U256::from_be_bytes(concentrated_liquidity_slot0_tracked_word(sqrt_price_x96, tick_post).0);
+    let word4 = U256::from_be_bytes(concentrated_liquidity_liquidity_tracked_word(liquidity).0);
     let tick_slot = tick_mapping_slot_at_base(-2880, U256::from(5u64));
     let word_tick = U256::from_be_bytes(tick_word_of(gross, net).0);
 
@@ -337,7 +339,7 @@ fn v3_pack_decode_round_trip_recovers_tick_indices_from_preimages() {
         &descriptors([(
             POOL,
             PoolFamily::V3 {
-                layout: ClSlotLayout::UniswapV3,
+                layout: ConcentratedLiquiditySlotLayout::UniswapV3,
                 tick_spacing: spacing,
                 current_tick_hint: Some(hint),
             },
@@ -347,7 +349,7 @@ fn v3_pack_decode_round_trip_recovers_tick_indices_from_preimages() {
     assert_eq!(
         state.family,
         PoolFamily::V3 {
-            layout: ClSlotLayout::UniswapV3,
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
             tick_spacing: spacing,
             current_tick_hint: Some(hint)
         }
@@ -395,7 +397,7 @@ fn v3_unmatched_slots_never_fabricate_typed_fields() {
         &descriptors([(
             POOL,
             PoolFamily::V3 {
-                layout: ClSlotLayout::UniswapV3,
+                layout: ConcentratedLiquiditySlotLayout::UniswapV3,
                 tick_spacing: 60,
                 current_tick_hint: Some(0),
             },
@@ -423,7 +425,9 @@ fn v3_unmatched_slots_never_fabricate_typed_fields() {
 /// post tick still recovers.
 #[test]
 fn v3_post_tick_anchors_the_preimage_hunt() {
-    let word0 = U256::from_be_bytes(cl_slot0_tracked_word(U256::from(1u128) << 96, 88_000).0);
+    let word0 = U256::from_be_bytes(
+        concentrated_liquidity_slot0_tracked_word(U256::from(1u128) << 96, 88_000).0,
+    );
     let tick_slot = tick_mapping_slot_at_base(88_320, U256::from(5u64)); // 60*1472
     let word_tick = U256::from_be_bytes(tick_word_of(3_000, 400).0);
 
@@ -437,7 +441,7 @@ fn v3_post_tick_anchors_the_preimage_hunt() {
         &descriptors([(
             POOL,
             PoolFamily::V3 {
-                layout: ClSlotLayout::UniswapV3,
+                layout: ConcentratedLiquiditySlotLayout::UniswapV3,
                 tick_spacing: 60,
                 // Pre-tx hint 0; the touched tick sits near the journal's
                 // OWN post tick (88000) — only the post anchor finds it.
@@ -1212,7 +1216,7 @@ async fn v3_live_parity(want_crossing: bool) {
                 descriptors.insert(
                     *pool,
                     PoolFamily::V3 {
-                        layout: ClSlotLayout::UniswapV3,
+                        layout: ConcentratedLiquiditySlotLayout::UniswapV3,
                         tick_spacing: spacing,
                         current_tick_hint: Some(hint),
                     },

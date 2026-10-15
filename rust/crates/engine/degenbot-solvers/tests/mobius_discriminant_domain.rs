@@ -19,7 +19,7 @@
 
 use alloy::primitives::U256;
 use degenbot_math::v2::{int_simulate_path, IntHopState};
-use degenbot_solvers::cl::{solve_piecewise, MixedHopView};
+use degenbot_solvers::concentrated_liquidity::{solve_piecewise, MixedHopView};
 use degenbot_solvers::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients};
 use degenbot_solvers::mobius_int_exact::{
     compute_mobius_model_optimal_input, exact_mobius_solve, isqrt_u512, narrow_u512_to_u256,

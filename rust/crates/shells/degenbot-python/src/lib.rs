@@ -192,15 +192,17 @@ pub use uniswap::address::to_checksum_address;
 #[cfg(feature = "concentrated-liquidity-math")]
 pub use concentrated_liquidity_math::tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 #[cfg(feature = "concentrated-liquidity-math")]
-pub use degenbot_math::cl::tick_math::{
+pub use degenbot_math::concentrated_liquidity::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
 };
 #[cfg(feature = "concentrated-liquidity-math")]
-pub use degenbot_math::cl::{
+pub use degenbot_math::concentrated_liquidity::{
     bit_math, full_math, functions, liquidity_math, sqrt_price_math, swap_math, unsafe_math,
 };
-pub use errors::{AbiDecodeError, AddressError, ClMathError, ProviderError, TickMathError};
+pub use errors::{
+    AbiDecodeError, AddressError, ConcentratedLiquidityMathError, ProviderError, TickMathError,
+};
 
 /// Ensure Python is initialized before the test harness spawns threads.
 ///

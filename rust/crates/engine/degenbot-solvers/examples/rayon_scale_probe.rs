@@ -19,7 +19,7 @@
 //! Offline solver-parallelism scaling probe .
 //!
 //! Reconstructs production ResolvedMixedPath inputs (V3 CL hops carrying the
-//! production build_cl_word_profiles + build_cl_crossing_table precomputes)
+//! production build_concentrated_liquidity_word_profiles + build_concentrated_liquidity_crossing_table precomputes)
 //! from the committed heavy-CL capture fixture and re-runs the production
 //! solver entry mixed::solve_path_with_min_profit under controlled thread
 //! counts. Measures wall / sum-CPU / efficiency per configuration so the
@@ -45,8 +45,9 @@ use std::time::Instant;
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::{
-    build_cl_crossing_table, build_cl_word_profiles, PreparedClHop, WalkStats,
+use degenbot_solvers::concentrated_liquidity::{
+    build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
+    PreparedConcentratedLiquidityHop, WalkStats,
 };
 use degenbot_solvers::mixed::{solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath};
 use rayon::prelude::*;
@@ -160,10 +161,14 @@ fn reconstruct(doc: &Value) -> Result<(u64, Arc<ResolvedMixedPath>, Option<u128>
         }
         let ranges = ra.iter().map(range).collect::<Result<Vec<_>, String>>()?;
         let seq = IntV3TickRangeSequence { ranges };
-        let crossings = Arc::from(build_cl_crossing_table(&seq));
-        let profiles = Arc::from(build_cl_word_profiles(&seq));
+        let crossings = Arc::from(build_concentrated_liquidity_crossing_table(&seq));
+        let profiles = Arc::from(build_concentrated_liquidity_word_profiles(&seq));
         hops.push(ResolvedHop::V3 {
-            prepared: PreparedClHop::from_parts(Arc::new(seq), crossings, profiles),
+            prepared: PreparedConcentratedLiquidityHop::from_parts(
+                Arc::new(seq),
+                crossings,
+                profiles,
+            ),
         });
     }
     let golden = doc.get("golden").filter(|g| !g.is_null()).and_then(|g| {
@@ -357,10 +362,11 @@ fn run_static(
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut fixture =
-        degenbot_solvers::capture_fixture::fixture_path("heavy_cl_solve_captures.jsonl")
-            .to_string_lossy()
-            .into_owned();
+    let mut fixture = degenbot_solvers::capture_fixture::fixture_path(
+        "heavy_concentrated_liquidity_solve_captures.jsonl",
+    )
+    .to_string_lossy()
+    .into_owned();
     let mut cap = usize::MAX;
     let mut serial_passes = 2usize;
     let mut bare_only = false;

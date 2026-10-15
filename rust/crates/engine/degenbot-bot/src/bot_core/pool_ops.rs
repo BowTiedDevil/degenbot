@@ -52,7 +52,7 @@ pub enum SwapOpError {
 /// The CL 5-tuple payload the staged fetch-sim seams surface — the legacy
 /// `(amount0, amount1, sqrt_price_x96, liquidity, tick)` tuple fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ClSwapPayload {
+pub struct ConcentratedLiquiditySwapPayload {
     /// Absolute token0 amount moved.
     pub amount0: U256,
     /// Absolute token1 amount moved.
@@ -73,7 +73,7 @@ pub struct ClSwapPayload {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StagedSwapOutcome {
     /// The swap computed; payload per the legacy 5-tuple.
-    Computed(ClSwapPayload),
+    Computed(ConcentratedLiquiditySwapPayload),
     /// A V4 amount-modifying hook invalidates the standard math — the
     /// approximate deltas ride along for the archived exception text.
     HookedPool {
@@ -371,7 +371,7 @@ pub fn simulate_swap_with_fetch(
         };
     }
     let (amount0, amount1) = payload.raw_token_amounts(request.zero_for_one);
-    StagedSwapOutcome::Computed(ClSwapPayload {
+    StagedSwapOutcome::Computed(ConcentratedLiquiditySwapPayload {
         amount0,
         amount1,
         sqrt_price_x96: payload.end_sqrt_price_x96,
@@ -714,7 +714,8 @@ mod tests {
     }
 
     #[test]
-    fn simulate_swap_with_fetch_returns_cl_payload_for_cl_pool() {
+    fn simulate_swap_with_fetch_returns_concentrated_liquidity_payload_for_concentrated_liquidity_pool(
+    ) {
         let state = fixture();
         let outcome = simulate_swap_with_fetch(&state, V3_ID, &exact_in_request(true), 100);
         let payload = match outcome {

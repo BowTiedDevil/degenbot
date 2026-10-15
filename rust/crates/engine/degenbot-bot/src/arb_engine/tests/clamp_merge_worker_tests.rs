@@ -152,9 +152,11 @@ fn worker_clamp_matches_engine_clamp_bit_for_bit() {
         }
     };
     let (mut r_engine, mut r_worker) = (mk(), mk());
-    let twins_engine = engine
-        .cycle
-        .clamp_cl_hop_capacity(path_id, &mut r_engine, &engine.registry);
+    let twins_engine = engine.cycle.clamp_concentrated_liquidity_hop_capacity(
+        path_id,
+        &mut r_engine,
+        &engine.registry,
+    );
     assert!(twins_engine > 0, "premise: the over-fed input must clamp");
     assert!(
         r_engine.consumed_inputs[1] < U256::from(1u128) << 120,

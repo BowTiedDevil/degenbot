@@ -33,8 +33,8 @@ use super::pool_builder::builder::{self, PoolBuilderError};
 use super::pool_builder::parity;
 use super::pool_builder::route::{self, ConstructedPool};
 use super::{
-    ClSlotLayout, PoolTickCoverage, RegisterAerodromePoolError, RegisterV2PoolError,
-    RegisterV4PoolError,
+    ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterAerodromePoolError,
+    RegisterV2PoolError, RegisterV4PoolError,
 };
 
 /// The build refused before any registration: either no `ConstructionIo` is
@@ -384,7 +384,7 @@ impl Bot {
         plan: &route::ConstructionRoute,
         db: Option<&dyn TickMapDb>,
         fetcher: Option<Arc<dyn TickWordFetcher>>,
-        slot_layout: Option<ClSlotLayout>,
+        slot_layout: Option<ConcentratedLiquiditySlotLayout>,
         address: Address,
         block: Option<u64>,
     ) -> Result<PoolBuildPayload, V3BuildError> {

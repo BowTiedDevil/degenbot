@@ -420,7 +420,7 @@ mod direct_seam_tests {
             "the sizing seam must not re-derive the bin count"
         );
     }
-    fn cl_hop(word_boundaries: usize) -> ResolvedHop {
+    fn concentrated_liquidity_hop(word_boundaries: usize) -> ResolvedHop {
         let seq = IntV3TickRangeSequence::new(vec![IntV3TickRangeHop {
             liquidity: 1_000_000,
             sqrt_price_x96: U256::from(1u64 << 40),
@@ -433,7 +433,7 @@ mod direct_seam_tests {
         }])
         .expect("valid tick range sequence");
         ResolvedHop::V3 {
-            prepared: ::degenbot_solvers::cl::PreparedClHop::from_parts(
+            prepared: ::degenbot_solvers::concentrated_liquidity::PreparedConcentratedLiquidityHop::from_parts(
                 Arc::new(seq),
                 Arc::new(Vec::new()),
                 Arc::new(Vec::new()),
@@ -443,7 +443,7 @@ mod direct_seam_tests {
     /// `path_cost_proxy` is the structural LPT cost: the total count of
     /// interior word-boundary prices across the CL hops (0 for an empty path).
     #[test]
-    fn path_cost_proxy_sums_cl_word_boundaries() {
+    fn path_cost_proxy_sums_concentrated_liquidity_word_boundaries() {
         let empty = ResolvedMixedPath {
             hops: Vec::new(),
             valid: true,
@@ -451,7 +451,7 @@ mod direct_seam_tests {
         };
         assert_eq!(path_cost_proxy(&empty), 0);
         let path = ResolvedMixedPath {
-            hops: vec![cl_hop(3), cl_hop(2)],
+            hops: vec![concentrated_liquidity_hop(3), concentrated_liquidity_hop(2)],
             valid: true,
             ..Default::default()
         };

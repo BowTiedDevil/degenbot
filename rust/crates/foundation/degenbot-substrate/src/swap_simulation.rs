@@ -49,7 +49,7 @@ use super::BotState;
 /// - **positive** → exact-OUTPUT swap of that magnitude (the pool delivers);
 /// - **negative** → exact-INPUT swap of that magnitude (the user sends).
 ///
-/// Outcome deltas (`ClSwapOutcome::consumed` / `delivered`) use the same
+/// Outcome deltas (`ConcentratedLiquiditySwapOutcome::consumed` / `delivered`) use the same
 /// perspective: negative = taken from the user, positive = given to the user.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SwapRequest {
@@ -110,7 +110,7 @@ pub struct V2SwapOutcome {
     pub caveats: Caveats,
 }
 
-impl ClSwapOutcome {
+impl ConcentratedLiquiditySwapOutcome {
     /// Raw per-token magnitudes for legacy tuple seams (`(token0, token1)`
     /// absolute amounts moved), given the swap direction.
     #[must_use]
@@ -127,7 +127,7 @@ impl ClSwapOutcome {
 
 /// Rich payload for concentrated-liquidity swaps (V3/V4).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClSwapOutcome {
+pub struct ConcentratedLiquiditySwapOutcome {
     /// Taken FROM the user (negative; `-input_consumed`).
     pub consumed: I256,
     /// Given TO the user (positive; token1 for zfo swaps, token0 otherwise).
@@ -154,9 +154,9 @@ pub enum SwapOutcome {
     /// Constant-product family result.
     V2(V2SwapOutcome),
     /// V3 concentrated-liquidity result.
-    V3(ClSwapOutcome),
+    V3(ConcentratedLiquiditySwapOutcome),
     /// V4 concentrated-liquidity result.
-    V4(ClSwapOutcome),
+    V4(ConcentratedLiquiditySwapOutcome),
 }
 
 impl SwapOutcome {
@@ -276,12 +276,12 @@ fn unsigned_to_user_delta(x: U256) -> I256 {
 
 /// Build the rich CL payload from a raw engine outcome.
 #[must_use]
-pub(crate) fn cl_payload(
+pub(crate) fn concentrated_liquidity_payload(
     outcome: &V3SwapOutcome,
     zero_for_one: bool,
     caveats: Caveats,
     fetched_words: Vec<i32>,
-) -> ClSwapOutcome {
+) -> ConcentratedLiquiditySwapOutcome {
     // Per-token moved amounts (absolute): token0/token1 by direction.
     // NOTE: do NOT derive these from `input_consumed` — that field is
     // denominated on the SPECIFIED side (see v3_state.rs:1417), so for an
@@ -292,7 +292,7 @@ pub(crate) fn cl_payload(
     } else {
         (outcome.amount1, outcome.amount0)
     };
-    ClSwapOutcome {
+    ConcentratedLiquiditySwapOutcome {
         consumed: -unsigned_to_user_delta(input_moved_raw),
         delivered: unsigned_to_user_delta(output_moved_raw),
         end_sqrt_price_x96: outcome.sqrt_price_x96,
@@ -482,7 +482,7 @@ enum TransientFamily {
 }
 
 /// One transient (hypothetical) CL target owned by an override sim.
-struct TransientCl {
+struct TransientConcentratedLiquidity {
     family: TransientFamily,
     inner: TransientInner,
 }
@@ -492,7 +492,7 @@ enum TransientInner {
     V4(Box<::degenbot_pools::v4_state::V4PoolState>),
 }
 
-impl TransientCl {
+impl TransientConcentratedLiquidity {
     fn simulate(
         &self,
         zero_for_one: bool,
@@ -528,7 +528,7 @@ impl TransientCl {
 /// `ComputeMerge` adapter over a transient target: identical policy, different
 /// merge destination (this is WHY the policy is generic over its merge target).
 struct OverrideSim<'a> {
-    target: &'a mut TransientCl,
+    target: &'a mut TransientConcentratedLiquidity,
     zero_for_one: bool,
     spec: I256,
     limit: U256,
@@ -641,7 +641,7 @@ pub(crate) fn drive(sim: &mut impl ComputeMerge, block: u64) -> PolicyAttempt {
 /// compute re-resolves the entry each call so a mid-loop fetch-merge is
 /// visible on the next attempt; borrows are sequenced through `&self` /
 /// `&mut self` rather than competing closures.
-pub(crate) struct RegisteredClSim<'a> {
+pub(crate) struct RegisteredConcentratedLiquiditySim<'a> {
     pub state: &'a mut BotState,
     pub pool_id: u64,
     pub zero_for_one: bool,
@@ -655,7 +655,7 @@ pub(crate) struct RegisteredClSim<'a> {
     pub disarm_fetch: bool,
 }
 
-impl ComputeMerge for RegisteredClSim<'_> {
+impl ComputeMerge for RegisteredConcentratedLiquiditySim<'_> {
     fn compute(&self) -> Result<V3SwapOutcome, SimulateSwapError> {
         let Some(entry) = self.state.registry.pools.get(&self.pool_id) else {
             return Err(SimulateSwapError::NotComputable);
@@ -780,7 +780,11 @@ impl BotState {
     /// for one) AND its checked-word set (`from_params` seeds
     /// known words from tick ROWS only — a caller-CHECKED empty word has no
     /// rows yet must never become a fetch target).
-    fn v3_discovery_transient(&self, identity: &V3PoolIdentity, st: &V3PoolState) -> TransientCl {
+    fn v3_discovery_transient(
+        &self,
+        identity: &V3PoolIdentity,
+        st: &V3PoolState,
+    ) -> TransientConcentratedLiquidity {
         let mut v3_transient = V3PoolState::from_params(
             RegisterV3PoolParams {
                 address: identity.address,
@@ -807,7 +811,7 @@ impl BotState {
         v3_transient
             .known_bitmap_words
             .extend(st.known_bitmap_words.iter().copied());
-        TransientCl {
+        TransientConcentratedLiquidity {
             family: TransientFamily::V3(identity.fee, identity.tick_spacing),
             inner: TransientInner::V3(Box::new(v3_transient)),
         }
@@ -815,7 +819,11 @@ impl BotState {
 
     /// V4 twin of [`Self::v3_discovery_transient`] — the same coverage +
     /// checked-word mirroring discipline (see that doc).
-    fn v4_discovery_transient(&self, identity: &V4PoolIdentity, st: &V4PoolState) -> TransientCl {
+    fn v4_discovery_transient(
+        &self,
+        identity: &V4PoolIdentity,
+        st: &V4PoolState,
+    ) -> TransientConcentratedLiquidity {
         let mut v4_transient = V4PoolState::from_params(
             RegisterV4PoolParams {
                 pool_manager: identity.pool_manager,
@@ -838,7 +846,7 @@ impl BotState {
         v4_transient
             .known_bitmap_words
             .extend(st.known_bitmap_words.iter().copied());
-        TransientCl {
+        TransientConcentratedLiquidity {
             family: TransientFamily::V4(identity.pool_key.fee, identity.pool_key.tick_spacing),
             inner: TransientInner::V4(Box::new(v4_transient)),
         }
@@ -861,7 +869,7 @@ impl BotState {
     /// steps past each discovered word and surfaces ALL of a pass missing
     /// words (pair-review condition 5).
     fn drive_missing(
-        target: &mut TransientCl,
+        target: &mut TransientConcentratedLiquidity,
         zero_for_one: bool,
         spec: I256,
         limit: U256,
@@ -930,7 +938,7 @@ impl BotState {
             PoolEntry::V3(p) => {
                 let (identity, state) = (&p.0, &p.1);
                 let mut missing = Vec::new();
-                let mut transient = TransientCl {
+                let mut transient = TransientConcentratedLiquidity {
                     family: TransientFamily::V3(identity.fee, identity.tick_spacing),
                     inner: TransientInner::V3(Box::new(
                         V3PoolState::from_params(
@@ -975,7 +983,7 @@ impl BotState {
             PoolEntry::V4(p) => {
                 let (identity, state) = (&p.0, &p.1);
                 let mut missing = Vec::new();
-                let mut transient = TransientCl {
+                let mut transient = TransientConcentratedLiquidity {
                     family: TransientFamily::V4(
                         identity.pool_key.fee,
                         identity.pool_key.tick_spacing,
@@ -1099,7 +1107,7 @@ impl BotState {
                     slot_layout: identity.slot_layout,
                 };
                 let (_id, st) = V3PoolState::from_params(params, self.registry.journal_depth);
-                TransientCl {
+                TransientConcentratedLiquidity {
                     family: TransientFamily::V3(identity.fee, identity.tick_spacing),
                     inner: TransientInner::V3(Box::new(st)),
                 }
@@ -1122,7 +1130,7 @@ impl BotState {
                     fetcher: None,
                 };
                 let (_id, st) = V4PoolState::from_params(params, self.registry.journal_depth);
-                TransientCl {
+                TransientConcentratedLiquidity {
                     family: TransientFamily::V4(
                         identity.pool_key.fee,
                         identity.pool_key.tick_spacing,
@@ -1272,7 +1280,7 @@ impl BotState {
                 let limit = request
                     .sqrt_price_limit
                     .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
-                let mut sim = RegisteredClSim {
+                let mut sim = RegisteredConcentratedLiquiditySim {
                     state: self,
                     pool_id,
                     zero_for_one: request.zero_for_one,
@@ -1280,7 +1288,7 @@ impl BotState {
                     limit,
                     disarm_fetch,
                 };
-                finish_cl(
+                finish_concentrated_liquidity(
                     &mut sim,
                     block,
                     SwapOutcomeFamily::V3,
@@ -1303,7 +1311,7 @@ impl BotState {
                 let limit = request
                     .sqrt_price_limit
                     .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
-                let mut sim = RegisteredClSim {
+                let mut sim = RegisteredConcentratedLiquiditySim {
                     state: self,
                     pool_id,
                     zero_for_one: request.zero_for_one,
@@ -1311,7 +1319,7 @@ impl BotState {
                     limit,
                     disarm_fetch,
                 };
-                finish_cl(
+                finish_concentrated_liquidity(
                     &mut sim,
                     block,
                     SwapOutcomeFamily::V4,
@@ -1331,7 +1339,7 @@ enum SwapOutcomeFamily {
     V4,
 }
 
-fn finish_cl(
+fn finish_concentrated_liquidity(
     sim: &mut impl ComputeMerge,
     block: u64,
     family: SwapOutcomeFamily,
@@ -1342,7 +1350,12 @@ fn finish_cl(
     match drive(sim, block) {
         PolicyAttempt::Computed(outcome, fetched_words) => {
             let caveats = caveats_for_coverage(coverage).union(extra_caveats);
-            let payload = cl_payload(&outcome, request.zero_for_one, caveats, fetched_words);
+            let payload = concentrated_liquidity_payload(
+                &outcome,
+                request.zero_for_one,
+                caveats,
+                fetched_words,
+            );
             SwapRead::Computed(match family {
                 SwapOutcomeFamily::V3 => SwapOutcome::V3(payload),
                 SwapOutcomeFamily::V4 => SwapOutcome::V4(payload),
@@ -1502,7 +1515,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // CL payload: user-perspective signs from unsigned engine amounts.
     #[test]
-    fn cl_payload_signs_follow_user_perspective() {
+    fn concentrated_liquidity_payload_signs_follow_user_perspective() {
         let outcome = V3SwapOutcome {
             amount0: U256::from(500_u64),
             amount1: U256::from(700_u64),
@@ -1511,7 +1524,8 @@ mod tests {
             tick: -3,
             input_consumed: U256::from(1_234_u64),
         };
-        let payload = cl_payload(&outcome, true, Caveats::SPARSE_COVERAGE, vec![7]);
+        let payload =
+            concentrated_liquidity_payload(&outcome, true, Caveats::SPARSE_COVERAGE, vec![7]);
         // zfo: input side is token0 → consumed tracks amount0 (500).
         assert_eq!(payload.consumed, -I256::try_from(500_u64).unwrap());
         assert_eq!(payload.delivered, I256::try_from(700_u64).unwrap());
@@ -1519,7 +1533,7 @@ mod tests {
         assert_eq!(payload.fetched_words, vec![7]);
         assert!(payload.caveats.contains(Caveats::SPARSE_COVERAGE));
 
-        let ofz = cl_payload(&outcome, false, Caveats::default(), Vec::new());
+        let ofz = concentrated_liquidity_payload(&outcome, false, Caveats::default(), Vec::new());
         assert_eq!(ofz.delivered, I256::try_from(500_u64).unwrap());
     }
 
@@ -1819,7 +1833,7 @@ mod tests {
     /// An override (hypothetical CL) request against a non-CL family is a
     /// typed refusal, not a bare `None` an override miss could produce.
     #[test]
-    fn override_simulation_on_a_non_cl_family_is_typed() {
+    fn override_simulation_on_a_non_concentrated_liquidity_family_is_typed() {
         let mut bot = BotState::new();
         let pid = register_curve_for_swap(&mut bot);
         let over = OverrideSwap {

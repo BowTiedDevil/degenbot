@@ -46,14 +46,14 @@ Hot path: `arb_engine/solve_cycle.rs` resolves each hop; V3/V4 hops call
 `get_cached_tick_ranges(..., max_ranges=15)` (`compute_tick_ranges` in
 `tick_bitmap.rs`) down to an `IntV3TickRangeSequence`
 (`rust/crates/foundation/degenbot-pools/src/int_v3_hop.rs`). The all-CL dispatcher calls
-`int_solve_cl_path` (`rust/crates/engine/degenbot-solvers/src/mobius_v3_int.rs`);
+`int_solve_concentrated_liquidity_path` (`rust/crates/engine/degenbot-solvers/src/mobius_v3_int.rs`);
 mixed V2+CL paths go through `exact_solve_mixed_path_n` /
 `exact_solve_mixed_v2_v3_sequence`. All of these enumerate ending-range
 tuples: `max_candidates = 10` per CL hop, mixed-radix counter, per-tuple
 `exact_mobius_solve` on the *unshifted* ending-range `IntHopState`s, then
 `total_optimal_input = piecewise_optimal + Σ crossing_gross_input`, then a
 ±2 neighbor sweep validated by the piecewise simulator
-(`int_simulate_cl_path_n` / `int_simulate_mixed_path_n`).
+(`int_simulate_concentrated_liquidity_path_n` / `int_simulate_mixed_path_n`).
 
 Three separate caps sit on the same data flow:
 
@@ -61,7 +61,7 @@ Three separate caps sit on the same data flow:
 |---|---|---|---|
 | `gen_ticks` budget (`max_ranges*4+16`) | `compute_tick_ranges` | raw tick walk | silent short walk |
 | `max_ranges = 15` | `get_cached_tick_ranges` | cached boundary list | starvation by zero-net boundary ticks (the fixture) |
-| `max_candidates = 10` | `int_solve_cl_path` + mixed solvers | enumerated piece prefix | argmax piece silently not enumerated |
+| `max_candidates = 10` | `int_solve_concentrated_liquidity_path` + mixed solvers | enumerated piece prefix | argmax piece silently not enumerated |
 
 All three degrade silently. None reports "model truncated"; the solver
 returns a confidently wrong answer (3032343697 WETH vs 1109518347 actual).
@@ -164,9 +164,9 @@ a function whose piece structure is monotone.**
    form or the piece geometry needs the enumeration; the cap exists only
    because the walk that would make it unnecessary was never built.
 
-## 4. Recommended design: `solve_cl_path_active_set`
+## 4. Recommended design: `solve_concentrated_liquidity_path_active_set`
 
-Replace the mixed-radix loop in `int_solve_cl_path`, `int_solve_v3_v3`, and
+Replace the mixed-radix loop in `int_solve_concentrated_liquidity_path`, `int_solve_v3_v3`, and
 `exact_solve_mixed_path_n` / `exact_solve_mixed_v2_v3_sequence` with one
 active-set routine (V2 hops simply have piece-count 1 and no crossing data):
 
@@ -227,7 +227,7 @@ candidate", exactly today's semantics.
 `PXSY47` then unifies the validation objective with the step-faithful
 sequential walker (`v3_simulate_swap`'s `compute_swap_step_v3` loop
 discipline, generalized to an N-hop path), replacing the bespoke piecewise
-objectives (`int_simulate_v3_swap` / `int_simulate_cl_path_n` /
+objectives (`int_simulate_v3_swap` / `int_simulate_concentrated_liquidity_path_n` /
 `int_simulate_mixed_path_n`). This retires a whole dual-maintenance seam:
 today both the piecewise simulator and `compute_crossing` re-derive the
 per-boundary rounding of `computeSwapStep` (the `ON5QMD` parity), in a second
@@ -265,7 +265,7 @@ incremental in `k`).
   `O(log U256)` iterations is too many simulations, and the wei-scale
   staircase perturbs the finite-difference sign near the optimum. Kept as a
   documented fallback safety net inside the iteration cap of
-  `solve_cl_path_active_set`, not as the primary mechanism.
+  `solve_concentrated_liquidity_path_active_set`, not as the primary mechanism.
 - **"Lagrangian/KKT-style" solver.** This is what the active-set walk *is*:
   the piece identity is the active constraint set; complementary slackness is
   exactly the rule "the argmax piece is the one whose unconstrained closed-form
@@ -293,7 +293,7 @@ incremental in `k`).
   current solver has the identical exposure — but `EHSWSX` must carry a
   width comment and a debug-assert mirroring the existing `U512 → U256`
   narrowing asserts.
-- **Partial-fill / exhaustion semantics.** `int_simulate_cl_path_n` has an
+- **Partial-fill / exhaustion semantics.** `int_simulate_concentrated_liquidity_path_n` has an
   "input below crossing_gross_input → path exhausted" branch that returns
   zeros mid-path; the walker handles exhaustion by mirroring the contract's
   price-limit stop. `PXSY47` must preserve the solver-visible distinction
@@ -337,7 +337,7 @@ incremental in `k`).
 
 ## 8. As-built outcome (ergo 7J22EQ, landed)
 
-The combinatorial enumeration was removed from `int_solve_cl_path`,
+The combinatorial enumeration was removed from `int_solve_concentrated_liquidity_path`,
 `int_solve_v3_v3`, `exact_solve_mixed_v2_v3_sequence`, and
 `exact_solve_mixed_path_n`; all four now delegate to
 `solve_active_set_path` in `mobius_v3_int.rs`. `max_candidates` is gone.
@@ -399,7 +399,7 @@ green; clippy `-D warnings` clean.
   `rust/crates/foundation/degenbot-pools/src/tick_bitmap.rs`,
   `rust/crates/foundation/degenbot-pools/src/v3_state.rs`
   (`build_int_v3_sequence`, `v3_simulate_swap`),
-  `rust/crates/foundation/degenbot-math/src/cl/`.
+  `rust/crates/foundation/degenbot-math/src/concentrated_liquidity/`.
 - Prior diagnosis doc: `docs/architecture/sim_v4_swap_step_rounding.md` (removed in
   the stale-docs cleanup `71ec78b2`)
   (the `int_simulate_v3_swap` 2-range approximation finding — `PXSY47`

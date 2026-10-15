@@ -15,7 +15,7 @@
 //! is how layout drift returns (the pancake classification incident — a
 //! fork pool read through canonical Uniswap indices misreads every field).
 //! CL-family mapping slots delegate to [`crate::v3_storage_slots`] /
-//! [`crate::v3_pancakeswap_storage_slots`] through the [`ClSlotLayout`]
+//! [`crate::v3_pancakeswap_storage_slots`] through the [`ConcentratedLiquiditySlotLayout`]
 //! selector.
 // Solidity/EVM identifiers (uint112, slot0, liquidity, uint256, SSTORE,
 // keccak256) are ubiquitous — match the crate's storage-slot modules.
@@ -23,7 +23,7 @@
 use alloy::primitives::{aliases::U112, keccak256, B256, U256};
 
 use crate::v3_storage_slots::{sign_extend_int16, sign_extend_int24};
-use crate::ClSlotLayout;
+use crate::ConcentratedLiquiditySlotLayout;
 
 /// Mask selecting the low 160 bits of a `U256` (the `uint160 sqrtPriceX96`
 /// field width inside CL `slot0`).
@@ -82,15 +82,15 @@ pub fn decode_v2_reserves_word(word: U256) -> V2ReservesParts {
 /// Tracked bits of a CL `slot0` word: `uint160 sqrtPriceX96 | int24 tick`
 /// (low 184 bits). The observation/fee-protocol/unlocked bits are NOT
 /// tracked — packed zero, masked out of comparisons.
-pub const CL_SLOT0_TRACKED_MASK: B256 = low_bits_mask(184);
+pub const CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK: B256 = low_bits_mask(184);
 
 /// Tracked bits of a CL `liquidity` word — the low-128 `uint128`.
-pub const CL_LIQUIDITY_TRACKED_MASK: B256 = low_bits_mask(128);
+pub const CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK: B256 = low_bits_mask(128);
 
 /// Tracked bits of a per-tick `ticks(tick)` slot+0 word — the FULL 256 bits
 /// (`uint128 liquidityGross | int128 liquidityNet`; the engine's `TickInfo`
 /// carries both).
-pub const CL_TICK_WORD_MASK: B256 = low_bits_mask(256);
+pub const CONCENTRATED_LIQUIDITY_TICK_WORD_MASK: B256 = low_bits_mask(256);
 
 /// Pack a CL `slot0` word with untracked bits zeroed:
 /// `uint160 sqrtPriceX96 | int24 tick << 160`. sqrtPriceX96 is masked to
@@ -104,7 +104,7 @@ pub const CL_TICK_WORD_MASK: B256 = low_bits_mask(256);
     clippy::cast_sign_loss,
     reason = "the on-chain int24 IS the low 24 bits of the two's-complement i32 pattern"
 )]
-pub fn cl_slot0_tracked_word(sqrt_price_x96: U256, tick: i32) -> B256 {
+pub fn concentrated_liquidity_slot0_tracked_word(sqrt_price_x96: U256, tick: i32) -> B256 {
     let sqrt_masked = sqrt_price_x96 & MASK_160;
     let tick_u = (tick as u32) & 0x00ff_ffff;
     (sqrt_masked | (U256::from(tick_u) << 160u32))
@@ -114,7 +114,7 @@ pub fn cl_slot0_tracked_word(sqrt_price_x96: U256, tick: i32) -> B256 {
 
 /// Pack a CL `liquidity` word (`uint128`, high half zero on-chain).
 #[must_use]
-pub fn cl_liquidity_tracked_word(liquidity: u128) -> B256 {
+pub fn concentrated_liquidity_liquidity_tracked_word(liquidity: u128) -> B256 {
     U256::from(liquidity).to_be_bytes::<32>().into()
 }
 
@@ -142,14 +142,20 @@ pub fn decode_tick_word(word: U256) -> (u128, i128) {
 /// The `ticks(tick)` mapping slot for a per-layout CL pool: ticks live at
 /// base 5 (Uniswap V3) or base 6 (Pancake V3 fork).
 #[must_use]
-pub fn cl_tick_mapping_slot(layout: ClSlotLayout, tick: i32) -> U256 {
+pub fn concentrated_liquidity_tick_mapping_slot(
+    layout: ConcentratedLiquiditySlotLayout,
+    tick: i32,
+) -> U256 {
     tick_mapping_slot_at_base(tick, U256::from(layout.ticks_mapping_slot()))
 }
 
 /// The `tickBitmap` per-word slot for a per-layout CL pool: base 6
 /// (Uniswap V3) or base 7 (Pancake V3 fork).
 #[must_use]
-pub fn cl_tick_bitmap_word_slot(layout: ClSlotLayout, word_pos: i16) -> U256 {
+pub fn concentrated_liquidity_tick_bitmap_word_slot(
+    layout: ConcentratedLiquiditySlotLayout,
+    word_pos: i16,
+) -> U256 {
     tick_bitmap_word_slot_at_base(word_pos, U256::from(layout.tick_bitmap_mapping_slot()))
 }
 
@@ -180,14 +186,14 @@ pub fn tick_mapping_slot_at_base(tick: i32, base: U256) -> U256 {
 
 /// Recover the tick index whose `ticks(tick)` slot equals `slot` against a
 /// per-layout CL pool's mapping base — the preimage side of
-/// [`cl_tick_mapping_slot`].
+/// [`concentrated_liquidity_tick_mapping_slot`].
 ///
 /// Delegates to [`recover_tick_from_slot_at_base`] with the layout's ticks
 /// mapping base (V3 slot 5; Pancake fork slot 6).
 #[must_use]
-pub fn recover_cl_tick_from_slot(
+pub fn recover_concentrated_liquidity_tick_from_slot(
     slot: U256,
-    layout: ClSlotLayout,
+    layout: ConcentratedLiquiditySlotLayout,
     tick_spacing: i32,
     anchors: &[i32],
     window: i32,

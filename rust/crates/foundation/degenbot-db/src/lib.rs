@@ -80,7 +80,7 @@ pub use connection::DegenbotDb;
 /// (`liquidity_gross: U128`, `liquidity_net: I256`) the liquidity updater
 /// applies against — aliased so it doesn't collide with the snapshot batch-read
 /// `U256` flavor above. This is the field type of `ComputedLiquidityUpdate`.
-pub use degenbot_math::cl::liquidity_mapping::LiquidityAtTick as ApplyLiquidityAtTick;
+pub use degenbot_math::concentrated_liquidity::liquidity_mapping::LiquidityAtTick as ApplyLiquidityAtTick;
 /// The canonical pool-family taxonomy (`degenbot-pathfinding`'s graph
 /// discriminant), re-exported because this crate's schema gate, species
 /// manifest, and row types all project through it: a DB consumer resolves the

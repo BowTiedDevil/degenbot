@@ -58,7 +58,7 @@ impl Family {
 }
 
 /// The EVM storage-layout id a V3 species uses. Mirrors the variants of
-/// `degenbot-pools`'s `ClSlotLayout`; kept as a manifest-local enum so this
+/// `degenbot-pools`'s `ConcentratedLiquiditySlotLayout`; kept as a manifest-local enum so this
 /// crate does not depend on `degenbot-pools`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

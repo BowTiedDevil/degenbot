@@ -57,7 +57,9 @@ use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally};
+use degenbot_solvers::concentrated_liquidity::{
+    simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
+};
 
 /// Sqrt-price limit that lets the walk cross every tick the input can reach
 /// (V4 Pool.swap's `sqrtPriceLimit` = the MIN/MAX bound for the direction).
@@ -1705,8 +1707,8 @@ fn fee1_76f75965_crossing_overprediction_at_4728() {
 /// oracle-vs-collapse split on the full crossing path).
 #[test]
 fn fee1_zfo_true_two_step_floored_equivalence() {
-    use degenbot_math::cl::swap_math::compute_swap_step_v4;
-    use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v4;
+    use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
     let cur = U256::from(79_231_869_042_278_935_382_727_675_145u128);
     let sqrt0 = U256::from(get_sqrt_ratio_at_tick_internal(0).unwrap()); // 2^96
     let lower = U256::from(79_220_240_490_215_316_061_937_756_561u128); // tick -2
@@ -1765,9 +1767,9 @@ fn fee1_zfo_true_two_step_floored_equivalence() {
 /// strictly greater — a self-checking guard that the VAASFM maximum-extraction
 /// choice remains justified if a future topology re-introduces a residual.
 #[test]
-fn cl_hop_clamp_margin_exceeds_worst_solver_over_prediction() {
+fn concentrated_liquidity_hop_clamp_margin_exceeds_worst_solver_over_prediction() {
     /// The VAASFM margin decision (must stay > worst observed over-prediction).
-    /// Keep in sync with `ArbitrageEngine::cl_hop_clamp_margin` in
+    /// Keep in sync with `ArbitrageEngine::concentrated_liquidity_hop_clamp_margin` in
     /// degenbot-bot (solver_dispatch.rs).
     const MARGIN: u64 = 1;
 

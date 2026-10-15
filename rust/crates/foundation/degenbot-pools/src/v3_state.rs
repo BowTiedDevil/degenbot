@@ -21,9 +21,9 @@ use crate::state_history::{
 use crate::tick_bitmap::{compute_tick_ranges, gen_ticks_iter, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::TickInfo;
-use degenbot_math::cl::functions::tick_position;
-use degenbot_math::cl::swap_math::compute_swap_step_v3;
-use degenbot_math::cl::tick_math::{
+use degenbot_math::concentrated_liquidity::functions::tick_position;
+use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
+use degenbot_math::concentrated_liquidity::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
 };
@@ -164,14 +164,14 @@ impl crate::liquidity_event::LiquidityEvent for BufferedV3PoolEvent {
 /// shipped. Slot constants single-source the fork table in
 /// [`crate::v3_pancakeswap_storage_slots`].
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub enum ClSlotLayout {
+pub enum ConcentratedLiquiditySlotLayout {
     /// Canonical Uniswap V3 — one-word slot0, liquidity@4, ticks@5.
     UniswapV3,
     /// `PancakeSwap` V3 fork — two-word slot0, liquidity@5, ticks@6.
     PancakeV3,
 }
 
-impl ClSlotLayout {
+impl ConcentratedLiquiditySlotLayout {
     /// The `liquidity` (uint128) storage slot number.
     #[must_use]
     pub const fn liquidity_slot(self) -> u64 {
@@ -212,7 +212,7 @@ impl ClSlotLayout {
 /// set `slot_layout` from the fork table — or through
 /// `degenbot_substrate::planning::ExplicitPoolState::V3`, whose
 /// `slot_layout` field is mandatory. A fixture defaulting to
-/// `ClSlotLayout::UniswapV3` must never reach a real fork pool.
+/// `ConcentratedLiquiditySlotLayout::UniswapV3` must never reach a real fork pool.
 #[derive(Clone, Debug)]
 pub struct RegisterV3PoolParams {
     pub address: Address,
@@ -261,7 +261,7 @@ pub struct RegisterV3PoolParams {
     /// struct-update default is for fixtures only — production
     /// registrations set it from the fork table
     /// (`V3_VARIANTS` in `degenbot-bot::connector_index`).
-    pub slot_layout: ClSlotLayout,
+    pub slot_layout: ConcentratedLiquiditySlotLayout,
 }
 
 impl Default for RegisterV3PoolParams {
@@ -287,7 +287,7 @@ impl Default for RegisterV3PoolParams {
             fetcher: None,
             deployer: Address::ZERO,
             init_hash: B256::ZERO,
-            slot_layout: ClSlotLayout::UniswapV3,
+            slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
         }
     }
 }
@@ -389,7 +389,7 @@ pub struct V3PoolIdentity {
     /// The pool contract's storage-slot layout family (VERIFY2 T4) — drives
     /// every slot-index consumer (divergence probe, sim-anchor projection,
     /// any direct slot serve). Immutable per pool.
-    pub slot_layout: ClSlotLayout,
+    pub slot_layout: ConcentratedLiquiditySlotLayout,
 }
 
 /// V3 concentrated-liquidity pool state owned by [`crate::BotState`].
@@ -967,7 +967,7 @@ impl V3PoolState {
                     .iter()
                     .map(|&t| {
                         U256::from(
-                            degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(t)
+                            degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal(t)
                                 .unwrap_or(alloy::primitives::U160::ZERO),
                         )
                     })
@@ -2376,7 +2376,7 @@ mod tests {
                 factory: Address::ZERO,
                 deployer: Address::ZERO,
                 init_hash: alloy::primitives::B256::ZERO,
-                slot_layout: ClSlotLayout::UniswapV3,
+                slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
             },
             V3PoolState {
                 sqrt_price_x96: sp_0,

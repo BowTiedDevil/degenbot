@@ -1,7 +1,7 @@
 # V2-as-degenerate-CL swap-step parity probe
 
-Probe harness: `rust/crates/engine/degenbot-solvers/examples/v2_cl_parity_probe.rs`
-Run: `cargo run -p degenbot-solvers --example v2_cl_parity_probe`
+Probe harness: `rust/crates/engine/degenbot-solvers/examples/v2_concentrated_liquidity_parity_probe.rs`
+Run: `cargo run -p degenbot-solvers --example v2_concentrated_liquidity_parity_probe`
 
 This probe answers the decision question in ADR-060 ("Collapse the V2 walk
 dispatch — representation vs interface"): can a V2 constant-product hop be
@@ -12,7 +12,7 @@ concern.
 
 The probe runs the production code paths unchanged: the baseline is
 `degenbot_math::v2::IntHopState::swap`, the candidate is
-`degenbot_solvers::cl::simulate_v3_range_swap` over the projected range. No
+`degenbot_solvers::concentrated_liquidity::simulate_v3_range_swap` over the projected range. No
 special rounding, no configuration switch.
 
 ## Mapping construction
@@ -96,7 +96,7 @@ range never reached, both simulators consume the full `x`. Divergence is
 therefore entirely in `output`. It is **not one-sided overall**: zero-for-one is
 strictly non-positive, one-for-zero can overshoot.
 
-Representative real divergences (all `consumed_v2 == consumed_cl`):
+Representative real divergences (all `consumed_v2 == consumed_concentrated_liquidity`):
 
 ```
 x=1            R_in=7456337076646   R_out=3886685670626625517819   V2=519695605   CL=0

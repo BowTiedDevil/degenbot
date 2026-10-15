@@ -11,7 +11,7 @@
 //!
 //! # Modules
 //!
-//! - [`errors`] — centralized error types (`TickMathError`, `ClMathError`,
+//! - [`errors`] — centralized error types (`TickMathError`, `ConcentratedLiquidityMathError`,
 //!   `AbiDecodeError`, `AddressError`, `ProviderError`, `ContractError`) with
 //!   inter-error conversions. The `From<Error> for PyErr` impls are gated behind
 //!   the `pyo3` feature.

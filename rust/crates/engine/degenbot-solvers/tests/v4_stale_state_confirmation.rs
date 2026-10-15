@@ -51,7 +51,9 @@ use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally};
+use degenbot_solvers::concentrated_liquidity::{
+    simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
+};
 
 /// The on-chain actual + the pre-fix lpFee-only prediction for path=97.
 const ONCHAIN_ACTUAL_OUT: u128 = 25_885;
@@ -121,7 +123,7 @@ fn sim_out_with_protocol_fee(state: &V4PoolState, amount_in: U256) -> U256 {
         TICK_SPACING,
         false, // ofz: WETH→USDC, price goes up
         amount_specified,
-        U256::from(degenbot_math::cl::tick_math::MAX_SQRT_RATIO),
+        U256::from(degenbot_math::concentrated_liquidity::tick_math::MAX_SQRT_RATIO),
     )
     .expect("v4_simulate_swap succeeds on the on-chain state");
     outcome.amount0 // ofz exact-in: amount0 is the output (caller receives token0=USDC)

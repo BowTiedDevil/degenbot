@@ -1,16 +1,16 @@
 use super::*;
 
-/// Staged-router contract (`cl_route)`: `route_v3_event` is THE decision
+/// Staged-router contract (`concentrated_liquidity_route)`: `route_v3_event` is THE decision
 /// point — a live-phase tick mutation for an unregistered pool must
 /// stage into the pump buffer (not drop), and the buffered event lands
 /// in `v3_buffer` keyed by address for the registration drain+pin seam.
 #[test]
 fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
-    use crate::cl_route::{ApplyOutcome, BufferKind};
+    use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
     let mut core = BotState::new();
     let addr = Address::from([0x66; 20]);
     let outcome = core.route_v3_event(
-        crate::cl_route::Phase::Live,
+        crate::concentrated_liquidity_route::Phase::Live,
         addr,
         BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
             tick_lower: -100,
@@ -26,7 +26,7 @@ fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
     // event horizon advances at ARRIVAL time (parity with V4) so the
     // pin's stamp-provenance verdict sees the true witnessed span after
     // the staged drain, not just ApplyDirect-routed events.
-    assert_eq!(core.cl().v3_event_horizon(&addr), 10);
+    assert_eq!(core.concentrated_liquidity().v3_event_horizon(&addr), 10);
 }
 
 /// the event horizon tracks the MAX block across multiple buffered
@@ -45,11 +45,26 @@ fn v3_event_horizon_tracks_max_block_across_buffered_events() {
             block_number: block,
         })
     };
-    core.route_v3_event(crate::cl_route::Phase::Live, addr, mk(10, 1), &[]);
-    core.route_v3_event(crate::cl_route::Phase::Live, addr, mk(50, 2), &[]);
-    core.route_v3_event(crate::cl_route::Phase::Live, addr, mk(30, 3), &[]);
+    core.route_v3_event(
+        crate::concentrated_liquidity_route::Phase::Live,
+        addr,
+        mk(10, 1),
+        &[],
+    );
+    core.route_v3_event(
+        crate::concentrated_liquidity_route::Phase::Live,
+        addr,
+        mk(50, 2),
+        &[],
+    );
+    core.route_v3_event(
+        crate::concentrated_liquidity_route::Phase::Live,
+        addr,
+        mk(30, 3),
+        &[],
+    );
     assert_eq!(core.buffered_v3_event_count(&addr), 3);
-    assert_eq!(core.cl().v3_event_horizon(&addr), 50);
+    assert_eq!(core.concentrated_liquidity().v3_event_horizon(&addr), 50);
 }
 
 #[test]
@@ -555,7 +570,8 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
     // live pump marks `block_b` complete at its ADR-008 D1 tombstone (the
     // first log of block_b+1); mirror that here so the drain takes the
     // buffered Mint instead of leaving it pinned behind the gate.
-    core.cl_mut().advance_pump_complete_cutoff(block_b);
+    core.concentrated_liquidity_mut()
+        .advance_pump_complete_cutoff(block_b);
     core.apply_pump_buffer_v3(&pool_addr);
 
     {

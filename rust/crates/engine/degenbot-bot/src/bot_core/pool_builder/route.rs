@@ -34,7 +34,7 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::tick_fetch::TickWordFetcher;
-use degenbot_pools::v3_state::ClSlotLayout;
+use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
 use super::choreography;
@@ -111,7 +111,7 @@ pub struct V3RouteInputs<'a> {
     /// Explicit CL slot-layout override (a non-JSON fork deployment the
     /// caller resolved from the DB descriptor); `None` = the builder's
     /// deployment-table resolution wins.
-    pub slot_layout: Option<ClSlotLayout>,
+    pub slot_layout: Option<ConcentratedLiquiditySlotLayout>,
 }
 
 /// The typed refusal of one construction attempt.

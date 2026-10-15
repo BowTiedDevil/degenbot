@@ -13,8 +13,8 @@
 
 pub mod apply_telemetry;
 pub mod balance_vector_orchestration;
-pub mod cl_orchestration;
-pub mod cl_route;
+pub mod concentrated_liquidity_orchestration;
+pub mod concentrated_liquidity_route;
 pub mod connector_index;
 pub mod divergence_probe;
 pub mod driver_spawn;
@@ -71,7 +71,7 @@ pub use ::degenbot_pools::v2_state::{
 };
 pub use ::degenbot_pools::v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
-    ClSlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
+    ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
     RegistrationLifecycle, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
     V3SwapUpdate,
 };
@@ -88,7 +88,9 @@ pub use ::degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 pub use ::degenbot_ingestion::RELEVANT_TOPICS;
 pub use ::degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 
-pub use cl_orchestration::{ClOrchestration, InstallWordOutcome, RegisteredV4, StagedWordFetch};
+pub use concentrated_liquidity_orchestration::{
+    ConcentratedLiquidityOrchestration, InstallWordOutcome, RegisteredV4, StagedWordFetch,
+};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use epoch::{BlockContext, Epoch, StaleEpoch};
 pub use epoch_delta::EpochDelta;
@@ -107,7 +109,7 @@ mod tests;
 /// The shared registry core - the family-agnostic field set every structural
 /// family reads: the pool tables, the token registry, the id counter, the
 /// reorg journal depth, and the ADR-040 quarantine set. `BotState` composes
-/// this core alongside the family capabilities ([`ClOrchestration`]); the
+/// this core alongside the family capabilities ([`ConcentratedLiquidityOrchestration`]); the
 /// registry-side `impl BotState` orchestration (swap simulation, balance
 /// vectors, reserve pairs) reads it directly.
 struct RegistryCore {
@@ -148,7 +150,7 @@ pub struct BotState {
     /// dual liquidity buffers, `v4_pool_ids`, the state-view registry, the
     /// registration gate, the snapshot seed block, the pump delivery
     /// cutoff, and the per-pool event horizons.
-    cl: ClOrchestration,
+    concentrated_liquidity: ConcentratedLiquidityOrchestration,
 }
 
 /// Why [`BotState::encode_swap`] refused a call.
@@ -185,7 +187,7 @@ pub enum EncodeSwapError {
 /// registered non-CL pool has no CL state to mutate. The typed refusal keeps
 /// the family dispatch from silently routing such a pool into the V3 path.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-pub enum ClApplyError {
+pub enum ConcentratedLiquidityApplyError {
     /// The pool id is not registered.
     #[error("pool {pool_id} is not registered")]
     NotRegistered {
@@ -220,10 +222,10 @@ const fn entry_family(entry: &PoolEntry) -> &'static str {
 
 /// Concentrated-liquidity dispatch bucket for a registered pool, computed as
 /// a value so the caller's lookup borrow ends before it mutates state.
-enum ClKind {
+enum ConcentratedLiquidityKind {
     V3,
     V4,
-    NonCl(&'static str),
+    NonConcentratedLiquidity(&'static str),
     Missing,
 }
 
@@ -497,7 +499,7 @@ impl BotState {
                 journal_depth,
                 quarantined_pools: hashbrown::HashSet::new(),
             },
-            cl: ClOrchestration::new(),
+            concentrated_liquidity: ConcentratedLiquidityOrchestration::new(),
         }
     }
 
@@ -657,17 +659,17 @@ impl BotState {
                     return false;
                 };
                 self.registry.pools.remove(&id);
-                self.cl.discard_v3_buffered(&address);
+                self.concentrated_liquidity.discard_v3_buffered(&address);
                 true
             }
             Some(pid) => {
                 // V4 path: (pool_manager, pool_id)-keyed.
                 let key = (address, pid);
-                let Some(id) = self.cl.remove_v4_registration(&key) else {
+                let Some(id) = self.concentrated_liquidity.remove_v4_registration(&key) else {
                     return false;
                 };
                 self.registry.pools.remove(&id);
-                self.cl.discard_v4_buffered(&key);
+                self.concentrated_liquidity.discard_v4_buffered(&key);
                 true
             }
         }
@@ -1002,48 +1004,52 @@ impl BotState {
     /// `apply_swap` genesis, which would backward-panic `update_block` (price
     /// seeded at HEAD past the DB map block) and falsely advance
     /// `tick_data_block`. A non-CL family has no CL journal to seed and is
-    /// refused with [`ClApplyError::UnsupportedFamily`].
+    /// refused with [`ConcentratedLiquidityApplyError::UnsupportedFamily`].
     ///
     /// # Errors
     ///
-    /// [`ClApplyError::NotRegistered`] for an unknown pool id, or
-    /// [`ClApplyError::UnsupportedFamily`] for a registered non-CL family.
+    /// [`ConcentratedLiquidityApplyError::NotRegistered`] for an unknown pool id, or
+    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`] for a registered non-CL family.
     pub fn seed_genesis_by_pool_id(
         &mut self,
         pool_id: u64,
         block: u64,
-    ) -> Result<u64, ClApplyError> {
-        match self.cl_kind(pool_id) {
-            ClKind::V3 => {
+    ) -> Result<u64, ConcentratedLiquidityApplyError> {
+        match self.concentrated_liquidity_kind(pool_id) {
+            ConcentratedLiquidityKind::V3 => {
                 let Some(PoolEntry::V3(p)) = self.registry.pools.get_mut(&pool_id) else {
-                    return Err(ClApplyError::NotRegistered { pool_id });
+                    return Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id });
                 };
                 p.1.seed_genesis(block);
                 Ok(pool_id)
             }
-            ClKind::V4 => {
+            ConcentratedLiquidityKind::V4 => {
                 let Some(PoolEntry::V4(p)) = self.registry.pools.get_mut(&pool_id) else {
-                    return Err(ClApplyError::NotRegistered { pool_id });
+                    return Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id });
                 };
                 p.1.seed_genesis(block);
                 Ok(pool_id)
             }
-            ClKind::Missing => Err(ClApplyError::NotRegistered { pool_id }),
-            ClKind::NonCl(family) => Err(ClApplyError::UnsupportedFamily {
-                pool_id,
-                family,
-                op: "genesis seed",
-            }),
+            ConcentratedLiquidityKind::Missing => {
+                Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id })
+            }
+            ConcentratedLiquidityKind::NonConcentratedLiquidity(family) => {
+                Err(ConcentratedLiquidityApplyError::UnsupportedFamily {
+                    pool_id,
+                    family,
+                    op: "genesis seed",
+                })
+            }
         }
     }
 
-    /// The CL dispatch bucket for `pool_id` — see [`ClKind`].
-    fn cl_kind(&self, pool_id: u64) -> ClKind {
+    /// The CL dispatch bucket for `pool_id` — see [`ConcentratedLiquidityKind`].
+    fn concentrated_liquidity_kind(&self, pool_id: u64) -> ConcentratedLiquidityKind {
         match self.registry.pools.get(&pool_id) {
-            Some(PoolEntry::V3(..)) => ClKind::V3,
-            Some(PoolEntry::V4(..)) => ClKind::V4,
-            Some(entry) => ClKind::NonCl(entry_family(entry)),
-            None => ClKind::Missing,
+            Some(PoolEntry::V3(..)) => ConcentratedLiquidityKind::V3,
+            Some(PoolEntry::V4(..)) => ConcentratedLiquidityKind::V4,
+            Some(entry) => ConcentratedLiquidityKind::NonConcentratedLiquidity(entry_family(entry)),
+            None => ConcentratedLiquidityKind::Missing,
         }
     }
 
@@ -1051,13 +1057,13 @@ impl BotState {
     /// `PyLiquidityPool.apply_liquidity_update` calls — routes V3 to
     /// `apply_v3_liquidity_update_by_pool_id` and V4 to
     /// `apply_v4_liquidity_update_by_pool_id`. A non-CL family is refused
-    /// with [`ClApplyError::UnsupportedFamily`] instead of falling into the
+    /// with [`ConcentratedLiquidityApplyError::UnsupportedFamily`] instead of falling into the
     /// V3 path.
     ///
     /// # Errors
     ///
-    /// [`ClApplyError::NotRegistered`] for an unknown pool id, or
-    /// [`ClApplyError::UnsupportedFamily`] for a registered non-CL family.
+    /// [`ConcentratedLiquidityApplyError::NotRegistered`] for an unknown pool id, or
+    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`] for a registered non-CL family.
     pub fn apply_liquidity_update_by_pool_id(
         &mut self,
         pool_id: u64,
@@ -1065,9 +1071,9 @@ impl BotState {
         tick_upper: i32,
         liquidity_delta: i128,
         block_number: u64,
-    ) -> Result<u64, ClApplyError> {
-        match self.cl_kind(pool_id) {
-            ClKind::V3 => self
+    ) -> Result<u64, ConcentratedLiquidityApplyError> {
+        match self.concentrated_liquidity_kind(pool_id) {
+            ConcentratedLiquidityKind::V3 => self
                 .apply_v3_liquidity_update_by_pool_id(
                     pool_id,
                     tick_lower,
@@ -1075,8 +1081,8 @@ impl BotState {
                     liquidity_delta,
                     block_number,
                 )
-                .ok_or(ClApplyError::NotRegistered { pool_id }),
-            ClKind::V4 => self
+                .ok_or(ConcentratedLiquidityApplyError::NotRegistered { pool_id }),
+            ConcentratedLiquidityKind::V4 => self
                 .apply_v4_liquidity_update_by_pool_id(
                     pool_id,
                     tick_lower,
@@ -1084,13 +1090,17 @@ impl BotState {
                     liquidity_delta,
                     block_number,
                 )
-                .ok_or(ClApplyError::NotRegistered { pool_id }),
-            ClKind::Missing => Err(ClApplyError::NotRegistered { pool_id }),
-            ClKind::NonCl(family) => Err(ClApplyError::UnsupportedFamily {
-                pool_id,
-                family,
-                op: "liquidity update",
-            }),
+                .ok_or(ConcentratedLiquidityApplyError::NotRegistered { pool_id }),
+            ConcentratedLiquidityKind::Missing => {
+                Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id })
+            }
+            ConcentratedLiquidityKind::NonConcentratedLiquidity(family) => {
+                Err(ConcentratedLiquidityApplyError::UnsupportedFamily {
+                    pool_id,
+                    family,
+                    op: "liquidity update",
+                })
+            }
         }
     }
 
@@ -1138,10 +1148,10 @@ impl BotState {
             let _ = event.apply_backfill(self);
         }
         if v3_touched {
-            self.cl.expire_v3_buffered(chunk_end);
+            self.concentrated_liquidity.expire_v3_buffered(chunk_end);
         }
         if v4_touched {
-            self.cl.expire_v4_buffered(chunk_end);
+            self.concentrated_liquidity.expire_v4_buffered(chunk_end);
         }
     }
 

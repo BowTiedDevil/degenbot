@@ -2012,14 +2012,18 @@ mod tests {
         clippy::too_many_lines,
         reason = "measurement harness: stdout is the deliverable"
     )]
-    fn exact_compose_tightens_or_equals_on_captured_cl_corpora() {
+    fn exact_compose_tightens_or_equals_on_captured_concentrated_liquidity_corpora() {
         let corpora: [(&str, &str, usize); 2] = [
             (
-                "heavy_cl_solve_captures",
-                "heavy_cl_solve_captures.jsonl",
+                "heavy_concentrated_liquidity_solve_captures",
+                "heavy_concentrated_liquidity_solve_captures.jsonl",
                 200,
             ),
-            ("synth_giant_cl", "synth_giant_cl.jsonl", 300),
+            (
+                "synth_giant_concentrated_liquidity",
+                "synth_giant_concentrated_liquidity.jsonl",
+                300,
+            ),
         ];
         let cfg = SolveRuntimeConfig::default();
         let cap = cfg.sampled_compose_lines.max(1);
@@ -2051,8 +2055,10 @@ mod tests {
                     .map(parse_hop_json)
                     .collect::<Option<Vec<_>>>()
                     .unwrap();
-                let views: Vec<Option<HopMath<'_>>> =
-                    seqs.iter().map(|s| Some(HopMath::cl_derived(s))).collect();
+                let views: Vec<Option<HopMath<'_>>> = seqs
+                    .iter()
+                    .map(|s| Some(HopMath::concentrated_liquidity_derived(s)))
+                    .collect();
                 let mut domain = U256::ZERO;
                 let mut exact = vec![Line::IDENTITY];
                 let mut sampled = vec![Line::IDENTITY];
@@ -2182,7 +2188,7 @@ mod tests {
     #[expect(clippy::print_stdout, clippy::unwrap_used)]
     fn exact_compose_is_pointwise_exact_and_additive_on_fat_chains() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/synth_giant_cl.jsonl");
+            .join("tests/fixtures/synth_giant_concentrated_liquidity.jsonl");
         let content = crate::capture_fixture::read_fixture(&fixture);
         let cfg = SolveRuntimeConfig::default();
         let cap = cfg.sampled_compose_lines.max(1);
@@ -2200,8 +2206,10 @@ mod tests {
                 .map(parse_hop_json)
                 .collect::<Option<Vec<_>>>()
                 .unwrap();
-            let views: Vec<Option<HopMath<'_>>> =
-                seqs.iter().map(|s| Some(HopMath::cl_derived(s))).collect();
+            let views: Vec<Option<HopMath<'_>>> = seqs
+                .iter()
+                .map(|s| Some(HopMath::concentrated_liquidity_derived(s)))
+                .collect();
             let mut domain = U256::ZERO;
             let mut exact = vec![Line::IDENTITY];
             let mut huge = vec![Line::IDENTITY];

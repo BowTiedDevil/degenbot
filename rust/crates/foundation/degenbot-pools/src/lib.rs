@@ -102,7 +102,7 @@ pub use v3_pancakeswap_storage_slots::{
 };
 /// Re-export the V3 storage-slot encoders at the crate root so the Tier-3b
 /// seeding layer + standalone consumers reach them without a long path.
-pub use v3_state::{ClSlotLayout, V3PoolState};
+pub use v3_state::{ConcentratedLiquiditySlotLayout, V3PoolState};
 pub use v3_storage_slots::{
     compute_v3_tick_bitmap_word, compute_v3_tick_bitmap_word_from_raw, decode_v3_slot0,
     encode_v3_liquidity_slot, encode_v3_slot0, encode_v3_slot0_fresh, encode_v3_tick_info_slot,

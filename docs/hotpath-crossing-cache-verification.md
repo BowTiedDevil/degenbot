@@ -49,8 +49,8 @@ The cache-lab sweep (Z5NOPD, docs/cache-lab-report.md) named S1_fused_epoch the
 winner; KGXFT7 wired the promotion in behind the default-on cutover gate
 `DEGENBOT_CL_PROJECTION_CACHE` (`0`/off/false disables; resolved once at
 engine construction). The parity gates
-`memo_off_all_cl_solve_is_byte_exact_v3_v4` and
-`memo_off_mixed_v2_cl_solve_is_byte_exact` prove byte-exact solver intake
+`memo_off_all_concentrated_liquidity_solve_is_byte_exact_v3_v4` and
+`memo_off_mixed_v2_concentrated_liquidity_solve_is_byte_exact` prove byte-exact solver intake
 for V3+V4 all-CL and V2+CL mixed paths with the memo on (cache hits) or off
 (fresh builds).
 

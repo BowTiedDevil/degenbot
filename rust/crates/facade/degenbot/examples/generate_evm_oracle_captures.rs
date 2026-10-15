@@ -211,7 +211,7 @@ fn scenarios() -> Vec<Scenario> {
         // crossing in chunk 2 — chunk 2's read pass + marker logic must
         // survive on chunk 1's committed map.
         Scenario {
-            name: "w2_cl_cross_chunk_flip_flip_swap",
+            name: "w2_concentrated_liquidity_cross_chunk_flip_flip_swap",
             pool: Some((500, 10)),
             frames: vec![
                 Frame::Mint {

@@ -4,7 +4,7 @@
 //! piece hop with deep middle liquidity; gate-heavy paths 10760/15012/26030:
 //! fat multi-hundred-to-low-thousands tick ranges feeding the envelope).
 //! Emits TWO files matching the offline harness schemas:
-//!   1. `cl_solve_replay` format:  {"block":..,"golden":null,"hops":[[range,..],..]}
+//!   1. `concentrated_liquidity_solve_replay` format:  {"block":..,"golden":null,"hops":[[range,..],..]}
 //!   2. `mixed_solve_replay` / `gate_bench` format: {"`path_id":..,"block"`:..,
 //!      "`n_hops":3,"hop_order"`:[false,..],"hops":[{"kind":"CL","ranges":[...]},..]}
 //!
@@ -17,7 +17,10 @@ use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use serde_json::{json, Value};
 
 fn sp_at(tick: i32) -> U256 {
-    U256::from(degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(tick).unwrap())
+    U256::from(
+        degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal(tick)
+            .unwrap(),
+    )
 }
 
 fn multi_range(
@@ -58,7 +61,7 @@ fn multi_range(
     IntV3TickRangeSequence::new(ranges).unwrap()
 }
 
-fn cl_json(seq: &IntV3TickRangeSequence) -> Value {
+fn concentrated_liquidity_json(seq: &IntV3TickRangeSequence) -> Value {
     Value::Array(
         seq.ranges
             .iter()
@@ -103,28 +106,28 @@ fn main() {
     let g2_hop2 = multi_range(-500, 3, false, &g_range(3_000, 2_000_000_000_000));
     let g2_hop3 = multi_range(0, 3, true, &g_range(1_500, 3_000_000_000_000));
 
-    let w_cl: Value = json!({
+    let w_concentrated_liquidity: Value = json!({
         "block": 0u64,
         "golden": Value::Null,
-        "hops": [cl_json(&w_hop1), cl_json(&w_hop2), cl_json(&w_hop3)]
+        "hops": [concentrated_liquidity_json(&w_hop1), concentrated_liquidity_json(&w_hop2), concentrated_liquidity_json(&w_hop3)]
     });
-    let g_cl: Value = json!({
+    let g_concentrated_liquidity: Value = json!({
         "block": 1u64,
         "golden": Value::Null,
-        "hops": [cl_json(&g_hop1), cl_json(&g_hop2), cl_json(&g_hop3)]
+        "hops": [concentrated_liquidity_json(&g_hop1), concentrated_liquidity_json(&g_hop2), concentrated_liquidity_json(&g_hop3)]
     });
-    let g2_cl: Value = json!({
+    let g2_concentrated_liquidity: Value = json!({
         "block": 2u64,
         "golden": Value::Null,
-        "hops": [cl_json(&g2_hop1), cl_json(&g2_hop2), cl_json(&g2_hop3)]
+        "hops": [concentrated_liquidity_json(&g2_hop1), concentrated_liquidity_json(&g2_hop2), concentrated_liquidity_json(&g2_hop3)]
     });
-    let cl_heavy = base.join("synth_giant_cl.jsonl");
+    let concentrated_liquidity_heavy = base.join("synth_giant_concentrated_liquidity.jsonl");
     std::fs::write(
-        &cl_heavy,
+        &concentrated_liquidity_heavy,
         format!(
-            "{w_cl}
-{g_cl}
-{g2_cl}
+            "{w_concentrated_liquidity}
+{g_concentrated_liquidity}
+{g2_concentrated_liquidity}
 "
         ),
     )
@@ -134,7 +137,7 @@ fn main() {
     let mix = |pid: u64, block: u64, hops: [&IntV3TickRangeSequence; 3]| -> Value {
         let hop_objs: Vec<Value> = hops
             .iter()
-            .map(|s| json!({ "kind": "CL", "ranges": cl_json(s) }))
+            .map(|s| json!({ "kind": "CL", "ranges": concentrated_liquidity_json(s) }))
             .collect();
         json!({
             "path_id": pid,
@@ -155,5 +158,9 @@ fn main() {
     );
     let mixed_heavy = base.join("synth_giant_mixed.jsonl");
     std::fs::write(&mixed_heavy, mm).unwrap();
-    println!("wrote {} and {}", cl_heavy.display(), mixed_heavy.display());
+    println!(
+        "wrote {} and {}",
+        concentrated_liquidity_heavy.display(),
+        mixed_heavy.display()
+    );
 }

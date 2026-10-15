@@ -1,6 +1,6 @@
 # Solve-entry unification: the unify-or-split decision and its landing
 
-The decision record for the two solve entries (`solve_cl_piecewise` intake vs
+The decision record for the two solve entries (`solve_concentrated_liquidity_piecewise` intake vs
 `solve_piecewise`, the one solve body), its bench data, and the landing notes.
 Split out of `walkmemo-cross-block-reuse-readout.md` (which owns the WalkMemo
 retention questions) so each document keeps one concern; the walkmemo
@@ -27,8 +27,8 @@ alternating order (median/p95 per path, 25–49 reps):
 
 - **Arm "today"** — the production branch route in `mixed::families::cl`: the
   prepared hops cloned from the resolved path (three `Arc` bumps per hop)
-  into `solve_cl_piecewise`.
-- **Arm "unified"** — one borrowed `MixedHopView::Cl` per position into
+  into `solve_concentrated_liquidity_piecewise`.
+- **Arm "unified"** — one borrowed `MixedHopView::ConcentratedLiquidity` per position into
   `solve_piecewise`, the route unification would take.
 
 Parity gate: both arms must return byte-equal
@@ -41,26 +41,26 @@ cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers \
   --example entry_ab_readout [-- <capture.jsonl>]
 DR_AB_ITERS=25|49 ...   DR_AB_MEMO=1 ...   # the active-memo stance
 
-# functions-timing over the cl_solve.* labels:
+# functions-timing over the concentrated_liquidity_solve.* labels:
 HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH=hp.json \
 HOTPATH_REPORT=functions-timing,threads \
 cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers \
   --features hotpath --example entry_ab_readout
 ```
 
-### Input 1 — telemetry functions-timing over the `cl_solve.*` labels
+### Input 1 — telemetry functions-timing over the `concentrated_liquidity_solve.*` labels
 
 Instrumented run (`--features hotpath`, 156 paths x 5 reps; `hp.json` is a
 runtime artifact outside the repo):
 
 | label | calls | avg | p95 | total | share |
 |---|---|---|---|---|---|
-| `cl_solve.int_solve_cl_path` | 781 | 157.53 µs | 350.46 µs | 123.04 ms | 17.56% |
-| `cl_solve.exact_solve_mixed_path_n` | 781 | 157.74 µs | 353.28 µs | 123.19 ms | 17.58% |
-| `cl_solve.active_set` (shared walk) | 1,561 | 156.76 µs | 349.69 µs | 244.70 ms | 34.92% |
-| `cl_solve.build_word_profiles` | 313 | 275.12 µs | 548.35 µs | 86.11 ms | 12.29% |
-| `cl_solve.build_crossing_table` | 313 | 212.90 µs | 416.25 µs | 66.64 ms | 9.51% |
-| `cl_solve.cl_walk_hop` | 3,121 | 397 ns | 460 ns | 1.24 ms | 0.18% |
+| `concentrated_liquidity_solve.int_solve_concentrated_liquidity_path` | 781 | 157.53 µs | 350.46 µs | 123.04 ms | 17.56% |
+| `concentrated_liquidity_solve.exact_solve_mixed_path_n` | 781 | 157.74 µs | 353.28 µs | 123.19 ms | 17.58% |
+| `concentrated_liquidity_solve.active_set` (shared walk) | 1,561 | 156.76 µs | 349.69 µs | 244.70 ms | 34.92% |
+| `concentrated_liquidity_solve.build_word_profiles` | 313 | 275.12 µs | 548.35 µs | 86.11 ms | 12.29% |
+| `concentrated_liquidity_solve.build_crossing_table` | 313 | 212.90 µs | 416.25 µs | 66.64 ms | 9.51% |
+| `concentrated_liquidity_solve.concentrated_liquidity_walk_hop` | 3,121 | 397 ns | 460 ns | 1.24 ms | 0.18% |
 
 Identical call counts, **0.13% per-call difference** on identical
 workloads. The walk itself (`active_set`) dominates both entry labels'
@@ -71,13 +71,13 @@ inclusive time — the entries are thin intake/fold wrappers over the same
 
 | corpus (capture) | memo stance | paths | parity | today (µs) | unified (µs) | unified/today |
 |---|---|---|---|---|---|---|
-| `heavy_cl_solve_captures` | off | 156 | 0 div | 614,993 | 618,331 | 1.0054x |
-| `heavy_cl_solve_captures` | on | 156 | 0 div | 45,708 | 45,507 | 0.9956x |
+| `heavy_concentrated_liquidity_solve_captures` | off | 156 | 0 div | 614,993 | 618,331 | 1.0054x |
+| `heavy_concentrated_liquidity_solve_captures` | on | 156 | 0 div | 45,708 | 45,507 | 0.9956x |
 | `live_capture_loop13` | off | 104 | 0 div | 9,844,006 | 9,839,108 | 0.9995x |
 | `live_capture_loop17` | off | 217 | 0 div | 23,525,079 | 23,366,284 | 0.9932x |
 
 Stability runs across the session (same harness): 1.0020x / 1.0065x
-(`heavy_cl`, off, 25/49 reps), 0.9970x (`heavy_cl`, on, 49 reps), 1.0020x
+(`heavy_concentrated_liquidity`, off, 25/49 reps), 0.9970x (`heavy_concentrated_liquidity`, on, 49 reps), 1.0020x
 under the instrumented build. Every measurement sits in a **±0.7% band with
 no systematic direction**; 477 captured paths x 25–49 reps x 2 arms, **0
 parity divergences**, `sims` columns equal. The memo-active stance collapses
@@ -95,7 +95,7 @@ Row census of the captured corpora by the route the production branch picks
 |---|---|---|---|
 | `live_capture_loop13` | 104 | 104 | 0 |
 | `live_capture_loop17` | 217 | 217 | 0 |
-| `heavy_cl_solve_captures` | 156 | 156 | 0 |
+| `heavy_concentrated_liquidity_solve_captures` | 156 | 156 | 0 |
 | `heavy_mixed_solve_captures` | 369 | 0 | 369 |
 
 In captured live traffic the all-CL entry takes **425 of 425** solve
@@ -106,7 +106,7 @@ the route level.
 ### Decision
 
 **UNIFY.** Route all-CL workloads through the mixed entry (borrowed
-`MixedHopView::Cl`) and delete the duplicated entry surface. The split's only
+`MixedHopView::ConcentratedLiquidity`) and delete the duplicated entry surface. The split's only
 justification is worth ≤0.13% per call and unmeasurable in route totals,
 while the split route pays a prepared-hop clone (three `Arc` bumps per hop)
 the unified route does not — the live corpora's 0.9932–0.9995 lean that way.
@@ -134,9 +134,9 @@ entries — non-discriminating on this corpus; the guard asymmetry
 
 ### Unification landed (ergo XW3H5V)
 
-The scoped replacement landed: `mixed::families/cl.rs` carries ONE route for
+The scoped replacement landed: `mixed::families/concentrated_liquidity.rs` carries ONE route for
 every path the arm accepts (one borrowed `MixedHopView` per position into the
-unified body — the prepared-hop clone is gone), `solve_cl_piecewise` is a
+unified body — the prepared-hop clone is gone), `solve_concentrated_liquidity_piecewise` is a
 forwarding intake convenience, and the duplicated all-CL solve body and its
 all-CL-only fingerprint are retired (CL-only compositions fold through
 `walk_mixed_path_fingerprint`: one entry, one key space). The contract is
@@ -150,13 +150,13 @@ the shared body; the parity gate is the forwarding contract):
 
 | corpus | paths | parity | intake (µs) | direct (µs) | direct/intake |
 |---|---|---|---|---|---|
-| `heavy_cl_solve_captures` | 156 | 0 div | 607,515 | 603,044 | 0.9926x |
+| `heavy_concentrated_liquidity_solve_captures` | 156 | 0 div | 607,515 | 603,044 | 0.9926x |
 | `live_capture_loop17` | 217 | 0 div | 23,514,828 | 23,676,046 | 1.0068x |
 
 Same noise band as the decision measurements, 0 parity divergences — the
 intake shape costs nothing measurable either. The tables above stand as the
 historical A/B (two separate solve bodies then); nothing in the decision
 changes. One label-semantics note for future functions-timing runs:
-`cl_solve.int_solve_cl_path` now measures the forwarding intake (inclusive
-of the body's span), and `cl_solve.exact_solve_mixed_path_n` the one solve
+`concentrated_liquidity_solve.int_solve_concentrated_liquidity_path` now measures the forwarding intake (inclusive
+of the body's span), and `concentrated_liquidity_solve.exact_solve_mixed_path_n` the one solve
 body for every composition.

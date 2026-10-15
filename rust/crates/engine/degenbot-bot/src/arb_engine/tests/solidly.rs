@@ -5,7 +5,7 @@ use super::*;
 // Solidly solve into the Rust engine).
 // -----------------------------------------------------------------
 #[test]
-fn solidly_hop_variant_is_not_v2_and_not_cl() {
+fn solidly_hop_variant_is_not_v2_and_not_concentrated_liquidity() {
     // The new variant must be excluded from the existing all-V2 and
     // all-CL dispatch branches — otherwise solve_path would mis-dispatch.
     assert!(!HopType::SolidlyStable.is_concentrated_liquidity());
@@ -44,7 +44,7 @@ fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
 // `degenbot_substrate::resolve::solidly::tests` (moved in T3 of epic
 // MKRKNB; they assert the `MissingHopReason` variants directly
 // against `project_solidly`). This module keeps only the
-// engine-level classifier test (`solidly_hop_variant_is_not_v2_and_not_cl`).
+// engine-level classifier test (`solidly_hop_variant_is_not_v2_and_not_concentrated_liquidity`).
 // -----------------------------------------------------------------
 // solve_solidly_path_int — the two-stage Möbius precheck +
 // golden-section search. Tests cover all four AC cases: (1) all-Solidly
@@ -329,7 +329,7 @@ fn solve_solidly_unprofitable_path_returns_none() {
     );
 }
 #[test]
-fn solve_solidly_plus_cl_path_rejected_by_scope() {
+fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
     use crate::bot_core::{RegisterAerodromeV2PoolParams, RegisterV3PoolParams};
     use degenbot_substrate::BotState;
     use std::sync::Arc;

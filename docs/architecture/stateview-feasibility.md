@@ -18,8 +18,8 @@
 
 ### 1.1 Corpus locations (confirmed on disk)
 
-- Heavy-CL solver-replay corpus: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl.zst` (420 paths / 87 MB decoded; packaged 80 KB), referenced by `docs/rayon-parallelism-lab.md` and read transparently via `rust/crates/engine/degenbot-solvers/src/capture_fixture.rs` (`read_fixture`, `DEGENBOT_SOLVER_CAPTURE_*` producer knobs in `rust/crates/engine/degenbot-bot/src/arb_engine/solver_capture.rs`).
-- Other committed captures: `heavy_mixed_solve_captures.jsonl.zst`, `live_capture_loop13/17.jsonl.zst`, `live_gatebursts_mixed.jsonl`, `cl_capture_offline.jsonl` (same fixture dir).
+- Heavy-CL solver-replay corpus: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl.zst` (420 paths / 87 MB decoded; packaged 80 KB), referenced by `docs/rayon-parallelism-lab.md` and read transparently via `rust/crates/engine/degenbot-solvers/src/capture_fixture.rs` (`read_fixture`, `DEGENBOT_SOLVER_CAPTURE_*` producer knobs in `rust/crates/engine/degenbot-bot/src/arb_engine/solver_capture.rs`).
+- Other committed captures: `heavy_mixed_solve_captures.jsonl.zst`, `live_capture_loop13/17.jsonl.zst`, `live_gatebursts_mixed.jsonl`, `concentrated_liquidity_capture_offline.jsonl` (same fixture dir).
 - **Tickmap size distribution has no producer-side capture:** the solver captures record precomputed tick-*range* views, not raw map cardinalities. The authoritative size/mix source is therefore the live registry the captures are drawn from: the running bot's pool database (below), read `-readonly` beside the live WAL.
 
 ### 1.2 Live pool-family mix and tickmap size distribution (500K-path bot, `~/.local/state/degenbot/db/degenbot.db`, 2026-09-07)

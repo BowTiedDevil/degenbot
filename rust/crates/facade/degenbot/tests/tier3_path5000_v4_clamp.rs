@@ -20,7 +20,7 @@
 //! `EXECUTOR_5M` gas threshold.
 //!
 //! The production solver clamp (`arb_engine`
-//! `clamp_cl_hop_capacity`) re-reads the live pool state post-solve and caps
+//! `clamp_concentrated_liquidity_hop_capacity`) re-reads the live pool state post-solve and caps
 //! the committed CL-hop input to `input_consumed − margin` (margin = 1 wei), so
 //! the loop exits on `amountRemaining == 0` at the last funded tick (~190k gas,
 //! well under 5M) with **byte-identical output** (`460882096151249`).
@@ -54,7 +54,7 @@
 
 use alloy::primitives::{aliases::I256, U160, U256};
 use degenbot::investigation::{build_v4_state, real_oracle, PathFixture};
-use degenbot_math::cl::tick_math::MAX_SQRT_RATIO;
+use degenbot_math::concentrated_liquidity::tick_math::MAX_SQRT_RATIO;
 use degenbot_pools::v4_state::v4_simulate_swap;
 use degenbot_simulation::oracle::Verdict;
 

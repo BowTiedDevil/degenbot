@@ -15,7 +15,7 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::WalkStats;
+use degenbot_solvers::concentrated_liquidity::WalkStats;
 use degenbot_solvers::profit_envelope::{GateDeps, HopMath};
 use serde_json::Value;
 use std::time::Instant;
@@ -74,7 +74,7 @@ fn replay_captured_heavy_paths() {
     // at a fresh local capture for diagnostic runs.
     let path = std::env::var("DBENCH_CAPTURES").unwrap_or_else(|_| {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/heavy_cl_solve_captures.jsonl")
+            .join("tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl")
             .to_string_lossy()
             .into_owned()
     });
@@ -98,7 +98,10 @@ fn replay_captured_heavy_paths() {
         let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
         // RED-1: small-K ranges must build word profiles after the threshold
         // widening. Until then the per-sim linear word walk is the driver.
-        let small_k_profile = degenbot_solvers::cl::build_cl_word_profiles(&seqs[1]);
+        let small_k_profile =
+            degenbot_solvers::concentrated_liquidity::build_concentrated_liquidity_word_profiles(
+                &seqs[1],
+            );
         let small_k_covered = seqs[1]
             .ranges
             .iter()
@@ -113,7 +116,7 @@ fn replay_captured_heavy_paths() {
         );
         let views: Vec<Option<HopMath<'_>>> = seq_refs
             .iter()
-            .map(|s| Some(HopMath::cl_derived(s)))
+            .map(|s| Some(HopMath::concentrated_liquidity_derived(s)))
             .collect();
         let gt0 = Instant::now();
         let (_bound, gs) = degenbot_solvers::profit_envelope::path_profit_bound_with_stats(
@@ -137,7 +140,7 @@ fn replay_captured_heavy_paths() {
         sub.merge_enum += gs.pairs_enumerated;
         sub.merge_fallbacks += gs.merge_legacy_fallbacks;
         let t0 = Instant::now();
-        let outcome = degenbot_solvers::cl::derive_and_solve_cl_piecewise(
+        let outcome = degenbot_solvers::concentrated_liquidity::derive_and_solve_concentrated_liquidity_piecewise(
             &seq_refs,
             &degenbot_solvers::runtime::SolveRuntimeConfig::default(),
         );

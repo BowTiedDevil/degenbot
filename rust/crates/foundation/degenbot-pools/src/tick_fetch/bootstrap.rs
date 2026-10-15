@@ -51,7 +51,7 @@ pub struct BootstrapTickWord {
     /// full-map verification, not a value reconstructed from `ticks`.
     pub bitmap: alloy::primitives::U256,
     /// The tick-bitmap word position that was fetched
-    /// (`degenbot_math::cl::get_tick_word_and_bit_position(tick, spacing).0`).
+    /// (`degenbot_math::concentrated_liquidity::get_tick_word_and_bit_position(tick, spacing).0`).
     pub word: i32,
     /// Initialized ticks in this word. `liquidity_gross` / `liquidity_net` /
     /// `block` — the same shape `register_*_pool` accepts as `tick_data`.
@@ -167,7 +167,7 @@ mod tests {
             if self.bitmap == 0 {
                 return Ok(None);
             }
-            let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
+            let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
                 tick,
                 tick_spacing,
             );

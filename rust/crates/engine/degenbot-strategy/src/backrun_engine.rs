@@ -13,7 +13,7 @@
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::v3_state::ClSlotLayout;
+use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 use degenbot_solvers::mixed::SolvePathResult;
 
@@ -340,7 +340,7 @@ impl BackrunSolver {
         tick: i32,
         overlay: hashbrown::HashMap<i32, TickInfo>,
         seed_block: u64,
-        slot_layout: ClSlotLayout,
+        slot_layout: ConcentratedLiquiditySlotLayout,
         ingress: &PoolIngress,
     ) -> Result<u64, V3LadderReject> {
         ingress
@@ -437,7 +437,7 @@ impl BackrunSolver {
         tick_spacing: i32,
         sqrt_override: Option<U256>,
         head: u64,
-        slot_layout: ClSlotLayout,
+        slot_layout: ConcentratedLiquiditySlotLayout,
         ingress: &PoolIngress,
     ) -> Result<u64, V3LadderReject> {
         let (sqrt_price_x96, tick, liquidity) =

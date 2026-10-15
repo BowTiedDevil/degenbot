@@ -47,7 +47,7 @@ degenbot-simulation.workspace = true
 degenbot-executor.workspace = true
 # The journal extractor's descriptor-map type (`extract_pool_post_states`).
 hashbrown.workspace = true
-# Slot layouts (V2 reserves slot, CL slot0/tick layouts) + `ClSlotLayout`.
+# Slot layouts (V2 reserves slot, CL slot0/tick layouts) + `ConcentratedLiquiditySlotLayout`.
 degenbot-pools.workspace = true
 # `WarmCodeCacheInner::shared_default()` returns a parking_lot RwLock.
 parking_lot = "^0.12" 

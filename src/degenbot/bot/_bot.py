@@ -570,7 +570,7 @@ class Bot(AccountQueryMixin):
         # echoes the construction identity. A new family is a core arm plus a
         # species-manifest entry — never a new branch here. The V3 fork storage
         # layout is resolved core-side from the deployment table.
-        is_cl = family is PoolFamily.CONCENTRATED_LIQUIDITY
+        is_concentrated_liquidity = family is PoolFamily.CONCENTRATED_LIQUIDITY
         pool_id, b_t0, b_t1, _b_addr, _b_var = self._py_bot.construct_pool(
             address,
             family=family.value,
@@ -578,7 +578,9 @@ class Bot(AccountQueryMixin):
             block=block,
             db=db_seed,
             tick_data_fetcher=(
-                self._make_v3_tick_data_fetcher(address, chain_id) if is_cl else None
+                self._make_v3_tick_data_fetcher(address, chain_id)
+                if is_concentrated_liquidity
+                else None
             ),
             factories=list(route.factories) or None,
             registries=list(_CURVE_REGISTRIES) if is_curve else None,
@@ -617,7 +619,7 @@ class Bot(AccountQueryMixin):
         # journals nothing, so `discard_states_before_block(update_block + 1)`
         # would not raise — a behavior regression for every consumer that
         # expects the registration seed to be a known state boundary.
-        if is_cl and block is not None and block > 0:
+        if is_concentrated_liquidity and block is not None and block > 0:
             py_pool.seed_genesis(block_number=block)
 
         if is_curve:

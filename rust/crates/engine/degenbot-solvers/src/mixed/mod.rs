@@ -17,7 +17,10 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};
 
-use crate::cl::{ClWordProfile, IntTickRangeCrossing, IntV3TickRangeSequence, PreparedClHop};
+use crate::concentrated_liquidity::{
+    ConcentratedLiquidityWordProfile, IntTickRangeCrossing, IntV3TickRangeSequence,
+    PreparedConcentratedLiquidityHop,
+};
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::{
     BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
@@ -202,14 +205,18 @@ pub enum ResolvedHop {
     /// V2 constant-product hop
     V2 { state: IntHopState },
     /// V3 concentrated-liquidity hop. `prepared` is the projection's
-    /// derivation value ([`PreparedClHop`]): the tick-range sequence paired
+    /// derivation value ([`PreparedConcentratedLiquidityHop`]): the tick-range sequence paired
     /// with its `Arc`-shared crossing table + word profiles, built once per
     /// `(pool, direction)` projection and shared across N paths reusing the
     /// pool.
-    V3 { prepared: PreparedClHop },
+    V3 {
+        prepared: PreparedConcentratedLiquidityHop,
+    },
     /// V4 concentrated-liquidity hop (same CL math as V3, different
     /// settlement). `prepared`: as `Self::V3`.
-    V4 { prepared: PreparedClHop },
+    V4 {
+        prepared: PreparedConcentratedLiquidityHop,
+    },
     /// Solidly/Aerodrome/Camelot stable or volatile hop. Owns its own solve
     /// branch — NOT concentrated-liquidity, so `as_int_sequence()` returns
     /// `None`. See [`SolidlyHopState`].
@@ -268,7 +275,9 @@ impl ResolvedHop {
     /// The precomputed dense-range word-boundary profile table (Stage-1 cache),
     /// if this is a CL hop (V3 or V4). `Arc`-shared across paths reusing the hop.
     #[must_use]
-    pub fn as_word_profiles(&self) -> Option<&Arc<Vec<Option<Arc<ClWordProfile>>>>> {
+    pub fn as_word_profiles(
+        &self,
+    ) -> Option<&Arc<Vec<Option<Arc<ConcentratedLiquidityWordProfile>>>>> {
         match self {
             Self::V3 { prepared } | Self::V4 { prepared } => Some(&prepared.profiles),
             Self::V2 { .. }
@@ -294,10 +303,12 @@ impl ResolvedHop {
         }
     }
 
-    /// The projection's [`PreparedClHop`] derivation value (sequence +
+    /// The projection's [`PreparedConcentratedLiquidityHop`] derivation value (sequence +
     /// `Arc` tables), if this is a CL hop (V3 or V4).
     #[must_use]
-    pub fn as_prepared_cl_hop(&self) -> Option<&PreparedClHop> {
+    pub fn as_prepared_concentrated_liquidity_hop(
+        &self,
+    ) -> Option<&PreparedConcentratedLiquidityHop> {
         match self {
             Self::V3 { prepared } | Self::V4 { prepared } => Some(prepared),
             Self::V2 { .. }
@@ -350,21 +361,24 @@ pub struct ResolvedMixedPath {
 /// int128 overflow detection.
 /// The family's path-level solve return (the [`SolveFn`] row shape): the
 /// value when profitable, the typed refusal when the arm declined without
-/// walking (see [`crate::cl::WalkRefusal`] for the walked/unwalked boundary),
+/// walking (see [`crate::concentrated_liquidity::WalkRefusal`] for the walked/unwalked boundary),
 /// plus the walk telemetry. Replaces the old
 /// `(Option<SolvePathResult>, WalkStats)` tuple, which conflated refusal with
 /// unprofitability.
 #[derive(Debug)]
 pub struct SolveArmOutcome {
     pub result: Option<SolvePathResult>,
-    pub refusal: Option<crate::cl::WalkRefusal>,
-    pub stats: crate::cl::WalkStats,
+    pub refusal: Option<crate::concentrated_liquidity::WalkRefusal>,
+    pub stats: crate::concentrated_liquidity::WalkStats,
 }
 
 impl SolveArmOutcome {
     /// The arm ran its search (walk or golden section) and produced `result`
     /// (possibly `None` = no profit found).
-    pub(crate) fn walked(result: Option<SolvePathResult>, stats: crate::cl::WalkStats) -> Self {
+    pub(crate) fn walked(
+        result: Option<SolvePathResult>,
+        stats: crate::concentrated_liquidity::WalkStats,
+    ) -> Self {
         Self {
             result,
             refusal: None,
@@ -373,11 +387,11 @@ impl SolveArmOutcome {
     }
 
     /// The arm declined the shape before any search: the named refusal.
-    pub(crate) fn refused(refusal: crate::cl::WalkRefusal) -> Self {
+    pub(crate) fn refused(refusal: crate::concentrated_liquidity::WalkRefusal) -> Self {
         Self {
             result: None,
             refusal: Some(refusal),
-            stats: crate::cl::WalkStats::default(),
+            stats: crate::concentrated_liquidity::WalkStats::default(),
         }
     }
 }

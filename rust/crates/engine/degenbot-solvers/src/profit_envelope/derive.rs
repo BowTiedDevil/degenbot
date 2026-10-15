@@ -1,5 +1,7 @@
-use crate::cl::build_cl_crossing_table;
-use crate::mixed::families::cl::{ClFan, ClFanKey, ClHop};
+use crate::concentrated_liquidity::build_concentrated_liquidity_crossing_table;
+use crate::mixed::families::concentrated_liquidity::{
+    ConcentratedLiquidityFan, ConcentratedLiquidityFanKey, ConcentratedLiquidityHop,
+};
 use crate::mixed::solve::{family_row_for, FamilyRow, RESERVE_CAP_ROW};
 use crate::mixed::HopType;
 use crate::runtime::SolveRuntimeConfig;
@@ -32,8 +34,8 @@ pub enum HopMath<'a> {
     /// Concentrated-liquidity hop: the ordered tick-range sequence plus its
     /// carried crossing table (production: the table the resolve pass already
     /// built — never re-derived per path; tableless callers use
-    /// [`HopMath::cl_derived`]).
-    Cl(ClHop<'a>),
+    /// [`HopMath::concentrated_liquidity_derived`]).
+    ConcentratedLiquidity(ConcentratedLiquidityHop<'a>),
     /// Solidly volatile pool (constant-product family). SOUND: identical
     /// Möbius family → the V2 rise lines. Carrying the retained fee
     /// (`gamma_numer/fee_denom`) lets the exact-fee tangent tighten the
@@ -162,10 +164,10 @@ impl<'a> HopMath<'a> {
     /// production builder and carries it. The derive cost is the caller's —
     /// live solves always pass tables already built for the walk.
     #[must_use]
-    pub fn cl_derived(seq: &'a IntV3TickRangeSequence) -> Self {
-        Self::Cl(ClHop {
+    pub fn concentrated_liquidity_derived(seq: &'a IntV3TickRangeSequence) -> Self {
+        Self::ConcentratedLiquidity(ConcentratedLiquidityHop {
             seq,
-            crossings: std::borrow::Cow::Owned(build_cl_crossing_table(seq)),
+            crossings: std::borrow::Cow::Owned(build_concentrated_liquidity_crossing_table(seq)),
         })
     }
 
@@ -176,7 +178,7 @@ impl<'a> HopMath<'a> {
     pub(crate) fn family_row(&self) -> &'static FamilyRow {
         match self {
             HopMath::V2(_) => family_row_for(HopType::V2),
-            HopMath::Cl(_) => family_row_for(HopType::V3),
+            HopMath::ConcentratedLiquidity(_) => family_row_for(HopType::V3),
             HopMath::SolidlyVolatile { .. } | HopMath::SolidlyStable { .. } => {
                 family_row_for(HopType::SolidlyStable)
             }
@@ -209,7 +211,7 @@ impl<'a> HopMath<'a> {
         let label = self.family_row().label;
         match self {
             HopMath::V2(h) => format!("{label}(r_in={},r_out={})", h.reserve_in, h.reserve_out),
-            HopMath::Cl(_) => label.to_string(),
+            HopMath::ConcentratedLiquidity(_) => label.to_string(),
             HopMath::SolidlyVolatile {
                 reserve_in,
                 reserve_out,
@@ -396,7 +398,7 @@ pub(crate) fn refuse_lines(
 /// the *first* range that survived the zero-liq skip but failed (zero
 /// price, `compute_crossing` failure, all-zero, or `cap_tail` overflow).
 #[must_use]
-pub(crate) fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
+pub(crate) fn classify_concentrated_liquidity_rejection(seq: &IntV3TickRangeSequence) -> String {
     if seq.ranges.is_empty() {
         return "reject=empty_ranges".to_string();
     }
@@ -442,7 +444,7 @@ pub(crate) fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
 /// boundary and no public reset exists.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum HopCacheKey {
-    ClTable(u128),
+    ConcentratedLiquidityTable(u128),
     MobiusHop(u128),
 }
 
@@ -459,7 +461,7 @@ pub(crate) fn content_mix_u256(mut h: u128, v: &U256) -> u128 {
 /// compose work the cache saves, and immune to the allocator address reuse
 /// the old pointer key only partially guarded against (its endpoint
 /// fingerprints could not see mid-table pool updates).
-pub(crate) fn cl_table_key(crossings: &[IntTickRangeCrossing]) -> u128 {
+pub(crate) fn concentrated_liquidity_table_key(crossings: &[IntTickRangeCrossing]) -> u128 {
     let mut h = 0xcbf2_9ce4_8422_2325_u128 ^ u128::try_from(crossings.len()).unwrap_or(u128::MAX);
     for cr in crossings {
         h = content_mix_u256(h, &cr.crossing_gross_input);
@@ -481,7 +483,8 @@ pub(crate) fn cl_table_key(crossings: &[IntTickRangeCrossing]) -> u128 {
 struct PrefixCacheState {
     epoch: u64,
     map: std::collections::HashMap<Vec<HopCacheKey>, Vec<Line>>,
-    cl_fans: std::collections::HashMap<ClFanKey, Arc<ClFan>>,
+    concentrated_liquidity_fans:
+        std::collections::HashMap<ConcentratedLiquidityFanKey, Arc<ConcentratedLiquidityFan>>,
 }
 
 /// Engine-owned gate memo (C4; loop-8 origin — the former process static
@@ -502,7 +505,7 @@ impl PrefixCache {
             inner: std::sync::Mutex::new(PrefixCacheState {
                 epoch: 0,
                 map: std::collections::HashMap::new(),
-                cl_fans: std::collections::HashMap::new(),
+                concentrated_liquidity_fans: std::collections::HashMap::new(),
             }),
         }
     }
@@ -515,7 +518,7 @@ impl PrefixCache {
                 if cache.epoch != epoch {
                     cache.epoch = epoch;
                     cache.map.clear();
-                    cache.cl_fans.clear();
+                    cache.concentrated_liquidity_fans.clear();
                 }
                 cache.map.get(chain).cloned()
             }
@@ -529,7 +532,7 @@ impl PrefixCache {
             if cache.epoch != epoch {
                 cache.epoch = epoch;
                 cache.map.clear();
-                cache.cl_fans.clear();
+                cache.concentrated_liquidity_fans.clear();
             }
             cache.map.insert(chain, lines);
         }
@@ -537,29 +540,38 @@ impl PrefixCache {
 
     /// Pool-static CL tangent fan against `epoch` (the same rollover-on-first
     /// touch rule as the prefix map). Poisoned lock → miss.
-    pub(crate) fn get_cl_fan(&self, epoch: u64, key: &ClFanKey) -> Option<Arc<ClFan>> {
+    pub(crate) fn get_concentrated_liquidity_fan(
+        &self,
+        epoch: u64,
+        key: &ConcentratedLiquidityFanKey,
+    ) -> Option<Arc<ConcentratedLiquidityFan>> {
         match self.inner.lock() {
             Ok(mut cache) => {
                 if cache.epoch != epoch {
                     cache.epoch = epoch;
                     cache.map.clear();
-                    cache.cl_fans.clear();
+                    cache.concentrated_liquidity_fans.clear();
                 }
-                cache.cl_fans.get(key).cloned()
+                cache.concentrated_liquidity_fans.get(key).cloned()
             }
             Err(_) => None,
         }
     }
 
     /// Pool-static CL tangent fan write against `epoch`.
-    pub(crate) fn insert_cl_fan(&self, epoch: u64, key: ClFanKey, fan: Arc<ClFan>) {
+    pub(crate) fn insert_concentrated_liquidity_fan(
+        &self,
+        epoch: u64,
+        key: ConcentratedLiquidityFanKey,
+        fan: Arc<ConcentratedLiquidityFan>,
+    ) {
         if let Ok(mut cache) = self.inner.lock() {
             if cache.epoch != epoch {
                 cache.epoch = epoch;
                 cache.map.clear();
-                cache.cl_fans.clear();
+                cache.concentrated_liquidity_fans.clear();
             }
-            cache.cl_fans.insert(key, fan);
+            cache.concentrated_liquidity_fans.insert(key, fan);
         }
     }
 }

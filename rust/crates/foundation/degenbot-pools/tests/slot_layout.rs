@@ -12,20 +12,23 @@
 //!   hand-built keccak preimage (negative ticks sign-extend).
 //! - A per-tick word decodes `liquidityGross | liquidityNet` (two's-
 //!   complement int128 in the high half) for both signs of net.
-//! - `recover_cl_tick_from_slot` recovers the tick index of a journalled
+//! - `recover_concentrated_liquidity_tick_from_slot` recovers the tick index of a journalled
 //!   ticks(tick) slot by hashing `tick_spacing`-aligned candidates around
 //!   the anchor ticks — and returns `None` for slots outside every window.
 #![expect(clippy::unwrap_used)]
 
 use alloy::primitives::{aliases::U112, keccak256, B256, U256};
 use degenbot_pools::slot_layout::{
-    cl_liquidity_tracked_word, cl_slot0_tracked_word, cl_tick_bitmap_word_slot,
-    cl_tick_mapping_slot, decode_tick_word, decode_v2_reserves_word, low_bits_mask,
-    pack_v2_reserves_word, recover_cl_tick_from_slot, tick_mapping_slot_at_base, tick_word_of,
-    CL_LIQUIDITY_TRACKED_MASK, CL_SLOT0_TRACKED_MASK, CL_TICK_WORD_MASK, V2_RESERVES_SLOT,
-    V2_RESERVES_TRACKED_MASK,
+    concentrated_liquidity_liquidity_tracked_word, concentrated_liquidity_slot0_tracked_word,
+    concentrated_liquidity_tick_bitmap_word_slot, concentrated_liquidity_tick_mapping_slot,
+    decode_tick_word, decode_v2_reserves_word, low_bits_mask, pack_v2_reserves_word,
+    recover_concentrated_liquidity_tick_from_slot, tick_mapping_slot_at_base, tick_word_of,
+    CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK, CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK,
+    CONCENTRATED_LIQUIDITY_TICK_WORD_MASK, V2_RESERVES_SLOT, V2_RESERVES_TRACKED_MASK,
 };
-use degenbot_pools::{v3_pancakeswap_storage_slots, v3_storage_slots, ClSlotLayout};
+use degenbot_pools::{
+    v3_pancakeswap_storage_slots, v3_storage_slots, ConcentratedLiquiditySlotLayout,
+};
 
 // Independent trusted literals (not computed by any pack helper here): the
 // reserves pair from the bot fixture, spelled out as bytes.
@@ -56,11 +59,11 @@ fn v2_reserves_decode_splits_fields_and_reads_timestamp() {
 }
 
 #[test]
-fn cl_slot0_and_liquidity_pack_zeroed_untracked_bits() {
+fn concentrated_liquidity_slot0_and_liquidity_pack_zeroed_untracked_bits() {
     // slot0: sqrtP in the low 160 bits, tick's 24-bit two's-complement
     // pattern at bits 160..184, everything else zero (negative tick).
     let sqrt = U256::from(1u128) << 96;
-    let word = cl_slot0_tracked_word(sqrt, -5010);
+    let word = concentrated_liquidity_slot0_tracked_word(sqrt, -5010);
     let as_u: U256 = U256::from_be_bytes(word.0);
     let tick_u = (as_u >> 160) & U256::from(0x00ff_ffffu32);
     assert_eq!(tick_u, U256::from((-5010i32).cast_unsigned() & 0x00ff_ffff));
@@ -70,27 +73,27 @@ fn cl_slot0_and_liquidity_pack_zeroed_untracked_bits() {
 
     // liquidity: uint128, high half zero.
     let liq = 0x0000_0000_006b_5d49_e99f_8835u128;
-    let wl = U256::from_be_bytes(cl_liquidity_tracked_word(liq).0);
+    let wl = U256::from_be_bytes(concentrated_liquidity_liquidity_tracked_word(liq).0);
     assert_eq!(wl, U256::from(liq));
     assert_eq!(wl >> 128, U256::ZERO);
 }
 
 #[test]
-fn cl_mapping_slot_helpers_agree_with_family_forward_fns_and_preimage() {
+fn concentrated_liquidity_mapping_slot_helpers_agree_with_family_forward_fns_and_preimage() {
     const T: i32 = -100;
     assert_eq!(
-        cl_tick_mapping_slot(ClSlotLayout::UniswapV3, T),
+        concentrated_liquidity_tick_mapping_slot(ConcentratedLiquiditySlotLayout::UniswapV3, T),
         v3_storage_slots::v3_tick_mapping_slot(T),
         "Uniswap V3 ticks base 5"
     );
     assert_eq!(
-        cl_tick_mapping_slot(ClSlotLayout::PancakeV3, T),
+        concentrated_liquidity_tick_mapping_slot(ConcentratedLiquiditySlotLayout::PancakeV3, T),
         v3_pancakeswap_storage_slots::pancake_v3_tick_mapping_slot(T),
         "Pancake V3 ticks base 6 — distinct from the Uni slot"
     );
     assert_ne!(
-        cl_tick_mapping_slot(ClSlotLayout::UniswapV3, T),
-        cl_tick_mapping_slot(ClSlotLayout::PancakeV3, T)
+        concentrated_liquidity_tick_mapping_slot(ConcentratedLiquiditySlotLayout::UniswapV3, T),
+        concentrated_liquidity_tick_mapping_slot(ConcentratedLiquiditySlotLayout::PancakeV3, T)
     );
 
     // The base-generic forward fn against a hand-built abi.encode(int24,
@@ -105,7 +108,7 @@ fn cl_mapping_slot_helpers_agree_with_family_forward_fns_and_preimage() {
 }
 
 #[test]
-fn cl_tick_bitmap_word_slot_pins_bitmap_bases_6_and_7() {
+fn concentrated_liquidity_tick_bitmap_word_slot_pins_bitmap_bases_6_and_7() {
     // Independent keccak preimage per the `mapping(int16 => uint256)` layout:
     // the sign-extended word then the mapping base. V3's `_tickBitmap` is
     // base 6; Pancake's is base 7. Pinning the exact expected slots catches a
@@ -122,16 +125,22 @@ fn cl_tick_bitmap_word_slot_pins_bitmap_bases_6_and_7() {
         U256::from_be_bytes(keccak256(input).0)
     };
     assert_eq!(
-        cl_tick_bitmap_word_slot(ClSlotLayout::UniswapV3, -8),
+        concentrated_liquidity_tick_bitmap_word_slot(
+            ConcentratedLiquiditySlotLayout::UniswapV3,
+            -8
+        ),
         expected(-8, 6)
     );
     assert_eq!(
-        cl_tick_bitmap_word_slot(ClSlotLayout::PancakeV3, 33),
+        concentrated_liquidity_tick_bitmap_word_slot(
+            ConcentratedLiquiditySlotLayout::PancakeV3,
+            33
+        ),
         expected(33, 7)
     );
     // The bitmap mapping is distinct from the ticks mapping (bases 5/6).
     assert_ne!(
-        cl_tick_bitmap_word_slot(ClSlotLayout::UniswapV3, 0),
+        concentrated_liquidity_tick_bitmap_word_slot(ConcentratedLiquiditySlotLayout::UniswapV3, 0),
         tick_mapping_slot_at_base(0, U256::from(5))
     );
 }
@@ -156,20 +165,21 @@ fn tick_word_round_trips_gross_and_net_for_both_signs() {
     assert_eq!(g2, 1_000u128);
     assert_eq!(n2, 300i128);
     assert!(
-        CL_TICK_WORD_MASK == low_bits_mask(256),
+        CONCENTRATED_LIQUIDITY_TICK_WORD_MASK == low_bits_mask(256),
         "tick word fully tracked"
     );
 }
 
 #[test]
-fn recover_cl_tick_from_slot_hashes_spacing_aligned_candidates() {
+fn recover_concentrated_liquidity_tick_from_slot_hashes_spacing_aligned_candidates() {
     let spacing = 60;
     // A touched tick at +600, anchors known to the engine's pre-tx tick (0)
     // and post-tx tick (600) — recovered exactly, from the canonical grid.
-    let slot = cl_tick_mapping_slot(ClSlotLayout::UniswapV3, 600);
-    let got = recover_cl_tick_from_slot(
+    let slot =
+        concentrated_liquidity_tick_mapping_slot(ConcentratedLiquiditySlotLayout::UniswapV3, 600);
+    let got = recover_concentrated_liquidity_tick_from_slot(
         slot,
-        ClSlotLayout::UniswapV3,
+        ConcentratedLiquiditySlotLayout::UniswapV3,
         spacing,
         &[0, 600],
         spacing * 64,
@@ -177,10 +187,11 @@ fn recover_cl_tick_from_slot_hashes_spacing_aligned_candidates() {
     assert_eq!(got, Some(600), "tick index recovered from preimage");
 
     // A NEGATIVE touched tick across the zero boundary.
-    let slot = cl_tick_mapping_slot(ClSlotLayout::UniswapV3, -2880);
-    let got = recover_cl_tick_from_slot(
+    let slot =
+        concentrated_liquidity_tick_mapping_slot(ConcentratedLiquiditySlotLayout::UniswapV3, -2880);
+    let got = recover_concentrated_liquidity_tick_from_slot(
         slot,
-        ClSlotLayout::UniswapV3,
+        ConcentratedLiquiditySlotLayout::UniswapV3,
         spacing,
         &[-2880, 0],
         spacing * 64,
@@ -190,23 +201,43 @@ fn recover_cl_tick_from_slot_hashes_spacing_aligned_candidates() {
     // A slot outside every candidate window (or not on the grid at all)
     // must NOT be guessed.
     let stray = U256::from_be_bytes(keccak256([7u8; 64]).0);
-    let got = recover_cl_tick_from_slot(stray, ClSlotLayout::UniswapV3, spacing, &[0], spacing * 2);
+    let got = recover_concentrated_liquidity_tick_from_slot(
+        stray,
+        ConcentratedLiquiditySlotLayout::UniswapV3,
+        spacing,
+        &[0],
+        spacing * 2,
+    );
     assert_eq!(got, None, "unmatched slots are never fabricated into ticks");
 }
 
 #[test]
-fn recover_cl_tick_uses_the_layouts_ticks_base() {
+fn recover_concentrated_liquidity_tick_uses_the_layouts_ticks_base() {
     // Same tick indexes to a different slot per fork layout.
-    let uni = cl_tick_mapping_slot(ClSlotLayout::UniswapV3, -180);
-    let pk = cl_tick_mapping_slot(ClSlotLayout::PancakeV3, -180);
+    let uni =
+        concentrated_liquidity_tick_mapping_slot(ConcentratedLiquiditySlotLayout::UniswapV3, -180);
+    let pk =
+        concentrated_liquidity_tick_mapping_slot(ConcentratedLiquiditySlotLayout::PancakeV3, -180);
     assert_eq!(
-        recover_cl_tick_from_slot(pk, ClSlotLayout::PancakeV3, 60, &[0], 60 * 8),
+        recover_concentrated_liquidity_tick_from_slot(
+            pk,
+            ConcentratedLiquiditySlotLayout::PancakeV3,
+            60,
+            &[0],
+            60 * 8
+        ),
         Some(-180)
     );
     assert_ne!(uni, pk);
     // The Uni slot decoded through pancake would misrecover (wrong base).
     assert_eq!(
-        recover_cl_tick_from_slot(pk, ClSlotLayout::UniswapV3, 60, &[0], 60 * 8),
+        recover_concentrated_liquidity_tick_from_slot(
+            pk,
+            ConcentratedLiquiditySlotLayout::UniswapV3,
+            60,
+            &[0],
+            60 * 8
+        ),
         None
     );
 }
@@ -224,14 +255,14 @@ fn tracked_masks_cover_declared_field_widths() {
         );
     };
     width(V2_RESERVES_TRACKED_MASK, 224);
-    width(CL_SLOT0_TRACKED_MASK, 184);
-    width(CL_LIQUIDITY_TRACKED_MASK, 128);
-    assert_eq!(masked(CL_TICK_WORD_MASK), U256::MAX);
+    width(CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK, 184);
+    width(CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK, 128);
+    assert_eq!(masked(CONCENTRATED_LIQUIDITY_TICK_WORD_MASK), U256::MAX);
     // the shared low-bits helper reproduces each declared width mask
     for (m, n) in [
         (V2_RESERVES_TRACKED_MASK, 224u32),
-        (CL_SLOT0_TRACKED_MASK, 184),
-        (CL_LIQUIDITY_TRACKED_MASK, 128),
+        (CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK, 184),
+        (CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK, 128),
     ] {
         assert_eq!(U256::from_be_bytes(m.0), masked(low_bits_mask(n)));
     }

@@ -55,7 +55,9 @@ use degenbot_pools::TickBootstrapRpc;
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickBootstrapRpc;
-use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally};
+use degenbot_solvers::concentrated_liquidity::{
+    simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
+};
 
 /// Hardcoded fixture from the captured `DEGENBOT_SIM_EXIT_ON_FAIL=1` trap
 /// (`logs/bot_run.log` block 25647669, path 7724). Pool `0x57D7…dF80`,
@@ -192,7 +194,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         fetcher: Some(Arc::clone(&fetcher)),
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
-        slot_layout: degenbot_pools::ClSlotLayout::UniswapV3,
+        slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
     };
     let (_identity, mut state) = V3PoolState::from_params(params, 8);
 

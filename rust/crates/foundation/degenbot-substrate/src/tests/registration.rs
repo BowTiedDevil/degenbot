@@ -617,7 +617,8 @@ fn register_v4_pool_rejects_sqrt_price_at_max_as_spec_violation() {
     // Distinct pool_id so the duplicate-registered guard never fires if the
     // previous test's params linger in core (defensive; core is fresh here).
     params.pool_id = [0xe1u8; 32];
-    params.sqrt_price_x96 = U256::from(degenbot_math::cl::tick_math::MAX_SQRT_RATIO);
+    params.sqrt_price_x96 =
+        U256::from(degenbot_math::concentrated_liquidity::tick_math::MAX_SQRT_RATIO);
     assert!(
         matches! {
             core.register_v4_pool(&params),
@@ -634,7 +635,8 @@ fn register_v4_pool_rejects_sqrt_price_below_min_as_spec_violation() {
     let mut params = make_v4_params_in_spec();
     params.pool_id = [0xe2u8; 32];
     params.sqrt_price_x96 =
-        U256::from(degenbot_math::cl::tick_math::MIN_SQRT_RATIO) - uint!(1_U256);
+        U256::from(degenbot_math::concentrated_liquidity::tick_math::MIN_SQRT_RATIO)
+            - uint!(1_U256);
     assert!(
         matches! {
             core.register_v4_pool(&params),
@@ -650,7 +652,7 @@ fn register_v4_pool_rejects_tick_below_min_as_spec_violation() {
     let mut core = BotState::new();
     let mut params = make_v4_params_in_spec();
     params.pool_id = [0xe3u8; 32];
-    params.tick = degenbot_math::cl::tick_math::MIN_TICK - 1;
+    params.tick = degenbot_math::concentrated_liquidity::tick_math::MIN_TICK - 1;
     assert!(
         matches! {
             core.register_v4_pool(&params),
@@ -839,7 +841,7 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
         Err(RegisterV4PoolError::DynamicFee { .. }),
     });
     assert_eq!(
-        core.cl().admission_verdict(pm, &pid),
+        core.concentrated_liquidity().admission_verdict(pm, &pid),
         Some(AdmissionVerdict::DynamicFee { fee: 0x100_000 })
     );
 
@@ -852,10 +854,10 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
         Err(RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 320_000 }),
     });
     assert_eq!(
-        core.cl().admission_verdict(pm, &pid2),
+        core.concentrated_liquidity().admission_verdict(pm, &pid2),
         Some(AdmissionVerdict::FeeExceedsEncoderLimit { fee: 320_000 })
     );
-    assert_eq!(core.cl.registration_gate.len(), 2);
+    assert_eq!(core.concentrated_liquidity.registration_gate.len(), 2);
 
     // An admitted pool registers normally and answers via the registry
     // of record — the REGISTRATION refusals gate-record, admissions do
@@ -865,7 +867,9 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
     ok.pool_id = pid3;
     let admitted = core.register_v4_pool(&ok).expect("in-spec registration");
     assert!(
-        core.cl().admission_verdict(pm, &pid3).is_none(),
+        core.concentrated_liquidity()
+            .admission_verdict(pm, &pid3)
+            .is_none(),
         "admitted pools gate-record nothing"
     );
     assert!(core.try_registered_v4(pm, &pid3).is_some());
@@ -1225,7 +1229,8 @@ fn register_v3_pool_rejects_duplicate_address_as_already_registered() {
 fn register_v3_pool_rejects_sqrt_price_at_max_as_spec_violation() {
     let mut core = BotState::new();
     let mut params = make_v3_params_in_spec();
-    params.sqrt_price_x96 = U256::from(degenbot_math::cl::tick_math::MAX_SQRT_RATIO);
+    params.sqrt_price_x96 =
+        U256::from(degenbot_math::concentrated_liquidity::tick_math::MAX_SQRT_RATIO);
     assert!(
         matches! {
             core.register_v3_pool(&params),
@@ -1240,7 +1245,8 @@ fn register_v3_pool_rejects_sqrt_price_below_min_as_spec_violation() {
     let mut core = BotState::new();
     let mut params = make_v3_params_in_spec();
     params.sqrt_price_x96 =
-        U256::from(degenbot_math::cl::tick_math::MIN_SQRT_RATIO) - uint!(1_U256);
+        U256::from(degenbot_math::concentrated_liquidity::tick_math::MIN_SQRT_RATIO)
+            - uint!(1_U256);
     assert!(
         matches! {
             core.register_v3_pool(&params),
@@ -1254,7 +1260,7 @@ fn register_v3_pool_rejects_sqrt_price_below_min_as_spec_violation() {
 fn register_v3_pool_rejects_tick_below_min_as_spec_violation() {
     let mut core = BotState::new();
     let mut params = make_v3_params_in_spec();
-    params.tick = degenbot_math::cl::tick_math::MIN_TICK - 1;
+    params.tick = degenbot_math::concentrated_liquidity::tick_math::MIN_TICK - 1;
     assert!(
         matches! {
             core.register_v3_pool(&params),

@@ -21,7 +21,7 @@ use super::derive::HopMath;
 #[derive(Clone, Debug)]
 pub struct CapturedHop<'a> {
     pub hop_index: usize,
-    /// `"unmapped"`, `"cl"`, or the family name + key scalars
+    /// `"unmapped"`, `"concentrated_liquidity"`, or the family name + key scalars
     /// (e.g. `v2(r_in=..,r_out=..)`) — the row's `family` field. Produced by
     /// [`HopMath::family_label`], shared with the gate's diagnostic.
     pub family: String,
@@ -65,7 +65,7 @@ impl<'a> DegeneratePathEvent<'a> {
                     Some(hop) => hop.family_label(),
                 };
                 let ranges = match slot {
-                    Some(HopMath::Cl(ch)) => Some(ch.seq),
+                    Some(HopMath::ConcentratedLiquidity(ch)) => Some(ch.seq),
                     _ => None,
                 };
                 CapturedHop {
@@ -90,7 +90,9 @@ impl<'a> DegeneratePathEvent<'a> {
             .hops
             .iter()
             .map(|h| {
-                let ranges = h.ranges.map_or(serde_json::Value::Null, cl_seq_to_json);
+                let ranges = h
+                    .ranges
+                    .map_or(serde_json::Value::Null, concentrated_liquidity_seq_to_json);
                 serde_json::json!({
                     "hop_index": h.hop_index,
                     "family": h.family,
@@ -113,7 +115,7 @@ impl<'a> DegeneratePathEvent<'a> {
 /// the offline replay harness needs to reconstruct an `IntV3TickRangeSequence`
 /// (decimal-string big-ints, matching the `HeavyPathCapture` JSONL schema in
 /// `arb_engine/solver_capture.rs`).
-fn cl_seq_to_json(seq: &IntV3TickRangeSequence) -> serde_json::Value {
+fn concentrated_liquidity_seq_to_json(seq: &IntV3TickRangeSequence) -> serde_json::Value {
     serde_json::Value::Array(
         seq.ranges
             .iter()

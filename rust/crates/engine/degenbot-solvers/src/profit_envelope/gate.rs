@@ -6,8 +6,8 @@ use degenbot_core::op_warn;
 
 use super::capture::{DegeneratePathEvent, DegeneratePathSink};
 use super::derive::{
-    cl_table_key, classify_cl_rejection, content_mix_u256, hop_lines_and_cap,
-    hop_lines_and_cap_cached, HopCacheKey, HopMath, PrefixCache,
+    classify_concentrated_liquidity_rejection, concentrated_liquidity_table_key, content_mix_u256,
+    hop_lines_and_cap, hop_lines_and_cap_cached, HopCacheKey, HopMath, PrefixCache,
 };
 use super::kernel::{
     approx_cmp_ceil, approx_cmp_ratio, ceil_div, compose_envelopes_exact, concave_max, i512_to_f64,
@@ -301,9 +301,9 @@ pub struct GateStats {
     /// Composed-boundary cache hits inside this path's envelope product.
     pub prefix_hits: u64,
     /// Pool-static CL tangent-fan cache hits (per CL hop derivation).
-    pub cl_fan_hits: u64,
+    pub concentrated_liquidity_fan_hits: u64,
     /// Pool-static CL tangent-fan cache misses (per CL hop derivation).
-    pub cl_fan_misses: u64,
+    pub concentrated_liquidity_fan_misses: u64,
     /// Composition boundaries actually executed for this path.
     pub boundaries_composed: u64,
     /// Product-matrix wall time (ns) across this path's boundaries.
@@ -390,8 +390,8 @@ impl GateStats {
         none_overflow: 0,
         duration_ns: 0,
         prefix_hits: 0,
-        cl_fan_hits: 0,
-        cl_fan_misses: 0,
+        concentrated_liquidity_fan_hits: 0,
+        concentrated_liquidity_fan_misses: 0,
         boundaries_composed: 0,
         product_ns: 0,
         prune_stage1_ns: 0,
@@ -441,8 +441,8 @@ impl GateStats {
         self.none_overflow += other.none_overflow;
         self.duration_ns += other.duration_ns;
         self.prefix_hits += other.prefix_hits;
-        self.cl_fan_hits += other.cl_fan_hits;
-        self.cl_fan_misses += other.cl_fan_misses;
+        self.concentrated_liquidity_fan_hits += other.concentrated_liquidity_fan_hits;
+        self.concentrated_liquidity_fan_misses += other.concentrated_liquidity_fan_misses;
         self.boundaries_composed += other.boundaries_composed;
         self.product_ns += other.product_ns;
         self.prune_stage1_ns += other.prune_stage1_ns;
@@ -533,11 +533,11 @@ pub struct GateDeps<'a> {
     pub(crate) capture: Option<&'a dyn DegeneratePathSink>,
     /// The engine-owned cross-block walk-memo handle; `None`
     /// disables the memo for this solve.
-    pub(crate) walk_memo: Option<&'a crate::cl::WalkMemo>,
+    pub(crate) walk_memo: Option<&'a crate::concentrated_liquidity::WalkMemo>,
     /// The engine-owned walk telemetry collector; `None` disables the ns
     /// census for this solve. Mirrors [`Self::walk_memo`] — the collector and
     /// the memo are constructed adjacently at the engine.
-    pub(crate) telemetry: Option<&'a crate::cl::WalkTelemetry>,
+    pub(crate) telemetry: Option<&'a crate::concentrated_liquidity::WalkTelemetry>,
     /// the owner's runtime stance (envelope caps + trace gate),
     /// instance-scoped and passed down — the gate reads no environment.
     pub(crate) runtime: SolveRuntimeConfig,
@@ -585,7 +585,7 @@ impl GateDeps<'_> {
         epoch: u64,
         prefix_store: &'a PrefixCache,
         capture: Option<&'a dyn DegeneratePathSink>,
-        walk_memo: Option<&'a crate::cl::WalkMemo>,
+        walk_memo: Option<&'a crate::concentrated_liquidity::WalkMemo>,
         runtime: SolveRuntimeConfig,
     ) -> GateDeps<'a> {
         GateDeps {
@@ -604,14 +604,14 @@ impl GateDeps<'_> {
 
     /// The engine-owned walk-memo handle, if any (`None` disables it).
     #[must_use]
-    pub fn walk_memo(&self) -> Option<&crate::cl::WalkMemo> {
+    pub fn walk_memo(&self) -> Option<&crate::concentrated_liquidity::WalkMemo> {
         self.walk_memo
     }
 
     /// The engine-owned walk telemetry collector, if any (`None` disables the
     /// ns census for this solve).
     #[must_use]
-    pub fn telemetry(&self) -> Option<&crate::cl::WalkTelemetry> {
+    pub fn telemetry(&self) -> Option<&crate::concentrated_liquidity::WalkTelemetry> {
         self.telemetry
     }
 }
@@ -623,7 +623,10 @@ impl<'a> GateDeps<'a> {
     /// handle the walk needs). `None` leaves the ns census off for this solve,
     /// exactly as [`Self::per_block`] seeds it.
     #[must_use]
-    pub fn with_telemetry(mut self, telemetry: Option<&'a crate::cl::WalkTelemetry>) -> Self {
+    pub fn with_telemetry(
+        mut self,
+        telemetry: Option<&'a crate::concentrated_liquidity::WalkTelemetry>,
+    ) -> Self {
         self.telemetry = telemetry;
         self
     }
@@ -631,7 +634,7 @@ impl<'a> GateDeps<'a> {
 
 /// The ONE gate entry: a rigorous upper bound on
 /// `max_x [path_output(x) − x]`, or a typed [`GateSkipCause`]. Crossings ride
-/// each CL hop's `ClHop` descriptor; the prefix-composition cache is keyed
+/// each CL hop's `ConcentratedLiquidityHop` descriptor; the prefix-composition cache is keyed
 /// on full hop content and generationed by `GateDeps::epoch`.
 #[must_use]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>], deps: &GateDeps<'_>) -> Envelope {
@@ -782,8 +785,10 @@ pub(crate) fn compose_path_bound(
         };
     let hop_key = |hop_idx: usize| -> Option<HopCacheKey> {
         match hops.get(hop_idx).and_then(Option::as_ref) {
-            Some(HopMath::Cl(ch)) => {
-                Some(HopCacheKey::ClTable(cl_table_key(ch.crossings.as_ref())))
+            Some(HopMath::ConcentratedLiquidity(ch)) => {
+                Some(HopCacheKey::ConcentratedLiquidityTable(
+                    concentrated_liquidity_table_key(ch.crossings.as_ref()),
+                ))
             }
             Some(HopMath::V2(h)) => Some(HopCacheKey::MobiusHop(mobius_key(
                 &h.reserve_in,
@@ -955,7 +960,9 @@ fn path_profit_bound_inner(
                     // reason is its own label.
                     let family = hop.family_label();
                     let reason = match hop {
-                        HopMath::Cl(ch) => classify_cl_rejection(ch.seq),
+                        HopMath::ConcentratedLiquidity(ch) => {
+                            classify_concentrated_liquidity_rejection(ch.seq)
+                        }
                         _ => family.clone(),
                     };
                     diag!(domain = solver, hop_index = e.hop_index,
@@ -1070,12 +1077,14 @@ pub(crate) fn path_bound_lines_with_stats(
 pub(crate) mod tests {
     use super::*;
 
-    use crate::cl::{build_cl_crossing_table, simulate_v3_range_swap, WalkTally};
-    use crate::mixed::families::cl::ClHop;
+    use crate::concentrated_liquidity::{
+        build_concentrated_liquidity_crossing_table, simulate_v3_range_swap, WalkTally,
+    };
+    use crate::mixed::families::concentrated_liquidity::ConcentratedLiquidityHop;
     use crate::profit_envelope::derive::tests::hop_lines_and_cap;
     use crate::profit_envelope::derive::HopMath;
     use crate::profit_envelope::kernel::{Line, COMPOSE_TARGET_BITS};
-    use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
     use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
     // Test shims: the production helpers now thread a caller-owned
@@ -1213,7 +1222,7 @@ pub(crate) mod tests {
                 );
             }
         }
-        let crossings = build_cl_crossing_table(s);
+        let crossings = build_concentrated_liquidity_crossing_table(s);
         for idx in [44usize, 45, 46, 47] {
             println!(
                 "cr[{idx}] acc_in={} acc_out={}",
@@ -1310,9 +1319,9 @@ pub(crate) mod tests {
         let mut all_hop_lines: Vec<Vec<Line>> = Vec::new();
         let mut xmax = U256::ZERO;
         for (hi, s) in seqs.iter().enumerate() {
-            let view = HopMath::Cl(ClHop {
+            let view = HopMath::ConcentratedLiquidity(ConcentratedLiquidityHop {
                 seq: s,
-                crossings: std::borrow::Cow::Owned(build_cl_crossing_table(s)),
+                crossings: std::borrow::Cow::Owned(build_concentrated_liquidity_crossing_table(s)),
             });
             let (lines, cap) =
                 hop_lines_and_cap(view, &SolveRuntimeConfig::default()).expect("hop derivable");
@@ -1414,8 +1423,10 @@ pub(crate) mod tests {
         }
 
         // --- Stage 3: full gate call must clear the golden.
-        let views: Vec<Option<HopMath>> =
-            seqs.iter().map(|s| Some(HopMath::cl_derived(s))).collect();
+        let views: Vec<Option<HopMath>> = seqs
+            .iter()
+            .map(|s| Some(HopMath::concentrated_liquidity_derived(s)))
+            .collect();
         match path_profit_bound(&views, &GateDeps::offline()) {
             Envelope::Bound(b) => {
                 println!("stage3 bound={b} golden={golden_profit}");
@@ -1469,17 +1480,21 @@ pub(crate) mod tests {
         let seq_a = fat_walk_seq(120, 1_000_000_000_000);
         let seq_b = fat_walk_seq(95, 1_000_000_000_000);
         let views: Vec<Option<HopMath<'_>>> = vec![
-            Some(HopMath::Cl(ClHop {
+            Some(HopMath::ConcentratedLiquidity(ConcentratedLiquidityHop {
                 seq: &seq_a,
-                crossings: std::borrow::Cow::Owned(build_cl_crossing_table(&seq_a)),
+                crossings: std::borrow::Cow::Owned(build_concentrated_liquidity_crossing_table(
+                    &seq_a,
+                )),
             })),
-            Some(HopMath::Cl(ClHop {
+            Some(HopMath::ConcentratedLiquidity(ConcentratedLiquidityHop {
                 seq: &seq_b,
-                crossings: std::borrow::Cow::Owned(build_cl_crossing_table(&seq_b)),
+                crossings: std::borrow::Cow::Owned(build_concentrated_liquidity_crossing_table(
+                    &seq_b,
+                )),
             })),
         ];
         let cfg = SolveRuntimeConfig::default();
-        let n_cl = 2u64;
+        let n_concentrated_liquidity = 2u64;
         let store = PrefixCache::new();
         let deps = GateDeps::per_block(1, &store, None, None, cfg);
 
@@ -1491,10 +1506,10 @@ pub(crate) mod tests {
             other @ Envelope::Unsupported(_) => panic!("gate must produce a bound, got {other:?}"),
         };
         assert_eq!(
-            gs_gate.cl_fan_misses, n_cl,
+            gs_gate.concentrated_liquidity_fan_misses, n_concentrated_liquidity,
             "gate must derive each CL fan once, cold"
         );
-        assert_eq!(gs_gate.cl_fan_hits, 0);
+        assert_eq!(gs_gate.concentrated_liquidity_fan_hits, 0);
 
         // Query 2 — the walk-side bound against the SAME cache/epoch: the
         // fans are REUSED (zero misses), so the double derivation is dead,
@@ -1503,11 +1518,11 @@ pub(crate) mod tests {
         let walk = path_bound_lines_with_stats(&views, &cfg, deps.fan_cache(), &mut gs_walk)
             .expect("walk bound derivable");
         assert_eq!(
-            gs_walk.cl_fan_misses, 0,
+            gs_walk.concentrated_liquidity_fan_misses, 0,
             "walk side re-derived the CL fans (the kill failed)"
         );
         assert_eq!(
-            gs_walk.cl_fan_hits, n_cl,
+            gs_walk.concentrated_liquidity_fan_hits, n_concentrated_liquidity,
             "walk side must reuse the gate's fans"
         );
 

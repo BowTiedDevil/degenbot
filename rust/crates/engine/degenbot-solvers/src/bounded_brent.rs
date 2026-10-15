@@ -5,7 +5,7 @@
 //!
 //! Role: a SciPy-1.17-parity REFERENCE, not a production solver — the solve
 //! path never calls it. It serves only as the CL refine-window oracle in
-//! tests (`cl/tests/refine_undersample.rs`, `tests/bounded_brent.rs`).
+//! tests (`concentrated_liquidity/tests/refine_undersample.rs`, `tests/bounded_brent.rs`).
 //!
 //! Transcribed expression-by-expression from SciPy 1.17
 //! (`scipy/optimize/_optimize.py`, `_minimize_scalar_bounded`). `bracket` is

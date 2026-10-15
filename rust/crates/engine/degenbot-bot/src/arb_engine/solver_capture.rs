@@ -76,7 +76,7 @@ pub(crate) fn gate_capture_from_cfg(
     })
 }
 /// One-shot capture of heavy solver inputs, so the offline replay harnesses
-/// (`solve_cl_piecewise` for all-CL, `examples/mixed_solve_replay.rs` for mixed
+/// (`solve_concentrated_liquidity_piecewise` for all-CL, `examples/mixed_solve_replay.rs` for mixed
 /// V2+CL) can be optimized against real captured pool state without a full bot
 /// run.
 ///
@@ -84,11 +84,11 @@ pub(crate) fn gate_capture_from_cfg(
 /// (`time_us >= MIN_US` OR `sims >= MIN_SIMS`), the 2-hop floor, path-id dedup,
 /// the `DEGENBOT_SOLVER_CAPTURE_CAP` cap, parent-dir creation, and the append
 /// (see [`Self::maybe_capture`]). The two variants differ only in DATA via
-/// [`CaptureVariant`]: [`CaptureVariant::HeavyCl`] keeps all-CL paths and emits
+/// [`CaptureVariant`]: [`CaptureVariant::HeavyConcentratedLiquidity`] keeps all-CL paths and emits
 /// the `IntV3TickRangeSequence` range body (default
-/// `.../cl_heavy_paths.jsonl`), while [`CaptureVariant::HeavyMixed`] keeps
+/// `.../concentrated_liquidity_heavy_paths.jsonl`), while [`CaptureVariant::HeavyMixed`] keeps
 /// paths with >=1 V2 and >=1 CL hop and emits a `kind`-discriminated V2/CL body
-/// plus `hop_order` (default `.../cl_mixed_paths.jsonl`; a
+/// plus `hop_order` (default `.../concentrated_liquidity_mixed_paths.jsonl`; a
 /// `DEGENBOT_SOLVER_CAPTURE_OUT` override gets a `_mixed` filename suffix so it
 /// cannot clobber the all-CL fixture).
 ///
@@ -109,7 +109,7 @@ pub(crate) struct HeavyPathCapture {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CaptureVariant {
     /// Pure-CL paths (every hop resolves to an int sequence).
-    HeavyCl,
+    HeavyConcentratedLiquidity,
     /// Mixed paths (>=1 V2 hop AND >=1 CL hop).
     HeavyMixed,
 }
@@ -118,8 +118,8 @@ impl CaptureVariant {
     /// exact-wei fixtures dir).
     fn default_out_path(self) -> std::path::PathBuf {
         let file = match self {
-            Self::HeavyCl => "cl_heavy_paths.jsonl",
-            Self::HeavyMixed => "cl_mixed_paths.jsonl",
+            Self::HeavyConcentratedLiquidity => "concentrated_liquidity_heavy_paths.jsonl",
+            Self::HeavyMixed => "concentrated_liquidity_mixed_paths.jsonl",
         };
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../../../logs/solver_capture")
@@ -129,7 +129,7 @@ impl CaptureVariant {
     /// a `_mixed` sibling rather than overwriting the all-CL fixture.
     fn transform_override(self, p: std::path::PathBuf) -> std::path::PathBuf {
         match self {
-            Self::HeavyCl => p,
+            Self::HeavyConcentratedLiquidity => p,
             Self::HeavyMixed => {
                 let mut pb = p;
                 if pb.extension().and_then(|e| e.to_str()) == Some("jsonl") {
@@ -147,7 +147,9 @@ impl CaptureVariant {
             return false;
         }
         match self {
-            Self::HeavyCl => resolved.hops.iter().all(|h| h.as_int_sequence().is_some()),
+            Self::HeavyConcentratedLiquidity => {
+                resolved.hops.iter().all(|h| h.as_int_sequence().is_some())
+            }
             Self::HeavyMixed => {
                 // >=1 V2 hop AND >=1 CL hop. The all-CL capture owns pure-CL;
                 // all-V2 dispatches to the closed-form Mobius solver.
@@ -155,8 +157,9 @@ impl CaptureVariant {
                     .hops
                     .iter()
                     .any(|h| matches!(h, ResolvedHop::V2 { .. }));
-                let has_cl = resolved.hops.iter().any(|h| h.as_int_sequence().is_some());
-                has_v2 && has_cl
+                let has_concentrated_liquidity =
+                    resolved.hops.iter().any(|h| h.as_int_sequence().is_some());
+                has_v2 && has_concentrated_liquidity
             }
         }
     }
@@ -168,14 +171,14 @@ impl CaptureVariant {
         resolved: &ResolvedMixedPath,
     ) -> (Option<Vec<bool>>, Vec<serde_json::Value>) {
         match self {
-            Self::HeavyCl => {
+            Self::HeavyConcentratedLiquidity => {
                 // Every hop carries an int sequence (shape filter), so the `?`
                 // never drops an element — it just satisfies the type checker
                 // without an `unwrap`.
                 let hops = resolved
                     .hops
                     .iter()
-                    .filter_map(|h| Some(cl_ranges_json(h.as_int_sequence()?)))
+                    .filter_map(|h| Some(concentrated_liquidity_ranges_json(h.as_int_sequence()?)))
                     .collect();
                 (None, hops)
             }
@@ -204,7 +207,7 @@ impl CaptureVariant {
                         ResolvedHop::V3 { prepared, .. } | ResolvedHop::V4 { prepared, .. } => {
                             serde_json::json!({
                                 "kind": "CL",
-                                "ranges": cl_ranges_json(&prepared.int_seq),
+                                "ranges": concentrated_liquidity_ranges_json(&prepared.int_seq),
                             })
                         }
                         _ => serde_json::Value::Null,
@@ -218,7 +221,9 @@ impl CaptureVariant {
 /// The 8 primitive fields of one CL tick range (big ints as decimal strings, so
 /// no alloy serde) — shared by both capture variants and matching the all-CL
 /// JSONL schema.
-fn cl_ranges_json(seq: &::degenbot_pools::int_v3_hop::IntV3TickRangeSequence) -> serde_json::Value {
+fn concentrated_liquidity_ranges_json(
+    seq: &::degenbot_pools::int_v3_hop::IntV3TickRangeSequence,
+) -> serde_json::Value {
     serde_json::Value::Array(
         seq.ranges
             .iter()
@@ -359,7 +364,7 @@ mod heavy_path_capture_tests {
     fn temp_out() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("{}.jsonl", unique_stem()))
     }
-    fn cl_hop() -> ResolvedHop {
+    fn concentrated_liquidity_hop() -> ResolvedHop {
         let seq = IntV3TickRangeSequence::new(vec![IntV3TickRangeHop {
             liquidity: 1_000_000,
             sqrt_price_x96: U256::from(1u64 << 40),
@@ -372,7 +377,7 @@ mod heavy_path_capture_tests {
         }])
         .expect("valid tick range sequence");
         ResolvedHop::V3 {
-            prepared: ::degenbot_solvers::cl::PreparedClHop::from_parts(
+            prepared: ::degenbot_solvers::concentrated_liquidity::PreparedConcentratedLiquidityHop::from_parts(
                 std::sync::Arc::new(seq),
                 std::sync::Arc::new(Vec::new()),
                 std::sync::Arc::new(Vec::new()),
@@ -398,8 +403,14 @@ mod heavy_path_capture_tests {
     }
     fn shapes() -> [(CaptureVariant, Vec<ResolvedHop>); 2] {
         [
-            (CaptureVariant::HeavyCl, vec![cl_hop(), cl_hop()]),
-            (CaptureVariant::HeavyMixed, vec![v2_hop(), cl_hop()]),
+            (
+                CaptureVariant::HeavyConcentratedLiquidity,
+                vec![concentrated_liquidity_hop(), concentrated_liquidity_hop()],
+            ),
+            (
+                CaptureVariant::HeavyMixed,
+                vec![v2_hop(), concentrated_liquidity_hop()],
+            ),
         ]
     }
     fn cfg(out: std::path::PathBuf) -> CaptureConfig {
@@ -449,13 +460,19 @@ mod heavy_path_capture_tests {
     /// `hop_order` while the all-CL body does not.
     #[test]
     fn shape_filter_is_variant_data() {
-        let all_cl = path(vec![cl_hop(), cl_hop()]);
-        let mixed = path(vec![v2_hop(), cl_hop()]);
+        let all_concentrated_liquidity = path(vec![
+            concentrated_liquidity_hop(),
+            concentrated_liquidity_hop(),
+        ]);
+        let mixed = path(vec![v2_hop(), concentrated_liquidity_hop()]);
         let out = temp_out();
-        let cap =
-            HeavyPathCapture::from_capture(&cfg(out.clone()), CaptureVariant::HeavyCl).unwrap();
+        let cap = HeavyPathCapture::from_capture(
+            &cfg(out.clone()),
+            CaptureVariant::HeavyConcentratedLiquidity,
+        )
+        .unwrap();
         cap.maybe_capture(1, 1, 60_000, 0, 0, None, &mixed);
-        cap.maybe_capture(2, 1, 60_000, 0, 0, None, &all_cl);
+        cap.maybe_capture(2, 1, 60_000, 0, 0, None, &all_concentrated_liquidity);
         let l = lines(&cap.out_path);
         assert_eq!(l.len(), 1, "all-CL writer must keep only the all-CL shape");
         assert_eq!(l[0]["path_id"], serde_json::json!(2));
@@ -466,7 +483,7 @@ mod heavy_path_capture_tests {
         let out2 = temp_out();
         let cap2 =
             HeavyPathCapture::from_capture(&cfg(out2.clone()), CaptureVariant::HeavyMixed).unwrap();
-        cap2.maybe_capture(1, 1, 60_000, 0, 0, None, &all_cl);
+        cap2.maybe_capture(1, 1, 60_000, 0, 0, None, &all_concentrated_liquidity);
         cap2.maybe_capture(2, 1, 60_000, 0, 0, None, &mixed);
         let l2 = lines(&cap2.out_path);
         assert_eq!(l2.len(), 1, "mixed writer must keep only the mixed shape");
@@ -502,9 +519,12 @@ mod heavy_path_capture_tests {
     #[test]
     fn out_path_override_is_variant_data() {
         let base = temp_out();
-        let cl = HeavyPathCapture::from_capture(&cfg(base.clone()), CaptureVariant::HeavyCl)
-            .expect("gated on");
-        assert_eq!(cl.out_path, base);
+        let concentrated_liquidity = HeavyPathCapture::from_capture(
+            &cfg(base.clone()),
+            CaptureVariant::HeavyConcentratedLiquidity,
+        )
+        .expect("gated on");
+        assert_eq!(concentrated_liquidity.out_path, base);
         let mixed = HeavyPathCapture::from_capture(&cfg(base.clone()), CaptureVariant::HeavyMixed)
             .expect("gated on");
         let mut expected = base.clone();

@@ -1,7 +1,7 @@
 # Hull-edge seed evaluation (no-op verdict)
 
 Evaluated seeding the active-set walk's first-piece right-edge bisection
-(`piece_window_right_edge_seeded`, cl/crossings.rs) from the composed
+(`piece_window_right_edge_seeded`, concentrated_liquidity/crossings.rs) from the composed
 bound hull's first growth-rate-takeover (bound slope crossing 1) to cut
 grow-loop probes.
 
@@ -12,8 +12,8 @@ The mechanism is sound (byte-identical goldens; the seed is an advisory
 
 - The walk's event solver fully supersedes the seeded bisection at the
   production-default stance (`event_solver_fallbacks` = 0 on all measured
-  corpora: `heavy_cl_solve_captures`, `live_capture_loop13/17`,
-  synthetic `cl_corpus`).
+  corpora: `heavy_concentrated_liquidity_solve_captures`, `live_capture_loop13/17`,
+  synthetic `concentrated_liquidity_corpus`).
 - Where the legacy stance runs, the measured win is small: −39/12 path
   probes per block (heavy corpus) against millions of probes spent
   elsewhere in the same corpora.

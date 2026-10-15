@@ -1,5 +1,5 @@
 //! Shared capture-JSONL parsing for the replay-harness examples
-//! (`cl_solve_replay`, `mixed_solve_replay`, `walkmemo_readout`).
+//! (`concentrated_liquidity_solve_replay`, `mixed_solve_replay`, `walkmemo_readout`).
 //!
 //! Each example binary includes this file via
 //! `#[path = "common/mod.rs"] mod common;` — the standard pattern for sharing

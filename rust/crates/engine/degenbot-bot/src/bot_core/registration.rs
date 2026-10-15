@@ -32,10 +32,11 @@ use degenbot_uniswap::dex_identity::DexVariant;
 use super::bot::Bot;
 use crate::bot_core::pool_builder::builder::{self, PoolBuilderError};
 use crate::bot_core::{
-    ClSlotLayout, PoolTickCoverage, RegisterAerodromePoolError, RegisterAerodromeV2PoolParams,
-    RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams,
-    RegisterV2PoolError, RegisterV2PoolParams, RegisterV3PoolError, RegisterV3PoolParams,
-    RegisterV4PoolError, RegisterV4PoolParams, RegisteredPoolFamily, TickInfo,
+    ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterAerodromePoolError,
+    RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
+    RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolError,
+    RegisterV2PoolParams, RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError,
+    RegisterV4PoolParams, RegisteredPoolFamily, TickInfo,
 };
 
 /// Error from [`Bot::register_v2_pool`]: the CREATE2 address verification
@@ -349,7 +350,7 @@ impl Bot {
         coverage: PoolTickCoverage,
         fetcher: Option<Arc<dyn TickWordFetcher>>,
         tick_data_block: Option<u64>,
-        slot_layout: Option<ClSlotLayout>,
+        slot_layout: Option<ConcentratedLiquiditySlotLayout>,
     ) -> Result<u64, V3RegistrationError> {
         // get-or-register, family-guarded (see `register_v2_pool`).
         {
@@ -374,9 +375,9 @@ impl Bot {
         }
         let slot_layout = slot_layout.unwrap_or_else(|| {
             if degenbot_uniswap::deployments::is_pancakeswap_v3_factory(self.chain_id(), factory) {
-                ClSlotLayout::PancakeV3
+                ConcentratedLiquiditySlotLayout::PancakeV3
             } else {
-                ClSlotLayout::UniswapV3
+                ConcentratedLiquiditySlotLayout::UniswapV3
             }
         });
         degenbot_uniswap::deployments::verify_v3_pool_address(
@@ -727,7 +728,7 @@ impl Bot {
         if let Some(verdict) = self
             .state_arc()
             .read_at(LockSite::Orchestrator)
-            .cl()
+            .concentrated_liquidity()
             .admission_verdict(pm, pid)
         {
             let core_err = match verdict {

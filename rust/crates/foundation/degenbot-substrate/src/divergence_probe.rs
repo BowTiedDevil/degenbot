@@ -61,10 +61,11 @@ use alloy::primitives::{Address, B256, U256};
 
 use degenbot_pools::slot_layout;
 use degenbot_pools::slot_layout::{
-    cl_liquidity_tracked_word as pack_cl_liquidity_word,
-    cl_slot0_tracked_word as pack_cl_slot0_word, pack_v2_reserves_word,
+    concentrated_liquidity_liquidity_tracked_word as pack_concentrated_liquidity_liquidity_word,
+    concentrated_liquidity_slot0_tracked_word as pack_concentrated_liquidity_slot0_word,
+    pack_v2_reserves_word,
 };
-use degenbot_pools::{ClSlotLayout, V3PoolState};
+use degenbot_pools::{ConcentratedLiquiditySlotLayout, V3PoolState};
 
 use crate::{BotState, PoolEntry};
 
@@ -123,14 +124,18 @@ impl TrackedSlotKind {
             Self::V2Reserves => slot_layout::V2_RESERVES_TRACKED_MASK,
             // sqrtPriceX96 (low 160) | tick (bits 160..184); high 72 NOT
             // tracked. Mask = low 184 bits set.
-            Self::V3Slot0 | Self::V4Slot0 => slot_layout::CL_SLOT0_TRACKED_MASK,
+            Self::V3Slot0 | Self::V4Slot0 => slot_layout::CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK,
             // uint128 liquidity (low 128); high 128 NOT tracked (zero on-chain
             // anyway, but mask to be safe against a packed-but-nonzero rpc).
-            Self::V3Liquidity | Self::V4Liquidity => slot_layout::CL_LIQUIDITY_TRACKED_MASK,
+            Self::V3Liquidity | Self::V4Liquidity => {
+                slot_layout::CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK
+            }
             // ticks(tick) slot+0: uint128 liquidityGross (low 128) |
             // int128 liquidityNet (high 128); the full 256-bit word IS tracked
             // (the engine carries both fields in TickInfo).
-            Self::V3TickInfo | Self::V4TickInfo => slot_layout::CL_TICK_WORD_MASK,
+            Self::V3TickInfo | Self::V4TickInfo => {
+                slot_layout::CONCENTRATED_LIQUIDITY_TICK_WORD_MASK
+            }
         }
     }
 }
@@ -161,7 +166,7 @@ pub struct TrackedSlotProbe {
 // must live in ONE place. Both consumers on this surface (the env-gated
 // point probe, `probe_tracked_storage_slot`, and the enumerated sim-anchor
 // projection, `project_sim_anchor_scalars`) delegate to the row tables
-// below; a new fork layout extends `ClSlotLayout` + one row arm + its test
+// below; a new fork layout extends `ConcentratedLiquiditySlotLayout` + one row arm + its test
 // and every consumer picks it up. Never re-derive slot indices at a call
 // site (that drift is how the pancake-slot classification bug arose).
 // ─────────────────────────────────────────────────────────────────────────
@@ -179,29 +184,32 @@ pub(crate) struct ScalarSlotRow {
 /// order. Slot0 word 0 (index 0) packs the same low-184 tracked shape on
 /// both layouts; `liquidity` sits at the layout's slot (Uniswap 4 / pancake
 /// 5). Two rows always (the surface the sim consults is fixed per layout).
-fn cl_scalar_rows(layout: ClSlotLayout, state: &V3PoolState) -> [ScalarSlotRow; 2] {
+fn concentrated_liquidity_scalar_rows(
+    layout: ConcentratedLiquiditySlotLayout,
+    state: &V3PoolState,
+) -> [ScalarSlotRow; 2] {
     [
         ScalarSlotRow {
             index: U256::ZERO,
             kind: TrackedSlotKind::V3Slot0,
-            engine_word: pack_cl_slot0_word(state.sqrt_price_x96, state.tick),
+            engine_word: pack_concentrated_liquidity_slot0_word(state.sqrt_price_x96, state.tick),
         },
         ScalarSlotRow {
             index: U256::from(layout.liquidity_slot()),
             kind: TrackedSlotKind::V3Liquidity,
-            engine_word: pack_cl_liquidity_word(state.liquidity),
+            engine_word: pack_concentrated_liquidity_liquidity_word(state.liquidity),
         },
     ]
 }
 
 /// Reverse-map an SLOAD'd index to a CL tracked row: the scalar pair, else
 /// the per-tick `ticks(tick)` slot at the layout's ticks base.
-fn cl_row_for_index(
-    layout: ClSlotLayout,
+fn concentrated_liquidity_row_for_index(
+    layout: ConcentratedLiquiditySlotLayout,
     state: &V3PoolState,
     index: U256,
 ) -> Option<ScalarSlotRow> {
-    if let Some(row) = cl_scalar_rows(layout, state)
+    if let Some(row) = concentrated_liquidity_scalar_rows(layout, state)
         .into_iter()
         .find(|row| row.index == index)
     {
@@ -256,7 +264,7 @@ impl BotState {
                     },
                 )),
                 Some(PoolEntry::V3(p)) => {
-                    for row in cl_scalar_rows(p.0.slot_layout, &p.1) {
+                    for row in concentrated_liquidity_scalar_rows(p.0.slot_layout, &p.1) {
                         out.push((
                             (address, row.index),
                             TrackedSlotProbe {
@@ -279,7 +287,9 @@ impl BotState {
                 | None => {}
             }
         }
-        for ((pm, pool_id_bytes), internal_pool_id) in self.cl.registered_v4_pools() {
+        for ((pm, pool_id_bytes), internal_pool_id) in
+            self.concentrated_liquidity.registered_v4_pools()
+        {
             if let Some(PoolEntry::V4(p)) = self.registry.pools.get(internal_pool_id) {
                 let state = &p.1;
                 let s_state = derive_v4_pool_state_base(pool_id_bytes);
@@ -287,7 +297,10 @@ impl BotState {
                     (*pm, s_state),
                     TrackedSlotProbe {
                         kind: TrackedSlotKind::V4Slot0,
-                        engine_word: pack_cl_slot0_word(state.sqrt_price_x96, state.tick),
+                        engine_word: pack_concentrated_liquidity_slot0_word(
+                            state.sqrt_price_x96,
+                            state.tick,
+                        ),
                         update_block: state.update_block,
                     },
                 ));
@@ -298,7 +311,7 @@ impl BotState {
                     ),
                     TrackedSlotProbe {
                         kind: TrackedSlotKind::V4Liquidity,
-                        engine_word: pack_cl_liquidity_word(state.liquidity),
+                        engine_word: pack_concentrated_liquidity_liquidity_word(state.liquidity),
                         update_block: state.update_block,
                     },
                 ));
@@ -337,10 +350,12 @@ impl BotState {
                     // the per-layout slot indices; probing a pancake pool at
                     // the canonical Uni indices reads a NON-tracked field and
                     // would fabricate a divergence (pool 0x1ac1A8FE, 19:03).
-                    cl_row_for_index(p.0.slot_layout, &p.1, index).map(|row| TrackedSlotProbe {
-                        kind: row.kind,
-                        engine_word: row.engine_word,
-                        update_block: p.1.update_block,
+                    concentrated_liquidity_row_for_index(p.0.slot_layout, &p.1, index).map(|row| {
+                        TrackedSlotProbe {
+                            kind: row.kind,
+                            engine_word: row.engine_word,
+                            update_block: p.1.update_block,
+                        }
                     })
                 }
                 // V2-style Aerodrome pools are NOT V2-slot-8 pools (their
@@ -361,7 +376,9 @@ impl BotState {
         // (PM, pool_id), and the per-tick `S_state` base is pool-id-derived).
         // Reverse-map: iterate this PM's V4 pools, derive each `S_state`, check
         // `index == S_state` (slot0) / `S_state + 3` (liquidity).
-        for ((pm, pool_id_bytes), internal_pool_id) in self.cl.registered_v4_pools() {
+        for ((pm, pool_id_bytes), internal_pool_id) in
+            self.concentrated_liquidity.registered_v4_pools()
+        {
             if *pm != address {
                 continue;
             }
@@ -373,7 +390,10 @@ impl BotState {
             if index == s_state {
                 return Some(TrackedSlotProbe {
                     kind: TrackedSlotKind::V4Slot0,
-                    engine_word: pack_cl_slot0_word(state.sqrt_price_x96, state.tick),
+                    engine_word: pack_concentrated_liquidity_slot0_word(
+                        state.sqrt_price_x96,
+                        state.tick,
+                    ),
                     update_block: state.update_block,
                 });
             }
@@ -381,7 +401,7 @@ impl BotState {
             if index == liquidity_slot {
                 return Some(TrackedSlotProbe {
                     kind: TrackedSlotKind::V4Liquidity,
-                    engine_word: pack_cl_liquidity_word(state.liquidity),
+                    engine_word: pack_concentrated_liquidity_liquidity_word(state.liquidity),
                     update_block: state.update_block,
                 });
             }
@@ -662,7 +682,7 @@ mod tests {
         // bogus [sim-divergence] on pool 0x1ac1A8FE.
         let mut core = BotState::new();
         let mut params = v3_pool_params();
-        params.slot_layout = degenbot_pools::ClSlotLayout::PancakeV3;
+        params.slot_layout = degenbot_pools::ConcentratedLiquiditySlotLayout::PancakeV3;
         let _id = core.register_v3_pool(&params).expect("V3 registration");
 
         assert!(
@@ -676,7 +696,7 @@ mod tests {
     fn pancake_v3_liquidity_probes_at_slot5_and_ticks_at_base_6() {
         let mut core = BotState::new();
         let mut params = v3_pool_params();
-        params.slot_layout = degenbot_pools::ClSlotLayout::PancakeV3;
+        params.slot_layout = degenbot_pools::ConcentratedLiquiditySlotLayout::PancakeV3;
         v3_pool_with_tick(&mut params, -100, 1_000, -500);
         let _id = core.register_v3_pool(&params).expect("V3 registration");
 
@@ -715,7 +735,7 @@ mod tests {
         // non-liquidity field.
         let mut core = BotState::new();
         let mut params = v3_pool_params();
-        params.slot_layout = degenbot_pools::ClSlotLayout::PancakeV3;
+        params.slot_layout = degenbot_pools::ConcentratedLiquiditySlotLayout::PancakeV3;
         let _id = core.register_v3_pool(&params).expect("V3 registration");
 
         let anchors = core.project_sim_anchor_scalars();

@@ -44,7 +44,7 @@ from degenbot.exceptions.pool import (
     IncompleteSwap,
     LiquidityPoolError,
 )
-from degenbot.uniswap.cl_companion import ConcentratedLiquidityCompanion
+from degenbot.uniswap.concentrated_liquidity_companion import ConcentratedLiquidityCompanion
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (

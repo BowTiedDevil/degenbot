@@ -43,7 +43,7 @@ use revm::context_interface::result::{ExecutionResult, Output};
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
 
-use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::state_history::{ReorgJournal, V3BlockDelta};
 use degenbot_pools::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, TickRangeCache,
@@ -1125,7 +1125,7 @@ fn solver_crossing_output_v3(
     amount_in: U256,
     seq: &degenbot_pools::int_v3_hop::IntV3TickRangeSequence,
 ) -> Option<U256> {
-    use degenbot_math::cl::swap_math::compute_swap_step_v3;
+    use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
 
     if amount_in.is_zero() {
         return Some(U256::ZERO);

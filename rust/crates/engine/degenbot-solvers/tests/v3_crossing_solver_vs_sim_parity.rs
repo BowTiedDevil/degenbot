@@ -81,7 +81,9 @@ use degenbot_pools::v3_state::{
 };
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally};
+use degenbot_solvers::concentrated_liquidity::{
+    simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
+};
 
 /// Sqrt-price limit that lets the walk cross every tick the input can reach
 /// (V3 Pool.swap's `sqrtPriceLimit` MIN/MAX bound for the direction).
@@ -152,7 +154,7 @@ fn build_multi_tick_v3_state(
         fetcher: None,
         deployer: alloy::primitives::Address::ZERO,
         init_hash: B256::ZERO,
-        slot_layout: degenbot_pools::ClSlotLayout::UniswapV3,
+        slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
     };
     let (_identity, state) = V3PoolState::from_params(params, 8);
     state
@@ -414,7 +416,7 @@ fn build_sparse_tick_v3_state(
         fetcher: None,
         deployer: alloy::primitives::Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
-        slot_layout: degenbot_pools::ClSlotLayout::UniswapV3,
+        slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
     };
     let (_identity, state) = V3PoolState::from_params(params, 8);
     state
@@ -558,7 +560,7 @@ fn v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class() {
 /// V4 recurrence exposed, which a price exactly on the boundary cannot
 /// exercise). Initialized ticks on both sides so both directions work.
 fn build_real_position_v3_state(base_liquidity: u128, tick_spacing: i32, fee: u32) -> V3PoolState {
-    use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
     let sq_t = get_sqrt_ratio_at_tick_internal(0).unwrap();
     let sq_n = get_sqrt_ratio_at_tick_internal(tick_spacing).unwrap();
     let sp = (U256::from(sq_t) + U256::from(sq_n)) / U256::from(2u64);
@@ -602,7 +604,7 @@ fn build_real_position_v3_state(base_liquidity: u128, tick_spacing: i32, fee: u3
         fetcher: None,
         deployer: alloy::primitives::Address::ZERO,
         init_hash: B256::ZERO,
-        slot_layout: degenbot_pools::ClSlotLayout::UniswapV3,
+        slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
     };
     let (_identity, state) = V3PoolState::from_params(params, 8);
     state

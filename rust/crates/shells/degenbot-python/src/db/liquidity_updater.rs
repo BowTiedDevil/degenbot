@@ -15,7 +15,7 @@
 //! The `liquidity_delta` is a signed `i128` — V3/V4 deltas fit in the
 //! contract's `int128` range (Burn events are negative, Mint positive, V4
 //! Modify already signed). `OverflowError` propagates if a caller passes a value
-//! outside that range (matches the `cl_apply_liquidity_mapping_update` seam).
+//! outside that range (matches the `concentrated_liquidity_apply_liquidity_mapping_update` seam).
 
 use std::path::PathBuf;
 

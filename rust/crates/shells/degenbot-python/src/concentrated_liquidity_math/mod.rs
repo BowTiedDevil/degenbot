@@ -1,5 +1,5 @@
 //! `PyO3` wrappers over the `degenbot-concentrated-liquidity-math` pure core.
-//! Mirrors `crates/foundation/degenbot-math/src/cl/`.
+//! Mirrors `crates/foundation/degenbot-math/src/concentrated_liquidity/`.
 
 pub mod lib;
 pub mod tick_math;
@@ -43,10 +43,10 @@ pub mod concentrated_liquidity_math {
     // them so Python companions and a standalone Rust consumer share one
     // source.
     #[pymodule_export]
-    const MIN_TICK: i32 = degenbot_math::cl::tick_math::MIN_TICK;
+    const MIN_TICK: i32 = degenbot_math::concentrated_liquidity::tick_math::MIN_TICK;
 
     #[pymodule_export]
-    const MAX_TICK: i32 = degenbot_math::cl::tick_math::MAX_TICK;
+    const MAX_TICK: i32 = degenbot_math::concentrated_liquidity::tick_math::MAX_TICK;
 
     /// The sqrt-ratio boundary constants cannot be declarative `const`
     /// exports: they are `U160`s widened to `U256` for the alloy → Python-int
@@ -54,7 +54,7 @@ pub mod concentrated_liquidity_math {
     /// submodule's imperative island here.
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
-        use degenbot_math::cl::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
+        use degenbot_math::concentrated_liquidity::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
         let py = m.py();
         m.add(
             "MIN_SQRT_RATIO",

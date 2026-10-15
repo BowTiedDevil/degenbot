@@ -106,7 +106,7 @@ impl PyArbEngine {
         // forward/reverse keys. v4_pool_id_by_key returns Option<u64>.
         let v4_pools = self.with_core(py, |core| {
             let v4_key = core
-                .cl()
+                .concentrated_liquidity()
                 .v4_pool_id_by_key(Address::ZERO, &pool_id)
                 .or_else(|| {
                     // V4 pools are registered with the actual pool_manager address,

@@ -126,7 +126,7 @@ pub(crate) fn solve_solidly_entry(
 ) -> crate::mixed::SolveArmOutcome {
     crate::mixed::SolveArmOutcome::walked(
         solve_solidly_path_int(resolved),
-        crate::cl::WalkStats::default(),
+        crate::concentrated_liquidity::WalkStats::default(),
     )
 }
 

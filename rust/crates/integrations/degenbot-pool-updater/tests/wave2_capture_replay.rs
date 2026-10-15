@@ -44,7 +44,7 @@ struct Scenario {
 
 const SCENARIOS: &[Scenario] = &[
     Scenario {
-        name: "w2_cl_cross_chunk_flip_flip_swap",
+        name: "w2_concentrated_liquidity_cross_chunk_flip_flip_swap",
         chunks: &[(1000, 1001), (1002, 1003), (1004, 1004)],
         verify_chunk: true,
     },

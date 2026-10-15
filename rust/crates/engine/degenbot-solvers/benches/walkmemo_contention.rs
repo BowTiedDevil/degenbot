@@ -3,7 +3,7 @@
 //! WalkMemo contention baseline — TODAY's single-mutex shape, documented.
 //!
 //! Rayon workers drive the CURRENT single-`parking_lot::Mutex` `WalkMemo`
-//! through the public all-CL solve entry ([`solve_cl_piecewise`]) — the
+//! through the public all-CL solve entry ([`solve_concentrated_liquidity_piecewise`]) — the
 //! production probe/store path: an unlocked `walk_path_fingerprint`, one
 //! locked probe (census insert + cache consult, result clone on a `Hit`),
 //! and on a `Miss` the inner walk plus the locked `note_cost`/`store`
@@ -33,7 +33,7 @@
 //! Criterion `elem/s` is the reported metric: one element = one probe/store
 //! op, swept over worker counts 1/2/4/8 (1 = the uncontended baseline) and
 //! set sizes 64 (hot set) / 4096 (the old wholesale-clear cap). Fixtures
-//! mirror `src/cl/tests/memo.rs`; a `+i` liquidity delta per bank entry
+//! mirror `src/concentrated_liquidity/tests/memo.rs`; a `+i` liquidity delta per bank entry
 //! makes every composition a distinct fingerprint without moving the
 //! economics, and priming asserts each entry landed in its intended arm.
 
@@ -45,9 +45,11 @@ use std::sync::Arc;
 
 use alloy::primitives::U256;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::{solve_cl_piecewise, PreparedClHop, WalkMemo, WalkOutcome};
+use degenbot_solvers::concentrated_liquidity::{
+    solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop, WalkMemo, WalkOutcome,
+};
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -65,7 +67,7 @@ const SET_SIZES: [usize; 2] = [64, 4096];
 const MISS_WINDOW_ROTATION: usize = 4;
 
 // ---------------------------------------------------------------------------
-// Fixtures — mirror the memo-test fixtures (src/cl/tests/memo.rs).
+// Fixtures — mirror the memo-test fixtures (src/concentrated_liquidity/tests/memo.rs).
 // ---------------------------------------------------------------------------
 
 /// Sqrt price at `tick` (the memo tests' `sp_at` helper).
@@ -132,7 +134,7 @@ fn multi_range_sequence(
     IntV3TickRangeSequence::new(ranges).unwrap()
 }
 
-/// A bank of two-sequence compositions with pre-derived `PreparedClHop`s
+/// A bank of two-sequence compositions with pre-derived `PreparedConcentratedLiquidityHop`s
 /// (the projection-cache shape: tables exist per pool/direction before any
 /// solve). One `solve_at` is one production memo op through the public
 /// entry — fingerprint, locked probe, and only on a `Miss` the walk and the
@@ -140,7 +142,7 @@ fn multi_range_sequence(
 struct PairBank {
     seq_a: Vec<IntV3TickRangeSequence>,
     seq_b: Vec<IntV3TickRangeSequence>,
-    prepared: Vec<[PreparedClHop; 2]>,
+    prepared: Vec<[PreparedConcentratedLiquidityHop; 2]>,
 }
 
 impl PairBank {
@@ -154,15 +156,15 @@ impl PairBank {
 
     fn push(&mut self, a: IntV3TickRangeSequence, b: IntV3TickRangeSequence) {
         self.prepared.push([
-            PreparedClHop::derive(Arc::new(a.clone())),
-            PreparedClHop::derive(Arc::new(b.clone())),
+            PreparedConcentratedLiquidityHop::derive(Arc::new(a.clone())),
+            PreparedConcentratedLiquidityHop::derive(Arc::new(b.clone())),
         ]);
         self.seq_a.push(a);
         self.seq_b.push(b);
     }
 
     fn solve_at(&self, i: usize, memo: &WalkMemo, cfg: &SolveRuntimeConfig) -> WalkOutcome {
-        solve_cl_piecewise(&self.prepared[i], Some(memo), None, cfg, None)
+        solve_concentrated_liquidity_piecewise(&self.prepared[i], Some(memo), None, cfg, None)
     }
 }
 

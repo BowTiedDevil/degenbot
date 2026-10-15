@@ -137,7 +137,7 @@ class ArbitrageEngine:
         liquidity that fails on-chain verification. This drains both the
         backfill and the pump buffer in order (backfill first, then pump),
         matching what the orphaned `register_v3_pool` path did via
-        `register_with_cl_buffers`. Safe to call on an already-registered pool;
+        `register_with_concentrated_liquidity_buffers`. Safe to call on an already-registered pool;
         a no-op if the pool is unregistered or has no buffered events.
         """
     def apply_buffer_v4(self, /, pool_manager: str, pool_id_hex: str) -> None:

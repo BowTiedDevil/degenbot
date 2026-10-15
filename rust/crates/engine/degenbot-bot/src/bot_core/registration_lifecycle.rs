@@ -108,7 +108,7 @@ impl std::error::Error for RegistrationLifecycleError {}
 /// — a verification failure aborts BEFORE `set_live`, leaving the tracked pool
 /// `Quarantined` (the tripwire; never auto-repair). No error on the Sparse /
 /// no-op paths.
-pub async fn run_cl_v3_lifecycle<F1, Fut1, F2, Fut2, E>(
+pub async fn run_concentrated_liquidity_v3_lifecycle<F1, Fut1, F2, Fut2, E>(
     core: &StateLock<BotState>,
     address: Address,
     snapshot_block: Option<u64>,
@@ -208,7 +208,7 @@ where
     Ok(())
 }
 
-/// V4 twin of [`run_cl_v3_lifecycle`] — same D4 coverage branch + two-step
+/// V4 twin of [`run_concentrated_liquidity_v3_lifecycle`] — same D4 coverage branch + two-step
 /// verify + tripwire-gated `Live`, keyed by (`pool_manager`, `pool_id`).
 ///
 /// Same lock-scope contract: no guard across the verify `.await`s; drain + pin
@@ -219,7 +219,7 @@ where
 /// Returns the closure error type `E` if either verify closure returns `Err`
 /// — a verification failure aborts before `set_live`, leaving the tracked pool
 /// `Quarantined`.
-pub async fn run_cl_v4_lifecycle<F1, Fut1, F2, Fut2, E>(
+pub async fn run_concentrated_liquidity_v4_lifecycle<F1, Fut1, F2, Fut2, E>(
     core: &StateLock<BotState>,
     pool_manager: Address,
     pool_id: V4PoolId,
@@ -297,7 +297,7 @@ where
 }
 
 /// Concrete V3 registration-lifecycle: same choreography as
-/// [`run_cl_v3_lifecycle`], but the two verify steps run through
+/// [`run_concentrated_liquidity_v3_lifecycle`], but the two verify steps run through
 /// `liquidity_verifier::verify_v3_liquidity_map` against the bot's **single**
 /// `AlloyProvider` (ADR-022 D3 — one provider per bot/chain, passed-in). V3
 /// needs no `state_view` (the per-pool verify reads `pool.ticks()` directly).
@@ -318,7 +318,7 @@ pub async fn run_v3_registration_lifecycle(
     snapshot_block: Option<u64>,
 ) -> Result<(), RegistrationLifecycleError> {
     let provider = provider.cloned();
-    run_cl_v3_lifecycle(
+    run_concentrated_liquidity_v3_lifecycle(
         core,
         address,
         snapshot_block,
@@ -368,7 +368,7 @@ pub async fn run_v4_registration_lifecycle(
     snapshot_block: Option<u64>,
 ) -> Result<(), RegistrationLifecycleError> {
     let provider = provider.cloned();
-    run_cl_v4_lifecycle(
+    run_concentrated_liquidity_v4_lifecycle(
         core,
         pool_manager,
         pool_id,
@@ -429,7 +429,10 @@ mod tests {
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_pools::v4_state::V4PoolKey;
 
-    use super::{run_cl_v3_lifecycle, run_cl_v4_lifecycle, RegistrationLifecycleError};
+    use super::{
+        run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle,
+        RegistrationLifecycleError,
+    };
     use crate::bot_core::{
         PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams, RegistrationLifecycle,
         TickInfo,
@@ -532,7 +535,7 @@ mod tests {
         };
         // Both closures `unreachable!` — the invariant is that Sparse never
         // invokes the verify RPC path.
-        let result = run_cl_v3_lifecycle::<_, _, _, _, ()>(
+        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
             &core,
             addr,
             Some(123),
@@ -555,7 +558,7 @@ mod tests {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v4(&mut c, pm, pid, PoolTickCoverage::Sparse);
         }
-        let result = run_cl_v4_lifecycle::<_, _, _, _, ()>(
+        let result = run_concentrated_liquidity_v4_lifecycle::<_, _, _, _, ()>(
             &core,
             pm,
             pid,
@@ -581,7 +584,7 @@ mod tests {
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let calls_seed = Arc::clone(&calls);
         let calls_post = Arc::clone(&calls);
-        let result = run_cl_v3_lifecycle::<_, _, _, _, ()>(
+        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
             &core,
             addr,
             Some(42),
@@ -658,7 +661,7 @@ mod tests {
         };
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seed_calls = Arc::clone(&calls);
-        let result = run_cl_v3_lifecycle::<_, _, _, _, ()>(
+        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
             &core,
             addr,
             Some(200), // global snapshot-seed block S
@@ -692,7 +695,7 @@ mod tests {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
-        let result = run_cl_v3_lifecycle::<_, _, _, _, String>(
+        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, String>(
             &core,
             addr,
             Some(42),
@@ -719,7 +722,7 @@ mod tests {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
-        let result = run_cl_v3_lifecycle::<_, _, _, _, String>(
+        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, String>(
             &core,
             addr,
             Some(42),
@@ -763,7 +766,7 @@ mod tests {
                 "must be buffered"
             );
         }
-        let result = run_cl_v3_lifecycle::<_, _, _, _, ()>(
+        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
             &core,
             addr,
             None, // no snapshot block → step-1 skipped; step-2 (post-drain) still runs
@@ -838,7 +841,7 @@ mod tests {
         }
 
         // Run the per-path lifecycle on the tracked V3 -> Live.
-        run_cl_v3_lifecycle::<_, _, _, _, ()>(
+        run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
             &core,
             tracked_addr,
             Some(42),
@@ -892,7 +895,7 @@ mod tests {
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
         let core_task = Arc::clone(&core);
         let task = tokio::spawn(async move {
-            run_cl_v3_lifecycle::<_, _, _, _, ()>(
+            run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
                 &core_task,
                 addr,
                 Some(42),
@@ -914,7 +917,7 @@ mod tests {
         // Concurrent write must complete promptly (no guard held across await).
         let write = tokio::time::timeout(std::time::Duration::from_millis(500), async {
             let c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            let n = c.cl().v4_pool_count();
+            let n = c.concentrated_liquidity().v4_pool_count();
             std::hint::black_box(n);
         })
         .await;
@@ -957,7 +960,7 @@ mod tests {
             writer_started_tx.send(()).expect("signal writer start");
             writer_core
                 .write_at(LockSite::Registration)
-                .cl_mut()
+                .concentrated_liquidity_mut()
                 .advance_pump_complete_cutoff(1);
         });
         writer_started_rx.recv().expect("writer thread started");

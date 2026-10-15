@@ -9,7 +9,7 @@
 //! (0xfe halt). This guard asserts the tier-3-proven twin
 //! (`v4_simulate_swap`) is byte-exact to the recorded on-chain actual
 //! (85097881) for this topology — the authoritative bound the solver's
-//! `clamp_cl_hop_capacity` now aligns `hop_outputs[i]`/`consumed_inputs[i+1]`
+//! `clamp_concentrated_liquidity_hop_capacity` now aligns `hop_outputs[i]`/`consumed_inputs[i+1]`
 //! to (so the take can never exceed the pool's actual yield).
 //!
 //! No RPC / toolchain — feeds the committed
@@ -20,7 +20,7 @@
 use alloy::primitives::aliases::I256;
 use alloy::primitives::U256;
 use degenbot::investigation::{build_v4_state, PathFixture};
-use degenbot_math::cl::tick_math::MIN_SQRT_RATIO;
+use degenbot_math::concentrated_liquidity::tick_math::MIN_SQRT_RATIO;
 use degenbot_pools::v4_state::v4_simulate_swap;
 
 const FIXTURE_PATH: &str = concat!(
@@ -32,7 +32,7 @@ const FIXTURE_PATH: &str = concat!(
 /// byte-exact twin target the solver over-predicted by 3 wei.
 const RECORDED_ACTUAL: u128 = 85_097_881;
 /// The live solver's over-predicted `hop_outputs[1]` that caused the 3-wei
-/// over-take (and whose drift `clamp_cl_hop_capacity` now corrects at the seam).
+/// over-take (and whose drift `clamp_concentrated_liquidity_hop_capacity` now corrects at the seam).
 const SOLVER_PREDICTED: u128 = 85_097_884;
 /// The recorded V4 exact-in (previous hop's output, `consumed_inputs[1]`).
 const RECORDED_V4_INPUT: u128 = 85_060_245;

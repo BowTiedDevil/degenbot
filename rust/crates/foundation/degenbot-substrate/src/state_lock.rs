@@ -161,7 +161,7 @@ pub enum LockSite {
     Python,
     /// Block pump (`bot_core/block_pump.rs`) acquisition.
     Pump,
-    /// Pool/registration lifecycle (`registration_lifecycle.rs`, `cl_orchestration.rs`).
+    /// Pool/registration lifecycle (`registration_lifecycle.rs`, `concentrated_liquidity_orchestration.rs`).
     Registration,
     /// Arbitrage-engine solver paths (`arb_engine/*`).
     Solver,

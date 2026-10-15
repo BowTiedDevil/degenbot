@@ -144,7 +144,7 @@ walk (deepest `Revert` frame + `classify_revert`).
 - `recompute_v2_amount_out`, `recompute_v3_amount_out`,
   `recompute_v4_amount_out` (L154/L190/L221) — the off-chain swap-math
   recompute against a separately-fetched snapshot.
-- `recompute_cl_amount_out_onchain` (the onchain-state scalar-slot0 recompute).
+- `recompute_concentrated_liquidity_amount_out_onchain` (the onchain-state scalar-slot0 recompute).
 - `populate_*_recompute`, `refresh_*_recompute_onchain` (L342/L372/L405/L…).
 - `HopRecompute` (L513) + the `DiagnosticHop::recompute` field (L631) + every
   `recompute: Some/None` site (L677…L2212).

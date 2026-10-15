@@ -89,7 +89,7 @@ impl PyArbEngine {
     /// liquidity that fails on-chain verification. This drains both the
     /// backfill and the pump buffer in order (backfill first, then pump),
     /// matching what the orphaned `register_v3_pool` path did via
-    /// `register_with_cl_buffers`. Safe to call on an already-registered pool;
+    /// `register_with_concentrated_liquidity_buffers`. Safe to call on an already-registered pool;
     /// a no-op if the pool is unregistered or has no buffered events.
     #[pyo3(signature = (pool_address))]
     fn apply_buffer_v3(&self, py: Python<'_>, pool_address: &str) -> PyResult<()> {
@@ -265,7 +265,9 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: guards acquired inside the accessor's py.detach.
-        let count = self.with_core(py, |s| s.cl().buffered_v3_event_count(&addr));
+        let count = self.with_core(py, |s| {
+            s.concentrated_liquidity().buffered_v3_event_count(&addr)
+        });
         Ok(count)
     }
 

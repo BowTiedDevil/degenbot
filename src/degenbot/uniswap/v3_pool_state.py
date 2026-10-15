@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot.uniswap.cl_pool_state import ConcentratedLiquidityPoolState
+from degenbot.uniswap.concentrated_liquidity_pool_state import ConcentratedLiquidityPoolState
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token

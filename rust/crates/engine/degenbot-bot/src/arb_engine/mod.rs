@@ -532,7 +532,8 @@ impl ArbitrageEngine {
                 path_status: HashMap::new(),
                 hop_projection_cache: HopProjectionCache::new(),
                 hop_projection_count: 0,
-                cl_projection_memo: degenbot_substrate::resolve::projection_memo_enabled(),
+                concentrated_liquidity_projection_memo:
+                    degenbot_substrate::resolve::projection_memo_enabled(),
                 path_description_cache: parking_lot::Mutex::new(HashMap::new()),
                 resolved_update_snapshot: HashMap::new(),
                 cursor: BlockCursor::default(), // (0, None, 0, false) — the pre-cursor init, unchanged
@@ -546,11 +547,13 @@ impl ArbitrageEngine {
                 // (dormant Unopened, pipe closed, counters at 0).
                 detached_cycle: detached_cycle::DetachedCycle::new(),
                 scope: BlockScope::new(
-                    std::sync::Arc::new(::degenbot_solvers::cl::WalkMemo::new(
+                    std::sync::Arc::new(::degenbot_solvers::concentrated_liquidity::WalkMemo::new(
                         cfg.solve.solver_walk_memo,
                         cfg.solve.solver_walk_memo_stats,
                     )),
-                    std::sync::Arc::new(::degenbot_solvers::cl::WalkTelemetry::new()),
+                    std::sync::Arc::new(
+                        ::degenbot_solvers::concentrated_liquidity::WalkTelemetry::new(),
+                    ),
                 ),
                 min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),
                 clamp_margin: retune.clamp_margin,
@@ -601,11 +604,11 @@ impl ArbitrageEngine {
             self.event_buffer_expiry_enabled = retune.event_buffer_max_age.is_some();
             self.core
                 .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-                .cl_mut()
+                .concentrated_liquidity_mut()
                 .set_v3_buffer_max_age(retune.event_buffer_max_age);
             self.core
                 .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-                .cl_mut()
+                .concentrated_liquidity_mut()
                 .set_v4_buffer_max_age(retune.event_buffer_max_age);
         }
         // The admission trio.

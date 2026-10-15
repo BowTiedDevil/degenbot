@@ -38,7 +38,7 @@ registered in the family tree `src/mixed/families/mod.rs:4` — plus the residua
 central sites ADR-071 D4 permits: one `HopType` variant (and its `HopType::ALL`
 entry), one `ResolvedHop` arm, one `HopMath` arm, and one `FAMILY_DISPATCH` row.
 The glossary gains one entry per new concept. The five landed modules are the
-template: `cl.rs`, `solidly.rs`, `balancer_weighted.rs`, `balancer_stable.rs`,
+template: `concentrated_liquidity.rs`, `solidly.rs`, `balancer_weighted.rs`, `balancer_stable.rs`,
 and `curve_stableswap.rs` under `src/mixed/families/`.
 
 ## 2. The family module — the export surface
@@ -54,7 +54,7 @@ One module owns everything the family contributes to a solve and its bound
   arm, registered on the row: `solidly_to_math` (`solidly.rs:84`),
   `weighted_to_math` (`balancer_weighted.rs:69`), `stable_to_math`
   (`balancer_stable.rs:63`), `curve_to_math` (`curve_stableswap.rs:73`),
-  `cl_to_math` (`cl.rs:46`).
+  `concentrated_liquidity_to_math` (`concentrated_liquidity.rs:46`).
 - **the V2-equivalent projection** — the Möbius profitability precheck the shared
   template consumes: `solidly_hop_v2_equiv` (`solidly.rs:167`),
   `balancer_weighted_hop_v2_equiv` (`balancer_weighted.rs:134`),
@@ -85,11 +85,11 @@ One module owns everything the family contributes to a solve and its bound
   `balancer_stable_rise` (`:371`); `curve_hop_lines` (`curve_stableswap.rs:213`) /
   `curve_stableswap_lines` (`:247`).
 
-CL is the extreme case: V3 and V4 share one solve (ADR-069), so `cl.rs` owns
-`ClHop` (`cl.rs:37`), the walkable-path entry `solve_walkable_path_int` (`:84`),
-and the tangent-fan builder `cl_hop_lines` (`:463`). It also owns `refine_bounds`
+CL is the extreme case: V3 and V4 share one solve (ADR-069), so `concentrated_liquidity.rs` owns
+`ConcentratedLiquidityHop` (`concentrated_liquidity.rs:37`), the walkable-path entry `solve_walkable_path_int` (`:84`),
+and the tangent-fan builder `concentrated_liquidity_hop_lines` (`:463`). It also owns `refine_bounds`
 (`:62`), the seam that translates the envelope's composed lines into the kernel's
-own refine-window vocabulary (`RefineBound`, `src/cl/window.rs:18`) — the kernel
+own refine-window vocabulary (`RefineBound`, `src/concentrated_liquidity/window.rs:18`) — the kernel
 names no envelope type.
 
 ## 3. The dispatch row — the row IS the registration
@@ -123,7 +123,7 @@ variant and its `ALL` entry:
   `is_concentrated_liquidity` (`:103`) needs no arm unless the family is CL.
 - **one `ResolvedHop` arm** (`:201`) plus its `hop_type()` arm (`:232`); add the
   variant to the four non-CL accessor `None` arms (`as_int_sequence` `:255`,
-  `as_word_profiles` `:271`, `as_crossing_table` `:286`, `as_prepared_cl_hop`
+  `as_word_profiles` `:271`, `as_crossing_table` `:286`, `as_prepared_concentrated_liquidity_hop`
   `:300`). Add a family accessor (mirror `as_solidly_state` `:313`) only when a
   caller needs one — the Balancer and Curve variants carry none and are matched
   directly at their use sites.

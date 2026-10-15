@@ -13,7 +13,7 @@ use alloy::primitives::{address, Address, I256, U256};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
 use degenbot_db::ApplyLiquidityAtTick;
-use degenbot_pools::v3_state::ClSlotLayout;
+use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
@@ -155,7 +155,7 @@ fn runtime(ticks: &[i32]) -> (MarketContext, u64, u64) {
         address: ANCHOR,
         fee: ANCHOR_FEE,
         tick_spacing: ANCHOR_SPACING,
-        layout: ClSlotLayout::UniswapV3,
+        layout: ConcentratedLiquiditySlotLayout::UniswapV3,
     });
     index.push_edge(V2Edge {
         pool_id: 202,
@@ -182,7 +182,7 @@ fn anchor_post_state() -> PoolPostState {
     PoolPostState {
         address: ANCHOR,
         family: PoolFamily::V3 {
-            layout: ClSlotLayout::UniswapV3,
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
             tick_spacing: ANCHOR_SPACING,
             current_tick_hint: Some(0),
         },

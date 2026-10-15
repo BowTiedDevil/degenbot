@@ -83,7 +83,7 @@ pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
 pub use ::degenbot_pools::state_history::BalancesBlockDelta;
 pub use ::degenbot_pools::v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
-    ClSlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
+    ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
     RegistrationLifecycle, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
     V3SwapUpdate,
 };
@@ -106,8 +106,8 @@ pub use registration_ledger::{
     UnregistrableRecord, REGISTRATION_OUTCOMES,
 };
 pub use registration_lifecycle::{
-    run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
-    run_v4_registration_lifecycle, RegistrationLifecycleError,
+    run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle,
+    run_v3_registration_lifecycle, run_v4_registration_lifecycle, RegistrationLifecycleError,
 };
 pub use stage_handlers::{
     AffectedPaths, CandidateId, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish,

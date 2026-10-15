@@ -83,8 +83,9 @@ fn pure_v3_path_finds_profitable_arb() {
         ..Default::default()
     });
     // V3 pool B at tick -60 (slightly cheaper token1), high liquidity
-    let sqrt_price_lower_u160 = degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(-60)
-        .unwrap_or(alloy::primitives::U160::ZERO);
+    let sqrt_price_lower_u160 =
+        degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal(-60)
+            .unwrap_or(alloy::primitives::U160::ZERO);
     let sqrt_price_lower = U256::from(sqrt_price_lower_u160);
     let mut tick_data_b = HashMap::new();
     tick_data_b.insert(
@@ -692,7 +693,8 @@ fn v4_int128_overflow_path_rejected() {
     let v4_pool_manager = Address::from([0x40u8; 20]);
     // tick -886_983 → sqrtPrice ≈ 4.36e9 (very low price, token0 is nearly worthless)
     let sp_extreme =
-        degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal(-886_983).unwrap_or_default();
+        degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal(-886_983)
+            .unwrap_or_default();
     let extreme_liquidity: u128 = 76_688_550_121_478_947_320_312_764_923_207_804;
     let v4_id = engine
         .register_v4_pool(&RegisterV4PoolParams {
@@ -745,7 +747,7 @@ fn v4_int128_overflow_path_rejected() {
                 &mut resolved,
                 &engine.cycle.hop_projection_cache,
                 None,
-                engine.cycle.cl_projection_memo,
+                engine.cycle.concentrated_liquidity_projection_memo,
             );
             engine
                 .cycle
@@ -783,7 +785,7 @@ fn v4_int128_overflow_path_rejected() {
 /// Register a small V4 pool that can only convert a bounded amount per
 /// swap (single narrow position, low liquidity), plus a 2-hop V2→V4 path
 /// whose V4 hop is fed an absurdly large committed input. Then drive
-/// `clamp_cl_hop_capacity` directly and assert it caps the V4 hop's
+/// `clamp_concentrated_liquidity_hop_capacity` directly and assert it caps the V4 hop's
 /// `consumed_inputs[1]` to the pools twin's `input_consumed - 1` (the 1-wei
 /// Forward-clamp staleness (the path-182449/110302 1-wei over-prediction
 /// class): when the upstream CL hop's twin forward-clamps the DOWNSTREAM
@@ -795,7 +797,7 @@ fn v4_int128_overflow_path_rejected() {
 /// `UniswapV2: K`).
 #[expect(clippy::too_many_lines)]
 #[test]
-fn clamp_cl_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
+fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
     use crate::arb_engine::PoolTickCoverage;
     use crate::bot_core::TickInfo;
     use degenbot_math::v2::IntHopState;
@@ -881,7 +883,7 @@ fn clamp_cl_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
     };
     engine
         .cycle
-        .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
+        .clamp_concentrated_liquidity_hop_capacity(path_id, &mut result, &engine.registry);
     // Test premise: the forward into the V2 hop was actually clamped.
     let clamped = result.consumed_inputs[1];
     assert!(
@@ -925,7 +927,7 @@ fn clamp_cl_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
 /// production at the solve→result merge seam.
 #[expect(clippy::too_many_lines)]
 #[test]
-fn clamp_cl_hop_capacity_caps_overfed_v4_input() {
+fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
     use crate::arb_engine::PoolTickCoverage;
     use crate::bot_core::TickInfo;
     use alloy::primitives::I256;
@@ -1013,7 +1015,7 @@ fn clamp_cl_hop_capacity_caps_overfed_v4_input() {
     };
     engine
         .cycle
-        .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
+        .clamp_concentrated_liquidity_hop_capacity(path_id, &mut result, &engine.registry);
     // Compute the pools twin's input_consumed at the requested input to
     // assert the clamped value equals `input_consumed - 1` exactly.
     let input_consumed = {
@@ -1088,7 +1090,7 @@ fn clamp_cl_hop_capacity_caps_overfed_v4_input() {
     clippy::too_many_lines,
     reason = "V4-first hop fixture setup + alignment assertions read as one scenario"
 )]
-fn clamp_cl_hop_capacity_aligns_v4_first_hop0_outputs() {
+fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
     use crate::arb_engine::PoolTickCoverage;
     use crate::bot_core::TickInfo;
     use alloy::primitives::I256;
@@ -1168,7 +1170,7 @@ fn clamp_cl_hop_capacity_aligns_v4_first_hop0_outputs() {
     };
     engine
         .cycle
-        .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
+        .clamp_concentrated_liquidity_hop_capacity(path_id, &mut result, &engine.registry);
     // Compute the V4 twin's amount1 (zfo=true → output = amount1) at the
     // requested input — the byte-exact value hop_outputs[0] must align to.
     let twin_out = {
@@ -1205,7 +1207,7 @@ fn clamp_cl_hop_capacity_aligns_v4_first_hop0_outputs() {
 /// terminates on `amountRemaining==0`. Prevents the clamp from corrupting
 /// `consumed_inputs` for the (common) fully-fed-hop case.
 #[test]
-fn clamp_cl_hop_capacity_noop_within_capacity() {
+fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
     use crate::arb_engine::PoolTickCoverage;
     use crate::bot_core::TickInfo;
     let mut engine = ArbitrageEngine::new();
@@ -1282,7 +1284,7 @@ fn clamp_cl_hop_capacity_noop_within_capacity() {
     };
     engine
         .cycle
-        .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
+        .clamp_concentrated_liquidity_hop_capacity(path_id, &mut result, &engine.registry);
     assert_eq!(
         result.consumed_inputs[0], small,
         "in-capacity input must be left untouched by the clamp"

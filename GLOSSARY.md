@@ -559,8 +559,8 @@ that genuinely diverge stay typed per ADR-059 D3 — and call the kernel at the 
 seam to produce the one prepared hop. The kernel carries no envelope vocabulary: no
 `Line`, no verdict, no cap. The tangent fan is derived from the kernel's crossing tables
 by the family module's bound side, and the engine-owned fan cache stays borrowed, never
-owned. Home: `degenbot-math`'s `cl` module (sibling of the `v2` and `balancer` leaves,
-ADR-035) once a second tier consumer reaches it; the solver crate's `cl` tree until then.
+owned. Home: `degenbot-math`'s `concentrated_liquidity` module (sibling of the `v2` and `balancer` leaves,
+ADR-035) once a second tier consumer reaches it; the solver crate's `concentrated_liquidity` tree until then.
 _Avoid_: a trait hierarchy over pools on the solve path; the kernel as an unowned tree
 inside the solver crate; envelope types inside the kernel; "CL family" naming the kernel.
 
@@ -1031,15 +1031,15 @@ _Avoid_: "session registry" for it; the `SessionObjectRegistry` is the
 identity-only layer, the registry core is the live state.
 
 **CL orchestration capability**:
-`ClOrchestration` — the one struct owning every CL-local state surface:
+`ConcentratedLiquidityOrchestration` — the one struct owning every CL-local state surface:
 the V3/V4 liquidity event buffers, `v4_pool_ids`, the V4 state-view registry,
 the registration gate, the snapshot seed block, the pump delivery cutoff, and
 the per-pool event horizons. `BotState` stays the composition root and
 delegates its public CL surface to it one-line-at-a-time; callers that need
-only CL-local state reach the capability directly through `BotState::cl()` /
-`cl_mut()` over the capability's `pub` method set, capability fns reach the
+only CL-local state reach the capability directly through `BotState::concentrated_liquidity()` /
+`concentrated_liquidity_mut()` over the capability's `pub` method set, capability fns reach the
 registry core only through the `RegistryCore` view their callers pass, and
 registry-side consumers (the sim-anchor projection, the storage probe) see
 V4 registration only through `registered_v4_pools()`.
-_Avoid_: reaching into `state.cl.<field>` from registry-side code or growing
+_Avoid_: reaching into `state.concentrated_liquidity.<field>` from registry-side code or growing
 CL policy outside the capability's method set.

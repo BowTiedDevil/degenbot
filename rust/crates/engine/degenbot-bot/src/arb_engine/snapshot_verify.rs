@@ -5,7 +5,7 @@
 //! imports continue to resolve. New code should import from
 //! `degenbot_bot::bot_core::snapshot_verify` directly.
 //!
-//! `register_with_cl_buffers` was made generic over the engine type `E`
+//! `register_with_concentrated_liquidity_buffers` was made generic over the engine type `E`
 //! during the move (it never inspects the engine); the concrete
 //! `E = ArbitrageEngine` is supplied at the call sites in
 //! `degenbot-python::bot::engine::register`, so existing callers are

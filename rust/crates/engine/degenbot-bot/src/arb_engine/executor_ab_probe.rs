@@ -17,18 +17,22 @@ use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::cl::{build_cl_crossing_table, build_cl_word_profiles, PreparedClHop};
+use degenbot_solvers::concentrated_liquidity::{
+    build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
+    PreparedConcentratedLiquidityHop,
+};
 use serde_json::Value;
 use std::sync::Arc;
 fn fixture_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("DEGENBOT_PROBE_FIXTURE") {
         return std::path::PathBuf::from(p);
     }
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl",
+    )
 }
 /// Zst-aware corpus load for the parity fixtures: the packaged
-/// `heavy_cl_solve_captures.jsonl.zst` decodes transparently via
+/// `heavy_concentrated_liquidity_solve_captures.jsonl.zst` decodes transparently via
 /// `capture_fixture::read_fixture` (same corpus the probe measures).
 pub(in crate::arb_engine) fn load_corpus_fixture(
 ) -> Vec<Arc<::degenbot_solvers::mixed::ResolvedMixedPath>> {
@@ -105,10 +109,14 @@ pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_solvers::mixed:
                 }
             }
             let seq = IntV3TickRangeSequence { ranges };
-            let crossings = Arc::from(build_cl_crossing_table(&seq));
-            let profiles = Arc::from(build_cl_word_profiles(&seq));
+            let crossings = Arc::from(build_concentrated_liquidity_crossing_table(&seq));
+            let profiles = Arc::from(build_concentrated_liquidity_word_profiles(&seq));
             hops.push(::degenbot_solvers::mixed::ResolvedHop::V3 {
-                prepared: PreparedClHop::from_parts(Arc::new(seq), crossings, profiles),
+                prepared: PreparedConcentratedLiquidityHop::from_parts(
+                    Arc::new(seq),
+                    crossings,
+                    profiles,
+                ),
             });
         }
         items.push(Arc::new(::degenbot_solvers::mixed::ResolvedMixedPath {

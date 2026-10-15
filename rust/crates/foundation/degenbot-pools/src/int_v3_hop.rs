@@ -575,8 +575,8 @@ impl IntV3TickRangeSequence {
 mod tests {
     use super::*;
     use alloy::primitives::I256;
-    use degenbot_math::cl::swap_math::compute_swap_step_v3;
-    use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
+    use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 
     /// O(N²)→O(N) performance proof: on a 500-range dense sequence,
     /// `crossings()` (O(N)) must be dramatically faster than calling

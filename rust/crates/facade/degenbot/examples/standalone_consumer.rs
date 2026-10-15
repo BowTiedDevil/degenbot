@@ -681,7 +681,7 @@ fn session_registry_get_or_create_standalone_slice() {
 }
 
 /// (IKGQ6F / ADR-022 D1) Standalone-Rust consumer drives the core-owned
-/// registration verify-lifecycle (`degenbot::run_cl_v3_lifecycle`) with no
+/// registration verify-lifecycle (`degenbot::run_concentrated_liquidity_v3_lifecycle`) with no
 /// Python in the build graph and no provider: a Tracked V3 pool registers
 /// Quarantined, then the generic lifecycle runs its two verify closures
 /// (trivial passing stubs here), drains + pins, and lands the pool `Live`.
@@ -691,7 +691,7 @@ fn registration_lifecycle_standalone_slice() {
 
     use degenbot::bot_core::{PoolTickCoverage, RegistrationLifecycle, TickInfo};
     use degenbot::substrate::state_lock::StateLock;
-    use degenbot::{run_cl_v3_lifecycle, RegisterV3PoolParams};
+    use degenbot::{run_concentrated_liquidity_v3_lifecycle, RegisterV3PoolParams};
 
     let core = StateLock::new(BotState::new());
     let addr = address!("000000000000000000000000000000000000000D");
@@ -734,7 +734,7 @@ fn registration_lifecycle_standalone_slice() {
     // closures stand in for the provider-backed verify (the generic fn needs
     // no provider). Sparse would be an immediate no-op.
     degenbot::runtime::get_runtime()
-        .block_on(run_cl_v3_lifecycle::<_, _, _, _, ()>(
+        .block_on(run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
             &core,
             addr,
             Some(42),

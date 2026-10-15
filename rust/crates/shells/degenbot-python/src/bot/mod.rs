@@ -1114,8 +1114,8 @@ impl PyBot {
                 // builder's deployment-table resolution.
                 let slot_override = match slot_layout {
                     None => None,
-                    Some("pancakeswap") => Some(degenbot_pools::v3_state::ClSlotLayout::PancakeV3),
-                    Some("uniswap") => Some(degenbot_pools::v3_state::ClSlotLayout::UniswapV3),
+                    Some("pancakeswap") => Some(degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::PancakeV3),
+                    Some("uniswap") => Some(degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3),
                     Some(other) => {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "build_v3_pool: slot_layout must be 'uniswap' or 'pancakeswap', got {other:?}"
@@ -1943,7 +1943,9 @@ impl PyBot {
         // RPC-adjacent work (cheap string check first — no malformed
         // argument behind a CREATE2 verify).
         let slot_override = match slot_layout {
-            Some("pancakeswap") => Some(degenbot_pools::v3_state::ClSlotLayout::PancakeV3),
+            Some("pancakeswap") => {
+                Some(degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::PancakeV3)
+            }
             Some("uniswap") | None => None,
             Some(other) => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(

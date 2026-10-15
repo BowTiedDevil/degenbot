@@ -31,7 +31,7 @@ from degenbot.uniswap.math import (
     MIN_TICK,
 )
 from degenbot.uniswap.math import (
-    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
+    get_tick_word_and_bit_position as concentrated_liquidity_get_tick_word_and_bit_position,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
@@ -231,7 +231,9 @@ def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
 def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     bot = make_bot_with_provider(fork_mainnet_full.provider)
     lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
-    current_word, _ = cl_get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
+    current_word, _ = concentrated_liquidity_get_tick_word_and_bit_position(
+        MIN_TICK, lp.tick_spacing
+    )
     assert lp.sparse_liquidity_map is True
     assert current_word + 1 not in lp.tick_bitmap
 
@@ -251,7 +253,7 @@ def test_external_update_with_sparse_liquidity_map(fork_mainnet_full: AnvilFork)
     bot = make_bot_with_provider(fork_mainnet_full.provider)
     lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
     print(f"{lp.tick_bitmap=}")
-    current_word, _ = cl_get_tick_word_and_bit_position(
+    current_word, _ = concentrated_liquidity_get_tick_word_and_bit_position(
         tick=MIN_TICK,
         tick_spacing=lp.tick_spacing,
     )

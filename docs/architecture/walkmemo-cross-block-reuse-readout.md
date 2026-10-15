@@ -8,7 +8,7 @@ the live-capture section records what real traffic actually does, kept
 explicitly separate.**
 
 The cross-block composition memo (`WalkMemo` in
-`rust/crates/engine/degenbot-solvers/src/cl/memo.rs`) is live on the engine path:
+`rust/crates/engine/degenbot-solvers/src/concentrated_liquidity/memo.rs`) is live on the engine path:
 `arb_engine::solve_cycle` advances `begin_block(solve_block)` before the per-path
 probes (solve_cycle.rs:1176) and threads the engine-owned handle into every solve
 (`gate_deps.walk_memo = Some(&memo)`, solve_cycle.rs:2087). This note records the
@@ -20,13 +20,13 @@ needs before anyone acts on it.
 `cargo run -p degenbot-solvers --example walkmemo_readout`
 (`rust/crates/engine/degenbot-solvers/examples/walkmemo_readout.rs`, new in this
 change) loads the same capture fixture the other replays use
-(`heavy_cl_solve_captures.jsonl` via `degenbot_solvers::capture_fixture`), derives
+(`heavy_concentrated_liquidity_solve_captures.jsonl` via `degenbot_solvers::capture_fixture`), derives
 `ClSolveTables` ONCE per captured path (the production shape — the A/B must not
 measure table derivation), then runs `E` epochs (default 5,
 `DR_READOUT_EPOCHS` to override) over the FULL path set — 156 captured paths, 12
 distinct `path_id`s, 2 hops each — in two arms:
 
-- **Arm A (memo off, the "before")**: `solve_cl_piecewise` with `None` memo every
+- **Arm A (memo off, the "before")**: `solve_concentrated_liquidity_piecewise` with `None` memo every
   epoch; per-epoch total walk sims + wall time.
 - **Arm B (memo on, stats on, the "after")**: one `WalkMemo::new(true, true)`,
   `begin_block(epoch)` at each epoch start BEFORE the per-path probes (the engine
@@ -47,7 +47,7 @@ missing is a capture with real epoch structure, not instrumentation.
 
 A second corpus-specific caveat: the walk's sim counters (`sims`,
 `probes_sims`, `hits_sims`) read **0 on this corpus**. That is the corpus, not a
-bug: the existing baseline harness `cl_solve_replay` reports the same all-zero
+bug: the existing baseline harness `concentrated_liquidity_solve_replay` reports the same all-zero
 `sims/refine/pieces/wsteps` row set for these exact paths (with goldens matching),
 so the current walk resolves these compositions without full-path
 `simulate_walk_path` calls. The sim columns are reported as recorded and carry no
@@ -58,7 +58,7 @@ signal here; the wall-time column is the cost signal.
 From an actual run of the example (exit 0; log kept at `/tmp/walkmemo_readout_run.log`):
 
 ```text
-WalkMemo readout: 156 captured path(s) (12 distinct path_id(s)) x 5 epoch(s), tables derived once per path, fixture=/workspaces/degenbot/rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl
+WalkMemo readout: 156 captured path(s) (12 distinct path_id(s)) x 5 epoch(s), tables derived once per path, fixture=/workspaces/degenbot/rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
 
 == Arm A: memo off (baseline) ==
 epoch  paths  walk_sims  wall_ms
@@ -137,10 +137,10 @@ Facts established from code (no measurement):
   nothing unless the `hotpath` Cargo feature is enabled
   (`hotpath = ["hotpath/hotpath", "hotpath/threads"]`).
 - The span labels that exist and would decide this:
-  - `cl_solve.int_solve_cl_path` — `solve_cl_piecewise` (the forwarding
-    all-CL intake in `cl/entries.rs`),
-  - `cl_solve.exact_solve_mixed_path_n` — `solve_piecewise` (the one
-    solve body in `cl/entries.rs`).
+  - `concentrated_liquidity_solve.int_solve_concentrated_liquidity_path` — `solve_concentrated_liquidity_piecewise` (the forwarding
+    all-CL intake in `concentrated_liquidity/entries.rs`),
+  - `concentrated_liquidity_solve.exact_solve_mixed_path_n` — `solve_piecewise` (the one
+    solve body in `concentrated_liquidity/entries.rs`).
 
 The share measurement is **PENDING**: it needs a telemetry-enabled live run and
 cannot be produced cheaply offline (the spans are compile-time no-ops in default
@@ -158,7 +158,7 @@ HOTPATH_SHUTDOWN_MS=30000 \
 uv run python ...   # bot runner over a live/multi-block capture; build with: cargo build -p degenbot-bot --features hotpath
 ```
 
-Then read `hp.json`'s functions-timing section, filter the two `cl_solve.*`
+Then read `hp.json`'s functions-timing section, filter the two `concentrated_liquidity_solve.*`
 labels, and compute their share of the solve path before touching a deliberate
 safety gate (e.g. pairing the tables to positions by index instead of
 re-folding).
@@ -172,7 +172,7 @@ follow-ups are in the live-capture section below.
 ### (c) Substrate intake asymmetry — CLOSED AS DOC NOTE (do not thread the memo)
 
 Code finding: the `None`-memo + `SolveRuntimeConfig::default()` call sites in
-`degenbot-substrate/src/resolve/mod.rs` (`all_cl_solve`, solve_cl_piecewise at
+`degenbot-substrate/src/resolve/mod.rs` (`all_concentrated_liquidity_solve`, solve_concentrated_liquidity_piecewise at
 line ~949; `mixed_solve`, solve_piecewise at ~1006) are **inside
 `#[cfg(test)] mod tests` (mod.rs:519)** — they are the winner-promotion parity
 gates (mod.rs:776), which verify that the fused-epoch projection memo changes
@@ -441,7 +441,7 @@ The solve-entry unify-or-split decision (UNIFY), its bench data, and the
 landing notes now live in
 [`solve-entry-unification.md`](solve-entry-unification.md) — one concern per
 document. The short version: the per-hop `Option` surface costs nothing
-measurable (0.13% per call at the `cl_solve.*` labels; route totals inside the
+measurable (0.13% per call at the `concentrated_liquidity_solve.*` labels; route totals inside the
 noise band), captured live traffic routed 425 of 425 dispatches to the all-CL
 entry, and the entries are now ONE solve body (`solve_piecewise`) with a
 forwarding all-CL intake.

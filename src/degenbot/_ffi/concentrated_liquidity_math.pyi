@@ -105,8 +105,8 @@ def get_tick_at_sqrt_ratio(sqrt_price_x96: Any) -> int:
     - The input is too large (exceeds 20 bytes)
     - The sqrt price is outside the valid [`MIN_SQRT_RATIO`, `MAX_SQRT_RATIO`) range
 
-    [`MIN_SQRT_RATIO`]: degenbot_math::cl::tick_math::MIN_SQRT_RATIO
-    [`MAX_SQRT_RATIO`]: degenbot_math::cl::tick_math::MAX_SQRT_RATIO
+    [`MIN_SQRT_RATIO`]: degenbot_math::concentrated_liquidity::tick_math::MIN_SQRT_RATIO
+    [`MAX_SQRT_RATIO`]: degenbot_math::concentrated_liquidity::tick_math::MAX_SQRT_RATIO
 
     Returns `PyTypeError` if the input is not an int or bytes
 
@@ -124,7 +124,7 @@ def get_tick_word_and_bit_position(tick: int, tick_spacing: int) -> tuple[int, i
     Compute the tick word and bit position for a compressed tick.
 
     Returns `(word, bit)` where `word` is the mapping key (`i32`) and `bit`
-    is in `0..=255` (`u8`). Mirrors `degenbot_math::cl::get_tick_word_and_bit_position`.
+    is in `0..=255` (`u8`). Mirrors `degenbot_math::concentrated_liquidity::get_tick_word_and_bit_position`.
     """
 
 def least_significant_bit(x: Any) -> int:

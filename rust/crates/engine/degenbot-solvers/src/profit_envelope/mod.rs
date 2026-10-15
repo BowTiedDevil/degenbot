@@ -52,7 +52,7 @@ pub use capture::{CapturedHop, DegeneratePathEvent, DegeneratePathSink};
 pub use derive::{HopMath, PrefixCache};
 // The CL family's gate view, re-exported at its historical path (the family
 // module is its home; ADR-071 D1).
-pub use crate::mixed::families::cl::ClHop;
+pub use crate::mixed::families::concentrated_liquidity::ConcentratedLiquidityHop;
 
 pub(crate) use derive::content_mix_u256;
 pub(crate) use gate::record_gate;

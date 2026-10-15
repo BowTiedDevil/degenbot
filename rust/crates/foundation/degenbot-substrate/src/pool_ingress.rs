@@ -24,7 +24,7 @@
 //! `ticks(int24)` cells and `tickBitmap` words — not slot math, so it is
 //! layout-agnostic and correct for every V3 fork. The layout that produced
 //! the staged `slot0`/`liquidity` scalars (read by the caller through the
-//! connector edge's [`ClSlotLayout`]) rides into
+//! connector edge's [`ConcentratedLiquiditySlotLayout`]) rides into
 //! [`ExplicitPoolState::V3::slot_layout`] unchanged; the ingress never drops
 //! or defaults it.
 //!
@@ -40,12 +40,12 @@ use std::sync::Arc;
 use alloy::primitives::{Address, B256, I256, U128, U256};
 use degenbot_db::snapshot::{LiquidityAtTick as DbLiquidityAtTick, LiquidityMap, TickMapDb};
 use degenbot_db::LiquidityUpdateEvent;
-use degenbot_math::cl::liquidity_mapping::{
+use degenbot_math::concentrated_liquidity::liquidity_mapping::{
     apply_liquidity_mapping_update, LiquidityAtTick as ApplyLiquidityAtTick,
 };
 pub use degenbot_pool_updater::fetch::{AlloyLiquidityLogSource, LiquidityLogSource};
 use degenbot_pools::tick_fetch::TickBootstrapRpc;
-use degenbot_pools::v3_state::ClSlotLayout;
+use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::liquidity_verifier::{
     verify_liquidity_map, LiquidityMap as RpcLiquidityMap, LiquidityMapTarget,
@@ -277,7 +277,7 @@ pub struct IngressV3Params {
     pub sqrt_price_x96: U256,
     pub liquidity: u128,
     pub tick: i32,
-    pub slot_layout: ClSlotLayout,
+    pub slot_layout: ConcentratedLiquiditySlotLayout,
 }
 
 /// A V4 pool's admission payload. `state_view` is bootstrap-only; complete
@@ -1273,7 +1273,7 @@ mod tests {
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: 1_000_000,
             tick: 0,
-            slot_layout: ClSlotLayout::UniswapV3,
+            slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
         }
     }
 

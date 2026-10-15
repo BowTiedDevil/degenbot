@@ -140,12 +140,12 @@ pub(crate) fn set_event_buffer_max_age(engine: &mut ArbitrageEngine, max_age: Op
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .cl_mut()
+        .concentrated_liquidity_mut()
         .set_v3_buffer_max_age(max_age);
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .cl_mut()
+        .concentrated_liquidity_mut()
         .set_v4_buffer_max_age(max_age);
 }
 /// Flush all buffered events in the V3/V4 buffers on `BotState` (ADR-003).
@@ -153,12 +153,12 @@ pub(crate) fn flush_event_buffer(engine: &mut ArbitrageEngine) {
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .cl_mut()
+        .concentrated_liquidity_mut()
         .flush_v3_buffer();
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .cl_mut()
+        .concentrated_liquidity_mut()
         .flush_v4_buffer();
 }
 /// Read the last solved results and block number.
@@ -240,7 +240,7 @@ pub(crate) fn v4_pool_count(engine: &ArbitrageEngine) -> usize {
     engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .cl()
+        .concentrated_liquidity()
         .v4_pool_count()
 }
 /// Number of registered mixed paths.

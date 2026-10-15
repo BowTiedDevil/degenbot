@@ -19,7 +19,7 @@
 //! rejected — zero `slot0-only` consumers exist); only the verifier/apply
 //! **views** are typed-narrowed.
 //!
-//! See ADR-004 (`docs/adr/ADR-004-cl-tickmap-typed-boundary.md`).
+//! See ADR-004 (`docs/adr/ADR-004-concentrated_liquidity-tickmap-typed-boundary.md`).
 
 use hashbrown::HashMap;
 

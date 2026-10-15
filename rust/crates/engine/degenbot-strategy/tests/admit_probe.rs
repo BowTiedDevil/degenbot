@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
 use degenbot_db::connection::DegenbotDb;
-use degenbot_pools::v3_state::ClSlotLayout;
+use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
@@ -115,7 +115,7 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
     let post = PoolPostState {
         address: ANCHOR,
         family: PoolFamily::V3 {
-            layout: ClSlotLayout::UniswapV3,
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
             tick_spacing: anchor.tick_spacing,
             current_tick_hint: Some(tick),
         },

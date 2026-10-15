@@ -33,7 +33,7 @@ pub fn v2_get_amount_out(
 
 /// The exact-in output token amount for a CL swap outcome: the currency that is
 /// TAKEN. `zero_for_one` false → token0 is output; true → token1 is output.
-pub fn cl_exact_in_output(outcome: &V3SwapOutcome, zero_for_one: bool) -> U256 {
+pub fn concentrated_liquidity_exact_in_output(outcome: &V3SwapOutcome, zero_for_one: bool) -> U256 {
     if zero_for_one {
         outcome.amount1
     } else {
@@ -79,7 +79,7 @@ pub fn v3_hop_output(
         amount_specified,
         limit,
     ) {
-        Ok(o) => OracleOutcome::Ok(cl_exact_in_output(&o, zero_for_one)),
+        Ok(o) => OracleOutcome::Ok(concentrated_liquidity_exact_in_output(&o, zero_for_one)),
         Err(SimulateSwapError::NotComputable) => OracleOutcome::NotComputable,
         Err(SimulateSwapError::MissingTickWord(w)) => OracleOutcome::MissingTickWord(w),
     }
@@ -107,7 +107,7 @@ pub fn v4_hop_output(
         amount_specified,
         limit,
     ) {
-        Ok(o) => OracleOutcome::Ok(cl_exact_in_output(&o, zero_for_one)),
+        Ok(o) => OracleOutcome::Ok(concentrated_liquidity_exact_in_output(&o, zero_for_one)),
         Err(SimulateSwapError::NotComputable) => OracleOutcome::NotComputable,
         Err(SimulateSwapError::MissingTickWord(w)) => OracleOutcome::MissingTickWord(w),
     }
@@ -140,7 +140,7 @@ pub fn v4_hop_output_consumed(
         limit,
     ) {
         Ok(o) => OracleWithConsumed {
-            outcome: OracleOutcome::Ok(cl_exact_in_output(&o, zero_for_one)),
+            outcome: OracleOutcome::Ok(concentrated_liquidity_exact_in_output(&o, zero_for_one)),
             input_consumed: o.input_consumed,
         },
         Err(SimulateSwapError::NotComputable) => OracleWithConsumed {

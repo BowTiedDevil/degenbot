@@ -10,7 +10,7 @@
 //! These helpers were trapped in `solvers/arb_engine` for historical
 //! ADR-005 reasons. D4 moves them onto the Bot / chain-pump layer — i.e.
 //! `bot_core` — so the verify orchestrator is reachable from `PyBot` without
-//! routing through the solver. `register_with_cl_buffers` is generic over the
+//! routing through the solver. `register_with_concentrated_liquidity_buffers` is generic over the
 //! engine type `E` (it never inspects the engine, only passes `&mut E` to the
 //! caller's closures), so it can live in the lower `bot_core` layer without a
 //! circular dependency on `arb_engine::ArbitrageEngine`. The
@@ -18,7 +18,7 @@
 //! `degenbot-python::bot::engine::register`.
 //!
 //! ## What's pure here
-//! - [`register_with_cl_buffers`] — the CL pool-registration orchestration:
+//! - [`register_with_concentrated_liquidity_buffers`] — the CL pool-registration orchestration:
 //!   register → apply backfill buffer → capture backfill-boundary snapshot →
 //!   apply pump buffer, all under a single engine-lock acquisition (so the pump
 //!   cannot race between registration and verification). Pure: generic over
@@ -61,7 +61,7 @@ pub enum SnapshotLoadError {
 /// - `Other` → `PyRuntimeError` (any other fatal classification failure)
 ///
 /// `Rpc` and `Provider` both surface as `VerificationRpcError` but are kept
-/// distinct here so the *orchestrator* (`run_cl_verification`) preserves the
+/// distinct here so the *orchestrator* (`run_concentrated_liquidity_verification`) preserves the
 /// per-call-transport category through the pure layer. The bounded retry
 /// dance (`crate::bot_core::verification_retry`) branches on this split, and
 /// the Python seam folds both into the same retryable exception type.
@@ -85,7 +85,7 @@ pub enum VerifyError {
     /// snapshot-built (`Tracked`) pool but a required precondition was never
     /// set: the RPC URL (and, for V4 pools, the `StateView` address). This is a
     /// fatal misconfiguration — the bot must NOT operate with an unverified
-    /// tick map, so `run_cl_verification` raises `NotConfigured` instead of the
+    /// tick map, so `run_concentrated_liquidity_verification` raises `NotConfigured` instead of the
     /// legacy silent `Ok(())` skip. The message names the missing call
     /// (`set_verify_rpc_url()` / `set_verify_state_view()`).
     NotConfigured(String),
@@ -116,7 +116,7 @@ impl std::error::Error for VerifyError {}
 /// The minimal on-chain RPC surface the two-phase CL verification needs
 /// (ADR-006 slice-5 candidate-2 completion).
 ///
-/// The pure orchestrator [`run_cl_verification`] drives this trait without
+/// The pure orchestrator [`run_concentrated_liquidity_verification`] drives this trait without
 /// knowing `AlloyProvider`, `tokio`, or `PyResult`. The single concrete impl
 /// lives in `py_binding.rs`: it holds a cached `AlloyProvider`, lazily
 /// constructs it from the configured `rpc_url`, `block_on`s the underlying
@@ -213,7 +213,7 @@ pub trait VerifyRpc {
 /// Returns `Ok(())` when `VerifyRpc::enabled` is `false` or both phases pass.
 /// Propagates [`VerifyError`] from `verify_snapshot` / `verify_backfill`
 /// (a snapshot mismatch short-circuits before the backfill phase runs).
-pub fn run_cl_verification<R, F1, F2>(
+pub fn run_concentrated_liquidity_verification<R, F1, F2>(
     rpc: &R,
     snapshot_block: Option<u64>,
     backfill_block: Option<u64>,
@@ -266,7 +266,7 @@ where
 /// is supplied at the call sites in `degenbot-python::bot::engine::register`.
 ///
 /// Returns the registration key + the captured backfill-boundary snapshot.
-pub fn register_with_cl_buffers<E, Key, BackfillSnapshot>(
+pub fn register_with_concentrated_liquidity_buffers<E, Key, BackfillSnapshot>(
     engine: &Arc<Mutex<E>>,
     register: impl FnOnce(&mut E) -> Key,
     apply_backfill: impl FnOnce(&mut E),
@@ -287,25 +287,25 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// A stand-in engine type — `register_with_cl_buffers` is generic over `E`
+    /// A stand-in engine type — `register_with_concentrated_liquidity_buffers` is generic over `E`
     /// and never inspects it, so a unit-struct suffices to exercise the
     /// ordering + lock-acquisition contract without pulling in the concrete
     /// `ArbitrageEngine` (which lives in the higher `solvers` layer).
     #[derive(Default)]
     struct DummyEngine;
 
-    /// ADR-006 slice 5b RED→GREEN: `register_with_cl_buffers` runs register →
+    /// ADR-006 slice 5b RED→GREEN: `register_with_concentrated_liquidity_buffers` runs register →
     /// `apply_backfill` → `take_backfill_snapshot` → `apply_pump` in ORDER under one
     /// lock acquisition, returning the key + the captured snapshot. (The
     /// ordering is load-bearing for the no-race guarantee.)
     #[test]
-    fn register_with_cl_buffers_runs_in_order_under_one_lock() {
+    fn register_with_concentrated_liquidity_buffers_runs_in_order_under_one_lock() {
         let engine = Arc::new(Mutex::new(DummyEngine));
         let order = Arc::new(AtomicUsize::new(0));
         let snap_calls = Arc::new(AtomicUsize::new(0));
 
         let key = 42u8;
-        let (returned_key, returned_snap) = register_with_cl_buffers(
+        let (returned_key, returned_snap) = register_with_concentrated_liquidity_buffers(
             &engine,
             {
                 let order = Arc::clone(&order);
@@ -369,7 +369,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // run_cl_verification orchestrator (ADR-006 slice-5 candidate-2)
+    // run_concentrated_liquidity_verification orchestrator (ADR-006 slice-5 candidate-2)
     // -----------------------------------------------------------------
 
     /// A fake `VerifyRpc` that records every call + can be made to fail at a
@@ -468,7 +468,7 @@ mod tests {
     }
 
     /// Opted-in-but-not-configured is a FATAL misconfiguration, not a silent
-    /// skip. `run_cl_verification` is only reached when the caller opted into
+    /// skip. `run_concentrated_liquidity_verification` is only reached when the caller opted into
     /// verification (`verify_on_register = true`) for a snapshot-built
     /// (`Tracked`) pool. Reaching it with `enabled() == false` therefore means
     /// verification was requested but the RPC URL was never set — the bot must
@@ -476,7 +476,7 @@ mod tests {
     /// rather than returning `Ok(())` (silent), so "startup succeeded" can no
     /// longer mean "never verified".
     #[test]
-    fn run_cl_verification_errors_when_not_configured() {
+    fn run_concentrated_liquidity_verification_errors_when_not_configured() {
         let rpc = FakeVerifyRpc::new(false);
         let snap = |_: &FakeVerifyRpc, b: u64| {
             panic!("snapshot phase must not run when not configured (block {b})")
@@ -484,7 +484,7 @@ mod tests {
         let back = |_: &FakeVerifyRpc, b: u64| {
             panic!("backfill phase must not run when not configured (block {b})")
         };
-        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(
             matches!(res, Err(VerifyError::NotConfigured(_))),
             "opted-in-but-no-url must raise NotConfigured, not return Ok"
@@ -496,7 +496,7 @@ mod tests {
     /// Both phases run in order: snapshot at `snapshot_block`, then backfill at
     /// `backfill_block`.
     #[test]
-    fn run_cl_verification_runs_snapshot_then_backfill_in_order() {
+    fn run_concentrated_liquidity_verification_runs_snapshot_then_backfill_in_order() {
         let rpc = FakeVerifyRpc::new(true);
         let order = Arc::new(AtomicUsize::new(0));
         let snap_order = Arc::clone(&order);
@@ -521,7 +521,7 @@ mod tests {
             Ok(())
         };
 
-        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(res.is_ok());
         assert_eq!(
             order.load(Ordering::SeqCst),
@@ -534,7 +534,7 @@ mod tests {
     /// (order is load-bearing — a snapshot mismatch must NOT touch post-buffer
     /// state).
     #[test]
-    fn run_cl_verification_snapshot_mismatch_short_circuits() {
+    fn run_concentrated_liquidity_verification_snapshot_mismatch_short_circuits() {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_snapshot = Some(VerifyError::Snapshot(
             "V3 pool 0x.. at snapshot block 10: tick data mismatch: lg=1 vs 2".to_string(),
@@ -546,7 +546,7 @@ mod tests {
             panic!("backfill must not run after a snapshot mismatch (block {b})")
         };
 
-        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(matches!(
             res,
             Err(VerifyError::Snapshot(m)) if m.contains("snapshot block 10")
@@ -557,7 +557,7 @@ mod tests {
 
     /// A backfill-phase mismatch propagates (snapshot phase ran first + ok).
     #[test]
-    fn run_cl_verification_backfill_mismatch_propagates() {
+    fn run_concentrated_liquidity_verification_backfill_mismatch_propagates() {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_backfill = Some(VerifyError::Snapshot(
             "V3 pool 0x.. at backfill block 20: tick data mismatch".to_string(),
@@ -567,7 +567,7 @@ mod tests {
             |r: &FakeVerifyRpc, b: u64| r.verify_v3_snapshot(Address::ZERO, &HashMap::new(), b);
         let back = |r: &FakeVerifyRpc, b: u64| r.verify_v3_backfill(&HashMap::new(), b);
 
-        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(matches!(
             res,
             Err(VerifyError::Snapshot(m)) if m.contains("backfill block 20")
@@ -579,7 +579,7 @@ mod tests {
     /// A provider construction failure from the snapshot phase propagates as
     /// `VerifyError::Provider` and still short-circuits the backfill phase.
     #[test]
-    fn run_cl_verification_provider_error_short_circuits() {
+    fn run_concentrated_liquidity_verification_provider_error_short_circuits() {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_snapshot = Some(VerifyError::Provider(
             "verify: 0x..: failed to create provider: connection refused".to_string(),
@@ -591,7 +591,7 @@ mod tests {
             panic!("backfill must not run after provider failure (block {b})")
         };
 
-        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(matches!(res, Err(VerifyError::Provider(_))));
         assert!(rpc.backfill_calls.lock().is_empty());
     }
@@ -604,7 +604,7 @@ mod tests {
     /// to `VerificationRpcError` (retryable) distinct from
     /// `VerificationMismatchError` (fatal).
     #[test]
-    fn run_cl_verification_rpc_error_propagates_unflattened() {
+    fn run_concentrated_liquidity_verification_rpc_error_propagates_unflattened() {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_snapshot = Some(VerifyError::Rpc(
             "V3 pool 0x.. at snapshot block 10: tickBitmap(0) RPC call failed: timeout".to_string(),
@@ -616,7 +616,7 @@ mod tests {
             panic!("backfill must not run after a snapshot RPC failure (block {b})")
         };
 
-        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(
             matches!(res, Err(VerifyError::Rpc(m)) if m.contains("RPC call failed")),
             "per-call RPC transport failure must surface as VerifyError::Rpc, not Snapshot"
@@ -631,7 +631,7 @@ mod tests {
     /// a per-call RPC transport failure from the backfill phase
     /// propagates as `VerifyError::Rpc` (snapshot phase ran first + ok).
     #[test]
-    fn run_cl_verification_backfill_rpc_error_propagates_unflattened() {
+    fn run_concentrated_liquidity_verification_backfill_rpc_error_propagates_unflattened() {
         let mut rpc = FakeVerifyRpc::new(true);
         rpc.fail_backfill = Some(VerifyError::Rpc(
             "V3 pool 0x.. at backfill block 20: ticks(100) RPC call failed: connection reset"
@@ -642,7 +642,7 @@ mod tests {
             |r: &FakeVerifyRpc, b: u64| r.verify_v3_snapshot(Address::ZERO, &HashMap::new(), b);
         let back = |r: &FakeVerifyRpc, b: u64| r.verify_v3_backfill(&HashMap::new(), b);
 
-        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(
             matches!(res, Err(VerifyError::Rpc(m)) if m.contains("backfill block 20") && m.contains("RPC call failed")),
             "backfill-phase RPC failure must surface as VerifyError::Rpc, not Snapshot"
@@ -654,14 +654,14 @@ mod tests {
     /// Missing snapshot block is a no-op for the snapshot phase but the
     /// backfill phase still runs (mirrors the legacy per-`Option<u64>` guards).
     #[test]
-    fn run_cl_verification_missing_snapshot_block_still_runs_backfill() {
+    fn run_concentrated_liquidity_verification_missing_snapshot_block_still_runs_backfill() {
         let rpc = FakeVerifyRpc::new(true);
         let snap = |_: &FakeVerifyRpc, b: u64| {
             panic!("snapshot phase must not run when its block is None (block {b})")
         };
         let back = |r: &FakeVerifyRpc, b: u64| r.verify_v3_backfill(&HashMap::new(), b);
 
-        let res = run_cl_verification(&rpc, None, Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, None, Some(20), snap, back);
         assert!(res.is_ok());
         assert!(rpc.snapshot_calls.lock().is_empty());
         assert_eq!(*rpc.backfill_calls.lock(), vec![20]);
@@ -672,7 +672,7 @@ mod tests {
     /// NOT swallowed. The register.rs V4 closures rely on this to surface a
     /// missing `set_verify_state_view()` as a loud fatal error.
     #[test]
-    fn run_cl_verification_propagates_not_configured_from_phase() {
+    fn run_concentrated_liquidity_verification_propagates_not_configured_from_phase() {
         let rpc = FakeVerifyRpc::new(true);
         let snap = |_: &FakeVerifyRpc, _b: u64| {
             Err(VerifyError::NotConfigured(
@@ -683,7 +683,7 @@ mod tests {
             panic!("backfill must not run after a NotConfigured (block {b})")
         };
 
-        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(
             matches!(res, Err(VerifyError::NotConfigured(m)) if m.contains("set_verify_state_view")),
             "NotConfigured from a phase must propagate, not be swallowed"

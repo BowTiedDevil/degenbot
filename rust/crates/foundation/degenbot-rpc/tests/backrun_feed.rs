@@ -142,7 +142,7 @@ async fn start_server(scripts: Vec<Vec<Step>>) -> MockServer {
         let _ = finish_rx.await;
     });
     let mut scripts = scripts.into_iter();
-    let seen_cl = seen.clone();
+    let seen_concentrated_liquidity = seen.clone();
     tokio::spawn(async move {
         let mut idx = 0usize;
         let mut pending: Option<Vec<Step>> = None;
@@ -156,7 +156,7 @@ async fn start_server(scripts: Vec<Vec<Step>>) -> MockServer {
             };
             let _ = idx;
             idx += 1;
-            let seen = seen_cl.clone();
+            let seen = seen_concentrated_liquidity.clone();
             tokio::spawn(async move {
                 let Ok(ws) = accept_async(stream).await else {
                     return;

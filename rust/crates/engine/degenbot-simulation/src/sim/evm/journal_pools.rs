@@ -36,8 +36,8 @@ use std::sync::Arc;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pools::slot_layout;
 use degenbot_pools::{
-    v3_storage_slots, v4_storage_slots, ClSlotLayout, ConcentratedLiquidityVariant, Identity,
-    ReservePairVariant,
+    v3_storage_slots, v4_storage_slots, ConcentratedLiquiditySlotLayout,
+    ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 };
 use hashbrown::HashMap;
 
@@ -54,7 +54,7 @@ pub enum PoolFamily {
     /// tick as the preimage anchor (`None` = unknown, the journal's own
     /// slot0 then carries the only anchor).
     V3 {
-        layout: ClSlotLayout,
+        layout: ConcentratedLiquiditySlotLayout,
         tick_spacing: i32,
         current_tick_hint: Option<i32>,
     },
@@ -419,8 +419,8 @@ mod taxonomy_tests {
     //! extraction vocabulary deliberately does not admit.
     use super::{PoolFamily, PoolFamilyTag, V4PoolSet};
     use degenbot_pools::{
-        BalanceVectorVariant, BinnedLiquidityVariant, ClSlotLayout, ConcentratedLiquidityVariant,
-        Identity, ReservePairVariant,
+        BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquiditySlotLayout,
+        ConcentratedLiquidityVariant, Identity, ReservePairVariant,
     };
 
     fn reserve_pair(variant: ReservePairVariant) -> Identity {
@@ -440,7 +440,7 @@ mod taxonomy_tests {
         assert_eq!(PoolFamily::V2Pair.tag(), PoolFamilyTag::V2Pair);
         assert_eq!(
             PoolFamily::V3 {
-                layout: ClSlotLayout::UniswapV3,
+                layout: ConcentratedLiquiditySlotLayout::UniswapV3,
                 tick_spacing: 10,
                 current_tick_hint: None,
             }

@@ -30,7 +30,7 @@ pub enum TickMathError {
 /// Errors from the concentrated-liquidity math library.
 #[derive(Debug, thiserror::Error, PartialEq)]
 #[non_exhaustive]
-pub enum ClMathError {
+pub enum ConcentratedLiquidityMathError {
     /// Division by zero.
     #[error("DIVISION BY ZERO")]
     DivisionByZero,
@@ -64,13 +64,13 @@ pub enum ClMathError {
 }
 
 #[cfg(feature = "pyo3")]
-impl From<ClMathError> for PyErr {
-    fn from(err: ClMathError) -> Self {
+impl From<ConcentratedLiquidityMathError> for PyErr {
+    fn from(err: ConcentratedLiquidityMathError) -> Self {
         Self::new::<PyValueError, _>(err.to_string())
     }
 }
 
-impl From<TickMathError> for ClMathError {
+impl From<TickMathError> for ConcentratedLiquidityMathError {
     fn from(err: TickMathError) -> Self {
         match err {
             TickMathError::InvalidTick(_) | TickMathError::SqrtRatioOutOfBounds { .. } => {

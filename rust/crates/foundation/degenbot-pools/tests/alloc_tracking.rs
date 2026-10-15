@@ -16,7 +16,9 @@
 use degenbot_pools::registry::ConcentratedLiquidityPoolMut;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v2_state::V2PoolState;
-use degenbot_pools::v3_state::{ClSlotLayout, PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+use degenbot_pools::v3_state::{
+    ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolParams, V3PoolState,
+};
 use degenbot_pools::TickInfo;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -106,7 +108,7 @@ fn v3_params_with(tick_data: HB<i32, TickInfo>) -> RegisterV3PoolParams {
         fetcher: None,
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
-        slot_layout: ClSlotLayout::UniswapV3,
+        slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
     }
 }
 

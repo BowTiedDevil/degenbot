@@ -41,7 +41,7 @@ pub mod mobius_int;
 pub mod mobius_int_exact;
 
 #[expect(clippy::doc_markdown)]
-pub mod cl;
+pub mod concentrated_liquidity;
 pub mod mobius_shifted_piece;
 pub mod profit_envelope;
 pub mod runtime;

@@ -2,7 +2,7 @@
 
 [hotpath-rs](https://hotpath.rs) profiles the block-pump -> solve path (the
 `#[hotpath::measure]` sites across `block_pump`, `SolveCoordinator`,
-`EngineHandle`, and the `cl_solve.*` / `mixed.*` solver internals) and, with
+`EngineHandle`, and the `concentrated_liquidity_solve.*` / `mixed.*` solver internals) and, with
 the `hotpath-prometheus` build feature, exposes every profiling subsystem as
 Prometheus metrics on a dedicated `GET /metrics` endpoint. The companion
 dashboard is [hotpath-profiling.json](hotpath-profiling.json) — imported into

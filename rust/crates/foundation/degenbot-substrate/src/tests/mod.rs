@@ -157,7 +157,7 @@ fn encode_swap_refuses_an_unregistered_pool() {
 }
 
 #[test]
-fn seed_genesis_refuses_a_non_cl_family() {
+fn seed_genesis_refuses_a_non_concentrated_liquidity_family() {
     let mut core = BotState::new();
     let v2_id = core
         .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
@@ -165,7 +165,7 @@ fn seed_genesis_refuses_a_non_cl_family() {
     let err = core.seed_genesis_by_pool_id(v2_id, 5).unwrap_err();
     assert_eq!(
         err,
-        ClApplyError::UnsupportedFamily {
+        ConcentratedLiquidityApplyError::UnsupportedFamily {
             pool_id: v2_id,
             family: "v2",
             op: "genesis seed"
@@ -174,7 +174,7 @@ fn seed_genesis_refuses_a_non_cl_family() {
 }
 
 #[test]
-fn apply_liquidity_update_refuses_a_non_cl_family() {
+fn apply_liquidity_update_refuses_a_non_concentrated_liquidity_family() {
     let mut core = BotState::new();
     let v2_id = core
         .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
@@ -184,7 +184,7 @@ fn apply_liquidity_update_refuses_a_non_cl_family() {
         .unwrap_err();
     assert_eq!(
         err,
-        ClApplyError::UnsupportedFamily {
+        ConcentratedLiquidityApplyError::UnsupportedFamily {
             pool_id: v2_id,
             family: "v2",
             op: "liquidity update"

@@ -4,7 +4,7 @@
 //! the canonical Solidity math for its pool family:
 //!
 //! - [`v2`] — Uniswap V2 constant-product (x·y=k) swap math
-//! - [`cl`] — Uniswap V3/V4 concentrated-liquidity math libraries (`tick`, `sqrt_price_math`, `swap_math`, `liquidity_mapping`)
+//! - [`concentrated_liquidity`] — Uniswap V3/V4 concentrated-liquidity math libraries (`tick`, `sqrt_price_math`, `swap_math`, `liquidity_mapping`)
 //! - [`curve`] — `Curve StableSwap invariant math` (`CurveDyCalculator`, `calc_dy`, `calc_y`)
 //! - [`balancer`] — Balancer V2 `FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath`
 //! - [`solidly`] — Solidly / Aerodrome / Camelot stable-pool invariants
@@ -13,7 +13,7 @@
 //! lockstep version, and the same consumer set (ADR-035).
 
 pub mod balancer;
-pub mod cl;
+pub mod concentrated_liquidity;
 pub mod curve;
 pub mod solidly;
 pub mod v2;

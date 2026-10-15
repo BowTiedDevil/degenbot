@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::error::DbError;
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::v3_state::ClSlotLayout;
+use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_uniswap::deployments::{layout_verdict, LayoutVerdict};
@@ -577,7 +577,7 @@ pub struct V3Edge {
     /// `liquidity`/tick words at layout-specific slots, so a mislabeled
     /// Pancake edge stages a garbage map and every anchored chain dies
     /// `sequence_unavailable`.
-    pub layout: ClSlotLayout,
+    pub layout: ConcentratedLiquiditySlotLayout,
 }
 
 impl V2ConnectorIndex {
@@ -593,11 +593,23 @@ impl V2ConnectorIndex {
         // table MUST carry its layout, because a layout mislabel stages a
         // garbage tick map and silently kills every anchored chain
         // (`sequence_unavailable`). Adding a V3 fork = one row, one layout.
-        const V3_VARIANTS: &[(&str, ClSlotLayout)] = &[
-            ("uniswap_v3_pools", ClSlotLayout::UniswapV3),
-            ("pancakeswap_v3_pools", ClSlotLayout::PancakeV3),
-            ("sushiswap_v3_pools", ClSlotLayout::UniswapV3),
-            ("aerodrome_v3_pools", ClSlotLayout::UniswapV3),
+        const V3_VARIANTS: &[(&str, ConcentratedLiquiditySlotLayout)] = &[
+            (
+                "uniswap_v3_pools",
+                ConcentratedLiquiditySlotLayout::UniswapV3,
+            ),
+            (
+                "pancakeswap_v3_pools",
+                ConcentratedLiquiditySlotLayout::PancakeV3,
+            ),
+            (
+                "sushiswap_v3_pools",
+                ConcentratedLiquiditySlotLayout::UniswapV3,
+            ),
+            (
+                "aerodrome_v3_pools",
+                ConcentratedLiquiditySlotLayout::UniswapV3,
+            ),
         ];
         // The DB emits `0x`-prefixed checksum addresses; alloy parses those.
         // (rows::decode::decode_address is pub(crate) to degenbot-db.)
@@ -667,7 +679,8 @@ impl V2ConnectorIndex {
         use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 
         // One deterministic sample per distinct layout (lowest pool_id).
-        let mut samples: hashbrown::HashMap<ClSlotLayout, &V3Edge> = hashbrown::HashMap::new();
+        let mut samples: hashbrown::HashMap<ConcentratedLiquiditySlotLayout, &V3Edge> =
+            hashbrown::HashMap::new();
         for edge in &self.v3_edges {
             match samples.get(&edge.layout) {
                 Some(best) if best.pool_id <= edge.pool_id => {}
@@ -1081,7 +1094,7 @@ mod tests {
             address: Address::new([12; 20]),
             fee: 500,
             tick_spacing: 10,
-            layout: ClSlotLayout::UniswapV3,
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
         });
 
         assert_eq!(ix.edge_degree(20, 10), 2);
@@ -1345,10 +1358,14 @@ mod tests {
         let pancake = ix
             .v3_edge_by_address(Address::new([0xC1; 20]))
             .expect("pancake edge");
-        assert_eq!(uni.layout, ClSlotLayout::UniswapV3, "uni variant layout");
+        assert_eq!(
+            uni.layout,
+            ConcentratedLiquiditySlotLayout::UniswapV3,
+            "uni variant layout"
+        );
         assert_eq!(
             pancake.layout,
-            ClSlotLayout::PancakeV3,
+            ConcentratedLiquiditySlotLayout::PancakeV3,
             "pancake fork carries its divergent layout"
         );
     }
@@ -1537,7 +1554,7 @@ mod ranking_tests {
             address: Address::new([u8::try_from(pool_id).unwrap_or(0); 20]),
             fee: 500,
             tick_spacing: 10,
-            layout: ClSlotLayout::UniswapV3,
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
         }
     }
 

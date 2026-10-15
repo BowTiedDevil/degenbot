@@ -50,7 +50,7 @@ use alloy::primitives::aliases::U112;
 use alloy::primitives::{address, keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use degenbot_executor::WarmupSlots;
-use degenbot_pools::{slot_layout, ClSlotLayout};
+use degenbot_pools::{slot_layout, ConcentratedLiquiditySlotLayout};
 use degenbot_simulation::sim::evm::frame_replay::{ReplayStatus, ReplayableTx};
 use degenbot_simulation::sim::evm::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord,
@@ -378,7 +378,7 @@ fn v3_scalar_parity(
     truth_liquidity: U256,
     divergences: &mut Vec<SlotDivergence>,
 ) {
-    let liquidity_slot = U256::from(ClSlotLayout::UniswapV3.liquidity_slot());
+    let liquidity_slot = U256::from(ConcentratedLiquiditySlotLayout::UniswapV3.liquidity_slot());
     let Some(PoolPostState {
         kind:
             PoolPostKind::Typed(TypedPoolPost::V3 {
@@ -403,12 +403,12 @@ fn v3_scalar_parity(
             truth_masked: B256::ZERO,
         });
     } else if let (Some(sqrt), Some(tk)) = (*sqrt_price_x96, *tick) {
-        let engine = slot_layout::cl_slot0_tracked_word(sqrt, tk);
+        let engine = slot_layout::concentrated_liquidity_slot0_tracked_word(sqrt, tk);
         require_masked_word(
             pool,
             U256::ZERO,
             "v3_slot0",
-            slot_layout::CL_SLOT0_TRACKED_MASK,
+            slot_layout::CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK,
             engine,
             truth_slot0,
             divergences,
@@ -423,12 +423,12 @@ fn v3_scalar_parity(
             truth_masked: B256::ZERO,
         });
     } else if let Some(liq) = *liquidity {
-        let engine = slot_layout::cl_liquidity_tracked_word(liq);
+        let engine = slot_layout::concentrated_liquidity_liquidity_tracked_word(liq);
         require_masked_word(
             pool,
             liquidity_slot,
             "v3_liquidity",
-            slot_layout::CL_LIQUIDITY_TRACKED_MASK,
+            slot_layout::CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK,
             engine,
             truth_liquidity,
             divergences,
@@ -442,7 +442,7 @@ fn v3_scalar_parity(
 /// recovered ticks.
 fn v3_tick_parity(
     pool: Address,
-    layout: ClSlotLayout,
+    layout: ConcentratedLiquiditySlotLayout,
     touched: &[TouchedTickWord],
     truth_words: &[U256],
     divergences: &mut Vec<SlotDivergence>,
@@ -458,7 +458,7 @@ fn v3_tick_parity(
             pool,
             slot,
             "v3_tick_word",
-            slot_layout::CL_TICK_WORD_MASK,
+            slot_layout::CONCENTRATED_LIQUIDITY_TICK_WORD_MASK,
             engine,
             *truth,
             divergences,
@@ -521,25 +521,25 @@ fn oracle_masks_untracked_bits_and_flags_tracked_divergence() {
     // V3 slot0: garbage in bits 184..256 (observationIndex/feeProtocol/
     // unlocked) is masked; a wrong tick (tracked bits 160..184) flags.
     let sqrt = U256::from(1_u128) << 96;
-    let engine0 = slot_layout::cl_slot0_tracked_word(sqrt, -5010);
+    let engine0 = slot_layout::concentrated_liquidity_slot0_tracked_word(sqrt, -5010);
     let dirty0 = U256::from_be_bytes(engine0.0) | (U256::from(0xdead_beef_u64) << 184_u32);
     let mut div = Vec::new();
     require_masked_word(
         POOL,
         U256::ZERO,
         "v3_slot0",
-        slot_layout::CL_SLOT0_TRACKED_MASK,
+        slot_layout::CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK,
         engine0,
         dirty0,
         &mut div,
     );
     assert!(div.is_empty(), "slot0 untracked bits masked: {div:?}");
-    let wrong_tick = slot_layout::cl_slot0_tracked_word(sqrt, 5010);
+    let wrong_tick = slot_layout::concentrated_liquidity_slot0_tracked_word(sqrt, 5010);
     require_masked_word(
         POOL,
         U256::ZERO,
         "v3_slot0",
-        slot_layout::CL_SLOT0_TRACKED_MASK,
+        slot_layout::CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK,
         engine0,
         U256::from_be_bytes(wrong_tick.0),
         &mut div,
@@ -547,26 +547,27 @@ fn oracle_masks_untracked_bits_and_flags_tracked_divergence() {
     assert_eq!(div.len(), 1, "a wrong tracked tick flags");
 
     // V3 liquidity: the high half is untracked; the low uint128 is tracked.
-    let liq_slot = U256::from(ClSlotLayout::UniswapV3.liquidity_slot());
-    let engine_liq = slot_layout::cl_liquidity_tracked_word(0x0000_0000_006b_5d49_e99f_8835);
+    let liq_slot = U256::from(ConcentratedLiquiditySlotLayout::UniswapV3.liquidity_slot());
+    let engine_liq =
+        slot_layout::concentrated_liquidity_liquidity_tracked_word(0x0000_0000_006b_5d49_e99f_8835);
     let dirty_liq = U256::from_be_bytes(engine_liq.0) | (U256::from(0xfeed_u64) << 200_u32);
     let mut div = Vec::new();
     require_masked_word(
         POOL,
         liq_slot,
         "v3_liquidity",
-        slot_layout::CL_LIQUIDITY_TRACKED_MASK,
+        slot_layout::CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK,
         engine_liq,
         dirty_liq,
         &mut div,
     );
     assert!(div.is_empty(), "liquidity high bits masked: {div:?}");
-    let wrong_liq = slot_layout::cl_liquidity_tracked_word(7_u128);
+    let wrong_liq = slot_layout::concentrated_liquidity_liquidity_tracked_word(7_u128);
     require_masked_word(
         POOL,
         liq_slot,
         "v3_liquidity",
-        slot_layout::CL_LIQUIDITY_TRACKED_MASK,
+        slot_layout::CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK,
         engine_liq,
         U256::from_be_bytes(wrong_liq.0),
         &mut div,
@@ -580,7 +581,7 @@ fn oracle_masks_untracked_bits_and_flags_tracked_divergence() {
         POOL,
         U256::from(9_u64),
         "v3_tick_word",
-        slot_layout::CL_TICK_WORD_MASK,
+        slot_layout::CONCENTRATED_LIQUIDITY_TICK_WORD_MASK,
         engine_tick,
         U256::from_be_bytes(engine_tick.0),
         &mut div,
@@ -591,7 +592,7 @@ fn oracle_masks_untracked_bits_and_flags_tracked_divergence() {
         POOL,
         U256::from(9_u64),
         "v3_tick_word",
-        slot_layout::CL_TICK_WORD_MASK,
+        slot_layout::CONCENTRATED_LIQUIDITY_TICK_WORD_MASK,
         engine_tick,
         flipped,
         &mut div,
@@ -938,7 +939,7 @@ async fn tracked_pool_descriptors(
             let spacing = tick_spacing_of(provider, *addr).await;
             let hint = pool_pre_tx_tick(provider, pre, post, *addr, pin).await;
             PoolFamily::V3 {
-                layout: ClSlotLayout::UniswapV3,
+                layout: ConcentratedLiquiditySlotLayout::UniswapV3,
                 tick_spacing: spacing,
                 current_tick_hint: Some(hint),
             }

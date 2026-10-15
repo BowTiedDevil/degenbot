@@ -24,8 +24,8 @@ to bin paths before the solve.
 
 `degenbot-solvers/examples/rayon_scale_probe.rs` reconstructs production
 `ResolvedMixedPath` inputs (V3 CL hops carrying the production
-`build_cl_word_profiles` + `build_cl_crossing_table` precomputes) from the
-committed heavy-CL capture fixture (`tests/fixtures/heavy_cl_solve_captures.jsonl`,
+`build_concentrated_liquidity_word_profiles` + `build_concentrated_liquidity_crossing_table` precomputes) from the
+committed heavy-CL capture fixture (`tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`,
 420 paths / 87 MB) and re-runs the production solver entry
 `mixed::solve_path_with_min_profit` under controlled thread counts.
 
@@ -151,6 +151,6 @@ solving, correlates with walk combinatorics). The per-drain solve then uses
 ## 6. Artifacts
 
 - Harness: `rust/crates/engine/degenbot-solvers/examples/rayon_scale_probe.rs`
-- Fixture: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl`
+- Fixture: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`
 - Raw CSV: `/tmp/raypar80.csv` (80-path), smoke run inline (40-path).
 - ergo: epic 7MKIR7, task 5A3C2P (harness), task QXEVGN (this report).

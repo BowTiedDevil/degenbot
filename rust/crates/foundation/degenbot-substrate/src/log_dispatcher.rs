@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use alloy::rpc::types::Log;
 
-use crate::cl_route::ApplyOutcome;
+use crate::concentrated_liquidity_route::ApplyOutcome;
 use crate::state_lock::StateLock;
 use crate::BotState;
 use degenbot_decoders::v2_sync_decoder::decode_sync_log;
@@ -172,7 +172,7 @@ impl DecodedPoolEvent {
             Self::V4Liquidity { .. } => crate::apply_telemetry::ApplyFamily::V4Liquidity,
         };
         let at0 = std::time::Instant::now();
-        let out = self.apply_at(bot_state, crate::cl_route::Phase::Live);
+        let out = self.apply_at(bot_state, crate::concentrated_liquidity_route::Phase::Live);
         crate::apply_telemetry::record(
             family,
             u64::try_from(at0.elapsed().as_nanos()).unwrap_or(u64::MAX),
@@ -183,7 +183,11 @@ impl DecodedPoolEvent {
     /// Route one decoded event to `bot_state` at the given pipeline `phase`.
     /// The phase is part of the routing-table question (Live vs Backfill), so
     /// the forward path and the backfill chunk loop share these arms.
-    fn apply_at(self, bot_state: &mut BotState, phase: crate::cl_route::Phase) -> ApplyOutcome {
+    fn apply_at(
+        self,
+        bot_state: &mut BotState,
+        phase: crate::concentrated_liquidity_route::Phase,
+    ) -> ApplyOutcome {
         match self {
             Self::V2Sync {
                 pool_address,
@@ -192,7 +196,9 @@ impl DecodedPoolEvent {
                 block_number,
             } => match bot_state.apply_v2_sync(pool_address, reserve0, reserve1, block_number) {
                 Some(pool_id) => ApplyOutcome::Applied(pool_id),
-                None => ApplyOutcome::NoOp(crate::cl_route::NoOpReason::ScalarReseedAtRegistration),
+                None => ApplyOutcome::NoOp(
+                    crate::concentrated_liquidity_route::NoOpReason::ScalarReseedAtRegistration,
+                ),
             },
             Self::V3Swap {
                 pool_address,
@@ -283,7 +289,10 @@ impl DecodedPoolEvent {
         if matches!(self, Self::V2Sync { .. }) {
             return None;
         }
-        Some(self.apply_at(bot_state, crate::cl_route::Phase::Backfill))
+        Some(self.apply_at(
+            bot_state,
+            crate::concentrated_liquidity_route::Phase::Backfill,
+        ))
     }
 }
 
@@ -637,7 +646,7 @@ impl LogDispatcher {
         // Capture displayable identity BEFORE apply consumes the event
         // - the APPLY MISS trace below needs to name WHICH pool was missed.
         let identity = decoded.display_identity();
-        // Verdict-only fast path (cl_route contract): a decoded event whose
+        // Verdict-only fast path (concentrated_liquidity_route contract): a decoded event whose
         // routing-table row is a confirmed Drop may skip the exclusive lock —
         // absence of work IS the semantics (the router would return NoOp
         // without mutating anything). Everything else falls through to the
@@ -665,7 +674,7 @@ impl LogDispatcher {
             }
             return;
         }
-        // Route + execute under the write guard (cl_route table owns policy),
+        // Route + execute under the write guard (concentrated_liquidity_route table owns policy),
         // then RELEASE before notifying.
         // the event's hop family must be read BEFORE `apply`
         // consumes the decoded event.
@@ -875,7 +884,9 @@ mod tests {
         // is the semantics. Tick mutations must never land here.
         assert_eq!(
             miss.apply(&mut state.write_at(crate::state_lock::LockSite::Core)),
-            ApplyOutcome::NoOp(crate::cl_route::NoOpReason::ScalarReseedAtRegistration),
+            ApplyOutcome::NoOp(
+                crate::concentrated_liquidity_route::NoOpReason::ScalarReseedAtRegistration
+            ),
             "apply must no-op (named Drop) for the unregistered scalar refresh"
         );
     }

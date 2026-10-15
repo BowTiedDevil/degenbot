@@ -40,7 +40,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     MissingLiquidityData,
 )
-from degenbot.uniswap.cl_companion import ConcentratedLiquidityCompanion
+from degenbot.uniswap.concentrated_liquidity_companion import ConcentratedLiquidityCompanion
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
 from degenbot.uniswap.v3_types import (

@@ -3,6 +3,6 @@
 
 pub(crate) mod balancer_stable;
 pub(crate) mod balancer_weighted;
-pub(crate) mod cl;
+pub(crate) mod concentrated_liquidity;
 pub(crate) mod curve_stableswap;
 pub(crate) mod solidly;

@@ -234,8 +234,10 @@ impl PoolEntry {
     /// `apply_liquidity_update` slices) to reach the trait method without a
     /// per-family variant match at each call site.
     #[must_use]
-    pub fn as_cl_mut(&mut self) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
-        some_cl_mut(self)
+    pub fn as_concentrated_liquidity_mut(
+        &mut self,
+    ) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
+        some_concentrated_liquidity_mut(self)
     }
 
     /// Bump the state nonce WITHOUT a semantic state change — the external
@@ -391,10 +393,12 @@ impl PoolEntry {
     }
 }
 
-/// `PoolEntry::as_cl_mut` helper — one match over V3 | V4. Free-standing so
-/// `PoolEntry::as_cl_mut` stays a one-liner (matches the `as_reorg_state`
+/// `PoolEntry::as_concentrated_liquidity_mut` helper — one match over V3 | V4. Free-standing so
+/// `PoolEntry::as_concentrated_liquidity_mut` stays a one-liner (matches the `as_reorg_state`
 /// shape). Returns `None` for the five non-CL families.
-fn some_cl_mut(entry: &mut PoolEntry) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
+fn some_concentrated_liquidity_mut(
+    entry: &mut PoolEntry,
+) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
     match entry {
         PoolEntry::V3(p) => Some(&mut p.1),
         PoolEntry::V4(p) => Some(&mut p.1),
@@ -1073,7 +1077,7 @@ pub struct TokenEntry {
 #[cfg(test)]
 mod projection_tests {
     use super::*;
-    use crate::v3_state::{ClSlotLayout, RegisterV3PoolParams, V3PoolState};
+    use crate::v3_state::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams, V3PoolState};
 
     fn v3_entry() -> PoolEntry {
         let (identity, state) = V3PoolState::from_params(
@@ -1094,7 +1098,7 @@ mod projection_tests {
                 fetcher: None,
                 deployer: Address::ZERO,
                 init_hash: alloy::primitives::B256::ZERO,
-                slot_layout: ClSlotLayout::UniswapV3,
+                slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
             },
             8,
         );
@@ -1159,7 +1163,7 @@ mod known_word_tests {
                 fetcher: None,
                 deployer: Address::ZERO,
                 init_hash: alloy::primitives::B256::ZERO,
-                slot_layout: crate::v3_state::ClSlotLayout::UniswapV3,
+                slot_layout: crate::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
             },
             8,
         );

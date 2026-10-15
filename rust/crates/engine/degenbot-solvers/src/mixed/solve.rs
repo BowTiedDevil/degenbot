@@ -7,7 +7,7 @@
 //! `degenbot-bot/src/solvers/arb_engine/solver_dispatch.rs` (where they were
 //! `impl ArbitrageEngine` associated fns with `#[allow(unused_self)]`).
 //!
-//! The CL hop uses `crate::cl::*` (same crate); the V2 + CL
+//! The CL hop uses `crate::concentrated_liquidity::*` (same crate); the V2 + CL
 //! Möbius arms call `crate::mobius_int::*` / `crate::mobius_int_exact::*`.
 
 use std::collections::BTreeSet;
@@ -20,7 +20,9 @@ use crate::mixed::families::balancer_stable::{
 use crate::mixed::families::balancer_weighted::{
     solve_balancer_weighted_entry, weighted_hop_lines, weighted_to_math,
 };
-use crate::mixed::families::cl::{cl_hop_lines, cl_to_math, solve_walkable_path_int};
+use crate::mixed::families::concentrated_liquidity::{
+    concentrated_liquidity_hop_lines, concentrated_liquidity_to_math, solve_walkable_path_int,
+};
 use crate::mixed::families::curve_stableswap::{curve_hop_lines, curve_to_math, solve_curve_entry};
 use crate::mixed::families::solidly::{solidly_hop_lines, solidly_to_math, solve_solidly_entry};
 use crate::profit_envelope::{
@@ -51,14 +53,14 @@ use crate::mixed::{
 pub struct SolveOutcome {
     pub result: Option<SolvePathResult>,
     /// Set only when a solve surface declined without walking (see
-    /// [`crate::cl::WalkRefusal`]); `None` on every walked outcome,
+    /// [`crate::concentrated_liquidity::WalkRefusal`]); `None` on every walked outcome,
     /// profitable or not. The envelope gate's rejection rides [`Self::envelope`].
-    pub refusal: Option<crate::cl::WalkRefusal>,
+    pub refusal: Option<crate::concentrated_liquidity::WalkRefusal>,
     /// The gate's typed fact, carried independently of walk telemetry.
     /// Planning maps `Bound` at or below its floor to the no-envelope-profit
     /// rejection; `Unsupported` remains solve-unscreened.
     pub envelope: Envelope,
-    pub stats: crate::cl::WalkStats,
+    pub stats: crate::concentrated_liquidity::WalkStats,
     /// The gate phase counters this solve produced — carried out on the
     /// outcome (the asymmetric twin of `stats`; no thread-local read-back).
     pub gate_stats: GateStats,
@@ -100,7 +102,7 @@ pub fn solve_path_with_min_profit(
                     result: None,
                     refusal: None,
                     envelope,
-                    stats: crate::cl::WalkStats::default(),
+                    stats: crate::concentrated_liquidity::WalkStats::default(),
                     gate_stats,
                 };
             }
@@ -252,9 +254,9 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         allowed: Some(&[HopType::V3, HopType::V4]),
         required: None,
         solve: named_fn!(solve_walkable_path_int),
-        to_math: named_fn!(cl_to_math),
-        lines: named_fn!(cl_hop_lines),
-        label: "cl",
+        to_math: named_fn!(concentrated_liquidity_to_math),
+        lines: named_fn!(concentrated_liquidity_hop_lines),
+        label: "concentrated_liquidity",
     },
     // Solidly accept row: V2 ∪ Solidly with ≥1 Solidly hop. A lone Solidly
     // path is the arm's own len<2 concern, not the dispatch's.
@@ -387,7 +389,7 @@ fn refuse_path(
     _gate: &GateDeps<'_>,
     _walk_env: Option<&PathBoundLines>,
 ) -> SolveArmOutcome {
-    SolveArmOutcome::refused(crate::cl::WalkRefusal::NotWalkable)
+    SolveArmOutcome::refused(crate::concentrated_liquidity::WalkRefusal::NotWalkable)
 }
 
 /// The V2 family's path entry: the integer-exact Möbius solve.
@@ -427,10 +429,10 @@ fn solve_exact_v2_entry(
                         None
                     }
                 }),
-            crate::cl::WalkStats::default(),
+            crate::concentrated_liquidity::WalkStats::default(),
         )
     } else {
-        SolveArmOutcome::refused(crate::cl::WalkRefusal::NotWalkable)
+        SolveArmOutcome::refused(crate::concentrated_liquidity::WalkRefusal::NotWalkable)
     }
 }
 
@@ -443,7 +445,7 @@ pub fn solve_path_inner(
 ) -> SolveArmOutcome {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
-        return SolveArmOutcome::refused(crate::cl::WalkRefusal::Unresolved);
+        return SolveArmOutcome::refused(crate::concentrated_liquidity::WalkRefusal::Unresolved);
     }
     // The distinct hop families present in this path — the dispatch key,
     // computed ONCE. [`family_row`] is a set-membership test against it; see
@@ -687,7 +689,9 @@ fn ascending_sweep(simulate: &impl Fn(U256) -> U256, center: U256) -> Option<(U2
 mod gate_tests {
     use super::*;
 
-    use crate::mixed::families::cl::{cl_hop_lines, cl_to_math, solve_walkable_path_int};
+    use crate::mixed::families::concentrated_liquidity::{
+        concentrated_liquidity_hop_lines, concentrated_liquidity_to_math, solve_walkable_path_int,
+    };
     use crate::mixed::ResolvedMixedPath;
     use degenbot_math::v2::IntHopState;
     use degenbot_uniswap::dex_identity::DexVariant;
@@ -861,9 +865,9 @@ mod gate_tests {
                 named_fn!(solve_exact_v2_entry),
             ),
             HopType::V3 | HopType::V4 => (
-                "cl",
-                named_fn!(cl_to_math),
-                named_fn!(cl_hop_lines),
+                "concentrated_liquidity",
+                named_fn!(concentrated_liquidity_to_math),
+                named_fn!(concentrated_liquidity_hop_lines),
                 named_fn!(solve_walkable_path_int),
             ),
             HopType::SolidlyStable => (
@@ -945,9 +949,9 @@ mod gate_tests {
             (&[HopType::V2], "v2"),
             (&[HopType::V2, HopType::V2], "v2"),
             // CL row: every hop CL (V3/V4).
-            (&[HopType::V3], "cl"),
-            (&[HopType::V4], "cl"),
-            (&[HopType::V3, HopType::V4], "cl"),
+            (&[HopType::V3], "concentrated_liquidity"),
+            (&[HopType::V4], "concentrated_liquidity"),
+            (&[HopType::V3, HopType::V4], "concentrated_liquidity"),
             // Solidly accept row: V2 ∪ Solidly with ≥1 Solidly hop. A lone
             // Solidly path is the family's own len<2 concern, not dispatch's.
             (&[HopType::V2, HopType::SolidlyStable], "solidly"),

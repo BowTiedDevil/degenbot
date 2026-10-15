@@ -46,14 +46,14 @@ fn make_v3_pool(factory: Address, liquidity: u128) -> PoolEntry {
         fetcher: None,
         deployer: factory,
         init_hash: B256::default(),
-        slot_layout: degenbot_pools::ClSlotLayout::UniswapV3,
+        slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
     };
     let (identity, state) = V3PoolState::from_params(params, 8);
     PoolEntry::V3(Box::new((identity, state)))
 }
 
 #[test]
-fn v3_pool_handle_exposes_structure_identity_cl_view_and_swap() {
+fn v3_pool_handle_exposes_structure_identity_concentrated_liquidity_view_and_swap() {
     let entry = make_v3_pool(Address::from([0x22u8; 20]), 1_000_000u128);
 
     let pool = Pool::new(&entry, 1);
@@ -66,14 +66,17 @@ fn v3_pool_handle_exposes_structure_identity_cl_view_and_swap() {
         }
     ));
 
-    let cl = pool.concentrated_liquidity().expect("CL view");
-    assert_eq!(cl.fee(), 3000);
-    assert_eq!(cl.tick_spacing(), 60);
-    assert_eq!(cl.liquidity(), 1_000_000);
-    assert_eq!(cl.tick(), 0);
-    assert_eq!(cl.sqrt_price_x96(), U256::from(1u128) << 96);
-    assert_eq!(cl.token0(), Address::from([0xAAu8; 20]));
-    assert_eq!(cl.token1(), Address::from([0xBBu8; 20]));
+    let concentrated_liquidity = pool.concentrated_liquidity().expect("CL view");
+    assert_eq!(concentrated_liquidity.fee(), 3000);
+    assert_eq!(concentrated_liquidity.tick_spacing(), 60);
+    assert_eq!(concentrated_liquidity.liquidity(), 1_000_000);
+    assert_eq!(concentrated_liquidity.tick(), 0);
+    assert_eq!(
+        concentrated_liquidity.sqrt_price_x96(),
+        U256::from(1u128) << 96
+    );
+    assert_eq!(concentrated_liquidity.token0(), Address::from([0xAAu8; 20]));
+    assert_eq!(concentrated_liquidity.token1(), Address::from([0xBBu8; 20]));
 
     let out = pool
         .calculate_tokens_out(true, U256::from(1_000))

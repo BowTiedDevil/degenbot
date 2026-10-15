@@ -172,7 +172,7 @@ fn curve_stable_mixed_with_v2_finds_arb() {
     assert!(!results.is_empty(), "should find V2+Curve mixed arb");
 }
 #[test]
-fn curve_stable_rejects_mixed_with_cl() {
+fn curve_stable_rejects_mixed_with_concentrated_liquidity() {
     use std::sync::Arc;
     let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
         degenbot_substrate::BotState::new(),

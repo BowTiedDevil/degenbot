@@ -106,7 +106,7 @@ otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", 
 # `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
 # only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
 # `DEGENBOT_HOTPATH=1` env var so default runs never construct the guard.
-# Forwards degenbot-solvers/hotpath so the solver-internal probes (cl_solve.*,
+# Forwards degenbot-solvers/hotpath so the solver-internal probes (concentrated_liquidity_solve.*,
 # mixed.solve_path_inner) instrument too — the crate-level hotpath dep unifies
 # at package level, but the explicit forward keeps the intent durable.
 # `tokio` backend: the tokio_runtime! monitor (hotpath_tokio_* families; the

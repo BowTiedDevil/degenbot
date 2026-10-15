@@ -35,7 +35,7 @@ use alloy::primitives::{Address, U256};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
 use degenbot_db::ApplyLiquidityAtTick;
-use degenbot_pools::v3_state::ClSlotLayout;
+use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::v3_state::RegisterV3PoolParams;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v3_slot0_liquidity};
@@ -266,7 +266,7 @@ fn build_sequence(
         fetcher: None,
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
-        slot_layout: ClSlotLayout::UniswapV3,
+        slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
     };
     let (_identity, state) = degenbot_pools::v3_state::V3PoolState::from_params(params, 8);
     (
@@ -309,7 +309,7 @@ fn runtime_for(
         address: pool,
         fee,
         tick_spacing: spacing,
-        layout: ClSlotLayout::UniswapV3,
+        layout: ConcentratedLiquiditySlotLayout::UniswapV3,
     });
     index.push_edge(V2Edge {
         pool_id: 302,
@@ -334,7 +334,7 @@ fn post_state(
     PoolPostState {
         address: pool,
         family: PoolFamily::V3 {
-            layout: ClSlotLayout::UniswapV3,
+            layout: ConcentratedLiquiditySlotLayout::UniswapV3,
             tick_spacing: spacing,
             current_tick_hint: Some(tick),
         },

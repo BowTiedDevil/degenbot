@@ -18,12 +18,13 @@
 use std::sync::LazyLock;
 
 use alloy::primitives::{I256, U256, U512};
-use degenbot_math::cl::swap_math::compute_swap_step_v3;
-use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
+use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::profit_envelope::{
-    path_output_bound_at, path_profit_bound, ClHop, Envelope, GateDeps, GateSkipCause, HopMath,
+    path_output_bound_at, path_profit_bound, ConcentratedLiquidityHop, Envelope, GateDeps,
+    GateSkipCause, HopMath,
 };
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 use std::borrow::Cow;
@@ -37,12 +38,12 @@ fn bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     }
 }
 
-/// Cl-carrying view helper: sequence + a borrowed table (the carried shape).
-fn cl_carried<'a>(
+/// ConcentratedLiquidity-carrying view helper: sequence + a borrowed table (the carried shape).
+fn concentrated_liquidity_carried<'a>(
     seq: &'a IntV3TickRangeSequence,
     table: &'a Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>,
 ) -> HopMath<'a> {
-    HopMath::Cl(ClHop {
+    HopMath::ConcentratedLiquidity(ConcentratedLiquidityHop {
         seq,
         crossings: Cow::Borrowed(table),
     })
@@ -123,7 +124,7 @@ const SWEEP: [u64; 22] = [
 ];
 
 fn assert_dominates(seq: &IntV3TickRangeSequence) {
-    let view = [Some(HopMath::cl_derived(seq))];
+    let view = [Some(HopMath::concentrated_liquidity_derived(seq))];
     for &x in &SWEEP {
         let x = U256::from(x);
         let bound = path_output_bound_at(
@@ -224,14 +225,14 @@ fn v2_envelope_dominates_true_mobius() {
 }
 
 #[test]
-fn mixed_v2_cl_path_pointwise_dominance() {
+fn mixed_v2_concentrated_liquidity_path_pointwise_dominance() {
     let v2 = IntHopState::new(
         U256::from(50_000_000_000_000u128),
         U256::from(40_000_000_000_000u128),
         997_000,
         1_000_000,
     );
-    let cl = mk_seq(vec![mk_range(
+    let concentrated_liquidity = mk_seq(vec![mk_range(
         6_000_000_000_000u128,
         p_at_tick(0),
         p_at_tick(-1200),
@@ -239,7 +240,9 @@ fn mixed_v2_cl_path_pointwise_dominance() {
     )]);
     let views = [
         Some(HopMath::V2(&v2)),
-        Some(HopMath::cl_derived(&cl)),
+        Some(HopMath::concentrated_liquidity_derived(
+            &concentrated_liquidity,
+        )),
         Some(HopMath::V2(&v2)),
     ];
     for &x in &SWEEP {
@@ -253,7 +256,7 @@ fn mixed_v2_cl_path_pointwise_dominance() {
         // Chain the oracles: V2 → CL → V2.
         let y1 = mobius(v2.reserve_in, v2.reserve_out, 997_000, 1_000_000, x);
         let y1_u = narrow512(y1).expect("V2 output within U256");
-        let mid = ref_walk(&cl, y1_u).expect("walks");
+        let mid = ref_walk(&concentrated_liquidity, y1_u).expect("walks");
         let truth = mobius(v2.reserve_in, v2.reserve_out, 997_000, 1_000_000, mid);
         assert!(
             U512::from(bound) >= truth,
@@ -406,7 +409,7 @@ fn m6776w_none_cause_classifies_each_exit() {
 static CAPTURES: LazyLock<String> = LazyLock::new(|| {
     degenbot_solvers::capture_fixture::read_fixture(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/heavy_cl_solve_captures.jsonl")
+            .join("tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl")
             .as_path(),
     )
 });
@@ -448,7 +451,7 @@ fn precomputed_crossings_match_self_derived_bound() {
             .collect();
         let derived: Vec<Option<HopMath<'_>>> = owned_seqs
             .iter()
-            .map(|s| Some(HopMath::cl_derived(s)))
+            .map(|s| Some(HopMath::concentrated_liquidity_derived(s)))
             .collect();
         let crossing_owned: Vec<Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>> = owned_seqs
             .iter()
@@ -457,7 +460,7 @@ fn precomputed_crossings_match_self_derived_bound() {
         let carried: Vec<Option<HopMath<'_>>> = owned_seqs
             .iter()
             .zip(crossing_owned.iter())
-            .map(|(s, t)| Some(cl_carried(s, t)))
+            .map(|(s, t)| Some(concentrated_liquidity_carried(s, t)))
             .collect();
         let derived_bound = path_profit_bound(&derived, &GateDeps::offline());
         let carried_bound = path_profit_bound(&carried, &GateDeps::offline());
@@ -493,7 +496,7 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
         .collect();
     let views: Vec<Option<HopMath<'_>>> = owned_seqs
         .iter()
-        .map(|s| Some(HopMath::cl_derived(s)))
+        .map(|s| Some(HopMath::concentrated_liquidity_derived(s)))
         .collect();
 
     // Same epoch both calls: populate the (content-keyed) cache, then reuse.
@@ -562,13 +565,13 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
         1000,
     );
     let small_views = vec![
-        Some(cl_carried(&seq1, &crossings1)),
-        Some(cl_carried(&seq2, &crossings2)),
+        Some(concentrated_liquidity_carried(&seq1, &crossings1)),
+        Some(concentrated_liquidity_carried(&seq2, &crossings2)),
         Some(HopMath::V2(&small_tail)),
     ];
     let large_views = vec![
-        Some(cl_carried(&seq1, &crossings1)),
-        Some(cl_carried(&seq2, &crossings2)),
+        Some(concentrated_liquidity_carried(&seq1, &crossings1)),
+        Some(concentrated_liquidity_carried(&seq2, &crossings2)),
         Some(HopMath::V2(&large_tail)),
     ];
 
@@ -613,11 +616,11 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
         1000,
     );
     let tiny_views = vec![
-        Some(cl_carried(&ladder, &ladder_crossings)),
+        Some(concentrated_liquidity_carried(&ladder, &ladder_crossings)),
         Some(HopMath::V2(&tiny_tail)),
     ];
     let huge_views = vec![
-        Some(cl_carried(&ladder, &ladder_crossings)),
+        Some(concentrated_liquidity_carried(&ladder, &ladder_crossings)),
         Some(HopMath::V2(&huge_tail)),
     ];
     let expected_tiny = path_profit_bound(&tiny_views, &GateDeps::offline());
@@ -665,8 +668,8 @@ fn prefix_cache_chains_through_v2_hops() {
     let c2: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = ladder2.crossings();
     let views = vec![
         Some(HopMath::V2(&v2)),
-        Some(cl_carried(&ladder1, &c1)),
-        Some(cl_carried(&ladder2, &c2)),
+        Some(concentrated_liquidity_carried(&ladder1, &c1)),
+        Some(concentrated_liquidity_carried(&ladder2, &c2)),
     ];
     let expected = path_profit_bound(&views, &GateDeps::offline());
     // C4: the cache is an owner-scoped value this test holds — populate once,
@@ -690,7 +693,7 @@ fn prefix_cache_chains_through_v2_hops() {
 }
 
 #[test]
-fn bound_dominates_golden_profit_on_heavy_cl_captures() {
+fn bound_dominates_golden_profit_on_heavy_concentrated_liquidity_captures() {
     let mut n_checked = 0u32;
     for line in CAPTURES.lines().filter(|l| !l.trim().is_empty()) {
         let doc: serde_json::Value = serde_json::from_str(line).expect("valid capture JSONL");
@@ -712,7 +715,7 @@ fn bound_dominates_golden_profit_on_heavy_cl_captures() {
             .collect();
         let views: Vec<Option<HopMath<'_>>> = owned_seqs
             .iter()
-            .map(|s| Some(HopMath::cl_derived(s)))
+            .map(|s| Some(HopMath::concentrated_liquidity_derived(s)))
             .collect();
         let golden = doc.get("golden").cloned().unwrap_or_default();
         if golden.is_null() {
@@ -832,7 +835,7 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     let good_price = p_at_tick(0);
     let range = mk_range(0, good_price, p_at_tick(-10), p_at_tick(10));
     let seq = mk_seq(vec![range]);
-    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::cl_derived(&seq))];
+    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::concentrated_liquidity_derived(&seq))];
 
     // path_profit_bound returns Unsupported(DegenerateHop) and triggers the
     // capture through the sink the harness supplies (the gate reads no env).
@@ -870,7 +873,7 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
         "n_hops": 1,
         "hops": [{
             "hop_index": 0,
-            "family": "cl",
+            "family": "concentrated_liquidity",
             "ranges": [{
                 "liquidity": "0",
                 "sqrt_price_x96": p_at_tick(0).to_string(),
@@ -925,7 +928,7 @@ fn extreme_entry_price_is_not_rejected() {
         extreme_price * U256::from(2u64),
     );
     let seq = mk_seq(vec![range]);
-    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::cl_derived(&seq))];
+    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::concentrated_liquidity_derived(&seq))];
 
     // The envelope must succeed (return Some bound), not reject the hop.
     // A single range with real liquidity and an extreme price is a perfectly
@@ -966,7 +969,7 @@ fn probe_cap_tail_extreme_ofz() {
         ..mk_range(liq, p_at_tick(100), p_at_tick(100), p_max)
     };
     let seq = mk_seq(vec![r0, r1]);
-    let views: Vec<Option<HopMath>> = vec![Some(HopMath::cl_derived(&seq))];
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::concentrated_liquidity_derived(&seq))];
     assert!(
         bound(&views).is_some(),
         "OFZ extreme should not be rejected"
@@ -982,7 +985,7 @@ fn probe_cap_tail_extreme_zfo() {
     let r0 = mk_range(liq, p0, p_at_tick(-100), p0);
     let r1 = mk_range(liq, p_at_tick(-100), p_min, p_at_tick(-100));
     let seq = mk_seq(vec![r0, r1]);
-    let views: Vec<Option<HopMath>> = vec![Some(HopMath::cl_derived(&seq))];
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::concentrated_liquidity_derived(&seq))];
     assert!(
         bound(&views).is_some(),
         "ZFO extreme should not be rejected"
@@ -1008,7 +1011,7 @@ fn probe_cap_tail_u128_max_liquidity_rejects() {
     // Single range, normal price, extreme liquidity:
     let r = mk_range(liq, p0, p0, p100);
     let seq = mk_seq(vec![r]);
-    let views: Vec<Option<HopMath>> = vec![Some(HopMath::cl_derived(&seq))];
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::concentrated_liquidity_derived(&seq))];
     // u128::MAX liquidity exceeds i128::MAX, so the old cap-tail's
     // `i128::try_from(er.liquidity).ok()?` rejected the whole hop. The
     // U512-based cap-tail computes the same formula directly, accepting
@@ -1030,7 +1033,7 @@ fn probe_cap_tail_u128_max_liquidity_extreme_price() {
         ..mk_range(liq, p0, p0, p_max)
     };
     let seq = mk_seq(vec![r]);
-    let views: Vec<Option<HopMath>> = vec![Some(HopMath::cl_derived(&seq))];
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::concentrated_liquidity_derived(&seq))];
     assert!(
         bound(&views).is_some(),
         "u128::MAX liquidity at extreme price should not be rejected"

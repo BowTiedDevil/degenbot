@@ -29,7 +29,7 @@ use degenbot_pools::curve_state::RegisterCurvePoolParams;
 use degenbot_pools::curve_strategies::resolve_curve_strategy_discriminants;
 use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
-use degenbot_pools::v3_state::{ClSlotLayout, RegisterV3PoolParams};
+use degenbot_pools::v3_state::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
 use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_pools::{
     BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
@@ -1009,7 +1009,10 @@ async fn bootstrap_v3_tick_map(
     block: u64,
 ) -> Result<(HashMap<i32, TickInfo>, U256), ProviderError> {
     let (word, _) =
-        degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
+        degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
+            tick,
+            tick_spacing,
+        );
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("V3 tick word fits in int16");
     // Best-effort single-word probe for a Sparse pool: an unreadable word
@@ -1258,9 +1261,9 @@ pub async fn build_v3(
     // divergent storage layout (liquidity@5, ticks@6) — resolved from the
     // deployment table; the FFI layer can override for non-JSON pools.
     let slot_layout = if deployments::is_pancakeswap_v3_factory(chain_id, imm.factory) {
-        ClSlotLayout::PancakeV3
+        ConcentratedLiquiditySlotLayout::PancakeV3
     } else {
-        ClSlotLayout::UniswapV3
+        ConcentratedLiquiditySlotLayout::UniswapV3
     };
 
     Ok(RegisterV3PoolParams {
@@ -1300,7 +1303,10 @@ async fn bootstrap_v4_tick_map(
     block: u64,
 ) -> Result<(HashMap<i32, TickInfo>, U256), ProviderError> {
     let (word, _) =
-        degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
+        degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
+            tick,
+            tick_spacing,
+        );
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("V4 tick word fits in int16");
     // Same best-effort single-word probe + graceful decode-error degradation as

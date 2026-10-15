@@ -11,7 +11,7 @@
 //!
 //! Both methods port the Python Branch 3 sparse-RPC loop verbatim:
 //! 1. Compute the tick-bitmap word via
-//!    [`degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position`].
+//!    [`degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position`].
 //! 2. `eth_call` the bitmap (`tickBitmap(int16)` for V3; `getTickBitmap(bytes32,int16)` for V4).
 //! 3. If the bitmap is zero → return `Ok(None)` (no initialized ticks in this
 //!    word — matches the Python "don't seed empty" rule).
@@ -90,7 +90,7 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
         let provider = Arc::clone(&self.provider);
         get_runtime().block_on(async move {
             // 1. Compute the tick-bitmap word containing `tick`.
-            let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
+            let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
                 tick,
                 tick_spacing,
             );
@@ -150,7 +150,7 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
 
         let provider = Arc::clone(&self.provider);
         get_runtime().block_on(async move {
-            let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
+            let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
                 tick,
                 tick_spacing,
             );

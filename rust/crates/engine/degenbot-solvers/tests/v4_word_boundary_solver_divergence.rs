@@ -53,7 +53,9 @@ use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
-use degenbot_solvers::cl::{simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally};
+use degenbot_solvers::concentrated_liquidity::{
+    simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
+};
 
 const TICK_SPACING: i32 = 60;
 const LP_FEE: u32 = 3_000;

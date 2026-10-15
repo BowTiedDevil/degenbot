@@ -162,7 +162,7 @@ fn balancer_stable_mixed_with_v2_finds_arb() {
     );
 }
 #[test]
-fn balancer_stable_rejects_mixed_with_cl() {
+fn balancer_stable_rejects_mixed_with_concentrated_liquidity() {
     use std::sync::Arc;
     let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
         degenbot_substrate::BotState::new(),

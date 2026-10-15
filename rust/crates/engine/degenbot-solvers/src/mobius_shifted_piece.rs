@@ -15,7 +15,7 @@
 //! with signed integer coefficients composed by 2×2 matrix multiplication.
 //! This module computes `(A, B, C, D)` directly, replacing the transitional
 //! unshifted-coefficients + additive-gross anchor of the active-set walk
-//! (`cl::walk_piece_anchor`), which mispriced downstream
+//! (`concentrated_liquidity::walk_piece_anchor`), which mispriced downstream
 //! crossings (they are paid from an upstream hop's OUTPUT, not the path
 //! input).
 //!

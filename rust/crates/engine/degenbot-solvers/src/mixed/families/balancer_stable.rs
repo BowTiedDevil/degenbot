@@ -86,7 +86,7 @@ pub(crate) fn solve_balancer_stable_entry(
 ) -> crate::mixed::SolveArmOutcome {
     crate::mixed::SolveArmOutcome::walked(
         solve_balancer_stable_path_int(resolved),
-        crate::cl::WalkStats::default(),
+        crate::concentrated_liquidity::WalkStats::default(),
     )
 }
 

@@ -10,12 +10,12 @@
 //!   `DR_READOUT_EPOCHS=8` ...  // more epochs over the same path set (default 5)
 //!
 //! Loads the same capture fixture the other replays use
-//! (`heavy_cl_solve_captures.jsonl` via `capture_fixture::fixture_path`),
-//! derives [`PreparedClHop`] ONCE per captured path (the production shape —
+//! (`heavy_concentrated_liquidity_solve_captures.jsonl` via `capture_fixture::fixture_path`),
+//! derives [`PreparedConcentratedLiquidityHop`] ONCE per captured path (the production shape —
 //! the A/B must not measure table derivation), then runs `E` epochs over the
 //! FULL path set in two arms:
 //!
-//! - Arm A (memo off): `solve_cl_piecewise` with `None` memo every epoch;
+//! - Arm A (memo off): `solve_concentrated_liquidity_piecewise` with `None` memo every epoch;
 //!   records per-epoch total walk sims + wall time. This is the "before"
 //!   baseline the memo arm is read against.
 //! - Arm B (memo on, stats on): one `WalkMemo::new(true, true)` handle;
@@ -31,17 +31,20 @@
 //! divergence across blocks) are all in place and reported here.
 
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solvers::cl::{solve_cl_piecewise, PreparedClHop, WalkMemo, WalkMemoStats};
+use degenbot_solvers::concentrated_liquidity::{
+    solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop, WalkMemo,
+    WalkMemoStats,
+};
 use degenbot_solvers::runtime::SolveRuntimeConfig;
 use serde_json::Value;
 
-#[path = "common/cl_rows.rs"]
-mod cl_rows;
 #[path = "common/mod.rs"]
 mod common;
+#[path = "common/concentrated_liquidity_rows.rs"]
+mod concentrated_liquidity_rows;
 
-use cl_rows::parse_cl_hops;
 use common::capture_arg;
+use concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
 
 /// One parsed capture row: a path id plus its owned CL sequences.
 struct CapturedPath {
@@ -65,19 +68,19 @@ struct ArmBRow {
 }
 
 /// Parse one capture row into its owned sequences (shared CL row parser via
-/// `cl_rows::parse_cl_hops`; failures are reported, never swallowed).
+/// `concentrated_liquidity_rows::parse_concentrated_liquidity_hops`; failures are reported, never swallowed).
 fn parse_path(doc: &Value) -> Result<CapturedPath, String> {
     let pid = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
     let hops_v = doc.get("hops").and_then(Value::as_array).ok_or("hops")?;
     Ok(CapturedPath {
         pid,
-        seqs: parse_cl_hops(hops_v)?,
+        seqs: parse_concentrated_liquidity_hops(hops_v)?,
     })
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = capture_arg(&args, "heavy_cl_solve_captures.jsonl");
+    let path = capture_arg(&args, "heavy_concentrated_liquidity_solve_captures.jsonl");
     let epochs: u64 = std::env::var("DR_READOUT_EPOCHS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -122,13 +125,15 @@ fn main() {
     // Production shape: derive the crossing tables + word profiles ONCE per
     // path, exactly what the engine's HopProjectionCache rides — the A/B must
     // not measure table derivation.
-    let prepared: Vec<Vec<PreparedClHop>> = paths
+    let prepared: Vec<Vec<PreparedConcentratedLiquidityHop>> = paths
         .iter()
         .map(|p| {
             p.seqs
                 .iter()
                 .map(|s| {
-                    PreparedClHop::derive(std::sync::Arc::new(IntV3TickRangeSequence::clone(s)))
+                    PreparedConcentratedLiquidityHop::derive(std::sync::Arc::new(
+                        IntV3TickRangeSequence::clone(s),
+                    ))
                 })
                 .collect()
         })
@@ -144,7 +149,7 @@ fn main() {
         let mut walk_sims = 0usize;
         let t0 = std::time::Instant::now();
         for prep in &prepared {
-            let out = solve_cl_piecewise(prep, None, None, &cfg, None);
+            let out = solve_concentrated_liquidity_piecewise(prep, None, None, &cfg, None);
             walk_sims += out.stats.sims;
         }
         arm_a.push(ArmARow {
@@ -164,7 +169,7 @@ fn main() {
         let mut walk_sims = 0usize;
         let t0 = std::time::Instant::now();
         for prep in &prepared {
-            let out = solve_cl_piecewise(prep, Some(&memo), None, &cfg, None);
+            let out = solve_concentrated_liquidity_piecewise(prep, Some(&memo), None, &cfg, None);
             walk_sims += out.stats.sims;
         }
         let wall_ms = t0.elapsed().as_secs_f64() * 1_000.0;

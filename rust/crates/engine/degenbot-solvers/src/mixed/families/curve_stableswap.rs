@@ -102,7 +102,7 @@ pub(crate) fn solve_curve_entry(
 ) -> crate::mixed::SolveArmOutcome {
     crate::mixed::SolveArmOutcome::walked(
         solve_curve_path_int(resolved),
-        crate::cl::WalkStats::default(),
+        crate::concentrated_liquidity::WalkStats::default(),
     )
 }
 

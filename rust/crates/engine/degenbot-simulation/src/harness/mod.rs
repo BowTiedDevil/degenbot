@@ -586,7 +586,7 @@ impl Harness {
 
     /// ADR-033 (D7) variant of [`Self::run_path_with_opts`] with CALLER-supplied
     /// `consumed_inputs` — the per-hop amounts the production solver commits
-    /// after `clamp_cl_hop_capacity` re-aligns them — instead of this harness
+    /// after `clamp_concentrated_liquidity_hop_capacity` re-aligns them — instead of this harness
     /// synthesizing the full-consumption chain (`[optimal_input,
     /// hop_outputs[0], …]`).
     pub fn run_path_with_consumed(
@@ -610,7 +610,7 @@ impl Harness {
 
     /// ADR-033 (D7): encode with CALLER-supplied per-hop `consumed_inputs`
     /// — the production solver's committed amounts (the shape
-    /// `clamp_cl_hop_capacity` re-aligns) — instead of synthesizing the
+    /// `clamp_concentrated_liquidity_hop_capacity` re-aligns) — instead of synthesizing the
     /// full-consumption chain. The amounts still flow through the production
     /// `encode_cmd_stream` intake (`EncodeContext` + `EncodeRequest`).
     pub fn encode_path_with_consumed(
@@ -899,7 +899,7 @@ pub fn v3_amount_out(
     zero_for_one: bool,
     fee: u32,
 ) -> u128 {
-    use degenbot_math::cl::sqrt_price_math::{
+    use degenbot_math::concentrated_liquidity::sqrt_price_math::{
         get_amount0_delta, get_amount1_delta, get_next_sqrt_price_from_input,
     };
     let fee_retained = U256::from(1_000_000u64 - u64::from(fee));
