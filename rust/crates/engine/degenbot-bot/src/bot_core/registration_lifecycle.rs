@@ -129,13 +129,13 @@ where
     // non-V3 pool → no-op Ok.
     let coverage = core
         .read_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .v3_pool_coverage(address);
+        .pool_coverage(address);
     match coverage {
         None => return Ok(()),
         Some(PoolTickCoverage::Sparse) => {
             let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            guard.apply_backfill_buffer_v3(&address);
-            guard.apply_pump_buffer_v3(&address);
+            guard.apply_backfill_buffer(&address);
+            guard.apply_pump_buffer(&address);
             return Ok(());
         }
         Some(PoolTickCoverage::Tracked) => {}
@@ -145,7 +145,7 @@ where
     // Swap/Mint/Burn to the pump buffer so the pin's `update_block` cannot
     // outrun `last_complete_block` during the drain+pin+verify window.
     core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .set_v3_pool_quarantined(address);
+        .set_pool_quarantined(address);
 
     // Step-1: verify the pinned snapshot SEED @ snapshot block. Only
     // when a snapshot block is supplied (the seam's gated-skip posture); the
@@ -164,7 +164,7 @@ where
     if let Some(snapshot_block) = snapshot_block {
         let seed = {
             core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-                .take_v3_snapshot_seed(address)
+                .take_snapshot_seed(address)
         };
         if let Some(seed) = seed {
             // Single acquisition by construction: the fused accessor chains
@@ -183,9 +183,9 @@ where
     // pair atomically with the drain (the step-2 rolling-start race fix).
     {
         let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-        guard.apply_backfill_buffer_v3(&address);
-        guard.apply_pump_buffer_v3(&address);
-        guard.pin_v3_post_drain_snapshot(address);
+        guard.apply_backfill_buffer(&address);
+        guard.apply_pump_buffer(&address);
+        guard.pin_post_drain_snapshot(address);
     }
 
     // Step-2: verify the pinned POST-DRAIN pair @ the pin's OWN captured block
@@ -194,7 +194,7 @@ where
     // pools (the 2026-06-29 crash). The pin is consumed exactly once.
     let pin = {
         core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-            .take_v3_post_drain_snapshot(address)
+            .take_post_drain_snapshot(address)
     };
     if let Some((tick_data, pinned_block)) = pin {
         verify_post_drain(tick_data, pinned_block).await?;
@@ -204,7 +204,7 @@ where
     // here means a Tracked pool's verification succeeded; `Live` is the last
     // transition.
     core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .set_v3_pool_live(address);
+        .set_pool_live(address);
     Ok(())
 }
 
@@ -238,13 +238,13 @@ where
     // unregistered / non-V4 → no-op Ok.
     let coverage = core
         .read_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .v4_pool_coverage(pool_manager, &pool_id);
+        .pool_coverage_by_key(pool_manager, &pool_id);
     match coverage {
         None => return Ok(()),
         Some(PoolTickCoverage::Sparse) => {
             let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            guard.apply_backfill_buffer_v4(pool_manager, pool_id);
-            guard.apply_pump_buffer_v4(pool_manager, pool_id);
+            guard.apply_backfill_buffer_by_key(pool_manager, pool_id);
+            guard.apply_pump_buffer_by_key(pool_manager, pool_id);
             return Ok(());
         }
         Some(PoolTickCoverage::Tracked) => {}
@@ -252,7 +252,7 @@ where
 
     // Quarantine before the first RPC await.
     core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .set_v4_pool_quarantined(pool_manager, pool_id);
+        .set_pool_quarantined_by_key(pool_manager, pool_id);
 
     // Step-1: verify the pinned snapshot seed @ snapshot block.
     // Anchored at the pool's OWN liquidity clock , falling back
@@ -261,7 +261,7 @@ where
     if let Some(snapshot_block) = snapshot_block {
         let seed = {
             core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-                .take_v4_snapshot_seed(pool_manager, &pool_id)
+                .take_snapshot_seed_by_key(pool_manager, &pool_id)
         };
         if let Some(seed) = seed {
             // Same single-acquisition invariant as the V3 site: the fused
@@ -276,15 +276,15 @@ where
     // Drain + pin under a SINGLE `core.write()` hold (step-2 race fix).
     {
         let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-        guard.apply_backfill_buffer_v4(pool_manager, pool_id);
-        guard.apply_pump_buffer_v4(pool_manager, pool_id);
-        guard.pin_v4_post_drain_snapshot(pool_manager, &pool_id);
+        guard.apply_backfill_buffer_by_key(pool_manager, pool_id);
+        guard.apply_pump_buffer_by_key(pool_manager, pool_id);
+        guard.pin_post_drain_snapshot_by_key(pool_manager, &pool_id);
     }
 
     // Step-2: verify the pinned post-drain pair @ the pin's OWN block.
     let pin = {
         core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-            .take_v4_post_drain_snapshot(pool_manager, &pool_id)
+            .take_post_drain_snapshot_by_key(pool_manager, &pool_id)
     };
     if let Some((tick_data, pinned_block)) = pin {
         verify_post_drain(tick_data, pinned_block).await?;
@@ -292,7 +292,7 @@ where
 
     // Tripwire passed → Live.
     core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .set_v4_pool_live(pool_manager, pool_id);
+        .set_pool_live_by_key(pool_manager, pool_id);
     Ok(())
 }
 
@@ -512,13 +512,13 @@ mod tests {
     }
 
     fn lifecycle_v3(core: &BotState, pool_id: u64) -> RegistrationLifecycle {
-        core.get_v3_pool(pool_id)
+        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
             .expect("registered V3 pool")
             .registration_lifecycle
     }
 
     fn lifecycle_v4(core: &BotState, pool_id: u64) -> RegistrationLifecycle {
-        core.get_v4_pool(pool_id)
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
             .expect("registered V4 pool")
             .registration_lifecycle
     }
@@ -758,10 +758,13 @@ mod tests {
         // is Quarantined (Tracked) so this BUFFERS rather than applies.
         {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            c.buffer_backfill_v3_liquidity_update(addr, -201_000, -200_990, -100, 5);
+            c.buffer_backfill_liquidity_update(addr, -201_000, -200_990, -100, 5);
             // Verify it buffered (Quarantined → not applied yet).
             assert_eq!(
-                c.get_v3_pool(pid).unwrap().tick_data.len(),
+                c.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pid)
+                    .unwrap()
+                    .tick_data
+                    .len(),
                 1,
                 "must be buffered"
             );
@@ -776,7 +779,9 @@ mod tests {
         .await;
         assert!(result.is_ok());
         let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
-        let state = c.get_v3_pool(pid).unwrap();
+        let state = c
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pid)
+            .unwrap();
         // The burn zeroed gross → tick removed (not stranded in the buffer).
         assert!(
             !state.tick_data.contains_key(&-201_000),
@@ -803,7 +808,7 @@ mod tests {
         ));
         let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         assert_eq!(
-            c.v4_pool_id_by_key(pm, &pid).map(|id| lifecycle_v4(&c, id)),
+            c.pool_id_by_key(pm, &pid).map(|id| lifecycle_v4(&c, id)),
             Some(RegistrationLifecycle::Quarantined),
             "tracked V4 without a provider must stay Quarantined"
         );
@@ -863,7 +868,7 @@ mod tests {
         // and must flush only the orphaned quarantined V4.
         {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            c.release_all_v3_v4_quarantined();
+            c.release_all_quarantined();
         }
 
         let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
@@ -873,7 +878,7 @@ mod tests {
         assert_eq!(lifecycle_v3(&c, sparse_pid), RegistrationLifecycle::Live);
         // The orphan was swept by the batch (the only legitimate use).
         assert_eq!(
-            lifecycle_v4(&c, c.v4_pool_id_by_key(orphan_vm, &orphan_pid).unwrap()),
+            lifecycle_v4(&c, c.pool_id_by_key(orphan_vm, &orphan_pid).unwrap()),
             RegistrationLifecycle::Live
         );
     }

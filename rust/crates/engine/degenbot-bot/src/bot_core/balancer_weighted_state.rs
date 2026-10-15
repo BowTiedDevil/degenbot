@@ -40,10 +40,14 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = core.register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]));
         let s = core
-            .get_balancer_weighted_pool(pool_id)
+            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+                pool_id,
+            )
             .expect("balancer weighted pool registered");
         let id = core
-            .get_balancer_weighted_identity(pool_id)
+            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(
+                pool_id,
+            )
             .expect("balancer weighted identity registered");
         assert_eq!(id.n_tokens(), 2);
         assert_eq!(
@@ -66,7 +70,9 @@ mod tests {
         );
         assert_eq!(affected, Some(pool_id));
         let s = core
-            .get_balancer_weighted_pool(pool_id)
+            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+                pool_id,
+            )
             .expect("balancer weighted pool registered");
         assert_eq!(
             s.balances.to_vec(),
@@ -121,7 +127,9 @@ mod tests {
             .expect("Some on a registered Balancer weighted pool")
             .expect("Ok (target > genesis block)");
         let s = core
-            .get_balancer_weighted_pool(pool_id)
+            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+                pool_id,
+            )
             .expect("balancer weighted pool registered");
         assert_eq!(
             s.balances.to_vec(),

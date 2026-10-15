@@ -898,7 +898,7 @@ fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<
             ..Default::default()
         })
         .expect("test setup: V3 registration");
-        core.set_v3_pool_quarantined(pool_addr);
+        core.set_pool_quarantined(pool_addr);
     }
     (bot, pool_addr)
 }

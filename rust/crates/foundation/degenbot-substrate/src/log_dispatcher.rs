@@ -129,7 +129,7 @@ impl DecodedPoolEvent {
                 pool_manager,
                 pool_id,
                 ..
-            } => bot_state.v4_pool_id_by_key(*pool_manager, pool_id),
+            } => bot_state.pool_id_by_key(*pool_manager, pool_id),
         }
     }
 
@@ -211,7 +211,8 @@ impl DecodedPoolEvent {
                 liquidity,
                 tick,
                 block_number,
-            } => bot_state.route_v3_event(
+            } => bot_state.concentrated_liquidity.route_v3_event(
+                &mut bot_state.registry,
                 phase,
                 pool_address,
                 crate::BufferedV3PoolEvent::Swap(degenbot_pools::v3_state::BufferedV3SwapEvent {
@@ -228,7 +229,8 @@ impl DecodedPoolEvent {
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            } => bot_state.route_v3_event(
+            } => bot_state.concentrated_liquidity.route_v3_event(
+                &mut bot_state.registry,
                 phase,
                 pool_address,
                 crate::BufferedV3PoolEvent::Liquidity(
@@ -248,7 +250,8 @@ impl DecodedPoolEvent {
                 liquidity,
                 tick,
                 block_number,
-            } => bot_state.route_v4_event(
+            } => bot_state.concentrated_liquidity.route_v4_event(
+                &mut bot_state.registry,
                 phase,
                 pool_manager,
                 pool_id,
@@ -267,7 +270,8 @@ impl DecodedPoolEvent {
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            } => bot_state.route_v4_event(
+            } => bot_state.concentrated_liquidity.route_v4_event(
+                &mut bot_state.registry,
                 phase,
                 pool_manager,
                 pool_id,
@@ -1056,6 +1060,7 @@ mod tests {
         assert!(
             state
                 .read_at(crate::state_lock::LockSite::Core)
+                .concentrated_liquidity()
                 .buffered_v3_event_count(&pool_addr)
                 > 0,
             "an unregistered pool's Mint must be buffered for staged \
@@ -1123,7 +1128,7 @@ mod tests {
         // direct-applies as this test models.
         state
             .write_at(crate::state_lock::LockSite::Core)
-            .set_v3_pool_live(pool_addr);
+            .set_pool_live(pool_addr);
 
         // The exact Mint log emitted at block 25390812 (decoded from cast).
         // topics[1]=owner, topics[2]=tickLower=0x03113c=201020,
@@ -1184,7 +1189,9 @@ mod tests {
         dispatcher.dispatch(&log, &state, None);
 
         let s = state.read_at(crate::state_lock::LockSite::Core);
-        let pool = s.get_v3_pool(pool_id).expect("pool registered");
+        let pool = s
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("pool registered");
         let t201020 = pool.tick_data.get(&201_020).cloned().expect("tick 201020");
         let t203350 = pool.tick_data.get(&203_350).cloned().expect("tick 203350");
 

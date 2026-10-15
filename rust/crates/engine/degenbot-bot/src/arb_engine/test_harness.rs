@@ -94,7 +94,7 @@ pub(crate) fn process_updates(
             }
         }
         for update in v3_updates {
-            if let Some(pool_id) = core.apply_v3_swap(
+            if let Some(pool_id) = core.apply_swap(
                 update.pool_address,
                 update.sqrt_price_x96,
                 update.liquidity,

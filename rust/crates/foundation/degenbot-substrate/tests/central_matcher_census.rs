@@ -1,0 +1,298 @@
+//! The central-matcher census drift gate (ADR-073 D6, C6 item 2): the moved
+//! per-family arms may never return to the central matchers. Two properties
+//! are pinned here, because the C3 lesson showed a literal-only census is
+//! blind to wrapper dispatches (`match registry.pools.get` hiding a moved
+//! arm behind a helper):
+//!
+//! 1. **the literal `match entry` census** — one number, pinned at its
+//!    post-C5 value (`rg 'match entry' rust/crates -g '!*tests*'`), so a
+//!    reintroduced central match row moves the count and fails here;
+//! 2. **the design-math absence property** — no family design-math
+//!    identifier (the families' compute leaves and the retired wrapper
+//!    names) may appear at the three central sites
+//!    (`pools::simulate_swap`, `substrate::swap_simulation`,
+//!    `substrate::resolve`) outside tests and comments.
+//!
+//! Both halves fail loudly with the file and the offending line, and both
+//! are ratchets: a deletion keeps them green, a reintroduction cannot stay.
+
+use std::path::{Path, PathBuf};
+
+use std::sync::OnceLock;
+
+/// The pinned post-C5 census value (manager pattern:
+/// `rg 'match entry' rust/crates -g '!*tests*'`; the one excluded hit is the
+/// cli-core exchange-arm test fixture, not a pool matcher).
+const PINNED_MATCH_ENTRY_CENSUS: usize = 22;
+
+/// The family design-math identifiers that may never appear at the central
+/// sites: the compute leaves the family read modules own, the retired
+/// central-math helpers, and the retired wrapper names (the C3/C5
+/// hidden-arm classes). `bpt_idx` — the hop payload's field — is NOT banned:
+/// the resolve row's DTO assembly may name its own payload fields; the ban
+/// targets the math (`skip_bpt`), not the data.
+const BANNED_DESIGN_MATH: &[&str] = &[
+    // Curve stableswap leaf chain (the family module's math).
+    "stableswap_get_",
+    // Balancer leaves + the BPT math helper.
+    "pow_up",
+    "pow_down",
+    "skip_bpt",
+    // The recorded TODO(extract-per-family-arms) shape.
+    "calc_out_given_in",
+    // Per-family compute arms (the Solidly read door's design leaves and the
+    // reserve-pair closed forms) — one token covers the `calc_exact_*` family.
+    "calc_exact",
+    // Retired wrapper names (the hidden-arm classes C3/C5 deleted).
+    "simulate_aerodrome",
+    "simulate_balancer",
+    "simulate_curve_stableswap",
+];
+
+/// The three central sites, relative to `rust/` (the workspace root).
+const CENTRAL_SITES: &[&str] = &[
+    "crates/foundation/degenbot-pools/src/simulate_swap.rs",
+    "crates/foundation/degenbot-substrate/src/swap_simulation.rs",
+    "crates/foundation/degenbot-substrate/src/resolve",
+];
+
+#[expect(
+    clippy::expect_used,
+    reason = "test helper: CARGO_MANIFEST_DIR depth is fixed at compile time; loud failure beats a dummy root"
+)]
+fn workspace_root() -> &'static Path {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        // CARGO_MANIFEST_DIR = rust/crates/foundation/degenbot-substrate; the
+        // scan root is the rust/ workspace (three levels up).
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .expect("role-grouped manifest is under the rust/ workspace")
+    })
+}
+
+/// One `.rs` source under `rust/crates`, excluding the test/example/bench
+/// path components the manager census glob excludes (`!*tests*`).
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_str().unwrap_or("");
+            if name == "target"
+                || matches!(name, "tests" | "examples" | "benches")
+                || name.starts_with('.')
+            {
+                continue;
+            }
+            collect_rs_files(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// Line is whole-line prose (a comment or doc comment): a historical reference
+/// in prose is not a reintroduction.
+fn is_comment_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("//")
+}
+
+/// Inside a `#[cfg(test)] mod ... { ... }` region: fixture content is not a
+/// central-matcher reintroduction (the C5 review's line-context rule,
+/// encoded). Depth-tracked between lines like the companion half of the
+/// config env gate.
+fn cfg_test_regions(lines: &[&str]) -> Vec<bool> {
+    let mut in_test = vec![false; lines.len()];
+    let mut depth = 0usize;
+    let mut active = false;
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if !active && trimmed.starts_with("#[cfg(test)]") {
+            // The mod header may sit on this line or the next; both open a
+            // brace at depth-1 from here.
+            let rest = lines.get(idx + 1).copied().unwrap_or("");
+            if rest.contains("mod ") || trimmed.contains("mod ") {
+                active = true;
+            }
+        }
+        in_test[idx] = active;
+        for c in line.chars() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if active && depth == 0 {
+                        active = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    in_test
+}
+
+/// The literal `match entry` census across the workspace sources.
+fn match_entry_census(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    collect_rs_files(&root.join("crates"), &mut files);
+    let mut hits = Vec::new();
+    for path in &files {
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for (idx, line) in text.lines().enumerate() {
+            if line.contains("match entry") {
+                hits.push(format!("{rel}:{}: {}", idx + 1, line.trim()));
+            }
+        }
+    }
+    hits
+}
+
+/// The design-math identifiers present at the central sites, outside tests
+/// and comments.
+fn design_math_at_central_sites(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for site in CENTRAL_SITES {
+        let path = root.join(site);
+        let meta = std::fs::metadata(&path);
+        let paths: Vec<PathBuf> = match meta {
+            Ok(m) if m.is_dir() => {
+                let mut v = Vec::new();
+                collect_rs_files(&path, &mut v);
+                v
+            }
+            _ => vec![path.clone()],
+        };
+        for path in paths {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let lines: Vec<&str> = text.lines().collect();
+            let in_test = cfg_test_regions(&lines);
+            for (idx, line) in lines.iter().enumerate() {
+                if is_comment_line(line) || in_test[idx] {
+                    continue;
+                }
+                for token in BANNED_DESIGN_MATH {
+                    if line.contains(token) {
+                        violations.push(format!(
+                            "{}:{}: {token}",
+                            path.strip_prefix(root).unwrap_or(&path).display(),
+                            idx + 1
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    violations
+}
+
+#[test]
+fn the_central_match_entry_census_is_pinned() {
+    let root = workspace_root();
+    let hits = match_entry_census(root);
+    assert!(
+        hits.len() >= PINNED_MATCH_ENTRY_CENSUS / 2,
+        "the scan went dark (workspace sources unreadable?): {} hits",
+        hits.len()
+    );
+    assert_eq!(
+        hits.len(),
+        PINNED_MATCH_ENTRY_CENSUS,
+        "the literal `match entry` census drifted from the pinned post-C5 value          (a central match row moved or reappeared — ADR-073 D2 permits exactly          one dispatch row per family at each central site):
+{}",
+        hits.join("
+")
+    );
+}
+
+#[test]
+fn no_family_design_math_at_the_central_sites() {
+    let root = workspace_root();
+    let violations = design_math_at_central_sites(root);
+    assert!(
+        violations.is_empty(),
+        "family design math reappeared at the central matchers (it belongs          behind the family read modules' doors — ADR-073 D1/D2):
+{}",
+        violations.join("
+")
+    );
+}
+
+/// A positive control for the scan itself: the banned tokens are the ones the
+/// families actually own, so a renamed leaf that stops matching is a failing
+/// table rather than a quiet gap. Each token must still exist at its family
+/// home (or have been retired with the wrapper that carried it — the
+/// retired-wrapper tokens are exempt from this control).
+#[test]
+fn the_banned_tokens_are_still_the_families_leaves() {
+    let root = workspace_root();
+    // The LIVE leaves must exist somewhere in the families/ tree.
+    let live = [
+        "stableswap_get_",
+        "skip_bpt",
+        "calc_exact_in_stable_solidly",
+    ];
+    let mut families_text = String::new();
+    let mut files = Vec::new();
+    collect_rs_files(
+        &root
+            .join("crates/foundation/degenbot-pools/src/families")
+            .clone(),
+        &mut files,
+    );
+    for path in &files {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            families_text.push_str(&text);
+        }
+    }
+    assert!(
+        !files.is_empty(),
+        "the families tree must be readable for the control"
+    );
+    for token in live {
+        assert!(
+            families_text.contains(token),
+            "the banned token {token} no longer names a family leaf — update              BANNED_DESIGN_MATH knowingly (the gate must not go dark)"
+        );
+    }
+    // The retired substrate wrapper names must not exist anywhere in the two
+    // central crates (exact names — the solvers crate's family-module entries
+    // legitimately carry `simulate_balancer_weighted_*` names and are NOT
+    // these).
+    let mut central_text = String::new();
+    let mut central = Vec::new();
+    collect_rs_files(&root.join("crates/foundation"), &mut central);
+    for path in &central {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            central_text.push_str(&text);
+        }
+    }
+    for token in [
+        "simulate_aerodrome_stable_swap",
+        "simulate_balancer_pair_out",
+        "simulate_balancer_pair_in_given_out",
+        "simulate_balancer_weighted_pair_out",
+    ] {
+        assert!(
+            !central_text.contains(token),
+            "the retired wrapper name {token} reappeared in the central crates"
+        );
+    }
+}

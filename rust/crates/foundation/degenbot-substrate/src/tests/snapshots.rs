@@ -231,21 +231,23 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
     // Tracked pools register `Quarantined`; transition to `Live`
     // (the driver's post-verify `set_live`) so the pump update below
     // direct-applies as this test models.
-    core.set_v3_pool_live(v3_addr);
+    core.set_pool_live(v3_addr);
 
     // The seed is pinned at registration for Tracked (snapshot) pools.
     assert_eq!(
-        core.v3_snapshot_seed(v3_addr).cloned(),
+        core.snapshot_seed(v3_addr).cloned(),
         Some(seed_clone.clone()),
         "Tracked pool must pin its snapshot seed at registration"
     );
 
     // Pump applies a Mint at block 1, mutating tick -60's gross.
-    core.apply_v3_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
+    core.apply_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = core
-        .get_v3_pool(core.pool_id_by_address(&v3_addr).unwrap())
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(
+            core.pool_id_by_address(&v3_addr).unwrap(),
+        )
         .and_then(|s| s.tick_data.get(&-60))
         .map(|t| t.liquidity_gross.to::<u128>());
     assert_ne!(
@@ -257,17 +259,17 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
     // ... but the pinned seed is UNCHANGED — step-1 can still verify the
     // snapshot block against the seed, not the pump-corrupted current.
     assert_eq!(
-        core.v3_snapshot_seed(v3_addr).cloned(),
+        core.snapshot_seed(v3_addr).cloned(),
         Some(seed_clone.clone()),
         "snapshot seed must be immutable across pump Mint/Burn (the rolling-start race fix)"
     );
 
     // `take_v3_snapshot_seed` returns the seed once and clears the slot
     // (memory is freed after step-1 verify; the seed is never needed again).
-    let taken = core.take_v3_snapshot_seed(v3_addr);
+    let taken = core.take_snapshot_seed(v3_addr);
     assert_eq!(taken, Some(seed_clone), "take returns the pinned seed");
     assert_eq!(
-        core.v3_snapshot_seed(v3_addr),
+        core.snapshot_seed(v3_addr),
         None,
         "take clears the slot so the seed is verified exactly once"
     );
@@ -320,19 +322,21 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
     .expect("test setup: V3 registration");
     // Tracked pools register `Quarantined`; transition to `Live` so
     // the pump Mint below direct-applies (this test's model).
-    core.set_v3_pool_live(v3_addr);
+    core.set_pool_live(v3_addr);
 
     // Pin the post-drain state atomically with the drain (no buffer here →
     // pin == current tick_data == the seed at registration). This is what
     // `apply_buffer_v3` does inside its single core.write() hold.
-    core.pin_v3_post_drain_snapshot(v3_addr);
+    core.pin_post_drain_snapshot(v3_addr);
 
     // A pump Mint lands AFTER the drain — mutating the live tick_data.
-    core.apply_v3_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
+    core.apply_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = core
-        .get_v3_pool(core.pool_id_by_address(&v3_addr).unwrap())
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(
+            core.pool_id_by_address(&v3_addr).unwrap(),
+        )
         .and_then(|s| s.tick_data.get(&-60))
         .map(|t| t.liquidity_gross.to::<u128>());
     assert_ne!(
@@ -343,7 +347,7 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
 
     // ... but the pinned post-drain snapshot is UNCHANGED — step-2 verifies
     // the drain-time state, not the pump-corrupted current.
-    let taken = core.take_v3_post_drain_snapshot(v3_addr);
+    let taken = core.take_post_drain_snapshot(v3_addr);
     let (tick_data, pinned_block) = taken.expect("Tracked pool pins post-drain");
     assert_eq!(
         tick_data, drain_clone,
@@ -354,7 +358,7 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
         "no buffer events drained → pin's block is the registration update_block (0)"
     );
     assert_eq!(
-        core.take_v3_post_drain_snapshot(v3_addr),
+        core.take_post_drain_snapshot(v3_addr),
         None,
         "take clears the post-drain slot (verified exactly once)"
     );
@@ -384,9 +388,9 @@ fn v3_post_drain_snapshot_is_none_for_sparse_pools() {
         ..Default::default()
     })
     .expect("test setup: V3 registration");
-    core.pin_v3_post_drain_snapshot(v3_addr);
+    core.pin_post_drain_snapshot(v3_addr);
     assert_eq!(
-        core.take_v3_post_drain_snapshot(v3_addr),
+        core.take_post_drain_snapshot(v3_addr),
         None,
         "sparse pools must not pin post-drain (no complete tick_data)"
     );
@@ -440,8 +444,8 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
     // backfill boundary — the pump was already running during `build_paths`,
     // so the pool's Mint at `pump_block` landed in the unregistered-pool
     // pump buffer via `apply_v3_liquidity_update`).
-    core.buffer_backfill_v3_liquidity_update(v3_addr, -60, 60, 500_i128, snapshot_block + 1);
-    core.apply_v3_liquidity_update(v3_addr, -60, 60, 750_i128, pump_block);
+    core.buffer_backfill_liquidity_update(v3_addr, -60, 60, 500_i128, snapshot_block + 1);
+    core.apply_liquidity_update(v3_addr, -60, 60, 750_i128, pump_block);
 
     core.register_v3_pool(&RegisterV3PoolParams {
         address: v3_addr,
@@ -464,20 +468,20 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
 
     // Drain both buffers + pin — exactly what `apply_buffer_v3` does
     // inside its single `core.write()` hold.
-    core.apply_backfill_buffer_v3(&v3_addr);
+    core.apply_backfill_buffer(&v3_addr);
     // the gated pump drain only yields fully-completed blocks.
     // Mirror the live pump's ADR-008 D1 tombstone (first log of
     // `pump_block`+1 closes `pump_block`) so the drain takes the pump
     // Mint at `pump_block` rather than leaving it behind the gate.
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(pump_block);
-    core.apply_pump_buffer_v3(&v3_addr);
-    core.pin_v3_post_drain_snapshot(v3_addr);
+    core.apply_pump_buffer(&v3_addr);
+    core.pin_post_drain_snapshot(v3_addr);
 
     // The pin must carry the pump event's block — the block the drained
     // `tick_data` actually matches on-chain at. Pre-fix the pin carried no
     // block at all and the verify used `backfill_block` → false mismatch.
-    let taken = core.take_v3_post_drain_snapshot(v3_addr);
+    let taken = core.take_post_drain_snapshot(v3_addr);
     let (tick_data, pinned_block) = taken.expect("Tracked pool pins post-drain");
     assert_eq!(
         pinned_block, pump_block,
@@ -496,7 +500,7 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
 
     // Idempotent take: second call returns None (verified exactly once).
     assert_eq!(
-        core.take_v3_post_drain_snapshot(v3_addr),
+        core.take_post_drain_snapshot(v3_addr),
         None,
         "take clears the pin slot (verified exactly once)"
     );
@@ -553,16 +557,17 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
     // Tracked pools register `Quarantined`; transition to `Live`
     // (the driver's post-verify `set_live`) so the pump update below
     // direct-applies as this test models.
-    core.set_v4_pool_live(pool_manager, pool_id_bytes);
+    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
 
     assert_eq!(
-        core.v4_snapshot_seed(pool_manager, &pool_id_bytes).cloned(),
+        core.snapshot_seed_by_key(pool_manager, &pool_id_bytes)
+            .cloned(),
         Some(seed_clone.clone()),
         "Tracked V4 pool must pin its snapshot seed at registration"
     );
 
     // Pump applies a ModifyLiquidity at block 1, mutating tick -60's gross.
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         -60,
@@ -574,9 +579,9 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = {
         let pid = core
-            .v4_pool_id_by_key(pool_manager, &pool_id_bytes)
+            .pool_id_by_key(pool_manager, &pool_id_bytes)
             .expect("registered");
-        core.get_v4_pool(pid)
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pid)
             .and_then(|s| s.tick_data.get(&-60))
             .map(|t| t.liquidity_gross.to::<u128>())
     };
@@ -588,16 +593,17 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
 
     // ... but the pinned seed is UNCHANGED — step-1 verifies seed, not current.
     assert_eq!(
-        core.v4_snapshot_seed(pool_manager, &pool_id_bytes).cloned(),
+        core.snapshot_seed_by_key(pool_manager, &pool_id_bytes)
+            .cloned(),
         Some(seed_clone.clone()),
         "V4 snapshot seed must be immutable across pump ModifyLiquidity (rolling-start race fix)"
     );
 
     // take: returns the seed exactly once then clears.
-    let taken = core.take_v4_snapshot_seed(pool_manager, &pool_id_bytes);
+    let taken = core.take_snapshot_seed_by_key(pool_manager, &pool_id_bytes);
     assert_eq!(taken, Some(seed_clone), "take returns the pinned seed");
     assert_eq!(
-        core.v4_snapshot_seed(pool_manager, &pool_id_bytes),
+        core.snapshot_seed_by_key(pool_manager, &pool_id_bytes),
         None,
         "take clears the V4 seed slot (verified exactly once)"
     );
@@ -655,14 +661,14 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
     .expect("V4 pool registers");
     // Tracked pools register `Quarantined`; transition to `Live` so
     // the pump ModifyLiquidity below direct-applies (this test's model).
-    core.set_v4_pool_live(pool_manager, pool_id_bytes);
+    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
 
     // Pin post-drain state atomically with the drain (what apply_buffer_v4
     // does inside its single core.write() hold).
-    core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
 
     // Pump ModifyLiquidity lands AFTER the drain.
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         -60,
@@ -674,9 +680,9 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
     // Live tick_data CHANGED ...
     let live_gross = {
         let pid = core
-            .v4_pool_id_by_key(pool_manager, &pool_id_bytes)
+            .pool_id_by_key(pool_manager, &pool_id_bytes)
             .expect("registered");
-        core.get_v4_pool(pid)
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pid)
             .and_then(|s| s.tick_data.get(&-60))
             .map(|t| t.liquidity_gross.to::<u128>())
     };
@@ -688,7 +694,7 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
 
     // ... but the pinned post-drain snapshot is UNCHANGED — step-2 verifies
     // drain-time state, not pump-corrupted current.
-    let taken = core.take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+    let taken = core.take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
     let (tick_data, pinned_block) = taken.expect("Tracked V4 pool pins post-drain");
     assert_eq!(
         tick_data, drain_clone,
@@ -699,7 +705,7 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
         "no buffer events drained → pin's block is the registration update_block (0)"
     );
     assert_eq!(
-        core.take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes),
+        core.take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes),
         None,
         "take clears the V4 post-drain slot (verified exactly once)"
     );
@@ -735,9 +741,9 @@ fn v4_post_drain_snapshot_is_none_for_sparse_pools() {
         fetcher: None,
     })
     .expect("V4 sparse pool registers");
-    core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
     assert_eq!(
-        core.take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes),
+        core.take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes),
         None,
         "sparse V4 pools must not pin post-drain"
     );
@@ -780,10 +786,10 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
         .expect("test setup: V3 registration");
     // Quarantine so live Mint/Burn route to the pump buffer (the
     // registration-seam posture during drain+pin+verify).
-    core.set_v3_pool_quarantined(pool_addr);
+    core.set_pool_quarantined(pool_addr);
     // Pump-buffer a Mint + a same-block Burn for block 100.
-    core.apply_v3_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
-    core.apply_v3_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
+    core.apply_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
+    core.apply_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
     // Pre-mark: two pump events, no complete block yet.
     assert_eq!(
         core.concentrated_liquidity
@@ -805,10 +811,10 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     // Drain + pin: the gated drain yields both events, then the pin
     // captures the post-drain pair. (apply_pump_buffer_v3 + pin are the
     // exact sequence the registration seam runs.)
-    core.apply_pump_buffer_v3(&pool_addr);
-    core.pin_v3_post_drain_snapshot(pool_addr);
+    core.apply_pump_buffer(&pool_addr);
+    core.pin_post_drain_snapshot(pool_addr);
     let (pinned_ticks, pinned_block) = core
-        .take_v3_post_drain_snapshot(pool_addr)
+        .take_post_drain_snapshot(pool_addr)
         .expect("pin was captured for a Tracked pool");
     assert_eq!(pinned_block, 100, "pin captured the drained update_block");
     // The net-zero Mint+Burn leaves gross=0 on the boundary ticks and
@@ -818,7 +824,7 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     assert_eq!(pinned_ticks.len(), 0, "net-zero Mint+Burn yields no tick");
     // set_live under an empty retained tail is a no-op flush (the probe
     // would log drained_retained_tail=0).
-    core.set_v3_pool_live(pool_addr);
+    core.set_pool_live(pool_addr);
 }
 
 // ── pin clamp regression (fabricated-mismatch fix) ──────────────
@@ -858,11 +864,11 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
     })
     .expect("test setup: V3 registration");
     // Quarantine so live Mint/Burn route to the pump buffer.
-    core.set_v3_pool_quarantined(pool_addr);
+    core.set_pool_quarantined(pool_addr);
     // Pump-buffer an UNDRAINED Mint at block 100, but only tombstone the
     // pump through block 99 → the drain (apply_pump_buffer_v3) holds the
     // block-100 event back, so the map is NOT complete at its 100 clock.
-    core.apply_v3_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
+    core.apply_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(99);
     assert_eq!(core.concentrated_liquidity().pump_complete_cutoff(), 99);
@@ -872,10 +878,10 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
             .pump_count_at_or_below(&pool_addr, 100),
         1
     );
-    core.apply_pump_buffer_v3(&pool_addr);
-    core.pin_v3_post_drain_snapshot(pool_addr);
+    core.apply_pump_buffer(&pool_addr);
+    core.pin_post_drain_snapshot(pool_addr);
     let (_ticks, pinned_block) = core
-        .take_v3_post_drain_snapshot(pool_addr)
+        .take_post_drain_snapshot(pool_addr)
         .expect("pin captured for a Tracked pool");
     assert_eq!(
         pinned_block, 99,
@@ -909,7 +915,7 @@ fn pin_preserves_clock_block_when_no_undrained_events() {
         ..Default::default()
     })
     .expect("test setup: V3 registration");
-    core.set_v3_pool_quarantined(pool_addr);
+    core.set_pool_quarantined(pool_addr);
     // Cutoff is BEHIND the seed clock (99 < 100) and the pump has NO event
     // for this pool at/below the clock → pump_count == 0. This is the
     // mod.rs:580 BENIGN seed case: the DB seed carries the live WS head
@@ -923,10 +929,10 @@ fn pin_preserves_clock_block_when_no_undrained_events() {
             .pump_count_at_or_below(&pool_addr, 100),
         0
     );
-    core.apply_pump_buffer_v3(&pool_addr);
-    core.pin_v3_post_drain_snapshot(pool_addr);
+    core.apply_pump_buffer(&pool_addr);
+    core.pin_post_drain_snapshot(pool_addr);
     let (_ticks, pinned_block) = core
-        .take_v3_post_drain_snapshot(pool_addr)
+        .take_post_drain_snapshot(pool_addr)
         .expect("pin captured for a Tracked pool");
     assert_eq!(
         pinned_block, 100,

@@ -147,8 +147,8 @@ impl AerodromeV2PoolState {
     /// Construct `(identity, state)` from registration params + journal depth.
     ///
     /// Seeds the reorg journal with a genesis anchor (before == after ==
-    /// registration reserves, at `update_block`) so
-    /// [`crate::BotState::aerodrome_restore_before_block`] can land
+    /// registration reserves, at `update_block`) so the registry's unified
+    /// `restore_pool_before_block` row (ADR-016) can land
     /// on the registration state — the same anchor discipline as V2/Curve.
     #[must_use]
     pub fn from_params(

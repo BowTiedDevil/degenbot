@@ -516,7 +516,7 @@ impl Bot {
         if let Some(registered_identity) = self
             .state_arc()
             .read_at(LockSite::Orchestrator)
-            .get_v4_identity(registered)
+            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(registered)
             .map(|i| parity::V4Identity {
                 currency0: i.pool_key.currency0,
                 currency1: i.pool_key.currency1,
@@ -678,7 +678,7 @@ impl Bot {
     /// Apply a V3 `Swap` event (scalars + reorg journal priors; no per-tick
     /// priors — the shell entry never carried any) under ONE core write
     /// guard. No-op if the pool is not registered.
-    pub fn update_v3_pool(
+    pub fn update_pool(
         &self,
         address: Address,
         sqrt_price_x96: U256,
@@ -688,7 +688,7 @@ impl Bot {
     ) {
         self.state_arc()
             .write_at(LockSite::Orchestrator)
-            .update_v3_pool(
+            .update_pool(
                 address,
                 sqrt_price_x96,
                 liquidity,
@@ -1051,7 +1051,7 @@ mod tests {
             )
             .expect("test setup: V3 registration");
         assert_eq!(bot.v3_journal_len(pool_id), 0);
-        bot.update_v3_pool(addr, U256::from(2u128) << 96, 2_000_000, -1, 101);
+        bot.update_pool(addr, U256::from(2u128) << 96, 2_000_000, -1, 101);
         assert_eq!(
             bot.v3_journal_len(pool_id),
             1,

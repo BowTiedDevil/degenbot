@@ -110,7 +110,10 @@ pub fn curve_data_provider(
     pool_id: u64,
 ) -> Option<Arc<dyn CurveDataProvider>> {
     let guard = state.read_at(LockSite::Orchestrator);
-    guard.get_curve_pool(pool_id)?.data_provider.clone()
+    guard
+        .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_id)?
+        .data_provider
+        .clone()
 }
 
 /// Stage the missing bitmap words a CL swap needs — the bounded 3-pass loop

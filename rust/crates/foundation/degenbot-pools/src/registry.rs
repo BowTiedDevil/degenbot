@@ -393,6 +393,75 @@ impl PoolEntry {
     }
 }
 
+/// The typed lens over a [`PoolEntry`] — one closed projection per registered
+/// state or identity slice (the GLOSSARY "state slice" vocabulary). The
+/// family-neutral registry rows read a slice through this trait, so the
+/// family knowledge lives in the caller's type parameter, never in a method
+/// name (ADR-073 D3: the surface names do not re-declare the family
+/// taxonomy).
+///
+/// The projection set is closed in substance: every implementing type is a
+/// slice this crate owns, and the orphan rule keeps foreign crates from
+/// implementing this trait for them — a new family extends the impl block
+/// below, not the call sites.
+pub trait PoolEntrySlice: 'static {
+    /// The slice of `entry`'s family this type projects, or `None` when the
+    /// entry belongs to a different family.
+    fn from_entry(entry: &PoolEntry) -> Option<&Self>;
+}
+
+macro_rules! entry_slice {
+    ($($ty:ty => $variant:ident . $field:tt),* $(,)?) => {
+        $(
+            impl PoolEntrySlice for $ty {
+                fn from_entry(pooled: &PoolEntry) -> Option<&Self> {
+                    match pooled {
+                        PoolEntry::$variant(p) => Some(&p.$field),
+                        _ => None,
+                    }
+                }
+            }
+        )*
+    };
+}
+
+entry_slice! {
+    V2PoolState => V2 . 1,
+    V2PoolIdentity => V2 . 0,
+    V3PoolState => V3 . 1,
+    V3PoolIdentity => V3 . 0,
+    V4PoolState => V4 . 1,
+    V4PoolIdentity => V4 . 0,
+    CurvePoolState => Curve . 1,
+    CurvePoolIdentity => Curve . 0,
+    BalancerWeightedPoolState => BalancerWeighted . 1,
+    BalancerWeightedPoolIdentity => BalancerWeighted . 0,
+    BalancerStablePoolState => BalancerStable . 1,
+    BalancerStablePoolIdentity => BalancerStable . 0,
+    AerodromeV2PoolState => AerodromeV2 . 1,
+    AerodromeV2PoolIdentity => AerodromeV2 . 0,
+}
+
+impl PoolEntrySlice for dyn ConcentratedLiquidityPool {
+    fn from_entry(pooled: &PoolEntry) -> Option<&Self> {
+        match pooled {
+            PoolEntry::V3(p) => Some(&p.1),
+            PoolEntry::V4(p) => Some(&p.1),
+            _ => None,
+        }
+    }
+}
+
+impl PoolEntry {
+    /// Project this entry onto the slice type `T` (the family-neutral typed
+    /// lens; see [`PoolEntrySlice`]). `None` when the entry's family does not
+    /// carry a `T`.
+    #[must_use]
+    pub fn slice<T: PoolEntrySlice + ?Sized>(&self) -> Option<&T> {
+        T::from_entry(self)
+    }
+}
+
 /// `PoolEntry::as_concentrated_liquidity_mut` helper — one match over V3 | V4. Free-standing so
 /// `PoolEntry::as_concentrated_liquidity_mut` stays a one-liner (matches the `as_reorg_state`
 /// shape). Returns `None` for the five non-CL families.

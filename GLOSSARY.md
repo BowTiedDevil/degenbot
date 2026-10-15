@@ -464,11 +464,30 @@ slice, and the family-local apply/get/calc behaviour over that slice. It reads n
 owner and consumes no solver kernel, so the family's read story is one file named for the
 family. The state owner (`BotState`) and the central dispatchers (`simulate_swap`,
 `resolve`, `swap_simulation`) keep one dispatch row per family and no family-shaped
-method set; the solve side is the **Family module**. Both homes carry the family's name,
+method set — since the C6 sweep, ZERO family-shaped names: the registry's rows name the
+operation (typed lens `pool_slice::<T>`, `apply_swap_by_pool_id`,
+`restore_pool_before_block`), never the family or design; the solve side is the **Family
+module**. Both homes carry the family's name,
 so one family is read as `<family>.rs` twice, at two depths, with a fixed layout between
 them.
+
 _Avoid_: per-family arms inside the central matchers; family behaviour hanging off the
-state owner as inherent methods; a family read module that reaches back into `BotState`.
+state owner as inherent methods; a family read module that reaches back into `BotState`;
+a family- or design-shaped method name on the state owner's surface (the taxonomy lives
+in the slice type and the family paths, not in row names).
+
+**Zero-output sentinel (retired)**:
+The pre-port contract where a family read arm answered `Ok(U256::ZERO)` for a swap it
+could not compute — a "not-yet-Rust-side" placeholder that read as a real zero-output
+swap. The last arm carrying it (non-`STANDARD` Curve swap styles at the Curve family
+read door) was retired to the typed `SimulateSwapError::NotComputable` (ADR-073 C6)
+after the companion's Curve read path was verified to carry no zero-vs-error
+distinguishing consumer. NOT the zero-input rule: `getAmountOut(0) = 0` is real
+on-chain semantics and stays in every read arm.
+
+_Avoid_: reintroducing a zero answer for "this door does not compute this"; a new
+not-computed case gets a typed refusal (`NotComputable` or a family-specific refusal
+vocabulary), never a placeholder value.
 
 **Solve anchor**:
 The block at-or-above the pool-state head that a block's solve, verification, and

@@ -15,12 +15,12 @@ module, one dispatch row, one enum arm per enum, one `HopType::ALL` entry, and
 one glossary entry per new concept.** The old census survives only as the
 superseded record in the appendix; do not reintroduce it.
 
-**Extension in flight (ADR-073, proposed):** the one-module census above is solve-only.
-ADR-073 extends the family seam to the read side — the **family read module** in
-`degenbot-pools` (state slice, swap-read arm, resolve projection, family-local
-apply/get/calc) beside this doc's solve-side **family module**, with dispatch rows at
-the central sites and `concentrated_liquidity` naming throughout. Until it lands, this
-conductor governs the solve half; the read half's conductor is part of the ADR-073 work.
+**The read half is landed (ADR-073, accepted/implemented):** the one-module
+census above is solve-only. ADR-073 adds the **family read module** in
+`degenbot-pools` beside this doc's solve-side **family module**; the read
+half's conductor is §R below, and the landed census gate
+(`degenbot-substrate/tests/central_matcher_census.rs`) pins both halves'
+shape. The eight-site checklist stays superseded (see the appendix).
 
 This is the implementer's conductor for the new shape, written from the code that
 exists: every anchor below is a `file:line` copied from the tree, relative to
@@ -30,6 +30,73 @@ drift-net methodology — lives in
 [the stableswap gate-bounds and solve-method evaluation](stableswap-gate-bounds-and-solve-method-evaluation.md);
 this document is the *how*. The sibling runbook for the strategy plane is
 [adding-a-strategy.md](adding-a-strategy.md).
+
+## R. The read half — the family read module (ADR-073)
+
+The solve half (§1–§7) teaches the solver and the gate about the family. The
+read half teaches the REGISTRY how the family is read, applied, and resolved.
+Both halves are one family, two homes (ADR-073 D1): the **family read module**
+in `rust/crates/foundation/degenbot-pools/src/families/<family>.rs` (or a tree
+when the family has two designs — `concentrated_liquidity/{mod,v3,v4}.rs` is
+the template), and the **family module** of §2 in `degenbot-solvers`.
+
+The landed census for the read half — everything a new family touches, and
+nothing else:
+
+1. **One family read module**, registered in
+   `rust/crates/foundation/degenbot-pools/src/families/mod.rs`. It owns:
+   the state slice + identity + registration DTO re-exports (the I/O-free
+   types stay in their `*_state.rs` homes and are presented under the family
+   path — ADR-001), the **four intent doors** (ADR-073 D4) — `capture_hop`
+   (the resolve projection, pure over the slice, refused rather than
+   defaulted), `read_swap` (ALL swap variants behind one entry, design
+   dispatch inside the tree, zero-input `Ok(0)` semantics per the on-chain
+   `getAmountOut(0) = 0` contract, typed `NotComputable` for what the door
+   does not compute — never a zero-output sentinel), `apply_event`, and
+   `observe` — and the family-local calc doors (the pure-over-slice halves of
+   the registry's orchestration rows). The two design arms of one family
+   share NO math inside the module; that is the guardrail, not a comment.
+2. **One dispatch row + one enum arm per central site** (ADR-073 D2 — rows,
+   not traits; exhaustiveness is the loud-abort discipline):
+   - `pools::simulate_swap`: one `PoolEntry::<Family>` arm → the `read_swap`
+     door (design branch inside the arm only where the family's slice IS the
+     design selector);
+   - `substrate::swap_simulation`: the exact-input row routes through
+     `simulate_swap` (already door-backed); a family with exact-out math adds
+     its typed arm there; a family without answers the typed
+     `UnsupportedFamily` gap before any door consultation;
+   - `substrate::resolve/<family>.rs`: the projection row — registry
+     lookups + `capture_hop` + the field-by-field `ResolvedHop` wrap + the
+     nonce. Zero family arithmetic at the row.
+3. **The registry seam stays family-neutral.** `BotState`'s rows name the
+   OPERATION, never the family or design: the typed lens
+   (`PoolEntrySlice` + `PoolEntry::slice::<T>()`, `BotState::pool_slice::<T>`),
+   the neutral dispatch rows (`apply_sync_by_pool_id`,
+   `apply_balance_update_by_pool_id`, `apply_swap_by_pool_id`,
+   `apply_liquidity_update_by_pool_id`, `restore_pool_before_block`), and the
+   registration entries (`register_<family>_pool` — the named seams D3
+   preserves). Zero family-shaped names remain on `BotState`'s surface; a
+   family's live-state story lives on its orchestration capability (the CL
+   pattern), not on `BotState`.
+4. **The census gate.**
+   `rust/crates/foundation/degenbot-substrate/tests/central_matcher_census.rs`
+   pins the literal `match entry` census and the absence of family
+   design-math identifiers at the three central sites (comments and
+   `#[cfg(test)]` fixtures excluded). A new family must keep it green — a
+   reintroduced central arm fails the gate, and so does a wrapper-dispatch
+   that hides one (the C3 lesson: the gate bans the leaves, not just the
+   rows). Move the family's pinned tests WITH it (house rule: acceptance
+   criteria live in named tests; the tier-3/oracle legs run through the
+   production doors — the drift-gate rule).
+5. **One glossary entry per new concept** (both halves' obligation — the
+   family read module, the intent doors, and any family-specific refusal
+   vocabulary get named there).
+
+The five landed read modules are the templates: `concentrated_liquidity/`
+(the tree — two designs, per-file projections, the FetchMode machinery),
+`curve_stableswap.rs`, `balancer_weighted.rs`, `balancer_stable.rs` (the
+tree-shared `balance_vector.rs` event vocabulary beside them),
+`reserve_pair.rs`, and `solidly.rs` (the design-selector slice type).
 
 ## 1. The change census
 

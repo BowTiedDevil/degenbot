@@ -88,18 +88,18 @@ fn inspect_path_returns_hop_details() {
     let v2_addr = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .get_v2_identity(v2_fwd)
+        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(v2_fwd)
         .map(|p| p.address);
     assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    let v3_pool = core.get_v3_identity(v3_key);
+    let v3_pool = core.pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(v3_key);
     assert_eq!(
         v3_pool.map(|p| p.address),
         Some(Address::from([0x22u8; 20]))
     );
-    let v4_pool = core.get_v4_identity(v4_key);
+    let v4_pool = core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(v4_key);
     assert_eq!(
         v4_pool.map(|p| p.pool_manager),
         Some(Address::from([0x33u8; 20]))
@@ -556,7 +556,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .set_v3_pool_live(pool_addr);
+        .set_pool_live(pool_addr);
     // Capture the registration scalar state.
     let reg_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
     let reg_liq = 1_000_000u128;
@@ -570,19 +570,21 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .apply_v3_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
+        .apply_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
     // Mint at block 6: adds liquidity at [+60, +120] — in-range because the
     // swap moved the tick to 60, so the active `liquidity` scalar also gets
     // +500 (parity with on-chain + the concentrated-liquidity-math pure reference).
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .apply_v3_liquidity_update(pool_addr, 60, 120, 500_i128, 6);
+        .apply_liquidity_update(pool_addr, 60, 120, 500_i128, 6);
     {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-        let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
+        let s = core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("v3 pool registered");
         assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
         assert_eq!(
             s.liquidity,
@@ -609,7 +611,9 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-        let s = core.get_v3_pool(pool_id).expect("v3 pool still registered");
+        let s = core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("v3 pool still registered");
         assert_eq!(
             s.sqrt_price_x96, reg_sp,
             "swap rolled back to registration scalars"
@@ -814,7 +818,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .set_v3_pool_live(pool_addr);
+        .set_pool_live(pool_addr);
     // Two swaps at distinct blocks inside one backfill chunk.
     let b1 = 10u64;
     let b2 = 20u64;
@@ -837,7 +841,9 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
+    let s = core
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .expect("v3 pool registered");
     // Two distinct-block swaps must produce two journal deltas — NOT one
     // collapsed delta stamped at chunk_end.
     assert_eq!(
@@ -874,7 +880,9 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
+    let s = core
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .expect("v3 pool registered");
     assert_eq!(
         s.sqrt_price_x96, sp_b1,
         "restore before B2={b2} lands at post-B1 scalars (per-log stamping)"
@@ -960,7 +968,7 @@ fn engine_then_core_lock_order_survives_concurrent_readers_and_writer() {
             while !done.load(std::sync::atomic::Ordering::Relaxed) {
                 let r = core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
                 // Read is coherent under one guard — no torn state.
-                let _pool = r.get_v2_pool_state(pool_id);
+                let _pool = r.pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id);
             }
         }));
     }

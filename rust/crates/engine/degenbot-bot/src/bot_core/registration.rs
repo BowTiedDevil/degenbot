@@ -280,9 +280,13 @@ impl Bot {
             let registry = core.read_at(LockSite::Orchestrator);
             if let Some((pool_id, family)) = registry.registered_pool_by_address(&address) {
                 let hit = family == RegisteredPoolFamily::V2
-                    && registry.get_v2_identity(pool_id).is_some_and(|ident| {
-                        ident.token0 == token0 && ident.token1 == token1 && ident.factory == factory
-                    });
+                    && registry
+                        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id)
+                        .is_some_and(|ident| {
+                            ident.token0 == token0
+                                && ident.token1 == token1
+                                && ident.factory == factory
+                        });
                 if hit {
                     return Ok(pool_id);
                 }
@@ -358,13 +362,15 @@ impl Bot {
             let registry = core.read_at(LockSite::Orchestrator);
             if let Some((pool_id, family)) = registry.registered_pool_by_address(&address) {
                 let hit = family == RegisteredPoolFamily::V3
-                    && registry.get_v3_identity(pool_id).is_some_and(|ident| {
-                        ident.token0 == token0
-                            && ident.token1 == token1
-                            && ident.factory == factory
-                            && ident.fee == fee
-                            && ident.tick_spacing == tick_spacing
-                    });
+                    && registry
+                        .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_id)
+                        .is_some_and(|ident| {
+                            ident.token0 == token0
+                                && ident.token1 == token1
+                                && ident.factory == factory
+                                && ident.fee == fee
+                                && ident.tick_spacing == tick_spacing
+                        });
                 if hit {
                     return Ok(pool_id);
                 }
@@ -437,7 +443,8 @@ impl Bot {
         {
             let core = self.state_arc();
             let registry = core.read_at(LockSite::Orchestrator);
-            if let Some(existing) = registry.try_registered_v4(params.pool_manager, &params.pool_id)
+            if let Some(existing) =
+                registry.try_registered_by_key(params.pool_manager, &params.pool_id)
             {
                 let hit = existing.pool_key.currency0 == params.pool_key.currency0
                     && existing.pool_key.currency1 == params.pool_key.currency1;
@@ -468,7 +475,7 @@ impl Bot {
                 registry.registered_pool_by_address(&params.address)
             {
                 if registry
-                    .get_curve_identity(pool_id)
+                    .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(pool_id)
                     .is_some_and(|ident| ident.tokens.as_ref() == params.tokens.as_slice())
                 {
                     return pool_id;
@@ -495,7 +502,7 @@ impl Bot {
                 registry.registered_pool_by_address(&params.address)
             {
                 if registry
-                    .get_balancer_weighted_identity(pool_id)
+                    .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(pool_id)
                     .is_some_and(|ident| {
                         ident.vault == params.vault
                             && ident.pool_id == params.pool_id
@@ -521,7 +528,7 @@ impl Bot {
                 registry.registered_pool_by_address(&params.address)
             {
                 if registry
-                    .get_balancer_stable_identity(pool_id)
+                    .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(pool_id)
                     .is_some_and(|ident| {
                         ident.vault == params.vault
                             && ident.pool_id == params.pool_id
@@ -568,7 +575,9 @@ impl Bot {
             if let Some((pool_id, family)) = registry.registered_pool_by_address(&address) {
                 let hit = family == RegisteredPoolFamily::AerodromeV2
                     && registry
-                        .get_aerodrome_identity(pool_id)
+                        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                            pool_id,
+                        )
                         .is_some_and(|ident| {
                             ident.token0 == token0
                                 && ident.token1 == token1
@@ -627,10 +636,10 @@ impl Bot {
     }
 
     /// Seed the Rust-owned V4 `StateView` registry (ADR-005 / Option 2).
-    pub fn register_v4_state_view(&self, pool_manager: Address, state_view: Address) {
+    pub fn register_state_view(&self, pool_manager: Address, state_view: Address) {
         self.state_arc()
             .write_at(LockSite::Orchestrator)
-            .register_v4_state_view(pool_manager, state_view);
+            .register_state_view(pool_manager, state_view);
     }
 
     /// Unregister a V2/V3 pool by its contract address (ADR-007 U3): drops
@@ -659,7 +668,7 @@ impl Bot {
         let (pool_id, RegisteredPoolFamily::V2) = state.registered_pool_by_address(addr)? else {
             return None;
         };
-        let ident = state.get_v2_identity(pool_id)?;
+        let ident = state.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id)?;
         Some((
             pool_id,
             ident.token0.to_checksum(None),
@@ -683,7 +692,7 @@ impl Bot {
         let (pool_id, RegisteredPoolFamily::V3) = state.registered_pool_by_address(addr)? else {
             return None;
         };
-        let ident = state.get_v3_identity(pool_id)?;
+        let ident = state.pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_id)?;
         let family = degenbot_uniswap::deployments::resolve_dex_name(chain_id, ident.factory)
             .map_or_else(|| "uniswap-v3".to_string(), |d| d.as_str().to_string());
         Some((
@@ -742,7 +751,7 @@ impl Bot {
         let Some(existing) = self
             .state_arc()
             .read_at(LockSite::Orchestrator)
-            .try_registered_v4(pm, pid)
+            .try_registered_by_key(pm, pid)
         else {
             return Ok(None);
         };
@@ -1290,7 +1299,7 @@ mod tests {
 
         let pm = Address::from([0x50u8; 20]);
         let sv = Address::from([0x60u8; 20]);
-        bot.register_v4_state_view(pm, sv);
+        bot.register_state_view(pm, sv);
 
         let v2_addr = Address::from([0x11u8; 20]);
         let pool_id =

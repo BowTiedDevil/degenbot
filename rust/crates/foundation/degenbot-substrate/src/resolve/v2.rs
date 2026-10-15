@@ -25,10 +25,10 @@ pub(crate) fn project_v2(
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let state = core
-        .get_v2_pool_state(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
     let identity = core
-        .get_v2_identity(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     let hop_state = reserve_pair_read::capture_hop(state, identity, pool_ref.zero_for_one);
     Ok((ResolvedHop::V2 { state: hop_state }, state.state_nonce))
@@ -97,7 +97,9 @@ mod tests {
         assert_eq!(s.gamma_numer, U256::from(997u64));
         assert_eq!(
             nonce,
-            core.get_v2_pool_state(v2_id).expect("state").state_nonce
+            core.pool_slice::<degenbot_pools::v2_state::V2PoolState>(v2_id)
+                .expect("state")
+                .state_nonce
         );
     }
 

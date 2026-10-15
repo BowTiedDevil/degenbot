@@ -55,10 +55,12 @@ mod tests {
             1,
         ));
         let s = core
-            .get_balancer_stable_pool(pool_id)
+            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(pool_id)
             .expect("balancer stable pool registered");
         let id = core
-            .get_balancer_stable_identity(pool_id)
+            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                pool_id,
+            )
             .expect("balancer stable identity registered");
         assert_eq!(id.n_tokens(), 3);
         assert_eq!(
@@ -86,7 +88,9 @@ mod tests {
             2,
         ));
         let id = core
-            .get_balancer_stable_identity(pool_id)
+            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                pool_id,
+            )
             .expect("balancer stable identity registered");
         assert_eq!(id.bpt_idx, None);
         assert_eq!(id.invariant_version, 2);
@@ -108,7 +112,7 @@ mod tests {
         );
         assert_eq!(affected, Some(pool_id));
         let s = core
-            .get_balancer_stable_pool(pool_id)
+            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(pool_id)
             .expect("balancer stable pool registered");
         assert_eq!(
             s.balances.to_vec(),
@@ -168,7 +172,7 @@ mod tests {
             .expect("Some on a registered Balancer stable pool")
             .expect("Ok (target > genesis block)");
         let s = core
-            .get_balancer_stable_pool(pool_id)
+            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(pool_id)
             .expect("balancer stable pool registered");
         assert_eq!(
             s.balances.to_vec(),

@@ -38,7 +38,7 @@ fn v2_identity_round_trip() {
         .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
         .expect("test setup: V2 registration");
     let id = core
-        .get_v2_identity(pool_id)
+        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id)
         .expect("registered V2 pool has an identity");
     assert_eq!(id.address, make_pool_addr());
     assert_eq!(id.token0, make_token0());
@@ -876,7 +876,7 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
             .is_none(),
         "admitted pools gate-record nothing"
     );
-    assert!(core.try_registered_v4(pm, &pid3).is_some());
+    assert!(core.try_registered_by_key(pm, &pid3).is_some());
     let _: u64 = admitted;
 }
 
@@ -1324,9 +1324,9 @@ fn unregister_v3_pool_discards_buffered_liquidity_events() {
     // Pre-registration: buffer a backfill ModifyLiquidity for `v3_addr`.
     // `buffer_backfill_v3_liquidity_update` on an UNregistered address
     // buffers (the registered-address early-return path doesn't fire).
-    core.buffer_backfill_v3_liquidity_update(v3_addr, -100, 100, 500_i128, 42_u64);
+    core.buffer_backfill_liquidity_update(v3_addr, -100, 100, 500_i128, 42_u64);
     assert_eq!(
-        core.buffered_v3_event_count(&v3_addr),
+        core.buffered_event_count(&v3_addr),
         1,
         "precondition: the event is buffered for the unregistered address"
     );
@@ -1355,7 +1355,7 @@ fn unregister_v3_pool_discards_buffered_liquidity_events() {
         })
         .expect("test setup: V3 registration");
     assert_eq!(
-        core.buffered_v3_event_count(&v3_addr),
+        core.buffered_event_count(&v3_addr),
         1,
         "registration must not auto-drain (drain is caller-driven), so the buffer entry survives to here"
     );
@@ -1365,7 +1365,7 @@ fn unregister_v3_pool_discards_buffered_liquidity_events() {
     let removed = core.unregister_pool(v3_addr, None);
     assert!(removed);
     assert_eq!(
-        core.buffered_v3_event_count(&v3_addr),
+        core.buffered_event_count(&v3_addr),
         0,
         "unregister must discard buffered V3 events for the removed address"
     );

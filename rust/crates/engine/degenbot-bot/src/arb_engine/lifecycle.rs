@@ -226,7 +226,7 @@ pub(crate) fn v2_pool_count(engine: &ArbitrageEngine) -> usize {
     engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .v2_pool_count()
+        .pool_count_of::<degenbot_pools::v2_state::V2PoolState>()
 }
 /// Number of registered V3 pools (state lives in `BotState` under ADR-003).
 #[must_use]
@@ -234,7 +234,7 @@ pub(crate) fn v3_pool_count(engine: &ArbitrageEngine) -> usize {
     engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .v3_pool_count()
+        .pool_count_of::<degenbot_pools::v3_state::V3PoolState>()
 }
 /// Number of registered V4 pools (state lives in `BotState` under ADR-003).
 #[must_use]

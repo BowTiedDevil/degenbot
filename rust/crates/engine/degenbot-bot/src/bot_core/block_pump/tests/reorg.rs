@@ -143,7 +143,7 @@ async fn late_forward_after_tombstone_is_benign_late_admit() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
-            .v2_snapshot(pool_id),
+            .pool_reserves(pool_id),
         Some((U256::from(7_000), U256::from(8_000), 9)),
         "pool state reflects only Streaming-window applies; late reserves dropped"
     );
@@ -274,7 +274,7 @@ proptest::proptest! {
                 ));
             }
             // The last LEGITIMATELY applied log owns pool state.
-            let snap = bot.state_arc().read_at(degenbot_substrate::state_lock::LockSite::Pump).v2_snapshot(pool_id);
+            let snap = bot.state_arc().read_at(degenbot_substrate::state_lock::LockSite::Pump).pool_reserves(pool_id);
             if snap != Some((last_reserves.0, last_reserves.1, last_block)) {
                 return Err(format!(
                     "pool state holds the last in-window apply, not a late tail: got {snap:?}"
@@ -314,7 +314,7 @@ async fn reorg_log_restores_pool_via_coordinator_and_pump_continues() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
-            .v2_snapshot(pool_id),
+            .pool_reserves(pool_id),
         Some((U256::from(1_500), U256::from(2_500), 7)),
         "forward Sync applied through the pump",
     );
@@ -346,7 +346,7 @@ async fn reorg_log_restores_pool_via_coordinator_and_pump_continues() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
-            .v2_snapshot(pool_id),
+            .pool_reserves(pool_id),
         Some((U256::from(1_000), U256::from(2_000), 5)),
         "reorg rolled back to genesis reserves",
     );
@@ -398,7 +398,7 @@ async fn reorg_contiguous_chunk_closes_on_first_forward_and_continues() {
     let snapshot = || {
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
-            .v2_snapshot(pool_id)
+            .pool_reserves(pool_id)
     };
 
     // Drive 5 -> 7 (forward sync at 7) -> tombstone 7 via a forward sync
@@ -497,7 +497,7 @@ async fn late_forward_log_on_tombstoned_block_is_benign_late_admit() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
-            .v2_snapshot(pool_id),
+            .pool_reserves(pool_id),
         Some((U256::from(1_600), U256::from(2_600), 8)),
         "pool state holds the last in-window apply, never the late survivor"
     );

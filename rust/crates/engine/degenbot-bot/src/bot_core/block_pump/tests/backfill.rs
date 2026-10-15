@@ -217,7 +217,7 @@ async fn backfill_to_ws_block_populates_buffer_before_return() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
-            .buffered_v3_event_count(&pool_addr),
+            .buffered_event_count(&pool_addr),
         1,
         "backfill_to_ws_block must buffer the V3 burn before returning (race regression)"
     );
@@ -283,7 +283,7 @@ async fn backfill_with_drain_reinjects_events_present_during_backfill() {
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
-            .buffered_v3_event_count(&pool_addr),
+            .buffered_event_count(&pool_addr),
         1,
         "backfill_with_drain must buffer the V3 burn before returning"
     );

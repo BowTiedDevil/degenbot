@@ -59,7 +59,7 @@ impl PyArbEngine {
             for pool_ref in &pool_refs {
                 match pool_ref.hop_type {
                     HopType::V2 => {
-                        let identity = core.get_v2_identity(pool_ref.pool_key);
+                        let identity = core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_ref.pool_key);
                         let addr = identity.map(|i| format!("{}", i.address));
                         // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
                         let gamma_numer = identity.map(|i| {
@@ -80,7 +80,7 @@ impl PyArbEngine {
                     }
                     HopType::V3 => {
                         let pool_id = pool_ref.pool_key;
-                        let identity = core.get_v3_identity(pool_id);
+                        let identity = core.pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_id);
                         let (addr, fee, ts) = identity.map_or((None, None, None), |i| {
                             (
                                 Some(format!("{}", i.address)),
@@ -98,7 +98,7 @@ impl PyArbEngine {
                         });
                     }
                     HopType::V4 => {
-                        let identity = core.get_v4_identity(pool_ref.pool_key);
+                        let identity = core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_ref.pool_key);
                         let (pm, pid, fee, ts) = identity.map_or((None, None, None, None), |i| {
                             (
                                 Some(format!("{}", i.pool_manager)),
@@ -131,7 +131,7 @@ impl PyArbEngine {
                         });
                     }
                     HopType::BalancerWeighted => {
-                        let id = core.get_balancer_weighted_identity(pool_ref.pool_key);
+                        let id = core.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(pool_ref.pool_key);
                         hops.push(HopInfo {
                             hop_type: "BalW".to_string(),
                             address: id.map(|i| format!("{}", i.address)),
@@ -142,7 +142,7 @@ impl PyArbEngine {
                         });
                     }
                     HopType::BalancerStable => {
-                        let id = core.get_balancer_stable_identity(pool_ref.pool_key);
+                        let id = core.pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(pool_ref.pool_key);
                         hops.push(HopInfo {
                             hop_type: "BalS".to_string(),
                             address: id.map(|i| format!("{}", i.address)),
@@ -153,7 +153,7 @@ impl PyArbEngine {
                         });
                     }
                     HopType::CurveStableswap => {
-                        let id = core.get_curve_identity(pool_ref.pool_key);
+                        let id = core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(pool_ref.pool_key);
                         hops.push(HopInfo {
                             hop_type: "Crv".to_string(),
                             address: id.map(|i| format!("{}", i.address)),
@@ -281,7 +281,7 @@ impl PyArbEngine {
         // owned data comes out, the PyResult is assembled under the GIL.
         Ok(self.with_core(py, |core| {
             let pool_id = core.pool_id_by_address(&addr)?;
-            let state = core.get_v2_pool_state(pool_id)?;
+            let state = core.pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)?;
             Some((
                 pool_id,
                 state.reserve0.to_string(),

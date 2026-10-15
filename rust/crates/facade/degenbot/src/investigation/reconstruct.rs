@@ -273,7 +273,9 @@ mod hook_wiring_tests {
         };
         let mut core = BotState::new();
         let registered = register_v4(&mut core, &p).expect("register");
-        let identity = core.get_v4_identity(registered).expect("identity");
+        let identity = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(registered)
+            .expect("identity");
         assert_eq!(
             identity.pool_key.hooks, hook,
             "hook address must survive replay registration"

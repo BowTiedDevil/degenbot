@@ -82,7 +82,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
     let staged = core
         .stage_word_fetch_by_pool_id(pool_id, 0, 99, false)
         .expect("sparse pool stores a fetcher");
-    core.apply_v3_liquidity_update_by_pool_id(pool_id, -60, 60, 1_000, 100);
+    let _ = core.apply_liquidity_update_by_pool_id(pool_id, -60, 60, 1_000, 100);
     let fetched = staged.fetch().expect("empty-word fetch");
     assert_eq!(
         core.install_word_fetch(&staged, &fetched),
@@ -416,7 +416,9 @@ fn swap_simulation_fills_missing_word_and_retries() {
         other => panic!("gate must recover via fetch+retry, got {other:?}"),
     }
     // The fetch merged word 0 into known_bitmap_words (no further miss).
-    let state = core.get_v3_pool(pool_id).expect("pool registered");
+    let state = core
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .expect("pool registered");
     assert!(
         state.known_bitmap_words.contains(&0),
         "fetched word 0 must be marked known"

@@ -253,7 +253,9 @@ async fn resume_boundary_duplicate_dropped_live_block_applied() {
 
     let arc = bot.state_arc();
     let core = arc.read_at(degenbot_substrate::state_lock::LockSite::Pump);
-    let st = core.get_v2_pool_state(pool_id).expect("v2 state");
+    let st = core
+        .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+        .expect("v2 state");
     assert_eq!(
         st.reserve0,
         U112::from(6_000),
@@ -333,7 +335,9 @@ async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
     );
     let arc = bot.state_arc();
     let core = arc.read_at(degenbot_substrate::state_lock::LockSite::Pump);
-    let st = core.get_v2_pool_state(pool_id).expect("v2 state");
+    let st = core
+        .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+        .expect("v2 state");
     assert_eq!(
         st.reserve0,
         U112::from(3_000),

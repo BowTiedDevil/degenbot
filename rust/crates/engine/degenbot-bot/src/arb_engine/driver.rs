@@ -968,7 +968,7 @@ impl EngineDriver {
         // skip the verify it still needs.
         if core
             .read_at(LockSite::Registration)
-            .v3_pool_coverage(address)
+            .pool_coverage(address)
             .is_none()
         {
             return Ok(());
@@ -1032,7 +1032,7 @@ impl EngineDriver {
         // skip the verify it still needs.
         if core
             .read_at(LockSite::Registration)
-            .v4_pool_coverage(pool_manager, &pool_id)
+            .pool_coverage_by_key(pool_manager, &pool_id)
             .is_none()
         {
             return Ok(());

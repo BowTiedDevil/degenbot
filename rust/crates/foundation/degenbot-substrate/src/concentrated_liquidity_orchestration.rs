@@ -41,8 +41,8 @@ use super::apply_telemetry::{
 use super::{
     BotState, BufferedV3PoolEvent, BufferedV4PoolEvent, ConcentratedLiquidityPoolMut, PoolEntry,
     PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError,
-    RegisterV4PoolParams, RegistrationLifecycle, TickInfo, V3PoolIdentity, V3PoolState,
-    V4PoolIdentity, V4PoolState, V4SwapUpdate,
+    RegisterV4PoolParams, RegistrationLifecycle, TickInfo, V3PoolState, V4PoolIdentity,
+    V4PoolState, V4SwapUpdate,
 };
 
 use super::RegistryCore;
@@ -875,54 +875,11 @@ impl ConcentratedLiquidityOrchestration {
     ///
     /// The solve engine reads state by reference through this accessor
     /// (ADR-003: "Pool's authority over its own math") and calls
-    /// `build_int_v3_sequence(zfo)` to build the per-hop state.
-    #[must_use]
-    pub(crate) fn get_v3_pool<'r>(
-        &self,
-        reg: &'r RegistryCore,
-        pool_id: u64,
-    ) -> Option<&'r V3PoolState> {
-        reg.pools
-            .get(&pool_id)
-            .and_then(PoolEntry::v3)
-            .map(|(_, state)| state)
-    }
     /// Look up a V3 pool's immutable registration identity (address, tokens,
     /// fee, `tick_spacing`, factory). Returns `None` if the pool is not
-    /// registered or isn't a V3 pool.
-    #[must_use]
-    pub(crate) fn get_v3_identity<'r>(
-        &self,
-        reg: &'r RegistryCore,
-        pool_id: u64,
-    ) -> Option<&'r V3PoolIdentity> {
-        reg.pools
-            .get(&pool_id)
-            .and_then(PoolEntry::v3)
-            .map(|(identity, _)| identity)
-    }
     /// Snapshot all V3 pool state for verification (clones every V3 entry).
     ///
     /// Used by `verify_liquidity_maps` so the engine+core locks can be
-    /// released before making async RPC calls.
-    #[must_use]
-    pub(crate) fn v3_pools_snapshot(
-        &self,
-        reg: &RegistryCore,
-    ) -> HashMap<u64, (V3PoolIdentity, V3PoolState)> {
-        reg.pools
-            .iter()
-            .filter_map(|(id, e)| match e {
-                PoolEntry::V3(p) => Some((*id, (p.0, p.1.clone()))),
-                PoolEntry::V2(..)
-                | PoolEntry::V4(..)
-                | PoolEntry::Curve(..)
-                | PoolEntry::BalancerWeighted(..)
-                | PoolEntry::BalancerStable(..)
-                | PoolEntry::AerodromeV2(..) => None,
-            })
-            .collect()
-    }
     /// Snapshot seed block `S` setter — the single source of truth for `S`.
     ///
     /// Production paths set `S` here in three ways:
@@ -1307,14 +1264,6 @@ impl ConcentratedLiquidityOrchestration {
             Some(concentrated_liquidity) => concentrated_liquidity.merge_tick_word(fetched),
             None => false,
         }
-    }
-    /// Number of registered V3 pools.
-    #[must_use]
-    pub(crate) fn v3_pool_count(&self, reg: &RegistryCore) -> usize {
-        reg.pools
-            .values()
-            .filter(|e| matches!(e, PoolEntry::V3(..)))
-            .count()
     }
     // -----------------------------------------------------------------------
     // V4 state (ADR-003: single entry per `(pool_manager, pool_id)`;
@@ -2438,7 +2387,7 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::update_v3_pool`].
-    pub fn update_v3_pool(
+    pub fn update_pool(
         &mut self,
         pool_address: Address,
         sqrt_price_x96: U256,
@@ -2456,104 +2405,6 @@ impl BotState {
             block_number,
             tick_priors,
         );
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::route_v3_event`].
-    pub fn route_v3_event(
-        &mut self,
-        phase: Phase,
-        pool_address: Address,
-        event: BufferedV3PoolEvent,
-        swap_priors: &[(i32, TickInfo)],
-    ) -> ApplyOutcome {
-        self.concentrated_liquidity.route_v3_event(
-            &mut self.registry,
-            phase,
-            pool_address,
-            event,
-            swap_priors,
-        )
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_v3_swap`].
-    pub fn apply_v3_swap(
-        &mut self,
-        pool_address: Address,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        block_number: u64,
-        tick_priors: &[(i32, TickInfo)],
-    ) -> Option<u64> {
-        self.concentrated_liquidity.apply_v3_swap(
-            &mut self.registry,
-            pool_address,
-            sqrt_price_x96,
-            liquidity,
-            tick,
-            block_number,
-            tick_priors,
-        )
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_v3_swap_by_pool_id`].
-    pub fn apply_v3_swap_by_pool_id(
-        &mut self,
-        pool_id: u64,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        block_number: u64,
-        tick_priors: &[(i32, TickInfo)],
-    ) -> Option<u64> {
-        self.concentrated_liquidity.apply_v3_swap_by_pool_id(
-            &mut self.registry,
-            pool_id,
-            sqrt_price_x96,
-            liquidity,
-            tick,
-            block_number,
-            tick_priors,
-        )
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_v3_liquidity_update`].
-    pub fn apply_v3_liquidity_update(
-        &mut self,
-        pool_address: Address,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: i128,
-        block_number: u64,
-    ) -> Option<u64> {
-        self.concentrated_liquidity.apply_v3_liquidity_update(
-            &mut self.registry,
-            pool_address,
-            tick_lower,
-            tick_upper,
-            liquidity_delta,
-            block_number,
-        )
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_v3_liquidity_update_by_pool_id`].
-    pub fn apply_v3_liquidity_update_by_pool_id(
-        &mut self,
-        pool_id: u64,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: i128,
-        block_number: u64,
-    ) -> Option<u64> {
-        self.concentrated_liquidity
-            .apply_v3_liquidity_update_by_pool_id(
-                &mut self.registry,
-                pool_id,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            )
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_tick_data_by_pool_id`].
@@ -2578,7 +2429,7 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::buffer_backfill_v3_liquidity_update`].
-    pub fn buffer_backfill_v3_liquidity_update(
+    pub fn buffer_backfill_liquidity_update(
         &mut self,
         pool_address: Address,
         tick_lower: i32,
@@ -2598,42 +2449,15 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer_v3`].
-    pub fn apply_backfill_buffer_v3(&mut self, address: &Address) {
+    pub fn apply_backfill_buffer(&mut self, address: &Address) {
         self.concentrated_liquidity
             .apply_backfill_buffer_v3(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer_v3`].
-    pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
+    pub fn apply_pump_buffer(&mut self, address: &Address) {
         self.concentrated_liquidity
             .apply_pump_buffer_v3(&mut self.registry, address);
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::buffered_v3_event_count`].
-    #[must_use]
-    pub fn buffered_v3_event_count(&self, address: &Address) -> usize {
-        self.concentrated_liquidity.buffered_v3_event_count(address)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::get_v3_pool`].
-    #[must_use]
-    pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
-        self.concentrated_liquidity
-            .get_v3_pool(&self.registry, pool_id)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::get_v3_identity`].
-    #[must_use]
-    pub fn get_v3_identity(&self, pool_id: u64) -> Option<&V3PoolIdentity> {
-        self.concentrated_liquidity
-            .get_v3_identity(&self.registry, pool_id)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::v3_pools_snapshot`].
-    #[must_use]
-    pub fn v3_pools_snapshot(&self) -> HashMap<u64, (V3PoolIdentity, V3PoolState)> {
-        self.concentrated_liquidity
-            .v3_pools_snapshot(&self.registry)
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_snapshot_seed_block`].
@@ -2641,27 +2465,20 @@ impl BotState {
         self.concentrated_liquidity.set_snapshot_seed_block(s);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::v3_snapshot_seed`].
-    #[must_use]
-    pub fn v3_snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
-        self.concentrated_liquidity
-            .v3_snapshot_seed(&self.registry, address)
-    }
-
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v3_snapshot_seed`].
-    pub fn take_v3_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
+    pub fn take_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
         self.concentrated_liquidity
             .take_v3_snapshot_seed(&mut self.registry, address)
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::pin_v3_post_drain_snapshot`].
-    pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
+    pub fn pin_post_drain_snapshot(&mut self, address: Address) {
         self.concentrated_liquidity
             .pin_v3_post_drain_snapshot(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v3_post_drain_snapshot`].
-    pub fn take_v3_post_drain_snapshot(
+    pub fn take_post_drain_snapshot(
         &mut self,
         address: Address,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
@@ -2670,7 +2487,7 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v3_pool_state`].
-    pub fn sync_v3_pool_state(
+    pub fn sync_pool_state(
         &mut self,
         pool_address: Address,
         sqrt_price_x96: U256,
@@ -2744,14 +2561,8 @@ impl BotState {
             .merge_tick_word(&mut self.registry, pool_id, fetched)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::v3_pool_count`].
-    #[must_use]
-    pub fn v3_pool_count(&self) -> usize {
-        self.concentrated_liquidity.v3_pool_count(&self.registry)
-    }
-
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::register_v4_state_view`].
-    pub fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
+    pub fn register_state_view(&mut self, pool_manager: Address, state_view: Address) {
         self.concentrated_liquidity
             .register_v4_state_view(pool_manager, state_view);
     }
@@ -2765,8 +2576,10 @@ impl BotState {
     /// manager-keyed and crate-internal): a refresh holds a `pool_id` and needs
     /// the state view the pool's own manager registered.
     #[must_use]
-    pub fn v4_state_view_for_pool(&self, pool_id: u64) -> Option<Address> {
-        let manager = self.get_v4_identity(pool_id)?.pool_manager;
+    pub fn state_view_for_pool(&self, pool_id: u64) -> Option<Address> {
+        let manager = self
+            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_id)?
+            .pool_manager;
         self.concentrated_liquidity.state_view_for(manager)
     }
 
@@ -2785,95 +2598,8 @@ impl BotState {
             .register_v4_pool(&mut self.registry, params)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::route_v4_event`].
-    pub fn route_v4_event(
-        &mut self,
-        phase: Phase,
-        pool_manager: Address,
-        v4_pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-        event: BufferedV4PoolEvent,
-        swap_priors: &[(i32, TickInfo)],
-    ) -> ApplyOutcome {
-        self.concentrated_liquidity.route_v4_event(
-            &mut self.registry,
-            phase,
-            pool_manager,
-            v4_pool_id,
-            event,
-            swap_priors,
-        )
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_v4_swap`].
-    pub fn apply_v4_swap(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
-        self.concentrated_liquidity
-            .apply_v4_swap(&mut self.registry, update, block_number)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_v4_liquidity_update`].
-    pub fn apply_v4_liquidity_update(
-        &mut self,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: alloy::primitives::I256,
-        block_number: u64,
-    ) -> Option<u64> {
-        self.concentrated_liquidity.apply_v4_liquidity_update(
-            &mut self.registry,
-            pool_manager,
-            pool_id,
-            tick_lower,
-            tick_upper,
-            liquidity_delta,
-            block_number,
-        )
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_v4_swap_by_pool_id`].
-    pub fn apply_v4_swap_by_pool_id(
-        &mut self,
-        pool_id: u64,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        block_number: u64,
-        tick_priors: &[(i32, TickInfo)],
-    ) -> Option<u64> {
-        self.concentrated_liquidity.apply_v4_swap_by_pool_id(
-            &mut self.registry,
-            pool_id,
-            sqrt_price_x96,
-            liquidity,
-            tick,
-            block_number,
-            tick_priors,
-        )
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_v4_liquidity_update_by_pool_id`].
-    pub fn apply_v4_liquidity_update_by_pool_id(
-        &mut self,
-        pool_id: u64,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: i128,
-        block_number: u64,
-    ) -> Option<u64> {
-        self.concentrated_liquidity
-            .apply_v4_liquidity_update_by_pool_id(
-                &mut self.registry,
-                pool_id,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            )
-    }
-
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::buffer_backfill_v4_liquidity_update`].
-    pub fn buffer_backfill_v4_liquidity_update(
+    pub fn buffer_backfill_liquidity_update_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -2895,7 +2621,7 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer_v4`].
-    pub fn apply_backfill_buffer_v4(
+    pub fn apply_backfill_buffer_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -2908,7 +2634,7 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer_v4`].
-    pub fn apply_pump_buffer_v4(
+    pub fn apply_pump_buffer_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -2919,14 +2645,14 @@ impl BotState {
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::v3_pool_coverage`].
     #[must_use]
-    pub fn v3_pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
+    pub fn pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
         self.concentrated_liquidity
             .v3_pool_coverage(&self.registry, address)
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::v4_pool_coverage`].
     #[must_use]
-    pub fn v4_pool_coverage(
+    pub fn pool_coverage_by_key(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -2936,13 +2662,13 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v3_pool_quarantined`].
-    pub fn set_v3_pool_quarantined(&mut self, address: Address) {
+    pub fn set_pool_quarantined(&mut self, address: Address) {
         self.concentrated_liquidity
             .set_v3_pool_quarantined(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_quarantined`].
-    pub fn set_v4_pool_quarantined(
+    pub fn set_pool_quarantined_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -2955,13 +2681,13 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v3_pool_live`].
-    pub fn set_v3_pool_live(&mut self, address: Address) {
+    pub fn set_pool_live(&mut self, address: Address) {
         self.concentrated_liquidity
             .set_v3_pool_live(&mut self.registry, address);
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_live`].
-    pub fn set_v4_pool_live(
+    pub fn set_pool_live_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -2971,28 +2697,14 @@ impl BotState {
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::release_all_v3_v4_quarantined`].
-    pub fn release_all_v3_v4_quarantined(&mut self) {
+    pub fn release_all_quarantined(&mut self) {
         self.concentrated_liquidity
             .release_all_v3_v4_quarantined(&mut self.registry);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::get_v4_pool`].
-    #[must_use]
-    pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
-        self.concentrated_liquidity
-            .get_v4_pool(&self.registry, pool_id)
-    }
-
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::get_v4_identity`].
-    #[must_use]
-    pub fn get_v4_identity(&self, pool_id: u64) -> Option<&V4PoolIdentity> {
-        self.concentrated_liquidity
-            .get_v4_identity(&self.registry, pool_id)
-    }
-
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::v4_pool_id_by_key`].
     #[must_use]
-    pub fn v4_pool_id_by_key(
+    pub fn pool_id_by_key(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -3003,7 +2715,7 @@ impl BotState {
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::try_registered_v4`].
     #[must_use]
-    pub fn try_registered_v4(
+    pub fn try_registered_by_key(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -3012,9 +2724,140 @@ impl BotState {
             .try_registered_v4(&self.registry, pool_manager, pool_id)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::v4_snapshot_seed`].
+    /// The address-keyed V3-carried swap apply (the capability's design-keyed
+    /// row behind a family-neutral name; the payload shape is the V3 scalar
+    /// form — V4 swaps carry [`V4SwapUpdate`] through [`Self::apply_swap_update`]).
+    pub fn apply_swap(
+        &mut self,
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
+        self.concentrated_liquidity.apply_v3_swap(
+            &mut self.registry,
+            pool_address,
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            block_number,
+            tick_priors,
+        )
+    }
+
+    /// The update-payload swap apply (the capability's design-keyed row behind
+    /// a family-neutral name; the update type carries the design).
+    pub fn apply_swap_update(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
+        self.concentrated_liquidity
+            .apply_v4_swap(&mut self.registry, update, block_number)
+    }
+
+    /// The address-keyed V3-carried liquidity update (the capability's
+    /// design-keyed row behind a family-neutral name; the V4 twin is
+    /// [`Self::apply_liquidity_update_by_key`]).
+    pub fn apply_liquidity_update(
+        &mut self,
+        pool_address: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<u64> {
+        self.concentrated_liquidity.apply_v3_liquidity_update(
+            &mut self.registry,
+            pool_address,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// The registration-key-keyed liquidity update (the capability's
+    /// design-keyed row behind a family-neutral name; the key is the
+    /// `(PoolManager, pool_id)` pair ADR-003 registers V4 under).
+    pub fn apply_liquidity_update_by_key(
+        &mut self,
+        pool_manager: Address,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: alloy::primitives::I256,
+        block_number: u64,
+    ) -> Option<u64> {
+        self.concentrated_liquidity.apply_v4_liquidity_update(
+            &mut self.registry,
+            pool_manager,
+            pool_id,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// The phase-routed live-event apply, address-keyed (the capability's
+    /// design-keyed route behind a family-neutral name; the buffered event
+    /// type carries the design).
+    pub fn route_event(
+        &mut self,
+        phase: Phase,
+        pool_address: Address,
+        event: BufferedV3PoolEvent,
+        swap_priors: &[(i32, TickInfo)],
+    ) -> ApplyOutcome {
+        self.concentrated_liquidity.route_v3_event(
+            &mut self.registry,
+            phase,
+            pool_address,
+            event,
+            swap_priors,
+        )
+    }
+
+    /// The phase-routed live-event apply, registration-key-keyed (the
+    /// capability's design-keyed route behind a family-neutral name).
+    pub fn route_event_by_key(
+        &mut self,
+        phase: Phase,
+        pool_manager: Address,
+        v4_pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+        event: BufferedV4PoolEvent,
+        swap_priors: &[(i32, TickInfo)],
+    ) -> ApplyOutcome {
+        self.concentrated_liquidity.route_v4_event(
+            &mut self.registry,
+            phase,
+            pool_manager,
+            v4_pool_id,
+            event,
+            swap_priors,
+        )
+    }
+
+    /// The buffered-event depth probe for the address-keyed buffer (the
+    /// capability's design-keyed counter behind a family-neutral name).
     #[must_use]
-    pub fn v4_snapshot_seed(
+    pub fn buffered_event_count(&self, address: &Address) -> usize {
+        self.concentrated_liquidity.buffered_v3_event_count(address)
+    }
+
+    /// The address-keyed snapshot seed read (the capability's design-keyed
+    /// row behind a family-neutral name; the V4 twin is
+    /// [`Self::snapshot_seed_by_key`]).
+    #[must_use]
+    pub fn snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
+        self.concentrated_liquidity
+            .v3_snapshot_seed(&self.registry, address)
+    }
+
+    /// The registration-key-keyed snapshot seed read (the capability's
+    /// design-keyed row behind a family-neutral name; the V3 twin is
+    /// [`Self::take_snapshot_seed`]'s address-keyed story).
+    #[must_use]
+    pub fn snapshot_seed_by_key(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -3023,8 +2866,8 @@ impl BotState {
             .v4_snapshot_seed(&self.registry, pool_manager, pool_id)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v4_snapshot_seed`].
-    pub fn take_v4_snapshot_seed(
+    /// The registration-key-keyed snapshot seed take (move out + clear).
+    pub fn take_snapshot_seed_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -3033,8 +2876,9 @@ impl BotState {
             .take_v4_snapshot_seed(&mut self.registry, pool_manager, pool_id)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::pin_v4_post_drain_snapshot`].
-    pub fn pin_v4_post_drain_snapshot(
+    /// The registration-key-keyed post-drain pin (the capability's
+    /// design-keyed row behind a family-neutral name).
+    pub fn pin_post_drain_snapshot_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -3046,8 +2890,8 @@ impl BotState {
         );
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v4_post_drain_snapshot`].
-    pub fn take_v4_post_drain_snapshot(
+    /// The registration-key-keyed post-drain take (move out + clear).
+    pub fn take_post_drain_snapshot_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -3061,13 +2905,13 @@ impl BotState {
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::v4_pools_snapshot`].
     #[must_use]
-    pub fn v4_pools_snapshot(&self) -> HashMap<u64, (V4PoolIdentity, V4PoolState)> {
+    pub fn registered_pools_snapshot(&self) -> HashMap<u64, (V4PoolIdentity, V4PoolState)> {
         self.concentrated_liquidity
             .v4_pools_snapshot(&self.registry)
     }
 
     /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v4_pool_state`].
-    pub fn sync_v4_pool_state(
+    pub fn sync_pool_state_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -3157,7 +3001,7 @@ mod registered_v4_fast_path_tests {
         let registered = register_v4(&mut core, pid, PoolTickCoverage::Tracked, 0x0102);
 
         let existing = core
-            .try_registered_v4(pm, &pid)
+            .try_registered_by_key(pm, &pid)
             .expect("registered pool must resolve by (pool_manager, pool_id)");
         assert_eq!(existing.pool_id, registered, "must be the same numeric id");
         let key = &existing.pool_key;
@@ -3179,7 +3023,7 @@ mod registered_v4_fast_path_tests {
         let _ = register_v4(&mut core, pid, PoolTickCoverage::Sparse, 0);
 
         let existing = core
-            .try_registered_v4(pm, &pid)
+            .try_registered_by_key(pm, &pid)
             .expect("registered pool must resolve");
         assert_eq!(existing.coverage, PoolTickCoverage::Sparse);
     }
@@ -3191,12 +3035,12 @@ mod registered_v4_fast_path_tests {
         let _ = register_v4(&mut core, [0xeeu8; 32], PoolTickCoverage::Sparse, 0);
 
         assert_eq!(
-            core.try_registered_v4(pm, &[0xffu8; 32]),
+            core.try_registered_by_key(pm, &[0xffu8; 32]),
             None,
             "an unregistered pool_id under the same manager must miss"
         );
         assert_eq!(
-            core.try_registered_v4(Address::from([0x45u8; 20]), &[0xeeu8; 32]),
+            core.try_registered_by_key(Address::from([0x45u8; 20]), &[0xeeu8; 32]),
             None,
             "an unknown pool_manager must miss"
         );
@@ -3246,7 +3090,9 @@ mod known_word_dispatcher_tests {
             core.mark_bitmap_words_known_by_pool_id(pool_id, &[7]),
             "dispatcher must report a CL apply"
         );
-        let state = core.get_v3_pool(pool_id).expect("registered");
+        let state = core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("registered");
         assert!(state.known_bitmap_words.contains(&7));
     }
 
@@ -3255,7 +3101,9 @@ mod known_word_dispatcher_tests {
     fn mark_bitmap_words_known_by_pool_id_tracked_noop() {
         let (mut core, pool_id) = register_v3(PoolTickCoverage::Tracked);
         let _ = core.mark_bitmap_words_known_by_pool_id(pool_id, &[7]);
-        let state = core.get_v3_pool(pool_id).expect("registered");
+        let state = core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("registered");
         assert!(
             !state.known_bitmap_words.contains(&7),
             "Tracked pools never record checked words"
@@ -3279,7 +3127,9 @@ mod known_word_dispatcher_tests {
         assert!(core
             .apply_liquidity_update_by_pool_id(pool_id, 15360, 15420, 1, 5)
             .is_ok());
-        let state = core.get_v3_pool(pool_id).expect("registered");
+        let state = core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("registered");
         assert!(
             state.tick_data.contains_key(&15360),
             "the Mint must initialize the boundary tick row"

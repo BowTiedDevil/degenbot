@@ -4,8 +4,10 @@
 //!
 //! GLOSSARY.md "Family read module": this tree owns the state slice (the
 //! I/O-free `crate::curve_state` types, ADR-001), the swap-read arm (the
-//! standard-stableswap exact-input read; the non-`STANDARD` swap styles keep
-//! their pre-port `Ok(ZERO)` sentinel — see the read door's docs), the resolve
+//! standard-stableswap exact-input read; the non-`STANDARD` swap styles
+//! answer the typed [`SimulateSwapError::NotComputable`] refusal — the
+//! pre-port `Ok(ZERO)` sentinel is retired (C6; see the read door's docs)),
+//! the resolve
 //! projection as a pure function of the family state slice, and the
 //! family-local apply/get/calc behavior over that slice. It reads NO state
 //! owner and consumes NO solver kernel — the hop is solver vocabulary, so the
@@ -17,8 +19,8 @@
 //! - [`capture_hop`] — the resolve projection: one fresh projection of one
 //!   hop, refused rather than defaulted;
 //! - [`read_swap`] — the swap-read arm, ALL variants (the standard
-//!   stableswap exact-input read plus the not-yet-ported swap-style sentinel)
-//!   behind one entry;
+//!   stableswap exact-input read plus the typed non-`STANDARD`-style
+//!   refusal) behind one entry;
 //! - [`apply_event`] — one buffered balance event onto one slice;
 //! - [`observe`] — family-local GET behavior over one slice.
 //!
@@ -162,10 +164,15 @@ pub fn capture_hop(
 
 /// The swap-read door — ALL variants behind one entry. The standard
 /// stableswap exact-input read (rate-adjusted `xp`, `get_y`, fee + rate
-/// descale, `ConversionStyle.FEE_THEN_RATE`) plus the pre-port sentinel for
-/// the non-`STANDARD` swap styles (crypto, live-admin, metapool `get_dy`
-/// base-pool dispatch — the Python companions keep doing their own math via
-/// `swap_fn` for those, so the Rust core returns `Ok(ZERO)`).
+/// descale, `ConversionStyle.FEE_THEN_RATE`) plus the typed refusal for the
+/// non-`STANDARD` swap styles (crypto, live-admin, metapool `get_dy`
+/// base-pool dispatch). Those styles' `get_dy` math is owned by the
+/// calculator path (`curve_dy_calculator`), not this read arm — the retired
+/// pre-port sentinel used to answer `Ok(ZERO)` here, which read as a real
+/// zero-output swap; the typed refusal says "not this door's computation"
+/// instead (C6 retirement; the companion's Curve read path consumes
+/// `curve_get_dy`, never this door, and no consumer distinguishes the old
+/// zero from the refusal).
 ///
 /// # Errors
 ///
@@ -178,10 +185,13 @@ pub fn read_swap(
     zero_for_one: bool,
     amount_in: U256,
 ) -> Result<U256, SimulateSwapError> {
-    // Only the standard stableswap path is ported; advertise the missing ones
-    // as the pre-port sentinel (matches the long-standing `Ok(U256::ZERO)` arm).
+    // Only the standard stableswap path is ported; the other styles answer the
+    // typed refusal (the retired `Ok(U256::ZERO)` not-yet-Rust-side sentinel —
+    // C6 retired it after the companion's Curve read path was verified to
+    // carry no zero-vs-error distinguishing consumer; `curve_get_dy` /
+    // `calculate_dy` remain the Rust surfaces that DO compute those styles).
     if identity.swap_style != 1 {
-        return Ok(U256::ZERO);
+        return Err(SimulateSwapError::NotComputable);
     }
     if amount_in.is_zero() {
         return Ok(U256::ZERO);
@@ -509,4 +519,63 @@ fn curve_total_supply(
     let lp = identity.lp_token.unwrap_or(identity.tokens[0]);
     p.token_total_supply(lp, block_number)
         .map_err(CurveInputsError::Provider)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::curve_state::CurvePoolIdentity;
+
+    // The retired not-yet-Rust-side sentinel: a non-STANDARD Curve swap style
+    // answers the TYPED refusal at the read door, never a zero output (the old
+    // Ok(U256::ZERO) arm read as a real zero-output swap and is gone - C6; the
+    // companion's Curve read path consumes curve_get_dy, which still computes
+    // those styles through the calculator, and no consumer distinguishes the
+    // old zero from the refusal).
+    #[test]
+    fn non_standard_swap_style_answers_the_typed_refusal_not_a_zero() {
+        let identity = CurvePoolIdentity {
+            address: alloy::primitives::Address::ZERO,
+            tokens: vec![alloy::primitives::Address::new([0x21u8; 20]); 2].into(),
+            a_coefficient: 100,
+            a_precision: 100,
+            fee: 4_000_000,
+            admin_fee: 0,
+            rate_multipliers: vec![U256::from(CURVE_PRECISION); 2].into(),
+            swap_style: 4, // CRYPTO - a non-STANDARD style
+            lending_rate_style: 0,
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 1,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: Box::default(),
+            precision_multipliers: vec![U256::from(CURVE_PRECISION); 2].into(),
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
+        };
+        let state = CurvePoolState {
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)].into(),
+            update_block: 1,
+            state_nonce: 1,
+            journal: crate::state_history::ReorgJournal::new(8),
+            data_provider: None,
+        };
+        let verdict = read_swap(&state, &identity, true, U256::from(1_000u64));
+        assert!(
+            matches!(verdict, Err(SimulateSwapError::NotComputable)),
+            "a non-STANDARD style answers the typed refusal, got {verdict:?}"
+        );
+    }
 }

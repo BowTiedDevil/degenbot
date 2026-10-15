@@ -962,7 +962,7 @@ pub fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> boo
                 Ok(bytes) if bytes.len() == 32 => {
                     let mut pid = [0u8; 32];
                     pid.copy_from_slice(&bytes);
-                    core.v4_pool_id_by_key(h.pool_manager_address, &pid)
+                    core.pool_id_by_key(h.pool_manager_address, &pid)
                         .map_or(0, |p| core.pool_state_nonce(p))
                 }
                 _ => 0,

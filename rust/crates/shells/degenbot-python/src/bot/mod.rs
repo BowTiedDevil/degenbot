@@ -1281,7 +1281,7 @@ impl PyBot {
         // Option 2) — the solver-state gate reads it to verify V4 hops.
         // Core-owned ([`Bot::register_v4_state_view`], LockSite::Core) under
         // this py.detach (inversion class).
-        py.detach(|| self.bot.register_v4_state_view(pm, state_view));
+        py.detach(|| self.bot.register_state_view(pm, state_view));
 
         // PRG-1 registry unification: the build (pre-check → build → publish)
         // runs under the engine-internal single flight keyed by
@@ -2135,7 +2135,7 @@ impl PyBot {
         })?;
         // The write guard is acquired inside the core method under this
         // py.detach (see `register_token`).
-        py.detach(|| self.bot.register_v4_state_view(pm, sv));
+        py.detach(|| self.bot.register_state_view(pm, sv));
         Ok(())
     }
 
@@ -2558,7 +2558,7 @@ impl PyBot {
 
         // The write guard is core-owned ([`Bot::update_v3_pool`],
         // LockSite::Core) under this py.detach (inversion class).
-        py.detach(|| self.bot.update_v3_pool(addr, spx, liq, tick, block_number));
+        py.detach(|| self.bot.update_pool(addr, spx, liq, tick, block_number));
         Ok(())
     }
 

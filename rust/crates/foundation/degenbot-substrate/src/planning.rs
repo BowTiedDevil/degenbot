@@ -481,7 +481,7 @@ impl Workspace {
     /// the id is unadmitted or not a V2 pool.
     #[must_use]
     pub fn v2_reserves(&self, pool_id: u64) -> Option<(U256, U256, u64)> {
-        self.state.v2_snapshot(pool_id)
+        self.state.pool_reserves(pool_id)
     }
 
     /// Declare a cycle from family-tagged hops (cycle order = hop order).
@@ -934,8 +934,8 @@ mod tests {
                 ..::degenbot_pools::v2_state::RegisterV2PoolParams::default()
             })
             .expect("canonical P");
-        let canonical_before = canonical.v2_snapshot(canonical_id);
-        let count_before = canonical.v2_pool_count();
+        let canonical_before = canonical.pool_reserves(canonical_id);
+        let count_before = canonical.pool_count_of::<degenbot_pools::v2_state::V2PoolState>();
 
         {
             let mut w = Workspace::new();
@@ -946,18 +946,22 @@ mod tests {
             let _ = w.evaluate(idx, U256::ZERO);
             // The scope's ids never index the canonical registry.
             assert_ne!(
-                canonical.v2_snapshot(p_id),
+                canonical.pool_reserves(p_id),
                 Some((U256::from(476_259u64), U256::from(1_050u64), 2))
             );
             assert_ne!(
-                canonical.v2_snapshot(q_id),
+                canonical.pool_reserves(q_id),
                 Some((U256::from(200_000u64), U256::from(900u64), SEED))
             );
         } // scope dropped
 
-        assert_eq!(canonical.v2_pool_count(), count_before, "no pool leaked in");
         assert_eq!(
-            canonical.v2_snapshot(canonical_id),
+            canonical.pool_count_of::<degenbot_pools::v2_state::V2PoolState>(),
+            count_before,
+            "no pool leaked in"
+        );
+        assert_eq!(
+            canonical.pool_reserves(canonical_id),
             canonical_before,
             "canonical state untouched"
         );
@@ -970,7 +974,10 @@ mod tests {
     fn workspace_admits_v4_pool_with_explicit_state() {
         let mut w = Workspace::new();
         let id = admitted_v4(&mut w, 1_000_000_000, 1_234);
-        let pool = w.state.get_v4_pool(id).expect("V4 state admitted");
+        let pool = w
+            .state
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(id)
+            .expect("V4 state admitted");
         assert_eq!(pool.sqrt_price_x96, U256::from(1u128) << 96);
         assert_eq!(pool.liquidity, 1_000_000_000);
         assert_eq!(pool.tick, 0);
@@ -990,7 +997,10 @@ mod tests {
             "the caller's tick map, nothing more"
         );
 
-        let identity = w.state.get_v4_identity(id).expect("V4 identity");
+        let identity = w
+            .state
+            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(id)
+            .expect("V4 identity");
         assert_eq!(identity.pool_manager, PM);
         assert_eq!(identity.pool_id, V4_POOL_ID);
         assert_eq!(identity.pool_key.tick_spacing, 10);

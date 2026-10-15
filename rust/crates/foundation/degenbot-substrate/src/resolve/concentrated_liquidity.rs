@@ -54,10 +54,10 @@ pub(crate) fn project_v3(
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let pool_state = core
-        .get_v3_pool(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
     let identity = core
-        .get_v3_identity(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     // Build the sequence ONCE through the family door and Arc-share it -
     // every path reusing this (pool, direction) clones an Arc, not the
@@ -86,10 +86,10 @@ pub(crate) fn project_v4(
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let pool_state = core
-        .get_v4_pool(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
     let identity = core
-        .get_v4_identity(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     // ADR-037: hooked pools are ADMITTED at registration but are
     // not solvable — the CL math assumes no hook intervention. Paths that
@@ -279,7 +279,12 @@ mod tests {
                 !seq.ranges.is_empty(),
                 "initialized ticks -> non-empty walk"
             );
-            assert_eq!(nonce, core.get_v3_pool(v3_id).expect("state").state_nonce);
+            assert_eq!(
+                nonce,
+                core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(v3_id)
+                    .expect("state")
+                    .state_nonce
+            );
         }
     }
 
@@ -350,7 +355,12 @@ mod tests {
             !seq.ranges.is_empty(),
             "initialized ticks -> non-empty walk"
         );
-        assert_eq!(nonce, core.get_v4_pool(v4_id).expect("state").state_nonce);
+        assert_eq!(
+            nonce,
+            core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(v4_id)
+                .expect("state")
+                .state_nonce
+        );
     }
 
     #[test]

@@ -741,8 +741,8 @@ pub(crate) fn clamp_result_with_state(
         let (out, input_clamp): (U256, Option<U256>) = match pool_ref.hop_type {
             HopType::V3 => {
                 let (Some(state), Some(identity)) = (
-                    core.get_v3_pool(pool_ref.pool_key),
-                    core.get_v3_identity(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_ref.pool_key),
                 ) else {
                     continue; // Pool state unavailable → can't clamp
                 };
@@ -771,8 +771,8 @@ pub(crate) fn clamp_result_with_state(
             }
             HopType::V4 => {
                 let (Some(state), Some(identity)) = (
-                    core.get_v4_pool(pool_ref.pool_key),
-                    core.get_v4_identity(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_ref.pool_key),
                 ) else {
                     continue;
                 };
@@ -809,8 +809,8 @@ pub(crate) fn clamp_result_with_state(
                 // report once (b) has forward-clamped its input upstream.
                 // Orientation mirrors `simulate_swap`'s V2 arm.
                 let (Some(state), Some(identity)) = (
-                    core.get_v2_pool_state(pool_ref.pool_key),
-                    core.get_v2_identity(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_ref.pool_key),
                 ) else {
                     continue; // Pool state unavailable → can't clamp
                 };
@@ -2352,7 +2352,9 @@ impl SolveCycle {
         // (matching the Python `arbitrage.solvers.solidly_stable` classification:
         // `AerodromeV2Pool(stable=True)` → `SolidlyStableHop`, else
         // `ConstantProductHop`).
-        if let Some(id) = core.get_aerodrome_identity(pool_id) {
+        if let Some(id) =
+            core.pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(pool_id)
+        {
             return Some(if id.stable {
                 HopType::SolidlyStable
             } else {
@@ -2362,22 +2364,39 @@ impl SolveCycle {
         // Camelot stable_swap pools route to the Solidly solve branch;
         // volatile Camelot is constant-product (V2). Same Python-faithful
         // classification as Aerodrome.
-        if let Some(id) = core.get_v2_identity(pool_id) {
+        if let Some(id) = core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id) {
             return Some(if id.stable_swap {
                 HopType::SolidlyStable
             } else {
                 HopType::V2
             });
         }
-        if core.get_v3_pool(pool_id).is_some() {
+        if core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .is_some()
+        {
             Some(HopType::V3)
-        } else if core.get_v4_pool(pool_id).is_some() {
+        } else if core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+            .is_some()
+        {
             Some(HopType::V4)
-        } else if core.get_balancer_weighted_pool(pool_id).is_some() {
+        } else if core
+            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+                pool_id,
+            )
+            .is_some()
+        {
             Some(HopType::BalancerWeighted)
-        } else if core.get_balancer_stable_pool(pool_id).is_some() {
+        } else if core
+            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(pool_id)
+            .is_some()
+        {
             Some(HopType::BalancerStable)
-        } else if core.get_curve_pool(pool_id).is_some() {
+        } else if core
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_id)
+            .is_some()
+        {
             Some(HopType::CurveStableswap)
         } else {
             None

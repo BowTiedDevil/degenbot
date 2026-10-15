@@ -19,12 +19,12 @@ use alloy::primitives::U256;
 
 use degenbot_math::curve::calculate_dy_underlying;
 use degenbot_pools::balancer_stable_state::{
-    BalancerStablePoolIdentity, BalancerStablePoolState, RegisterBalancerStablePoolParams,
+    BalancerStablePoolState, RegisterBalancerStablePoolParams,
 };
 use degenbot_pools::balancer_weighted_state::{
-    BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
+    BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
-use degenbot_pools::curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
+use degenbot_pools::curve_state::{CurvePoolState, RegisterCurvePoolParams};
 use degenbot_pools::families::curve_stableswap as curve_read;
 use degenbot_pools::CurveInputsError;
 
@@ -119,32 +119,6 @@ impl BotState {
             .as_balance_vector_mut()?
             .apply_balance_update(balances, block_number);
         Some(pool_id)
-    }
-
-    /// Read a registered Curve pool's state by `pool_id`.
-    ///
-    /// The Python companion reads `balances` / `update_block`
-    /// through this accessor via `PyLiquidityPool.balances` getter. Returns
-    /// `None` for non-Curve pools (silent no-op).
-    #[must_use]
-    pub fn get_curve_pool(&self, pool_id: u64) -> Option<&CurvePoolState> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::curve)
-            .map(|(_, state)| state)
-    }
-
-    /// Look up a Curve pool's immutable registration identity (address,
-    /// tokens, fee, `admin_fee`, `rate_multipliers`, variant enums, `base_pool`).
-    /// Returns `None` if the pool is not registered or isn't a Curve pool.
-    #[must_use]
-    pub fn get_curve_identity(&self, pool_id: u64) -> Option<&CurvePoolIdentity> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::curve)
-            .map(|(identity, _)| identity)
     }
 
     /// Rust-owned stableswap `get_dy` — the family-neutral calc row. The
@@ -335,35 +309,6 @@ impl BotState {
         pool_id
     }
 
-    /// Read a registered Balancer weighted pool's state by `pool_id`.
-    ///
-    /// The Python companion reads `balances` / `update_block`
-    /// through this accessor via `PyLiquidityPool` getters. Returns `None`
-    /// for non-Balancer-weighted pools (silent no-op).
-    #[must_use]
-    pub fn get_balancer_weighted_pool(&self, pool_id: u64) -> Option<&BalancerWeightedPoolState> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::balancer_weighted)
-            .map(|(_, state)| state)
-    }
-
-    /// Look up a Balancer weighted pool's immutable registration identity
-    /// (address, vault, `pool_id`, tokens, weights, `scaling_factors`, `swap_fee`,
-    /// `pow_version`). Returns `None` if not registered or not a weighted pool.
-    #[must_use]
-    pub fn get_balancer_weighted_identity(
-        &self,
-        pool_id: u64,
-    ) -> Option<&BalancerWeightedPoolIdentity> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::balancer_weighted)
-            .map(|(identity, _)| identity)
-    }
-
     /// Register a Balancer V2 stable pool. The pool's immutable config
     /// (`pool_id`, vault, tokens, amp, `scaling_factors`, `swap_fee`,
     /// `bpt_idx`, `invariant_version`) + the registration `balances`/
@@ -419,36 +364,5 @@ impl BotState {
         self.registry.pool_addresses.insert(params.address, pool_id);
 
         pool_id
-    }
-
-    /// Read a registered Balancer stable pool's state by `pool_id`.
-    ///
-    /// The Python companion reads `balances` / `update_block` /
-    /// `bpt_idx` / `invariant_version` / `amp` through this accessor via
-    /// `PyLiquidityPool` getters. Returns `None` for non-Balancer-stable
-    /// pools (silent no-op).
-    #[must_use]
-    pub fn get_balancer_stable_pool(&self, pool_id: u64) -> Option<&BalancerStablePoolState> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::balancer_stable)
-            .map(|(_, state)| state)
-    }
-
-    /// Look up a Balancer stable pool's immutable registration identity
-    /// (address, vault, `pool_id`, tokens, amp, `scaling_factors`, `swap_fee`,
-    /// `bpt_idx`, `invariant_version`). Returns `None` if not registered or not
-    /// a stable pool.
-    #[must_use]
-    pub fn get_balancer_stable_identity(
-        &self,
-        pool_id: u64,
-    ) -> Option<&BalancerStablePoolIdentity> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::balancer_stable)
-            .map(|(identity, _)| identity)
     }
 }

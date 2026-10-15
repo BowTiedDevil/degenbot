@@ -36,8 +36,10 @@ impl PyArbEngine {
         let v3_pools = self.with_core(py, |core| {
             let key = core.pool_id_by_address(&pool_addr)?;
             let mut map = hashbrown::HashMap::new();
-            if let (Some(identity), Some(pool)) = (core.get_v3_identity(key), core.get_v3_pool(key))
-            {
+            if let (Some(identity), Some(pool)) = (
+                core.pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(key),
+                core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(key),
+            ) {
                 map.insert(key, (*identity, pool.clone()));
             }
             Some(map)
@@ -111,7 +113,7 @@ impl PyArbEngine {
                 .or_else(|| {
                     // V4 pools are registered with the actual pool_manager address,
                     // not ZERO. Fallback: scan all V4 pools for matching pool_id.
-                    for (key, pool) in core.v4_pools_snapshot() {
+                    for (key, pool) in core.registered_pools_snapshot() {
                         if pool.0.pool_id == pool_id {
                             return Some(key);
                         }
@@ -121,9 +123,10 @@ impl PyArbEngine {
 
             let fwd_key = v4_key?;
             let mut map = hashbrown::HashMap::new();
-            if let (Some(identity), Some(pool)) =
-                (core.get_v4_identity(fwd_key), core.get_v4_pool(fwd_key))
-            {
+            if let (Some(identity), Some(pool)) = (
+                core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(fwd_key),
+                core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(fwd_key),
+            ) {
                 map.insert(fwd_key, (identity.clone(), pool.clone()));
             }
             Some(map)

@@ -24,10 +24,14 @@ pub(crate) fn project_balancer_weighted(
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let id = core
-        .get_balancer_weighted_identity(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(
+            pool_ref.pool_key,
+        )
         .ok_or(MissingHopReason::MissingIdentity)?;
     let state = core
-        .get_balancer_weighted_pool(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+            pool_ref.pool_key,
+        )
         .ok_or(MissingHopReason::MissingState)?;
     let hop = weighted_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(cl_refusal)?;
     Ok((
@@ -134,9 +138,11 @@ mod tests {
         assert_eq!(s.balance_out, U256::from(1000u64) * one_e18);
         assert_eq!(
             nonce,
-            core.get_balancer_weighted_pool(bw_id)
-                .expect("state")
-                .state_nonce
+            core.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+                bw_id
+            )
+            .expect("state")
+            .state_nonce
         );
     }
 

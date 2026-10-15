@@ -1,8 +1,48 @@
 # ADR-073: The Family Read Module — one family, two homes, rows at the seams
 
-**Status: proposed** (drafted at the architecture-review grilling, 2026-10-14; ratify
-through the ergo review flow). Supersedes the solve-only scope of the ADR-071 family
-census; ADR-059 D3/D6 and ADR-071 stand unchanged in substance.
+**Status: accepted / implemented** (drafted at the architecture-review grilling,
+2026-10-14; ratified through the ergo review flow; landed across epic JE3DED
+chunks C1–C6 — CL pilot, balance-vector, reserve-pair, Solidly, final sweep).
+Supersedes the solve-only scope of the ADR-071 family census; ADR-059 D3/D6 and
+ADR-071 stand unchanged in substance.
+
+**Implementation dispositions (recorded at the C6 close):**
+
+- **Zero-sentinel retirement (C6 item 1).** The `Ok(U256::ZERO)`
+  not-yet-Rust-side sentinel on non-`STANDARD` Curve swap styles (crypto,
+  live-admin, metapool `get_dy` base-pool dispatch) is retired to the typed
+  `SimulateSwapError::NotComputable` at the Curve family read door. Precheck:
+  the Python companion's Curve read path consumes `curve_get_dy` (the
+  calculator path, which still computes those styles) — no consumer in
+  `src/degenbot/` distinguishes zero-output from not-computable on this read
+  door, and the pyo3 `simulate` seam flattens both verdicts to the same
+  `not_computable` status. The sibling zero-input rule stays: `getAmountOut(0)
+  = 0` is real semantics, not a sentinel.
+- **`hop_sim` thin-forward — accepted divergence.** The kernel's
+  `concentrated_liquidity::hop_sim::simulate_v3_range_swap` does NOT thin-
+  forward to the `families::concentrated_liquidity::read_swap` door. The walk
+  consumes PREPARED ranges (`IntV3TickRangeHop` — boundary prices, liquidity,
+  fee scalars), no pool slice; a synthetic-state bridge (fabricating a slice
+  whose tick map reproduces the prepared word boundaries) would move the
+  byte-exact oracle surface rather than pin it — the tier-3 revm legs run
+  through `v3_simulate_swap` (the pools-side walk behind the read door), and
+  no drift net pins `hop_sim`'s per-word-boundary outcomes against a
+  pre-refactor snapshot. The kernel's step math already delegates to the same
+  canonical `compute_swap_step_v3` leaf the door's walk uses — one source of
+  per-step parity — so the divergence is the walk FRAMING, not the math.
+  Recorded as the accepted ADR-073 D4 residual: `read_swap` serves the
+  registry-backed parity invocations; `hop_sim` serves the solver kernel's
+  prepared-range invocations; both name the same step function.
+- **Camelot-stable read-path gap — pre-existing, backlog RZ4XEX.** A Camelot
+  stable pool registers as `PoolEntry::V2` with `stable_swap = true` but the
+  pools-layer V2 row prices it with constant-product math while the solve
+  branch and the Python companion use the Solidly-Camelot invariant. Dormant
+  (unrouted), pre-existing before this ADR. A correct read needs a
+  registry-decimals ruling (ADR-003 boundary: `V2PoolIdentity` carries no
+  decimals); until that ruling the gap stays open in backlog RZ4XEX. The
+  Solidly family door already carries the Camelot read arm
+  (variant-carried scales) so the routed row has exactly one door to call
+  when the ruling lands.
 
 ## Context
 

@@ -7,11 +7,14 @@
 //! (it catches the value error + calls the pools-defined `TickWordFetcher`
 //! trait to fill the word, then retries).
 //!
-//! The **not-yet-Rust-side** sentinel (`Ok(U256::ZERO)`) survives only for the
-//! families whose invariant math the Rust core does not yet own: non-`STANDARD`
-//! Curve swap styles (crypto, live-admin, metapool `get_dy` base-pool dispatch).
-//! V2, V3/V4 CL, Balancer weighted+stable, Aerodrome V2 volatile **and** stable,
-//! and Curve standard stableswap are all ported — the Python companions
+//! The **not-yet-Rust-side** sentinel (`Ok(U256::ZERO)`) is RETIRED (C6): the
+//! last arm that carried it — the non-`STANDARD` Curve swap styles (crypto,
+//! live-admin, metapool `get_dy` base-pool dispatch) — now answers the typed
+//! [`SimulateSwapError::NotComputable`] at the family read door (the
+//! companion's Curve read path was verified to carry no zero-vs-error
+//! distinguishing consumer; those styles' `get_dy` math is the calculator
+//! path's). V2, V3/V4 CL, Balancer weighted+stable, Aerodrome V2 volatile
+//! **and** stable, and Curve standard stableswap are all ported — the Python companions
 //! for those delegate to this core rather than doing their own math. The
 //! per-family design arms live behind the family read modules' read doors
 //! (ADR-073 D1) — Aerodrome **stable** behind `families::solidly` — and this
@@ -39,8 +42,9 @@ use crate::v3_state::SimulateSwapError;
 /// [`SimulateSwapError::MissingTickWord(word)`] / [`NotComputable`](SimulateSwapError::NotComputable).
 ///
 /// `Ok(U256::ZERO)` covers the non-fetchable zeros (zero amount, V2 with zero
-/// reserves, and the remaining not-yet-Rust-side sentinel: non-standard Curve
-/// swap styles). The V3/V4 arms surface a
+/// reserves). A non-`STANDARD` Curve swap style answers the typed
+/// [`SimulateSwapError::NotComputable`] (the not-yet-Rust-side sentinel is
+/// retired — C6). The V3/V4 arms surface a
 /// sparse-map miss as [`SimulateSwapError::MissingTickWord`] (the caller —
 /// [`BotState::calculate_tokens_out_with_fetch`] in `degenbot-bot` — fetches +
 /// retries); arithmetic overflow / non-positive amount yields

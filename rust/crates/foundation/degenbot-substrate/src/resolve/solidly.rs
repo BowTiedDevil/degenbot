@@ -59,9 +59,15 @@ pub(crate) fn project_solidly(
     core: &BotState,
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
-    if let Some(id) = core.get_aerodrome_identity(pool_ref.pool_key) {
+    if let Some(id) = core
+        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+            pool_ref.pool_key,
+        )
+    {
         let state = core
-            .get_aerodrome_pool(pool_ref.pool_key)
+            .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState>(
+                pool_ref.pool_key,
+            )
             .ok_or(MissingHopReason::MissingState)?;
         let (decimals_0, decimals_1) = token_decimals(core, &id.token0, &id.token1)?;
         let hop = solidly::capture_hop(
@@ -73,9 +79,11 @@ pub(crate) fn project_solidly(
             pool_ref.zero_for_one,
         );
         Ok((wrap_hop(hop), state.state_nonce))
-    } else if let Some(id) = core.get_v2_identity(pool_ref.pool_key) {
+    } else if let Some(id) =
+        core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_ref.pool_key)
+    {
         let state = core
-            .get_v2_pool_state(pool_ref.pool_key)
+            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_ref.pool_key)
             .ok_or(MissingHopReason::MissingState)?;
         let (decimals_0, decimals_1) = token_decimals(core, &id.token0, &id.token1)?;
         let hop = solidly::capture_hop(
@@ -177,9 +185,11 @@ mod tests {
             assert_eq!(hop0.token_in, token_in, "zero_for_one → token_in = !zfo");
             assert_eq!(
                 nonce,
-                core.get_aerodrome_pool(aero_id)
-                    .expect("pool state")
-                    .state_nonce
+                core.pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState>(
+                    aero_id
+                )
+                .expect("pool state")
+                .state_nonce
             );
         }
     }

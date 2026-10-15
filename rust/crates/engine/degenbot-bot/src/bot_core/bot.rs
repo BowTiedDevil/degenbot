@@ -386,7 +386,10 @@ impl Bot {
             .state
             .read_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
         // Family guard: 0 for non-V2 (preserves the per-family contract).
-        if state.get_v2_pool_state(pool_id).is_none() {
+        if state
+            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+            .is_none()
+        {
             0
         } else {
             state.pool_journal_len(pool_id).unwrap_or(0)
@@ -402,7 +405,10 @@ impl Bot {
             .state
             .read_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
         // Family guard: 0 for non-V3/V4 (preserves the per-family contract).
-        if state.get_v3_or_v4_pool(pool_id).is_none() {
+        if state
+            .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
+            .is_none()
+        {
             0
         } else {
             state.pool_journal_len(pool_id).unwrap_or(0)
@@ -426,7 +432,10 @@ impl Bot {
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
         // Family guard: no-op for non-V2 (V2's contract).
-        if state.get_v2_pool_state(pool_id).is_none() {
+        if state
+            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+            .is_none()
+        {
             return Ok(());
         }
         state
@@ -448,7 +457,10 @@ impl Bot {
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
         // Family guard: no-op for non-V3/V4 (V3's contract).
-        if state.get_v3_or_v4_pool(pool_id).is_none() {
+        if state
+            .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
+            .is_none()
+        {
             return Ok(());
         }
         state
@@ -482,7 +494,10 @@ impl Bot {
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
         // Family guard: `Ok(None)` for non-V2 (the PyO3 no-op contract).
-        if state.get_v2_pool_state(pool_id).is_none() {
+        if state
+            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+            .is_none()
+        {
             return Ok(None);
         }
         match state.restore_pool_before_block(pool_id, block) {
@@ -491,7 +506,7 @@ impl Bot {
             Some(Ok(())) => {
                 #[expect(clippy::expect_used)] // invariant-guarded (family confirmed above)
                 let s = state
-                    .get_v2_pool_state(pool_id)
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
                     .expect("V2 pool confirmed above");
                 Ok(Some((
                     s.reserve0.to::<alloy::primitives::U256>(),
@@ -529,7 +544,10 @@ impl Bot {
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
         // Family guard: `Ok(None)` for non-V3/V4 (the PyO3 no-op contract).
-        if state.get_v3_or_v4_pool(pool_id).is_none() {
+        if state
+            .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
+            .is_none()
+        {
             return Ok(None);
         }
         match state.restore_pool_before_block(pool_id, block) {
@@ -538,7 +556,7 @@ impl Bot {
             Some(Ok(())) => {
                 #[expect(clippy::expect_used)] // invariant-guarded (family confirmed above)
                 let s = state
-                    .get_v3_or_v4_pool(pool_id)
+                    .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
                     .expect("V3/V4 pool confirmed above");
                 Ok(Some((
                     s.sqrt_price_x96(),
@@ -855,7 +873,7 @@ mod tests {
         // A Swap update journals the priors, so the count becomes 1.
         bot.state_arc()
             .write_at(degenbot_substrate::state_lock::LockSite::Core)
-            .update_v3_pool(
+            .update_pool(
                 Address::from([0x22u8; 20]),
                 alloy::primitives::U256::from(2u128) << 96,
                 2_000_000,
@@ -965,7 +983,7 @@ mod tests {
 
         bot.state_arc()
             .write_at(degenbot_substrate::state_lock::LockSite::Core)
-            .update_v3_pool(
+            .update_pool(
                 Address::from([0x22u8; 20]),
                 alloy::primitives::U256::from(2u128) << 96,
                 2_000_000,

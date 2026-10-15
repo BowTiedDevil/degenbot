@@ -895,8 +895,12 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    let state = core.get_v2_pool_state(v2).unwrap();
-    let identity = core.get_v2_identity(v2).unwrap();
+    let state = core
+        .pool_slice::<degenbot_pools::v2_state::V2PoolState>(v2)
+        .unwrap();
+    let identity = core
+        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(v2)
+        .unwrap();
     let expected = IntHopState::new(
         state.reserve1.to::<U256>(),
         state.reserve0.to::<U256>(),
@@ -1022,8 +1026,12 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-        let state = core.get_v4_pool(v4_id).unwrap();
-        let identity = core.get_v4_identity(v4_id).unwrap();
+        let state = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(v4_id)
+            .unwrap();
+        let identity = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(v4_id)
+            .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(false);
         let outcome = v4_simulate_swap(
@@ -1044,8 +1052,12 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-        let state = core.get_v4_pool(v4_id).unwrap();
-        let identity = core.get_v4_identity(v4_id).unwrap();
+        let state = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(v4_id)
+            .unwrap();
+        let identity = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(v4_id)
+            .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(false);
         v4_simulate_swap(
@@ -1177,8 +1189,12 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-        let state = core.get_v4_pool(v4_id).unwrap();
-        let identity = core.get_v4_identity(v4_id).unwrap();
+        let state = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(v4_id)
+            .unwrap();
+        let identity = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(v4_id)
+            .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(true);
         v4_simulate_swap(

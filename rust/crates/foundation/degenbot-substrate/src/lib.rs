@@ -59,8 +59,8 @@ pub use ::degenbot_pools::rate_provider::{
     BalancerRateProvider, RateProviderError, StaticRateProvider,
 };
 pub use ::degenbot_pools::registry::{
-    ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, RegisteredPoolFamily,
-    TokenEntry,
+    ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, PoolEntrySlice,
+    RegisteredPoolFamily, TokenEntry,
 };
 pub use ::degenbot_pools::simulate_swap::simulate_swap;
 pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
@@ -269,13 +269,13 @@ pub struct BotCurveBasePoolPort<'a> {
 impl CurveBasePoolPort for BotCurveBasePoolPort<'_> {
     fn token_count(&self) -> usize {
         self.state
-            .get_curve_identity(self.base_id)
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.base_id)
             .map_or(0, degenbot_pools::curve_state::CurvePoolIdentity::n_coins)
     }
 
     fn fee(&self) -> U256 {
         self.state
-            .get_curve_identity(self.base_id)
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.base_id)
             .map_or(U256::ZERO, |id| U256::from(id.fee))
     }
 
@@ -348,6 +348,30 @@ impl BotState {
     #[doc(hidden)]
     pub fn pool_entry_mut(&mut self, pool_id: u64) -> Option<&mut PoolEntry> {
         self.registry.pools.get_mut(&pool_id)
+    }
+
+    /// The family-neutral typed registry read (ADR-073 D3): the slice or
+    /// identity type is the caller's type parameter, so the family knowledge
+    /// lives in the type, never in a method name. `None` when the id is
+    /// unregistered or its family does not carry a `T`.
+    #[must_use]
+    pub fn pool_slice<T: PoolEntrySlice + ?Sized>(&self, pool_id: u64) -> Option<&T> {
+        self.registry
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::slice::<T>)
+    }
+
+    /// The family-neutral typed registration count: how many registered
+    /// entries project onto the slice type `T` (the solve-lane sizing rows'
+    /// shared body — the count is per typed slice, not per named family).
+    #[must_use]
+    pub fn pool_count_of<T: PoolEntrySlice>(&self) -> usize {
+        self.registry
+            .pools
+            .values()
+            .filter(|entry| entry.slice::<T>().is_some())
+            .count()
     }
 
     /// The registered address of a workspace pool id — the deficit trace's
@@ -522,34 +546,6 @@ impl BotState {
         self.registry.pools.get(&pool_id).map(entry_family)
     }
 
-    /// Family-dispatching reader for the V3/V4 concentrated-liquidity
-    /// families. Returns a trait view over the shared read-only
-    /// surface — the mutable scalars (`sqrt_price_x96`/`liquidity`/`tick`/
-    /// `update_block`), the immutable fee/tick-spacing, and `tick_data`.
-    ///
-    /// This is the reader twin of the apply dispatchers: the prior
-    /// per-handle Python readers (`PyLiquidityPool.snapshot_v3`,
-    /// `tick_data_snapshot`, the scalar getters, the restore/discard guards)
-    /// went through `get_v3_pool`, which matches `PoolEntry::V3` only and
-    /// returns `None` for `PoolEntry::V4` — silently yielding `None`/empty/0
-    /// for every V4 read. Routing them through this accessor makes the
-    /// docstrings' "V3/V4 pool" wording honest.
-    ///
-    /// Returns `None` for V2 or unregistered (the V3-only contract) — V2 has
-    /// a different state shape and is read via the dedicated V2 getters.
-    #[must_use]
-    pub fn get_v3_or_v4_pool(&self, pool_id: u64) -> Option<&dyn ConcentratedLiquidityPool> {
-        match self.registry.pools.get(&pool_id)? {
-            PoolEntry::V3(p) => Some(&p.1),
-            PoolEntry::V4(p) => Some(&p.1),
-            PoolEntry::V2(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
-    }
-
     /// Get the pool ID for a given contract address.
     #[must_use]
     pub fn pool_id_by_address(&self, address: &Address) -> Option<u64> {
@@ -592,7 +588,7 @@ impl BotState {
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<RegisteredPoolFamily> {
-        let id = self.v4_pool_id_by_key(pool_manager, pool_id)?;
+        let id = self.pool_id_by_key(pool_manager, pool_id)?;
         Some(self.registry.pools.get(&id)?.registered_family())
     }
 
@@ -616,7 +612,7 @@ impl BotState {
             pool_id,
         } = identity
         {
-            return self.v4_pool_id_by_key(*pool_manager, pool_id);
+            return self.pool_id_by_key(*pool_manager, pool_id);
         }
         let (pool_id, _) = self.registered_pool_by_address(&identity.address())?;
         (self.pool_family(pool_id) == Some(identity.family_tag())).then_some(pool_id)
@@ -977,7 +973,8 @@ impl BotState {
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
         if matches!(self.registry.pools.get(&pool_id), Some(PoolEntry::V4(..))) {
-            self.apply_v4_swap_by_pool_id(
+            self.concentrated_liquidity.apply_v4_swap_by_pool_id(
+                &mut self.registry,
                 pool_id,
                 sqrt_price_x96,
                 liquidity,
@@ -986,7 +983,8 @@ impl BotState {
                 tick_priors,
             )
         } else {
-            self.apply_v3_swap_by_pool_id(
+            self.concentrated_liquidity.apply_v3_swap_by_pool_id(
+                &mut self.registry,
                 pool_id,
                 sqrt_price_x96,
                 liquidity,
@@ -1054,9 +1052,10 @@ impl BotState {
     }
 
     /// Family-dispatching liquidity update. The single entry point
-    /// `PyLiquidityPool.apply_liquidity_update` calls — routes V3 to
-    /// `apply_v3_liquidity_update_by_pool_id` and V4 to
-    /// `apply_v4_liquidity_update_by_pool_id`. A non-CL family is refused
+    /// `PyLiquidityPool.apply_liquidity_update` calls — the CL dispatch
+    /// bucket routes V3/V4 onto the capability's design-keyed rows (ADR-073
+    /// D3: the surface name is family-neutral; the design selection is the
+    /// entry's). A non-CL family is refused
     /// with [`ConcentratedLiquidityApplyError::UnsupportedFamily`] instead of falling into the
     /// V3 path.
     ///
@@ -1074,7 +1073,9 @@ impl BotState {
     ) -> Result<u64, ConcentratedLiquidityApplyError> {
         match self.concentrated_liquidity_kind(pool_id) {
             ConcentratedLiquidityKind::V3 => self
+                .concentrated_liquidity
                 .apply_v3_liquidity_update_by_pool_id(
+                    &mut self.registry,
                     pool_id,
                     tick_lower,
                     tick_upper,
@@ -1083,7 +1084,9 @@ impl BotState {
                 )
                 .ok_or(ConcentratedLiquidityApplyError::NotRegistered { pool_id }),
             ConcentratedLiquidityKind::V4 => self
+                .concentrated_liquidity
                 .apply_v4_liquidity_update_by_pool_id(
+                    &mut self.registry,
                     pool_id,
                     tick_lower,
                     tick_upper,

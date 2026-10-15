@@ -77,11 +77,11 @@ pub fn build_path_info(
 fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, PathInfoBuildError> {
     match pool_ref.hop_type {
         HopType::V2 => {
-            let id = core.get_v2_identity(pool_ref.pool_key).ok_or(
-                PathInfoBuildError::PoolNotRegistered {
+            let id = core
+                .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_ref.pool_key)
+                .ok_or(PathInfoBuildError::PoolNotRegistered {
                     pool_id: pool_ref.pool_key,
-                },
-            )?;
+                })?;
             // The Python `build_hops_from_pools` computes
             // `fee = int(pool.fee_token0 * 10000)` where the Python
             // `fee_token0` is the FEE fraction `Fraction(denom - gamma, denom)`
@@ -109,11 +109,11 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
             ))
         }
         HopType::V3 => {
-            let id = core.get_v3_identity(pool_ref.pool_key).ok_or(
-                PathInfoBuildError::PoolNotRegistered {
+            let id = core
+                .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_ref.pool_key)
+                .ok_or(PathInfoBuildError::PoolNotRegistered {
                     pool_id: pool_ref.pool_key,
-                },
-            )?;
+                })?;
             Ok(v3_hop(
                 id.address,
                 id.token0,
@@ -123,11 +123,11 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
             ))
         }
         HopType::V4 => {
-            let id = core.get_v4_identity(pool_ref.pool_key).ok_or(
-                PathInfoBuildError::PoolNotRegistered {
+            let id = core
+                .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_ref.pool_key)
+                .ok_or(PathInfoBuildError::PoolNotRegistered {
                     pool_id: pool_ref.pool_key,
-                },
-            )?;
+                })?;
             Ok(v4_hop(
                 id.pool_manager,
                 alloy::primitives::B256::new(id.pool_id),

@@ -1074,10 +1074,20 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
             let addr = match family {
-                "v2" => core.get_v2_identity(self.pool_id).map(|i| i.address),
-                "v3" => core.get_v3_identity(self.pool_id).map(|i| i.address),
-                "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.address),
-                "curve" => core.get_curve_identity(self.pool_id).map(|i| i.address),
+                "v2" => core
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
+                    .map(|i| i.address),
+                "v3" => core
+                    .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(self.pool_id)
+                    .map(|i| i.address),
+                "aerodrome-v2" => core
+                    .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                        self.pool_id,
+                    )
+                    .map(|i| i.address),
+                "curve" => core
+                    .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
+                    .map(|i| i.address),
                 _ => None,
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -1093,12 +1103,20 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
             let addr = match family {
-                "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
-                "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
+                "v2" => core
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
+                    .map(|i| i.token0),
+                "v3" => core
+                    .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(self.pool_id)
+                    .map(|i| i.token0),
                 "v4" => core
-                    .get_v4_identity(self.pool_id)
+                    .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(self.pool_id)
                     .map(|i| i.pool_key.currency0),
-                "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.token0),
+                "aerodrome-v2" => core
+                    .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                        self.pool_id,
+                    )
+                    .map(|i| i.token0),
                 _ => None,
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -1114,12 +1132,20 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
             let addr = match family {
-                "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
-                "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
+                "v2" => core
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
+                    .map(|i| i.token1),
+                "v3" => core
+                    .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(self.pool_id)
+                    .map(|i| i.token1),
                 "v4" => core
-                    .get_v4_identity(self.pool_id)
+                    .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(self.pool_id)
                     .map(|i| i.pool_key.currency1),
-                "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.token1),
+                "aerodrome-v2" => core
+                    .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                        self.pool_id,
+                    )
+                    .map(|i| i.token1),
                 _ => None,
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -1135,9 +1161,17 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
             let addr = match family {
-                "v2" => core.get_v2_identity(self.pool_id).map(|i| i.factory),
-                "v3" => core.get_v3_identity(self.pool_id).map(|i| i.factory),
-                "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.factory),
+                "v2" => core
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
+                    .map(|i| i.factory),
+                "v3" => core
+                    .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(self.pool_id)
+                    .map(|i| i.factory),
+                "aerodrome-v2" => core
+                    .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                        self.pool_id,
+                    )
+                    .map(|i| i.factory),
                 _ => None,
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -1154,8 +1188,12 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
             let addr = match family {
-                "v2" => core.get_v2_identity(self.pool_id).map(|i| i.deployer),
-                "v3" => core.get_v3_identity(self.pool_id).map(|i| i.deployer),
+                "v2" => core
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
+                    .map(|i| i.deployer),
+                "v3" => core
+                    .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(self.pool_id)
+                    .map(|i| i.deployer),
                 _ => None,
             };
             addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -1173,8 +1211,12 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
             let h = match family {
-                "v2" => core.get_v2_identity(self.pool_id).map(|i| i.init_hash),
-                "v3" => core.get_v3_identity(self.pool_id).map(|i| i.init_hash),
+                "v2" => core
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
+                    .map(|i| i.init_hash),
+                "v3" => core
+                    .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(self.pool_id)
+                    .map(|i| i.init_hash),
                 _ => None,
             };
             h.map(|b| format!("{b:#x}")).unwrap_or_default()
@@ -1187,7 +1229,7 @@ impl PyLiquidityPool {
     #[getter]
     fn fee_token0(&self, py: Python<'_>) -> (u64, u64) {
         self.with_state(py, |core| {
-            core.get_v2_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
                 .map(|s| s.fee_token0)
                 .unwrap_or_default()
         })
@@ -1198,7 +1240,7 @@ impl PyLiquidityPool {
     #[getter]
     fn fee_token1(&self, py: Python<'_>) -> (u64, u64) {
         self.with_state(py, |core| {
-            core.get_v2_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
                 .map(|s| s.fee_token1)
                 .unwrap_or_default()
         })
@@ -1213,11 +1255,13 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| match family {
             "v2" => core
-                .get_v2_identity(self.pool_id)
+                .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
                 .map(|d| d.variant.as_str().to_string())
                 .unwrap_or_default(),
             "aerodrome-v2" => core
-                .get_aerodrome_identity(self.pool_id)
+                .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                    self.pool_id,
+                )
                 .map(|d| d.variant.as_str().to_string())
                 .unwrap_or_default(),
             _ => String::new(),
@@ -1229,7 +1273,7 @@ impl PyLiquidityPool {
     #[getter]
     fn stable_swap(&self, py: Python<'_>) -> bool {
         self.with_state(py, |core| {
-            core.get_v2_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
                 .is_some_and(|d| d.stable_swap)
         })
     }
@@ -1251,7 +1295,7 @@ impl PyLiquidityPool {
     #[getter]
     fn fee_denominator(&self, py: Python<'_>) -> Option<u64> {
         self.with_state(py, |core| {
-            core.get_v2_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
                 .and_then(|d| d.fee_denominator)
         })
     }
@@ -1266,7 +1310,7 @@ impl PyLiquidityPool {
     #[getter]
     fn dex(&self, py: Python<'_>) -> Option<crate::bot::dex_identity::PyDexIdentity> {
         self.with_state(py, |core| {
-            let id = core.get_v2_identity(self.pool_id)?;
+            let id = core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)?;
             let mut ident = degenbot_uniswap::dex_identity::preset_for_variant(id.variant);
             ident.factory = id.factory;
             ident.deployer = id.deployer;
@@ -1292,12 +1336,20 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
             let token_addr = match family {
-                "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
-                "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
+                "v2" => core
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
+                    .map(|i| i.token0),
+                "v3" => core
+                    .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(self.pool_id)
+                    .map(|i| i.token0),
                 "v4" => core
-                    .get_v4_identity(self.pool_id)
+                    .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(self.pool_id)
                     .map(|i| i.pool_key.currency0),
-                "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.token0),
+                "aerodrome-v2" => core
+                    .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                        self.pool_id,
+                    )
+                    .map(|i| i.token0),
                 _ => None,
             }?;
             if core.has_token(&token_addr) {
@@ -1314,12 +1366,20 @@ impl PyLiquidityPool {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
             let token_addr = match family {
-                "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
-                "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
+                "v2" => core
+                    .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(self.pool_id)
+                    .map(|i| i.token1),
+                "v3" => core
+                    .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(self.pool_id)
+                    .map(|i| i.token1),
                 "v4" => core
-                    .get_v4_identity(self.pool_id)
+                    .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(self.pool_id)
                     .map(|i| i.pool_key.currency1),
-                "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.token1),
+                "aerodrome-v2" => core
+                    .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                        self.pool_id,
+                    )
+                    .map(|i| i.token1),
                 _ => None,
             }?;
             if core.has_token(&token_addr) {
@@ -1332,7 +1392,7 @@ impl PyLiquidityPool {
 
     fn get_balancer_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
         self.with_state(py, |core| {
-            let identity = core.get_balancer_weighted_identity(self.pool_id)?;
+            let identity = core.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id)?;
             let mut out = Vec::with_capacity(identity.tokens.len());
             for token_addr in &identity.tokens {
                 if !core.has_token(token_addr) {
@@ -1357,7 +1417,7 @@ impl PyLiquidityPool {
     #[getter]
     fn pool_manager_address(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
-            core.get_v4_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.pool_manager))
                 .unwrap_or_default()
         })
@@ -1367,9 +1427,11 @@ impl PyLiquidityPool {
     /// a V4 pool.
     #[getter]
     fn pool_id_hex(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| match core.get_v4_identity(self.pool_id) {
-            Some(i) => alloy::hex::encode_prefixed(i.pool_id),
-            None => String::new(),
+        self.with_state(py, |core| {
+            match core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(self.pool_id) {
+                Some(i) => alloy::hex::encode_prefixed(i.pool_id),
+                None => String::new(),
+            }
         })
     }
 
@@ -1378,7 +1440,7 @@ impl PyLiquidityPool {
     #[getter]
     fn hook_address(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
-            core.get_v4_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.pool_key.hooks))
                 .unwrap_or_default()
         })
@@ -1391,8 +1453,10 @@ impl PyLiquidityPool {
     #[getter]
     fn aerodrome_stable(&self, py: Python<'_>) -> bool {
         self.with_state(py, |core| {
-            core.get_aerodrome_identity(self.pool_id)
-                .is_some_and(|d| d.stable)
+            core.pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                self.pool_id,
+            )
+            .is_some_and(|d| d.stable)
         })
     }
 
@@ -1401,9 +1465,11 @@ impl PyLiquidityPool {
     #[getter]
     fn aerodrome_fee(&self, py: Python<'_>) -> (u64, u64) {
         self.with_state(py, |core| {
-            core.get_aerodrome_identity(self.pool_id)
-                .map(|d| d.fee)
-                .unwrap_or_default()
+            core.pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                self.pool_id,
+            )
+            .map(|d| d.fee)
+            .unwrap_or_default()
         })
     }
 
@@ -1411,9 +1477,11 @@ impl PyLiquidityPool {
     #[getter]
     fn aerodrome_token0_decimals(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_aerodrome_identity(self.pool_id)
-                .map(|d| d.token0_decimals)
-                .unwrap_or_default()
+            core.pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                self.pool_id,
+            )
+            .map(|d| d.token0_decimals)
+            .unwrap_or_default()
         })
     }
 
@@ -1421,9 +1489,11 @@ impl PyLiquidityPool {
     #[getter]
     fn aerodrome_token1_decimals(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_aerodrome_identity(self.pool_id)
-                .map(|d| d.token1_decimals)
-                .unwrap_or_default()
+            core.pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                self.pool_id,
+            )
+            .map(|d| d.token1_decimals)
+            .unwrap_or_default()
         })
     }
 
@@ -1434,7 +1504,7 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_address(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
-            core.get_balancer_weighted_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.address))
                 .unwrap_or_default()
         })
@@ -1445,7 +1515,7 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_vault(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
-            core.get_balancer_weighted_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.vault))
                 .unwrap_or_default()
         })
@@ -1456,7 +1526,7 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_pool_id_hex(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
-            match core.get_balancer_weighted_identity(self.pool_id) {
+            match core.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id) {
                 Some(i) => alloy::hex::encode_prefixed(i.pool_id),
                 None => String::new(),
             }
@@ -1468,7 +1538,7 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_token_addresses(&self, py: Python<'_>) -> Vec<String> {
         self.with_state(py, |core| {
-            match core.get_balancer_weighted_identity(self.pool_id) {
+            match core.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id) {
                 Some(i) => i
                     .tokens
                     .iter()
@@ -1484,9 +1554,11 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_weights(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let weights: Vec<alloy::primitives::U256> = self.with_state(py, |s| {
-            s.get_balancer_weighted_identity(self.pool_id)
-                .map(|i| i.weights.to_vec())
-                .unwrap_or_default()
+            s.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(
+                self.pool_id,
+            )
+            .map(|i| i.weights.to_vec())
+            .unwrap_or_default()
         });
         let py_w: Vec<Py<PyAny>> = weights
             .iter()
@@ -1500,9 +1572,11 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let sf: Vec<alloy::primitives::U256> = self.with_state(py, |s| {
-            s.get_balancer_weighted_identity(self.pool_id)
-                .map(|i| i.scaling_factors.to_vec())
-                .unwrap_or_default()
+            s.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(
+                self.pool_id,
+            )
+            .map(|i| i.scaling_factors.to_vec())
+            .unwrap_or_default()
         });
         let py_sf: Vec<Py<PyAny>> = sf
             .iter()
@@ -1516,9 +1590,11 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_swap_fee(&self, py: Python<'_>) -> u128 {
         self.with_state(py, |s| {
-            s.get_balancer_weighted_identity(self.pool_id)
-                .map(|i| i.swap_fee)
-                .unwrap_or_default()
+            s.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(
+                self.pool_id,
+            )
+            .map(|i| i.swap_fee)
+            .unwrap_or_default()
         })
     }
 
@@ -1527,9 +1603,11 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_pow_version(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |s| {
-            s.get_balancer_weighted_identity(self.pool_id)
-                .map(|i| i.pow_version)
-                .unwrap_or_default()
+            s.pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(
+                self.pool_id,
+            )
+            .map(|i| i.pow_version)
+            .unwrap_or_default()
         })
     }
 
@@ -1769,7 +1847,8 @@ impl PyLiquidityPool {
         Option<u64>,
     )> {
         self.with_state(py, |core| {
-            let id = core.get_curve_identity(self.pool_id)?;
+            let id =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             Some((
                 id.initial_a_coefficient,
                 id.future_a_coefficient,
@@ -1796,7 +1875,8 @@ impl PyLiquidityPool {
         Option<u64>,
     )> {
         self.with_state(py, |core| {
-            let id = core.get_curve_identity(self.pool_id)?;
+            let id =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             Some((
                 id.fee_gamma,
                 id.mid_fee,
@@ -1813,7 +1893,8 @@ impl PyLiquidityPool {
     #[expect(clippy::option_option)]
     fn curve_lp_token(&self, py: Python<'_>) -> Option<Option<String>> {
         self.with_state(py, |core| {
-            let id = core.get_curve_identity(self.pool_id)?;
+            let id =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             Some(
                 id.lp_token
                     .map(|a| address_utils::address_to_checksum_string(&a)),
@@ -1825,7 +1906,9 @@ impl PyLiquidityPool {
     /// or when none were registered.
     #[getter]
     fn curve_use_lending(&self, py: Python<'_>) -> Vec<bool> {
-        self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
+        self.with_state(py, |core| match core
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
+        {
             Some(i) => i.use_lending.to_vec(),
             None => Vec::new(),
         })
@@ -1836,7 +1919,9 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_precision_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let pms: Vec<alloy::primitives::U256> =
-            self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
+            self.with_state(py, |core| match core
+                .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
+            {
                 Some(i) => i.precision_multipliers.to_vec(),
                 None => Vec::new(),
             });
@@ -1852,7 +1937,9 @@ impl PyLiquidityPool {
     /// pools registered without a provider (the no-I/O fixture case).
     #[getter]
     fn curve_has_data_provider(&self, py: Python<'_>) -> bool {
-        self.with_state(py, |core| match core.get_curve_pool(self.pool_id) {
+        self.with_state(py, |core| match core
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(self.pool_id)
+        {
             Some(s) => s.data_provider.is_some(),
             None => false,
         })
@@ -1864,7 +1951,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_a_coefficient(&self, py: Python<'_>) -> u128 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.a_coefficient)
         })
     }
@@ -1873,7 +1960,8 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_fee(&self, py: Python<'_>) -> u64 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id).map_or(0, |i| i.fee)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
+                .map_or(0, |i| i.fee)
         })
     }
 
@@ -1881,7 +1969,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_admin_fee(&self, py: Python<'_>) -> u64 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.admin_fee)
         })
     }
@@ -1890,7 +1978,9 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_rate_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rms: Vec<alloy::primitives::U256> =
-            self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
+            self.with_state(py, |core| match core
+                .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
+            {
                 Some(i) => i.rate_multipliers.to_vec(),
                 None => Vec::new(),
             });
@@ -1906,7 +1996,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_swap_style(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.swap_style)
         })
     }
@@ -1915,7 +2005,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_lending_rate_style(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.lending_rate_style)
         })
     }
@@ -1924,7 +2014,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_d_variant(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.d_variant)
         })
     }
@@ -1933,7 +2023,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_y_variant(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.y_variant)
         })
     }
@@ -1942,7 +2032,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_yd_variant(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.yd_variant)
         })
     }
@@ -1951,7 +2041,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_metapool_rate_style(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.metapool_rate_style)
         })
     }
@@ -1960,7 +2050,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_metapool_underlying_style(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |core| {
-            core.get_curve_identity(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)
                 .map_or(0, |i| i.metapool_underlying_style)
         })
     }
@@ -1971,7 +2061,8 @@ impl PyLiquidityPool {
     #[expect(clippy::option_option)]
     fn curve_base_pool_address(&self, py: Python<'_>) -> Option<Option<String>> {
         self.with_state(py, |core| {
-            let id = core.get_curve_identity(self.pool_id)?;
+            let id =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             Some(
                 id.base_pool
                     .map(|a| address_utils::address_to_checksum_string(&a)),
@@ -1985,7 +2076,8 @@ impl PyLiquidityPool {
     /// wraps each via `Erc20Token.from_handle`.
     fn get_curve_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
         self.with_state(py, |core| {
-            let identity = core.get_curve_identity(self.pool_id)?;
+            let identity =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             let mut out = Vec::with_capacity(identity.tokens.len());
             for token_addr in &identity.tokens {
                 if !core.has_token(token_addr) {
@@ -2002,7 +2094,8 @@ impl PyLiquidityPool {
     /// this isn't a Curve pool, or any underlying token isn't registered.
     fn get_curve_tokens_underlying(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
         self.with_state(py, |core| {
-            let identity = core.get_curve_identity(self.pool_id)?;
+            let identity =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             let underlying = identity.tokens_underlying.clone()?;
             let mut out = Vec::with_capacity(underlying.len());
             for token_addr in &underlying {
@@ -2021,7 +2114,8 @@ impl PyLiquidityPool {
     /// or if the LP token isn't registered.
     fn get_curve_lp_token(&self, py: Python<'_>) -> Option<PyErc20Token> {
         self.with_state(py, |core| {
-            let identity = core.get_curve_identity(self.pool_id)?;
+            let identity =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             let lp = identity.lp_token?;
             if !core.has_token(&lp) {
                 return None;
@@ -2037,7 +2131,8 @@ impl PyLiquidityPool {
     /// a non-Curve pool.
     fn curve_token_addresses(&self, py: Python<'_>) -> Option<Vec<String>> {
         self.with_state(py, |core| {
-            let identity = core.get_curve_identity(self.pool_id)?;
+            let identity =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             let mut out = Vec::with_capacity(identity.tokens.len());
             for address in &identity.tokens {
                 out.push(address_utils::address_to_checksum_string(address));
@@ -2051,7 +2146,8 @@ impl PyLiquidityPool {
     /// handle. Not registration-gated (twin of `curve_token_addresses`).
     fn curve_token_addresses_underlying(&self, py: Python<'_>) -> Option<Vec<String>> {
         self.with_state(py, |core| {
-            let identity = core.get_curve_identity(self.pool_id)?;
+            let identity =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             let underlying = identity.tokens_underlying.as_ref()?;
             let mut out = Vec::with_capacity(underlying.len());
             for address in underlying {
@@ -2066,7 +2162,8 @@ impl PyLiquidityPool {
     /// registration-gated (twin of `curve_token_addresses`).
     fn curve_lp_token_address(&self, py: Python<'_>) -> Option<String> {
         self.with_state(py, |core| {
-            let identity = core.get_curve_identity(self.pool_id)?;
+            let identity =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             identity
                 .lp_token
                 .map(|address| address_utils::address_to_checksum_string(&address))
@@ -2081,7 +2178,8 @@ impl PyLiquidityPool {
     /// `CurveStableswapPool.from_handle(handle.curve_base_pool())`.
     fn curve_base_pool(&self, py: Python<'_>) -> Option<PyLiquidityPool> {
         self.with_state(py, |core| {
-            let id = core.get_curve_identity(self.pool_id)?;
+            let id =
+                core.pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.pool_id)?;
             let base_addr = id.base_pool?;
             let base_id = core.pool_id_by_address(&base_addr)?;
             // Construct a handle over the base pool's id, sharing this core.
@@ -2270,7 +2368,7 @@ impl PyLiquidityPool {
         // Provider clone inside py.detach (GIL/BotState inversion fix,
         // 2026-08-21 run-9); the re-entrant provider call stays under the GIL.
         let provider = self.with_state(py, |core| {
-            core.get_curve_pool(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolState>(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
         let provider = provider?;
@@ -2279,7 +2377,7 @@ impl PyLiquidityPool {
 
     fn fetch_curve_block_timestamp(&self, py: Python<'_>, block_number: u64) -> Option<u64> {
         let provider = self.with_state(py, |core| {
-            core.get_curve_pool(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolState>(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
         let provider = provider?;
@@ -2294,7 +2392,7 @@ impl PyLiquidityPool {
         block_number: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
         let provider = self.with_state(py, |core| {
-            core.get_curve_pool(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolState>(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
         let Some(provider) = provider else {
@@ -2319,7 +2417,7 @@ impl PyLiquidityPool {
         block_number: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
         let provider = self.with_state(py, |core| {
-            core.get_curve_pool(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolState>(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
         let Some(provider) = provider else {
@@ -2365,7 +2463,7 @@ impl PyLiquidityPool {
 
     fn fetch_curve_base_cache_updated(&self, py: Python<'_>, block_number: u64) -> Option<u64> {
         let provider = self.with_state(py, |core| {
-            core.get_curve_pool(self.pool_id)
+            core.pool_slice::<degenbot_pools::curve_state::CurvePoolState>(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
         let provider = provider?;
@@ -2405,8 +2503,10 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_bpt_index(&self, py: Python<'_>) -> Option<usize> {
         self.with_state(py, |s| {
-            s.get_balancer_stable_identity(self.pool_id)
-                .and_then(|i| i.bpt_idx)
+            s.pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                self.pool_id,
+            )
+            .and_then(|i| i.bpt_idx)
         })
     }
 
@@ -2417,8 +2517,10 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_amp(&self, py: Python<'_>) -> u128 {
         self.with_state(py, |s| {
-            s.get_balancer_stable_identity(self.pool_id)
-                .map_or(0, |i| i.amp)
+            s.pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                self.pool_id,
+            )
+            .map_or(0, |i| i.amp)
         })
     }
 
@@ -2429,8 +2531,10 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_invariant_version(&self, py: Python<'_>) -> u8 {
         self.with_state(py, |s| {
-            s.get_balancer_stable_identity(self.pool_id)
-                .map_or(0, |i| i.invariant_version)
+            s.pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                self.pool_id,
+            )
+            .map_or(0, |i| i.invariant_version)
         })
     }
 
@@ -2441,9 +2545,11 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_stable_vault(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
-            core.get_balancer_stable_identity(self.pool_id)
-                .map(|i| address_utils::address_to_checksum_string(&i.vault))
-                .unwrap_or_default()
+            core.pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                self.pool_id,
+            )
+            .map(|i| address_utils::address_to_checksum_string(&i.vault))
+            .unwrap_or_default()
         })
     }
 
@@ -2452,7 +2558,10 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_stable_pool_id_hex(&self, py: Python<'_>) -> String {
         self.with_state(py, |core| {
-            match core.get_balancer_stable_identity(self.pool_id) {
+            match core
+                .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                    self.pool_id,
+                ) {
                 Some(i) => alloy::hex::encode_prefixed(i.pool_id),
                 None => String::new(),
             }
@@ -2464,7 +2573,10 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_stable_token_addresses(&self, py: Python<'_>) -> Vec<String> {
         self.with_state(py, |core| {
-            match core.get_balancer_stable_identity(self.pool_id) {
+            match core
+                .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                    self.pool_id,
+                ) {
                 Some(i) => i
                     .tokens
                     .iter()
@@ -2481,7 +2593,10 @@ impl PyLiquidityPool {
     /// via ``Bot.register_token``). ``None`` if not a Balancer stable pool.
     fn get_balancer_stable_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
         self.with_state(py, |core| {
-            let id = core.get_balancer_stable_identity(self.pool_id)?;
+            let id = core
+                .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                    self.pool_id,
+                )?;
             let mut out = Vec::with_capacity(id.tokens.len());
             for token_addr in &id.tokens {
                 if !core.has_token(token_addr) {
@@ -2498,7 +2613,10 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_stable_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let sfs: Vec<alloy::primitives::U256> = self.with_state(py, |core| {
-            match core.get_balancer_stable_identity(self.pool_id) {
+            match core
+                .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                    self.pool_id,
+                ) {
                 Some(i) => i.scaling_factors.to_vec(),
                 None => Vec::new(),
             }
@@ -2515,8 +2633,10 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_stable_swap_fee(&self, py: Python<'_>) -> u128 {
         self.with_state(py, |core| {
-            core.get_balancer_stable_identity(self.pool_id)
-                .map_or(0, |i| i.swap_fee)
+            core.pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+                self.pool_id,
+            )
+            .map_or(0, |i| i.swap_fee)
         })
     }
 
@@ -2529,7 +2649,9 @@ impl PyLiquidityPool {
     #[getter]
     fn balancer_stable_rate_provider_is_static(&self, py: Python<'_>) -> bool {
         self.with_state(py, |core| {
-            match core.get_balancer_stable_pool(self.pool_id) {
+            match core.pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(
+                self.pool_id,
+            ) {
                 Some(s) => s.rate_provider.as_ref().is_none_or(|p| p.is_static()),
                 None => false,
             }
@@ -2548,7 +2670,10 @@ impl PyLiquidityPool {
         block_identifier: Option<u64>,
     ) -> PyResult<Option<Vec<u128>>> {
         let provider = self.with_state(py, |core| {
-            let s = core.get_balancer_stable_pool(self.pool_id)?;
+            let s = core
+                .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(
+                    self.pool_id,
+                )?;
             s.rate_provider.clone()
         });
         let Some(provider) = provider else {

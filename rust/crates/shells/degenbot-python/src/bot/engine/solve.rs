@@ -109,9 +109,9 @@ impl PyArbEngine {
         py.detach(move || {
             let core = stages.core();
             let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
-            core.apply_backfill_buffer_v3(&addr);
-            core.apply_pump_buffer_v3(&addr);
-            core.pin_v3_post_drain_snapshot(addr);
+            core.apply_backfill_buffer(&addr);
+            core.apply_pump_buffer(&addr);
+            core.pin_post_drain_snapshot(addr);
         });
         Ok(())
     }
@@ -137,9 +137,9 @@ impl PyArbEngine {
         py.detach(move || {
             let core = stages.core();
             let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
-            core.apply_backfill_buffer_v4(pm, pool_id);
-            core.apply_pump_buffer_v4(pm, pool_id);
-            core.pin_v4_post_drain_snapshot(pm, &pool_id);
+            core.apply_backfill_buffer_by_key(pm, pool_id);
+            core.apply_pump_buffer_by_key(pm, pool_id);
+            core.pin_post_drain_snapshot_by_key(pm, &pool_id);
         });
         Ok(())
     }
@@ -158,7 +158,7 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_v3_pool_quarantined(addr));
+        self.with_core_mut(py, |s| s.set_pool_quarantined(addr));
         Ok(())
     }
 
@@ -177,7 +177,7 @@ impl PyArbEngine {
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_v4_pool_quarantined(pm, pool_id));
+        self.with_core_mut(py, |s| s.set_pool_quarantined_by_key(pm, pool_id));
         Ok(())
     }
 
@@ -191,7 +191,7 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_v3_pool_live(addr));
+        self.with_core_mut(py, |s| s.set_pool_live(addr));
         Ok(())
     }
 
@@ -209,7 +209,7 @@ impl PyArbEngine {
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_v4_pool_live(pm, pool_id));
+        self.with_core_mut(py, |s| s.set_pool_live_by_key(pm, pool_id));
         Ok(())
     }
 
@@ -221,10 +221,7 @@ impl PyArbEngine {
     #[expect(clippy::unnecessary_wraps)]
     fn release_all_v3_v4_quarantined(&self, py: Python<'_>) -> PyResult<()> {
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(
-            py,
-            degenbot_substrate::BotState::release_all_v3_v4_quarantined,
-        );
+        self.with_core_mut(py, degenbot_substrate::BotState::release_all_quarantined);
         Ok(())
     }
 
@@ -248,7 +245,7 @@ impl PyArbEngine {
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
         self.with_core_mut(py, |s| {
-            s.buffer_backfill_v3_liquidity_update(
+            s.buffer_backfill_liquidity_update(
                 addr,
                 tick_lower,
                 tick_upper,
@@ -286,7 +283,7 @@ impl PyArbEngine {
         // owned tick data comes out, the dict is built under the GIL below.
         let tick_data = self.with_core(py, |s| {
             let key = s.pool_id_by_address(&addr)?;
-            let pool = s.get_v3_pool(key)?;
+            let pool = s.pool_slice::<degenbot_pools::v3_state::V3PoolState>(key)?;
             Some(pool.tick_data.clone())
         });
         let Some(tick_data) = tick_data else {
@@ -407,7 +404,7 @@ impl PyArbEngine {
 
         self.with_core_mut(py, |s| {
             for (addr, sqrt_price, liquidity, tick, tick_data) in updates {
-                s.sync_v3_pool_state(addr, sqrt_price, liquidity, tick, tick_data, block_number);
+                s.sync_pool_state(addr, sqrt_price, liquidity, tick, tick_data, block_number);
             }
         });
         Ok(())
@@ -469,7 +466,7 @@ impl PyArbEngine {
 
         self.with_core_mut(py, |s| {
             for (pool_manager, pool_id, sync) in updates {
-                s.sync_v4_pool_state(pool_manager, pool_id, sync);
+                s.sync_pool_state_by_key(pool_manager, pool_id, sync);
             }
         });
         Ok(())

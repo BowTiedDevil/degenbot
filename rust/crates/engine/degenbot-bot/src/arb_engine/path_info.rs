@@ -57,24 +57,30 @@ pub(crate) fn describe_hop(
 ) -> String {
     let zfo = u8::from(zero_for_one);
     match hop_type {
-        HopType::V2 => core.get_v2_identity(pool_id).map_or_else(
-            || format!("V2:pool_id={pool_id}(zfo={zfo})"),
-            |id| format!("V2:{:#x}(zfo={zfo})", id.address),
-        ),
-        HopType::V3 => core.get_v3_identity(pool_id).map_or_else(
-            || format!("V3:pool_id={pool_id}(zfo={zfo})"),
-            |id| format!("V3:{:#x}(zfo={zfo})", id.address),
-        ),
-        HopType::V4 => core.get_v4_identity(pool_id).map_or_else(
-            || format!("V4:pool_id={pool_id}(zfo={zfo})"),
-            |id| {
-                format!(
-                    "V4:{:#x}:0x{}(zfo={zfo})",
-                    id.pool_manager,
-                    alloy::hex::encode(id.pool_id)
-                )
-            },
-        ),
+        HopType::V2 => core
+            .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id)
+            .map_or_else(
+                || format!("V2:pool_id={pool_id}(zfo={zfo})"),
+                |id| format!("V2:{:#x}(zfo={zfo})", id.address),
+            ),
+        HopType::V3 => core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_id)
+            .map_or_else(
+                || format!("V3:pool_id={pool_id}(zfo={zfo})"),
+                |id| format!("V3:{:#x}(zfo={zfo})", id.address),
+            ),
+        HopType::V4 => core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_id)
+            .map_or_else(
+                || format!("V4:pool_id={pool_id}(zfo={zfo})"),
+                |id| {
+                    format!(
+                        "V4:{:#x}:0x{}(zfo={zfo})",
+                        id.pool_manager,
+                        alloy::hex::encode(id.pool_id)
+                    )
+                },
+            ),
         other => format!("{other:?}:pool_id={pool_id}"),
     }
 }

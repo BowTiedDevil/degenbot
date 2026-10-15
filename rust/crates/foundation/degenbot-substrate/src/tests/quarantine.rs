@@ -120,14 +120,18 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
     // Tracked V4 → Quarantined (register_v4_on_core uses Tracked).
     let tracked_v4 = register_v4_on_core(&mut core, 0);
     assert_eq!(
-        core.get_v4_pool(tracked_v4).unwrap().registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(tracked_v4)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Quarantined
     );
 
     // Sparse V3 → Live (register_v3_on_core uses Sparse).
     let sparse_v3 = register_v3_on_core(&mut core, Address::from([0x88u8; 20]), 0);
     assert_eq!(
-        core.get_v3_pool(sparse_v3).unwrap().registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(sparse_v3)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Live
     );
 
@@ -169,7 +173,9 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
         })
         .expect("sparse V4 registration");
     assert_eq!(
-        core.get_v4_pool(sparse_v4).unwrap().registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(sparse_v4)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Live
     );
 
@@ -204,7 +210,9 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
         })
         .expect("tracked V3 registration");
     assert_eq!(
-        core.get_v3_pool(tracked_v3).unwrap().registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(tracked_v3)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Quarantined
     );
 }
@@ -220,11 +228,13 @@ fn sparse_pool_ignores_set_quarantined() {
     let pool_addr = Address::from([0x77u8; 20]);
     // register_v3_on_core uses Sparse coverage.
     register_v3_on_core(&mut core, pool_addr, 0);
-    core.set_v3_pool_quarantined(pool_addr);
+    core.set_pool_quarantined(pool_addr);
     assert_eq!(
-        core.get_v3_pool(core.pool_id_by_address(&pool_addr).unwrap())
-            .unwrap()
-            .registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(
+            core.pool_id_by_address(&pool_addr).unwrap()
+        )
+        .unwrap()
+        .registration_lifecycle,
         RegistrationLifecycle::Live,
         "Sparse pool must ignore set_quarantined and stay Live"
     );
@@ -273,32 +283,38 @@ fn release_all_quarantined_flushes_and_marks_live() {
     let tracked_v4 = register_v4_on_core(&mut core, 0);
     let _ = tracked_v3; // Sparse → Live from the start, not in the sweep.
     assert_eq!(
-        core.get_v3_pool(tracked_v3b)
+        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(tracked_v3b)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined
     );
     assert_eq!(
-        core.get_v4_pool(tracked_v4).unwrap().registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(tracked_v4)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Quarantined
     );
 
-    core.release_all_v3_v4_quarantined();
+    core.release_all_quarantined();
 
     assert_eq!(
-        core.get_v3_pool(tracked_v3b)
+        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(tracked_v3b)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Live
     );
     assert_eq!(
-        core.get_v4_pool(tracked_v4).unwrap().registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(tracked_v4)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Live
     );
     // The Sparse V3 (register_v3_on_core) was already Live; release
     // (which would be idempotent) is safe here too.
     assert_eq!(
-        core.get_v3_pool(tracked_v3).unwrap().registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(tracked_v3)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Live
     );
 }
@@ -315,19 +331,24 @@ fn quarantined_v4_pool_defers_live_swap_to_pump_buffer() {
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
     // Quarantine the pool.
-    core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
+    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
     assert_eq!(
-        core.get_v4_pool(pool_id).unwrap().registration_lifecycle,
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Quarantined
     );
     // Snapshot the pre-swap state.
-    let pre = core.get_v4_pool(pool_id).unwrap().clone();
+    let pre = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap()
+        .clone();
     let pre_count = core
         .concentrated_liquidity
         .v4_buffer
         .event_count(&(pool_manager, pool_id_bytes));
     // Deliver a live Swap at block 11.
-    core.apply_v4_swap(
+    core.apply_swap_update(
         &V4SwapUpdate {
             pool_manager,
             pool_id: pool_id_bytes,
@@ -339,7 +360,9 @@ fn quarantined_v4_pool_defers_live_swap_to_pump_buffer() {
         11,
     );
     // The swap was deferred: scalars + update_block unchanged.
-    let s = core.get_v4_pool(pool_id).unwrap();
+    let s = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap();
     assert_eq!(
         s.update_block, pre.update_block,
         "update_block must NOT advance — swap deferred"
@@ -373,21 +396,24 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
+    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
     let pre_t60 = core
-        .get_v4_pool(pool_id)
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
         .unwrap()
         .tick_data
         .get(&60)
         .unwrap()
         .clone();
-    let pre_update_block = core.get_v4_pool(pool_id).unwrap().update_block;
+    let pre_update_block = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap()
+        .update_block;
     let pre_count = core
         .concentrated_liquidity
         .v4_buffer
         .event_count(&(pool_manager, pool_id_bytes));
     // Deliver a live Burn (negative ModifyLiquidity) at block 11.
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -395,7 +421,9 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
         I256::try_from(-500i128).unwrap(),
         11,
     );
-    let s = core.get_v4_pool(pool_id).unwrap();
+    let s = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap();
     assert_eq!(
         *s.tick_data.get(&60).unwrap(),
         pre_t60,
@@ -432,13 +460,13 @@ fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
     // Snapshot seed at S=10; register the pool.
     let _pool_id = register_v4_on_core(&mut core, 10);
     // Quarantine BEFORE any live event lands (the registration seam's job).
-    core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
+    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
     // The pump has fully delivered block 10 (tombstone at 11).
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // A live Swap lands at block 11 (in-progress; `last_complete_block` is
     // still 10 — no tombstone for 11 yet).
-    core.apply_v4_swap(
+    core.apply_swap_update(
         &V4SwapUpdate {
             pool_manager,
             pool_id: pool_id_bytes,
@@ -451,11 +479,11 @@ fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
     );
     // Drain the complete-block tail (block 10 has no events; block 11 is
     // retained by the gate).
-    core.apply_pump_buffer_v4(pool_manager, pool_id_bytes);
+    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
     // Pin the post-drain pair.
-    core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
     let (tick_data, pinned_block) = core
-        .take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes)
+        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("a Tracked pool pins a post-drain pair");
     // The pin's `update_block` is 10 (the registration block) — the live
     // Swap at 11 was deferred and the gate retained it. `update_block` did
@@ -484,12 +512,12 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
+    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // Buffer a Burn (block 11, in-progress) + a Swap (block 11) — both
     // retained by the gate during quarantine.
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -497,7 +525,7 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         I256::try_from(-50i128).unwrap(),
         11,
     );
-    core.apply_v4_swap(
+    core.apply_swap_update(
         &V4SwapUpdate {
             pool_manager,
             pool_id: pool_id_bytes,
@@ -516,8 +544,10 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         "both events retained"
     );
     // Transition to Live: flush the retained tail.
-    core.set_v4_pool_live(pool_manager, pool_id_bytes);
-    let s = core.get_v4_pool(pool_id).unwrap();
+    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
+    let s = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap();
     assert_eq!(s.registration_lifecycle, RegistrationLifecycle::Live);
     assert_eq!(s.update_block, 11, "flush applied both events at block 11");
     // tick 60: 100 (seed) - 50 (Burn) = 50.
@@ -535,7 +565,7 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         0
     );
     // A subsequent live event applies directly (no buffering).
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -550,7 +580,9 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         0,
         "Live pool applies directly — no buffering"
     );
-    let s = core.get_v4_pool(pool_id).unwrap();
+    let s = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap();
     assert_eq!(
         s.tick_data.get(&60).unwrap().liquidity_gross,
         U128::from(60)
@@ -569,9 +601,9 @@ fn live_pool_applies_modify_liquidity_directly() {
     // A Tracked pool registers `Quarantined` — transition it
     // to `Live` (the driver's `set_v4_pool_live` is the sole path to the
     // steady-state direct-apply contract).
-    core.set_v4_pool_live(pool_manager, pool_id_bytes);
+    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
     // Now Live — applies directly, never buffers.
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -586,7 +618,9 @@ fn live_pool_applies_modify_liquidity_directly() {
         0,
         "Live pool never buffers"
     );
-    let s = core.get_v4_pool(pool_id).unwrap();
+    let s = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap();
     // Two-stamp rule: tick-map-only ModifyLiquidity → liquidity clock
     // advances; the price clock stays at the seed block 10.
     assert_eq!(s.tick_data_block, 11, "applied directly (liquidity clock)");
@@ -617,7 +651,7 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     let mut core = BotState::new();
     // Backfill-range event (block 8, in the snapshot gap S+1..W-1) for
     // an UNregistered pool → backfill buffer.
-    core.buffer_backfill_v4_liquidity_update(
+    core.buffer_backfill_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -627,13 +661,13 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     );
     // Register the pool (snapshot seed at block 10, tick 60 gross 100).
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
+    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
     // The pump has tombstoned block 10 (live events at 10 are complete).
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // A complete-block pump event (block 10) + an in-progress-block pump
     // event (block 11) — both deferred to the pump buffer.
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -641,7 +675,7 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
         I256::try_from(20i128).unwrap(),
         10,
     );
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -650,12 +684,12 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
         11,
     );
     // Drain both buffers (the registration `apply_buffer_v4` sequence).
-    core.apply_backfill_buffer_v4(pool_manager, pool_id_bytes);
-    core.apply_pump_buffer_v4(pool_manager, pool_id_bytes);
+    core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
+    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
     // Pin the post-drain pair.
-    core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
     let (tick_data, pinned_block) = core
-        .take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes)
+        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("Tracked pool pins");
     // The pin reflects backfill (8) + complete-block pump (10): tick 60
     // gross = 100 (seed) + 30 (backfill) + 20 (pump@10) = 150. The pin's
@@ -671,8 +705,10 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
         "pin = seed + backfill + complete-pump (block-11 Burn retained)"
     );
     // set_live flushes the retained tail (block-11 Burn).
-    core.set_v4_pool_live(pool_manager, pool_id_bytes);
-    let s = core.get_v4_pool(pool_id).unwrap();
+    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
+    let s = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap();
     // Two-stamp rule: the retained-tail Burn (block 11) is tick-map-only,
     // so it advances the LIQUIDITY clock; the price clock stays at 10.
     assert_eq!(
@@ -702,7 +738,7 @@ fn quarantined_pool_backfill_always_fully_drained() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     // A backfill event at block 9 (gap S+1..W-1). No pump buffer events.
-    core.buffer_backfill_v4_liquidity_update(
+    core.buffer_backfill_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -711,14 +747,14 @@ fn quarantined_pool_backfill_always_fully_drained() {
         9,
     );
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
+    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
     // NO cutoff set (no tombstone yet) — the gated pump drain would yield
     // nothing, but the backfill drain is UNGATED and must still apply.
-    core.apply_backfill_buffer_v4(pool_manager, pool_id_bytes);
-    core.apply_pump_buffer_v4(pool_manager, pool_id_bytes);
-    core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+    core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
+    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
+    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
     let (tick_data, pinned_block) = core
-        .take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes)
+        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("Tracked pool pins");
     // The backfill event applied (ungated) → the tick (seed 100 + 40) is
     // present. `update_block` is MONOTONIC (no rewind): the pool registered
@@ -755,7 +791,7 @@ fn concurrent_registration_lifecycle_invariant() {
             let pid_byte = 0xeeu8 + i as u8;
             let pid_bytes = [pid_byte; 32];
             let pool_id = register_v4_on_core_with_pid(&mut core, pid_bytes, 10);
-            core.set_v4_pool_quarantined(pool_manager, pid_bytes);
+            core.set_pool_quarantined_by_key(pool_manager, pid_bytes);
             (pid_bytes, pool_id)
         })
         .collect();
@@ -765,7 +801,7 @@ fn concurrent_registration_lifecycle_invariant() {
     // Interleaved live events: a ModifyLiquidity on pool 0, a Swap on
     // pool 1, a ModifyLiquidity on pool 2 — all at the in-progress block
     // 11. All deferred to their respective pump buffers.
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_ids[0].0,
         60,
@@ -773,7 +809,7 @@ fn concurrent_registration_lifecycle_invariant() {
         I256::try_from(-10i128).unwrap(),
         11,
     );
-    core.apply_v4_swap(
+    core.apply_swap_update(
         &V4SwapUpdate {
             pool_manager,
             pool_id: pool_ids[1].0,
@@ -784,7 +820,7 @@ fn concurrent_registration_lifecycle_invariant() {
         },
         11,
     );
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_ids[2].0,
         60,
@@ -796,10 +832,10 @@ fn concurrent_registration_lifecycle_invariant() {
     // MUST be ≤ `last_complete_block` (10) — the in-progress block 11
     // events were retained by the gate, NOT applied.
     for (pid_bytes, _) in &pool_ids {
-        core.apply_pump_buffer_v4(pool_manager, *pid_bytes);
-        core.pin_v4_post_drain_snapshot(pool_manager, pid_bytes);
+        core.apply_pump_buffer_by_key(pool_manager, *pid_bytes);
+        core.pin_post_drain_snapshot_by_key(pool_manager, pid_bytes);
         let (_, pinned_block) = core
-            .take_v4_post_drain_snapshot(pool_manager, pid_bytes)
+            .take_post_drain_snapshot_by_key(pool_manager, pid_bytes)
             .expect("each Tracked pool pins");
         assert!(
             pinned_block <= 10,
@@ -809,17 +845,23 @@ fn concurrent_registration_lifecycle_invariant() {
     // Pool 0's tick 60 unchanged (block-11 Burn retained). Pool 2's
     // tick 60 unchanged (block-11 Mint retained). Pool 1's scalars
     // unchanged (block-11 Swap retained).
-    let s0 = core.get_v4_pool(pool_ids[0].1).unwrap();
+    let s0 = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ids[0].1)
+        .unwrap();
     assert_eq!(
         s0.tick_data.get(&60).unwrap().liquidity_gross,
         U128::from(100)
     );
-    let s2 = core.get_v4_pool(pool_ids[2].1).unwrap();
+    let s2 = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ids[2].1)
+        .unwrap();
     assert_eq!(
         s2.tick_data.get(&60).unwrap().liquidity_gross,
         U128::from(100)
     );
-    let s1 = core.get_v4_pool(pool_ids[1].1).unwrap();
+    let s1 = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ids[1].1)
+        .unwrap();
     assert_eq!(s1.sqrt_price_x96, U256::from(1u128) << 96, "swap deferred");
 }
 
@@ -835,13 +877,13 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let _pool_id = register_v4_on_core(&mut core, 10);
-    core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
+    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // Swap arrives FIRST (logIdx 120), then Mint (logIdx 1433) — both at
     // the in-progress block 11. Cross-type arrival order is preserved in
     // the buffer (Swap before Mint in the Vec).
-    core.apply_v4_swap(
+    core.apply_swap_update(
         &V4SwapUpdate {
             pool_manager,
             pool_id: pool_id_bytes,
@@ -852,7 +894,7 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
         },
         11,
     );
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -860,10 +902,10 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
         I256::try_from(25i128).unwrap(),
         11,
     );
-    core.apply_pump_buffer_v4(pool_manager, pool_id_bytes);
-    core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
+    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
     let (tick_data, pinned_block) = core
-        .take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes)
+        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("Tracked pool pins");
     assert_eq!(pinned_block, 10, "in-progress block 11 events retained");
     assert_eq!(
@@ -872,7 +914,7 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
         "Mint at 11 NOT applied — retained"
     );
     // Flush at Live applies BOTH in arrival order (Swap, then Mint).
-    core.set_v4_pool_live(pool_manager, pool_id_bytes);
+    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
 }
 
 /// Reorg-during-quarantine edge (documented): a reorg that changes
@@ -892,11 +934,11 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
+    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // A complete-block Mint at 10 (applied at drain), then pin.
-    core.apply_v4_liquidity_update(
+    core.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -904,10 +946,10 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
         I256::try_from(50i128).unwrap(),
         10,
     );
-    core.apply_pump_buffer_v4(pool_manager, pool_id_bytes);
-    core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
+    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
     let (tick_data, pinned_block) = core
-        .take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes)
+        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("Tracked pool pins");
     assert_eq!(pinned_block, 10);
     assert_eq!(tick_data.get(&60).unwrap().liquidity_gross, U128::from(150));
@@ -916,7 +958,9 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
     // 10 would compare this frozen pair against post-reorg on-chain@10
     // (which lacks the Mint) → mismatch → fail-fast (the reorg surfaces).
     core.restore_pool_before_block(pool_id, 10);
-    let s = core.get_v4_pool(pool_id).unwrap();
+    let s = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .unwrap();
     assert_eq!(
         s.tick_data.get(&60).unwrap().liquidity_gross,
         U128::from(100),

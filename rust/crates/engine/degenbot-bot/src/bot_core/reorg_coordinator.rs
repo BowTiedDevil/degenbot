@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(
             bot.state_arc()
                 .read_at(degenbot_substrate::state_lock::LockSite::Core)
-                .v2_snapshot(pool_id),
+                .pool_reserves(pool_id),
             Some((U256::from(1_500), U256::from(2_500), 7)),
             "forward Sync applied"
         );
@@ -435,7 +435,7 @@ mod tests {
         assert_eq!(
             bot.state_arc()
                 .read_at(degenbot_substrate::state_lock::LockSite::Core)
-                .v2_snapshot(pool_id),
+                .pool_reserves(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "reorg rolled back to genesis reserves"
         );
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(
             bot.state_arc()
                 .read_at(degenbot_substrate::state_lock::LockSite::Core)
-                .v2_snapshot(pool_id),
+                .pool_reserves(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "too-deep reorg left state unchanged"
         );
@@ -589,7 +589,9 @@ mod tests {
         {
             let state = bot.state_arc();
             let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
-            let s = guard.get_v3_pool(pool_id).expect("registered");
+            let s = guard
+                .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+                .expect("registered");
             assert_eq!(s.sqrt_price_x96, new_sqrt);
             assert_eq!(s.liquidity, 2_000_000);
             assert_eq!(s.tick, 50);
@@ -617,7 +619,9 @@ mod tests {
         {
             let state = bot.state_arc();
             let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
-            let s = guard.get_v3_pool(pool_id).expect("registered");
+            let s = guard
+                .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+                .expect("registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sqrt,
                 "scalars rolled back to registration"
@@ -654,7 +658,7 @@ mod tests {
         assert!(bot
             .state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Core)
-            .get_v3_pool(pool_id)
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
             .unwrap()
             .journal
             .is_empty());
@@ -675,7 +679,9 @@ mod tests {
         // State untouched — the registration scalars survive.
         let state = bot.state_arc();
         let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
-        let s = guard.get_v3_pool(pool_id).expect("registered");
+        let s = guard
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
         assert_eq!(s.liquidity, 1_000_000);
         assert_eq!(s.tick, 0);
@@ -810,7 +816,9 @@ mod tests {
         {
             let state = bot.state_arc();
             let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
-            let s = guard.get_v4_pool(pool_id).expect("registered");
+            let s = guard
+                .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+                .expect("registered");
             assert_eq!(s.sqrt_price_x96, new_sqrt);
             assert_eq!(s.journal.len(), 1, "V4 registration pushes no genesis");
         }
@@ -840,7 +848,9 @@ mod tests {
         {
             let state = bot.state_arc();
             let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
-            let s = guard.get_v4_pool(pool_id).expect("registered");
+            let s = guard
+                .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+                .expect("registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sqrt,
                 "V4 scalars rolled back to registration"
@@ -861,7 +871,7 @@ mod tests {
         assert!(bot
             .state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Core)
-            .get_v4_pool(pool_id)
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
             .unwrap()
             .journal
             .is_empty());
@@ -889,7 +899,9 @@ mod tests {
         }
         let state = bot.state_arc();
         let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
-        let s = guard.get_v4_pool(pool_id).expect("registered");
+        let s = guard
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+            .expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
         assert!(s.journal.is_empty());
     }

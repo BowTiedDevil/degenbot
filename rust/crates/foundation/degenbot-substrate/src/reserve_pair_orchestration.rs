@@ -18,12 +18,9 @@
 use alloy::primitives::{aliases::U112, Address, U256};
 
 use degenbot_pools::aerodrome_v2_state::{
-    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
-    RegisterAerodromeV2PoolParams,
+    AerodromeV2PoolState, RegisterAerodromePoolError, RegisterAerodromeV2PoolParams,
 };
-use degenbot_pools::v2_state::{
-    RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
-};
+use degenbot_pools::v2_state::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolState};
 
 use super::{BotState, PoolEntry};
 
@@ -136,60 +133,6 @@ impl BotState {
         Some(pool_id)
     }
 
-    /// Read a registered V2 pool's state by `pool_id`.
-    ///
-    /// The solve engine reads state by reference through this accessor
-    /// (ADR-003: "Pool's authority over its own math") and builds the
-    /// orientation-specific `IntHopState` at resolve time from `zero_for_one`.
-    #[must_use]
-    pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::v2)
-            .map(|(_, state)| state)
-    }
-
-    /// Look up a V2 pool's immutable registration identity (address, tokens,
-    /// fees, factory, variant, stable-strategy inputs). Returns `None` if the
-    /// pool is not registered or isn't a V2 pool.
-    #[must_use]
-    pub fn get_v2_identity(&self, pool_id: u64) -> Option<&V2PoolIdentity> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::v2)
-            .map(|(identity, _)| identity)
-    }
-
-    /// Snapshot a V2 pool's current mutable state (reserves + block) under one
-    /// read guard (ADR-005 slice 4 step 3). Returns `None` if the pool is not
-    /// registered or isn't a V2 pool (no V2 state to read).
-    ///
-    /// The Python companion's `state` property + `simulate_*` methods build a
-    /// `UniswapV2PoolState` from this single snapshot so a Rust-side
-    /// `sync_reserves` (pump update) can't interleave between separate reads —
-    /// the `StateCache.lock()` atomicity the drop-`StateCache` refactor loses.
-    #[must_use]
-    pub fn v2_snapshot(&self, pool_id: u64) -> Option<(U256, U256, u64)> {
-        let state = self.get_v2_pool_state(pool_id)?;
-        Some((
-            state.reserve0.to::<U256>(),
-            state.reserve1.to::<U256>(),
-            state.update_block,
-        ))
-    }
-
-    /// Number of registered V2 pools.
-    #[must_use]
-    pub fn v2_pool_count(&self) -> usize {
-        self.registry
-            .pools
-            .values()
-            .filter(|e| matches!(e, PoolEntry::V2(..)))
-            .count()
-    }
-
     /// Register an Aerodrome V2 pool by contract address (ADR-005 Aerodrome
     /// state port).
     ///
@@ -235,25 +178,17 @@ impl BotState {
         Ok(pool_id)
     }
 
-    /// Look up an Aerodrome V2 pool's immutable registration identity. Returns
-    /// `None` if not registered or not an Aerodrome pool.
+    /// The registered reserve pair's `(reserve0, reserve1, update_block)`
+    /// snapshot — the reserves reader the V2 solve lane and the reorg
+    /// coordinator reconcile against (the retired `v2_snapshot`, family-
+    /// neutral name; the returned tuple is the reserve-pair slice's values).
     #[must_use]
-    pub fn get_aerodrome_identity(&self, pool_id: u64) -> Option<&AerodromeV2PoolIdentity> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::aerodrome_v2)
-            .map(|(identity, _)| identity)
-    }
-
-    /// Read a registered Aerodrome V2 pool's state by `pool_id` (reserves +
-    /// `update_block` + the reorg journal).
-    #[must_use]
-    pub fn get_aerodrome_pool(&self, pool_id: u64) -> Option<&AerodromeV2PoolState> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::aerodrome_v2)
-            .map(|(_, state)| state)
+    pub fn pool_reserves(&self, pool_id: u64) -> Option<(U256, U256, u64)> {
+        let state = self.pool_slice::<V2PoolState>(pool_id)?;
+        Some((
+            U256::from(state.reserve0),
+            U256::from(state.reserve1),
+            state.update_block,
+        ))
     }
 }

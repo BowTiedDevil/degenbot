@@ -9,7 +9,7 @@ fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
     use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
     let mut core = BotState::new();
     let addr = Address::from([0x66; 20]);
-    let outcome = core.route_v3_event(
+    let outcome = core.route_event(
         crate::concentrated_liquidity_route::Phase::Live,
         addr,
         BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
@@ -21,7 +21,7 @@ fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
         &[],
     );
     assert_eq!(outcome, ApplyOutcome::Buffered(BufferKind::Pump));
-    assert_eq!(core.buffered_v3_event_count(&addr), 1);
+    assert_eq!(core.buffered_event_count(&addr), 1);
     // a buffered event is engine-witnessed activity — the
     // event horizon advances at ARRIVAL time (parity with V4) so the
     // pin's stamp-provenance verdict sees the true witnessed span after
@@ -45,25 +45,25 @@ fn v3_event_horizon_tracks_max_block_across_buffered_events() {
             block_number: block,
         })
     };
-    core.route_v3_event(
+    core.route_event(
         crate::concentrated_liquidity_route::Phase::Live,
         addr,
         mk(10, 1),
         &[],
     );
-    core.route_v3_event(
+    core.route_event(
         crate::concentrated_liquidity_route::Phase::Live,
         addr,
         mk(50, 2),
         &[],
     );
-    core.route_v3_event(
+    core.route_event(
         crate::concentrated_liquidity_route::Phase::Live,
         addr,
         mk(30, 3),
         &[],
     );
-    assert_eq!(core.buffered_v3_event_count(&addr), 3);
+    assert_eq!(core.buffered_event_count(&addr), 3);
     assert_eq!(core.concentrated_liquidity().v3_event_horizon(&addr), 50);
 }
 
@@ -110,7 +110,9 @@ fn v3_split_clock_seed_prices_at_head_ticks_at_db_block() {
             ..Default::default()
         })
         .expect("test setup: V3 split-clock registration");
-    let s = core.get_v3_pool(pool_id).expect("registered");
+    let s = core
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .expect("registered");
     assert_eq!(
         s.update_block, head,
         "price clock stamped at HEAD (fresh slot0 read)"
@@ -155,13 +157,15 @@ fn aerodrome_reserve_mutation_and_reorg_rollback() {
 
     // Identity survives.
     let identity = core
-        .get_aerodrome_identity(pool_id)
+        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(pool_id)
         .expect("aerodrome identity");
     assert_eq!(identity.fee, (3, 1000));
     assert!(!identity.stable);
 
     // Initial registration state (genesis anchor at block 10).
-    let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
+    let state = core
+        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState>(pool_id)
+        .expect("aerodrome state");
     assert_eq!(state.reserve0, U112::from(1_000u64));
     assert_eq!(state.reserve1, U112::from(2_000u64));
     assert_eq!(state.update_block, 10);
@@ -171,7 +175,9 @@ fn aerodrome_reserve_mutation_and_reorg_rollback() {
     let applied =
         core.apply_sync_by_pool_id(pool_id, U112::from(1_500u64), U112::from(2_500u64), 20);
     assert_eq!(applied, Some(pool_id));
-    let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
+    let state = core
+        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState>(pool_id)
+        .expect("aerodrome state");
     assert_eq!(state.reserve0, U112::from(1_500u64));
     assert_eq!(state.reserve1, U112::from(2_500u64));
     assert_eq!(state.update_block, 20);
@@ -181,7 +187,9 @@ fn aerodrome_reserve_mutation_and_reorg_rollback() {
     core.restore_pool_before_block(pool_id, 20)
         .expect("restore returns Some")
         .expect("restore succeeds");
-    let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
+    let state = core
+        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState>(pool_id)
+        .expect("aerodrome state");
     assert_eq!(state.reserve0, U112::from(1_000u64));
     assert_eq!(state.reserve1, U112::from(2_000u64));
     assert_eq!(state.update_block, 10);
@@ -318,7 +326,7 @@ fn backfill_live_in_range_post_seed_adjusts_in_range_liquidity() {
     let mut core = BotState::new();
     let pool_id = register_v3(&mut core, 5); // seed block 5, liq 0, tick 0 (Sparse -> Live)
                                              // Post-seed in-range Mint (tick 0 in [-60,60), block 6 > seed 5):
-    core.buffer_backfill_v3_liquidity_update(make_pool_addr(), -60, 60, 123_456_i128, 6);
+    core.buffer_backfill_liquidity_update(make_pool_addr(), -60, 60, 123_456_i128, 6);
     let Some(state) = core
         .registry
         .pools
@@ -353,7 +361,7 @@ fn backfill_live_in_range_pre_seed_does_not_adjust_scalar() {
     let mut core = BotState::new();
     let pool_id = register_v3(&mut core, 5); // seed block 5
                                              // Pre-seed in-range Mint (block 4 <= seed 5):
-    core.buffer_backfill_v3_liquidity_update(make_pool_addr(), -60, 60, 250_000_i128, 4);
+    core.buffer_backfill_liquidity_update(make_pool_addr(), -60, 60, 250_000_i128, 4);
     let Some(state) = core
         .registry
         .pools
@@ -394,7 +402,7 @@ fn v3_restore_before_block_past_newest_leaves_state_untouched() {
 
     // Forward Swap at block 10 moves scalars + initializes tick 100.
     let new_sqrt = U256::from(2u64) << 96;
-    core.apply_v3_swap_by_pool_id(
+    core.apply_swap_by_pool_id(
         pool_id,
         new_sqrt,
         1_000,
@@ -497,16 +505,18 @@ fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
 
     // 1. Pre-registration: buffer a backfill Mint at [60, 120], block B=5.
     let mut core = BotState::new();
-    core.buffer_backfill_v3_liquidity_update(pool_addr, 60, 120, 500_i128, block_b);
+    core.buffer_backfill_liquidity_update(pool_addr, 60, 120, 500_i128, block_b);
 
     // 2. Register on the SAME core (tick 60 gross=100, tick 120 absent).
     let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
 
     // 3. Apply the backfill buffer (the registration-staged application).
-    core.apply_backfill_buffer_v3(&pool_addr);
+    core.apply_backfill_buffer(&pool_addr);
 
     {
-        let s = core.get_v3_pool(pool_id).expect("registered");
+        let s = core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("registered");
         // Two-stamp rule: a Mint mutates the TICK MAP (liquidity clock
         // advances) but, being out of range, leaves the slot0 head
         // untouched (price clock stays at registration block 0).
@@ -537,7 +547,9 @@ fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
     // 4. Restore before block B → rolls back the buffered Mint to the
     //    registration snapshot.
     core.restore_pool_before_block(pool_id, block_b);
-    let s = core.get_v3_pool(pool_id).expect("registered");
+    let s = core
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .expect("registered");
     let t60 = s.tick_data.get(&60).expect("tick 60 still present");
     assert_eq!(
         t60.liquidity_gross,
@@ -562,7 +574,7 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
 
     // 1. Pre-registration: pump the Mint (unregistered → pump buffer).
     let mut core = BotState::new();
-    core.apply_v3_liquidity_update(pool_addr, 60, 120, 500_i128, block_b);
+    core.apply_liquidity_update(pool_addr, 60, 120, 500_i128, block_b);
 
     // 2. Register on the SAME core + 3. apply pump buffer.
     let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
@@ -572,10 +584,12 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
     // buffered Mint instead of leaving it pinned behind the gate.
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(block_b);
-    core.apply_pump_buffer_v3(&pool_addr);
+    core.apply_pump_buffer(&pool_addr);
 
     {
-        let s = core.get_v3_pool(pool_id).expect("registered");
+        let s = core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("registered");
         // Two-stamp rule: tick-map-only mint → liquidity clock advances,
         // price clock untouched.
         assert_eq!(
@@ -599,7 +613,9 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
     }
 
     core.restore_pool_before_block(pool_id, block_b);
-    let s = core.get_v3_pool(pool_id).expect("registered");
+    let s = core
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .expect("registered");
     assert_eq!(
         s.tick_data.get(&60).expect("t60").liquidity_gross,
         alloy::primitives::U128::from(100),
@@ -627,7 +643,7 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
 
     // 1. Pre-registration: buffer a backfill ModifyLiquidity at [60,120].
     let mut core = BotState::new();
-    core.buffer_backfill_v4_liquidity_update(
+    core.buffer_backfill_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -671,10 +687,12 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
         .expect("V4 pool registers");
 
     // 3. Apply the backfill buffer.
-    core.apply_backfill_buffer_v4(pool_manager, pool_id_bytes);
+    core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
 
     {
-        let s = core.get_v4_pool(pool_id).expect("registered");
+        let s = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+            .expect("registered");
         // Two-stamp rule: tick-map-only ModifyLiquidity → liquidity clock
         // advances, price clock untouched.
         assert_eq!(
@@ -699,7 +717,9 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
 
     // 4. Restore before block B → rolls back the ModifyLiquidity.
     core.restore_pool_before_block(pool_id, block_b);
-    let s = core.get_v4_pool(pool_id).expect("registered");
+    let s = core
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .expect("registered");
     assert_eq!(
         s.tick_data.get(&60).expect("t60").liquidity_gross,
         U128::from(100),
@@ -766,7 +786,9 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
     // V3-only method). Assert it now applies.
     let _ =
         core_a.apply_swap_by_pool_id(id_a, U256::from(2u128) << 96, 2_000_000, -100, block_b, &[]);
-    let s_a = core_a.get_v4_pool(id_a).expect("V4 pool A registered");
+    let s_a = core_a
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(id_a)
+        .expect("V4 pool A registered");
     assert_eq!(s_a.sqrt_price_x96, U256::from(2u128) << 96);
     assert_eq!(s_a.liquidity, 2_000_000);
     assert_eq!(s_a.tick, -100);
@@ -780,7 +802,7 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
     // AC parity: same scalar inputs via `apply_v4_swap` produce identical
     // post-state. The dispatcher's V4 branch mirrors `apply_v4_swap`'s
     // body (same tick_priors=[], same journal shape).
-    let _ = core_b.apply_v4_swap(
+    let _ = core_b.apply_swap_update(
         &V4SwapUpdate {
             pool_manager,
             pool_id: pool_id_bytes,
@@ -791,7 +813,9 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
         },
         block_b,
     );
-    let s_b = core_b.get_v4_pool(id_b).expect("V4 pool B registered");
+    let s_b = core_b
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(id_b)
+        .expect("V4 pool B registered");
     assert_eq!(s_b.sqrt_price_x96, s_a.sqrt_price_x96);
     assert_eq!(s_b.liquidity, s_a.liquidity);
     assert_eq!(s_b.tick, s_a.tick);
@@ -858,7 +882,9 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
         Ok(id_a),
         "dispatcher must report an applied V4 liquidity update"
     );
-    let s_a = core_a.get_v4_pool(id_a).expect("registered A");
+    let s_a = core_a
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(id_a)
+        .expect("registered A");
     // Two-stamp rule: out-of-range mint → liquidity clock advances, price
     // clock untouched.
     assert_eq!(s_a.tick_data_block, block_b);
@@ -875,7 +901,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
 
     // Parity: direct apply_v4_liquidity_update on B produces the same state.
     assert_eq!(
-        core_b.apply_v4_liquidity_update(
+        core_b.apply_liquidity_update_by_key(
             pool_manager,
             pool_id_bytes,
             60,
@@ -885,7 +911,9 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
         ),
         Some(id_b)
     );
-    let s_b = core_b.get_v4_pool(id_b).expect("registered B");
+    let s_b = core_b
+        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(id_b)
+        .expect("registered B");
     assert_eq!(
         s_b.tick_data.get(&60).expect("t60").liquidity_gross,
         s_a.tick_data.get(&60).expect("t60").liquidity_gross
@@ -951,7 +979,7 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
     let _ =
         core_a.apply_swap_by_pool_id(id_a, U256::from(3u128) << 96, 9_000_000, -240, block_b, &[]);
     let view_a = core_a
-        .get_v3_or_v4_pool(id_a)
+        .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(id_a)
         .expect("V4 pool must surface a non-None reader view");
     assert_eq!(view_a.sqrt_price_x96(), U256::from(3u128) << 96);
     assert_eq!(view_a.liquidity(), 9_000_000);
@@ -962,14 +990,14 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
     // identity/state split; identity reads go through the family-specific
     // getter rather than the dyn-dispatch view).
     let v4_id_a = core_a
-        .get_v4_identity(id_a)
+        .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(id_a)
         .expect("registered V4 pool surfaces an identity via get_v4_identity");
     assert_eq!(v4_id_a.pool_key.fee, 500);
     assert_eq!(v4_id_a.pool_key.tick_spacing, 10);
 
     // AC parity: identical scalar inputs via `apply_v4_swap` produce the
     // same values read through the accessor.
-    let _ = core_b.apply_v4_swap(
+    let _ = core_b.apply_swap_update(
         &V4SwapUpdate {
             pool_manager,
             pool_id: pool_id_bytes,
@@ -981,7 +1009,7 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
         block_b,
     );
     let view_b = core_b
-        .get_v3_or_v4_pool(id_b)
+        .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(id_b)
         .expect("V4 pool B surfaces a reader view");
     assert_eq!(view_b.sqrt_price_x96(), view_a.sqrt_price_x96());
     assert_eq!(view_b.liquidity(), view_a.liquidity());
@@ -1043,7 +1071,7 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
     let id_b = core_b.register_v4_pool(&params).expect("V4 B registers");
 
     let _ = core_a.apply_liquidity_update_by_pool_id(id_a, 60, 120, 700, block_b);
-    let _ = core_b.apply_v4_liquidity_update(
+    let _ = core_b.apply_liquidity_update_by_key(
         pool_manager,
         pool_id_bytes,
         60,
@@ -1056,10 +1084,10 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
     // accessor now yields the V4 tick map (non-empty, mutated) and the
     // view matches the dedicated-path twin.
     let view_a = core_a
-        .get_v3_or_v4_pool(id_a)
+        .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(id_a)
         .expect("V4 A reader view non-None");
     let view_b = core_b
-        .get_v3_or_v4_pool(id_b)
+        .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(id_b)
         .expect("V4 B reader view non-None");
     assert!(!view_a.tick_data().is_empty(), "V4 tick map surfaced");
     assert_eq!(
@@ -1122,7 +1150,7 @@ fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
 
     let block_b = 9u64;
     // Two same-block Swaps with distinct scalars.
-    let _ = core.apply_v3_swap_by_pool_id(
+    let _ = core.apply_swap_by_pool_id(
         pool_id,
         U256::from(2u128) << 96,
         2_000_000,
@@ -1130,7 +1158,7 @@ fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
         block_b,
         &[],
     );
-    let _ = core.apply_v3_swap_by_pool_id(
+    let _ = core.apply_swap_by_pool_id(
         pool_id,
         U256::from(3u128) << 96,
         3_000_000,
@@ -1141,7 +1169,9 @@ fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
 
     // Sanity: current state reflects the second swap.
     {
-        let s = core.get_v3_pool(pool_id).expect("registered");
+        let s = core
+            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(3u128) << 96);
     }
 
@@ -1149,7 +1179,9 @@ fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
     // (2<<96, 2_000_000, -10); the fix must land on the pre-B (registration)
     // state (1<<96, 1_000_000, 0).
     let _ = core.restore_pool_before_block(pool_id, block_b);
-    let s = core.get_v3_pool(pool_id).expect("registered after restore");
+    let s = core
+        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .expect("registered after restore");
     assert_eq!(
         s.sqrt_price_x96,
         U256::from(1u128) << 96,

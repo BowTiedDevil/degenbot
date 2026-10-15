@@ -63,9 +63,11 @@ mod tests {
     fn register_and_read_back_balances() {
         let mut core = BotState::new();
         let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
-        let s = core.get_curve_pool(pool_id).expect("curve pool registered");
+        let s = core
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_id)
+            .expect("curve pool registered");
         let id = core
-            .get_curve_identity(pool_id)
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(pool_id)
             .expect("curve pool identity registered");
         assert_eq!(id.n_coins(), 3);
         assert_eq!(
@@ -87,7 +89,9 @@ mod tests {
             12,
         );
         assert_eq!(affected, Some(pool_id));
-        let s = core.get_curve_pool(pool_id).expect("curve pool registered");
+        let s = core
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_id)
+            .expect("curve pool registered");
         assert_eq!(
             s.balances.to_vec(),
             vec![U256::from(1_500), U256::from(2_500), U256::from(3_500)]
@@ -143,7 +147,9 @@ mod tests {
             .expect("Some on a registered Curve pool")
             .expect("Ok (target > genesis block)");
         // Current mutable state was written back.
-        let s = core.get_curve_pool(pool_id).expect("curve pool registered");
+        let s = core
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_id)
+            .expect("curve pool registered");
         assert_eq!(
             s.balances.to_vec(),
             vec![U256::from(1_000), U256::from(2_000), U256::from(3_000)]
@@ -209,7 +215,7 @@ mod tests {
         };
         let pool_id = core.register_curve_pool(&params);
         let id = core
-            .get_curve_identity(pool_id)
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(pool_id)
             .expect("curve identity present");
 
         // A-ramp.
@@ -241,7 +247,7 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
         let id = core
-            .get_curve_identity(pool_id)
+            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(pool_id)
             .expect("curve identity present");
         assert_eq!(id.initial_a_coefficient, None);
         assert_eq!(id.future_a_coefficient, None);

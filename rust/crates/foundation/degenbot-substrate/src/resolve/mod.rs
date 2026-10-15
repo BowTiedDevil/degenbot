@@ -735,7 +735,7 @@ mod tests {
         // P's tick_data + active liquidity, bumping ONLY P's state_nonce.
         let p_nonce_before = core.pool_state_nonce(p);
         let q_nonce_before = core.pool_state_nonce(q);
-        core.apply_v3_liquidity_update_by_pool_id(p, -120, 120, 1_000_000, 43)
+        core.apply_liquidity_update_by_pool_id(p, -120, 120, 1_000_000, 43)
             .expect("mint applied to P (pool_id path, no buffering)");
         assert_ne!(
             core.pool_state_nonce(p),
