@@ -3,9 +3,11 @@
 //!
 //! One tree per family under [`families`]; each tree is a GLOSSARY.md
 //! "Family read module": it reads no state owner and consumes no solver
-//! kernel, so the family's read story is one file named for the family. The
-//! solve-side half of each family stays in `degenbot-solvers` (GLOSSARY.md
-//! "Family module").
+//! kernel, so the family's read story is one file named for the family.
+//! Since the ADR-073 endgame re-home each family file ALSO carries the
+//! family's solve entry (its nested `solve` module; the CL tree's
+//! [`concentrated_liquidity::solve`]) — the two-homes pattern is literally
+//! ONE file per family.
 //!
 //! The central dispatchers keep one dispatch row per family (ADR-073 D2) and
 //! call ONLY the family tree's intent doors.

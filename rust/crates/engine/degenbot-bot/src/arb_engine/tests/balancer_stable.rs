@@ -208,9 +208,9 @@ fn balancer_stable_rejects_mixed_with_concentrated_liquidity() {
     .expect("path registers (resolve succeeds per-arm)");
     let resolved = &engine.cycle.path_resolved[&path_id];
     assert!(
-        ::degenbot_solvers::mixed::solve_path(
+        ::degenbot_pools::solve::mixed::solve_path(
             resolved,
-            &::degenbot_solvers::profit_envelope::GateDeps::offline()
+            &::degenbot_pools::solve::profit_envelope::GateDeps::offline()
         )
         .result
         .is_none(),

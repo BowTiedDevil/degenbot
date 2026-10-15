@@ -45,7 +45,7 @@ use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
 use self::solve_cycle::{BlockScope, SolveCycle};
-use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
+use ::degenbot_pools::solve::mixed::{MixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
 #[cfg(test)]
@@ -330,12 +330,12 @@ impl PumpPhase {
 /// illiquid); `Sparse` = no snapshot data — solver results may be inaccurate.
 pub use crate::bot_core::PoolTickCoverage;
 // ADR-015: the path/snapshot/hop-state value types + INT128_MAX constant
-// now live in `degenbot-solvers::mixed` (the solver's intake contract). The
+// now live in `degenbot_pools::solve::mixed` (the solver's intake contract). The
 // re-export shim that lived here during the staged relocation has been
 // dropped — callers import the solver types directly from
-// `::degenbot_solvers::mixed::{...}`. `BlockMetadata`, `PoolTickCoverage`,
+// `::degenbot_pools::solve::mixed::{...}`. `BlockMetadata`, `PoolTickCoverage`,
 // `V3SnapshotData`/`V4SnapshotData` (if needed) resolve to their original
-// homes (`bot_core`, `degenbot_solvers::mixed`).
+// homes (`bot_core`, `degenbot_pools::solve::mixed`).
 // `BlockMetadata` lives in `bot_core` (general block data); re-exported here so
 // engine code + external references (`crate::arb_engine::BlockMetadata`)
 // keep working (ADR-006 D4).
@@ -382,7 +382,7 @@ pub struct ResultBatch {
 /// cold-start `solve_all`): the deferral then keeps its pre-fold dropped
 /// behavior.
 pub(crate) type DeferredReRecordHook =
-    std::sync::Arc<dyn Fn(&[degenbot_solvers::affected_keys::AffectedKey], u64) + Send + Sync>;
+    std::sync::Arc<dyn Fn(&[degenbot_pools::solve::affected_keys::AffectedKey], u64) + Send + Sync>;
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 ///
@@ -405,7 +405,7 @@ pub(crate) struct ArbitrageEngine {
     /// solver crate's removed process-global RUNTIME `OnceLock`.
     /// ADR-045 T4: the cycle owns its own copy.
     #[expect(dead_code)]
-    runtime_cfg: ::degenbot_solvers::runtime::SolveRuntimeConfig,
+    runtime_cfg: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
     /// V2 + V3 + V4 pool state owner (ADR-003). The shared
     /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
     /// mutations a write guard. Lock ordering when nested is
@@ -547,12 +547,14 @@ impl ArbitrageEngine {
                 // (dormant Unopened, pipe closed, counters at 0).
                 detached_cycle: detached_cycle::DetachedCycle::new(),
                 scope: BlockScope::new(
-                    std::sync::Arc::new(::degenbot_solvers::concentrated_liquidity::WalkMemo::new(
-                        cfg.solve.solver_walk_memo,
-                        cfg.solve.solver_walk_memo_stats,
-                    )),
                     std::sync::Arc::new(
-                        ::degenbot_solvers::concentrated_liquidity::WalkTelemetry::new(),
+                        ::degenbot_pools::solve::concentrated_liquidity::WalkMemo::new(
+                            cfg.solve.solver_walk_memo,
+                            cfg.solve.solver_walk_memo_stats,
+                        ),
+                    ),
+                    std::sync::Arc::new(
+                        ::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry::new(),
                     ),
                 ),
                 min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),

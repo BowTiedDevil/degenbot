@@ -526,7 +526,7 @@ mod tests {
         lane_death_response, run_solve_lane, LaneFailure, LaneOutcome, SolveLane, SolveOutcome,
     };
     use crate::arb_engine::executor::{Executor as _, SubmitWork};
-    use degenbot_solvers::mixed::SolvePathResult;
+    use degenbot_pools::solve::mixed::SolvePathResult;
     use degenbot_workers::budget::BudgetOverrides;
     use degenbot_workers::dispatcher::{
         AbortingPolicy, ArenaToken, FleetBoot, PanicAction, PanicVerdict, SeatSurvivesPolicy,
@@ -576,7 +576,7 @@ mod tests {
     fn submit_bins(
         executor: &FleetSolveExecutor,
         bins: &[Vec<usize>],
-        items: &[Arc<::degenbot_solvers::mixed::ResolvedMixedPath>],
+        items: &[Arc<::degenbot_pools::solve::mixed::ResolvedMixedPath>],
         ctx: &Arc<crate::arb_engine::solve_cycle::SolveCycleShared>,
     ) -> Vec<(u64, SolvePathResult)> {
         let (tx, rx) = std::sync::mpsc::channel::<(u64, SolvePathResult)>();

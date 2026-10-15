@@ -40,7 +40,6 @@ degenbot-pools.workspace = true
 degenbot-substrate.workspace = true
 degenbot-pool-updater.workspace = true
 degenbot-pathfinding.workspace = true
-degenbot-solvers.workspace = true
 degenbot-executor.workspace = true
 degenbot-uniswap.workspace = true
 # ADR-042 F3: the fleet (role-switching worker fleet) hosts the solve bins
@@ -106,13 +105,14 @@ otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", 
 # `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
 # only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
 # `DEGENBOT_HOTPATH=1` env var so default runs never construct the guard.
-# Forwards degenbot-solvers/hotpath so the solver-internal probes (concentrated_liquidity_solve.*,
+# Forwards degenbot-pools/hotpath (the re-homed solver kernels, ADR-073 endgame) so the
+# solver-internal probes (concentrated_liquidity_solve.*,
 # mixed.solve_path_inner) instrument too — the crate-level hotpath dep unifies
 # at package level, but the explicit forward keeps the intent durable.
 # `tokio` backend: the tokio_runtime! monitor (hotpath_tokio_* families; the
 # full RuntimeMetrics getters additionally need --cfg tokio_unstable, which
 # hotpath build recipes set in RUSTFLAGS for this feature lane).
-hotpath = ["hotpath/hotpath", "hotpath/threads", "hotpath/tokio", "degenbot-solvers/hotpath"]
+hotpath = ["hotpath/hotpath", "hotpath/threads", "hotpath/tokio", "degenbot-pools/hotpath"]
 hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 # Prometheus exporter for the profiler itself (GET /metrics, default

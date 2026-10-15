@@ -41,7 +41,7 @@ use crate::arb_engine::ArbitrageEngine;
 #[cfg(test)]
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::{Address, I256, U256};
-use degenbot_solvers::mixed::{MixedPoolRef, SolvePathResult};
+use degenbot_pools::solve::mixed::{MixedPoolRef, SolvePathResult};
 // the pipelined sim scheduler moved here beside `PendingSim` /
 // `SimulatedPathResult`; it takes the cycle context from `solve_cycle` and
 // owns the once-per-process boot-refusal latch ).
@@ -241,7 +241,7 @@ pub(crate) fn build_inline_sim_request(
     ctx: &crate::arb_engine::solve_cycle::SolveCycleShared,
     idx: usize,
     pid: u64,
-    result: &degenbot_solvers::mixed::SolvePathResult,
+    result: &degenbot_pools::solve::mixed::SolvePathResult,
 ) -> InlineSimRequest {
     InlineSimRequest {
         path_id: pid,
@@ -424,7 +424,7 @@ mod inline_sim_tests {
     use crate::arb_engine::lifecycle::register_path;
     use crate::bot_core::RegisterV4PoolParams;
     use alloy::primitives::U256;
-    use degenbot_solvers::mixed::{HopType, PoolHop};
+    use degenbot_pools::solve::mixed::{HopType, PoolHop};
     use hashbrown::HashMap;
     use parking_lot::Mutex;
     use std::sync::Arc;

@@ -200,8 +200,8 @@ mod tests {
     use ::degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};
     use alloy::primitives::{aliases::U112, Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
-    use degenbot_solvers::affected_keys::AffectedKey;
-    use degenbot_solvers::mixed::HopType;
+    use degenbot_pools::solve::affected_keys::AffectedKey;
+    use degenbot_pools::solve::mixed::HopType;
     use hashbrown::HashMap;
     use std::sync::Arc;
 

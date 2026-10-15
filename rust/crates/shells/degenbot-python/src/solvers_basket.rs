@@ -1,6 +1,6 @@
 //! `QuantAMM` solver bindings (feature = "bot").
 //!
-//! Domain `#[pyfunction]` surface over `degenbot-solvers`; registration stays
+//! Domain `#[pyfunction]` surface over `degenbot_pools::solve`; registration stays
 //! exported declaratively from the root `#[pymodule]` in `lib.rs`.
 
 use pyo3::exceptions::PyValueError;
@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 
 /// `QuantAMM` closed-form N-token Balancer weighted basket arbitrage solver.
 ///
-/// Thin `PyO3` wrapper over [`degenbot_solvers::basket::solve_balancer_weighted`].
+/// Thin `PyO3` wrapper over [`degenbot_pools::solve::basket::solve_balancer_weighted`].
 /// Port of `BalancerMultiTokenSolver` / `solve_balancer_weighted` (Willetts &
 /// Harrington, `QuantAMM` Equation 9).
 ///
@@ -65,7 +65,7 @@ pub fn solve_balancer_weighted_basket(
             market_prices.len()
         )));
     }
-    let pool = degenbot_solvers::basket::BalancerMultiTokenState {
+    let pool = degenbot_pools::solve::basket::BalancerMultiTokenState {
         reserves,
         weights,
         fee_numer,
@@ -73,7 +73,7 @@ pub fn solve_balancer_weighted_basket(
         decimals,
     };
     let result =
-        degenbot_solvers::basket::solve_balancer_weighted(&pool, &market_prices, max_input);
+        degenbot_pools::solve::basket::solve_balancer_weighted(&pool, &market_prices, max_input);
     Ok((
         result.trades,
         result.profit,

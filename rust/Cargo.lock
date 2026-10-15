@@ -2237,7 +2237,6 @@ dependencies = [
  "degenbot-rpc",
  "degenbot-runs",
  "degenbot-simulation",
- "degenbot-solvers",
  "degenbot-strategy",
  "degenbot-submission",
  "degenbot-substrate",
@@ -2351,7 +2350,6 @@ dependencies = [
  "degenbot-pool-updater",
  "degenbot-pools",
  "degenbot-rpc",
- "degenbot-solvers",
  "degenbot-substrate",
  "degenbot-uniswap",
  "degenbot-workers",
@@ -2490,7 +2488,7 @@ version = "0.6.0-alpha.15"
 dependencies = [
  "alloy",
  "degenbot-executor",
- "degenbot-solvers",
+ "degenbot-pools",
  "thiserror",
 ]
 
@@ -2501,7 +2499,7 @@ dependencies = [
  "alloy",
  "degenbot-execution",
  "degenbot-executor",
- "degenbot-solvers",
+ "degenbot-pools",
  "thiserror",
 ]
 
@@ -2595,16 +2593,27 @@ name = "degenbot-pools"
 version = "0.6.0-alpha.15"
 dependencies = [
  "alloy",
+ "criterion",
+ "degenbot-core",
  "degenbot-decoders",
  "degenbot-math",
+ "degenbot-rpc",
  "degenbot-uniswap",
  "hashbrown 0.17.1",
  "hex",
+ "hotpath",
+ "num-bigint 0.5.1",
+ "num-integer",
  "parking_lot",
  "proptest",
+ "rayon",
  "revm",
  "serde_json",
+ "tempfile",
  "thiserror",
+ "tokio",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -2699,32 +2708,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-solvers"
-version = "0.6.0-alpha.15"
-dependencies = [
- "alloy",
- "criterion",
- "degenbot-core",
- "degenbot-math",
- "degenbot-pools",
- "degenbot-rpc",
- "degenbot-uniswap",
- "hashbrown 0.17.1",
- "hotpath",
- "num-bigint 0.5.1",
- "num-integer",
- "parking_lot",
- "proptest",
- "rayon",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "zstd",
-]
-
-[[package]]
 name = "degenbot-strategy"
 version = "0.6.0-alpha.15"
 dependencies = [
@@ -2743,7 +2726,6 @@ dependencies = [
  "degenbot-rpc",
  "degenbot-runs",
  "degenbot-simulation",
- "degenbot-solvers",
  "degenbot-submission",
  "degenbot-substrate",
  "hashbrown 0.17.1",
@@ -2822,7 +2804,6 @@ dependencies = [
  "degenbot-pool-updater",
  "degenbot-pools",
  "degenbot-rpc",
- "degenbot-solvers",
  "degenbot-uniswap",
  "hashbrown 0.17.1",
  "hotpath",
@@ -2892,7 +2873,6 @@ dependencies = [
  "degenbot-price",
  "degenbot-rpc",
  "degenbot-simulation",
- "degenbot-solvers",
  "degenbot-strategy",
  "degenbot-submission",
  "degenbot-substrate",

@@ -22,7 +22,7 @@ pub fn u512_div_ceil(num: U512, denom: U512) -> U256 {
 
 /// Narrow `U512` → `U256` with an overflow assert (mirrors the helper in
 /// `degenbot-bot`/`narrow_u512_to_u256`; consolidated into a shared
-/// `v2-math` pub fn by the `degenbot-solvers` extraction epic).
+/// `v2-math` pub fn by the solver-kernel extraction epic).
 #[must_use]
 fn u512_to_u256(v: U512) -> U256 {
     assert!(

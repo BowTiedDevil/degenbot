@@ -469,7 +469,7 @@ pub(crate) mod outcome_ledger {
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
-    use degenbot_solvers::mixed::SolvePathResult;
+    use degenbot_pools::solve::mixed::SolvePathResult;
     use degenbot_workers::posture::{FleetPosture, PostureOwner, PosturePolicy, ThrottleSample};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};

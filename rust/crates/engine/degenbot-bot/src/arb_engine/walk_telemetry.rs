@@ -1,6 +1,6 @@
 //! The per-epoch `WalkMemoStats` tap (observation only).
 //!
-//! [`WalkMemo`](::degenbot_solvers::concentrated_liquidity::WalkMemo) has been fully instrumented
+//! [`WalkMemo`](::degenbot_pools::solve::concentrated_liquidity::WalkMemo) has been fully instrumented
 //! since the memo landed (probes, hits, distinct, cache plays, negatives,
 //! per-probe/per-hit sims), but nothing in the engine drained it: `take_stats`
 //! existed with no engine-side caller. This module is the drain. It owns:
@@ -53,7 +53,7 @@
 //!   stance, so every counter stays zero and the tap is fully inert — no
 //!   JSONL line, no instruments, no IO. The bot-side gate is this
 //!   zero-activity short-circuit, NOT the memo's `active()` itself:
-//!   `active()` is `pub(super)` in `degenbot-solvers` (crate-private) and
+//!   `active()` is `pub(super)` in `degenbot_pools::solve` (crate-private) and
 //!   unreachable from `degenbot-bot`; the zero counters ARE that stance's
 //!   observable effect. (`begin_block` still advances a disabled memo's
 //!   epoch — irrelevant here: nothing else ever moves.)
@@ -86,7 +86,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ::degenbot_solvers::concentrated_liquidity::{WalkMemo, WalkMemoStats};
+use ::degenbot_pools::solve::concentrated_liquidity::{WalkMemo, WalkMemoStats};
 use degenbot_core::op_warn;
 
 /// The production JSONL path, relative to the process CWD. `run_bot.sh` cds
@@ -300,10 +300,10 @@ mod tests {
     use super::*;
     use ::alloy::primitives::U256;
     use ::degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-    use ::degenbot_solvers::concentrated_liquidity::{
+    use ::degenbot_pools::solve::concentrated_liquidity::{
         solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop,
     };
-    use ::degenbot_solvers::runtime::SolveRuntimeConfig;
+    use ::degenbot_pools::solve::runtime::SolveRuntimeConfig;
     use parking_lot::Mutex;
 
     /// Capturing sink — lines land in a buffer, never the production

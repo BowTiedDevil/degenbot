@@ -66,7 +66,7 @@ use super::lifecycle::{
 };
 use super::path_registry::PathRegistrationError;
 use super::{DiagnosticPathState, ResultBatch};
-use ::degenbot_solvers::mixed::{MixedPoolRef, PoolHop, SolvePathResult};
+use ::degenbot_pools::solve::mixed::{MixedPoolRef, PoolHop, SolvePathResult};
 use degenbot_executor::composers::PathInfo;
 use degenbot_substrate::path_info::PathInfoBuildError;
 use hashbrown::HashMap;
@@ -1115,7 +1115,7 @@ mod construction_ledger_pins {
             !crate::bot_core::PumpControl::has_dirty_paths(&stages),
             "a fresh injected ledger is empty"
         );
-        delta.record_affected(degenbot_solvers::mixed::HopType::V2, 1u64, 1u64);
+        delta.record_affected(degenbot_pools::solve::mixed::HopType::V2, 1u64, 1u64);
         assert!(
             crate::bot_core::PumpControl::has_dirty_paths(&stages),
             "the injected ledger must be the one the stage surface reads"

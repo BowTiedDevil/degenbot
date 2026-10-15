@@ -18,7 +18,7 @@ use crate::arb_engine::test_harness::{
 use crate::arb_engine::{ArbitrageEngine, BlockMetadata, PumpPhase};
 use crate::bot_core::RegisterV3PoolParams;
 use crate::bot_core::RegisterV4PoolParams;
-use ::degenbot_solvers::mixed::{
+use ::degenbot_pools::solve::mixed::{
     HopType, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
 };
 use alloy::primitives::{aliases::U112, Address, U256};

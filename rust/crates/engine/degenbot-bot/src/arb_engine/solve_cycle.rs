@@ -102,16 +102,16 @@ use super::DeferredReRecordHook;
 use crate::arb_engine::detached_cycle::{self, DetachedArm, LaneDrainCounts};
 use crate::arb_engine::executor::{run_solve_lane, LaneOutcome, SolveLane, SolveOutcome};
 use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
-use ::degenbot_solvers::mixed::{
+use ::degenbot_pools::solve::mixed::{
     HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
 };
 use alloy::primitives::{I256, U256};
 use dashmap::DashMap;
 use degenbot_core::diag;
 use degenbot_core::{op_error, op_info};
+use degenbot_pools::solve::affected_keys::AffectedKey;
 use degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};
 use degenbot_pools::v4_state::v4_simulate_swap;
-use degenbot_solvers::affected_keys::AffectedKey;
 use degenbot_substrate::resolve::resolve_hops;
 use degenbot_substrate::resolve::HopProjectionCache;
 use degenbot_substrate::{BlockMetadata, BotState, EpochDelta};
@@ -152,9 +152,9 @@ struct ResolveChunkOut {
 /// in one place.
 #[derive(Clone)]
 pub(crate) struct BlockScope {
-    walk_memo: Arc<::degenbot_solvers::concentrated_liquidity::WalkMemo>,
-    walk_telemetry: Arc<::degenbot_solvers::concentrated_liquidity::WalkTelemetry>,
-    prefix_cache: Arc<::degenbot_solvers::profit_envelope::PrefixCache>,
+    walk_memo: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkMemo>,
+    walk_telemetry: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry>,
+    prefix_cache: Arc<::degenbot_pools::solve::profit_envelope::PrefixCache>,
     epoch: u64,
 }
 
@@ -162,13 +162,13 @@ impl BlockScope {
     /// A fresh scope at epoch 0 over the given walk-composition memo and
     /// walk-telemetry collector handles.
     pub(crate) fn new(
-        walk_memo: Arc<::degenbot_solvers::concentrated_liquidity::WalkMemo>,
-        walk_telemetry: Arc<::degenbot_solvers::concentrated_liquidity::WalkTelemetry>,
+        walk_memo: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkMemo>,
+        walk_telemetry: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry>,
     ) -> Self {
         Self {
             walk_memo,
             walk_telemetry,
-            prefix_cache: Arc::new(::degenbot_solvers::profit_envelope::PrefixCache::new()),
+            prefix_cache: Arc::new(::degenbot_pools::solve::profit_envelope::PrefixCache::new()),
             epoch: 0,
         }
     }
@@ -181,7 +181,7 @@ impl BlockScope {
     pub(crate) fn advance(
         &mut self,
         block: u64,
-    ) -> ::degenbot_solvers::concentrated_liquidity::WalkMemoStats {
+    ) -> ::degenbot_pools::solve::concentrated_liquidity::WalkMemoStats {
         self.epoch = block;
         self.walk_memo.begin_block(block)
     }
@@ -194,7 +194,9 @@ impl BlockScope {
 
     /// The engine-owned walk-composition memo handle.
     #[must_use]
-    pub(crate) fn walk_memo(&self) -> &Arc<::degenbot_solvers::concentrated_liquidity::WalkMemo> {
+    pub(crate) fn walk_memo(
+        &self,
+    ) -> &Arc<::degenbot_pools::solve::concentrated_liquidity::WalkMemo> {
         &self.walk_memo
     }
 
@@ -202,13 +204,15 @@ impl BlockScope {
     #[must_use]
     pub(crate) fn walk_telemetry(
         &self,
-    ) -> &Arc<::degenbot_solvers::concentrated_liquidity::WalkTelemetry> {
+    ) -> &Arc<::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry> {
         &self.walk_telemetry
     }
 
     /// The engine-owned prefix-composition cache handle.
     #[must_use]
-    pub(crate) fn prefix_cache(&self) -> &Arc<::degenbot_solvers::profit_envelope::PrefixCache> {
+    pub(crate) fn prefix_cache(
+        &self,
+    ) -> &Arc<::degenbot_pools::solve::profit_envelope::PrefixCache> {
         &self.prefix_cache
     }
 }
@@ -235,7 +239,7 @@ pub(crate) struct SolveCycleShared {
     pub(crate) clamp_margin: U256,
     /// the instance-scoped solver runtime stance, threaded down —
     /// the solver crate has no process-global config anymore.
-    pub(crate) runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig,
+    pub(crate) runtime: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
     /// Every per-path cost sink — the pipeline instruments, the K-slowest
     /// retention, the two capture hooks, and the next-cycle LPT cost history —
     /// behind ONE record call from the lane walk, plus the ONE typed snapshot
@@ -290,16 +294,16 @@ impl SolveCycleShared {
             metadata,
             gate_capture: None,
             scope: BlockScope::new(
-                std::sync::Arc::new(::degenbot_solvers::concentrated_liquidity::WalkMemo::new(
-                    false, false,
-                )),
                 std::sync::Arc::new(
-                    ::degenbot_solvers::concentrated_liquidity::WalkTelemetry::new(),
+                    ::degenbot_pools::solve::concentrated_liquidity::WalkMemo::new(false, false),
+                ),
+                std::sync::Arc::new(
+                    ::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry::new(),
                 ),
             ),
             min_profit: U256::ZERO,
             clamp_margin: U256::from(1u128),
-            runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
+            runtime: ::degenbot_pools::solve::runtime::SolveRuntimeConfig::default(),
             path_cost_ledger: super::path_cost_ledger::PathCostLedger::new(
                 solve_block,
                 None,
@@ -516,7 +520,7 @@ pub(crate) struct SolveCycle {
     /// construction), and the inline-sim hook (kept in sync by
     /// `set_inline_simulator`).
     pub(crate) cfg: Arc<::degenbot_config::BotConfig>,
-    pub(crate) runtime_cfg: ::degenbot_solvers::runtime::SolveRuntimeConfig,
+    pub(crate) runtime_cfg: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
     pub(crate) inline_sim: Option<Arc<dyn super::inline_sim::InlineSimulator>>,
     // --- for_test knobs (ADR-041: names pinned on the engine) ---------
     /// Test-only: hook invoked at the start of each path solve.
@@ -1777,11 +1781,11 @@ impl SolveCycle {
             if !deferred_paths.is_empty() {
                 let mut deferred_sorted: Vec<u64> = deferred_paths.iter().copied().collect();
                 deferred_sorted.sort_unstable();
-                let mut keys: Vec<degenbot_solvers::affected_keys::AffectedKey> = Vec::new();
+                let mut keys: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = Vec::new();
                 for path_id in deferred_sorted {
                     if let Some(path) = registry.get(path_id) {
                         keys.extend(path.pools.iter().map(|pool_ref| {
-                            degenbot_solvers::affected_keys::AffectedKey::new(
+                            degenbot_pools::solve::affected_keys::AffectedKey::new(
                                 pool_ref.hop_type,
                                 pool_ref.pool_key,
                             )
@@ -2293,7 +2297,7 @@ impl SolveCycle {
             let run_bin = move || {
                 // Cold start: no capture wiring — deps with the
                 // registered-epoch guard + the engine walk-memo handle.
-                let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
+                let gate_deps = ::degenbot_pools::solve::profit_envelope::GateDeps::per_block(
                     results_block,
                     &prefix_store,
                     None,
@@ -2304,7 +2308,7 @@ impl SolveCycle {
                 for &i in &bin {
                     let (path_id, resolved) = &to_solve_bin[i];
                     let _solve_ctx = solve_span_bin.enter();
-                    if let Some(mut r) = ::degenbot_solvers::mixed::solve_path_with_min_profit(
+                    if let Some(mut r) = ::degenbot_pools::solve::mixed::solve_path_with_min_profit(
                         resolved, min_floor, &gate_deps,
                     )
                     .result
@@ -2576,9 +2580,9 @@ impl SolveCycle {
         // Eagerly solve the newly registered path.
         if let Some(resolved) = registration.resolved.as_ref() {
             if resolved.valid {
-                if let Some(mut solve_result) = ::degenbot_solvers::mixed::solve_path(
+                if let Some(mut solve_result) = ::degenbot_pools::solve::mixed::solve_path(
                     resolved,
-                    &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+                    &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
                 )
                 .result
                 {
@@ -2837,7 +2841,7 @@ impl SolveCycle {
 mod tests {
     use super::*;
     use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
-    use ::degenbot_solvers::mixed::{HopType, PoolHop};
+    use ::degenbot_pools::solve::mixed::{HopType, PoolHop};
     use alloy::primitives::{aliases::U112, Address, U256};
     use hashbrown::HashSet;
     fn usdc(amount: u64) -> U112 {
@@ -3128,7 +3132,7 @@ mod tests {
 mod clamp_recompute_tests {
     #![expect(clippy::expect_used)] // tests assert recompute invariants
     use super::recompute_clamped_profit;
-    use ::degenbot_solvers::mixed::SolvePathResult;
+    use ::degenbot_pools::solve::mixed::SolvePathResult;
     use alloy::primitives::U256;
     /// Path-142603 (V4-V4-V3 @25723658) regression: the solver reported a
     /// phantom +346,369,630 wei profit because its V3 hop2 output

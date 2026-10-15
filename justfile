@@ -217,8 +217,8 @@ test-fleet-parity:
 # nondeterminism across reps, on the single-block anchor + the 156-row heavy
 # corpus. Blocks merge in CI; named here so the pre-push gate runs it too.
 test-golden-replay:
-    cd rust && cargo run --locked -q -p degenbot-solvers --example concentrated_liquidity_solve_replay -- crates/engine/degenbot-solvers/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
-    cd rust && cargo run --locked -q -p degenbot-solvers --example concentrated_liquidity_solve_replay -- crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
+    cd rust && cargo run --locked -q -p degenbot-pools --example concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
+    cd rust && cargo run --locked -q -p degenbot-pools --example concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
 
 
 # Run the cargo workspace suite under cargo-nextest: per-process test
@@ -1325,16 +1325,16 @@ lint-stub-drift:
 # for the all-CL intake vs the direct entry over a capture corpus, parity-gated
 # (exits 1 on divergence). DR_AB_ITERS / DR_AB_MEMO shape the run.
 entry-ab corpus="heavy_concentrated_liquidity_solve_captures.jsonl":
-    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers --example entry_ab_readout -- rust/crates/engine/degenbot-solvers/tests/fixtures/{{corpus}}
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --example entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
 
 # The same run instrumented: functions-timing over the concentrated_liquidity_solve.* labels.
 # HOTPATH_OUTPUT_PATH (default hp.json) names the report — a runtime artifact,
 # never committed.
 entry-ab-telemetry corpus="heavy_concentrated_liquidity_solve_captures.jsonl":
-    HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH="${HOTPATH_OUTPUT_PATH:-hp.json}" HOTPATH_REPORT=functions-timing,threads cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers --features hotpath --example entry_ab_readout -- rust/crates/engine/degenbot-solvers/tests/fixtures/{{corpus}}
+    HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH="${HOTPATH_OUTPUT_PATH:-hp.json}" HOTPATH_REPORT=functions-timing,threads cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --features hotpath --example entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
 
 # The WalkMemo cross-block reuse readout: the fixture A/B (memo off vs on)
 # over the captured corpus. DR_READOUT_EPOCHS sets the epoch count.
 walkmemo-readout:
-    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-solvers --example walkmemo_readout
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --example walkmemo_readout
 

@@ -56,14 +56,14 @@ fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
 /// the solver-vs-grid parity tests (golden-section must not miss the grid
 /// optimum by more than one step).
 fn grid_scan_best(
-    resolved: &::degenbot_solvers::mixed::ResolvedMixedPath,
+    resolved: &::degenbot_pools::solve::mixed::ResolvedMixedPath,
     max_reserve: U256,
     grid_step: U256,
 ) -> U256 {
     let mut best = U256::ZERO;
     let mut x = U256::from(1u64);
     while x <= max_reserve {
-        let out = ::degenbot_solvers::mixed::simulate_solidly_path(x, &resolved.hops);
+        let out = ::degenbot_pools::solve::mixed::simulate_solidly_path(x, &resolved.hops);
         best = best.max(out.saturating_sub(x));
         x += grid_step;
     }
@@ -161,9 +161,9 @@ fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
     )
     .expect("path registers");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
-    let result = ::degenbot_solvers::mixed::solve_path(
+    let result = ::degenbot_pools::solve::mixed::solve_path(
         resolved,
-        &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
     )
     .result
     .expect("profitable path solves");
@@ -279,9 +279,9 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
     )
     .expect("mixed path registers");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
-    let result = ::degenbot_solvers::mixed::solve_path(
+    let result = ::degenbot_pools::solve::mixed::solve_path(
         resolved,
-        &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
     )
     .result
     .expect("profitable mixed path solves");
@@ -319,9 +319,9 @@ fn solve_solidly_unprofitable_path_returns_none() {
     .expect("path registers");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
     assert!(
-        ::degenbot_solvers::mixed::solve_path(
+        ::degenbot_pools::solve::mixed::solve_path(
             resolved,
-            &::degenbot_solvers::profit_envelope::GateDeps::offline()
+            &::degenbot_pools::solve::profit_envelope::GateDeps::offline()
         )
         .result
         .is_none(),
@@ -405,9 +405,9 @@ fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
     .expect("path registers (resolve is per-arm)");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
     // Solidly + CL is out of scope (p): solve_path returns None.
-    assert!(::degenbot_solvers::mixed::solve_path(
+    assert!(::degenbot_pools::solve::mixed::solve_path(
         resolved,
-        &::degenbot_solvers::profit_envelope::GateDeps::offline()
+        &::degenbot_pools::solve::profit_envelope::GateDeps::offline()
     )
     .result
     .is_none());

@@ -27,7 +27,7 @@
 //! repopulate them via `compute_field_diffs` without re-introducing the heavy
 //! Multicall3 recompute.
 use super::ArbitrageEngine;
-use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
+use ::degenbot_pools::solve::mixed::{HopType, MixedPoolRef};
 use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 /// A single typed field-level divergence between the engine's view of a pool
@@ -434,7 +434,7 @@ pub(crate) fn diagnostic_path_state(
 /// to live here was retired (captured swaps replace the recompute).
 fn thread_solver_result_onto_snapshot(
     snapshot: &mut DiagnosticPathState,
-    solve_result: Option<&::degenbot_solvers::mixed::SolvePathResult>,
+    solve_result: Option<&::degenbot_pools::solve::mixed::SolvePathResult>,
 ) {
     let Some(result) = solve_result else {
         return;
@@ -533,7 +533,7 @@ mod tests {
     use crate::arb_engine::{ArbitrageEngine, DiagnosticPathState, PoolTickCoverage};
     use crate::bot_core::RegisterV3PoolParams as V3Params;
     use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
-    use ::degenbot_solvers::mixed::PoolHop;
+    use ::degenbot_pools::solve::mixed::PoolHop;
     use alloy::primitives::{aliases::U112, Address, U256};
     use hashbrown::HashMap;
     fn usdc(amount: u64) -> U112 {
@@ -816,7 +816,7 @@ mod tests {
             field_drift: Vec::new(),
         });
         let hop_outputs = vec![U256::from(123_u64)];
-        let solve_result = ::degenbot_solvers::mixed::SolvePathResult {
+        let solve_result = ::degenbot_pools::solve::mixed::SolvePathResult {
             optimal_input: amount_in,
             profit: U256::from(1_u64),
             hop_outputs: hop_outputs.clone(),

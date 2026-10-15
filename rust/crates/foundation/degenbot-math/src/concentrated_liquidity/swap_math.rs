@@ -408,7 +408,7 @@ mod protocol_fee_tests {
     /// `slot0.protocolFee = 0x1f41f4` → 500 pips each direction,
     /// `lpFee = 3000` → effective `swapFee = 3499` pips. Pinned by the
     /// offline replay in
-    /// `degenbot-solvers/tests/v4_stale_state_confirmation.rs`.
+    /// `degenbot-pools/tests/v4_stale_state_confirmation.rs`.
     #[test]
     fn calculate_swap_fee_path97_fixture_pinned() {
         assert_eq!(calculate_swap_fee(500, 3_000).unwrap(), 3_499);

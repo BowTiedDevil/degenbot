@@ -12,7 +12,7 @@
 use alloy::primitives::{Address, U256};
 
 use degenbot_pools::families::solidly::{self, SolidlyHopProjection, SolidlyState};
-use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop, SolidlyHopState};
+use degenbot_pools::solve::mixed::{MixedPoolRef, ResolvedHop, SolidlyHopState};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -33,7 +33,7 @@ fn token_decimals(
 }
 
 /// The solver-vocabulary wrap — the row's named seam: the family projection
-/// into `degenbot_solvers`' hop payload, field by field.
+/// into the solver's hop payload, field by field.
 fn wrap_hop(hop: SolidlyHopProjection) -> ResolvedHop {
     ResolvedHop::SolidlyStable {
         state: SolidlyHopState {
@@ -109,7 +109,7 @@ mod tests {
     use super::project_solidly;
     use crate::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
     use alloy::primitives::{aliases::U112, Address, U256};
-    use degenbot_solvers::mixed::{HopType, MixedPoolRef};
+    use degenbot_pools::solve::mixed::{HopType, MixedPoolRef};
     use degenbot_uniswap::dex_identity::DexVariant;
 
     // -----------------------------------------------------------------

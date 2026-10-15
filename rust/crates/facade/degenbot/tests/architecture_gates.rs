@@ -194,7 +194,7 @@ fn python_phrases(line: &str) -> Vec<(String, String, String)> {
 
 #[test]
 fn workspace_membership_is_exact_and_role_grouped() {
-    const EXPECTED_NAMES: [&str; 36] = [
+    const EXPECTED_NAMES: [&str; 35] = [
         "degenbot",
         "degenbot-aave",
         "degenbot-abi",
@@ -223,7 +223,6 @@ fn workspace_membership_is_exact_and_role_grouped() {
         "degenbot-runs",
         "degenbot-settlement-bot-example",
         "degenbot-simulation",
-        "degenbot-solvers",
         "degenbot-strategy",
         "degenbot-stubgen",
         "degenbot-submission",
@@ -240,6 +239,10 @@ fn workspace_membership_is_exact_and_role_grouped() {
     assert_eq!(
         names, EXPECTED_NAMES,
         "workspace package identities changed"
+    );
+    assert!(
+        !names.contains(&"degenbot-solvers"),
+        "`degenbot-solvers` was dissolved (ADR-073 amendment A5) and must not reappear"
     );
 
     let crates_root = workspace_root().join("crates");
@@ -313,6 +316,20 @@ fn cli_shell_names_only_allowlisted_externals() {
     assert!(
         offenders.is_empty(),
         "degenbot-cli may list only workspace members + argv/sink plumbing; offenders: {offenders:?}"
+    );
+}
+
+#[test]
+fn facade_solvers_reexport_reaches_pools_solve() {
+    // ADR-073 amendment A5 dissolved the `degenbot-solvers` crate; the facade
+    // re-export name `degenbot::solvers` must stay wired to
+    // `degenbot_pools::solve`. `type_name` reports the type's canonical
+    // definition path, so equality proves the re-export resolves to the
+    // re-homed module rather than some other item.
+    assert_eq!(
+        std::any::type_name::<degenbot::solvers::runtime::SolveRuntimeConfig>(),
+        "degenbot_pools::solve::runtime::SolveRuntimeConfig",
+        "the `degenbot::solvers` re-export must resolve to `degenbot_pools::solve`"
     );
 }
 

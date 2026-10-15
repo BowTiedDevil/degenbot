@@ -10,7 +10,7 @@
 //! function of the family state slice, and the family-local apply/observe
 //! behavior over those slices. It reads NO state owner and consumes NO
 //! solver kernel — the hop payload is `degenbot_math::v2::IntHopState` (the
-//! math leaf the substrate resolve row wraps into the solvers crate's
+//! math leaf the substrate resolve row wraps into the solver's
 //! `ResolvedHop`).
 //!
 //! # The family map

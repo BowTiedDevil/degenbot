@@ -225,9 +225,9 @@ fn solve_3hop_v3_v3_v3_path() {
     // Now the N-hop CL solver runs. With 3 pools at the same price but
     // different liquidity, the path is unlikely to be profitable after fees,
     // but the solver must not reject due to hop count.
-    let result = ::degenbot_solvers::mixed::solve_path(
+    let result = ::degenbot_pools::solve::mixed::solve_path(
         resolved,
-        &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
     )
     .result;
     let _ = result; // No panic = test passes
@@ -313,9 +313,9 @@ fn solve_3hop_mixed_v2_v3_v2_path() {
     assert_eq!(resolved.hops[1].hop_type(), HopType::V3);
     assert_eq!(resolved.hops[2].hop_type(), HopType::V2);
     // Key: previously this returned None due to hop_types.len() != 2
-    let result = ::degenbot_solvers::mixed::solve_path(
+    let result = ::degenbot_pools::solve::mixed::solve_path(
         resolved,
-        &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
     )
     .result;
     let _ = result;
@@ -477,11 +477,11 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
     engine.cycle.path_resolved.clear();
     // the re-restored pools re-enter the epoch delta; the solve
     // consumes the delta's taken keys (all registered hop keys here).
-    let reorg_keys: Vec<degenbot_solvers::affected_keys::AffectedKey> = engine
+    let reorg_keys: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = engine
         .registry
         .pool_to_paths
         .keys()
-        .map(|(hop, pool)| degenbot_solvers::affected_keys::AffectedKey::new(*hop, *pool))
+        .map(|(hop, pool)| degenbot_pools::solve::affected_keys::AffectedKey::new(*hop, *pool))
         .collect();
     run_test_cycle(&mut engine, 5, &BlockMetadata::default(), &reorg_keys);
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
@@ -709,11 +709,11 @@ fn register_path_rejects_pool_id_not_in_bot() {
     let result = register_path(
         &mut engine,
         vec![
-            ::degenbot_solvers::mixed::PoolHop {
+            ::degenbot_pools::solve::mixed::PoolHop {
                 pool_id: real_pool_id,
                 zero_for_one: true,
             },
-            ::degenbot_solvers::mixed::PoolHop {
+            ::degenbot_pools::solve::mixed::PoolHop {
                 pool_id: bogus_id,
                 zero_for_one: false,
             },

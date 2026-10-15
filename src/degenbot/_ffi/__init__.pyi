@@ -4810,7 +4810,7 @@ def solve_balancer_weighted_basket(
     """
     `QuantAMM` closed-form N-token Balancer weighted basket arbitrage solver.
 
-    Thin `PyO3` wrapper over [`degenbot_solvers::basket::solve_balancer_weighted`].
+    Thin `PyO3` wrapper over [`degenbot_pools::solve::basket::solve_balancer_weighted`].
     Port of `BalancerMultiTokenSolver` / `solve_balancer_weighted` (Willetts &
     Harrington, `QuantAMM` Equation 9).
 

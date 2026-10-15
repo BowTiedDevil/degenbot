@@ -237,9 +237,9 @@ fn balancer_weighted_5050_matches_v2_mobius_on_same_reserves() {
     .unwrap();
     // resolve + solve the bw path specifically
     let resolved = &engine.cycle.path_resolved[&bw_path];
-    let bw_result = ::degenbot_solvers::mixed::solve_path(
+    let bw_result = ::degenbot_pools::solve::mixed::solve_path(
         resolved,
-        &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
     )
     .result
     .expect("bw path should solve");
@@ -363,9 +363,9 @@ fn balancer_weighted_rejects_mixed_with_concentrated_liquidity() {
     let resolved = &engine.cycle.path_resolved[&path_id];
     // Balancer weighted + CL is out of scope — solve_path returns None.
     assert!(
-        ::degenbot_solvers::mixed::solve_path(
+        ::degenbot_pools::solve::mixed::solve_path(
             resolved,
-            &::degenbot_solvers::profit_envelope::GateDeps::offline()
+            &::degenbot_pools::solve::profit_envelope::GateDeps::offline()
         )
         .result
         .is_none(),

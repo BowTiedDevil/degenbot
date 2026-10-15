@@ -42,7 +42,7 @@ pub use degenbot_pathfinding as pathfinding;
 
 /// Stateless solver math (Möbius composition, V3/V4 tick solving, the
 /// `QuantAMM` Balancer basket solver) — relocated from `degenbot-bot` (ADR-015).
-pub use degenbot_solvers as solvers;
+pub use degenbot_pools::solve as solvers;
 
 /// The strategy plane: the six-slot strategy vocabulary and the concrete
 /// executable strategies composed over the capability crates.

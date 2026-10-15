@@ -1115,7 +1115,7 @@ fn v3_pool_start_in_empty_region_crosses_to_liquidity() {
     }
 }
 
-/// Solver-side output for an exact-in amount, mirroring the `degenbot-solvers`
+/// Solver-side output for an exact-in amount, mirroring the `degenbot-pools` solve tree
 /// `solver_crossing_output` (the definitive solve-block assembly the engine
 /// runs): find the largest crossed range `k` with
 /// `compute_crossing(k).crossing_gross_input <= amount_in`, take its cumulative

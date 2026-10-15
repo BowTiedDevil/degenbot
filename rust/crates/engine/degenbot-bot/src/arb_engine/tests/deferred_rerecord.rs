@@ -9,23 +9,25 @@ use super::*;
 // with the hook unset (direct engine drives) the deferral keeps today's
 // drop.
 // -------------------------------------------------------------------
-fn kjwik5_key(pool_id: u64) -> degenbot_solvers::affected_keys::AffectedKey {
-    degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, pool_id)
+fn kjwik5_key(pool_id: u64) -> degenbot_pools::solve::affected_keys::AffectedKey {
+    degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, pool_id)
 }
-fn kjwik5_affected_keys(pool_ids: &[u64]) -> Vec<degenbot_solvers::affected_keys::AffectedKey> {
+fn kjwik5_affected_keys(
+    pool_ids: &[u64],
+) -> Vec<degenbot_pools::solve::affected_keys::AffectedKey> {
     pool_ids.iter().copied().map(kjwik5_key).collect()
 }
 fn kjwik5_path_keys(
     engine: &ArbitrageEngine,
     path_id: u64,
-) -> Vec<degenbot_solvers::affected_keys::AffectedKey> {
+) -> Vec<degenbot_pools::solve::affected_keys::AffectedKey> {
     engine
         .path_pools()
         .get(&path_id)
         .expect("registered path")
         .pools
         .iter()
-        .map(|r| degenbot_solvers::affected_keys::AffectedKey::new(r.hop_type, r.pool_key))
+        .map(|r| degenbot_pools::solve::affected_keys::AffectedKey::new(r.hop_type, r.pool_key))
         .collect()
 }
 /// Guard 1: capture the `[solve-phase]` events' `paths.deferred_future_price`
@@ -33,7 +35,7 @@ fn kjwik5_path_keys(
 /// enqueue) carry the same value; the test asserts every captured value.
 type Kjwik5EventFields = std::sync::Arc<parking_lot::Mutex<Vec<Vec<(String, String)>>>>;
 type Kjwik5ReRecords = std::sync::Arc<
-    parking_lot::Mutex<Vec<(Vec<degenbot_solvers::affected_keys::AffectedKey>, u64)>>,
+    parking_lot::Mutex<Vec<(Vec<degenbot_pools::solve::affected_keys::AffectedKey>, u64)>>,
 >;
 fn kjwik5_capture_deferred_counter(run: impl FnOnce()) -> Vec<u64> {
     use tracing_subscriber::layer::SubscriberExt;

@@ -90,6 +90,12 @@ pub mod rate_provider;
 pub mod registry;
 pub mod simulate_swap;
 pub mod slot_layout;
+/// The solver-kernel tree (ADR-073 endgame re-home): the family-blind kernels
+/// (the golden-section template, the integer-verification Möbius order, the
+/// envelope composition and its caches) live here beside the family read
+/// modules, and each family's solve entry lives inside its family module
+/// under [`families`].
+pub mod solve;
 pub mod spec_bounds;
 pub mod state_history;
 /// Re-export the *`PancakeSwap` V3 fork* storage-slot encoders at the crate root

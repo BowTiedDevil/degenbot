@@ -5,7 +5,7 @@
 //! reorg journal, verifier, pump) and `arb_engine` (the `ArbitrageEngine`
 //! path/solve/dispatch + delivery layer) are a **mutually coupled pair** —
 //! ~30 cross-references each way (`BotState` needs the solver value types
-//! `IntHopState`/`IntV3TickRangeSequence` from `degenbot-solvers` and the
+//! `IntHopState`/`IntV3TickRangeSequence` from `degenbot_pools::solve` and the
 //! decoders; the engine needs `BotState`/`V3PoolState`/`TickInfo`
 //! from `bot_core`). ADR-003 explicitly refuses to
 //! extract a `LiquidityMap` generic against this sample-of-one, so the two
@@ -40,8 +40,8 @@
 //!
 //! The stateless solver math itself (Möbius composition, V3/V4 integer
 //! tick-range solving, the `QuantAMM` Balancer basket solver) lives in the
-//! `degenbot-solvers` crate and is imported via `::degenbot_solvers` —
-//! never re-exported from here.
+//! `degenbot-pools` `solve` tree (the ADR-073 endgame re-home) and is
+//! imported via `::degenbot_pools::solve` — never re-exported from here.
 
 // tokio's full `RuntimeMetrics` getters — which the `hotpath` crate reads for
 // pump/solver profiling — are gated behind tokio's unstable cfg. There is no

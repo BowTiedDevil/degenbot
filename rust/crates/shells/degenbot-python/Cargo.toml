@@ -35,7 +35,6 @@ degenbot-bot = { workspace = true, optional = true }
 degenbot-substrate = { workspace = true, optional = true }
 # (5WTYYQ) The WS-ingestion event surface the bot-driven pump consumes.
 degenbot-ingestion = { workspace = true, optional = true }
-degenbot-solvers = { workspace = true, optional = true }
 degenbot-pools.workspace = true
 degenbot-decoders = { workspace = true, optional = true }
 degenbot-uniswap = { workspace = true, optional = true }
@@ -115,7 +114,7 @@ dev-features = [
     "pyo3/extension-module",
     "degenbot-bot/hotpath",
     "degenbot-bot/hotpath-prometheus",
-    "degenbot-solvers/hotpath",
+    "degenbot-pools/hotpath",
     "degenbot-bot/allocator-ctrl",
     "otel",
     "mimalloc",
@@ -135,7 +134,7 @@ experimental-inspect = ["pyo3/experimental-inspect"]
 # builds now name the type too).
 # ADR-070: `bot` includes `db` — the construction DB half is opened by the
 # shell (a writer-enabled crate), so the shell needs its own `degenbot-db` edge.
-bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "dep:degenbot-solvers", "dep:degenbot-workers", "rpc", "decoders", "uniswap", "db"]
+bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "dep:degenbot-workers", "rpc", "decoders", "uniswap", "db"]
 price = ["dep:degenbot-price", "rpc"]
 submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
 simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "rpc", "executor", "submission"]

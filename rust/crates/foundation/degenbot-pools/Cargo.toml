@@ -21,9 +21,39 @@ hashbrown.workspace = true
 degenbot-decoders.workspace = true
 degenbot-uniswap.workspace = true
 degenbot-math.workspace = true
+degenbot-core.workspace = true
+# --- solver-kernel tree (ADR-073 endgame re-home; src/solve/) ---
+tracing = { version = "^0.1" }
+serde_json = { version = "^1.0" }
+# Exact rational integer arithmetic for the Möbius shifted-piece kernel.
+num-bigint = { version = "^0.5" }
+num-integer = { version = "^0.1" }
+# Capture-fixture transparent decompress (src/solve/capture_fixture.rs); large
+# fixtures ship as .jsonl.zst, readers decode in memory.
+zstd.workspace = true
+# hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
+# default-features = false -> no-op stubs in default builds; the
+# `hotpath` feature enables real instrumentation. Version matched to degenbot-bot.
+hotpath = { version = "^0.28.6", default-features = false }
+
+[features]
+hotpath = ["hotpath/hotpath", "hotpath/threads"]
+# Ambient walk telemetry: the per-thread walk-combinator counters, event
+# census, and process-wide timing statics. Off by default so a release build
+# that never reads the counters pays nothing for them; enabling it turns
+# the writers on. See src/solve/concentrated_liquidity/telemetry.rs for the gate.
+telemetry = []
 
 [dev-dependencies]
 proptest = "^1.12"
+rayon = { version = "^1.12" }
+criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
+tempfile = { version = "^3.27" }
+# Network-gated V3 mainnet-fixture reproduction (the live +13 V3-hop
+# over-prediction trap): these deps fetch the real pool state on demand; the
+# test is env-gated so CI never hits the net.
+degenbot-rpc.workspace = true
+tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
 serde_json = "^1.0"
 hex = "^0.4"
 # revm drives the Tier-3b end-to-end `Pool.swap` oracle: it deploys real
@@ -34,4 +64,16 @@ hex = "^0.4"
 # default features excludes dev-deps), so the no-pyo3-in-cores invariant is
 # unaffected.
 revm = { version = "^43.0", default-features = true }
+
+[[bench]]
+name = "digest"
+harness = false
+
+[[bench]]
+name = "walkmemo_contention"
+harness = false
+
+[[bench]]
+name = "stable_arms"
+harness = false
 

@@ -19,7 +19,7 @@ DEVELOPMENT_FEATURES = [
     "pyo3/extension-module",
     "degenbot-bot/hotpath",
     "degenbot-bot/hotpath-prometheus",
-    "degenbot-solvers/hotpath",
+    "degenbot-pools/hotpath",
     "degenbot-bot/allocator-ctrl",
     "otel",
     "mimalloc",

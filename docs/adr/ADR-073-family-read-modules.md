@@ -156,3 +156,69 @@ deletion test in executable form.
   `read_swap` must serve design-specific parity invocations unchanged in outcome.
 - **Not in scope here:** the kernel re-home (the one-file-per-family endgame),
   retiring `ClOrchestration` entirely, and any trait-ification of the family set.
+
+## Amendment — the endgame landed (kernel re-home, door vocabulary, capability keep)
+
+*Recorded at the T4 close of epic UGXLEG (T2/T3/T4 chunks). The status line above is
+untouched — review flips it.*
+
+**A1 — Two-axis family rule (T1/T2).** Reads route at the behavioral axis; state
+lives at the structural axis (GLOSSARY.md "family read module" / "family module"):
+the reserve-pair structural slice serves both V2 designs, the balance-vector slice
+serves Curve + both Balancer invariants, and each family's routing decisions name the
+behavioral family. One structural slice may back several behavioral families; the
+dispatch rows stay typed enums (D2).
+
+**A2 — One door vocabulary (T2).** The families share ONE family-blind door
+contract at `families/door.rs`: one `SwapReadRequest`, one `ReadOutcome`, one
+`Observe`/`Observed` probe pair, one `FamilyApply` apply contract. A family's design
+bits ride as additive variants of these shapes, never as forks; the substrate
+swap-simulation row adapts the outcome onto its typed contract.
+
+**A3 — Capability thinned, then KEPT (T3, fork-2(b) judgment).**
+`ConcentratedLiquidityOrchestration` retired its 21 design-named behavior arms into
+the family-neutral `BotState` rows and the family read doors, keeping only CL-specific
+live-state choreography: the routing funnel, the dual liquidity buffers + drains, the
+delivery cutoff, the event horizons, the quarantine lifecycle, and the pin/provenance
+verification. **Fork-2(b) is decided: KEEP the capability — do not fold it into
+`RegistryCore`.** Its remainder is family behavior by construction (V3 address-keyed
+vs V4 key-keyed buffers are inherently different maps); folding it into the core would
+smuggle CL behavior into the family-agnostic registry table or push consumers back to
+fine-grained accessor calls. A later fold stays cheap if a second buffered family
+forces the generalization.
+
+**A4 — The priors door: explicit exception (T3 → T4 decision).** The
+tick-priors overlay (`swap_priors`) applies to DIRECT swap application only; buffered
+events never carry priors. `FamilyApply`'s associated `Event` type therefore cannot
+and should not carry priors: extending the door contract (option (i) at T4) would tax
+every buffered event's shape to serve a caller class that never buffers, for zero
+behavioral gain — a design change mid-re-home with byte-exact surfaces at stake. The
+decision is **option (ii): the priors-carrying direct apply is a second, intentional
+application door**, formalized here as the documented exception to the "everything
+applies through `FamilyApply`" reading: `route_event`/`route_event_by_key` accept
+priors and apply directly through the state's own typed apply methods; the buffered
+drains keep using `FamilyApply`. Both doors share the state slices, the routing
+table, and the acceptance witness (the armed oracle legs); neither drops or invents
+priors.
+
+**A5 — The endgame landed (T4): one file per family.** The family-blind kernels —
+the golden-section template (`bounded_brent`), the integer-verification Möbius order
+(`mobius_int`, `mobius_int_exact`, `mobius_shifted_piece`), the envelope composition
+and its caches (`profit_envelope`), plus the mixed intake contract, the CL walk
+kernel, the basket solver, capture fixtures, and the runtime config — moved DOWN into
+`degenbot-pools/src/solve/`, beside the family read modules. Each solve entry moved
+INTO its family module: `families/{balancer_stable,balancer_weighted,curve_stableswap,
+solidly}.rs` carry a nested `pub(crate) mod solve`, and the CL tree carries
+`families/concentrated_liquidity/solve.rs` — the D1 two-homes pattern is literally
+ONE file per family. The `degenbot-solvers` crate is dissolved (workspace manifest
+consistent; the facade keeps its `degenbot::solvers` re-export name, now pointing at
+`degenbot_pools::solve`; the `hotpath`/`telemetry` features move to `degenbot-pools`).
+The accepted `hop_sim` divergence disposition now travels with the code as the
+`solve/concentrated_liquidity/hop_sim.rs` module doc. The C3/C5 routing helpers were
+renamed to their mechanisms (`presence_by_address`, `presence_by_pool_id`) — no
+design-named family arms remain anywhere.
+
+**A6 — Byte-exact acceptance.** The endgame landed under the armed drift net: the
+tier-3 oracle suites, the revm runtime matrix, the facade parity legs, and the
+solvers' crossing/parity + golden-replay suites stayed byte-identical across the
+move (recorded in the T4 sign-off).

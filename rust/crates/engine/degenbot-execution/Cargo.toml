@@ -22,4 +22,4 @@ thiserror = { version = "^2.0" }
 # consumer already reaches.
 degenbot-executor.workspace = true
 # `SolvePathResult` (amounts) — the solve-result view's amount side (ADR-025 D4).
-degenbot-solvers.workspace = true
+degenbot-pools.workspace = true

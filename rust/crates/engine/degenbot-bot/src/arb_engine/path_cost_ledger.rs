@@ -185,8 +185,8 @@ impl PathCostLedger {
     pub(crate) fn record(
         &self,
         pid: u64,
-        resolved: &::degenbot_solvers::mixed::ResolvedMixedPath,
-        outcome: &::degenbot_solvers::mixed::solve::SolveOutcome,
+        resolved: &::degenbot_pools::solve::mixed::ResolvedMixedPath,
+        outcome: &::degenbot_pools::solve::mixed::solve::SolveOutcome,
         elapsed: std::time::Duration,
     ) {
         let micros = elapsed.as_micros();
@@ -207,13 +207,15 @@ impl PathCostLedger {
         // dense-word threshold logs once per process (harvest a real capture).
         // Same latch + threshold as the retired walk-side check; the threshold
         // constant stays in the solver crate.
-        if ws.max_dense_words >= ::degenbot_solvers::concentrated_liquidity::DENSE_OBSERVE_THRESHOLD
+        if ws.max_dense_words
+            >= ::degenbot_pools::solve::concentrated_liquidity::DENSE_OBSERVE_THRESHOLD
             && !DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
         {
             op_warn!(
                 domain = solver,
                 max_dense_words = ws.max_dense_words,
-                threshold = ::degenbot_solvers::concentrated_liquidity::DENSE_OBSERVE_THRESHOLD,
+                threshold =
+                    ::degenbot_pools::solve::concentrated_liquidity::DENSE_OBSERVE_THRESHOLD,
                 "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
             );
         }

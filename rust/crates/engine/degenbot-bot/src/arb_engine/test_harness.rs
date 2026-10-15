@@ -34,7 +34,7 @@ pub(crate) fn run_test_cycle(
     engine: &mut ArbitrageEngine,
     block_number: u64,
     metadata: &BlockMetadata,
-    affected: &[degenbot_solvers::affected_keys::AffectedKey],
+    affected: &[degenbot_pools::solve::affected_keys::AffectedKey],
 ) -> CycleOutcome {
     let outcome = engine.cycle.run_epoch(
         cycle_ticket(affected),
@@ -144,7 +144,7 @@ pub(crate) fn hop_projection_count(engine: &ArbitrageEngine) -> u64 {
 /// sheds). This is the sanctioned door — a direct drive never reaches for the
 /// cycle's private stash.
 pub(crate) fn cycle_ticket(
-    affected: &[degenbot_solvers::affected_keys::AffectedKey],
+    affected: &[degenbot_pools::solve::affected_keys::AffectedKey],
 ) -> CycleTicket {
     CycleTicket::for_test(affected.to_vec())
 }

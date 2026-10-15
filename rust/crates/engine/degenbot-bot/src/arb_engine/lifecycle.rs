@@ -7,22 +7,26 @@
 //! remains outside `arb_engine/mod.rs` (the one-impl-block structural gate).
 
 use super::{ArbitrageEngine, HashMap};
-use ::degenbot_solvers::mixed::{PoolHop, SolvePathResult};
+use ::degenbot_pools::solve::mixed::{PoolHop, SolvePathResult};
 /// the solver crate's runtime stance is INSTANCE-SCOPED — built
 /// fresh per engine from the typed config and passed down; no `OnceLock`.
 #[must_use]
 pub(crate) fn solve_runtime_config_from_cfg(
     cfg: &::degenbot_config::BotConfig,
-) -> ::degenbot_solvers::runtime::SolveRuntimeConfig {
-    ::degenbot_solvers::runtime::SolveRuntimeConfig {
+) -> ::degenbot_pools::solve::runtime::SolveRuntimeConfig {
+    ::degenbot_pools::solve::runtime::SolveRuntimeConfig {
         event_solver_legacy: cfg.solve.walk_event_solver_legacy,
         walk_event_census: cfg.solve.walk_event_census,
         anchor_sweep: match cfg.solve.walk_anchor_sweep {
-            ::degenbot_config::AnchorSweep::Off => ::degenbot_solvers::runtime::AnchorSweep::Off,
-            ::degenbot_config::AnchorSweep::CenterOnly => {
-                ::degenbot_solvers::runtime::AnchorSweep::CenterOnly
+            ::degenbot_config::AnchorSweep::Off => {
+                ::degenbot_pools::solve::runtime::AnchorSweep::Off
             }
-            ::degenbot_config::AnchorSweep::Full => ::degenbot_solvers::runtime::AnchorSweep::Full,
+            ::degenbot_config::AnchorSweep::CenterOnly => {
+                ::degenbot_pools::solve::runtime::AnchorSweep::CenterOnly
+            }
+            ::degenbot_config::AnchorSweep::Full => {
+                ::degenbot_pools::solve::runtime::AnchorSweep::Full
+            }
         },
         max_tangent_lines: cfg.solve.envelope_max_tangent_lines,
         sampled_compose_lines: cfg.solve.envelope_sampled_compose_lines,

@@ -24,8 +24,8 @@
 //! both families) table derivation is shared.
 
 use degenbot_pools::families::concentrated_liquidity as cl_read;
-use degenbot_solvers::concentrated_liquidity::PreparedConcentratedLiquidityHop;
-use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
+use degenbot_pools::solve::concentrated_liquidity::PreparedConcentratedLiquidityHop;
+use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -139,7 +139,7 @@ mod tests {
     use crate::PoolTickCoverage;
     use crate::{BotState, RegisterV3PoolParams, RegisterV4PoolParams, TickInfo, V4PoolKey};
     use alloy::primitives::{Address, U128, U256};
-    use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
+    use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop};
 
     /// Projection stand-in for tests: the word-profile table is built fresh per
     /// call (`build_concentrated_liquidity_word_profiles`, no cross-call reuse).

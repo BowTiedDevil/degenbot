@@ -339,8 +339,9 @@ impl ConcentratedLiquidityOrchestration {
         let e = self.v4_event_horizons.entry(key).or_insert(0);
         *e = (*e).max(block_number);
     }
-    /// Resolve a V3 pool's routing presence (`concentrated_liquidity_route` axis).
-    fn v3_presence(&self, reg: &RegistryCore, pool_address: &Address) -> PoolPresence {
+    /// Resolve a V3 pool's routing presence (`concentrated_liquidity_route` axis),
+    /// keyed by registry pool address.
+    fn presence_by_address(&self, reg: &RegistryCore, pool_address: &Address) -> PoolPresence {
         let lifecycle =
             reg.pool_addresses
                 .get(pool_address)
@@ -373,7 +374,7 @@ impl ConcentratedLiquidityOrchestration {
             BufferedV3PoolEvent::Swap(_) => EventKind::ScalarRefresh,
             BufferedV3PoolEvent::Liquidity(_) => EventKind::TickMutation,
         };
-        let presence = self.v3_presence(reg, &pool_address);
+        let presence = self.presence_by_address(reg, &pool_address);
         let event_block = match &event {
             BufferedV3PoolEvent::Swap(s) => s.block_number,
             BufferedV3PoolEvent::Liquidity(l) => l.block_number,
@@ -1269,8 +1270,9 @@ impl ConcentratedLiquidityOrchestration {
 
         Ok(pool_id)
     }
-    /// Resolve a V4 pool's routing presence (`concentrated_liquidity_route` axis).
-    fn v4_presence(
+    /// Resolve a V4 pool's routing presence (`concentrated_liquidity_route` axis),
+    /// keyed by the (`pool_manager`, pool id) singleton key.
+    fn presence_by_pool_id(
         &self,
         reg: &RegistryCore,
         key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
@@ -1300,7 +1302,7 @@ impl ConcentratedLiquidityOrchestration {
             BufferedV4PoolEvent::Swap(_) => EventKind::ScalarRefresh,
             BufferedV4PoolEvent::Liquidity(_) => EventKind::TickMutation,
         };
-        let presence = self.v4_presence(reg, &(pool_manager, v4_pool_id));
+        let presence = self.presence_by_pool_id(reg, &(pool_manager, v4_pool_id));
         let event_block = match &event {
             BufferedV4PoolEvent::Swap(s) => s.block_number,
             BufferedV4PoolEvent::Liquidity(l) => l.block_number,

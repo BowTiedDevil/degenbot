@@ -8,7 +8,7 @@
 //! the family-local apply/get/calc behavior over that slice. It reads NO
 //! state owner and consumes NO solver kernel — the hop is solver vocabulary,
 //! so the wrapper stays at the dispatch row (the substrate resolve row does
-//! the registry lookup and wraps the solvers crate's `ResolvedHop`).
+//! the registry lookup and wraps the solver's `ResolvedHop`).
 //!
 //! # The four intent doors (D4)
 //!
@@ -42,6 +42,9 @@
 //! design would resurrect the seam ADR-037 closed). The policy encodes none
 //! of the design differences.
 
+/// The family's solve entry (ADR-073 endgame): the solve half re-homed from
+/// the dissolved solver crate — the family story is ONE tree again.
+pub(crate) mod solve;
 pub mod v3;
 pub mod v4;
 
