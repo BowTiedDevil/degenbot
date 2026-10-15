@@ -19,6 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 from tests import conftest as harness
 
 if TYPE_CHECKING:
@@ -119,3 +121,80 @@ def test_rpc_resolver_has_no_degenbot_namespace_fallback() -> None:
     literals = " ".join(c for c in code.co_consts[1:] if isinstance(c, str))
     assert "DEGENBOT_RPC" not in literals
     assert not any("DEGENBOT_RPC" in name for name in code.co_names)
+
+
+# ---------------------------------------------------------------------------
+# The resolution contract: process environment > ``tests.env`` > table
+# default. Guarded for the same reason as the namespace boundary above -- the
+# failure mode is a silently wrong endpoint. The ``test-fork`` lane PROBES a
+# resolved URI while the pytest legs DIAL one, so a resolver that drops a layer
+# sends those two to different machines and the gate verifies the wrong node.
+
+_RESOLVABLE = "TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI"
+
+
+def test_resolution_prefers_the_process_environment() -> None:
+    resolved = harness._resolve_rpc_uri(
+        _RESOLVABLE,
+        {_RESOLVABLE: "https://from-env.example"},
+        {_RESOLVABLE: "https://from-tests-env.example"},
+        {_RESOLVABLE: "https://from-defaults.example"},
+    )
+    assert resolved == "https://from-env.example"
+
+
+def test_resolution_falls_through_tests_env_to_the_table_default() -> None:
+    resolved = harness._resolve_rpc_uri(
+        _RESOLVABLE,
+        {},
+        {_RESOLVABLE: "https://from-tests-env.example"},
+        {_RESOLVABLE: "https://from-defaults.example"},
+    )
+    assert resolved == "https://from-tests-env.example"
+
+    resolved = harness._resolve_rpc_uri(
+        _RESOLVABLE,
+        {},
+        {},
+        {_RESOLVABLE: "https://from-defaults.example"},
+    )
+    assert resolved == "https://from-defaults.example"
+
+
+def test_an_empty_declared_value_is_absent() -> None:
+    """A half-set override must not shadow a working lower layer."""
+    resolved = harness._resolve_rpc_uri(
+        _RESOLVABLE,
+        {_RESOLVABLE: ""},
+        {_RESOLVABLE: "https://from-tests-env.example"},
+        {_RESOLVABLE: "https://from-defaults.example"},
+    )
+    assert resolved == "https://from-tests-env.example"
+
+
+def test_an_undeclared_name_raises_even_when_the_environment_supplies_it() -> None:
+    """The table is the vocabulary; ambient state cannot add names to it."""
+    with pytest.raises(KeyError):
+        harness._resolve_rpc_uri(
+            "TEST_NOT_IN_THE_VOCABULARY",
+            {"TEST_NOT_IN_THE_VOCABULARY": "https://sneaky.example"},
+            {},
+            {},
+        )
+
+
+def test_rpc_honors_the_process_environment_layer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(_RESOLVABLE, "https://from-env.example")
+    assert harness._rpc(_RESOLVABLE) == "https://from-env.example"
+
+
+def test_the_lane_probe_sees_only_machine_declared_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``test-fork`` fails closed through this seam: the table default is a
+    fallback for the offline suite's imports, never a lane declaration."""
+    monkeypatch.delenv(_RESOLVABLE, raising=False)
+    monkeypatch.setattr(harness, "_TESTS_ENV_VALUES", {})
+    assert harness.declared_rpc_uri(_RESOLVABLE) is None
+    monkeypatch.setenv(_RESOLVABLE, "https://from-env.example")
+    assert harness.declared_rpc_uri(_RESOLVABLE) == "https://from-env.example"

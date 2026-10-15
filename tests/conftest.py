@@ -10,14 +10,16 @@ offline detection lives in ``tests/offline.py``.
 
 import atexit
 import logging
+import os
 import shutil
 import tempfile
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Mapping
 from pathlib import Path
 
 import pytest
 from _pytest.config import Config, Parser
 from _pytest.nodes import Item
+from dotenv import dotenv_values
 from hypothesis import settings
 
 # THE SUITE ENVIRONMENT, DECLARED AS DATA. The FFI module init boots the
@@ -250,8 +252,9 @@ def _set_degenbot_logging():
 # share a default wherever one public endpoint serves both today (Arbitrum and
 # Ethereum via publicnode, Base via mainnet.base.org) -- the table makes that
 # sharing visible, and a tier that needs its own endpoint (a real archive node)
-# changes only its row. A name absent from the table raises at collection, so
-# the vocabulary cannot drift from its defaults. The names are imported across
+# declares it through ``tests.env`` or the process environment. A name absent
+# from the table raises at collection, so the vocabulary cannot drift from its
+# defaults. The names are imported across
 # the suite (``tests/test_anvil_fork.py``, the parity suites) and the ``_FULL_``
 # env spellings are an external contract (``executor/ape-config.yaml``), so the
 # bindings stay real module-level assignments.
@@ -269,13 +272,57 @@ _DEFAULT_RPC_URIS: dict[str, str] = {
 }
 
 
-def _rpc(key: str) -> str:
-    """Look up a harness endpoint in the declared table.
+_TESTS_ENV_PATH = Path(__file__).resolve().parent.parent / "tests.env"
+_TESTS_ENV_VALUES: dict[str, str] = {
+    key: value for key, value in dotenv_values(_TESTS_ENV_PATH).items() if value is not None
+}
 
-    No env or ``tests.env`` layer overrides the table: the defaults below are
-    what runs, so a broken endpoint is a visible default fix (or a real runtime
-    knob), not a silent machine-local override. A name absent from the table
-    raises at collection, so the vocabulary cannot drift from its defaults.
+
+def _declared_value(
+    key: str,
+    environ: Mapping[str, str],
+    file_values: Mapping[str, str],
+) -> str | None:
+    return environ.get(key) or file_values.get(key) or None
+
+
+def _resolve_rpc_uri(
+    key: str,
+    environ: Mapping[str, str],
+    file_values: Mapping[str, str],
+    defaults: Mapping[str, str],
+) -> str:
+    """Resolve one endpoint name through the precedence contract.
+
+    Process environment > ``tests.env`` > table default, as ``tests.env.example``
+    documents. The table is the visible keyless fallback, not a pin: an endpoint
+    is machine topology (a devcontainer reth, a personal archive key), which
+    belongs in the gitignored ``tests.env`` or the process environment, never in
+    tracked code. An empty declared value is absent, so a half-set override
+    cannot shadow a working lower layer. A name absent from the table raises
+    before any layer is consulted: the table is the vocabulary, and ambient
+    state must not widen it.
+    """
+    if key not in defaults:
+        raise KeyError(key)
+    return _declared_value(key, environ, file_values) or defaults[key]
+
+
+def declared_rpc_uri(key: str) -> str | None:
+    """The endpoint the machine declared for ``key``, or ``None`` if none did.
+
+    The ``test-fork`` lane fails closed through this seam: it probes exactly
+    what the pytest legs dial (``_rpc`` consults the same layers first) and
+    refuses to run against the table's public fallback, which serves the offline
+    suite's imports rather than declaring a lane endpoint.
+    """
+    if key not in _DEFAULT_RPC_URIS:
+        raise KeyError(key)
+    return _declared_value(key, os.environ, _TESTS_ENV_VALUES)
+
+
+def _rpc(key: str) -> str:
+    """Look up a harness endpoint: process env > ``tests.env`` > table default.
 
     The names this resolves are the harness's own vocabulary, deliberately kept
     out of the operator namespace: the suite needs two node tiers per chain
@@ -288,7 +335,7 @@ def _rpc(key: str) -> str:
     ``${TEST_ETHEREUM_FULL_NODE_HTTP_URI}`` as an external contract, which is why the
     ``_FULL_`` names outlive the suite that defines them.
     """
-    return _DEFAULT_RPC_URIS[key]
+    return _resolve_rpc_uri(key, os.environ, _TESTS_ENV_VALUES, _DEFAULT_RPC_URIS)
 
 
 TEST_ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc("TEST_ARBITRUM_FULL_NODE_HTTP_URI")

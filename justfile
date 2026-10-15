@@ -260,19 +260,23 @@ test-rust-nextest *args:
 #   - the Rust live revm fork-truth legs: the `#[ignore]`d `live_*` tests in
 #     degenbot-simulation, gated on the chain-1 endpoint env family
 #     `DEGENBOT_RPC_HTTP_CHAINID_1` (exported here from the probe target).
-# Fails CLOSED on absent or unreachable RPC: TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
-# must be set AND the endpoint must answer eth_chainId (probe, don't assume).
-# The devcontainer's reth satisfies both (containerEnv sets
-# http://host.containers.internal:8545/, WS :8546); any reachable archive
-# endpoint works — the pytest harness's endpoint table (tests/conftest.py)
-# supplies the per-chain URIs the pytest legs actually dial.
+# Fails CLOSED unless the machine DECLARES an endpoint (process env or the
+# gitignored tests.env, resolved through tests/conftest.py: env > tests.env >
+# table default — the same layers the pytest legs dial, so the probe can never
+# green-light one machine while the tests hit another) AND that endpoint answers
+# eth_chainId (probe, don't assume). The conftest table default is not a lane
+# declaration: it serves the offline suite's imports. The devcontainer's reth
+# satisfies both (containerEnv sets http://host.containers.internal:8545/, WS
+# :8546); any reachable archive endpoint works.
 # On demand only: minutes of live-RPC work, never in `test` / pre-push / CI.
-test-fork:
+test-fork: dev
     #!/usr/bin/env bash
     set -euo pipefail
-    rpc_uri="${TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI:-}"
+    # Resolve the probe target through tests/conftest.py's declared layers so
+    # this gate dials exactly what the pytest legs dial.
+    rpc_uri="$({{ py_run }} python -c 'from tests.conftest import declared_rpc_uri; print(declared_rpc_uri("TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI") or "")')"
     if [ -z "$rpc_uri" ]; then
-        echo "ERROR: no RPC env — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI to a reachable Ethereum endpoint" >&2
+        echo "ERROR: no RPC declared — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI (process env or tests.env) to a reachable Ethereum endpoint" >&2
         echo "       (the devcontainer sets http://host.containers.internal:8545/ for its reth)" >&2
         exit 1
     fi
@@ -288,12 +292,20 @@ test-fork:
     echo "▶ fork lane RPC: $rpc_uri (chain $({{ py_run }} python -c 'import json,sys; print(int(json.load(sys.stdin)["result"], 16))' <<<"$chain_id"))"
     echo
     echo "▶ pytest fork legs: -m '(online_rpc or base) and not slow'"
-    {{ py_run }} pytest -m '(online_rpc or base) and not slow' -q --no-header
+    pytest_rc=0
+    {{ py_run }} pytest -m '(online_rpc or base) and not slow' -q --no-header || pytest_rc=$?
     echo
     echo "▶ Rust live revm fork legs: degenbot-simulation live_* (run-ignored only)"
+    rust_rc=0
     DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo nextest run --locked --manifest-path rust/Cargo.toml \
-        -p degenbot-simulation -E 'test(live_)' --run-ignored only --no-fail-fast
+        -p degenbot-simulation -E 'test(live_)' --run-ignored only --no-fail-fast || rust_rc=$?
     echo
+    # Both legs always run: a failing first leg must not starve the lane of
+    # the second leg's evidence. The lane still fails closed on any leg.
+    if [ "$pytest_rc" -ne 0 ] || [ "$rust_rc" -ne 0 ]; then
+        echo "✗ fork lane FAILED (pytest exit ${pytest_rc}, rust exit ${rust_rc})" >&2
+        exit $(( pytest_rc != 0 ? pytest_rc : rust_rc ))
+    fi
     echo "✓ fork lane complete."
 
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
