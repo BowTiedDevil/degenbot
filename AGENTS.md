@@ -156,6 +156,12 @@ or gate is asserting a layout-level fact it should not (ADR-072).
 
 The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly) — never a hand-typed `uv run pytest`. Prefer the whole suite over selecting individual test files: the full run is fast and it is the run that surfaces seam and cross-module regressions. The suite carries pytest-timeout so a hung test fails with a timeout report instead of parking its xdist worker (the 300s timeout budget is set in `pyproject.toml`; no per-test or per-suite headroom exists — a timeout failure is the signal to investigate a slow or hung test; marker-filter enforcement lives in `tests/conftest.py`). The ordering-sensitive suites (`tests/arbitrage/test_arbitrage_session.py`, `tests/operator/test_operator_channel.py`) have a repeat-run gate: `just test-flake-probe` runs them three consecutive times with `-p no:cacheprovider` and fails on any failing run.
 
+## Fork/RPC-gated suites (`just test-fork`)
+
+`just test-fork` is the ONE on-demand lane for the legs every offline gate (`test`, pre-push, CI) deliberately deselects: the pytest live-RPC tiers (`-m '(online_rpc or base) and not slow'` — the fork-marked suites under `tests/`, e.g. the `AnvilFork`-driven live legs and `tests/registry/test_deployment_onchain_verification.py`) and the Rust live revm fork-truth legs (the `#[ignore]`d `live_*` tests in `degenbot-simulation`, run with `--run-ignored only` behind `DEGENBOT_RPC_HTTP_CHAINID_1`, which the recipe exports from the probe target).
+
+It fails CLOSED when the RPC env is absent OR the endpoint is unreachable (probed with `eth_chainId`, not assumed): `TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI` must be set and must answer. The devcontainer's reth satisfies both (`containerEnv` sets `http://host.containers.internal:8545/`, WS on `:8546` — see `Node access` above); any reachable Ethereum endpoint works, since the pytest harness dials the per-chain endpoint table in `tests/conftest.py`. Never wired into `test` / pre-push / CI: the lane costs minutes of live-RPC work.
+
 ## Build-Artifact Housekeeping
 
 `rust/target` holds several independently rebuildable cache families (normal

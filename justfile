@@ -111,7 +111,7 @@ test-standalone:
 # (`test-rust` / `test-python`) so the python-version matrix and job
 # partitioning keep working. Deliberately excluded from `test` (run on demand):
 # toolchain-gated Tier-3 harness rebuilds (`test-tier3` / `verify-tier3-*`) and
-# net-gated suites (`record-golden`, `verify-deployments`).
+# net-gated suites (`test-fork`, `record-golden`, `verify-deployments`).
 
 # Default gate: standalone smoke + cargo workspace + full pytest.
 test: test-rust-nextest test-python
@@ -226,15 +226,75 @@ test-golden-replay:
 # <cargo target dir>/nextest/ci/nextest-ci.junit.xml. `--no-fail-fast` so one failing
 # test never aborts the whole run.
 # Requires cargo-nextest: cargo install --locked cargo-nextest
-# Extra args forward to `cargo nextest run` (e.g. `just test-rust-nextest -E 'test(foo)'`).
-# Via {{ args }} interpolation, not "$@": just never passes recipe arguments as
-# positional script arguments (set positional-arguments is off repo-wide; see gen-stubs).
+# Extra args forward to `cargo nextest run` (e.g. `just test-rust-nextest -E 'test(foo)'`
+# or `just test-rust-nextest -p degenbot-substrate` — both work: the parenthesized
+# filter reaches nextest intact, and -p actually narrows, see below).
+#
+# Forwarding is raw `{{args}}` text interpolation, never "$@": just does not pass
+# recipe arguments as positional script arguments (set positional-arguments is off
+# repo-wide; see gen-stubs). Raw interpolation is parsed by BASH, so an unquoted
+# parenthesized filter like `test(foo)` used to abort this script at parse time;
+# absorbing it into a quoted assignment parses it as data instead. Double quotes
+# inside forwarded args are still not supported (they never were, under raw
+# interpolation). `-p`/`--package` must ALSO drop the trailing `--workspace`:
+# nextest gives --workspace precedence and silently runs every workspace member
+# when both selections are present, so the documented `-p <crate>` narrowing
+# never narrowed.
 test-rust-nextest *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    set -f # noglob: a filter metacharacter must never glob-expand against the cwd
+    nextest_args="{{ args }}"
     python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo nextest run --locked --manifest-path rust/Cargo.toml --workspace --profile ci --no-fail-fast {{ args }}
+    selection="--workspace"
+    if [[ $nextest_args =~ (^|[[:space:]])(-p|--package)([[:space:]]|=) ]]; then
+        selection=""
+    fi
+    # shellcheck disable=SC2086 # deliberate word-split of the forwarded args
+    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast $nextest_args
+
+# Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,
+# CI) deliberately deselects:
+#   - the pytest live-RPC tiers (`online_rpc` / `base`, minus `slow`);
+#   - the Rust live revm fork-truth legs: the `#[ignore]`d `live_*` tests in
+#     degenbot-simulation, gated on the chain-1 endpoint env family
+#     `DEGENBOT_RPC_HTTP_CHAINID_1` (exported here from the probe target).
+# Fails CLOSED on absent or unreachable RPC: TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
+# must be set AND the endpoint must answer eth_chainId (probe, don't assume).
+# The devcontainer's reth satisfies both (containerEnv sets
+# http://host.containers.internal:8545/, WS :8546); any reachable archive
+# endpoint works — the pytest harness's endpoint table (tests/conftest.py)
+# supplies the per-chain URIs the pytest legs actually dial.
+# On demand only: minutes of live-RPC work, never in `test` / pre-push / CI.
+test-fork:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rpc_uri="${TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI:-}"
+    if [ -z "$rpc_uri" ]; then
+        echo "ERROR: no RPC env — set TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI to a reachable Ethereum endpoint" >&2
+        echo "       (the devcontainer sets http://host.containers.internal:8545/ for its reth)" >&2
+        exit 1
+    fi
+    chain_id=""
+    chain_id="$(curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "$rpc_uri")" \
+        || chain_id=""
+    if [[ ! $chain_id == *'"result"'* ]]; then
+        echo "ERROR: no reachable Ethereum RPC at TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI=$rpc_uri" >&2
+        echo "       (eth_chainId response: ${chain_id:-<none>}) — start the node or re-point the URI" >&2
+        exit 1
+    fi
+    echo "▶ fork lane RPC: $rpc_uri (chain $({{ py_run }} python -c 'import json,sys; print(int(json.load(sys.stdin)["result"], 16))' <<<"$chain_id"))"
+    echo
+    echo "▶ pytest fork legs: -m '(online_rpc or base) and not slow'"
+    {{ py_run }} pytest -m '(online_rpc or base) and not slow' -q --no-header
+    echo
+    echo "▶ Rust live revm fork legs: degenbot-simulation live_* (run-ignored only)"
+    DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo nextest run --locked --manifest-path rust/Cargo.toml \
+        -p degenbot-simulation -E 'test(live_)' --run-ignored only --no-fail-fast
+    echo
+    echo "✓ fork lane complete."
 
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
