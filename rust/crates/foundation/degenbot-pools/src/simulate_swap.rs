@@ -14,7 +14,8 @@
 //! and Curve standard stableswap are all ported — the Python companions
 //! for those delegate to this core rather than doing their own math. The
 //! per-family design arms live behind the family read modules' read doors
-//! (ADR-073 D1); this dispatch keeps ONE row per family and no family math.
+//! (ADR-073 D1) — Aerodrome **stable** behind `families::solidly` — and this
+//! dispatch keeps ONE row per family and no family math.
 //!
 //! **Relocated** (the value core) from
 //! `degenbot-bot/src/bot_core/mod.rs::BotState::calculate_tokens_out_miss_aware`;
@@ -22,7 +23,6 @@
 //! `&PoolEntry` then delegates here.
 
 use alloy::primitives::{I256, U256};
-use degenbot_math::solidly;
 
 use crate::families::concentrated_liquidity::{
     ConcentratedLiquidityState, DesignScalars, FetchMode, SwapReadOutcome, SwapReadRequest,
@@ -30,6 +30,7 @@ use crate::families::concentrated_liquidity::{
 };
 use crate::families::{
     balancer_stable, balancer_weighted, concentrated_liquidity, curve_stableswap, reserve_pair,
+    solidly,
 };
 use crate::registry::PoolEntry;
 use crate::v3_state::SimulateSwapError;
@@ -133,10 +134,19 @@ pub fn simulate_swap(
                     },
                 );
             }
-            // Stable mode: Solidly stable invariant (`x^3y + y^3x >= k`)
-            // via `calc_exact_in_stable_solidly` (decimals carried on identity).
-            // The Solidly family's read arm — not the reserve-pair module's.
-            simulate_aerodrome_stable_swap(id, state, zero_for_one, amount_in)
+            // Stable mode: the Solidly family's read door (the stable
+            // invariant, the fee convention, and the identity-carried decimal
+            // scales live there — not the reserve-pair module's).
+            solidly::read_swap(
+                solidly::SolidlyState::Aerodrome {
+                    identity: id,
+                    state,
+                },
+                solidly::SwapReadRequest::ExactIn {
+                    zero_for_one,
+                    amount_in,
+                },
+            )
         }
         // One balance-vector row per family (ADR-073 D2): the exact-input
         // read goes through the family read module's read_swap door — the
@@ -191,35 +201,4 @@ fn cl_stateless_row(
         SwapReadOutcome::Stateless(Err(err)) => Err(err),
         _ => unreachable!("stateless read returns the stateless verdict"),
     }
-}
-
-/// Aerodrome V2 **stable**-mode exact-input swap (Solidly invariant
-/// `x^3*y + y^3*x >= k`) via `calc_exact_in_stable_solidly`.
-///
-/// The identity carries token0/token1 decimal counts as `u8`; they are
-/// converted to the `10**decimals` scale factors the Solidly math expects
-/// (mirrors the Python `AerodromeV2Pool` companion, which uses
-/// `10**token.decimals`).
-fn simulate_aerodrome_stable_swap(
-    id: &crate::aerodrome_v2_state::AerodromeV2PoolIdentity,
-    state: &crate::aerodrome_v2_state::AerodromeV2PoolState,
-    zero_for_one: bool,
-    amount_in: U256,
-) -> Result<U256, SimulateSwapError> {
-    if amount_in.is_zero() {
-        return Ok(U256::ZERO);
-    }
-    let token_in: u8 = u8::from(!zero_for_one);
-    let (fee_numer, fee_denom) = id.fee;
-    solidly::calc_exact_in_stable_solidly(
-        amount_in,
-        token_in,
-        state.reserve0.to::<U256>(),
-        state.reserve1.to::<U256>(),
-        U256::from(10u64).pow(U256::from(id.token0_decimals)),
-        U256::from(10u64).pow(U256::from(id.token1_decimals)),
-        U256::from(fee_numer),
-        U256::from(fee_denom),
-    )
-    .map_err(|_| SimulateSwapError::NotComputable)
 }

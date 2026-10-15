@@ -1,13 +1,17 @@
-//! Solidly-stable (Aerodrome stable / Camelot `stable_swap`) projection.
+//! Solidly-stable (Aerodrome stable / Camelot `stable_swap`) resolve row —
+//! the registry-lookup + solver-vocabulary wrap seam (ADR-073 D2).
 //!
-//! Reads reserves + identity off the per-family `PoolEntry` arm, then fetches
-//! token decimals via the token registry (never stored on the identity —
-//! ADR-003 single source of truth). Dedup is ONLY the token-decimals fetch
-//! shared across the two variants; the fee math stays two distinct paths
-//! (Aerodrome fee-fraction direct; Camelot retained-gamma inverted to fee).
+//! The projection itself is the family read module's door —
+//! `degenbot_pools::families::solidly::capture_hop` — a pure function of the
+//! family state slice plus the registry scales. This row keeps ONLY the
+//! state-owner seams: the registry lookups (the dedup'd token-decimals fetch,
+//! ADR-003 single source of truth), and the one `ResolvedHop` wrap + nonce.
+//! The fee conventions (Aerodrome fee-fraction direct; Camelot retained-gamma
+//! inverted to fee) are design-private behind the door.
 
 use alloy::primitives::{Address, U256};
 
+use degenbot_pools::families::solidly::{self, SolidlyHopProjection, SolidlyState};
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop, SolidlyHopState};
 
 use super::super::BotState;
@@ -28,9 +32,29 @@ fn token_decimals(
     }
 }
 
-/// Solidly-stable projection. Aerodrome identity wins when present; otherwise
+/// The solver-vocabulary wrap — the row's named seam: the family projection
+/// into `degenbot_solvers`' hop payload, field by field.
+fn wrap_hop(hop: SolidlyHopProjection) -> ResolvedHop {
+    ResolvedHop::SolidlyStable {
+        state: SolidlyHopState {
+            reserves_0: hop.reserves_0,
+            reserves_1: hop.reserves_1,
+            decimals_0: hop.decimals_0,
+            decimals_1: hop.decimals_1,
+            token_in: hop.token_in,
+            fee_numer: hop.fee_numer,
+            fee_denom: hop.fee_denom,
+            stable: hop.stable,
+            variant: hop.variant,
+        },
+    }
+}
+
+/// Solidly-stable resolve row. Aerodrome identity wins when present; otherwise
 /// a V2 identity (`stable_swap=true`) is the Camelot arm; neither present
-/// means the pool is not a Solidly-stable pool.
+/// means the pool is not a Solidly-stable pool. The projection is the family
+/// read module's [`solidly::capture_hop`] door — the registry scales this row
+/// fetches are the door's caller-supplied input (both designs).
 pub(crate) fn project_solidly(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -40,57 +64,30 @@ pub(crate) fn project_solidly(
             .get_aerodrome_pool(pool_ref.pool_key)
             .ok_or(MissingHopReason::MissingState)?;
         let (decimals_0, decimals_1) = token_decimals(core, &id.token0, &id.token1)?;
-        // Aerodrome fee is stored as the fee fraction directly
-        // (cf. Camelot below).
-        Ok((
-            ResolvedHop::SolidlyStable {
-                state: SolidlyHopState {
-                    reserves_0: state.reserve0.to::<U256>(),
-                    reserves_1: state.reserve1.to::<U256>(),
-                    decimals_0,
-                    decimals_1,
-                    token_in: u8::from(!pool_ref.zero_for_one),
-                    fee_numer: U256::from(id.fee.0),
-                    fee_denom: U256::from(id.fee.1),
-                    stable: id.stable,
-                    variant: id.variant,
-                },
+        let hop = solidly::capture_hop(
+            SolidlyState::Aerodrome {
+                identity: id,
+                state,
             },
-            state.state_nonce,
-        ))
+            (decimals_0, decimals_1),
+            pool_ref.zero_for_one,
+        );
+        Ok((wrap_hop(hop), state.state_nonce))
     } else if let Some(id) = core.get_v2_identity(pool_ref.pool_key) {
-        // Camelot stable_swap path (V2PoolIdentity with
-        // `stable_swap=true`).
         let state = core
             .get_v2_pool_state(pool_ref.pool_key)
             .ok_or(MissingHopReason::MissingState)?;
         let (decimals_0, decimals_1) = token_decimals(core, &id.token0, &id.token1)?;
-        // Camelot stores the per-direction RETAINED fraction
-        // `(gamma_numer, fee_denom)`; the solidly math takes the
-        // FEE fraction, so invert: `fee_numer = denom - gamma`,
-        // `fee_denom = denom`. Selected by `zero_for_one`
-        // (token0 in → fee_token0; token1 in → fee_token1).
-        let (gamma, denom) = if pool_ref.zero_for_one {
-            id.fee_token0
-        } else {
-            id.fee_token1
-        };
-        Ok((
-            ResolvedHop::SolidlyStable {
-                state: SolidlyHopState {
-                    reserves_0: state.reserve0.to::<U256>(),
-                    reserves_1: state.reserve1.to::<U256>(),
-                    decimals_0,
-                    decimals_1,
-                    token_in: u8::from(!pool_ref.zero_for_one),
-                    fee_numer: U256::from(denom.saturating_sub(gamma)),
-                    fee_denom: U256::from(denom),
-                    stable: id.stable_swap,
-                    variant: id.variant,
-                },
+        let hop = solidly::capture_hop(
+            SolidlyState::Camelot {
+                identity: id,
+                state,
+                decimals: (decimals_0, decimals_1),
             },
-            state.state_nonce,
-        ))
+            (decimals_0, decimals_1),
+            pool_ref.zero_for_one,
+        );
+        Ok((wrap_hop(hop), state.state_nonce))
     } else {
         // Not an Aerodrome/Camelot pool → invalid.
         Err(MissingHopReason::MissingIdentity)

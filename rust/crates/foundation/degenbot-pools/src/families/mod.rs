@@ -16,10 +16,14 @@
 //! and calc behavior never cross. The reserve-pair structural family (V2 +
 //! Aerodrome V2 volatile) is one module carrying its own event/probe
 //! vocabulary — both designs' apply bodies are the ADR-017 D3 collapse, so
-//! nothing sits beside it.
+//! nothing sits beside it. The Solidly structural family (Aerodrome V2
+//! stable + Camelot `stable_swap`) is likewise one module with its own
+//! vocabulary — its two designs share the slices and the Sync shape, so
+//! nothing sits beside it either.
 pub mod balance_vector;
 pub mod balancer_stable;
 pub mod balancer_weighted;
 pub mod concentrated_liquidity;
 pub mod curve_stableswap;
 pub mod reserve_pair;
+pub mod solidly;
