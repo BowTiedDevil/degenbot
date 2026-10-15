@@ -56,7 +56,7 @@ from degenbot.provider import (
 )
 from degenbot.provider.factory import get_provider_from_config
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.types.pool_type import PoolFamily
+from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
@@ -646,6 +646,21 @@ class Bot(AccountQueryMixin):
         # `from_handle` is a concrete-class classmethod (not on the base); cast
         # to `type[Any]` so the call is type-checkable.
         pool = cast("type[Any]", pool_class).from_handle(py_pool)
+
+        # Bind the resolved identity onto the companion (builder knowledge:
+        # the descriptor drove the class choice and the core's family/variant
+        # registration). The class label alone is not identity — sushiswap v3
+        # shares UniswapV3Pool — so the pool carries the frozen descriptor.
+        pool.bind_pool_type(
+            pool_type
+            if pool_type is not None
+            else PoolTypeDescriptor(
+                family=family,
+                variant=variant,
+                kind=derive_kind(family, variant),
+                factory=None,
+            )
+        )
         # Idempotent register: a concurrent registration worker may have built
         # this same shared pool first; use the canonical instance so THIS path
         # still registers instead of being lossily skipped.

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
@@ -157,7 +158,18 @@ def make_v3_pool(
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
-    return pool_class.from_handle(handle)
+    pool = pool_class.from_handle(handle)
+    # Identity is builder knowledge (Bot.build_pool binds the resolver's
+    # descriptor the same way). The class label alone conflates variants.
+    pool.bind_pool_type(
+        PoolTypeDescriptor(
+            family=PoolFamily.CONCENTRATED_LIQUIDITY,
+            variant=pool_class.variant,
+            kind=derive_kind(PoolFamily.CONCENTRATED_LIQUIDITY, pool_class.variant),
+            factory=get_checksum_address(factory),
+        )
+    )
+    return pool
 
 
 __all__ = [

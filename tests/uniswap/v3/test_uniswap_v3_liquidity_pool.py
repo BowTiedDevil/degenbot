@@ -213,12 +213,18 @@ def test_pool_creation_with_liquidity_map(bot_mainnet_full: Bot) -> None:
 
 
 @pytest.mark.base
-def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
+def test_built_pool_identity_matches_deployment_truth(fork_base_full: AnvilFork) -> None:
+    # The wrong-pool-type guard used to raise here by construction. The one
+    # build entry resolves the family from chain data now, so the same meaning
+    # is "the object handed back IS the deployment's type, immutably" — a
+    # mislabeled pool would price swaps with the wrong fee model.
     bot = make_bot_with_provider(fork_base_full.provider)
-
     pancake_pool_address = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
-    with pytest.raises(LiquidityPoolError):
-        bot.build_pool(pancake_pool_address)
+    pool = bot.build_pool(pancake_pool_address)
+    assert pool.pool_type.kind == "pancakeswap_v3"
+    assert pool.pool_type.variant == "pancakeswap"
+    with pytest.raises(AttributeError):
+        pool.pool_type = pool.pool_type  # type: ignore[misc]
 
 
 @pytest.mark.base
