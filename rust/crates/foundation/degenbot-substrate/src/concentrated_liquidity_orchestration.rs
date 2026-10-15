@@ -21,6 +21,7 @@ use degenbot_core::op_warn;
 use hashbrown::HashMap;
 
 use ::degenbot_pools::families::concentrated_liquidity as cl;
+use ::degenbot_pools::families::door::{FamilyApply, Observe, Observed};
 
 use alloy::primitives::{Address, U256};
 
@@ -862,13 +863,10 @@ impl ConcentratedLiquidityOrchestration {
     /// through here so cross-type arrival order within a block is preserved
     /// (a `Swap` at logIdx 1433 lands after a `Mint` at logIdx 120 if it
     /// arrived after). The slice mutation is the family read module's
-    /// [`cl::apply_event`] door (V3 arm) — the capability owns the routing,
-    /// the door owns the family behavior.
+    /// apply door (the [`FamilyApply`] contract, V3 arm) — the capability
+    /// owns the routing, the door owns the family behavior.
     fn apply_buffered_v3_event(state: &mut V3PoolState, event: BufferedV3PoolEvent) {
-        cl::apply_event(
-            cl::ConcentratedLiquidityApplyTarget::V3(state),
-            cl::ConcentratedLiquidityEvent::V3(event),
-        );
+        state.apply_event(event);
     }
     /// Mark `block` as fully processed by the pump (every V3 log for `block`
     /// Read a registered V3 pool's state by `pool_id`.
@@ -1117,8 +1115,8 @@ impl ConcentratedLiquidityOrchestration {
             },
             _ => return None,
         };
-        match cl::observe(design, cl::Observe::TickFingerprint) {
-            cl::Observed::TickFingerprint(fingerprint) => fingerprint,
+        match cl::observe(design, Observe::TickFingerprint) {
+            Observed::TickFingerprint(fingerprint) => fingerprint,
             _ => unreachable!("the fingerprint probe answers"),
         }
     }
@@ -1759,10 +1757,7 @@ impl ConcentratedLiquidityOrchestration {
     /// the int256 delta to i128 at the drain→apply seam (ADR-014 D4, matching
     /// the live `apply_v4_liquidity_update_by_pool_id` path).
     fn apply_buffered_v4_event(state: &mut V4PoolState, event: BufferedV4PoolEvent) {
-        cl::apply_event(
-            cl::ConcentratedLiquidityApplyTarget::V4(state),
-            cl::ConcentratedLiquidityEvent::V4(event),
-        );
+        state.apply_event(event);
     }
     /// Set a V3 pool's registration lifecycle to `Quarantined`. The
     /// live pump then defers the pool's `Swap`/`Mint`/`Burn` events to the

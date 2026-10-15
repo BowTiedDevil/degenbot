@@ -30,6 +30,8 @@ use std::sync::Arc;
 use alloy::primitives::{Address, I256};
 
 use super::{CaptureRefusal, DesignScalars, Observe, Observed, OverrideScalars};
+
+use crate::families::door::FamilyApply;
 use crate::int_v3_hop::IntV3TickRangeSequence;
 use crate::registry::ConcentratedLiquidityPoolMut as _;
 use crate::v3_state::V3SwapOutcome;
@@ -49,7 +51,7 @@ pub use crate::v4_state::{
 /// identity — `amountSpecified < 0` is exact input, which IS the canonical
 /// user-perspective sign.
 #[must_use]
-pub fn engine_amount_specified(canonical: I256) -> I256 {
+pub(super) fn engine_amount_specified(canonical: I256) -> I256 {
     canonical
 }
 
@@ -68,7 +70,7 @@ pub fn engine_amount_specified(canonical: I256) -> I256 {
 /// never solvable);
 /// [`CaptureRefusal::SequenceUnavailable`] when the integer tick-range
 /// sequence could not be built for the direction.
-pub fn capture_hop(
+pub(super) fn capture_hop(
     state: &V4PoolState,
     scalars: DesignScalars,
     hooks: Address,
@@ -96,7 +98,7 @@ pub fn capture_hop(
 /// tick-bitmap word (sparse coverage — the caller owns fetch + retry), or
 /// [`SimulateSwapError::NotComputable`] on arithmetic overflow, invariant
 /// violation, or non-positive amount.
-pub fn compute(
+pub(super) fn compute(
     state: &V4PoolState,
     scalars: DesignScalars,
     zero_for_one: bool,
@@ -113,31 +115,35 @@ pub fn compute(
     )
 }
 
-/// The V4 apply arm of [`super::apply_event`] — one buffered pool event
-/// (`Liquidity` or `Swap`) onto one V4 slice. V4 twin of the V3 apply arm —
-/// the `Liquidity` variant narrows the int256 delta to i128 at the
+/// The V4 apply arm of the [`FamilyApply`] contract — one buffered pool
+/// event (`Liquidity` or `Swap`) onto one V4 slice. V4 twin of the V3 apply
+/// arm — the `Liquidity` variant narrows the int256 delta to i128 at the
 /// drain→apply seam (ADR-014 D4, matching the live apply path).
-pub fn apply_event(state: &mut V4PoolState, event: BufferedV4PoolEvent) {
-    match event {
-        BufferedV4PoolEvent::Liquidity(u) => {
-            if let Ok(delta_i128) = i128::try_from(u.liquidity_delta) {
-                state.apply_liquidity_update(
-                    u.tick_lower,
-                    u.tick_upper,
-                    delta_i128,
-                    u.block_number,
-                );
+impl FamilyApply for V4PoolState {
+    type Event = BufferedV4PoolEvent;
+
+    fn apply_event(&mut self, event: Self::Event) {
+        match event {
+            BufferedV4PoolEvent::Liquidity(u) => {
+                if let Ok(delta_i128) = i128::try_from(u.liquidity_delta) {
+                    self.apply_liquidity_update(
+                        u.tick_lower,
+                        u.tick_upper,
+                        delta_i128,
+                        u.block_number,
+                    );
+                }
             }
-        }
-        BufferedV4PoolEvent::Swap(s) => {
-            state.apply_swap(s.sqrt_price_x96, s.liquidity, s.tick, s.block_number, &[]);
+            BufferedV4PoolEvent::Swap(s) => {
+                self.apply_swap(s.sqrt_price_x96, s.liquidity, s.tick, s.block_number, &[]);
+            }
         }
     }
 }
 
 /// The V4 observe arm of [`super::observe`] — family-local GET behavior over
 /// one V4 slice. [`Observe::Hooked`] reads the design's hook permission bits.
-pub fn observe(state: &V4PoolState, probe: Observe, hooks: Address) -> Observed {
+pub(super) fn observe(state: &V4PoolState, probe: Observe, hooks: Address) -> Observed {
     match probe {
         Observe::Coverage => Observed::Coverage(state.coverage),
         Observe::Hooked => Observed::Hooked(has_amount_modifying_hook(hooks)),
@@ -146,6 +152,7 @@ pub fn observe(state: &V4PoolState, probe: Observe, hooks: Address) -> Observed 
             state.tick_data.len(),
             state.tick_data.values().map(|t| t.block).sum(),
         ))),
+        _ => unreachable!("a CL slice answers only the CL probes"),
     }
 }
 
@@ -156,7 +163,7 @@ pub fn observe(state: &V4PoolState, probe: Observe, hooks: Address) -> Observed 
 /// hook/dynamic-fee admission gate, and the discovery walk stages the
 /// registered pool's own coverage.
 #[must_use]
-pub fn discovery_state(
+pub(super) fn discovery_state(
     identity: &V4PoolIdentity,
     state: &V4PoolState,
     journal_depth: usize,
@@ -192,7 +199,7 @@ pub fn discovery_state(
 /// words). `hook_flags`/`protocol_fee` zero on the transient copy — safe by
 /// construction for registered pools (admission gate).
 #[must_use]
-pub fn override_state(
+pub(super) fn override_state(
     identity: &V4PoolIdentity,
     over: &OverrideScalars<'_>,
     update_block: u64,

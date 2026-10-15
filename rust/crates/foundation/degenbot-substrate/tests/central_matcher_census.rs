@@ -25,6 +25,28 @@ use std::sync::OnceLock;
 /// cli-core exchange-arm test fixture, not a pool matcher).
 const PINNED_MATCH_ENTRY_CENSUS: usize = 22;
 
+/// The reintroduction marker the census counts (shared by the workspace scan
+/// and the synthetic-fixture negative probe, so the probe witnesses the same
+/// predicate the pin enforces).
+const MATCH_ENTRY_TOKEN: &str = "match entry";
+
+/// The door surface of the family read modules: the four intent doors, the
+/// projection/calc doors the central rows legitimately call, and their
+/// per-design arms' public names. Any OTHER top-level `pub fn` under
+/// `families/` is a non-door export: it must be covered by
+/// [`BANNED_DESIGN_MATH`] (the banned token derived from the export) or
+/// classified as a door here — knowingly, via the
+/// `the_families_export_only_the_door_fns` meta-test.
+const DOOR_FNS: &[&str] = &[
+    "read_swap",
+    "capture_hop",
+    "capture_aerodrome_hop",
+    "observe",
+    "get_dy",
+    "calc_token_amount",
+    "calc_withdraw_one_coin",
+];
+
 /// The family design-math identifiers that may never appear at the central
 /// sites: the compute leaves the family read modules own, the retired
 /// central-math helpers, and the retired wrapper names (the C3/C5
@@ -140,6 +162,35 @@ fn cfg_test_regions(lines: &[&str]) -> Vec<bool> {
     in_test
 }
 
+/// The census predicate over one source text: the number of reintroduced
+/// `match entry` rows.
+fn match_entry_hits_in_text(text: &str) -> usize {
+    text.lines()
+        .filter(|line| line.contains(MATCH_ENTRY_TOKEN))
+        .count()
+}
+
+/// The banned-identifier scan over one source text: every banned token in
+/// CODE (a comment or a `#[cfg(test)]` region is prose/fixtures, not a
+/// reintroduction). Line reports carry the relative path so a red half
+/// names its site.
+fn banned_token_hits_in_text(rel: &str, text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let in_test = cfg_test_regions(&lines);
+    let mut violations = Vec::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if is_comment_line(line) || in_test[idx] {
+            continue;
+        }
+        for token in BANNED_DESIGN_MATH {
+            if line.contains(token) {
+                violations.push(format!("{rel}:{}: {token}", idx + 1));
+            }
+        }
+    }
+    violations
+}
+
 /// The literal `match entry` census across the workspace sources.
 fn match_entry_census(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
@@ -155,7 +206,7 @@ fn match_entry_census(root: &Path) -> Vec<String> {
             continue;
         };
         for (idx, line) in text.lines().enumerate() {
-            if line.contains("match entry") {
+            if line.contains(MATCH_ENTRY_TOKEN) {
                 hits.push(format!("{rel}:{}: {}", idx + 1, line.trim()));
             }
         }
@@ -182,22 +233,12 @@ fn design_math_at_central_sites(root: &Path) -> Vec<String> {
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let lines: Vec<&str> = text.lines().collect();
-            let in_test = cfg_test_regions(&lines);
-            for (idx, line) in lines.iter().enumerate() {
-                if is_comment_line(line) || in_test[idx] {
-                    continue;
-                }
-                for token in BANNED_DESIGN_MATH {
-                    if line.contains(token) {
-                        violations.push(format!(
-                            "{}:{}: {token}",
-                            path.strip_prefix(root).unwrap_or(&path).display(),
-                            idx + 1
-                        ));
-                    }
-                }
-            }
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            violations.extend(banned_token_hits_in_text(&rel, text.as_str()));
         }
     }
     violations
@@ -295,4 +336,114 @@ fn the_banned_tokens_are_still_the_families_leaves() {
             "the retired wrapper name {token} reappeared in the central crates"
         );
     }
+}
+
+/// The families' export surface is door-only: every top-level `pub fn` under
+/// `families/` must be a named door. A NON-door export is exactly the shape
+/// that can quietly resurface at the central matchers, so it must be covered
+/// by `BANNED_DESIGN_MATH` (the banned token derived from the export name)
+/// before it can appear there unflagged — this meta-test is that
+/// derivation's ratchet.
+#[test]
+fn the_families_export_only_the_door_fns() {
+    let root = workspace_root();
+    let mut files = Vec::new();
+    collect_rs_files(
+        &root
+            .join("crates/foundation/degenbot-pools/src/families")
+            .clone(),
+        &mut files,
+    );
+    assert!(
+        !files.is_empty(),
+        "the families tree must be readable for the meta-test"
+    );
+    let mut offenders = Vec::new();
+    for path in &files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for (idx, line) in text.lines().enumerate() {
+            // Column-0 `pub fn`s only: inherent/trait-impl methods and
+            // tree-internal (`pub(super)`) arms are not export surface.
+            let rest = if let Some(rest) = line.strip_prefix("pub fn ") {
+                rest
+            } else if let Some(rest) = line.strip_prefix("pub const fn ") {
+                rest
+            } else {
+                continue;
+            };
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let is_door = DOOR_FNS.contains(&name.as_str());
+            let is_banned = BANNED_DESIGN_MATH.iter().any(|token| name.contains(token));
+            if !is_door && !is_banned {
+                offenders.push(format!(
+                    "{}:{}: {name}",
+                    path.strip_prefix(root).unwrap_or(path).display(),
+                    idx + 1
+                ));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the families tree exports non-door functions (classify each as a \
+         door in DOOR_FNS, or derive a BANNED_DESIGN_MATH token from its \
+         name so a central-matcher reintroduction cannot hide behind it):
+{}",
+        offenders.join(
+            "
+"
+        )
+    );
+}
+
+/// The negative probe: the gate's red path witnessed on a synthetic fixture,
+/// permanently (a gate whose red path is only a one-time manual probe is not
+/// a gate). The same line-context rules the workspace scan enforces — a
+/// banned token in CODE goes red, the same token in a comment or inside a
+/// `#[cfg(test)]` region stays green — and the census predicate moves on a
+/// reintroduced row.
+#[test]
+fn the_gate_goes_red_on_a_synthetic_fixture() {
+    // Red: a banned design-math leaf called in code at a "central site".
+    let red = "
+use degenbot_math::balancer::weighted_math;
+fn row() -> u256 {
+    weighted_math::pow_up(x, y)
+}
+";
+    let hits = banned_token_hits_in_text("synthetic/red.rs", red);
+    assert!(
+        !hits.is_empty(),
+        "a banned design-math token in code must trip the gate"
+    );
+    assert!(
+        hits[0].contains("pow_up"),
+        "the hit names the token: {hits:?}"
+    );
+
+    // Green: the same token in prose and inside a `#[cfg(test)]` region —
+    // the C5 line-context rules must keep the gate quiet there.
+    let clean = "
+// a historical note mentions pow_up in prose
+#[cfg(test)]
+mod tests {
+    fn fixture() {
+        let _ = pow_up;
+    }
+}
+";
+    assert!(
+        banned_token_hits_in_text("synthetic/clean.rs", clean).is_empty(),
+        "comment and cfg(test) occurrences are not reintroductions"
+    );
+
+    // The census half: the counted predicate is `match entry`, and a
+    // synthetic reintroduced row registers exactly one hit.
+    assert_eq!(match_entry_hits_in_text("match entry {"), 1);
+    assert_eq!(match_entry_hits_in_text("match other {"), 0);
 }

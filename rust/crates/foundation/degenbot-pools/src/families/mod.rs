@@ -10,20 +10,18 @@
 //! The central dispatchers keep one dispatch row per family (ADR-073 D2) and
 //! call ONLY the family tree's intent doors.
 //!
-//! The balance-vector structural family (Curve stableswap, Balancer weighted,
-//! Balancer stable) shares its family-blind event/probe vocabulary in
-//! [`balance_vector`] (ADR-059 D6) — the per-family projections, swap reads,
-//! and calc behavior never cross. The reserve-pair structural family (V2 +
-//! Aerodrome V2 volatile) is one module carrying its own event/probe
-//! vocabulary — both designs' apply bodies are the ADR-017 D3 collapse, so
-//! nothing sits beside it. The Solidly structural family (Aerodrome V2
-//! stable + Camelot `stable_swap`) is likewise one module with its own
-//! vocabulary — its two designs share the slices and the Sync shape, so
-//! nothing sits beside it either.
+//! The doors themselves share ONE family-blind contract vocabulary in
+//! [`door`] — one swap-read request, one read outcome, one observe probe
+//! pair, one apply contract — with each family's design bits riding as
+//! additive variants. The reserve-pair structural family (V2 + Aerodrome V2
+//! volatile) and the Solidly structural family (Aerodrome V2 stable + Camelot
+//! `stable_swap`) share the state slices and the Sync shape, so one
+//! [`door::SyncEvent`] and one [`door::FamilyApply`] impl serve both.
 pub mod balance_vector;
 pub mod balancer_stable;
 pub mod balancer_weighted;
 pub mod concentrated_liquidity;
 pub mod curve_stableswap;
+pub mod door;
 pub mod reserve_pair;
 pub mod solidly;

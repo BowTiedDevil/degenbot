@@ -26,6 +26,8 @@ use std::sync::Arc;
 use alloy::primitives::I256;
 
 use super::{CaptureRefusal, DesignScalars, Observe, Observed, OverrideScalars};
+
+use crate::families::door::FamilyApply;
 use crate::int_v3_hop::IntV3TickRangeSequence;
 use crate::registry::ConcentratedLiquidityPoolMut as _;
 use crate::v3_state::{v3_simulate_swap, PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
@@ -44,7 +46,7 @@ pub use crate::v3_state::{
 /// canonical request is exact-OUTPUT, while V3's `amountSpecified` is positive
 /// for exact input.
 #[must_use]
-pub fn engine_amount_specified(canonical: I256) -> I256 {
+pub(super) fn engine_amount_specified(canonical: I256) -> I256 {
     -canonical
 }
 
@@ -60,7 +62,7 @@ pub fn engine_amount_specified(canonical: I256) -> I256 {
 /// Python's `sparse_liquidity_map` early-True);
 /// [`CaptureRefusal::SequenceUnavailable`] when the integer tick-range
 /// sequence could not be built for the direction.
-pub fn capture_hop(
+pub(super) fn capture_hop(
     state: &V3PoolState,
     scalars: DesignScalars,
     zero_for_one: bool,
@@ -84,7 +86,7 @@ pub fn capture_hop(
 /// tick-bitmap word (sparse coverage — the caller owns fetch + retry), or
 /// [`SimulateSwapError::NotComputable`] on arithmetic overflow, invariant
 /// violation, or non-positive amount.
-pub fn compute(
+pub(super) fn compute(
     state: &V3PoolState,
     scalars: DesignScalars,
     zero_for_one: bool,
@@ -101,23 +103,27 @@ pub fn compute(
     )
 }
 
-/// The V3 apply arm of [`super::apply_event`] — one buffered pool event
-/// (`Liquidity` or `Swap`) onto one V3 slice. The V3 drain loops dispatch
-/// through here so cross-type arrival order within a block is preserved (a
-/// `Swap` at logIdx 1433 lands after a `Mint` at logIdx 120 if it arrived
-/// after). Mirrors the live-path apply methods: `Liquidity` →
+/// The V3 apply arm of the [`FamilyApply`] contract — one buffered pool
+/// event (`Liquidity` or `Swap`) onto one V3 slice. The V3 drain loops
+/// dispatch through here so cross-type arrival order within a block is
+/// preserved (a `Swap` at logIdx 1433 lands after a `Mint` at logIdx 120 if
+/// it arrived after). Mirrors the live-path apply methods: `Liquidity` →
 /// `state.apply_liquidity_update`, `Swap` → `state.apply_swap` (with
 /// `tick_priors: &[]` — the pump path never carries tick priors).
-pub fn apply_event(state: &mut V3PoolState, event: BufferedV3PoolEvent) {
-    match event {
-        BufferedV3PoolEvent::Liquidity(u) => state.apply_liquidity_update(
-            u.tick_lower,
-            u.tick_upper,
-            u.liquidity_delta,
-            u.block_number,
-        ),
-        BufferedV3PoolEvent::Swap(s) => {
-            state.apply_swap(s.sqrt_price_x96, s.liquidity, s.tick, s.block_number, &[]);
+impl FamilyApply for V3PoolState {
+    type Event = BufferedV3PoolEvent;
+
+    fn apply_event(&mut self, event: Self::Event) {
+        match event {
+            BufferedV3PoolEvent::Liquidity(u) => self.apply_liquidity_update(
+                u.tick_lower,
+                u.tick_upper,
+                u.liquidity_delta,
+                u.block_number,
+            ),
+            BufferedV3PoolEvent::Swap(s) => {
+                self.apply_swap(s.sqrt_price_x96, s.liquidity, s.tick, s.block_number, &[]);
+            }
         }
     }
 }
@@ -125,7 +131,7 @@ pub fn apply_event(state: &mut V3PoolState, event: BufferedV3PoolEvent) {
 /// The V3 observe arm of [`super::observe`] — family-local GET behavior over
 /// one V3 slice. V3 has no hook concept, so [`Observe::Hooked`] is always
 /// `false`.
-pub fn observe(state: &V3PoolState, probe: Observe) -> Observed {
+pub(super) fn observe(state: &V3PoolState, probe: Observe) -> Observed {
     match probe {
         Observe::Coverage => Observed::Coverage(state.coverage),
         Observe::Hooked => Observed::Hooked(false),
@@ -134,6 +140,7 @@ pub fn observe(state: &V3PoolState, probe: Observe) -> Observed {
             state.tick_data.len(),
             state.tick_data.values().map(|t| t.block).sum(),
         ))),
+        _ => unreachable!("a CL slice answers only the CL probes"),
     }
 }
 
@@ -143,7 +150,7 @@ pub fn observe(state: &V3PoolState, probe: Observe) -> Observed {
 /// (`from_params` seeds known words from tick ROWS only — a caller-CHECKED
 /// empty word has no rows yet must never become a fetch target).
 #[must_use]
-pub fn discovery_state(
+pub(super) fn discovery_state(
     identity: &V3PoolIdentity,
     state: &V3PoolState,
     journal_depth: usize,
@@ -183,7 +190,7 @@ pub fn discovery_state(
 /// fetch mode), and the checked-word set is NOT mirrored (a hypothetical has
 /// no established words).
 #[must_use]
-pub fn override_state(
+pub(super) fn override_state(
     identity: &V3PoolIdentity,
     over: &OverrideScalars<'_>,
     update_block: u64,

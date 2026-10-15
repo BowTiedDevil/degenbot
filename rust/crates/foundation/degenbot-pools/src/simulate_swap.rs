@@ -28,9 +28,9 @@
 use alloy::primitives::{I256, U256};
 
 use crate::families::concentrated_liquidity::{
-    ConcentratedLiquidityState, DesignScalars, FetchMode, SwapReadOutcome, SwapReadRequest,
-    SwapReadSource,
+    ConcentratedLiquidityState, DesignScalars, FetchMode, SwapReadSource,
 };
+use crate::families::door::{ReadOutcome, SwapReadRequest};
 use crate::families::{
     balancer_stable, balancer_weighted, concentrated_liquidity, curve_stableswap, reserve_pair,
     solidly,
@@ -56,6 +56,10 @@ use crate::v3_state::SimulateSwapError;
 /// pool's walk enters an unfetched tick-bitmap word (the caller fetches +
 /// retries), or [`SimulateSwapError::NotComputable`] on arithmetic overflow /
 /// invariant violation / non-positive amount.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the length is the dispatch's shape (one row per family, each      row a door call in the shared request vocabulary); per-row extraction      would re-duplicate the row scaffolding ADR-073 D2 collapsed"
+)]
 pub fn simulate_swap(
     entry: &PoolEntry,
     zero_for_one: bool,
@@ -70,11 +74,12 @@ pub fn simulate_swap(
                 identity: &p.0,
                 state: &p.1,
             },
-            reserve_pair::SwapReadRequest::ExactIn {
+            SwapReadRequest::ExactIn {
                 zero_for_one,
                 amount_in,
             },
-        ),
+        )
+        .amount(),
         // V3 concentrated-liquidity math. Exact-input swap: the unsigned
         // amount enters as a canonical NEGATIVE request (exact input); the
         // design's fee + sign conventions live behind the family read
@@ -132,11 +137,12 @@ pub fn simulate_swap(
                         identity: id,
                         state,
                     },
-                    reserve_pair::SwapReadRequest::ExactIn {
+                    SwapReadRequest::ExactIn {
                         zero_for_one,
                         amount_in,
                     },
-                );
+                )
+                .amount();
             }
             // Stable mode: the Solidly family's read door (the stable
             // invariant, the fee convention, and the identity-carried decimal
@@ -146,11 +152,12 @@ pub fn simulate_swap(
                     identity: id,
                     state,
                 },
-                solidly::SwapReadRequest::ExactIn {
+                SwapReadRequest::ExactIn {
                     zero_for_one,
                     amount_in,
                 },
             )
+            .amount()
         }
         // One balance-vector row per family (ADR-073 D2): the exact-input
         // read goes through the family read module's read_swap door — the
@@ -159,20 +166,30 @@ pub fn simulate_swap(
         PoolEntry::BalancerWeighted(p) => balancer_weighted::read_swap(
             &p.1,
             &p.0,
-            balancer_weighted::SwapReadRequest::ExactIn {
+            SwapReadRequest::ExactIn {
                 zero_for_one,
                 amount_in,
             },
-        ),
+        )
+        .amount(),
         PoolEntry::BalancerStable(p) => balancer_stable::read_swap(
             &p.1,
             &p.0,
-            balancer_stable::SwapReadRequest::ExactIn {
+            SwapReadRequest::ExactIn {
                 zero_for_one,
                 amount_in,
             },
-        ),
-        PoolEntry::Curve(p) => curve_stableswap::read_swap(&p.1, &p.0, zero_for_one, amount_in),
+        )
+        .amount(),
+        PoolEntry::Curve(p) => curve_stableswap::read_swap(
+            &p.1,
+            &p.0,
+            SwapReadRequest::ExactIn {
+                zero_for_one,
+                amount_in,
+            },
+        )
+        .amount(),
     }
 }
 
@@ -190,19 +207,19 @@ fn cl_stateless_row(
 ) -> Result<U256, SimulateSwapError> {
     match concentrated_liquidity::read_swap(
         SwapReadSource::Shared(design),
-        SwapReadRequest {
+        SwapReadRequest::ConcentratedLiquidity {
             zero_for_one,
             amount_specified,
             sqrt_price_limit: None,
         },
         FetchMode::Stateless,
     ) {
-        SwapReadOutcome::Stateless(Ok(outcome)) => Ok(if zero_for_one {
+        ReadOutcome::Stateless(Ok(outcome)) => Ok(if zero_for_one {
             outcome.amount1
         } else {
             outcome.amount0
         }),
-        SwapReadOutcome::Stateless(Err(err)) => Err(err),
+        ReadOutcome::Stateless(Err(err)) => Err(err),
         _ => unreachable!("stateless read returns the stateless verdict"),
     }
 }

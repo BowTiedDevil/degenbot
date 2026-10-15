@@ -40,7 +40,8 @@ use degenbot_math::balancer::PowVersion;
 use crate::state_history::BalanceVectorPoolState as _;
 use crate::v3_state::SimulateSwapError;
 
-use super::balance_vector::{BalanceVectorEvent, Observe, Observed};
+use super::balance_vector::BalanceVectorEvent;
+use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest};
 
 /// The state slice + its registration DTOs — the family's read surface lives
 /// in `crate::balancer_weighted_state` (I/O-free per ADR-001) and is
@@ -139,45 +140,6 @@ pub fn capture_hop(
     })
 }
 
-/// The swap-read request: EVERY weighted read variant, keyed by direction and
-/// token selection. The token0/1 exact-input row, the N-token pair reads, and
-/// the `GIVEN_OUT` arm all enter through [`read_swap`].
-#[derive(Clone, Copy, Debug)]
-pub enum SwapReadRequest<'a> {
-    /// Exact-input swap over the token0/token1 pair (the seat engine's hop
-    /// universe) — `zero_for_one` selects the direction.
-    ExactIn {
-        /// Direction of the swap (token0 → token1 when `true`).
-        zero_for_one: bool,
-        /// The input amount (native decimals).
-        amount_in: U256,
-    },
-    /// Exact-input swap across an explicit token pair (the standalone-driver
-    /// N-token surface). Overrides carry the caller's view of the balances.
-    PairExactIn {
-        /// Input token index.
-        idx_in: usize,
-        /// Output token index.
-        idx_out: usize,
-        /// The input amount (native decimals).
-        amount_in: U256,
-        /// Replacement balances (caller's view); `None` reads the slice.
-        override_balances: Option<&'a [U256]>,
-    },
-    /// Exact-output swap across an explicit token pair (the `GIVEN_OUT` arm).
-    /// Overrides carry the caller's view of the balances.
-    PairExactOut {
-        /// Input token index.
-        idx_in: usize,
-        /// Output token index.
-        idx_out: usize,
-        /// The requested output amount (native decimals).
-        amount_out: U256,
-        /// Replacement balances (caller's view); `None` reads the slice.
-        override_balances: Option<&'a [U256]>,
-    },
-}
-
 /// The swap-read door — ALL variants behind one entry.
 ///
 /// # Errors
@@ -187,12 +149,13 @@ pub enum SwapReadRequest<'a> {
 /// or an arithmetic overflow (mirroring the pipe-line's `SafeMath` revert
 /// contract). The family carries no sparse-map miss — a balance-vector slice
 /// has no tick words to miss.
+#[must_use]
 pub fn read_swap(
     state: &BalancerWeightedPoolState,
     identity: &BalancerWeightedPoolIdentity,
     request: SwapReadRequest<'_>,
-) -> Result<U256, SimulateSwapError> {
-    match request {
+) -> ReadOutcome {
+    let read = match request {
         SwapReadRequest::ExactIn {
             zero_for_one,
             amount_in,
@@ -205,6 +168,7 @@ pub fn read_swap(
             idx_out,
             amount_in,
             override_balances,
+            override_scaling_factors: None,
         } => pair_exact_in(
             state,
             identity,
@@ -218,6 +182,7 @@ pub fn read_swap(
             idx_out,
             amount_out,
             override_balances,
+            override_scaling_factors: None,
         } => pair_exact_out(
             state,
             identity,
@@ -226,7 +191,15 @@ pub fn read_swap(
             amount_out,
             override_balances,
         ),
-    }
+        // A variant this family doesn't answer is a typed refusal: an
+        // exact-output read over the token0/1 pair, the CL canonical
+        // request, and the stable family's scaling-factor override bit (a
+        // weighted pool's scaling factors are registration-immutable
+        // identity fields — there is no caller view to override, so a
+        // `Some` is refused rather than silently ignored).
+        _ => return ReadOutcome::NotComputable,
+    };
+    ReadOutcome::simple(read)
 }
 
 /// Balancer V2 weighted exact-input swap across an explicit token pair.
@@ -354,16 +327,29 @@ fn pair_exact_out(
 /// `apply_balance_update_by_pool_id` orchestration row stays on the
 /// family-blind trait projection (`PoolEntry::as_balance_vector_mut`) — a
 /// per-family match there would reintroduce the arms ADR-017 D1 collapsed.
-pub fn apply_event(state: &mut BalancerWeightedPoolState, event: BalanceVectorEvent) {
-    state.apply_balance_update(event.balances, event.block_number);
+impl FamilyApply for BalancerWeightedPoolState {
+    type Event = BalanceVectorEvent;
+
+    fn apply_event(&mut self, event: Self::Event) {
+        self.apply_balance_update(event.balances, event.block_number);
+    }
 }
 
-/// The observe door — family-local GET behavior over one slice.
+/// The observe door — family-local GET behavior over one slice. Every probe
+/// this family carries is answerable over the slice; a probe another family
+/// carries is a caller bug (the door refuses to answer it rather than
+/// defaulting).
+///
+/// # Panics
+///
+/// Only on a foreign probe (never constructible by a correct caller — the
+/// same backstop posture as the compiler-enforced event/slice pairing).
 #[must_use]
 pub fn observe(state: &BalancerWeightedPoolState, probe: Observe) -> Observed {
     match probe {
         Observe::UpdateBlock => Observed::UpdateBlock(state.update_block),
         Observe::StateNonce => Observed::StateNonce(state.state_nonce),
         Observe::TokenCount => Observed::TokenCount(state.balances.len()),
+        _ => unreachable!("a balance-vector slice answers only the vector probes"),
     }
 }

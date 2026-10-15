@@ -34,6 +34,7 @@ use ::degenbot_pools::tick_fetch::TickWordFetcher;
 use alloy::primitives::{I256, U256};
 
 use ::degenbot_pools::families::concentrated_liquidity as cl;
+use ::degenbot_pools::families::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 use ::degenbot_pools::families::reserve_pair;
 use ::degenbot_pools::families::{balancer_stable, balancer_weighted};
 use ::degenbot_pools::registry::PoolEntry;
@@ -305,18 +306,20 @@ pub fn simulate_pair_in_given_out(
         PoolEntry::BalancerWeighted(p) => balancer_weighted::read_swap(
             &p.1,
             &p.0,
-            balancer_weighted::SwapReadRequest::PairExactOut {
+            SwapReadRequest::PairExactOut {
                 idx_in,
                 idx_out,
                 amount_out,
                 override_balances,
+                override_scaling_factors: None,
             },
         )
+        .amount()
         .ok(),
         PoolEntry::BalancerStable(p) => balancer_stable::read_swap(
             &p.1,
             &p.0,
-            balancer_stable::SwapReadRequest::PairExactOut {
+            SwapReadRequest::PairExactOut {
                 idx_in,
                 idx_out,
                 amount_out,
@@ -324,6 +327,7 @@ pub fn simulate_pair_in_given_out(
                 override_scaling_factors,
             },
         )
+        .amount()
         .ok(),
         _ => None,
     }
@@ -349,18 +353,20 @@ pub fn simulate_pair_out(
         PoolEntry::BalancerWeighted(p) => balancer_weighted::read_swap(
             &p.1,
             &p.0,
-            balancer_weighted::SwapReadRequest::PairExactIn {
+            SwapReadRequest::PairExactIn {
                 idx_in,
                 idx_out,
                 amount_in,
                 override_balances,
+                override_scaling_factors: None,
             },
         )
+        .amount()
         .ok(),
         PoolEntry::BalancerStable(p) => balancer_stable::read_swap(
             &p.1,
             &p.0,
-            balancer_stable::SwapReadRequest::PairExactIn {
+            SwapReadRequest::PairExactIn {
                 idx_in,
                 idx_out,
                 amount_in,
@@ -368,6 +374,7 @@ pub fn simulate_pair_out(
                 override_scaling_factors,
             },
         )
+        .amount()
         .ok(),
         _ => None,
     }
@@ -443,7 +450,7 @@ impl BotState {
         Some(
             cl::read_swap(
                 source,
-                cl::SwapReadRequest {
+                SwapReadRequest::ConcentratedLiquidity {
                     zero_for_one: request.zero_for_one,
                     amount_specified: request.amount_specified,
                     sqrt_price_limit: request.sqrt_price_limit,
@@ -544,7 +551,7 @@ impl BotState {
         Some(
             cl::read_swap(
                 source,
-                cl::SwapReadRequest {
+                SwapReadRequest::ConcentratedLiquidity {
                     zero_for_one: over.request.zero_for_one,
                     amount_specified: over.request.amount_specified,
                     sqrt_price_limit: over.request.sqrt_price_limit,
@@ -639,18 +646,20 @@ impl BotState {
         Ok(
             match cl::read_swap(
                 source,
-                cl::SwapReadRequest {
+                SwapReadRequest::ConcentratedLiquidity {
                     zero_for_one: over.request.zero_for_one,
                     amount_specified: over.request.amount_specified,
                     sqrt_price_limit: over.request.sqrt_price_limit,
                 },
                 mode,
             ) {
-                cl::SwapReadOutcome::Computed { outcome, .. } => Some(outcome),
-                cl::SwapReadOutcome::NotComputable
-                | cl::SwapReadOutcome::FetchFailed { .. }
-                | cl::SwapReadOutcome::FetchExhausted { .. } => None,
-                cl::SwapReadOutcome::Stateless(_) | cl::SwapReadOutcome::MissingWords(_) => {
+                ReadOutcome::Computed { outcome, .. } => Some(outcome),
+                ReadOutcome::NotComputable
+                | ReadOutcome::FetchFailed { .. }
+                | ReadOutcome::FetchExhausted { .. } => None,
+                ReadOutcome::Amount(_)
+                | ReadOutcome::Stateless(_)
+                | ReadOutcome::MissingWords(_) => {
                     unreachable!("override reads run armed or disarmed, never stateless/discovery")
                 }
             },
@@ -731,16 +740,18 @@ impl BotState {
                 // (zero request, overdraw, vanishing denominator →
                 // NotComputable — the retired helper's `None` mapping).
                 (true, PoolEntry::V2(p)) => {
-                    match reserve_pair::read_swap(
+                    let required = reserve_pair::read_swap(
                         reserve_pair::ReservePairState::V2 {
                             identity: &p.0,
                             state: &p.1,
                         },
-                        reserve_pair::SwapReadRequest::ExactOut {
+                        SwapReadRequest::ExactOut {
                             zero_for_one: request.zero_for_one,
                             amount_out: magnitude,
                         },
-                    ) {
+                    )
+                    .amount();
+                    match required {
                         Ok(required) => SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
                             consumed: -unsigned_to_user_delta(required),
                             delivered: unsigned_to_user_delta(magnitude),
@@ -799,8 +810,7 @@ impl BotState {
                         state: &p.1,
                         scalars: cl::DesignScalars::new(p.0.fee, p.0.tick_spacing),
                     };
-                    let cl::Observed::Coverage(coverage) =
-                        cl::observe(design, cl::Observe::Coverage)
+                    let Observed::Coverage(coverage) = cl::observe(design, Observe::Coverage)
                     else {
                         unreachable!("coverage probe answers")
                     };
@@ -823,13 +833,11 @@ impl BotState {
                         ),
                         hooks,
                     };
-                    let cl::Observed::Coverage(coverage) =
-                        cl::observe(design, cl::Observe::Coverage)
+                    let Observed::Coverage(coverage) = cl::observe(design, Observe::Coverage)
                     else {
                         unreachable!("coverage probe answers")
                     };
-                    let cl::Observed::Hooked(hooked) = cl::observe(design, cl::Observe::Hooked)
-                    else {
+                    let Observed::Hooked(hooked) = cl::observe(design, Observe::Hooked) else {
                         unreachable!("hooked probe answers")
                     };
                     let extra_caveats = if hooked {
@@ -874,7 +882,7 @@ impl BotState {
         };
         let read = cl::read_swap(
             cl::SwapReadSource::Slice(target),
-            cl::SwapReadRequest {
+            SwapReadRequest::ConcentratedLiquidity {
                 zero_for_one: request.zero_for_one,
                 amount_specified: request.amount_specified,
                 sqrt_price_limit: request.sqrt_price_limit,
@@ -882,7 +890,7 @@ impl BotState {
             mode,
         );
         match read {
-            cl::SwapReadOutcome::Computed {
+            ReadOutcome::Computed {
                 outcome,
                 fetched_words,
             } => {
@@ -898,10 +906,10 @@ impl BotState {
                     SwapOutcomeFamily::V4 => SwapOutcome::V4(payload),
                 })
             }
-            cl::SwapReadOutcome::NotComputable => SwapRead::NotComputable,
-            cl::SwapReadOutcome::FetchFailed { word } => SwapRead::FetchFailed { word },
-            cl::SwapReadOutcome::FetchExhausted { word } => SwapRead::FetchExhausted { word },
-            cl::SwapReadOutcome::Stateless(_) | cl::SwapReadOutcome::MissingWords(_) => {
+            ReadOutcome::NotComputable => SwapRead::NotComputable,
+            ReadOutcome::FetchFailed { word } => SwapRead::FetchFailed { word },
+            ReadOutcome::FetchExhausted { word } => SwapRead::FetchExhausted { word },
+            ReadOutcome::Amount(_) | ReadOutcome::Stateless(_) | ReadOutcome::MissingWords(_) => {
                 unreachable!("registered reads run armed or disarmed, never stateless/discovery")
             }
         }

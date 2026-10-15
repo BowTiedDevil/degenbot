@@ -506,13 +506,15 @@ fn engine_weighted_in_given_out(case: &WeightedCase, zfo: bool, amount_out: U256
     ::degenbot_pools::families::balancer_weighted::read_swap(
         &state,
         &identity,
-        ::degenbot_pools::families::balancer_weighted::SwapReadRequest::PairExactOut {
+        ::degenbot_pools::families::door::SwapReadRequest::PairExactOut {
             idx_in,
             idx_out,
             amount_out,
             override_balances: None,
+            override_scaling_factors: None,
         },
     )
+    .amount()
     .ok()
 }
 
@@ -539,7 +541,7 @@ fn engine_stable_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) ->
     ::degenbot_pools::families::balancer_stable::read_swap(
         &state,
         &identity,
-        ::degenbot_pools::families::balancer_stable::SwapReadRequest::PairExactOut {
+        ::degenbot_pools::families::door::SwapReadRequest::PairExactOut {
             idx_in,
             idx_out,
             amount_out,
@@ -547,6 +549,7 @@ fn engine_stable_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) ->
             override_scaling_factors: None,
         },
     )
+    .amount()
     .ok()
 }
 
@@ -573,7 +576,7 @@ fn engine_stable_v2_in_given_out(case: &StableCase, zfo: bool, amount_out: U256)
     ::degenbot_pools::families::balancer_stable::read_swap(
         &state,
         &identity,
-        ::degenbot_pools::families::balancer_stable::SwapReadRequest::PairExactOut {
+        ::degenbot_pools::families::door::SwapReadRequest::PairExactOut {
             idx_in,
             idx_out,
             amount_out,
@@ -581,6 +584,7 @@ fn engine_stable_v2_in_given_out(case: &StableCase, zfo: bool, amount_out: U256)
             override_scaling_factors: None,
         },
     )
+    .amount()
     .ok()
 }
 
@@ -685,7 +689,7 @@ fn engine_stable_v2_out3(
     ::degenbot_pools::families::balancer_stable::read_swap(
         &state,
         &identity,
-        ::degenbot_pools::families::balancer_stable::SwapReadRequest::PairExactIn {
+        ::degenbot_pools::families::door::SwapReadRequest::PairExactIn {
             idx_in,
             idx_out,
             amount_in,
@@ -693,6 +697,7 @@ fn engine_stable_v2_out3(
             override_scaling_factors: None,
         },
     )
+    .amount()
     .ok()
 }
 
@@ -728,7 +733,7 @@ fn engine_stable_v2_in_given_out3(
     ::degenbot_pools::families::balancer_stable::read_swap(
         &state,
         &identity,
-        ::degenbot_pools::families::balancer_stable::SwapReadRequest::PairExactOut {
+        ::degenbot_pools::families::door::SwapReadRequest::PairExactOut {
             idx_in,
             idx_out,
             amount_out,
@@ -736,6 +741,7 @@ fn engine_stable_v2_in_given_out3(
             override_scaling_factors: None,
         },
     )
+    .amount()
     .ok()
 }
 

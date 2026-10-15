@@ -77,13 +77,14 @@
 //! lookup (the dedup'd token-decimals fetch, ADR-003) and passes the scales
 //! into [`capture_hop`].
 
-use alloy::primitives::{aliases::U112, U256};
+use alloy::primitives::U256;
 
 use degenbot_math::solidly;
 use degenbot_uniswap::dex_identity::DexVariant;
 
-use crate::state_history::ReservePairPoolState;
 use crate::v3_state::SimulateSwapError;
+
+use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 
 /// The state slices — the family's read surface lives in
 /// `crate::aerodrome_v2_state` / `crate::v2_state` (I/O-free per ADR-001)
@@ -94,21 +95,6 @@ use crate::v3_state::SimulateSwapError;
 /// `register_v2_pool`) — the Solidly family adds no registration surface.
 pub use crate::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
 pub use crate::v2_state::{V2PoolIdentity, V2PoolState};
-
-/// One buffered Solidly-family event (a `Sync(uint112, uint112)`): the new
-/// reserves and the block they landed at. The event type pairs with both
-/// family slices at the apply door; the slices' own
-/// [`ReservePairPoolState::apply_sync`] owns the journal + clock discipline
-/// (ADR-017 D3 — Solidly mirrors v2-core's `Sync(uint112, uint112)` shape).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SolidlyEvent {
-    /// The new token0 reserve (on-chain `uint112`).
-    pub reserve0: U112,
-    /// The new token1 reserve (on-chain `uint112`).
-    pub reserve1: U112,
-    /// The block the update landed at (advances the price clock).
-    pub block_number: u64,
-}
 
 /// Design selection by state slice (read-only): the variant IS the design —
 /// the Aerodrome/Camelot match happens inside the module, never at the
@@ -139,25 +125,6 @@ pub enum SolidlyState<'a> {
         /// evaluates at, `(token0, token1)`.
         decimals: (U256, U256),
     },
-}
-
-/// The family-local GET probes the observe door answers over one slice.
-/// Every probe is answerable over both designs — the door never defaults.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Observe {
-    /// The block of the last `Sync` (the family's price clock).
-    UpdateBlock,
-    /// The per-mutation state nonce (the staleness gate).
-    StateNonce,
-}
-
-/// One observed fact, keyed by the probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Observed {
-    /// The slice's price clock.
-    UpdateBlock(u64),
-    /// The slice's per-mutation nonce.
-    StateNonce(u64),
 }
 
 /// The capture door's hop payload — the family's fresh projection of one
@@ -252,32 +219,6 @@ pub fn capture_hop(
     }
 }
 
-/// The swap-read request: EVERY Solidly read variant, keyed by direction.
-/// The family's contract-level view surface is the exact-input read (the
-/// on-chain `getAmountOut` over the stable invariant); an exact-output
-/// request is refused defensively — the central rows answer it with their
-/// typed family gap before the door is consulted (the exact-out math the
-/// Python companion uses is not a Rust read-path contract).
-#[derive(Clone, Copy, Debug)]
-pub enum SwapReadRequest {
-    /// Exact-input swap (on-chain `getAmountOut`); a zero request answers the
-    /// legacy `Ok(U256::ZERO)` sentinel (retired by C6, not here).
-    ExactIn {
-        /// Direction of the swap (token0 → token1 when `true`).
-        zero_for_one: bool,
-        /// The input amount (native decimals).
-        amount_in: U256,
-    },
-    /// Exact-output — refused (see the enum docs). No central row routes an
-    /// exact-output read to this family.
-    ExactOut {
-        /// Direction of the swap (token0 → token1 when `true`).
-        zero_for_one: bool,
-        /// The requested output amount (native decimals).
-        amount_out: U256,
-    },
-}
-
 /// The swap-read door — ALL variants behind one entry. The Aerodrome
 /// fee-fraction convention and the Camelot retained-gamma convention are the
 /// design-private arms' own; callers never map fees or `k`/`get_y` pairs.
@@ -292,11 +233,9 @@ pub enum SwapReadRequest {
 /// false` V2 identity — the reserve-pair family's read arm owns those
 /// invariants; refusing beats mis-pricing with the wrong math). (The family
 /// carries no sparse-map miss — a Solidly slice has no tick words to miss.)
-pub fn read_swap(
-    design: SolidlyState<'_>,
-    request: SwapReadRequest,
-) -> Result<U256, SimulateSwapError> {
-    match design {
+#[must_use]
+pub fn read_swap(design: SolidlyState<'_>, request: SwapReadRequest) -> ReadOutcome {
+    let read = match design {
         SolidlyState::Aerodrome { identity, state } => {
             read_aerodrome_stable_swap(state, identity, request)
         }
@@ -305,22 +244,18 @@ pub fn read_swap(
             state,
             decimals,
         } => read_camelot_stable_swap(state, identity, decimals, request),
-    }
+    };
+    ReadOutcome::simple(read)
 }
 
-/// The apply door — one buffered Solidly-family event (a `Sync`) onto one
-/// slice, generic over the family trait: both designs' apply bodies are
-/// byte-identical (the ADR-017 D3 collapse — full-state
-/// [`crate::state_history::V2BlockDelta`] push + reserve overwrite + clock
-/// advance), so one door serves both. The neutral `apply_sync_by_pool_id`
-/// orchestration row stays on the family-blind trait projection
-/// (`PoolEntry::as_reserve_pair_mut`) — a per-family match there would
-/// reintroduce the arms ADR-017 D3 collapsed.
-pub fn apply_event<S: ReservePairPoolState>(state: &mut S, event: SolidlyEvent) {
-    state.apply_sync(event.reserve0, event.reserve1, event.block_number);
-}
-
-/// The observe door — family-local GET behavior over one slice.
+/// The observe door — family-local GET behavior over one slice. Both probes
+/// are answerable over both designs; a probe another family carries is a
+/// caller bug (the door refuses to answer it rather than defaulting).
+///
+/// # Panics
+///
+/// Only on a foreign probe (never constructible by a correct caller — the
+/// same backstop posture as the compiler-enforced event/slice pairing).
 #[must_use]
 pub fn observe(design: SolidlyState<'_>, probe: Observe) -> Observed {
     match probe {
@@ -332,6 +267,7 @@ pub fn observe(design: SolidlyState<'_>, probe: Observe) -> Observed {
             SolidlyState::Aerodrome { state, .. } => state.state_nonce,
             SolidlyState::Camelot { state, .. } => state.state_nonce,
         }),
+        _ => unreachable!("a Solidly slice answers only the sync probes"),
     }
 }
 
@@ -448,6 +384,9 @@ mod tests {
 
     use super::*;
 
+    use crate::families::door::{FamilyApply, SyncEvent};
+
+    use alloy::primitives::aliases::U112;
     use alloy::primitives::Address;
 
     use crate::state_history::{ReorgJournal, V2BlockDelta};
@@ -547,7 +486,7 @@ mod tests {
                 amount_in: U256::from(AERO_AMOUNT_IN),
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("canonical fixture computes, got {other:?}"),
         };
         assert_eq!(out, U256::from(AERO_EXPECTED_OUT));
@@ -561,7 +500,7 @@ mod tests {
                 amount_in: U256::from(AERO_AMOUNT_IN),
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("canonical fixture computes, got {other:?}"),
         };
         assert_eq!(out_rev, out, "symmetric direction on equal balances");
@@ -581,7 +520,7 @@ mod tests {
                     amount_in: U256::ZERO,
                 }
             ),
-            Ok(U256::ZERO)
+            ReadOutcome::Amount(U256::ZERO)
         );
     }
 
@@ -599,7 +538,7 @@ mod tests {
                     amount_in: U256::from(1000u64),
                 }
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
     }
 
@@ -617,7 +556,7 @@ mod tests {
                     amount_out: U256::from(1u64),
                 }
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
     }
 
@@ -640,7 +579,7 @@ mod tests {
                 amount_in: U256::from(CAM_SNAPSHOT[0]),
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("oracle fixture computes, got {other:?}"),
         };
         assert_eq!(out, U256::from(CAM_SNAPSHOT[7]));
@@ -658,7 +597,7 @@ mod tests {
                     amount_in: U256::ZERO,
                 }
             ),
-            Ok(U256::ZERO)
+            ReadOutcome::Amount(U256::ZERO)
         );
     }
 
@@ -678,7 +617,7 @@ mod tests {
                     amount_in: U256::from(1000u64),
                 }
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
     }
 
@@ -774,14 +713,14 @@ mod tests {
         // The door is the family's named apply arm: both slices route the
         // same event vocabulary through their (byte-identical) ADR-017
         // `apply_sync` bodies — reserves, price clock, nonce, and journal.
-        let event = SolidlyEvent {
+        let event = SyncEvent {
             reserve0: U112::from(150u64),
             reserve1: U112::from(250u64),
             block_number: 7,
         };
 
         let (aero_identity, mut aero_state) = aerodrome_fixture(true);
-        apply_event(&mut aero_state, event);
+        aero_state.apply_event(event);
         assert_eq!(aero_state.reserve0, U112::from(150u64));
         assert_eq!(aero_state.reserve1, U112::from(250u64));
         assert_eq!(aero_state.update_block, 7);
@@ -790,7 +729,7 @@ mod tests {
         let _ = aero_identity;
 
         let (cam_identity, mut cam_state) = camelot_fixture();
-        apply_event(&mut cam_state, event);
+        cam_state.apply_event(event);
         assert_eq!(cam_state.reserve0, U112::from(150u64));
         assert_eq!(cam_state.reserve1, U112::from(250u64));
         assert_eq!(cam_state.update_block, 7);

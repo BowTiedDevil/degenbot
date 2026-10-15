@@ -1,15 +1,16 @@
-//! Family-blind door plumbing shared by the three balance-vector family read
-//! modules — [`super::curve_stableswap`], [`super::balancer_weighted`], and
-//! [`super::balancer_stable`] (ADR-059 D6: what the families genuinely share
-//! lives beside them, never between their projections).
+//! Family-blind event vocabulary shared by the three balance-vector family
+//! read modules — [`super::curve_stableswap`], [`super::balancer_weighted`],
+//! and [`super::balancer_stable`] (ADR-059 D6: what the families genuinely
+//! share lives beside them, never between their projections).
 //!
 //! The balance-vector structural family's three solve families carry the same
 //! live-state shape (a balance vector + a two-stamp clock + a reorg journal,
 //! ADR-017 D1) and therefore the same event vocabulary: one buffered balance
-//! update lands on the slice through the family's apply door. The probes the
-//! intent doors expose over that state shape are likewise identical. The
-//! per-family swap math, resolve projections, and calc behavior are
-//! deliberately NOT here — each family read module owns its own.
+//! update lands on the slice through the family's apply door
+//! ([`super::door::FamilyApply`]). The probe vocabulary the observe doors
+//! answer is the shared [`super::door`] contract. The per-family swap math,
+//! resolve projections, and calc behavior are deliberately NOT here — each
+//! family read module owns its own.
 
 use alloy::primitives::U256;
 
@@ -24,28 +25,4 @@ pub struct BalanceVectorEvent {
     pub balances: Vec<U256>,
     /// The block the update landed at (advances the price clock).
     pub block_number: u64,
-}
-
-/// The family-local GET probes the observe door answers over one
-/// balance-vector slice. Every probe is answerable over each of the three
-/// slices — the door never defaults.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Observe {
-    /// The block of the last balance update (the family's price clock).
-    UpdateBlock,
-    /// The per-mutation state nonce (the staleness gate).
-    StateNonce,
-    /// The token count (the balance vector's arity).
-    TokenCount,
-}
-
-/// One observed fact, keyed by the probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Observed {
-    /// The slice's price clock.
-    UpdateBlock(u64),
-    /// The slice's per-mutation nonce.
-    StateNonce(u64),
-    /// The slice's balance-vector arity.
-    TokenCount(usize),
 }

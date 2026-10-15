@@ -59,7 +59,7 @@
 //! collapse: both slices' `apply_sync` bodies are byte-identical full-state
 //! [`crate::state_history::V2BlockDelta`] pushes).
 
-use alloy::primitives::{aliases::U112, U256};
+use alloy::primitives::U256;
 
 use degenbot_math::solidly;
 use degenbot_math::v2::IntHopState;
@@ -68,6 +68,8 @@ use crate::families::solidly as solidly_read;
 
 use crate::state_history::ReservePairPoolState;
 use crate::v3_state::SimulateSwapError;
+
+use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest, SyncEvent};
 
 /// The state slices + their registration DTOs — the family's read surface
 /// lives in `crate::v2_state` / `crate::aerodrome_v2_state` (I/O-free per
@@ -78,21 +80,6 @@ pub use crate::aerodrome_v2_state::{
     RegisterAerodromeV2PoolParams,
 };
 pub use crate::v2_state::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState};
-
-/// One buffered reserve-pair event (a `Sync(uint112, uint112)`): the new
-/// reserves and the block they landed at. The event type pairs with both
-/// family slices at the apply door; the slices' own
-/// [`ReservePairPoolState::apply_sync`] owns the journal + clock discipline
-/// (ADR-017 D3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ReservePairEvent {
-    /// The new token0 reserve (on-chain `uint112`).
-    pub reserve0: U112,
-    /// The new token1 reserve (on-chain `uint112`).
-    pub reserve1: U112,
-    /// The block the update landed at (advances the price clock).
-    pub block_number: u64,
-}
 
 /// Design selection by state slice (read-only): the variant IS the design —
 /// the V2/Aerodrome match happens inside the module, never at the callers.
@@ -113,25 +100,6 @@ pub enum ReservePairState<'a> {
         /// The pool's mutable state (reserves + journal + price clock).
         state: &'a AerodromeV2PoolState,
     },
-}
-
-/// The family-local GET probes the observe door answers over one slice.
-/// Every probe is answerable over both designs — the door never defaults.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Observe {
-    /// The block of the last `Sync` (the family's price clock).
-    UpdateBlock,
-    /// The per-mutation state nonce (the staleness gate).
-    StateNonce,
-}
-
-/// One observed fact, keyed by the probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Observed {
-    /// The slice's price clock.
-    UpdateBlock(u64),
-    /// The slice's per-mutation nonce.
-    StateNonce(u64),
 }
 
 /// The capture door — the resolve projection: one fresh projection of one V2
@@ -178,34 +146,6 @@ pub fn capture_hop(
     IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom)
 }
 
-/// The swap-read request: EVERY reserve-pair read variant, keyed by
-/// direction. Both designs answer exact input; only the V2 design carries
-/// the exact-output closed form.
-#[derive(Clone, Copy, Debug)]
-pub enum SwapReadRequest {
-    /// Exact-input swap (on-chain `getAmountOut`); a zero request answers the
-    /// legacy `Ok(U256::ZERO)` sentinel (retired by C6, not here).
-    ExactIn {
-        /// Direction of the swap (token0 → token1 when `true`).
-        zero_for_one: bool,
-        /// The input amount (native decimals).
-        amount_in: U256,
-    },
-    /// Exact-output swap — the closed-form `constant_product_calc_exact_out`:
-    /// the input required so that after fee, the pool's output-side reserve
-    /// loses exactly `amount_out` (the `+1` floor-division compensation
-    /// included). Refused ([`SimulateSwapError::NotComputable`]) on a zero
-    /// request, overdraw (`amount_out >= reserve_out`), or a vanishing
-    /// denominator — the substrate row mapped the retired helper's `None`
-    /// verdicts there.
-    ExactOut {
-        /// Direction of the swap (token0 → token1 when `true`).
-        zero_for_one: bool,
-        /// The requested output amount (native decimals).
-        amount_out: U256,
-    },
-}
-
 /// The Aerodrome volatile design's resolve projection: the orientation-
 /// selected reserves plus the unidirectional FEE fraction converted to the
 /// retained fraction the V2 hop payload carries (`gamma = denom − fee`;
@@ -247,42 +187,89 @@ pub fn capture_aerodrome_hop(
 /// Aerodrome design carries a `stable` identity (the Solidly family's read
 /// arm owns that invariant — refusing beats mis-pricing with volatile math),
 /// and when a V2 design carries a `stable_swap` identity WITHOUT its
-/// construction-time decimal scales (see [`read_v2_swap`] — the behavioral
-/// axis routes the Camelot arm, and a scale-less stable identity refuses
-/// rather than guess). (The family carries no sparse-map miss — a
-/// reserve-pair slice has no tick words to miss.)
-pub fn read_swap(
-    design: ReservePairState<'_>,
-    request: SwapReadRequest,
-) -> Result<U256, SimulateSwapError> {
+/// construction-time decimal scales (the behavioral axis routes the Camelot
+/// arm at this door, and a scale-less stable identity refuses rather than
+/// guess). (The family carries no sparse-map miss — a reserve-pair slice has
+/// no tick words to miss.)
+#[must_use]
+pub fn read_swap(design: ReservePairState<'_>, request: SwapReadRequest) -> ReadOutcome {
     match design {
-        ReservePairState::V2 { identity, state } => read_v2_swap(state, identity, request),
+        ReservePairState::V2 { identity, state } => {
+            // Behavioral-axis routing (ADR-073): a `stable_swap = true`
+            // identity's math family is the Solidly door's Camelot arm — the
+            // constant product would mis-price it. The shared request passes
+            // through UNCHANGED (one door vocabulary, no per-family adapter);
+            // the `10**decimals` scales ride the identity (captured at
+            // construction from the token registry, ADR-003 — the C5
+            // variant-carried-scales precedent), and a stable identity
+            // WITHOUT them answers the typed refusal here — never a guessed
+            // scale, never CP math.
+            if identity.stable_swap {
+                let Some((d0, d1)) = identity.token0_decimals.zip(identity.token1_decimals) else {
+                    return ReadOutcome::NotComputable;
+                };
+                let decimals = (
+                    U256::from(10u64).pow(U256::from(d0)),
+                    U256::from(10u64).pow(U256::from(d1)),
+                );
+                return solidly_read::read_swap(
+                    solidly_read::SolidlyState::Camelot {
+                        identity,
+                        state,
+                        decimals,
+                    },
+                    request,
+                );
+            }
+            ReadOutcome::simple(read_v2_swap(state, identity, request))
+        }
         ReservePairState::Aerodrome { identity, state } => {
             if identity.stable {
                 // The stable invariant is the Solidly family's read arm (the
                 // ADR-073 D6 landing order): the central rows route a stable
                 // identity there. Refuse rather than mis-price with the
                 // volatile constant-product math.
-                return Err(SimulateSwapError::NotComputable);
+                return ReadOutcome::NotComputable;
             }
-            read_aerodrome_volatile_swap(state, identity, request)
+            ReadOutcome::simple(read_aerodrome_volatile_swap(state, identity, request))
         }
     }
 }
 
-/// The apply door — one buffered reserve-pair event (a `Sync`) onto one
-/// slice, generic over the family trait: both designs' apply bodies are
-/// byte-identical (the ADR-017 D3 collapse — full-state
+/// The apply door — one buffered Sync event onto a reserve-pair slice
+/// ([`door::FamilyApply`]): both designs' apply bodies are byte-identical
+/// (the ADR-017 D3 collapse — full-state
 /// [`crate::state_history::V2BlockDelta`] push + reserve overwrite + clock
-/// advance), so one door serves both. The neutral `apply_sync_by_pool_id`
-/// orchestration row stays on the family-blind trait projection
-/// (`PoolEntry::as_reserve_pair_mut`) — a per-family match there would
-/// reintroduce the arms ADR-017 D3 collapsed.
-pub fn apply_event<S: ReservePairPoolState>(state: &mut S, event: ReservePairEvent) {
-    state.apply_sync(event.reserve0, event.reserve1, event.block_number);
+/// advance), so one shared event ([`door::SyncEvent`]) and one impl per
+/// slice serve BOTH structural families — the Solidly family's designs
+/// (Aerodrome V2 stable, Camelot `stable_swap`) land on these same slices.
+/// The neutral `apply_sync_by_pool_id` orchestration row stays on the
+/// family-blind trait projection (`PoolEntry::as_reserve_pair_mut`) — a
+/// per-family match there would reintroduce the arms ADR-017 D3 collapsed.
+impl FamilyApply for V2PoolState {
+    type Event = SyncEvent;
+
+    fn apply_event(&mut self, event: Self::Event) {
+        self.apply_sync(event.reserve0, event.reserve1, event.block_number);
+    }
 }
 
-/// The observe door — family-local GET behavior over one slice.
+impl FamilyApply for AerodromeV2PoolState {
+    type Event = SyncEvent;
+
+    fn apply_event(&mut self, event: Self::Event) {
+        self.apply_sync(event.reserve0, event.reserve1, event.block_number);
+    }
+}
+
+/// The observe door — family-local GET behavior over one slice. Both probes
+/// are answerable over both designs; a probe another family carries is a
+/// caller bug (the door refuses to answer it rather than defaulting).
+///
+/// # Panics
+///
+/// Only on a foreign probe (never constructible by a correct caller — the
+/// same backstop posture as the compiler-enforced event/slice pairing).
 #[must_use]
 pub fn observe(design: ReservePairState<'_>, probe: Observe) -> Observed {
     match probe {
@@ -294,6 +281,7 @@ pub fn observe(design: ReservePairState<'_>, probe: Observe) -> Observed {
             ReservePairState::V2 { state, .. } => state.state_nonce,
             ReservePairState::Aerodrome { state, .. } => state.state_nonce,
         }),
+        _ => unreachable!("a reserve-pair slice answers only the sync probes"),
     }
 }
 
@@ -313,45 +301,9 @@ fn read_v2_swap(
     identity: &V2PoolIdentity,
     request: SwapReadRequest,
 ) -> Result<U256, SimulateSwapError> {
-    // Behavioral-axis routing (ADR-073): a `stable_swap = true` identity's
-    // math family is the Solidly door's Camelot arm — the constant product
-    // would mis-price it. The `10**decimals` scales ride the identity
-    // (captured at construction from the token registry, ADR-003 — the
-    // C5 variant-carried-scales precedent); a stable identity WITHOUT them
-    // answers the typed refusal here — never a guessed scale, never CP math.
-    if identity.stable_swap {
-        let Some((d0, d1)) = identity.token0_decimals.zip(identity.token1_decimals) else {
-            return Err(SimulateSwapError::NotComputable);
-        };
-        let decimals = (
-            U256::from(10u64).pow(U256::from(d0)),
-            U256::from(10u64).pow(U256::from(d1)),
-        );
-        let solidly_request = match request {
-            SwapReadRequest::ExactIn {
-                zero_for_one,
-                amount_in,
-            } => solidly_read::SwapReadRequest::ExactIn {
-                zero_for_one,
-                amount_in,
-            },
-            SwapReadRequest::ExactOut {
-                zero_for_one,
-                amount_out,
-            } => solidly_read::SwapReadRequest::ExactOut {
-                zero_for_one,
-                amount_out,
-            },
-        };
-        return solidly_read::read_swap(
-            solidly_read::SolidlyState::Camelot {
-                identity,
-                state,
-                decimals,
-            },
-            solidly_request,
-        );
-    }
+    // (The `stable_swap` behavioral-axis routing lives at the door: a stable
+    // identity is delegated to the Solidly door's Camelot arm there, the
+    // shared request passing through unchanged.)
     match request {
         SwapReadRequest::ExactIn {
             zero_for_one,
@@ -380,6 +332,9 @@ fn read_v2_swap(
                 .swap_exact_out(amount_out)
                 .map_err(|_| SimulateSwapError::NotComputable)
         }
+        // A variant this family doesn't answer (the N-token pair reads, the
+        // CL canonical request) is a typed refusal.
+        _ => Err(SimulateSwapError::NotComputable),
     }
 }
 
@@ -429,6 +384,7 @@ mod tests {
 
     use super::*;
 
+    use alloy::primitives::aliases::U112;
     use alloy::primitives::U512;
 
     use crate::state_history::{ReorgJournal, V2BlockDelta};
@@ -525,7 +481,7 @@ mod tests {
                 amount_in: U256::from(AMOUNT_IN),
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("canonical fixture computes, got {other:?}"),
         };
         assert_eq!(out, U256::from(EXPECTED_AMOUNT_OUT));
@@ -544,7 +500,7 @@ mod tests {
                 amount_in: U256::ZERO,
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("zero input is the sentinel, not an error: {other:?}"),
         };
         assert_eq!(out, U256::ZERO);
@@ -563,7 +519,7 @@ mod tests {
                 amount_out: U256::from(EXPECTED_AMOUNT_OUT),
             },
         ) {
-            Ok(required) => required,
+            ReadOutcome::Amount(required) => required,
             other => panic!("canonical fixture computes, got {other:?}"),
         };
         assert_eq!(required, U256::from(EXPECTED_AMOUNT_IN));
@@ -585,7 +541,7 @@ mod tests {
                     amount_out: U256::ZERO,
                 }
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
         // Overdraw: `amount_out >= reserve_out` is undefined.
         assert_eq!(
@@ -596,7 +552,7 @@ mod tests {
                     amount_out: U256::from(RESERVE1),
                 }
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
     }
 
@@ -659,7 +615,7 @@ mod tests {
                 amount_out,
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("the exact input fits U256, got {other:?}"),
         };
         assert_eq!(U512::from(out), oracle);
@@ -687,7 +643,7 @@ mod tests {
                     amount_out,
                 },
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
     }
 
@@ -725,7 +681,7 @@ mod tests {
                 amount_out,
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("just below the edge the exact value computes, got {other:?}"),
         };
         assert_eq!(U512::from(out), oracle);
@@ -747,7 +703,7 @@ mod tests {
                 amount_in: U256::from(1000u64),
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("volatile fixture computes, got {other:?}"),
         };
         assert_eq!(out, U256::from(1992u64));
@@ -760,7 +716,7 @@ mod tests {
                 amount_in: U256::from(1000u64),
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("volatile fixture computes, got {other:?}"),
         };
         assert_eq!(out, U256::from(498u64));
@@ -774,7 +730,7 @@ mod tests {
                     amount_in: U256::ZERO,
                 }
             ),
-            Ok(U256::ZERO)
+            ReadOutcome::Amount(U256::ZERO)
         );
     }
 
@@ -792,7 +748,7 @@ mod tests {
                     amount_in: U256::from(1000u64),
                 }
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
     }
 
@@ -810,7 +766,7 @@ mod tests {
                     amount_out: U256::from(1u64),
                 }
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
     }
 
@@ -875,7 +831,7 @@ mod tests {
                 amount_in: U256::from(CAM2[0]),
             },
         ) {
-            Ok(out) => out,
+            ReadOutcome::Amount(out) => out,
             other => panic!("oracle fixture computes, got {other:?}"),
         };
         assert_eq!(out, U256::from(CAM2[7]));
@@ -911,7 +867,7 @@ mod tests {
                     amount_in: U256::from(CAM2[0]),
                 },
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
         // One side missing is equally refused.
         identity.token0_decimals = Some(6);
@@ -927,7 +883,7 @@ mod tests {
                     amount_in: U256::from(CAM2[0]),
                 },
             ),
-            Err(SimulateSwapError::NotComputable)
+            ReadOutcome::NotComputable
         );
     }
 
@@ -975,14 +931,14 @@ mod tests {
         // The door is the family's named apply arm: both slices route the
         // same event vocabulary through their (byte-identical) ADR-017
         // `apply_sync` bodies — reserves, price clock, nonce, and journal.
-        let event = ReservePairEvent {
+        let event = SyncEvent {
             reserve0: U112::from(150u64),
             reserve1: U112::from(250u64),
             block_number: 7,
         };
 
         let (v2_identity, mut v2_state) = v2_fixture();
-        apply_event(&mut v2_state, event);
+        v2_state.apply_event(event);
         assert_eq!(v2_state.reserve0, U112::from(150u64));
         assert_eq!(v2_state.reserve1, U112::from(250u64));
         assert_eq!(v2_state.update_block, 7);
@@ -991,7 +947,7 @@ mod tests {
         let _ = v2_identity;
 
         let (aero_identity, mut aero_state) = aerodrome_fixture(false);
-        apply_event(&mut aero_state, event);
+        aero_state.apply_event(event);
         assert_eq!(aero_state.reserve0, U112::from(150u64));
         assert_eq!(aero_state.reserve1, U112::from(250u64));
         assert_eq!(aero_state.update_block, 7);

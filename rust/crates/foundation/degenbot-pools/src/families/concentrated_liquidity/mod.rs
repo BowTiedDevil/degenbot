@@ -22,7 +22,8 @@
 //! - [`read_swap`] — the swap-read arm, ALL variants (registered stateless /
 //!   armed miss recovery / disarm-fetch / transient override / missing-words
 //!   discovery) behind ONE entry;
-//! - [`apply_event`] — one buffered pool event onto one slice;
+//! - `apply_event` — one buffered pool event onto one slice (the
+//!   [`super::door::FamilyApply`] contract);
 //! - [`observe`] — family-local GET behavior over one slice.
 //!
 //! # The projection guardrail (structural, load-bearing)
@@ -35,23 +36,26 @@
 //! IS the enforcement, not a header comment.
 //!
 //! What the two designs DO share inside this tree is only the door plumbing:
-//! the request/outcome vocabulary below and the ONE fetch→merge→retry policy
-//! in [`drive`] (ADR-037's drive loop — formerly copy-pasted per call shape,
-//! collapsed once; re-duplicating it per design would resurrect the seam
-//! ADR-037 closed). The policy encodes none of the design differences.
+//! the family-blind request/outcome/probe vocabulary in [`super::door`] and
+//! the ONE fetch→merge→retry policy in [`drive`] (ADR-037's drive loop —
+//! formerly copy-pasted per call shape, collapsed once; re-duplicating it per
+//! design would resurrect the seam ADR-037 closed). The policy encodes none
+//! of the design differences.
 
 pub mod v3;
 pub mod v4;
 
 use std::sync::Arc;
 
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, U256};
 use hashbrown::{HashMap, HashSet};
+
+use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 
 use crate::int_v3_hop::IntV3TickRangeSequence;
 use crate::registry::ConcentratedLiquidityPoolMut;
 use crate::tick_fetch::{FetchedTickWord, TickWordFetcher};
-use crate::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
+use crate::v3_state::{SimulateSwapError, V3SwapOutcome};
 pub use crate::TickInfo;
 
 /// The state slices and event/registration DTOs, presented at the tree root
@@ -117,24 +121,6 @@ pub enum ConcentratedLiquidityStateMut<'a> {
     },
 }
 
-/// One buffered pool event for one design — the event type pairs with the
-/// slice type, so the cross-design pairing is unconstructible.
-pub enum ConcentratedLiquidityEvent {
-    /// A buffered V3 pool event (`Liquidity` or `Swap`).
-    V3(BufferedV3PoolEvent),
-    /// A buffered V4 pool event (`Liquidity` or `Swap`).
-    V4(BufferedV4PoolEvent),
-}
-
-/// The apply door's target: the bare mutable slice — design selection IS the
-/// state slice type, and the apply behavior reads no registration scalars.
-pub enum ConcentratedLiquidityApplyTarget<'a> {
-    /// The Uniswap V3 design slice, mutable.
-    V3(&'a mut V3PoolState),
-    /// The Uniswap V4 design slice, mutable.
-    V4(&'a mut V4PoolState),
-}
-
 /// The registered identity + state pair a transient source stages from —
 /// the identity carries the immutable registration fields the transient's
 /// `from_params` rebuild needs (the state slice does not carry them).
@@ -168,33 +154,11 @@ pub enum CaptureRefusal {
     HookedPool,
 }
 
-/// The canonical swap-read request (ADR-037 sign convention: positive
-/// `amount_specified` = exact output, negative = exact input). The design
-/// files map it onto their engine conventions — callers never do.
-#[derive(Clone, Copy, Debug)]
-pub struct SwapReadRequest {
-    /// Direction of the swap (token0 → token1 when `true`).
-    pub zero_for_one: bool,
-    /// Signed canonical amount — see the type-level convention.
-    pub amount_specified: I256,
-    /// Price-limit bound; `None` selects the shared CL default.
-    pub sqrt_price_limit: Option<U256>,
-}
-
-impl SwapReadRequest {
-    /// The effective walk limit: the caller's bound or the shared CL default.
-    #[must_use]
-    pub fn limit(&self) -> U256 {
-        self.sqrt_price_limit
-            .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(self.zero_for_one))
-    }
-}
-
 /// Which miss-recovery posture [`read_swap`] runs — "all variants and both
 /// fetch modes behind one entry" (ADR-073 D4).
 pub enum FetchMode<'a> {
     /// Pattern B, stateless: no recovery at all — a sparse-map miss surfaces
-    /// as DATA ([`SwapReadOutcome::Stateless`] carrying
+    /// as DATA ([`ReadOutcome::Stateless`] carrying
     /// [`SimulateSwapError::MissingTickWord`]); the caller owns fetch + retry.
     Stateless,
     /// Miss recovery ARMED: a miss fetches `word` through the stored fetcher
@@ -209,7 +173,7 @@ pub enum FetchMode<'a> {
         block: u64,
     },
     /// Miss recovery DISARMED: a residual missing word surfaces as
-    /// [`SwapReadOutcome::FetchExhausted`] (additive, in-contract) instead of
+    /// [`ReadOutcome::FetchExhausted`] (additive, in-contract) instead of
     /// fetching under the caller's write guard.
     Disarmed,
     /// Missing-words DISCOVERY: never fetches — a forged-empty fill lands on
@@ -261,57 +225,12 @@ pub struct OverrideScalars<'a> {
     pub tick_data: &'a HashMap<i32, TickInfo>,
 }
 
-/// The typed result of [`read_swap`] — the family's one swap-read outcome.
-#[derive(Debug, PartialEq, Eq)]
-pub enum SwapReadOutcome {
-    /// A completed read: the raw engine outcome (V3-shaped; both CL designs
-    /// return it) + the words fetched during miss recovery, in fetch order.
-    Computed {
-        /// The engine swap outcome.
-        outcome: V3SwapOutcome,
-        /// Tick-bitmap words fetched during miss recovery.
-        fetched_words: Vec<i32>,
-    },
-    /// The [`FetchMode::Stateless`] verdict: the raw compute result, with a
-    /// sparse-map miss surfaced as DATA (Pattern B) for the caller's own
-    /// fetch + retry shell.
-    Stateless(Result<V3SwapOutcome, SimulateSwapError>),
-    /// Arithmetic overflow / invariant violation / non-positive amount.
-    NotComputable,
-    /// Miss recovery ran but the fetch itself failed for `word`.
-    FetchFailed {
-        /// The word whose recovery failed.
-        word: i32,
-    },
-    /// Miss recovery was impossible or exhausted for `word` (no fetcher
-    /// registered, disarmed, or the same word missed twice after a merge).
-    FetchExhausted {
-        /// The word whose recovery was exhausted.
-        word: i32,
-    },
-    /// The [`FetchMode::Discovery`] verdict: every missing word on the
-    /// crossing, in first-miss order.
-    MissingWords(Vec<i32>),
-}
-
-impl SwapReadOutcome {
-    /// The discovery word list (empty for every other variant — call only on
-    /// a [`FetchMode::Discovery`] read).
-    #[must_use]
-    pub fn missing_words(self) -> Vec<i32> {
-        match self {
-            Self::MissingWords(words) => words,
-            _ => Vec::new(),
-        }
-    }
-}
-
 /// Why a missing-word recovery could not run — the drive policy's fetch
 /// verdict.
 enum FetchVerdict {
-    /// No fetcher is registered (⇒ [`SwapReadOutcome::FetchExhausted`]).
+    /// No fetcher is registered (⇒ [`ReadOutcome::FetchExhausted`]).
     NoFetcher,
-    /// The fetcher ran and failed (⇒ [`SwapReadOutcome::FetchFailed`]).
+    /// The fetcher ran and failed (⇒ [`ReadOutcome::FetchFailed`]).
     Errored,
 }
 
@@ -355,46 +274,39 @@ pub fn capture_hop(
 )]
 pub fn read_swap(
     source: SwapReadSource<'_>,
-    request: SwapReadRequest,
+    request: SwapReadRequest<'_>,
     mode: FetchMode<'_>,
-) -> SwapReadOutcome {
+) -> ReadOutcome {
+    // The CL family answers only its canonical variant; a request another
+    // family carries is a typed refusal (never a guessed mapping).
+    let SwapReadRequest::ConcentratedLiquidity {
+        zero_for_one,
+        amount_specified,
+        sqrt_price_limit,
+    } = request
+    else {
+        return ReadOutcome::NotComputable;
+    };
+    // The effective walk limit: the caller's bound or the shared CL default.
+    let limit =
+        sqrt_price_limit.unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(zero_for_one));
     match source {
         SwapReadSource::Shared(design) => match design {
             ConcentratedLiquidityState::V3 { state, scalars } => drive_shared(state, |st| {
-                v3::compute(
-                    st,
-                    scalars,
-                    request.zero_for_one,
-                    request.amount_specified,
-                    request.limit(),
-                )
+                v3::compute(st, scalars, zero_for_one, amount_specified, limit)
             }),
             ConcentratedLiquidityState::V4 {
                 state,
                 scalars,
                 hooks: _,
             } => drive_shared(state, |st| {
-                v4::compute(
-                    st,
-                    scalars,
-                    request.zero_for_one,
-                    request.amount_specified,
-                    request.limit(),
-                )
+                v4::compute(st, scalars, zero_for_one, amount_specified, limit)
             }),
         },
         SwapReadSource::Slice(design) => match design {
             ConcentratedLiquidityStateMut::V3 { state, scalars } => drive(
                 state,
-                |st| {
-                    v3::compute(
-                        st,
-                        scalars,
-                        request.zero_for_one,
-                        request.amount_specified,
-                        request.limit(),
-                    )
-                },
+                |st| v3::compute(st, scalars, zero_for_one, amount_specified, limit),
                 &downgrade_discovery(&mode),
             ),
             ConcentratedLiquidityStateMut::V4 {
@@ -403,15 +315,7 @@ pub fn read_swap(
                 hooks: _,
             } => drive(
                 state,
-                |st| {
-                    v4::compute(
-                        st,
-                        scalars,
-                        request.zero_for_one,
-                        request.amount_specified,
-                        request.limit(),
-                    )
-                },
+                |st| v4::compute(st, scalars, zero_for_one, amount_specified, limit),
                 &downgrade_discovery(&mode),
             ),
         },
@@ -426,9 +330,9 @@ pub fn read_swap(
                             v3::compute(
                                 st,
                                 DesignScalars::new(identity.fee, identity.tick_spacing),
-                                request.zero_for_one,
-                                request.amount_specified,
-                                request.limit(),
+                                zero_for_one,
+                                amount_specified,
+                                limit,
                             )
                         },
                         &mode,
@@ -445,9 +349,9 @@ pub fn read_swap(
                                     identity.pool_key.fee,
                                     identity.pool_key.tick_spacing,
                                 ),
-                                request.zero_for_one,
-                                request.amount_specified,
-                                request.limit(),
+                                zero_for_one,
+                                amount_specified,
+                                limit,
                             )
                         },
                         &mode,
@@ -465,9 +369,9 @@ pub fn read_swap(
                         v3::compute(
                             st,
                             DesignScalars::new(identity.fee, identity.tick_spacing),
-                            request.zero_for_one,
-                            request.amount_specified,
-                            request.limit(),
+                            zero_for_one,
+                            amount_specified,
+                            limit,
                         )
                     },
                     &mode,
@@ -485,9 +389,9 @@ pub fn read_swap(
                                 identity.pool_key.fee,
                                 identity.pool_key.tick_spacing,
                             ),
-                            request.zero_for_one,
-                            request.amount_specified,
-                            request.limit(),
+                            zero_for_one,
+                            amount_specified,
+                            limit,
                         )
                     },
                     &mode,
@@ -516,60 +420,6 @@ fn downgrade_discovery<'a>(mode: &'a FetchMode<'a>) -> FetchMode<'a> {
     }
 }
 
-/// The apply door — one buffered pool event onto one slice; the design/event
-/// pairing is unconstructible across designs.
-///
-/// # Panics
-///
-/// Never for callers that construct the event and slice together (the
-/// cross-design pairing is unrepresentable at every production site); the
-/// catch-all arm is the compiler-exhaustive backstop.
-pub fn apply_event(
-    design: ConcentratedLiquidityApplyTarget<'_>,
-    event: ConcentratedLiquidityEvent,
-) {
-    match (design, event) {
-        (ConcentratedLiquidityApplyTarget::V3(state), ConcentratedLiquidityEvent::V3(event)) => {
-            v3::apply_event(state, event);
-        }
-        (ConcentratedLiquidityApplyTarget::V4(state), ConcentratedLiquidityEvent::V4(event)) => {
-            v4::apply_event(state, event);
-        }
-        // The cross-design pairing is unconstructible (event and slice are
-        // built together at every production site); the arms exist so the
-        // match stays compiler-exhaustive over the two slices.
-        (ConcentratedLiquidityApplyTarget::V3(_), ConcentratedLiquidityEvent::V4(_))
-        | (ConcentratedLiquidityApplyTarget::V4(_), ConcentratedLiquidityEvent::V3(_)) => {
-            unreachable!("CL design/event pairing is unconstructible")
-        }
-    }
-}
-
-/// The family-local GET probes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Observe {
-    /// Registration coverage (`Tracked` / `Sparse`).
-    Coverage,
-    /// Whether the design's hook surface can modify swap amounts (V3: always
-    /// `false` — no hook concept; V4: the amount-modifying permission bits).
-    Hooked,
-    /// The tick-data fingerprint `(update_block, tick_count, sum_of_blocks)`
-    /// the engine verifier summarizes state with.
-    TickFingerprint,
-}
-
-/// One observed fact, keyed by the probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Observed {
-    /// The slice's registration coverage.
-    Coverage(PoolTickCoverage),
-    /// Whether the design's hook surface can modify swap amounts.
-    Hooked(bool),
-    /// The tick-data fingerprint; `Some` for every CL slice (every probe is
-    /// answerable over the family's slices).
-    TickFingerprint(Option<(u64, usize, u64)>),
-}
-
 /// The observe door — family-local GET behavior over one slice.
 #[must_use]
 pub fn observe(design: ConcentratedLiquidityState<'_>, probe: Observe) -> Observed {
@@ -585,20 +435,20 @@ pub fn observe(design: ConcentratedLiquidityState<'_>, probe: Observe) -> Observ
 
 /// The stateless-only read against a SHARED slice: one compute attempt, no
 /// merge target exists, so the verdict is always the raw Pattern-B shape
-/// ([`SwapReadOutcome::Stateless`]).
+/// ([`ReadOutcome::Stateless`]).
 fn drive_shared<S: ConcentratedLiquidityPoolMut>(
     state: &S,
     compute: impl Fn(&S) -> Result<V3SwapOutcome, SimulateSwapError>,
-) -> SwapReadOutcome {
-    SwapReadOutcome::Stateless(compute(state))
+) -> ReadOutcome {
+    ReadOutcome::Stateless(compute(state))
 }
 
 /// THE fetch → merge → retry loop — formerly copy-pasted per call shape in
 /// the swap-simulation gate, collapsed once at the family door. Dedup rule:
 /// a second miss on the SAME word means the previous merge did not satisfy
 /// the walker — give up rather than loop forever. No-fetcher and
-/// exhausted-miss collapse to [`SwapReadOutcome::FetchExhausted`]; a fetcher
-/// error is [`SwapReadOutcome::FetchFailed`].
+/// exhausted-miss collapse to [`ReadOutcome::FetchExhausted`]; a fetcher
+/// error is [`ReadOutcome::FetchFailed`].
 ///
 /// Fetch errors are deliberately single-strike: the abort surfaces honestly
 /// and the CALLER owns its retry budget. Discovery mode never fetches: a
@@ -608,19 +458,19 @@ fn drive<S: ConcentratedLiquidityPoolMut>(
     state: &mut S,
     mut compute: impl FnMut(&S) -> Result<V3SwapOutcome, SimulateSwapError>,
     mode: &FetchMode<'_>,
-) -> SwapReadOutcome {
+) -> ReadOutcome {
     let mut attempted: HashSet<i32> = HashSet::new();
     let mut fetched_words: Vec<i32> = Vec::new();
     loop {
         match compute(state) {
             Ok(outcome) => {
                 return match mode {
-                    FetchMode::Stateless => SwapReadOutcome::Stateless(Ok(outcome)),
+                    FetchMode::Stateless => ReadOutcome::Stateless(Ok(outcome)),
                     // Discovery: the walk established every word — the pass
                     // verdict IS the collected list (the transient is
                     // discarded with the read).
-                    FetchMode::Discovery => SwapReadOutcome::MissingWords(fetched_words),
-                    _ => SwapReadOutcome::Computed {
+                    FetchMode::Discovery => ReadOutcome::MissingWords(fetched_words),
+                    _ => ReadOutcome::Computed {
                         outcome,
                         fetched_words,
                     },
@@ -629,26 +479,24 @@ fn drive<S: ConcentratedLiquidityPoolMut>(
             Err(SimulateSwapError::NotComputable) => {
                 return match mode {
                     FetchMode::Stateless => {
-                        SwapReadOutcome::Stateless(Err(SimulateSwapError::NotComputable))
+                        ReadOutcome::Stateless(Err(SimulateSwapError::NotComputable))
                     }
-                    FetchMode::Discovery => SwapReadOutcome::MissingWords(fetched_words),
-                    _ => SwapReadOutcome::NotComputable,
+                    FetchMode::Discovery => ReadOutcome::MissingWords(fetched_words),
+                    _ => ReadOutcome::NotComputable,
                 }
             }
             Err(SimulateSwapError::MissingTickWord(word)) => match mode {
                 // Pattern B: the miss IS the answer (data, for the caller's
                 // fetch+retry shell one layer up).
                 FetchMode::Stateless => {
-                    return SwapReadOutcome::Stateless(Err(SimulateSwapError::MissingTickWord(
-                        word,
-                    )))
+                    return ReadOutcome::Stateless(Err(SimulateSwapError::MissingTickWord(word)))
                 }
                 // Discovery: list every missing word in one pass, stepping the
                 // walker past each with a forged-empty fill on the (transient)
                 // target. Never fetches.
                 FetchMode::Discovery => {
                     if !attempted.insert(word) {
-                        return SwapReadOutcome::MissingWords(fetched_words);
+                        return ReadOutcome::MissingWords(fetched_words);
                     }
                     fetched_words.push(word);
                     let _ = state.merge_tick_word(&FetchedTickWord {
@@ -658,7 +506,7 @@ fn drive<S: ConcentratedLiquidityPoolMut>(
                 }
                 FetchMode::Armed { .. } | FetchMode::Disarmed => {
                     if !attempted.insert(word) {
-                        return SwapReadOutcome::FetchExhausted { word };
+                        return ReadOutcome::FetchExhausted { word };
                     }
                     match fetch_word(mode, word) {
                         Ok(data) => {
@@ -666,10 +514,10 @@ fn drive<S: ConcentratedLiquidityPoolMut>(
                             fetched_words.push(word);
                         }
                         Err(FetchVerdict::NoFetcher) => {
-                            return SwapReadOutcome::FetchExhausted { word };
+                            return ReadOutcome::FetchExhausted { word };
                         }
                         Err(FetchVerdict::Errored) => {
-                            return SwapReadOutcome::FetchFailed { word };
+                            return ReadOutcome::FetchFailed { word };
                         }
                     }
                 }
@@ -703,6 +551,7 @@ mod tests {
 
     use super::*;
     use crate::tick_fetch::FetchTickWordError;
+    use crate::v3_state::PoolTickCoverage;
 
     // -------------------------------------------------------------------
     // THE drive-policy pin (moved with the family from the substrate
@@ -827,7 +676,7 @@ mod tests {
             &FetchMode::Disarmed,
         );
         match outcome {
-            SwapReadOutcome::Computed { fetched_words, .. } => assert!(fetched_words.is_empty()),
+            ReadOutcome::Computed { fetched_words, .. } => assert!(fetched_words.is_empty()),
             other => panic!("expected Computed, got {other:?}"),
         }
         assert!(target.fetched.borrow().is_empty());
@@ -855,7 +704,7 @@ mod tests {
             },
         );
         match outcome {
-            SwapReadOutcome::Computed { fetched_words, .. } => assert_eq!(fetched_words, vec![-4]),
+            ReadOutcome::Computed { fetched_words, .. } => assert_eq!(fetched_words, vec![-4]),
             other => panic!("expected Computed, got {other:?}"),
         }
         assert_eq!(*target.fetched.borrow(), vec![-4]);
@@ -880,7 +729,7 @@ mod tests {
                 block: 17,
             },
         );
-        assert_eq!(outcome, SwapReadOutcome::FetchExhausted { word: 9 });
+        assert_eq!(outcome, ReadOutcome::FetchExhausted { word: 9 });
     }
 
     #[test]
@@ -897,7 +746,7 @@ mod tests {
             scripted_compute(vec![Err(SimulateSwapError::MissingTickWord(2))]),
             &FetchMode::Disarmed,
         );
-        assert_eq!(outcome, SwapReadOutcome::FetchExhausted { word: 2 });
+        assert_eq!(outcome, ReadOutcome::FetchExhausted { word: 2 });
 
         let mut errored_target = ScriptedMergeTarget {
             fetched: std::cell::RefCell::new(Vec::new()),
@@ -915,7 +764,7 @@ mod tests {
                 block: 17,
             },
         );
-        assert_eq!(outcome, SwapReadOutcome::FetchFailed { word: 2 });
+        assert_eq!(outcome, ReadOutcome::FetchFailed { word: 2 });
     }
 
     #[test]
@@ -928,7 +777,7 @@ mod tests {
             scripted_compute(vec![Err(SimulateSwapError::NotComputable)]),
             &FetchMode::Disarmed,
         );
-        assert_eq!(outcome, SwapReadOutcome::NotComputable);
+        assert_eq!(outcome, ReadOutcome::NotComputable);
     }
 
     #[test]
@@ -948,7 +797,7 @@ mod tests {
             ]),
             &FetchMode::Discovery,
         );
-        assert_eq!(outcome, SwapReadOutcome::MissingWords(vec![8, 12]));
+        assert_eq!(outcome, ReadOutcome::MissingWords(vec![8, 12]));
         // The forged-empty fills DID land (the walk stepped past each word).
         assert_eq!(*target.fetched.borrow(), vec![8, 12]);
     }
@@ -967,7 +816,7 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            SwapReadOutcome::Stateless(Err(SimulateSwapError::MissingTickWord(5)))
+            ReadOutcome::Stateless(Err(SimulateSwapError::MissingTickWord(5)))
         );
         assert!(target.fetched.borrow().is_empty());
     }

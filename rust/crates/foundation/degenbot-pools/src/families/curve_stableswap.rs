@@ -48,7 +48,8 @@ use crate::curve_dy_io::{check_pool_liquidity, resolve_dy_inputs, CurveInputsErr
 use crate::state_history::BalanceVectorPoolState as _;
 use crate::v3_state::SimulateSwapError;
 
-use super::balance_vector::{BalanceVectorEvent, Observe, Observed};
+use super::balance_vector::BalanceVectorEvent;
+use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest};
 
 // Curve stableswap structural constants (Vyper contract literal values).
 /// Curve native precision scale (1e18).
@@ -184,7 +185,27 @@ pub fn capture_hop(
 /// output from a refusal.
 /// (The family carries no sparse-map miss — a balance-vector slice has no
 /// tick words to miss.)
+#[must_use]
 pub fn read_swap(
+    state: &CurvePoolState,
+    identity: &CurvePoolIdentity,
+    request: SwapReadRequest<'_>,
+) -> ReadOutcome {
+    // The family answers only the exact-input read; every other variant of
+    // the shared request vocabulary (the pair reads, the CL canonical
+    // request) is a typed refusal.
+    let SwapReadRequest::ExactIn {
+        zero_for_one,
+        amount_in,
+    } = request
+    else {
+        return ReadOutcome::NotComputable;
+    };
+    ReadOutcome::simple(read_standard_swap(state, identity, zero_for_one, amount_in))
+}
+
+/// The standard stableswap exact-input read arm behind [`read_swap`].
+fn read_standard_swap(
     state: &CurvePoolState,
     identity: &CurvePoolIdentity,
     zero_for_one: bool,
@@ -305,17 +326,30 @@ pub fn read_swap(
 /// `apply_balance_update_by_pool_id` orchestration row stays on the
 /// family-blind trait projection (`PoolEntry::as_balance_vector_mut`) — a
 /// per-family match there would reintroduce the arms ADR-017 D1 collapsed.
-pub fn apply_event(state: &mut CurvePoolState, event: BalanceVectorEvent) {
-    state.apply_balance_update(event.balances, event.block_number);
+impl FamilyApply for CurvePoolState {
+    type Event = BalanceVectorEvent;
+
+    fn apply_event(&mut self, event: Self::Event) {
+        self.apply_balance_update(event.balances, event.block_number);
+    }
 }
 
-/// The observe door — family-local GET behavior over one slice.
+/// The observe door — family-local GET behavior over one slice. Every probe
+/// this family carries is answerable over the slice; a probe another family
+/// carries is a caller bug (the door refuses to answer it rather than
+/// defaulting).
+///
+/// # Panics
+///
+/// Only on a foreign probe (never constructible by a correct caller — the
+/// same backstop posture as the compiler-enforced event/slice pairing).
 #[must_use]
 pub fn observe(state: &CurvePoolState, probe: Observe) -> Observed {
     match probe {
         Observe::UpdateBlock => Observed::UpdateBlock(state.update_block),
         Observe::StateNonce => Observed::StateNonce(state.state_nonce),
         Observe::TokenCount => Observed::TokenCount(state.balances.len()),
+        _ => unreachable!("a balance-vector slice answers only the vector probes"),
     }
 }
 
@@ -577,9 +611,16 @@ mod tests {
             journal: crate::state_history::ReorgJournal::new(8),
             data_provider: None,
         };
-        let verdict = read_swap(&state, &identity, true, U256::from(1_000u64));
+        let verdict = read_swap(
+            &state,
+            &identity,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(1_000u64),
+            },
+        );
         assert!(
-            matches!(verdict, Err(SimulateSwapError::NotComputable)),
+            matches!(verdict, ReadOutcome::NotComputable),
             "a non-STANDARD style answers the typed refusal, got {verdict:?}"
         );
     }
@@ -638,9 +679,16 @@ mod tests {
     fn fewer_than_two_coins_answers_the_typed_refusal_not_a_zero() {
         let identity = degenerate_identity(1);
         let state = degenerate_state(1);
-        let verdict = read_swap(&state, &identity, true, U256::from(1_000u64));
+        let verdict = read_swap(
+            &state,
+            &identity,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(1_000u64),
+            },
+        );
         assert!(
-            matches!(verdict, Err(SimulateSwapError::NotComputable)),
+            matches!(verdict, ReadOutcome::NotComputable),
             "n_coins < 2 answers the typed refusal, got {verdict:?}"
         );
     }
@@ -651,9 +699,16 @@ mod tests {
         // balance vector against a two-coin identity leaves `xp.len() != n_coins`.
         let identity = degenerate_identity(2);
         let state = degenerate_state(1);
-        let verdict = read_swap(&state, &identity, true, U256::from(1_000u64));
+        let verdict = read_swap(
+            &state,
+            &identity,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(1_000u64),
+            },
+        );
         assert!(
-            matches!(verdict, Err(SimulateSwapError::NotComputable)),
+            matches!(verdict, ReadOutcome::NotComputable),
             "xp.len() != n_coins answers the typed refusal, got {verdict:?}"
         );
     }
