@@ -18,8 +18,8 @@ use alloy::primitives::{Address, I256, U256};
 use degenbot_pools::curve_data_provider::CurveDataProvider;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::swap_simulation::{
-    simulate_balancer_pair_in_given_out, simulate_balancer_pair_out, Caveats, OverrideSwap,
-    SwapOutcome, SwapRead, SwapRequest, UnsupportedOverrideFamily,
+    simulate_pair_in_given_out, simulate_pair_out, Caveats, OverrideSwap, SwapOutcome, SwapRead,
+    SwapRequest, UnsupportedOverrideFamily,
 };
 use degenbot_substrate::{BotState, EncodeSwapError};
 use degenbot_uniswap::v2_encoding::EncodedCall;
@@ -302,7 +302,7 @@ pub fn calculate_tokens_out_for_pair(
     override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
     let guard = state.read_at(LockSite::Orchestrator);
-    simulate_balancer_pair_out(
+    simulate_pair_out(
         &guard,
         pool_id,
         index_in,
@@ -326,7 +326,7 @@ pub fn calculate_tokens_in_for_pair(
     override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
     let guard = state.read_at(LockSite::Orchestrator);
-    simulate_balancer_pair_in_given_out(
+    simulate_pair_in_given_out(
         &guard,
         pool_id,
         index_in,

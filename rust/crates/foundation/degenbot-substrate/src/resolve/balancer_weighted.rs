@@ -1,15 +1,24 @@
-//! Balancer weighted-pool projection.
+//! Balancer weighted-pool resolve row — the registry-lookup + solver-vocabulary
+//! wrap seam (ADR-073 D2).
+//!
+//! The projection itself is the family read module's door —
+//! `degenbot_pools::families::balancer_weighted::capture_hop` — a pure
+//! function of the family state slice (pairwise upscale to 18-decimal fixed
+//! point + pow-version decode). This file keeps ONLY the state-owner seam:
+//! the registry lookups, the refusal mapping, the nonce, and the one
+//! `ResolvedHop` wrap.
 
-use alloy::primitives::U256;
-
+use degenbot_pools::families::balancer_weighted as weighted_read;
 use degenbot_solvers::mixed::{BalancerWeightedHopState, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
 
-/// Balancer-weighted projection: upscale the pairwise balances to
-/// 18-decimal fixed point (Balancer convention: the math leaf operates at
-/// ONE = 1e18 scale; `scaling_factors[i] = 10^(18 - token_decimals_i)`).
+/// Balancer-weighted resolve row: read pool state + identity off `core`
+/// (ADR-003), then the family read module's [`weighted_read::capture_hop`]
+/// door derives the upscaled pairwise hop payload the weighted solve branch
+/// consumes. The row wraps the solver-vocabulary hop
+/// (`ResolvedHop::BalancerWeighted`).
 pub(crate) fn project_balancer_weighted(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -20,50 +29,31 @@ pub(crate) fn project_balancer_weighted(
     let state = core
         .get_balancer_weighted_pool(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
-    // N-token pool: zero_for_one selects token[0]→token[1]
-    // (i=0, j=1) or token[1]→token[0] (i=1, j=0). The engine
-    // only handles the pairwise (0/1) case; N>2 pair selection
-    // is a Python-side concern (BalancerPairView) that fixes
-    // the pair before registration.
-    if id.n_tokens() < 2 {
-        return Err(MissingHopReason::TooFewTokens); // Can't form a pairwise hop
-    }
-    let (balance_in, balance_out, weight_in, weight_out, sf_in, sf_out) = if pool_ref.zero_for_one {
-        (
-            state.balances[0].saturating_mul(id.scaling_factors[0]),
-            state.balances[1].saturating_mul(id.scaling_factors[1]),
-            id.weights[0],
-            id.weights[1],
-            id.scaling_factors[0],
-            id.scaling_factors[1],
-        )
-    } else {
-        (
-            state.balances[1].saturating_mul(id.scaling_factors[1]),
-            state.balances[0].saturating_mul(id.scaling_factors[0]),
-            id.weights[1],
-            id.weights[0],
-            id.scaling_factors[1],
-            id.scaling_factors[0],
-        )
-    };
-    let pow_version = degenbot_math::balancer::PowVersion::from_u8(id.pow_version)
-        .ok_or(MissingHopReason::UnknownVariant)?; // Unknown pow_version → invalid
+    let hop = weighted_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(cl_refusal)?;
     Ok((
         ResolvedHop::BalancerWeighted {
             state: BalancerWeightedHopState {
-                balance_in,
-                balance_out,
-                weight_in,
-                weight_out,
-                swap_fee: U256::from(id.swap_fee),
-                pow_version,
-                scaling_factor_in: sf_in,
-                scaling_factor_out: sf_out,
+                balance_in: hop.balance_in,
+                balance_out: hop.balance_out,
+                weight_in: hop.weight_in,
+                weight_out: hop.weight_out,
+                swap_fee: hop.swap_fee,
+                pow_version: hop.pow_version,
+                scaling_factor_in: hop.scaling_factor_in,
+                scaling_factor_out: hop.scaling_factor_out,
             },
         },
         state.state_nonce,
     ))
+}
+
+/// Map the family read module's capture refusal onto the resolve
+/// invalidation vocabulary — the row's one mapping site.
+fn cl_refusal(refusal: weighted_read::CaptureRefusal) -> MissingHopReason {
+    match refusal {
+        weighted_read::CaptureRefusal::TooFewTokens => MissingHopReason::TooFewTokens,
+        weighted_read::CaptureRefusal::UnknownVariant => MissingHopReason::UnknownVariant,
+    }
 }
 
 #[cfg(test)]

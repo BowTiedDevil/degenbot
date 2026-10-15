@@ -1,15 +1,22 @@
-//! Curve stableswap projection.
+//! Curve stableswap resolve row — the registry-lookup + solver-vocabulary
+//! wrap seam (ADR-073 D2).
+//!
+//! The projection itself is the family read module's door —
+//! `degenbot_pools::families::curve_stableswap::capture_hop` — a pure
+//! function of the family state slice (rate-adjusted XP + the pairwise (0/1)
+//! variant decode). This file keeps ONLY the state-owner seam: the registry
+//! lookups, the refusal mapping, the nonce, and the one `ResolvedHop` wrap.
 
-use alloy::primitives::U256;
-
-use degenbot_math::curve::{FEE_DENOMINATOR, X_PRECISION};
+use degenbot_pools::families::curve_stableswap as curve_read;
 use degenbot_solvers::mixed::{CurveStableswapHopState, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
 
-/// Curve-stableswap projection: rate-adjusted XP + the pairwise (0/1) variant
-/// bytes, all read off `core` (ADR-003).
+/// Curve-stableswap resolve row: read pool state + identity off `core`
+/// (ADR-003), then the family read module's [`curve_read::capture_hop`] door
+/// derives the rate-adjusted hop payload the curve solve branch consumes.
+/// The row wraps the solver-vocabulary hop (`ResolvedHop::CurveStableswap`).
 pub(crate) fn project_curve(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -20,54 +27,37 @@ pub(crate) fn project_curve(
     let state = core
         .get_curve_pool(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
-    if id.tokens.len() < 2 {
-        return Err(MissingHopReason::TooFewTokens); // Can't form a pairwise hop
-    }
-    let (raw_idx_in, raw_idx_out) = if pool_ref.zero_for_one {
-        (0, 1)
-    } else {
-        (1, 0)
-    };
-    // Curve constants (degenbot_math::curve owns the convention).
-    let precision = U256::from(X_PRECISION);
-    let fee_denom = U256::from(FEE_DENOMINATOR);
-    let a_precision = U256::from(id.a_precision);
-    let amp = U256::from(id.a_coefficient).saturating_mul(a_precision);
-    let n_coins = U256::from(id.tokens.len() as u64);
-    // Build rate-adjusted XP: xp[i] = balances[i] * rate_multipliers[i] / X_PRECISION
-    let xp: Vec<U256> = state
-        .balances
-        .iter()
-        .zip(id.rate_multipliers.iter())
-        .map(|(b, rm)| b.saturating_mul(*rm) / precision)
-        .collect();
-    if raw_idx_in >= xp.len() || raw_idx_out >= xp.len() {
-        return Err(MissingHopReason::OutOfRange);
-    }
-    let y_variant = degenbot_math::curve::stableswap::YVariant::try_from_u8(id.y_variant)
-        .ok_or(MissingHopReason::UnknownVariant)?;
-    let d_variant = degenbot_math::curve::stableswap::DVariant::try_from_u8(id.d_variant)
-        .ok_or(MissingHopReason::UnknownVariant)?;
+    let hop = curve_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(cl_refusal)?;
     Ok((
         ResolvedHop::CurveStableswap {
             state: CurveStableswapHopState {
-                amp,
-                a_precision,
-                xp,
-                token_index_in: raw_idx_in,
-                token_index_out: raw_idx_out,
-                n_coins,
-                fee: U256::from(id.fee),
-                fee_denom,
-                precision,
-                rate_multiplier_in: id.rate_multipliers[raw_idx_in],
-                rate_multiplier_out: id.rate_multipliers[raw_idx_out],
-                y_variant,
-                d_variant,
+                amp: hop.amp,
+                a_precision: hop.a_precision,
+                xp: hop.xp,
+                token_index_in: hop.token_index_in,
+                token_index_out: hop.token_index_out,
+                n_coins: hop.n_coins,
+                fee: hop.fee,
+                fee_denom: hop.fee_denom,
+                precision: hop.precision,
+                rate_multiplier_in: hop.rate_multiplier_in,
+                rate_multiplier_out: hop.rate_multiplier_out,
+                y_variant: hop.y_variant,
+                d_variant: hop.d_variant,
             },
         },
         state.state_nonce,
     ))
+}
+
+/// Map the family read module's capture refusal onto the resolve
+/// invalidation vocabulary — the row's one mapping site.
+fn cl_refusal(refusal: curve_read::CaptureRefusal) -> MissingHopReason {
+    match refusal {
+        curve_read::CaptureRefusal::TooFewTokens => MissingHopReason::TooFewTokens,
+        curve_read::CaptureRefusal::UnknownVariant => MissingHopReason::UnknownVariant,
+        curve_read::CaptureRefusal::OutOfRange => MissingHopReason::OutOfRange,
+    }
 }
 
 #[cfg(test)]

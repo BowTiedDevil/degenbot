@@ -636,7 +636,7 @@ impl Bot {
 
     /// The raw stableswap `get_dy` for a Curve pool — the read guard is
     /// taken here (`LockSite::Orchestrator`); the math + provider resolution are
-    /// `BotState::curve_get_dy`'s (their error type passes through, and the
+    /// `BotState::get_dy`'s (their error type passes through, and the
     /// shell's `Debug`-format surface is unchanged).
     ///
     /// # Errors
@@ -650,9 +650,14 @@ impl Bot {
         block_number: u64,
         override_balances: Option<&[U256]>,
     ) -> Result<U256, super::CurveInputsError> {
-        self.state_arc()
-            .read_at(LockSite::Orchestrator)
-            .curve_get_dy(pool_id, i, j, dx, block_number, override_balances)
+        self.state_arc().read_at(LockSite::Orchestrator).get_dy(
+            pool_id,
+            i,
+            j,
+            dx,
+            block_number,
+            override_balances,
+        )
     }
 
     /// Apply a V2 `Sync` event (reserves + journaling) under ONE core write
@@ -838,7 +843,7 @@ mod tests {
         ));
     }
 
-    /// `curve_get_dy` through the facade delegates to the state method under
+    /// `get_dy` through the facade delegates to the state method under
     /// the core read guard, passing the typed error through unchanged (the
     /// shell's `Debug`-format surface).
     #[test]

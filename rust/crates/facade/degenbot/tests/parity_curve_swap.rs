@@ -165,10 +165,10 @@ fn standalone_rust_consumer_curve_dy_matches_recorded_constant() {
     }
 }
 
-/// Tier-2 gateway for the **Rust-owned orchestrated** `curve_get_dy` entry
+/// Tier-2 gateway for the **Rust-owned orchestrated** `get_dy` entry
 /// . This is the ADR-005 claim at the orchestration layer: a
 /// `cargo add degenbot` consumer registering a Curve pool into a `BotState`
-/// and calling `BotState::curve_get_dy` (identity + balances + optional
+/// and calling `BotState::get_dy` (identity + balances + optional
 /// provider → `resolve_dy_inputs` → `calculate_dy`) MUST reproduce the same
 /// recorded `dy` as the Python consumer driving `PyBot.curve_get_dy` with the
 /// same registration. Both sides read the shared `standard_plain` fixture for
@@ -223,7 +223,7 @@ fn standalone_rust_consumer_curve_get_dy_equals_recorded_constant() {
     let dx = u256(&plain.args.dx);
     let expected = u256(&plain.expected.dy);
     let dy = state
-        .curve_get_dy(pool_id, plain.args.i, plain.args.j, dx, 0, None)
-        .unwrap_or_else(|e| panic!("BotState::curve_get_dy failed: {e:?}"));
-    assert_eq!(dy, expected, "Rust-consumer curve_get_dy mismatch");
+        .get_dy(pool_id, plain.args.i, plain.args.j, dx, 0, None)
+        .unwrap_or_else(|e| panic!("BotState::get_dy failed: {e:?}"));
+    assert_eq!(dy, expected, "Rust-consumer get_dy mismatch");
 }

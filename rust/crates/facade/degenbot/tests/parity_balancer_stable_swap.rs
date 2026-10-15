@@ -4,10 +4,10 @@
 //! RPSW4Z).
 //!
 //! Proves the BPT-index-skipping path in
-//! `simulate_balancer_stable_swap` (`skip_bpt`) correctly **drops the BPT
+//! the `balancer_stable` family read door (`skip_bpt`) correctly **drops the BPT
 //! token from the invariant balance list** before computing the stableswap
 //! outGivenIn, end-to-end through `BotState::swap_simulation` (ADR-037)
-//! → `simulate_swap` → `simulate_balancer_stable_swap` → `skip_bpt` — the
+//! → `simulate_swap` → the family read door → `skip_bpt` — the
 //! same path a `cargo add degenbot` standalone consumer reaches.
 //!
 //! ## The BPT-drop equivalence (the oracle)

@@ -3,8 +3,8 @@
 //! over the CANONICAL balancer-v2-monorepo math cores (`FixedPoint`,
 //! `LogExpMath`, `WeightedMath`, `StableMath`, vendored at pinned commit
 //! f8b6f44) into an offline revm `CacheDB`. The harness reproduces the exact
-//! fee/scaling/direction sequence of the Rust `simulate_balancer_weighted_swap`
-//! / `simulate_balancer_stable_swap` (`invariant_version` == 1), so the engine
+//! fee/scaling/direction sequence of the Rust `balancer_weighted` /
+//! `balancer_stable` family read doors (`invariant_version` == 1), so the engine
 //! output === the canonical-FixedPoint bytecode output byte-for-byte across a
 //! pinned case + proptests over balances × weights × fees × amounts ×
 //! direction.
@@ -503,8 +503,15 @@ fn engine_weighted_in_given_out(case: &WeightedCase, zfo: bool, amount_out: U256
         8,
     );
     let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
-    ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair_in_given_out(
-        &identity, &state, idx_in, idx_out, amount_out, None,
+    ::degenbot_pools::families::balancer_weighted::read_swap(
+        &state,
+        &identity,
+        ::degenbot_pools::families::balancer_weighted::SwapReadRequest::PairExactOut {
+            idx_in,
+            idx_out,
+            amount_out,
+            override_balances: None,
+        },
     )
     .ok()
 }
@@ -529,8 +536,16 @@ fn engine_stable_in_given_out(case: &StableCase, zfo: bool, amount_out: U256) ->
         8,
     );
     let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
-    ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
-        &identity, &state, idx_in, idx_out, amount_out, None, None,
+    ::degenbot_pools::families::balancer_stable::read_swap(
+        &state,
+        &identity,
+        ::degenbot_pools::families::balancer_stable::SwapReadRequest::PairExactOut {
+            idx_in,
+            idx_out,
+            amount_out,
+            override_balances: None,
+            override_scaling_factors: None,
+        },
     )
     .ok()
 }
@@ -555,8 +570,16 @@ fn engine_stable_v2_in_given_out(case: &StableCase, zfo: bool, amount_out: U256)
         8,
     );
     let (idx_in, idx_out) = if zfo { (0, 1) } else { (1, 0) };
-    ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
-        &identity, &state, idx_in, idx_out, amount_out, None, None,
+    ::degenbot_pools::families::balancer_stable::read_swap(
+        &state,
+        &identity,
+        ::degenbot_pools::families::balancer_stable::SwapReadRequest::PairExactOut {
+            idx_in,
+            idx_out,
+            amount_out,
+            override_balances: None,
+            override_scaling_factors: None,
+        },
     )
     .ok()
 }
@@ -659,8 +682,16 @@ fn engine_stable_v2_out3(
         },
         8,
     );
-    ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair(
-        &identity, &state, idx_in, idx_out, amount_in, None, None,
+    ::degenbot_pools::families::balancer_stable::read_swap(
+        &state,
+        &identity,
+        ::degenbot_pools::families::balancer_stable::SwapReadRequest::PairExactIn {
+            idx_in,
+            idx_out,
+            amount_in,
+            override_balances: None,
+            override_scaling_factors: None,
+        },
     )
     .ok()
 }
@@ -694,8 +725,16 @@ fn engine_stable_v2_in_given_out3(
         },
         8,
     );
-    ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
-        &identity, &state, idx_in, idx_out, amount_out, None, None,
+    ::degenbot_pools::families::balancer_stable::read_swap(
+        &state,
+        &identity,
+        ::degenbot_pools::families::balancer_stable::SwapReadRequest::PairExactOut {
+            idx_in,
+            idx_out,
+            amount_out,
+            override_balances: None,
+            override_scaling_factors: None,
+        },
     )
     .ok()
 }

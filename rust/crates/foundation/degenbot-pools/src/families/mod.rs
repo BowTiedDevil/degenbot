@@ -9,4 +9,13 @@
 //!
 //! The central dispatchers keep one dispatch row per family (ADR-073 D2) and
 //! call ONLY the family tree's intent doors.
+//!
+//! The balance-vector structural family (Curve stableswap, Balancer weighted,
+//! Balancer stable) shares its family-blind event/probe vocabulary in
+//! [`balance_vector`] (ADR-059 D6) — the per-family projections, swap reads,
+//! and calc behavior never cross.
+pub mod balance_vector;
+pub mod balancer_stable;
+pub mod balancer_weighted;
 pub mod concentrated_liquidity;
+pub mod curve_stableswap;

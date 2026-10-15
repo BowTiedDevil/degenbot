@@ -34,6 +34,7 @@ use ::degenbot_pools::tick_fetch::TickWordFetcher;
 use alloy::primitives::{I256, U256};
 
 use ::degenbot_pools::families::concentrated_liquidity as cl;
+use ::degenbot_pools::families::{balancer_stable, balancer_weighted};
 use ::degenbot_pools::registry::PoolEntry;
 use ::degenbot_pools::simulate_swap::simulate_swap;
 use ::degenbot_pools::v3_state::{PoolTickCoverage, V3SwapOutcome};
@@ -283,36 +284,14 @@ pub(crate) fn concentrated_liquidity_payload(
     }
 }
 
-/// Balancer V2 weighted: exact-input across an explicit token pair
-/// (standalone-driver N-token surface — the seat engine's hop universe stays
-/// the token0/1 pair, which routes through the `zero_for_one` arm).
-/// Returns `None` for non-weighted pools or an out-of-domain computation.
-#[must_use]
-pub fn simulate_balancer_weighted_pair_out(
-    bot: &BotState,
-    pool_id: u64,
-    idx_in: usize,
-    idx_out: usize,
-    amount_in: U256,
-) -> Option<U256> {
-    match bot.registry.pools.get(&pool_id)? {
-        PoolEntry::BalancerWeighted(p) => {
-            let (id, state) = (&p.0, &p.1);
-            ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair(
-                id, state, idx_in, idx_out, amount_in, None,
-            )
-            .ok()
-        }
-        _ => None,
-    }
-}
-
 /// `(reserve_in, reserve_out)` for a V2 swap direction, widened to U256.
-/// Balancer V2 (weighted + stable): exact-output across an explicit token
-/// pair (standalone-driver N-token surface). Returns None for non-Balancer
-/// pools or an out-of-domain computation.
+/// Exact-output across an explicit token pair (standalone-driver N-token
+/// surface). The per-family dispatch is one row (ADR-073 D2): each
+/// balance-vector family's `GIVEN_OUT` read lives behind its read module's
+/// `read_swap` door. Returns None for non-balance-vector pools or an
+/// out-of-domain computation.
 #[must_use]
-pub fn simulate_balancer_pair_in_given_out(
+pub fn simulate_pair_in_given_out(
     bot: &BotState,
     pool_id: u64,
     idx_in: usize,
@@ -322,41 +301,41 @@ pub fn simulate_balancer_pair_in_given_out(
     override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
     match bot.registry.pools.get(&pool_id)? {
-        PoolEntry::BalancerWeighted(p) => {
-            let (id, state) = (&p.0, &p.1);
-            ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair_in_given_out(
-                id,
-                state,
+        PoolEntry::BalancerWeighted(p) => balancer_weighted::read_swap(
+            &p.1,
+            &p.0,
+            balancer_weighted::SwapReadRequest::PairExactOut {
                 idx_in,
                 idx_out,
                 amount_out,
                 override_balances,
-            )
-            .ok()
-        }
-        PoolEntry::BalancerStable(p) => {
-            let (id, state) = (&p.0, &p.1);
-            ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair_in_given_out(
-                id,
-                state,
+            },
+        )
+        .ok(),
+        PoolEntry::BalancerStable(p) => balancer_stable::read_swap(
+            &p.1,
+            &p.0,
+            balancer_stable::SwapReadRequest::PairExactOut {
                 idx_in,
                 idx_out,
                 amount_out,
                 override_balances,
                 override_scaling_factors,
-            )
-            .ok()
-        }
+            },
+        )
+        .ok(),
         _ => None,
     }
 }
 
-/// Balancer V2 (weighted + stable): exact-input across an explicit token
-/// pair (standalone-driver N-token surface). Overrides carry the caller's
-/// view of balances (and stable scaling factors - `MetaStable` rates). Returns
-/// None for non-Balancer pools or an out-of-domain computation.
+/// Exact-input across an explicit token pair (standalone-driver N-token
+/// surface). The per-family dispatch is one row (ADR-073 D2): each
+/// balance-vector family's N-token exact-in read lives behind its read
+/// module's `read_swap` door. Overrides carry the caller's view of balances
+/// (and stable scaling factors - `MetaStable` rates). Returns None for
+/// non-balance-vector pools or an out-of-domain computation.
 #[must_use]
-pub fn simulate_balancer_pair_out(
+pub fn simulate_pair_out(
     bot: &BotState,
     pool_id: u64,
     idx_in: usize,
@@ -366,31 +345,29 @@ pub fn simulate_balancer_pair_out(
     override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
     match bot.registry.pools.get(&pool_id)? {
-        PoolEntry::BalancerWeighted(p) => {
-            let (id, state) = (&p.0, &p.1);
-            ::degenbot_pools::simulate_swap::simulate_balancer_weighted_swap_pair(
-                id,
-                state,
+        PoolEntry::BalancerWeighted(p) => balancer_weighted::read_swap(
+            &p.1,
+            &p.0,
+            balancer_weighted::SwapReadRequest::PairExactIn {
                 idx_in,
                 idx_out,
                 amount_in,
                 override_balances,
-            )
-            .ok()
-        }
-        PoolEntry::BalancerStable(p) => {
-            let (id, state) = (&p.0, &p.1);
-            ::degenbot_pools::simulate_swap::simulate_balancer_stable_swap_pair(
-                id,
-                state,
+            },
+        )
+        .ok(),
+        PoolEntry::BalancerStable(p) => balancer_stable::read_swap(
+            &p.1,
+            &p.0,
+            balancer_stable::SwapReadRequest::PairExactIn {
                 idx_in,
                 idx_out,
                 amount_in,
                 override_balances,
                 override_scaling_factors,
-            )
-            .ok()
-        }
+            },
+        )
+        .ok(),
         _ => None,
     }
 }

@@ -281,13 +281,13 @@ impl CurveBasePoolPort for BotCurveBasePoolPort<'_> {
 
     fn calc_token_amount(&self, amounts: &[U256], block: u64) -> Result<U256, CurveSwapError> {
         self.state
-            .curve_calc_token_amount(self.base_id, amounts, true, block)
+            .calc_token_amount(self.base_id, amounts, true, block)
             .map_err(curve_error_into_swap)
     }
 
     fn get_dy(&self, i: usize, j: usize, dx: U256, block: u64) -> Result<U256, CurveSwapError> {
         self.state
-            .curve_get_dy(self.base_id, i, j, dx, block, None)
+            .get_dy(self.base_id, i, j, dx, block, None)
             .map_err(curve_error_into_swap)
     }
 
@@ -298,7 +298,7 @@ impl CurveBasePoolPort for BotCurveBasePoolPort<'_> {
         block: u64,
     ) -> Result<U256, CurveSwapError> {
         self.state
-            .curve_calc_withdraw_one_coin(self.base_id, token_amount, i, block)
+            .calc_withdraw_one_coin(self.base_id, token_amount, i, block)
             .map_err(curve_error_into_swap)
     }
 }

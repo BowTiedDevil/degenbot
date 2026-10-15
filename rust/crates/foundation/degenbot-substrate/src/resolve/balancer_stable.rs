@@ -1,14 +1,24 @@
-//! Balancer stable-pool projection.
+//! Balancer stable-pool resolve row — the registry-lookup + solver-vocabulary
+//! wrap seam (ADR-073 D2).
+//!
+//! The projection itself is the family read module's door —
+//! `degenbot_pools::families::balancer_stable::capture_hop` — a pure
+//! function of the family state slice (pairwise (0/1) hop over the
+//! BPT-skipped, 18-decimal-upscaled balances with the pre-computed
+//! `invariant`). This file keeps ONLY the state-owner seam: the registry
+//! lookups, the refusal mapping, the nonce, and the one `ResolvedHop` wrap.
 
-use alloy::primitives::U256;
-
+use degenbot_pools::families::balancer_stable as stable_read;
 use degenbot_solvers::mixed::{BalancerStableHopState, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
 
-/// Balancer-stable projection: pairwise (0/1) hop over the BPT-skipped,
-/// 18-decimal-upscaled balances with the pre-computed `invariant`.
+/// Balancer-stable resolve row: read pool state + identity off `core`
+/// (ADR-003), then the family read module's [`stable_read::capture_hop`] door
+/// derives the BPT-skipped upscaled hop payload (invariant pre-computed
+/// one-shot) the stable solve branch consumes. The row wraps the
+/// solver-vocabulary hop (`ResolvedHop::BalancerStable`).
 pub(crate) fn project_balancer_stable(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -19,61 +29,32 @@ pub(crate) fn project_balancer_stable(
     let state = core
         .get_balancer_stable_pool(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
-    if id.n_tokens() < 2 {
-        return Err(MissingHopReason::TooFewTokens); // Can't form a pairwise hop
-    }
-    let (raw_idx_in, raw_idx_out) = if pool_ref.zero_for_one {
-        (0, 1)
-    } else {
-        (1, 0)
-    };
-    let skip_bpt = |idx: usize| -> usize {
-        match id.bpt_idx {
-            Some(bpt) if idx >= bpt => idx - 1,
-            _ => idx,
-        }
-    };
-    let token_index_in = skip_bpt(raw_idx_in);
-    let token_index_out = skip_bpt(raw_idx_out);
-    let upscaled_balances: Vec<U256> = {
-        let mut ub = Vec::with_capacity(id.n_tokens());
-        for (i, &bal) in state.balances.iter().enumerate() {
-            if id.bpt_idx.is_some_and(|bpt| bpt == i) {
-                continue;
-            }
-            ub.push(bal.saturating_mul(id.scaling_factors[i]));
-        }
-        ub
-    };
-    if token_index_in >= upscaled_balances.len() || token_index_out >= upscaled_balances.len() {
-        return Err(MissingHopReason::OutOfRange);
-    }
-    let amp_u256 = U256::from(id.amp);
-    let invariant = if id.invariant_version == 1 {
-        degenbot_math::balancer::stable_math::calculate_invariant(amp_u256, &upscaled_balances)
-    } else {
-        degenbot_math::balancer::stable_math::calculate_invariant_deployed(
-            amp_u256,
-            &upscaled_balances,
-            true,
-        )
-    };
-    let invariant = invariant.map_err(|_| MissingHopReason::InvariantError)?;
+    let hop = stable_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(cl_refusal)?;
     Ok((
         ResolvedHop::BalancerStable {
             state: BalancerStableHopState {
-                amp: amp_u256,
-                balances: upscaled_balances,
-                token_index_in,
-                token_index_out,
-                invariant,
-                swap_fee: U256::from(id.swap_fee),
-                scaling_factor_in: id.scaling_factors[raw_idx_in],
-                scaling_factor_out: id.scaling_factors[raw_idx_out],
+                amp: hop.amp,
+                balances: hop.balances,
+                token_index_in: hop.token_index_in,
+                token_index_out: hop.token_index_out,
+                invariant: hop.invariant,
+                swap_fee: hop.swap_fee,
+                scaling_factor_in: hop.scaling_factor_in,
+                scaling_factor_out: hop.scaling_factor_out,
             },
         },
         state.state_nonce,
     ))
+}
+
+/// Map the family read module's capture refusal onto the resolve
+/// invalidation vocabulary — the row's one mapping site.
+fn cl_refusal(refusal: stable_read::CaptureRefusal) -> MissingHopReason {
+    match refusal {
+        stable_read::CaptureRefusal::TooFewTokens => MissingHopReason::TooFewTokens,
+        stable_read::CaptureRefusal::OutOfRange => MissingHopReason::OutOfRange,
+        stable_read::CaptureRefusal::InvariantError => MissingHopReason::InvariantError,
+    }
 }
 
 #[cfg(test)]

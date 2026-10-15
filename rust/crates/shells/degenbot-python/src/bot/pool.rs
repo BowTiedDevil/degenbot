@@ -2121,7 +2121,7 @@ impl PyLiquidityPool {
             None => None,
         };
         let result = self.with_state(py, |core| {
-            core.curve_get_dy(
+            core.get_dy(
                 self.pool_id,
                 i,
                 j,
@@ -2175,7 +2175,7 @@ impl PyLiquidityPool {
             None => None,
         };
         let result = self.with_state(py, |core| {
-            core.curve_get_dy_underlying(
+            core.get_dy_underlying(
                 self.pool_id,
                 i,
                 j,
@@ -2217,7 +2217,7 @@ impl PyLiquidityPool {
             .map_err(|_| pyo3::exceptions::PyTypeError::new_err("amounts must be a list[int]"))?;
         let amounts = crate::bot::extract_u256_list(cast)?;
         let result = self.with_state(py, |core| {
-            core.curve_calc_token_amount(self.pool_id, &amounts, deposit, block_number)
+            core.calc_token_amount(self.pool_id, &amounts, deposit, block_number)
         });
         let out = match result {
             Ok(v) => v,
@@ -2245,7 +2245,7 @@ impl PyLiquidityPool {
     ) -> PyResult<Py<PyAny>> {
         let token_amount = crate::conversion::alloy::extract_python_u256(token_amount)?;
         let result = self.with_state(py, |core| {
-            core.curve_calc_withdraw_one_coin(self.pool_id, token_amount, i, block_number)
+            core.calc_withdraw_one_coin(self.pool_id, token_amount, i, block_number)
         });
         let out = match result {
             Ok(v) => v,

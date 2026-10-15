@@ -117,13 +117,13 @@ fn curve_get_dy_runs_the_rust_owned_swap_path() {
     });
 
     let dy = core
-        .curve_get_dy(pool_id, 0, 1, E18, 0, None)
+        .get_dy(pool_id, 0, 1, E18, 0, None)
         .expect("standard curve get_dy");
     assert_eq!(dy, U256::from(1_008_296_947_143_911_861u64));
 
     // Unknown pool id -> UnknownPool error.
     assert!(matches!(
-        core.curve_get_dy(999_999, 0, 1, E18, 0, None),
+        core.get_dy(999_999, 0, 1, E18, 0, None),
         Err(CurveInputsError::UnknownPool(999_999))
     ));
 }
@@ -183,7 +183,7 @@ fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
     meta.balances = vec![U256::ZERO, E21];
     let meta_id = core.register_curve_pool(&meta);
     let err = core
-        .curve_get_dy_underlying(meta_id, 0, 1, E18, 1, None)
+        .get_dy_underlying(meta_id, 0, 1, E18, 1, None)
         .expect_err("a zero metapool balance must refuse");
     assert!(matches!(err, CurveInputsError::NoLiquidity));
 
@@ -195,7 +195,7 @@ fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
     let meta_pool_b_id =
         core.register_curve_pool(&params(Address::from([0xcdu8; 20]), Some(base_zero_addr)));
     let err = core
-        .curve_get_dy_underlying(meta_pool_b_id, 0, 1, E18, 1, None)
+        .get_dy_underlying(meta_pool_b_id, 0, 1, E18, 1, None)
         .expect_err("a zero base-pool balance must refuse");
     assert!(matches!(err, CurveInputsError::NoLiquidity));
 }
@@ -204,7 +204,7 @@ fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
 fn curve_get_dy_refuses_a_zero_balance_direct_pool() {
     // The direct-pool zero-balance refusal is core-owned (the companion
     // `calculate_tokens_out_from_tokens_in` pre-validation is gone): a zero
-    // balance on any coin returns the typed `NoLiquidity` from `curve_get_dy`,
+    // balance on any coin returns the typed `NoLiquidity` from `get_dy`,
     // raised where the balance vector is read.
     use crate::RegisterCurvePoolParams;
 
@@ -252,13 +252,13 @@ fn curve_get_dy_refuses_a_zero_balance_direct_pool() {
     let zero_id =
         core.register_curve_pool(&params(Address::from([0x11u8; 20]), vec![U256::ZERO, E21]));
     let err = core
-        .curve_get_dy(zero_id, 0, 1, E18, 1, None)
+        .get_dy(zero_id, 0, 1, E18, 1, None)
         .expect_err("a zero balance must refuse");
     assert!(matches!(err, CurveInputsError::NoLiquidity));
 
     // A fully funded pool still computes dy (the check is not a blanket refusal).
     let funded_id = core.register_curve_pool(&params(Address::from([0x12u8; 20]), vec![E21, E21]));
-    assert!(core.curve_get_dy(funded_id, 0, 1, E18, 1, None).is_ok());
+    assert!(core.get_dy(funded_id, 0, 1, E18, 1, None).is_ok());
 }
 
 #[test]
