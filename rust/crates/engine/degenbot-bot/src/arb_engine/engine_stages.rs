@@ -1161,10 +1161,13 @@ mod dissolution_complete {
     const ENGINE_STAGES: &str = include_str!("engine_stages.rs");
     const LANE_WALK: &str = include_str!("lane_walk.rs");
     /// The cycle module's sources — the module tree, not one file.
-    const SOLVE_CYCLE_SOURCES: [&str; 3] = [
+    const SOLVE_CYCLE_SOURCES: [&str; 6] = [
         include_str!("solve_cycle/mod.rs"),
         include_str!("solve_cycle/shed.rs"),
         include_str!("solve_cycle/resolve.rs"),
+        include_str!("solve_cycle/solve.rs"),
+        include_str!("solve_cycle/merge.rs"),
+        include_str!("solve_cycle/deliver.rs"),
     ];
     /// The module tree no longer declares (or even names) `solver_dispatch`.
     #[test]
