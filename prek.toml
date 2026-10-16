@@ -175,8 +175,8 @@ hooks = [
   { id = "object-gc", name = "Object DB GC", language = "system", entry = "scripts/hooks/object-gc.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # ci-parity checks the ci.yml job matrix against the local entrypoints
-  # (scripts/hooks/ci-parity-manifest.txt) and requires every note claiming
-  # pre-push wiring to name one of this stage's `entry` strings.
+  # (scripts/hooks/ci-parity-manifest.txt) and requires every string in a
+  # line's push_gates column to name one of this stage's `entry` strings.
   { id = "ci-parity", name = "CI job parity", language = "system", entry = "scripts/hooks/ci-parity.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },

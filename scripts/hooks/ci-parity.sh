@@ -5,9 +5,9 @@
 # The CI job matrix is compared here against a MANIFEST of local entrypoints
 # (scripts/hooks/ci-parity-manifest.txt): a job without one is drift, and a
 # manifest entry naming a `just` recipe that no longer exists is drift too.
-# Notes claiming pre-push wiring are additionally checked against prek.toml's
+# The manifest's push_gates column is additionally checked against prek.toml's
 # `stages = ["pre-push"]` entries -- the push-gate manifest `just pre-push`
-# delegates to (ADR-074), so the claim cannot outlive the wiring.
+# delegates to (ADR-074), so the declaration cannot outlive the wiring.
 #
 # Exit codes:
 #   0   parity
@@ -22,9 +22,9 @@
 #     unchanged step name is invisible here.
 #   - Only `run: just <recipe>` lines are machine-checked against the
 #     justfile. Raw `run:` commands are the manifest's prose.
-#   - Manifest lines whose notes carry "(in just pre-push)" must name a recipe
-#     that appears as a `stages = ["pre-push"]` entry in prek.toml, i.e. is
-#     part of the push-gate manifest.
+#   - The manifest's push_gates column names entry strings that must appear as
+#     `stages = ["pre-push"]` entries in prek.toml, i.e. must be part of the
+#     push-gate manifest; notes carry no wiring claim.
 #
 # Override the sources for the negative probes (tests/test_ci_parity.py):
 #   MANIFEST=... CI=... JF=... PREK=...
@@ -38,9 +38,11 @@ jf="${JF:-justfile}"
 prek_toml="${PREK:-prek.toml}"
 manifest_file="${MANIFEST:-scripts/hooks/ci-parity-manifest.txt}"
 
-# The manifest: job id | kind | local entrypoint notes.
+# The manifest: job id | kind | push_gates | local entrypoint notes.
 #   local    -- a named local entrypoint exists (named in the notes)
 #   ci-only  -- nothing to run locally; the notes must say WHY
+# push_gates is a comma-separated list of prek.toml `entry` strings that must
+# be `stages = ["pre-push"]` entries; empty when the job is not push-wired.
 if [ ! -s "$manifest_file" ]; then
     echo "ci-parity: manifest ${manifest_file} is missing or empty -- refusing to pass" >&2
     exit 2
@@ -80,11 +82,11 @@ recipe_exists() {
     grep -I -qE "^${1}(:|[[:space:]])" "$jf"
 }
 
-# The `just <recipe>` names a note carries, minus the "(in just pre-push)"
-# marker itself -- its own `just pre-push` would otherwise read as a gate name.
-note_recipes() {
-    printf '%s' "$1" | sed 's/([^)]*in just pre-push[^)]*)//' \
-        | grep -oE 'just [a-z0-9_-]+' | awk '{print $2}' | sort -u || true
+trim() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "${value}"
 }
 
 in_push_manifest() {
@@ -97,7 +99,7 @@ in_push_manifest() {
 
 declare -A in_manifest=()
 
-while IFS='|' read -r job kind notes; do
+while IFS='|' read -r job kind push_gates notes; do
     [ -n "${job}" ] || continue
     if [ -z "${kind}" ] || [ -z "${notes}" ]; then
         echo "ci-parity: manifest line for '${job}' needs kind AND notes" >&2
@@ -117,17 +119,21 @@ while IFS='|' read -r job kind notes; do
     fi
     in_manifest["${job}"]=1
     # Every `just <recipe>` the notes name must exist ...
-    for name in $(note_recipes "${notes}"); do
+    for name in $(printf '%s' "${notes}" | grep -oE 'just [a-z0-9_-]+' | awk '{print $2}' | sort -u || true); do
         if ! recipe_exists "${name}"; then
             echo "ci-parity: job '${job}' names just recipe '${name}' which does not exist in ${jf}" >&2
             fail=1
         fi
-        # ... and, when the notes claim pre-push wiring, be wired there.
-        if printf '%s' "${notes}" | grep -q 'in just pre-push'; then
-            if ! in_push_manifest "just ${name}"; then
-                echo "ci-parity: job '${job}' claims '${name}' is in just pre-push, but no stages = [\"pre-push\"] entry in ${prek_toml} runs 'just ${name}'" >&2
-                fail=1
-            fi
+    done
+    # ... and every entry string in the push_gates column must be wired into the
+    # push-gate manifest (prek.toml's `stages = ["pre-push"]` entries).
+    IFS=',' read -ra gates <<< "${push_gates}"
+    for gate in "${gates[@]}"; do
+        gate="$(trim "${gate}")"
+        [ -n "${gate}" ] || continue
+        if ! in_push_manifest "${gate}"; then
+            echo "ci-parity: job '${job}' declares push gate '${gate}' which is not a stages = [\"pre-push\"] entry in ${prek_toml}" >&2
+            fail=1
         fi
     done
 done < "$manifest_file"

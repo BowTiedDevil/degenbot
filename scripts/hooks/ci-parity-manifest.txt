@@ -1,11 +1,11 @@
-changes|ci-only|dorny/paths-filter decides which downstream jobs run; nothing to execute
-commitlint|local|scripts/hooks/commitlint-push.sh (push range; in just pre-push)
-markdownlint|local|just lint-markdown
-msrv|local|just check-msrv
-rust|local|just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-binding-default, just check-rust-dev-features, just check-rust-extension-release, just check-rust-all-features, just test-rust, just test-rust-ci (CI build env), just test-fleet-parity, just test-golden-replay, just build-rust-extension, just publish-dry-run --no-verify
-cli-no-python|local|just ci-no-python-cli-gate (in just pre-push)
-tier3-oracle|local|just verify-tier3-artifacts, just verify-tier3-executor-artifact
-python|local|just check-uv-lock, just fmt-check-python, just lint-python, just test-python-noise-gate
-python|local|just test-python-no-anvil-spawn-surface (in just pre-push)
-python|local|full-suite no-anvil mirror of the CI non-floor legs (manual): just test-python-no-anvil
-stub-drift|local|just lint-stub-drift (in just pre-push)
+changes|ci-only||dorny/paths-filter decides which downstream jobs run; nothing to execute
+commitlint|local|scripts/hooks/commitlint-push.sh|push range
+markdownlint|local||just lint-markdown
+msrv|local||just check-msrv
+rust|local||just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-binding-default, just check-rust-dev-features, just check-rust-extension-release, just check-rust-all-features, just test-rust, just test-rust-ci (CI build env), just test-fleet-parity, just test-golden-replay, just build-rust-extension, just publish-dry-run --no-verify
+cli-no-python|local|just ci-no-python-cli-gate|just ci-no-python-cli-gate
+tier3-oracle|local||just verify-tier3-artifacts, just verify-tier3-executor-artifact
+python|local||just check-uv-lock, just fmt-check-python, just lint-python, just test-python-noise-gate
+python|local|just test-python-no-anvil-spawn-surface|just test-python-no-anvil-spawn-surface
+python|local||full-suite no-anvil mirror of the CI non-floor legs (manual): just test-python-no-anvil
+stub-drift|local|just lint-stub-drift|just lint-stub-drift

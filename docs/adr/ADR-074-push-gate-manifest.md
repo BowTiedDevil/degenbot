@@ -16,7 +16,7 @@ the miss.
 
 Three more artifacts existed only to police the copies: the pre-push gate drift
 brake (`scripts/hooks/pre-push-gate-drift.sh`, comparing the two lists), a
-negative-probe suite over that brake, and ci-parity's "in just pre-push" wiring
+negative-probe suite over that brake, and ci-parity's marker-based wiring
 check, which grepped `run_gate <name>` lines in the justfile. The brake itself
 carried a fourth copy — the sed/awk extraction that re-derived each list.
 
@@ -41,14 +41,14 @@ suite, and ci-parity's `run_gate` grep are removed outright, and the
 `pre-push-gate-drift` entry leaves prek.toml. Nothing remains to compare, so a
 probe of the one-line recipe would be a vacuous green.
 
-**D5 — ci-parity's wiring check is retargeted.** A manifest note claiming
-pre-push wiring must still name a recipe that is wired into the push gates — now
-verified against prek.toml's `stages = ["pre-push"]` entry strings (`just
-<recipe>`), not against justfile `run_gate` lines. The manifest itself is
-promoted from a heredoc inside `scripts/hooks/ci-parity.sh` to the first-class
-data file `scripts/hooks/ci-parity-manifest.txt` (same `job|kind|notes` pipe
-format, reader unchanged), and the gate gains the negative-probe suite it never
-had (`tests/test_ci_parity.py`).
+**D5 — ci-parity's wiring check is retargeted.** The manifest's `push_gates`
+column names entry strings that must appear among prek.toml's
+`stages = ["pre-push"]` entries, replacing the note-embedded marker that was
+grepped against justfile `run_gate` lines. The manifest itself is promoted from
+a heredoc inside `scripts/hooks/ci-parity.sh` to the first-class data file
+`scripts/hooks/ci-parity-manifest.txt` (`job|kind|push_gates|notes` pipe
+format), and the gate gains the negative-probe suite it never had
+(`tests/test_ci_parity.py`).
 
 **D6 — Hard cutover.** No flag, no transition period, one commit. The recipe is
 a leaf nothing else calls, and CI invokes individual recipes rather than
