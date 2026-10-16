@@ -1160,7 +1160,12 @@ mod dissolution_complete {
     const MOD_RS: &str = include_str!("mod.rs");
     const ENGINE_STAGES: &str = include_str!("engine_stages.rs");
     const LANE_WALK: &str = include_str!("lane_walk.rs");
-    const SOLVE_CYCLE: &str = include_str!("solve_cycle.rs");
+    /// The cycle module's sources — the module tree, not one file.
+    const SOLVE_CYCLE_SOURCES: [&str; 3] = [
+        include_str!("solve_cycle/mod.rs"),
+        include_str!("solve_cycle/shed.rs"),
+        include_str!("solve_cycle/resolve.rs"),
+    ];
     /// The module tree no longer declares (or even names) `solver_dispatch`.
     #[test]
     fn solver_dispatch_is_gone_from_the_module_tree() {
@@ -1192,8 +1197,8 @@ mod dissolution_complete {
             "fn recompute_clamped_profit(",
         ] {
             assert!(
-                SOLVE_CYCLE.contains(marker),
-                "solve_cycle.rs must own {marker:?}"
+                SOLVE_CYCLE_SOURCES.iter().any(|src| src.contains(marker)),
+                "the solve_cycle module must own {marker:?}"
             );
         }
         // The detached-merge chain `self.cycle.merge_detached_item(` moved
