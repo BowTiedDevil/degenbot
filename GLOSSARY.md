@@ -291,10 +291,20 @@ coordination are private internals.
 _Avoid_: "driver shell" (that is the whole Python companion), "backrun session".
 
 **Registration outcome ledger**:
-The cockpit's owner of the registration memo: the hop-identity key, the typed
-stable-vs-transient build refusal, and the bounded outcome vocabulary behind the metric
-tags.
-_Avoid_: "skip gate", "class-name refusal set".
+The core's owner of the registration memo: the hop-identity key, the typed
+stable-vs-transient build refusal, the bounded outcome vocabulary behind the metric
+tags, and the **Refusal vocabulary** (ADR-077). The cockpit consumes it through a thin
+adapter — outcomes and tags are minted from the core's exported lists, never re-owned.
+_Avoid_: "skip gate", "class-name refusal set"; a Python-side outcome type that mirrors
+the core's.
+
+**Refusal vocabulary**:
+The one closed `RefusalKind` the registration outcome ledger owns (ADR-077): every
+registration-phase refusal is a variant with family and phase riding as data, never as
+per-family enum types. Load-bearing classifications (stable-vs-transient build refusal,
+fatal-vs-transient verify failure) ride on the variant. Swap-calculation refusals are
+NOT this vocabulary — they ride the family read door's `SimulateSwapError`.
+_Avoid_: per-family registration error enums; a second identity-mismatch vocabulary.
 
 **Session state**:
 The cockpit's one owner of a session's coordination state (dispatcher, sim context,
@@ -477,6 +487,23 @@ _Avoid_: per-family arms inside the central matchers; family behaviour hanging o
 state owner as inherent methods; a family read module that reaches back into `BotState`;
 a family- or design-shaped method name on the state owner's surface (the taxonomy lives
 in the slice type and the family paths, not in row names).
+
+**Family write door**:
+The one registration/construction entry on the state owner (ADR-078): ONE
+`PoolRegistration` request whose per-family params ride as additive variants, ONE
+verdict speaking the **Refusal vocabulary**. The per-family orchestration modules stay
+behind the door; every consumer (PyO3 wrapper, bot core, pure-Rust driver) crosses the
+same seam, and a new family adds a params variant, never a method.
+_Avoid_: a family×verb method matrix on any consumer; payload construction in the PyO3
+wrapper; a driver-side construction fallback chain (see **Pool construction**).
+
+**CL state module**:
+The concentrated-liquidity family tree's state half (ADR-080): the journals,
+bitmap-word seeding and coverage, viability, and tick-range cache shared by the V3/V4
+designs, data-generic and monomorphic in hot loops (ADR-059 D6). `v3_state`/`v4_state`
+are the two storage adapters (slot0 vs state-view/hook-keyed PoolId); the kernel
+(ADR-071) and the family read module (ADR-073) are its siblings.
+_Avoid_: a second copy of journal/bitmap/viability logic per design; a trait per pool.
 
 **Zero-output sentinel (retired)**:
 The pre-port contract where a family read arm answered `Ok(U256::ZERO)` for a swap it
@@ -973,6 +1000,14 @@ _Avoid_: "solve loop" (the pump's block loop), bare "cycle", "engine cycle".
 **Cycle-transient state**:
 The state a cycle borrows between blocks — admission verdict, cycle arm, pending new
 paths, cursor advance — owned by the cycle rather than smeared across engine fields.
+
+**Epoch context**:
+The one value the solve cycle's phases (`shed / resolve / solve / merge / deliver`,
+ADR-076) thread: the cycle-transient state plus the status, admission, cache, and
+results/config clusters. Test seams are construction-time fields on the cycle, never
+methods on its interface.
+_Avoid_: `*_for_test` setters on the cycle's public surface; a mutable handle to the
+cycle's internal stash crossing the seam.
 
 **Path cost ledger**:
 The solve cycle's owner of per-path cost accounting — the pipeline instruments, the
