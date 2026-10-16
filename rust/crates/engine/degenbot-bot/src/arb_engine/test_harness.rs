@@ -155,10 +155,11 @@ pub(crate) fn pending_new_paths(engine: &ArbitrageEngine) -> &HashSet<u64> {
     engine.cycle.pending_new_paths()
 }
 
-/// The pending-new carry, mutable: a fixture arms the handoff without
-/// registering a path first.
-pub(crate) fn pending_new_paths_mut(engine: &mut ArbitrageEngine) -> &mut HashSet<u64> {
-    engine.cycle.pending_new_paths_mut()
+/// Arm the pending-new carry without registering a path first: the fixture
+/// door onto the cycle's own mutator, so the carry never crosses the seam as
+/// a `&mut` (ADR-076 D3).
+pub(crate) fn arm_pending_new_path(engine: &mut ArbitrageEngine, path_id: u64) {
+    engine.cycle.note_pending_new_path(path_id);
 }
 
 /// The current cycle's same-state reuse counter (a cycle-transient probe).

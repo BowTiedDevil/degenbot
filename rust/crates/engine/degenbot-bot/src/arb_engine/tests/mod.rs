@@ -104,13 +104,11 @@ fn detached_fixture(delay_ms: u64) -> (ArbitrageEngine, Vec<u64>, Vec<u64>) {
     }
     // The first registered path's id owns the injected delay.
     let target = path_ids[0];
-    engine
-        .cycle
-        .set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid == target {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            }
-        }));
+    engine.cycle.test_solve_delay = Some(std::sync::Arc::new(move |pid: u64| {
+        if pid == target {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
+    }));
     (engine, pool_ids, path_ids)
 }
 

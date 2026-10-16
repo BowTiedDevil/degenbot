@@ -9,9 +9,14 @@
 //!
 //! **T3** assembled [`SolveCycle`] — the resolve companions, the
 //! cycle-transient stash, the solve output, the admissions stance, the
-//! detached-arm collaborator, the walk/projection recorders, and the seven
-//! `for_test` knobs. The engine holds it as `engine.cycle`; the pinned
-//! `*_for_test` engine setters delegate into it.
+//! detached-arm collaborator, the walk/projection recorders, and the test
+//! knobs. The engine holds it as `engine.cycle`.
+//!
+//! **ADR-076 D2/D3** shrank the surface back to production shape: the test
+//! knobs are construction-time fields on [`SolveCycle`] (internal seams, never
+//! interface methods), the pending-new carry no longer hands out a `&mut`, and
+//! [`run_epoch`] works over the explicit [`EpochContext`] the phases will be
+//! relocated onto.
 //!
 //! **T4** landed the interface and moved its bodies onto
 //! [`SolveCycle`]: `draw` / `run_epoch` / `register_path` /
@@ -403,15 +408,15 @@ impl CycleTicket {
 ///
 /// The resolve companions, the cycle-transient stash, the solve output,
 /// the admissions stance, the detached-arm collaborator, the
-/// walk/projection recorders, and the seven `for_test` knobs. The T4
+/// walk/projection recorders, and the construction-time test knobs. The T4
 /// interface (`draw` / `run_epoch` / `register_path` /
 /// `register_and_solve_path` / `solve_all_paths` / `merge_detached_item` /
 /// `forget`) now lands its bodies here.
 ///
 /// The engine holds this as `engine.cycle`; the white-box tests re-index
-/// mechanically to `engine.cycle.*` and the pinned `*_for_test` engine
-/// setters delegate into these fields (ADR-041: knob names never change at
-/// the call site).
+/// mechanically to `engine.cycle.*`. The test knobs are data, not methods
+/// (ADR-076 D2): a test writes the field it varies, and [`run_epoch`] reads
+/// them through [`EpochContext`].
 ///
 /// The cycle-transient stash is module-private: the draw verdict lives in the
 /// [`CycleTicket`] the draw mints (never here), and the remaining stashes are
@@ -522,7 +527,7 @@ pub(crate) struct SolveCycle {
     pub(crate) cfg: Arc<::degenbot_config::BotConfig>,
     pub(crate) runtime_cfg: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
     pub(crate) inline_sim: Option<Arc<dyn super::inline_sim::InlineSimulator>>,
-    // --- for_test knobs (ADR-041: names pinned on the engine) ---------
+    // --- construction-time test knobs (ADR-076 D2: data, not methods) ---
     /// Test-only: hook invoked at the start of each path solve.
     #[cfg(test)]
     pub(crate) test_solve_delay: Option<Arc<dyn Fn(u64) + Send + Sync>>,
@@ -550,6 +555,86 @@ pub(crate) struct SolveCycle {
     pub(crate) test_merge_rx:
         Option<std::sync::mpsc::Receiver<crate::arb_engine::executor::LaneOutcome>>,
 }
+
+/// The epoch's explicit workspace (ADR-076 D1/D2): the four state clusters
+/// [`SolveCycle::run_epoch`] mutates — status, admission, caches,
+/// results/config — plus the epoch inputs and the collaborators the epoch
+/// reaches. It is built once at the top of the epoch and will be handed to
+/// each phase by `&mut` (ADR-076 D1); the clusters themselves stay flat on
+/// [`SolveCycle`] (the engine's lifecycle surface reads them too), so the
+/// context borrows them for exactly one epoch rather than moving them.
+///
+/// Construction stances that cannot change inside an epoch are copied in, so
+/// the phase bodies carry no `&`/`*` noise; the mutable clusters, the
+/// admission stashes, and the pending-new carry are borrowed. The carry is a
+/// field HERE (ADR-076 D3): the epoch consumes it through the context, and no
+/// `&mut` to it crosses the seam.
+#[expect(clippy::struct_excessive_bools)] // the packed construction stances (admission, projection memo, inline sim, resolve-par)
+pub(crate) struct EpochContext<'a> {
+    // --- status cluster -------------------------------------------------
+    /// Path solve-eligibility state machine (the dirty-pool fan-out gate).
+    pub(crate) path_status: &'a mut HashMap<u64, PathSolveStatus>,
+    /// Resolved path states (Arc-shared into the solve dispatch).
+    pub(crate) path_resolved: &'a mut HashMap<u64, Arc<ResolvedMixedPath>>,
+    /// The ONE engine block cursor.
+    pub(crate) cursor: &'a mut BlockCursor,
+    // --- admission cluster ----------------------------------------------
+    /// Construction-time admission stance (`DEGENBOT_SOLVE_ADMISSION`).
+    pub(crate) solve_admission: bool,
+    /// The un-merged-result pipe depth target in KEYS.
+    pub(crate) admission_target_depth: u64,
+    /// THE one solve-arm machine (per-cycle states, merge pipe, gauges).
+    pub(crate) detached_cycle: &'a mut DetachedCycle,
+    /// The pending-new carry: paths eagerly solved at registration, awaiting
+    /// the next dirty-cycle merge.
+    pub(crate) pending_new_paths: &'a mut HashSet<u64>,
+    /// Reuse-eligibility counter for the current solve cycle (probe only).
+    pub(crate) paths_same_state_this_cycle: &'a mut u64,
+    /// The deferred-path re-record hook (the ledger carry for deferrals).
+    pub(crate) deferred_re_record: &'a Option<DeferredReRecordHook>,
+    /// The diagnostic force-deferred override (`EngineRetune::force_deferred`).
+    pub(crate) force_deferred: &'a Option<HashSet<u64>>,
+    // --- caches cluster --------------------------------------------------
+    /// Per-path snapshot of every hop's `pool_update_block` at the last
+    /// successful resolve.
+    pub(crate) resolved_update_snapshot: &'a mut HashMap<u64, Vec<u64>>,
+    /// Hop-projection memo (pool,direction) -> snapshot@nonce.
+    pub(crate) hop_projection_cache: &'a HopProjectionCache,
+    /// Fused hop-projection memo switch (resolved ONCE at construction).
+    pub(crate) concentrated_liquidity_projection_memo: bool,
+    // --- results/config cluster ------------------------------------------
+    /// Last solved results, keyed by path ID.
+    pub(crate) results: &'a DashMap<u64, SolvePathResult>,
+    /// Config (immutable after construction) and the instance solver runtime
+    /// stance threaded down from it.
+    pub(crate) cfg: &'a Arc<::degenbot_config::BotConfig>,
+    pub(crate) runtime_cfg: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
+    /// Per-path previous-block MEASURED cost (the LPT cost refinement).
+    pub(crate) path_cost_history: &'a Arc<super::path_cost_ledger::PathCostHistory>,
+    /// The pre-solve profitability floor (packed instance value).
+    pub(crate) min_profit_floor: U256,
+    /// The CL-hop clamp margin (packed instance value).
+    pub(crate) clamp_margin: U256,
+    /// The inline-sim stance (instance value).
+    pub(crate) inline_sim_enabled: bool,
+    /// The engine's inline-sim hook snapshot.
+    pub(crate) inline_sim: &'a Option<Arc<dyn super::inline_sim::InlineSimulator>>,
+    /// The chunked-parallel resolve stance (instance value).
+    pub(crate) resolve_par_stance: bool,
+    // --- epoch collaborators (not a cluster; the epoch still reaches them) --
+    /// The block scope: the ONE owner of the block boundary.
+    pub(crate) scope: &'a mut BlockScope,
+    /// The shared `BotState` handle (a clone of the engine's Arc).
+    pub(crate) core:
+        &'a Arc<degenbot_substrate::state_lock::StateLock<degenbot_substrate::BotState>>,
+    /// Monotonic count of actual family projections (cache misses).
+    pub(crate) hop_projection_count: &'a mut u64,
+    /// The registered-path identity registry (read-only inside an epoch).
+    pub(crate) registry: &'a PathRegistry,
+    /// The cycle's block metadata (the sim request's block env).
+    pub(crate) metadata: &'a BlockMetadata,
+}
+
 /// The per-cycle resolve census — the submission/resolve counts the stage
 /// hooks and telemetry read off a [`CycleOutcome`] (ADR-045).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -962,6 +1047,45 @@ fn recompute_clamped_profit(result: &SolvePathResult) -> Option<U256> {
     let first_consumed = result.consumed_inputs.first().copied()?;
     Some(final_output.saturating_sub(first_consumed))
 }
+
+/// The uncached hop-description render for one path: the ONE body behind
+/// [`SolveCycle::describe_path`] and the epoch's cached door. A free function
+/// so the epoch can render a path while the context holds `&mut` to other
+/// fields (a `&self` method call would borrow the whole cycle).
+fn describe_path_with(
+    core: &Arc<degenbot_substrate::state_lock::StateLock<BotState>>,
+    registry: &PathRegistry,
+    path_id: u64,
+) -> String {
+    let Some(path) = registry.get(path_id) else {
+        return format!("path_id={path_id} (unregistered)");
+    };
+    let core = core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
+    let hops: Vec<String> = path
+        .pools
+        .iter()
+        .map(|r| describe_hop(&core, r.hop_type, r.pool_key, r.zero_for_one))
+        .collect();
+    format!("path_id={path_id} [{}]", hops.join(" -> "))
+}
+
+/// The telemetry string-cache door (path id -> formatted hop description,
+/// built once at first emission). Same lock discipline as the method it backs:
+/// a lookup lock, then an insert lock.
+fn describe_path_cached_with(
+    cache: &parking_lot::Mutex<HashMap<u64, Arc<str>>>,
+    core: &Arc<degenbot_substrate::state_lock::StateLock<BotState>>,
+    registry: &PathRegistry,
+    path_id: u64,
+) -> Arc<str> {
+    if let Some(hit) = cache.lock().get(&path_id) {
+        return Arc::clone(hit);
+    }
+    let rendered: Arc<str> = Arc::from(describe_path_with(core, registry, path_id));
+    cache.lock().insert(path_id, Arc::clone(&rendered));
+    rendered
+}
+
 // ===========================================================================
 // ADR-045 T4: the moved solve-cycle behavior. Bodies moved verbatim from
 // the retired grab file / `lifecycle.rs`; only the receiver (`self` is the
@@ -1343,6 +1467,40 @@ impl SolveCycle {
             draw_zero,
         } = ticket;
         let _ = &mut *delivery;
+        // The epoch's explicit workspace (ADR-076 D1/D2): the four state
+        // clusters plus the epoch inputs, borrowed for exactly this epoch.
+        // Every phase below reads and mutates THROUGH the context, so the
+        // phases can be relocated onto it without moving ownership of the
+        // cycle's flat state (the engine's lifecycle surface reads it too).
+        let ctx = EpochContext {
+            path_status: &mut self.path_status,
+            path_resolved: &mut self.path_resolved,
+            cursor: &mut self.cursor,
+            solve_admission: self.solve_admission,
+            admission_target_depth: self.admission_target_depth,
+            detached_cycle: &mut self.detached_cycle,
+            pending_new_paths: &mut self.transients.pending_new_paths,
+            paths_same_state_this_cycle: &mut self.transients.paths_same_state_this_cycle,
+            deferred_re_record: &self.deferred_re_record,
+            force_deferred: &self.force_deferred,
+            resolved_update_snapshot: &mut self.resolved_update_snapshot,
+            hop_projection_cache: &self.hop_projection_cache,
+            concentrated_liquidity_projection_memo: self.concentrated_liquidity_projection_memo,
+            results: &self.results,
+            cfg: &self.cfg,
+            runtime_cfg: self.runtime_cfg,
+            path_cost_history: &self.path_cost_history,
+            min_profit_floor: self.min_profit_floor,
+            clamp_margin: self.clamp_margin,
+            inline_sim_enabled: self.inline_sim_enabled,
+            inline_sim: &self.inline_sim,
+            resolve_par_stance: self.resolve_par_stance,
+            scope: &mut self.scope,
+            core: &self.core,
+            hop_projection_count: &mut self.hop_projection_count,
+            registry,
+            metadata,
+        };
         let mut same_state_total;
         let mut projections_total;
         let solved_bins;
@@ -1370,9 +1528,9 @@ impl SolveCycle {
             // the affected keys ARE the delta's taken (HopType,
             // pool_id) reverse-index keys — one loop, no per-family intake.
             for key in &affected {
-                if let Some(path_ids) = registry.paths_for(&key.path_index_key()) {
+                if let Some(path_ids) = ctx.registry.paths_for(&key.path_index_key()) {
                     for &path_id in path_ids {
-                        if self
+                        if ctx
                             .path_status
                             .entry(path_id)
                             .or_default()
@@ -1394,8 +1552,7 @@ impl SolveCycle {
         // that bypass the pump (e.g. tests driving `solve_dirty` directly).
         let anchor = crate::bot_core::solve_anchor::SolveAnchor::resolve(
             block_number,
-            &self
-                .core
+            &ctx.core
                 .read_at(degenbot_substrate::state_lock::LockSite::Solver),
         );
         let solve_block = anchor.block();
@@ -1407,7 +1564,7 @@ impl SolveCycle {
         // straight to the telemetry renderer. The tap is inert on the first
         // boundary of a run and on a disabled memo (the zero-activity gate —
         // see `super::walk_telemetry`).
-        let stats = self.scope.advance(solve_block);
+        let stats = ctx.scope.advance(solve_block);
         super::walk_telemetry::emit_epoch_boundary(&stats, solve_block);
         // -----------------------------------------------------------------
         // ADMISSION DRAW: the ticket consumed above carries the SINGLE
@@ -1424,29 +1581,29 @@ impl SolveCycle {
         // ledger for a later cycle (carry). The check precedes the
         // pending-new-path merge so a shed never clears work it did not do.
         // -----------------------------------------------------------------
-        if self.solve_admission && draw_zero {
-            self.detached_cycle.shed();
+        if ctx.solve_admission && draw_zero {
+            ctx.detached_cycle.shed();
             op_info!(
                 domain = solver,
                 block_number = solve_block,
                 paths.affected = affected_path_ids.len(),
-                in_flight = self
+                in_flight = ctx
                     .detached_cycle
                     .outstanding
                     .load(std::sync::atomic::Ordering::Relaxed),
-                target_depth = self.admission_target_depth,
+                target_depth = ctx.admission_target_depth,
                 "SHED: draw-time zero budget — nothing submitted; keys retained for carry"
             );
             // monotone advance on the block cursor (the
             // skipped_empty bookkeeping contract).
-            self.cursor.advance_solved(solve_block);
+            ctx.cursor.advance_solved(solve_block);
             let arm = CycleArm::Shed {
                 keys_affected: affected_path_ids.len(),
-                in_flight: self
+                in_flight: ctx
                     .detached_cycle
                     .outstanding
                     .load(std::sync::atomic::Ordering::Relaxed),
-                target_depth: self.admission_target_depth,
+                target_depth: ctx.admission_target_depth,
             };
             self.transients.last_arm = Some(arm);
             return CycleOutcome {
@@ -1465,15 +1622,15 @@ impl SolveCycle {
         // eagerly solved at registration time, but the pump's process_block
         // replaces self.results entirely — so we must include them to avoid
         // dropping their results.
-        affected_path_ids.extend(&self.transients.pending_new_paths);
-        self.transients.pending_new_paths.clear();
+        affected_path_ids.extend(&*ctx.pending_new_paths);
+        ctx.pending_new_paths.clear();
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
             // Cold-start trace: keys with NO registered paths reach here as a
             // bookkeeping-only pass (span exists, no dispatch) — stamp so the
             // cycle span never reads as arm-less.
             // monotone advance on the block cursor.
-            self.cursor.advance_solved(solve_block);
+            ctx.cursor.advance_solved(solve_block);
             let arm = CycleArm::SkippedEmpty { keys_affected: 0 };
             self.transients.last_arm = Some(arm);
             return CycleOutcome {
@@ -1510,7 +1667,12 @@ impl SolveCycle {
                 for &path_id in &affected_path_ids {
                     diag!(domain = solver, block_number = solve_block,
                         path.id = path_id,
-                        path.hops = %self.describe_path_cached(path_id, registry),
+                        path.hops = %describe_path_cached_with(
+                            &self.path_description_cache,
+                            ctx.core,
+                            ctx.registry,
+                            path_id,
+                        ),
                         dirty.keys = affected.len(),
                         "activated by dirty pool"
                     );
@@ -1553,7 +1715,7 @@ impl SolveCycle {
         // `deferred_paths` is now reserved for the genuinely illegitimate future-
         // price case below; genuine chain/solver divergence is left to the ADR-021
         // verifier, which fatal-aborts loudly (the preferred failure, esp. in dev).
-        self.transients.paths_same_state_this_cycle = 0;
+        *ctx.paths_same_state_this_cycle = 0;
         // these accumulate from the chunk merges inside the resolve
         // block below (same content the serial loop used to produce inline).
         let mut deferred_paths: HashSet<u64> = HashSet::new();
@@ -1561,7 +1723,7 @@ impl SolveCycle {
         // clone the deferred re-record hook out before the resolve
         // borrows `self` (Arc bump, cheap); it fires at the deferral site
         // below with the deferred paths' hop-pool keys.
-        let deferred_re_record = self.deferred_re_record.clone();
+        let deferred_re_record = ctx.deferred_re_record.clone();
         // phase span for the core-lock re-derive window (the
         // summary event after the block stays on the same node).
         let resolve_ctx = tracing::info_span!(
@@ -1583,7 +1745,7 @@ impl SolveCycle {
             // nonzero = core-lock congestion, not compute.
             let core = hotpath::measure_block!(
                 "resolve.core_read_acquire",
-                self.core
+                ctx.core
                     .read_at(degenbot_substrate::state_lock::LockSite::Solver)
             );
             let resolve_chunk = |path_ids: &[u64]| -> ResolveChunkOut {
@@ -1597,7 +1759,7 @@ impl SolveCycle {
                     deferred: Vec::new(),
                 };
                 for (chunk_pos, &path_id) in path_ids.iter().enumerate() {
-                    let Some(path) = registry.get(path_id) else {
+                    let Some(path) = ctx.registry.get(path_id) else {
                         continue;
                     };
                     // a hop whose PRICE
@@ -1618,7 +1780,7 @@ impl SolveCycle {
                     // Diagnostic override (the real future-price
                     // tripwire is unreachable after the solve-anchor head
                     // floor, so a forced set exercises the carry).
-                    let mut future = self
+                    let mut future = ctx
                         .force_deferred
                         .as_ref()
                         .is_some_and(|forced| forced.contains(&path_id));
@@ -1629,7 +1791,7 @@ impl SolveCycle {
                         }
                         update_snapshot.push(ub);
                     }
-                    let same_state = self
+                    let same_state = ctx
                         .resolved_update_snapshot
                         .get(&path_id)
                         .is_some_and(|prev| *prev == update_snapshot);
@@ -1653,9 +1815,9 @@ impl SolveCycle {
                         &core,
                         &path.pools,
                         &mut resolved,
-                        &self.hop_projection_cache,
+                        ctx.hop_projection_cache,
                         Some(&mut chunk_projections),
-                        self.concentrated_liquidity_projection_memo,
+                        ctx.concentrated_liquidity_projection_memo,
                     );
                     out.projections = chunk_projections;
                     for d in &deficits {
@@ -1682,7 +1844,7 @@ impl SolveCycle {
             let mut affected_vec: Vec<u64> = affected_path_ids.iter().copied().collect();
             affected_vec.sort_unstable();
             let chunk_outs: Vec<ResolveChunkOut> = hotpath::measure_block!("resolve.chunks", {
-                if !self.resolve_par_stance || affected_vec.len() < RESOLVE_PAR_MIN {
+                if !ctx.resolve_par_stance || affected_vec.len() < RESOLVE_PAR_MIN {
                     vec![resolve_chunk(&affected_vec)]
                 } else {
                     // the resolve chunk fan-out leaves rayon with
@@ -1747,13 +1909,13 @@ impl SolveCycle {
                     projections_total += projections;
                     deferred_paths.extend(deferred);
                     for (path_id, snapshot) in snapshots {
-                        self.resolved_update_snapshot.insert(path_id, snapshot);
+                        ctx.resolved_update_snapshot.insert(path_id, snapshot);
                     }
                     for (path_id, arc) in resolved {
-                        self.path_resolved.insert(path_id, arc);
+                        ctx.path_resolved.insert(path_id, arc);
                     }
                     for (path_id, deficits) in status {
-                        self.path_status
+                        ctx.path_status
                             .entry(path_id)
                             .or_default()
                             .set_resolved(&deficits);
@@ -1762,9 +1924,9 @@ impl SolveCycle {
                         *invalid_reasons.entry(reason).or_insert(0u64) += count;
                     }
                 }
-                self.transients.paths_same_state_this_cycle = same_state_total;
+                *ctx.paths_same_state_this_cycle = same_state_total;
                 // Lifetime counter (the serial loop accumulated in place).
-                self.hop_projection_count += projections_total;
+                *ctx.hop_projection_count += projections_total;
             });
         });
         // the ledger carry for deferred paths — re-record EVERY hop
@@ -1783,7 +1945,7 @@ impl SolveCycle {
                 deferred_sorted.sort_unstable();
                 let mut keys: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = Vec::new();
                 for path_id in deferred_sorted {
-                    if let Some(path) = registry.get(path_id) {
+                    if let Some(path) = ctx.registry.get(path_id) {
                         keys.extend(path.pools.iter().map(|pool_ref| {
                             degenbot_pools::solve::affected_keys::AffectedKey::new(
                                 pool_ref.hop_type,
@@ -1804,7 +1966,7 @@ impl SolveCycle {
             u32::try_from(affected_path_ids.len()).unwrap_or(u32::MAX),
         ));
         hotpath::gauge!("resolve_paths_same_state").set(f64::from(
-            u32::try_from(self.transients.paths_same_state_this_cycle).unwrap_or(u32::MAX),
+            u32::try_from(*ctx.paths_same_state_this_cycle).unwrap_or(u32::MAX),
         ));
         hotpath::gauge!("resolve_paths_deferred").set(f64::from(
             u32::try_from(deferred_paths.len()).unwrap_or(u32::MAX),
@@ -1819,8 +1981,8 @@ impl SolveCycle {
         }
         diag!(domain = solver, block_number = solve_block,
             paths.resolved = affected_path_ids.len(),
-            paths.same_state = self.transients.paths_same_state_this_cycle,
-            hop.projections = self.hop_projection_count,
+            paths.same_state = *ctx.paths_same_state_this_cycle,
+            hop.projections = *ctx.hop_projection_count,
             paths.deferred_future_price = deferred_paths.len(),
             invalid.reasons = %invalid_reasons.iter().map(|(r, c)| format!("{c}x {r}")).collect::<Vec<_>>().join(", "),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
@@ -1846,7 +2008,7 @@ impl SolveCycle {
         // A deferred path's result is dropped too: it is excluded from this
         // live solve (its pool is stale, so its prior result is stale as well).
         for &path_id in &affected_path_ids {
-            self.results.remove(&path_id);
+            ctx.results.remove(&path_id);
         }
         // Solve only the non-deferred affected set.
         let solve_path_ids: HashSet<u64> = affected_path_ids
@@ -1882,7 +2044,7 @@ impl SolveCycle {
         let to_solve: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)> = solve_path_ids
             .iter()
             .filter_map(|&pid| {
-                let resolved = self.path_resolved.get(&pid)?;
+                let resolved = ctx.path_resolved.get(&pid)?;
                 if !resolved.valid {
                     invalid_count += 1;
                     return None;
@@ -1924,12 +2086,12 @@ impl SolveCycle {
         // at the owner; the gate itself reads no environment. The prefix-
         // composition cache is generationed by the block epoch inside the
         // gate deps (no public reset to call anymore).
-        let gate_capture = gate_capture_from_cfg(&self.cfg);
+        let gate_capture = gate_capture_from_cfg(ctx.cfg);
         // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
         // the exact all-CL pool state the solver consumed for heavy paths so
         // the CL solver can be optimized offline. None (no-op) unless gated.
         let capture = HeavyPathCapture::from_capture(
-            &self.cfg.capture,
+            &ctx.cfg.capture,
             CaptureVariant::HeavyConcentratedLiquidity,
         );
         // Optional mixed V2+CL solver capture (same gate): heavy
@@ -1938,7 +2100,7 @@ impl SolveCycle {
         // Defaults OUT of the fixtures dir (loop-18: working rows never
         // accrete there; goldens are produced only by concentrated_liquidity_capture_gen).
         let capture_mixed =
-            HeavyPathCapture::from_capture(&self.cfg.capture, CaptureVariant::HeavyMixed);
+            HeavyPathCapture::from_capture(&ctx.cfg.capture, CaptureVariant::HeavyMixed);
         // SIMPIPE2 T2: pool-ref snapshot aligned to `to_solve` order (the
         // worker clamp's pool list) — captured under this cycle's engine
         // Mutex so it cannot interleave with a re-registration.
@@ -1947,7 +2109,7 @@ impl SolveCycle {
         let pool_refs: Vec<std::sync::Arc<MixedPath>> = to_solve
             .iter()
             .map(|(pid, _)| {
-                registry
+                ctx.registry
                     .get(*pid)
                     .cloned()
                     .unwrap_or_else(|| std::sync::Arc::new(MixedPath { pools: Vec::new() }))
@@ -1955,26 +2117,26 @@ impl SolveCycle {
             .collect();
         let shared = std::sync::Arc::new(SolveCycleShared {
             solve_block,
-            metadata: *metadata,
+            metadata: *ctx.metadata,
             gate_capture,
-            scope: self.scope.clone(),
-            runtime: self.runtime_cfg,
+            scope: ctx.scope.clone(),
+            runtime: ctx.runtime_cfg,
             path_cost_ledger: super::path_cost_ledger::PathCostLedger::new(
                 solve_block,
                 capture.map(std::sync::Arc::new),
                 capture_mixed.map(std::sync::Arc::new),
-                std::sync::Arc::clone(&self.path_cost_history),
+                std::sync::Arc::clone(ctx.path_cost_history),
             ),
             #[cfg(test)]
             test_solve_delay: self.test_solve_delay.clone(),
             #[cfg(test)]
             test_solve_panic: self.test_solve_panic.clone(),
-            core: std::sync::Arc::clone(&self.core),
+            core: std::sync::Arc::clone(ctx.core),
             pool_refs,
-            min_profit: self.min_profit_floor,
-            clamp_margin: self.clamp_margin,
-            worker_clamp: self.inline_sim_enabled,
-            inline_sim: self.inline_sim.clone(),
+            min_profit: ctx.min_profit_floor,
+            clamp_margin: ctx.clamp_margin,
+            worker_clamp: ctx.inline_sim_enabled,
+            inline_sim: ctx.inline_sim.clone(),
         });
         // The LPT bins are Arc-shared for every arm; the
         // arms index through the same deref (byte-identical semantics).
@@ -2036,7 +2198,7 @@ impl SolveCycle {
         // the in-cycle fallback retired; a positive-draw cycle ALWAYS
         // detaches (the draw already owns backpressure; there is no
         // post-begin race-shed).
-        let arm = self.detached_cycle.begin_cycle();
+        let arm = ctx.detached_cycle.begin_cycle();
         let DetachedArm {
             cycle_seq,
             merge_tx,
@@ -2051,7 +2213,7 @@ impl SolveCycle {
                 to_solve
                     .iter()
                     .filter_map(|(pid, _)| {
-                        self.resolved_update_snapshot
+                        ctx.resolved_update_snapshot
                             .get(pid)
                             .map(|stamp| (*pid, stamp.clone()))
                     })
@@ -2061,7 +2223,7 @@ impl SolveCycle {
             let bins = compute_bins();
             // Copy the cycle metadata out: the 'static bin threads
             // outlive the caller's &BlockMetadata borrow.
-            let cycle_metadata = *metadata;
+            let cycle_metadata = *ctx.metadata;
             // The gauge is machine-owned: the ISSUE half is the hook
             // below (bin threads bump it at SEND time — so a bin that
             // dies before sending NEVER leaks a count); the RECEIPT half
@@ -2099,7 +2261,7 @@ impl SolveCycle {
                 // bin body; an Arc-shared atomic carries the bump) —
                 // the machine's ISSUE half:
                 let gauge_bump: std::sync::Arc<dyn Fn() + Send + Sync> =
-                    self.detached_cycle.gauge_hook();
+                    ctx.detached_cycle.gauge_hook();
                 // Bin jobs ride the fleet executor (fleet.stance=fleet) or
                 // the dedicated tokio solve executor (persistent warm
                 // workers). The body
@@ -2189,7 +2351,7 @@ impl SolveCycle {
                     );
                 }
             }
-            self.detached_cycle.publish_gauge();
+            ctx.detached_cycle.publish_gauge();
             diag!(
                 domain = solver,
                 block_number = solve_block,
@@ -2640,34 +2802,18 @@ impl SolveCycle {
         // channel exists — poisoning the diff for the first real send. The
         // pump owns dispatch via `send_result_batch`.
     }
+    /// The uncached render: the white-box door (production renders through
+    /// [`Self::describe_path_cached`]), delegating to the ONE body.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn describe_path(&self, path_id: u64, registry: &PathRegistry) -> String {
-        let Some(path) = registry.get(path_id) else {
-            return format!("path_id={path_id} (unregistered)");
-        };
-        let core = self
-            .core
-            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-        let hops: Vec<String> = path
-            .pools
-            .iter()
-            .map(|r| describe_hop(&core, r.hop_type, r.pool_key, r.zero_for_one))
-            .collect();
-        format!("path_id={path_id} [{}]", hops.join(" -> "))
+        describe_path_with(&self.core, registry, path_id)
     }
     pub(crate) fn describe_path_cached(
         &self,
         path_id: u64,
         registry: &PathRegistry,
     ) -> std::sync::Arc<str> {
-        if let Some(hit) = self.path_description_cache.lock().get(&path_id) {
-            return std::sync::Arc::clone(hit);
-        }
-        let rendered: std::sync::Arc<str> =
-            std::sync::Arc::from(self.describe_path(path_id, registry));
-        self.path_description_cache
-            .lock()
-            .insert(path_id, std::sync::Arc::clone(&rendered));
-        rendered
+        describe_path_cached_with(&self.path_description_cache, &self.core, registry, path_id)
     }
     /// Simulate one clamp-admitted path through the installed hook. `None` =
     /// no hook installed, the path is unknown, or the hook reported failure-
@@ -2751,10 +2897,17 @@ impl SolveCycle {
     pub(crate) fn pending_new_paths(&self) -> &HashSet<u64> {
         &self.transients.pending_new_paths
     }
-    /// The pending-new carry, mutable: a fixture that arms the handoff
-    /// without registering a path first.
-    pub(crate) fn pending_new_paths_mut(&mut self) -> &mut HashSet<u64> {
-        &mut self.transients.pending_new_paths
+    /// Arm the pending-new carry without registering a path first (the
+    /// white-box fixture seam; `register_and_solve_path` is the production
+    /// writer). The carry never leaves the cycle: callers ask for the
+    /// mutation, never a `&mut` (ADR-076 D3).
+    pub(crate) fn note_pending_new_path(&mut self, path_id: u64) {
+        self.transients.pending_new_paths.insert(path_id);
+    }
+    /// Consume the pending-new carry exactly as one dirty epoch does (the
+    /// white-box fixture seam; the epoch clears it through [`EpochContext`]).
+    pub(crate) fn clear_pending_new_carry(&mut self) {
+        self.transients.pending_new_paths.clear();
     }
     /// The current cycle's same-state reuse counter (probe).
     pub(crate) fn same_state_this_cycle(&self) -> u64 {
@@ -2783,31 +2936,13 @@ impl SolveCycle {
         }
         self.test_merge_rx = Some(rx);
     }
-    // --- the engine's `#[cfg(test)]` knob setters, homed on their
-    // owning machine (moved off the `ArbitrageEngine` seam twin). ---
-    pub(crate) fn set_solve_delay_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
-        self.test_solve_delay = Some(hook);
-    }
-    pub(crate) fn set_solve_panic_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
-        self.test_solve_panic = Some(hook);
-    }
-    /// Test seam: force the future-price deferral for `pids` (empty
-    /// clears it). The real tripwire is unreachable after the solve-anchor
-    /// head floor, so the carry is exercised through this seam.
-    pub(crate) fn set_force_deferred_for_test(&mut self, pids: HashSet<u64>) {
-        self.force_deferred = if pids.is_empty() { None } else { Some(pids) };
-    }
-    pub(crate) fn set_merge_probe(&mut self, probe: Arc<parking_lot::Mutex<Vec<u64>>>) {
-        self.merge_probe = Some(probe);
-    }
+    // --- the remaining `#[cfg(test)]` knob setters, homed on their owning
+    // machine (moved off the `ArbitrageEngine` seam twin). The four ADR-076
+    // D2 setters and the three inline epoch flags are gone: those knobs are
+    // construction-time fields on [`SolveCycle`], written directly by the
+    // tests that vary them (internal seams, never interface methods). ---
     pub(crate) fn set_merge_panic_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
         self.test_merge_panic = Some(hook);
-    }
-    /// Test harness: toggle the inline merge drain. `EngineStages`
-    /// turns it OFF before driving the engine (the sidecar owns the pipe
-    /// there — see the field doc).
-    pub(crate) fn set_sync_merge_for_test(&mut self, on: bool) {
-        self.test_sync_merge = on;
     }
     pub(crate) fn set_streaming_delivery(&mut self, on: bool) {
         self.streaming_delivery = on;
@@ -2827,13 +2962,6 @@ impl SolveCycle {
     /// Test seam for the retention window (blocks).
     pub(crate) fn set_admission_retention_blocks(&mut self, window: u64) {
         self.admission_retention_blocks = window;
-    }
-    /// A/B seam (TEST ONLY). The production stance is
-    /// construction-frozen from `cfg.solve.solve_resolve_par`;
-    /// the parity test drives both arms through this mutator instead of
-    /// flipping a process-global.
-    pub(crate) fn set_resolve_parallel_for_test(&mut self, on: bool) {
-        self.resolve_par_stance = on;
     }
 }
 #[cfg(test)]
@@ -3045,7 +3173,7 @@ mod tests {
             "a fresh register arms the carry"
         );
         // Model the carry consumed by one dirty cycle.
-        engine.cycle.pending_new_paths_mut().clear();
+        engine.cycle.clear_pending_new_carry();
         let again = engine
             .cycle
             .register_and_solve_path(hops, &mut engine.registry)
@@ -3214,5 +3342,104 @@ mod clamp_recompute_tests {
     fn degenerate_path_returns_none() {
         let r = SolvePathResult::default();
         assert!(recompute_clamped_profit(&r).is_none());
+    }
+}
+
+// ======================================================================
+// ADR-076 D2/D3: the `SolveCycle` surface is production shape.
+//
+// The epoch's test knobs are internal seams (construction-time fields), never
+// interface methods, and the pending-new carry never crosses the seam as a
+// `&mut`. The absence half is a compile-time inherent-absence probe (the
+// candidate2 `NoInherentTwinProbe` pattern): the probe takes `&mut` and is
+// called on a `&mut SolveCycle`, so method resolution meets an inherent method
+// at the same autoref step and prefers it — an inherent re-introduction
+// shadows the probe and fails to build (arity/type mismatch), while the trait
+// methods alone resolve cleanly.
+// ======================================================================
+#[cfg(test)]
+mod epoch_context_seams {
+    /// The five names that left the `SolveCycle` surface (ADR-076 D2/D3).
+    #[test]
+    fn solve_cycle_surface_carries_no_test_knob_methods() {
+        struct KnobProbeToken;
+
+        trait NoTestKnobSurfaceProbe {
+            fn set_force_deferred_for_test(&mut self, _t: KnobProbeToken);
+            fn set_merge_probe(&mut self, _t: KnobProbeToken);
+            fn set_sync_merge_for_test(&mut self, _t: KnobProbeToken);
+            fn set_resolve_parallel_for_test(&mut self, _t: KnobProbeToken);
+            fn pending_new_paths_mut(&mut self, _t: KnobProbeToken);
+        }
+
+        impl NoTestKnobSurfaceProbe for super::SolveCycle {
+            fn set_force_deferred_for_test(&mut self, _t: KnobProbeToken) {}
+            fn set_merge_probe(&mut self, _t: KnobProbeToken) {}
+            fn set_sync_merge_for_test(&mut self, _t: KnobProbeToken) {}
+            fn set_resolve_parallel_for_test(&mut self, _t: KnobProbeToken) {}
+            fn pending_new_paths_mut(&mut self, _t: KnobProbeToken) {}
+        }
+
+        let mut engine = crate::arb_engine::ArbitrageEngine::new();
+        let cycle = &mut engine.cycle;
+        cycle.set_force_deferred_for_test(KnobProbeToken);
+        cycle.set_merge_probe(KnobProbeToken);
+        cycle.set_sync_merge_for_test(KnobProbeToken);
+        cycle.set_resolve_parallel_for_test(KnobProbeToken);
+        cycle.pending_new_paths_mut(KnobProbeToken);
+    }
+
+    /// The blanket half (the `dissolution_complete` textual-gate idiom): no
+    /// `pub(crate) fn` declaration in this file carries a `*_for_test` name,
+    /// so a NEW knob method cannot slip past the five-name probe above. The
+    /// needle is split so the gate's own text is never an offender.
+    #[test]
+    fn solve_cycle_source_declares_no_for_test_surface() {
+        const SRC: &str = include_str!("solve_cycle.rs");
+        let suffix = ["_for", "_test("].concat();
+        let offenders: Vec<&str> = SRC
+            .lines()
+            .filter(|line| line.contains("pub(crate) fn ") && line.contains(&suffix))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "`*_for_test` declarations remain on the SolveCycle surface: {offenders:?}"
+        );
+    }
+
+    /// The context's cluster shape is a compile-time fact (ADR-076 D1): the
+    /// phases will be handed `&mut EpochContext`, so a cluster field that
+    /// leaves the context is a build failure here.
+    #[test]
+    fn epoch_context_carries_the_four_clusters() {
+        fn carries(ctx: &super::EpochContext<'_>) {
+            // status
+            let _ = &ctx.path_status;
+            let _ = &ctx.path_resolved;
+            let _ = &ctx.cursor;
+            // admission
+            let _ = &ctx.solve_admission;
+            let _ = &ctx.admission_target_depth;
+            let _ = &ctx.detached_cycle;
+            let _ = &ctx.pending_new_paths;
+            let _ = &ctx.paths_same_state_this_cycle;
+            let _ = &ctx.deferred_re_record;
+            let _ = &ctx.force_deferred;
+            // caches
+            let _ = &ctx.resolved_update_snapshot;
+            let _ = &ctx.hop_projection_cache;
+            let _ = &ctx.concentrated_liquidity_projection_memo;
+            // results/config
+            let _ = &ctx.results;
+            let _ = &ctx.cfg;
+            let _ = &ctx.runtime_cfg;
+            let _ = &ctx.path_cost_history;
+            let _ = &ctx.min_profit_floor;
+            let _ = &ctx.clamp_margin;
+            let _ = &ctx.inline_sim_enabled;
+            let _ = &ctx.inline_sim;
+            let _ = &ctx.resolve_par_stance;
+        }
+        let _: fn(&super::EpochContext<'_>) = carries;
     }
 }

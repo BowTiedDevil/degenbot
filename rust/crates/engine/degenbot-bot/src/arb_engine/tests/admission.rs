@@ -325,7 +325,7 @@ fn admission_race_positive_draw_never_sheds() {
     engine.cycle.set_admission_target_depth(8);
     // An eager-registration path in the merge pipe: a post-merge race
     // shed would be the F2 data-loss class.
-    crate::arb_engine::test_harness::pending_new_paths_mut(&mut engine).insert(path_ids[1]);
+    crate::arb_engine::test_harness::arm_pending_new_path(&mut engine, path_ids[1]);
     let engine = Arc::new(parking_lot::Mutex::new(engine));
     let delta = Arc::new(EpochDelta::new(0u64));
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
@@ -749,7 +749,7 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
         let (mut engine, path_ids, hub_a, hub_b) = build();
         // the A/B arm drives the INSTANCE stance now (no
         // process-global flip; no parallel-order dependence).
-        engine.cycle.set_resolve_parallel_for_test(parallel);
+        engine.cycle.resolve_par_stance = parallel;
         // Cycle 1: dirty BOTH hubs -> all N paths re-resolve in one cycle.
         process_updates(
             &mut engine,

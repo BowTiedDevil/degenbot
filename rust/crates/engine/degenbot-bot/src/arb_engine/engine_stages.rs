@@ -414,7 +414,9 @@ impl EngineStages {
         // would steal it. Disable the inline drain for every EngineStages-
         // driven engine; the sidecar owns the pipe here.
         #[cfg(test)]
-        engine.cycle.set_sync_merge_for_test(false);
+        {
+            engine.cycle.test_sync_merge = false;
+        }
         if ticket.is_empty() {
             // Kept for inner bookkeeping parity (last_processed_block et al)
             // plus the pre-cycle expiry; provably cannot consume dirt under

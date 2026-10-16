@@ -95,9 +95,7 @@ fn deferred_path_re_records_all_hop_pools_via_the_hook() {
     let deferred = path_ids[0];
     let expected = kjwik5_path_keys(&engine, deferred);
     assert_eq!(expected.len(), 2, "fixture path has two hops");
-    engine
-        .cycle
-        .set_force_deferred_for_test(HashSet::from([deferred]));
+    engine.cycle.force_deferred = Some(HashSet::from([deferred]));
     let seen: Kjwik5ReRecords = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let seen_hook = std::sync::Arc::clone(&seen);
     set_deferred_re_record(
@@ -140,9 +138,7 @@ fn deferred_path_re_records_all_hop_pools_via_the_hook() {
 fn deferred_path_without_hook_keeps_today_drop_behavior() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
     let deferred = path_ids[1];
-    engine
-        .cycle
-        .set_force_deferred_for_test(HashSet::from([deferred]));
+    engine.cycle.force_deferred = Some(HashSet::from([deferred]));
     run_test_cycle(
         &mut engine,
         100,
@@ -173,9 +169,7 @@ fn future_price_counter_semantics_are_unchanged() {
         baseline.iter().all(|&count| count == 0),
         "no future-priced hop → the counter reads 0; got {baseline:?}"
     );
-    engine
-        .cycle
-        .set_force_deferred_for_test(HashSet::from([path_ids[0], path_ids[2]]));
+    engine.cycle.force_deferred = Some(HashSet::from([path_ids[0], path_ids[2]]));
     let forced = kjwik5_capture_deferred_counter(|| {
         run_test_cycle(&mut engine, 101, &BlockMetadata::default(), &affected);
     });
@@ -198,9 +192,7 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
     let deferred = path_ids[0];
     let deferred_keys = kjwik5_path_keys(&engine, deferred);
-    engine
-        .cycle
-        .set_force_deferred_for_test(HashSet::from([deferred]));
+    engine.cycle.force_deferred = Some(HashSet::from([deferred]));
     let engine = Arc::new(parking_lot::Mutex::new(engine));
     let delta = Arc::new(EpochDelta::new(0u64));
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
@@ -240,10 +232,7 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
     }
     // The anchor catches up: the path is no longer future-priced. Cycle 2
     // draws it back from the ledger.
-    engine
-        .lock()
-        .cycle
-        .set_force_deferred_for_test(HashSet::new());
+    engine.lock().cycle.force_deferred = None;
     let ctx = BlockContext::new(Epoch::at(101), BlockMetadata::default());
     let drawn = stages
         .on_resolve(&Resolve {
@@ -302,9 +291,7 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
     // Cycle 1's window is wide (nothing seeded may expire before the
     // deferral); it is narrowed before cycle 2 to bound the retry.
     engine.cycle.set_admission_retention_blocks(200);
-    engine
-        .cycle
-        .set_force_deferred_for_test(HashSet::from([deferred]));
+    engine.cycle.force_deferred = Some(HashSet::from([deferred]));
     let engine = Arc::new(parking_lot::Mutex::new(engine));
     let delta = Arc::new(EpochDelta::new(0u64));
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
@@ -337,10 +324,7 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
     // Cycle 2: narrow the window to zero and advance one block — the
     // cutoff prunes the deferred lead's bucket before the draw, so it is
     // never redrawn.
-    engine
-        .lock()
-        .cycle
-        .set_force_deferred_for_test(HashSet::new());
+    engine.lock().cycle.force_deferred = None;
     engine.lock().cycle.set_admission_retention_blocks(0);
     let ctx = BlockContext::new(Epoch::at(defer_block + 1), BlockMetadata::default());
     let drawn = stages

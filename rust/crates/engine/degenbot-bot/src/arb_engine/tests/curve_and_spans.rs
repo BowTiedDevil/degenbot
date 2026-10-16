@@ -1128,22 +1128,20 @@ fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
     );
     let hook_probe = probe.clone();
     let hook_fast = fast_pids.clone();
-    engine
-        .cycle
-        .set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid == slow_pid {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-                while std::time::Instant::now() < deadline {
-                    if hook_probe.lock().iter().any(|p| hook_fast.contains(p)) {
-                        hook_probe.lock().push(u64::MAX); // merge-before-release marker
-                        return;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+    engine.cycle.test_solve_delay = Some(std::sync::Arc::new(move |pid: u64| {
+        if pid == slow_pid {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while std::time::Instant::now() < deadline {
+                if hook_probe.lock().iter().any(|p| hook_fast.contains(p)) {
+                    hook_probe.lock().push(u64::MAX); // merge-before-release marker
+                    return;
                 }
-                hook_probe.lock().push(u64::MAX); // released WITHOUT a fast merge
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
-        }));
-    engine.cycle.set_merge_probe(probe.clone());
+            hook_probe.lock().push(u64::MAX); // released WITHOUT a fast merge
+        }
+    }));
+    engine.cycle.merge_probe = Some(probe.clone());
     let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
     let joiner = std::thread::spawn(move || {
         engine.cycle.run_epoch(
@@ -1245,22 +1243,20 @@ fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
     let fast_pids: Vec<u64> = path_ids[1..].to_vec();
     let observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let hook_observed = observed.clone();
-    engine
-        .cycle
-        .set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid == slow_pid {
-                // The park only needs to outlast the fast paths' solve; the
-                // window is scaled to that, not to a multi-second wall.
-                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
-                while std::time::Instant::now() < deadline {
-                    if hook_observed.load(std::sync::atomic::Ordering::Relaxed) {
-                        return;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+    engine.cycle.test_solve_delay = Some(std::sync::Arc::new(move |pid: u64| {
+        if pid == slow_pid {
+            // The park only needs to outlast the fast paths' solve; the
+            // window is scaled to that, not to a multi-second wall.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+            while std::time::Instant::now() < deadline {
+                if hook_observed.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
                 }
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
-        }));
-    engine.cycle.set_merge_probe(probe.clone());
+        }
+    }));
+    engine.cycle.merge_probe = Some(probe.clone());
     let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
     let joiner = std::thread::spawn(move || {
         engine.cycle.run_epoch(

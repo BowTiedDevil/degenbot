@@ -196,14 +196,12 @@ fn detached_undercount_trips_the_fan_in_assert() {
     // arrive at all: SILENT UNDERCOUNT).
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
     let kill = path_ids[1];
-    engine
-        .cycle
-        .set_solve_panic_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid != kill {
-                return;
-            }
-            panic!("path killed mid-bin (red harness)");
-        }));
+    engine.cycle.test_solve_panic = Some(std::sync::Arc::new(move |pid: u64| {
+        if pid != kill {
+            return;
+        }
+        panic!("path killed mid-bin (red harness)");
+    }));
     let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
         .iter()
         .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
@@ -277,14 +275,12 @@ fn detached_panic_does_not_leak_inflight_gauge() {
     }
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
     let kill = path_ids[2];
-    engine
-        .cycle
-        .set_solve_panic_hook(std::sync::Arc::new(move |pid: u64| {
-            if pid != kill {
-                return;
-            }
-            panic!("path killed mid-bin (red harness)");
-        }));
+    engine.cycle.test_solve_panic = Some(std::sync::Arc::new(move |pid: u64| {
+        if pid != kill {
+            return;
+        }
+        panic!("path killed mid-bin (red harness)");
+    }));
     let g0 = engine
         .cycle
         .detached_cycle
@@ -460,7 +456,7 @@ fn detached_solve_returns_at_enqueue_end_when_sync_drain_is_off() {
     // direct-call engines merge inline (synchronous harness); turn
     // that OFF so this pins the PRODUCTION return semantics — enqueue end,
     // results ABSENT until the sidecar (or a later drain) lands them.
-    engine.cycle.set_sync_merge_for_test(false);
+    engine.cycle.test_sync_merge = false;
     let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
         .iter()
         .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
