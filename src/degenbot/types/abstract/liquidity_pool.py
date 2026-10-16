@@ -5,9 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from degenbot.types.address_comparable import AddressComparable
-
 from degenbot.exceptions.base import DegenbotValueError
+from degenbot.types.address_comparable import AddressComparable
 
 if TYPE_CHECKING:
     from degenbot._ffi import BotIo, Pool
@@ -32,6 +31,11 @@ class AbstractLiquidityPool(AddressComparable, ABC):
         the identity that governs swap math (fee model, storage layout). The
         concrete class is not identity: ``sushiswap-v3`` deployments share
         ``UniswapV3Pool`` with vanilla v3 by design. Read-only by construction.
+
+        Raises:
+            DegenbotValueError: If the identity is read before a builder binds
+                it.
+
         """
         if self._bound_pool_type is None:
             msg = (
@@ -48,6 +52,10 @@ class AbstractLiquidityPool(AddressComparable, ABC):
         core's own registration identity. Re-binding the identical value is a
         no-op (the get-or-register path answers an existing handle); re-binding
         a different value is a seam bug and raises.
+
+        Raises:
+            DegenbotValueError: If a different descriptor is re-bound.
+
         """
         if self._bound_pool_type is not None and self._bound_pool_type != descriptor:
             msg = (

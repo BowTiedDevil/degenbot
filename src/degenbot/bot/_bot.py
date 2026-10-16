@@ -157,10 +157,15 @@ class Bot(AccountQueryMixin):
                 override keywords); the default is
                 :func:`~degenbot.provider.factory.get_provider_from_config`.
 
-        Refuses with a :class:`ValueError` when no layer names a chain or an
-        endpoint (naming what to declare, export, or pass), and with a
-        :class:`DegenbotValueError` when an injected provider serves another
-        chain than the resolved one.
+        The chain and database refusals (no layer names one) come from the
+        cascade's :func:`resolve_chain_id` / :func:`resolve_database_path` as a
+        :class:`ValueError`, each naming what to declare, export, or pass.
+
+        Raises:
+            DegenbotValueError: If an injected provider serves another chain
+                than the resolved one, or provider boot fails — typed on the
+                build-refusal taxonomy and immediate (a host that does not
+                resolve is not retried).
 
         """
         # A driver session is constructing its engine: bind the shared
@@ -480,7 +485,6 @@ class Bot(AccountQueryMixin):
         """
         return self.build_erc20token(address)
 
-    # ruff: ignore[too-many-locals] - one knob per resolved construction input, mirroring the retired keyword surface
     def resolve_pool_type(self, address: str) -> PoolTypeDescriptor:
         """Resolve a pool's type without building it.
 
@@ -488,6 +492,9 @@ class Bot(AccountQueryMixin):
         factory's registry entry, then on-chain probing): ask "what would be
         built?" before spending a build, and compare the preview against the
         identity a built pool binds.
+
+        Returns:
+            The resolved pool type descriptor.
 
         Raises:
             DegenbotValueError: If the pool's type cannot be determined.
@@ -501,11 +508,11 @@ class Bot(AccountQueryMixin):
             )
         except DegenbotValueError:
             raise
-        except Exception as exc:  # noqa: BLE001 — classified on the build-refusal taxonomy
+        except Exception as exc:
             msg = f"resolve_pool_type: cannot determine the type of {address}: {exc}"
             raise DegenbotValueError(message=msg) from exc
 
-    def build_pool(
+    def build_pool(  # ruff:ignore[too-many-locals]
         self,
         address: str,
         *,
@@ -610,7 +617,7 @@ class Bot(AccountQueryMixin):
         # species-manifest entry — never a new branch here. The V3 fork storage
         # layout is resolved core-side from the deployment table.
         is_concentrated_liquidity = family is PoolFamily.CONCENTRATED_LIQUIDITY
-        pool_id, b_t0, b_t1, _b_addr, _b_var = self._py_bot.construct_pool(
+        pool_id, b_t0, b_t1, _b_addr, b_var = self._py_bot.construct_pool(
             address,
             family=family.value,
             variant=variant,
@@ -688,10 +695,9 @@ class Bot(AccountQueryMixin):
         # variants contradicting the resolver's are a core/driver seam bug —
         # never hand back a mislabeled pool. Canonical/unrecognized spellings
         # on either side are the registry census's business, not this guard's.
-        echoed_variant = classify_pool_variant(_b_var)
-        resolved_variant = classify_pool_variant(
-            pool_type.variant if pool_type is not None else None
-        )
+        echoed_variant = classify_pool_variant(b_var)
+        resolved_raw = pool_type.variant if pool_type is not None else None
+        resolved_variant = classify_pool_variant(resolved_raw)
         if (
             echoed_variant is not None
             and resolved_variant is not None
@@ -702,7 +708,7 @@ class Bot(AccountQueryMixin):
             raise DegenbotValueError(
                 message=(
                     f"build_pool: core identity diverged from the resolver for {address}: "
-                    f"resolver variant {pool_type.variant!r} vs core echo {_b_var!r}"
+                    f"resolver variant {resolved_raw!r} vs core echo {b_var!r}"
                 )
             )
 
