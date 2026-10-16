@@ -56,7 +56,13 @@ from degenbot.provider import (
 )
 from degenbot.provider.factory import get_provider_from_config
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
+from degenbot.types.pool_type import (
+    PoolFamily,
+    PoolTypeDescriptor,
+    PoolVariant,
+    classify_pool_variant,
+    derive_kind,
+)
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
@@ -466,6 +472,30 @@ class Bot(AccountQueryMixin):
         return self.build_erc20token(address)
 
     # ruff: ignore[too-many-locals] - one knob per resolved construction input, mirroring the retired keyword surface
+    def resolve_pool_type(self, address: str) -> PoolTypeDescriptor:
+        """Resolve a pool's type without building it.
+
+        The same resolution ``build_pool()`` performs (DB kind, then the
+        factory's registry entry, then on-chain probing): ask "what would be
+        built?" before spending a build, and compare the preview against the
+        identity a built pool binds.
+
+        Raises:
+            DegenbotValueError: If the pool's type cannot be determined.
+
+        """
+        try:
+            return _resolve_pool_type_impl(
+                get_checksum_address(address),
+                chain_id=self.chain_id,
+                io=self._io,
+            )
+        except DegenbotValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — classified on the build-refusal taxonomy
+            msg = f"resolve_pool_type: cannot determine the type of {address}: {exc}"
+            raise DegenbotValueError(message=msg) from exc
+
     def build_pool(
         self,
         address: str,
@@ -645,6 +675,28 @@ class Bot(AccountQueryMixin):
 
         # `from_handle` is a concrete-class classmethod (not on the base); cast
         # to `type[Any]` so the call is type-checkable.
+        # Identity parity: the core echoes the variant it registered. Known
+        # variants contradicting the resolver's are a core/driver seam bug —
+        # never hand back a mislabeled pool. Canonical/unrecognized spellings
+        # on either side are the registry census's business, not this guard's.
+        echoed_variant = classify_pool_variant(_b_var)
+        resolved_variant = classify_pool_variant(
+            pool_type.variant if pool_type is not None else None
+        )
+        if (
+            echoed_variant is not None
+            and resolved_variant is not None
+            and echoed_variant is not PoolVariant.UNRECOGNIZED
+            and resolved_variant is not PoolVariant.UNRECOGNIZED
+            and echoed_variant is not resolved_variant
+        ):
+            raise DegenbotValueError(
+                message=(
+                    f"build_pool: core identity diverged from the resolver for {address}: "
+                    f"resolver variant {pool_type.variant!r} vs core echo {_b_var!r}"
+                )
+            )
+
         pool = cast("type[Any]", pool_class).from_handle(py_pool)
 
         # Bind the resolved identity onto the companion (builder knowledge:

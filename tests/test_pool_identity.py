@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from degenbot._ffi import Pool
+from degenbot.bot import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.types.pool_type import (
@@ -143,3 +144,15 @@ def test_from_handle_refuses_a_foreign_family() -> None:
     foreign_handle = SimpleNamespace(pool_family="v2")
     with pytest.raises(DegenbotValueError, match="not a V3-family pool"):
         UniswapV3Pool.from_handle(cast("Pool", foreign_handle))
+
+
+def test_resolve_pool_type_contract_is_held_at_the_live_seam() -> None:
+    """The public resolution probe is covered live, where a chain exists.
+
+    A typed refusal for an undeterminable address (``Bot.resolve_pool_type``
+    raising ``DegenbotValueError``) and the preview-equals-bind invariant both
+    need a reachable chain to be meaningful; the offline suite stays hermetic
+    and both are asserted in the fork-tier identity test instead of against the
+    suite's deliberately inert ambient endpoints.
+    """
+    assert callable(getattr(Bot, "resolve_pool_type", None))

@@ -221,6 +221,9 @@ def test_built_pool_identity_matches_deployment_truth(fork_base_full: AnvilFork)
     bot = make_bot_with_provider(fork_base_full.provider)
     pancake_pool_address = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
     pool = bot.build_pool(pancake_pool_address)
+    assert bot.resolve_pool_type(pancake_pool_address) == pool.pool_type
+    with pytest.raises(DegenbotValueError):
+        bot.resolve_pool_type("0x" + "00" * 20)
     assert pool.pool_type.kind == "pancakeswap_v3"
     assert pool.pool_type.variant == "pancakeswap"
     with pytest.raises(AttributeError):
