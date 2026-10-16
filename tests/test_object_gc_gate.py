@@ -188,4 +188,4 @@ def test_gate_is_wired_into_the_pre_push_stage() -> None:
     assert hooks[0]["always_run"] is True
 
     justfile = (REPO_ROOT / "justfile").read_text()
-    assert "scripts/hooks/object-gc.sh" in justfile, "just pre-push must mirror the gate"
+    assert "prek run --stage pre-push" in justfile, "just pre-push must delegate to this stage"

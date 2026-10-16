@@ -128,19 +128,12 @@ hooks = [
   #    repacks, and runs first so the build/test gates below see a sane object
   #    database.
   #
-  # 2. pre-push-gate-drift — the `just pre-push` recipe is a hand-written
-  #    transcription of this very list, and a transcription is an artifact that
-  #    drifts. It already did (a shorter recipe ran green while the push was
-  #    blocked by a gate it never ran), and `just pre-push` is what AGENTS.md
-  #    points every agent at before pushing. So the recipe's gate list is
-  #    compared against this stage's `entry` list here and a mismatch fails.
-  #
-  # 3. commitlint-push — re-lint every commit message in the outgoing push
+  # 2. commitlint-push — re-lint every commit message in the outgoing push
   #    range (safety net). prek's pre-push stage consumes git's push-line stdin
   #    and does not forward it to hooks, so the range is computed from the
   #    upstream tracking ref instead (mirrors `just lint-commits`).
   #
-  # 4. Whole-tree format sweeps — `just fmt-check` (cargo fmt --all) and
+  # 3. Whole-tree format sweeps — `just fmt-check` (cargo fmt --all) and
   #    `just fmt-check-python` (ruff format --check src/). Moved here from
   #    pre-commit: a tree sweep at commit time examined untracked files other
   #    lanes left mid-flight (prek's stash parks tracked-unstaged changes but
@@ -148,11 +141,11 @@ hooks = [
   #    own files are covered at pre-commit by the staged-slice gates above;
   #    these catch everything else before it reaches CI.
   #
-  # 5. Code linters (whole crate): rust-clippy + python-lint (incl. ty). These
+  # 4. Code linters (whole crate): rust-clippy + python-lint (incl. ty). These
   #    run unconditionally over the whole tree, so a config/Cargo change can't
   #    slip a regression.
   #
-  # 6. Compiled architecture gates — no-pyo3-in-cores and the engine
+  # 5. Compiled architecture gates — no-pyo3-in-cores and the engine
   #    impl-block gate are cargo tests on the umbrella crate's
   #    architecture_gates binary: workspace-wide invariants with no meaningful
   #    per-file slice (a per-file grep would be a different, weaker detector),
@@ -160,21 +153,30 @@ hooks = [
   #    "instant" checks the old pre-commit section claimed — every commit,
   #    docs-only ones included, paid a cargo test build.
   #
-  # 7. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
+  # 6. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
   #    build/test jobs (always_run = true, pass_filenames = false). python-build
   #    (maturin develop) produces the .so that python-test imports, so it must
   #    precede python-test.
   #
-  # 8. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
+  # 7. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
   #    aborts the push and the remaining gates are skipped. Without it, prek
   #    runs the whole stage to completion and reports every failure.
+  #
+  # These `entry` strings ARE the push-gate manifest (ADR-074): `just pre-push`
+  # runs `prek run --stage pre-push` and keeps no gate list of its own, so this
+  # stage is the single place a gate is added, removed, or re-pointed.
+  # scripts/hooks/ci-parity.sh extracts them with a sed anchored on the
+  # single-line `{ id = ... }` table opener, so every pre-push entry must stay
+  # on ONE line -- a multi-line TOML table would be invisible to that check.
   #
   # Bypass with `git push --no-verify` (CI still runs), or re-run a subset
   # manually with `prek run --stage pre-push --skip rust-test` etc.
   # (add `--fail-fast` there to mirror the installed push behavior).
   { id = "object-gc", name = "Object DB GC", language = "system", entry = "scripts/hooks/object-gc.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
-  { id = "pre-push-gate-drift", name = "Pre-push gate drift", language = "system", entry = "scripts/hooks/pre-push-gate-drift.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  # ci-parity checks the ci.yml job matrix against the local entrypoints
+  # (scripts/hooks/ci-parity-manifest.txt) and requires every note claiming
+  # pre-push wiring to name one of this stage's `entry` strings.
   { id = "ci-parity", name = "CI job parity", language = "system", entry = "scripts/hooks/ci-parity.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },

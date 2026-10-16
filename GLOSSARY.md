@@ -529,6 +529,14 @@ treated as evidence. Cheap insurance against inert pass-throughs, stale comparis
 and accidentally-dead checks.
 _Avoid_: trusting an unprobed pass; running a gate whose failure branch is unknown.
 
+**Push-gate manifest**:
+prek.toml's `stages = ["pre-push"]` hook entries — the single declaration of the
+push-gate list. `just pre-push` is a one-line adapter over `prek run --stage pre-push`,
+never a transcription, so the recipe and an actual `git push` run the same gates by
+construction ([ADR-074](docs/adr/ADR-074-push-gate-manifest.md)).
+_Avoid_: a second gate list (a `run_gate` transcription, a generated recipe); calling
+`just pre-push` a mirror of the hook.
+
 ## Capture and replay
 
 **Golden capture**:

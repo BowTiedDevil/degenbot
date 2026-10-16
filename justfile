@@ -124,60 +124,17 @@ test-standalone:
 # Default gate: standalone smoke + cargo workspace + full pytest.
 test: test-rust-nextest test-python
 
-# Run every pre-push gate manually, in hook order and fail-fast — the
-# object-DB GC brake, the commitlint push-range re-lint, the whole-tree format
-# sweeps, the Rust/Python code linters (clippy, ruff+ty, stubtest, stub drift),
-# the compiled architecture gates, then the Rust and Python build + test
-# tracks, exactly as the installed prek pre-push hook runs them
-# (prek.toml, stages = ["pre-push"]). The installed hook and ci.yml stay
-# authoritative on an actual push; this is for checking the gates with
-# `just pre-push` before `git push`.
-#
-# The list below is a literal transcription of the `stages = ["pre-push"]`
-# entries in prek.toml — same gates, same order, same entries. A gate added,
-# removed, renamed, or re-pointed there must change here in the same commit,
-# because a `just pre-push` that runs a shorter list is a false green: the
-# push then gets blocked by a gate this recipe never ran.
-#
-# Manual pre-push gate check (mirrors prek.toml pre-push stage, fail-fast).
+# Run the pre-push gates before `git push`. prek.toml's
+# `stages = ["pre-push"]` entries are the single owner of the gate list (the
+# push-gate manifest, ADR-074); this recipe only delegates to them, so it can
+# never drift into a shorter list that reports green while the push is blocked
+# by a gate the recipe never ran. prek is a global uv tool (see
+# `just setup-git-hooks`), installed on demand here.
 pre-push:
     #!/usr/bin/env bash
     set -euo pipefail
-
-    run_gate() {
-        local label="$1"
-        shift
-        echo
-        echo "===================================================================="
-        echo "▶ pre-push gate: ${label}"
-        echo "===================================================================="
-        "$@"
-    }
-
-    run_gate "Object DB GC"                scripts/hooks/object-gc.sh
-    run_gate "Pre-push gate drift"         scripts/hooks/pre-push-gate-drift.sh
-    run_gate "CI job parity"           scripts/hooks/ci-parity.sh
-    run_gate "commitlint (push range)"     scripts/hooks/commitlint-push.sh
-    run_gate "Rust fmt check"              just fmt-check
-    run_gate "Python fmt check"            just fmt-check-python
-    run_gate "Rust clippy"                 just lint-rust-check
-    run_gate "Python lint"                 just lint-python-check
-    run_gate "Stubtest drift gate"         just lint-stubtest
-    run_gate "Stub drift gate"             just lint-stub-drift
-    run_gate "Rust no-pyo3 cores"          just check-no-pyo3-in-cores
-    run_gate "Rust engine impl-block gate" just check-engine-impl-blocks
-    run_gate "Rust config-derived-static gate" just check-config-derived-statics
-    run_gate "Rust build"                  just build-rust-extension
-    run_gate "Rust tests"                  just test-rust
-    run_gate "Fleet parity (FF-T5)"      just test-fleet-parity
-    run_gate "Solver golden replay (F2)" just test-golden-replay
-    run_gate "Python build (maturin)"      just dev
-    run_gate "Python tests"                just test-python-noise-gate
-    run_gate "CLI no-Python gate"        just ci-no-python-cli-gate
-    run_gate "Python no-anvil (spawn surface)" just test-python-no-anvil-spawn-surface
-
-    echo
-    echo "✓ all pre-push gates passed."
+    command -v prek >/dev/null 2>&1 || uv tool install prek
+    prek run --stage pre-push
 
 # Run only the Rust track (standalone smoke + cargo workspace). CI's rust-test
 # job and the pre-push hook call this subunit directly; humans use `just test`.

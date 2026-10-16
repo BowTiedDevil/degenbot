@@ -105,6 +105,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [070](ADR-070-updaters-are-the-sole-db-writers.md) | Updaters are the sole DB writers — the `writer` cargo fence, read-only opens, path-only schema init | accepted |
 | [071](ADR-071-family-modules-and-concentrated-liquidity-kernel.md) | Family modules and the Concentrated Liquidity Kernel — one module, one row, one enum arm supersedes the eight-site family change | accepted |
 | [073](ADR-073-family-read-modules.md) | The family read module — one family, two homes, rows at the seams; `concentrated_liquidity` naming | proposed |
+| [074](ADR-074-push-gate-manifest.md) | The push-gate manifest — `just pre-push` delegates to prek.toml's pre-push entries | accepted |
 
 ## Historical — provenance only
 
