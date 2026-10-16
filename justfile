@@ -13,6 +13,11 @@ target_dir := env_var_or_default("CARGO_TARGET_DIR", "rust/target")
 # now builds the same dev-features extension (pyproject.toml
 # `config-settings-package`), so this is a speed choice, not a correctness
 # guard. Defined once so recipes never hand-write the flag.
+# Recipe argv reaches the body as real positional parameters, so "$@"
+# forwards each argument exactly as the caller typed it (a `{{ args }}` text
+# splice re-splits quoted words in bash and silently runs the wrong thing).
+set positional-arguments := true
+
 py_run := "uv run --no-sync"
 
 # Default recipe - show available commands
@@ -30,7 +35,10 @@ venv:
 # (ad-hoc use; recipes should use `{{ py_run }}` directly, which preserves
 # argument quoting).
 py *args:
-    {{ py_run }} {{ args }}
+    # argv is forwarded word-for-word through "$@"; a text splice of the raw
+    # args would re-parse the joined text in bash (`just py python -c 'x=f(1)'`
+    # used to die at the paren).
+    {{ py_run }} "$@"
 
 # Print the project's single source-of-truth version (the [workspace.package]
 # literal in rust/Cargo.toml, inherited by every crate + bridged into the wheel
@@ -226,33 +234,30 @@ test-golden-replay:
 # <cargo target dir>/nextest/ci/nextest-ci.junit.xml. `--no-fail-fast` so one failing
 # test never aborts the whole run.
 # Requires cargo-nextest: cargo install --locked cargo-nextest
-# Extra args forward to `cargo nextest run` (e.g. `just test-rust-nextest -E 'test(foo)'`
-# or `just test-rust-nextest -p degenbot-substrate` — both work: the parenthesized
-# filter reaches nextest intact, and -p actually narrows, see below).
-#
-# Forwarding is raw `{{args}}` text interpolation, never "$@": just does not pass
-# recipe arguments as positional script arguments (set positional-arguments is off
-# repo-wide; see gen-stubs). Raw interpolation is parsed by BASH, so an unquoted
-# parenthesized filter like `test(foo)` used to abort this script at parse time;
-# absorbing it into a quoted assignment parses it as data instead. Double quotes
-# inside forwarded args are still not supported (they never were, under raw
-# interpolation). `-p`/`--package` must ALSO drop the trailing `--workspace`:
-# nextest gives --workspace precedence and silently runs every workspace member
-# when both selections are present, so the documented `-p <crate>` narrowing
-# never narrowed.
+# Extra args forward to `cargo nextest run` (e.g. `just test-rust-nextest -E 'test(foo) or test(bar)'`
+# or `just test-rust-nextest -p degenbot-substrate`). They cross the recipe
+# boundary as real argv (`"$@"` under `set positional-arguments`), so quoted
+# multi-word filters keep their grouping and parens are never bash-parsed.
+# `-p`/`--package` must ALSO drop the trailing `--workspace`: nextest gives
+# --workspace precedence and silently runs every workspace member when both
+# selections are present, so the documented `-p <crate>` narrowing would never
+# narrow.
 test-rust-nextest *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    set -f # noglob: a filter metacharacter must never glob-expand against the cwd
-    nextest_args="{{ args }}"
     python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # argv rides "$@" — each flag and its value reach cargo intact (`-p <crate>`,
+    # `-E 'test(a) or test(b)'`). `-p`/`--package` must ALSO drop the trailing
+    # `--workspace`: nextest gives --workspace precedence and silently runs
+    # every workspace member when both selections are present.
     selection="--workspace"
-    if [[ $nextest_args =~ (^|[[:space:]])(-p|--package)([[:space:]]|=) ]]; then
-        selection=""
-    fi
-    # shellcheck disable=SC2086 # deliberate word-split of the forwarded args
-    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast $nextest_args
+    for arg in "$@"; do
+        case "$arg" in
+            -p|--package|--package=*) selection="" ;;
+        esac
+    done
+    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast "$@"
 
 # Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,
 # CI) deliberately deselects:
@@ -600,10 +605,15 @@ test-python: dev
 test-python-noise-gate kw="" *args: dev
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ -n "{{ kw }}" ]; then
-        exec bash scripts/pytest_noise_gate.sh run -k "{{ kw }}" {{ args }}
+    # Usage: just test-python-noise-gate [KW] [PYTEST_ARGS ...]. KW is the -k
+    # expression (quoted as one word here); everything after it rides "$@" so
+    # extra pytest args and multiple test targets reach pytest exactly as typed
+    # (a raw text splice re-split those words and silently ran the wrong tests).
+    kw="${1-}"; [ $# -eq 0 ] || shift
+    if [ -n "$kw" ]; then
+        exec bash scripts/pytest_noise_gate.sh run -k "$kw" "$@"
     fi
-    exec bash scripts/pytest_noise_gate.sh run {{ args }}
+    exec bash scripts/pytest_noise_gate.sh run "$@"
 
 # Flake probe for the ordering-sensitive suites (session/operator-channel
 # state machines, where inter-test order leaks surface): run both suites
@@ -1302,9 +1312,8 @@ gen-stubs check="":
     #!/usr/bin/env bash
     set -euo pipefail
     # just does not pass recipe arguments as positional script arguments
-    # (`set positional-arguments` is off repo-wide), so the flag arrives only
-    # via `{{ check }}` interpolation — a `for arg in "$@"` loop here never
-    # executed and `--check` silently took the regenerate branch.
+    # (recipe argv is forwarded as `"$@"`), but the flag is read from `{{ check }}` so
+    # its one-token contract is explicit.
     check=0
     case "{{ check }}" in
         "") ;;

@@ -177,9 +177,18 @@ class Bot(AccountQueryMixin):
         else:
             # Resolved from the cascade — the factory hands the chain to the core,
             # which enforces the match itself.
-            self._provider = (provider_factory or get_provider_from_config)(
-                chain_id=self._chain_id, node=node
-            )
+            try:
+                self._provider = (provider_factory or get_provider_from_config)(
+                    chain_id=self._chain_id, node=node
+                )
+            except DegenbotValueError:
+                raise
+            except Exception as exc:
+                msg = (
+                    f"Bot: cannot build a provider for chain {self._chain_id} "
+                    f"(node={node!r}): {exc}"
+                )
+                raise DegenbotValueError(message=msg) from exc
 
         # Polars-inspired three-layer architecture (ADR-005): a the Rust ``Bot`` engine
         # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.

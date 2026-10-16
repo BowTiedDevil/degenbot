@@ -387,6 +387,13 @@ async fn connect_ws_with_retries(
         {
             Ok(provider) => return Ok(Arc::new(provider.erased())),
             Err(e) => {
+                if is_unresolvable_host(&e) {
+                    return Err(ProviderError::ConnectionFailed {
+                        message: format!(
+                            "WebSocket endpoint host does not resolve (name resolution is deterministic; no retries spent): {e}"
+                        ),
+                    });
+                }
                 attempt += 1;
                 if attempt >= max_retries {
                     return Err(ProviderError::ConnectionFailed {
@@ -407,6 +414,17 @@ async fn connect_ws_with_retries(
             }
         }
     }
+}
+
+/// Name resolution of an endpoint host is deterministic: a name that does not
+/// resolve will not resolve after backoff either, so the retry budget must not
+/// be spent on it — fail fast and name the endpoint instead.
+fn is_unresolvable_host<E: std::fmt::Display>(error: &E) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("failed to lookup address information")
+        || text.contains("name or service not known")
+        || text.contains("no such host")
+        || text.contains("nodename nor servname")
 }
 
 /// Retry an IPC connect at construction with the existing backoff.
