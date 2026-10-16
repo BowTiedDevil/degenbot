@@ -148,15 +148,25 @@ impl EngineStages {
     #[must_use]
     pub(crate) fn new(engine: Arc<Mutex<ArbitrageEngine>>, delta: Arc<EpochDelta>) -> Self {
         {
+            let mut engine = engine.lock();
             let ledger = Arc::clone(&delta);
             set_deferred_re_record(
-                &mut engine.lock(),
+                &mut engine,
                 Arc::new(move |keys, block| {
                     for &key in keys {
                         ledger.record(key, block);
                     }
                 }),
             );
+            // this path spawns the merge sidecar AFTER the cycle returns,
+            // and the machine's merge Receiver is take-once — a direct-call
+            // inline drain (the synchronous unit-test harness) would steal
+            // it. Construction is the one place the EngineStages return
+            // stance is stamped; the sidecar owns the pipe here.
+            #[cfg(test)]
+            {
+                engine.cycle.test_sync_merge = false;
+            }
         }
         Self {
             engine,
@@ -408,15 +418,6 @@ impl EngineStages {
         // ~2µs empty pass, gate + work under ONE mutex acquisition.
         let mut engine =
             hotpath::measure_block!("EngineStages::solve.probe_lock", self.engine.lock());
-        // this path spawns the merge sidecar AFTER the cycle
-        // returns (below), and the machine's merge Receiver is take-once —
-        // a direct-call inline drain (the synchronous unit-test harness)
-        // would steal it. Disable the inline drain for every EngineStages-
-        // driven engine; the sidecar owns the pipe here.
-        #[cfg(test)]
-        {
-            engine.cycle.test_sync_merge = false;
-        }
         if ticket.is_empty() {
             // Kept for inner bookkeeping parity (last_processed_block et al)
             // plus the pre-cycle expiry; provably cannot consume dirt under

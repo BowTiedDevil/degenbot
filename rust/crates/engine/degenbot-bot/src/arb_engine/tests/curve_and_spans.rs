@@ -1194,8 +1194,6 @@ fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
         eprintln!("skipping: streaming-delivery test requires >=2 cores");
         return;
     }
-    let probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>> =
-        std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let mut engine = ArbitrageEngine::new();
     engine.cycle.set_streaming_delivery(true);
     let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1256,7 +1254,6 @@ fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
             }
         }
     }));
-    engine.cycle.merge_probe = Some(probe.clone());
     let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
     let joiner = std::thread::spawn(move || {
         engine.cycle.run_epoch(

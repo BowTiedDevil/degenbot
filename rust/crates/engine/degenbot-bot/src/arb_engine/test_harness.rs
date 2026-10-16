@@ -80,7 +80,7 @@ pub(crate) fn process_updates(
     v3_updates: &[V3SwapUpdate],
     block_number: u64,
     metadata: &BlockMetadata,
-) {
+) -> CycleOutcome {
     // Apply V2+V3 updates to BotState and collect affected pool ids (ADR-003)
     let mut v2_affected = HashSet::new();
     let mut v3_affected = HashSet::new();
@@ -112,7 +112,7 @@ pub(crate) fn process_updates(
         &v3_affected,
         &HashSet::new(),
     ));
-    engine.cycle.run_epoch(
+    let outcome = engine.cycle.run_epoch(
         ticket,
         block_number,
         metadata,
@@ -121,6 +121,7 @@ pub(crate) fn process_updates(
     );
     // monotone advance on the block cursor.
     engine.cycle.cursor.advance_processed(block_number);
+    outcome
 }
 
 /// Test-only read accessor for the block cursor's solved boundary.
@@ -160,9 +161,4 @@ pub(crate) fn pending_new_paths(engine: &ArbitrageEngine) -> &HashSet<u64> {
 /// a `&mut` (ADR-076 D3).
 pub(crate) fn arm_pending_new_path(engine: &mut ArbitrageEngine, path_id: u64) {
     engine.cycle.note_pending_new_path(path_id);
-}
-
-/// The current cycle's same-state reuse counter (a cycle-transient probe).
-pub(crate) fn same_state_this_cycle(engine: &ArbitrageEngine) -> u64 {
-    engine.cycle.same_state_this_cycle()
 }

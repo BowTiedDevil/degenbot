@@ -747,7 +747,7 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
     };
     let run = |parallel: bool| {
         let (mut engine, path_ids, hub_a, hub_b) = build();
-        // the A/B arm drives the INSTANCE stance now (no
+        // the A/B arm drives the INSTANCE stance at construction (no
         // process-global flip; no parallel-order dependence).
         engine.cycle.resolve_par_stance = parallel;
         // Cycle 1: dirty BOTH hubs -> all N paths re-resolve in one cycle.
@@ -776,15 +776,15 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
         );
         // Cycle 2: dirty hub_b only -> 600 affected paths again; hub_a must
         // be walked ONCE by the shared sharded cache (serial: also once).
-        let projections_before = engine.cycle.hop_projection_count;
-        process_updates(
+        // The epoch's resolve census is the typed read of those walks.
+        let cycle_2a = process_updates(
             &mut engine,
             &[(Address::from([0xbb_u8; 20]), weth(880), usdc(1_230_000))],
             &[],
             501,
             &BlockMetadata::default(),
         );
-        engine.cycle.run_epoch(
+        let cycle_2b = engine.cycle.run_epoch(
             crate::arb_engine::test_harness::cycle_ticket(
                 &crate::arb_engine::tests::test_keys::affected_keys(
                     &HashSet::from([hub_b]),
@@ -797,19 +797,23 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
             &engine.registry,
             &mut engine.delivery,
         );
-        let projections_delta = engine.cycle.hop_projection_count - projections_before;
+        let projections_delta = cycle_2a.census.projections + cycle_2b.census.projections;
+        let same_state = cycle_2b.census.same_state;
         let (results, _block) = latest_results(&engine);
         let hop_shapes: HashMap<u64, usize> = path_ids
             .iter()
-            .map(|&(path_id, ..)| (path_id, engine.cycle.path_resolved[&path_id].hops.len()))
+            .map(|&(path_id, ..)| {
+                (
+                    path_id,
+                    results
+                        .get(&path_id)
+                        .expect("solved result")
+                        .hop_outputs
+                        .len(),
+                )
+            })
             .collect();
-        (
-            results,
-            crate::arb_engine::test_harness::same_state_this_cycle(&engine),
-            projections_delta,
-            path_ids,
-            hop_shapes,
-        )
+        (results, same_state, projections_delta, path_ids, hop_shapes)
     };
     let (serial_results, serial_same_state, serial_proj_delta, path_ids, serial_hop_shapes) =
         run(false);

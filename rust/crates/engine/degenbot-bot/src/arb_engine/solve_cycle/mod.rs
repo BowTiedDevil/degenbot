@@ -1632,10 +1632,6 @@ impl SolveCycle {
     pub(crate) fn clear_pending_new_carry(&mut self) {
         self.transients.pending_new_paths.clear();
     }
-    /// The current cycle's same-state reuse counter (probe).
-    pub(crate) fn same_state_this_cycle(&self) -> u64 {
-        self.transients.paths_same_state_this_cycle
-    }
     /// Test harness: drain up to `expected` items from the merge pipe
     /// INLINE through the sidecar's own per-item merge path
     /// (`merge_detached_item`), so a direct `solve_dirty` /

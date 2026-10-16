@@ -461,17 +461,17 @@ fn detached_solve_returns_at_enqueue_end_when_sync_drain_is_off() {
         .iter()
         .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
         .collect();
-    run_test_cycle(
+    let outcome = run_test_cycle(
         &mut engine,
         100,
         &BlockMetadata::default(),
         &affected_keys_v2,
     );
-    assert_eq!(engine.cycle.cycle_arm(), "detached");
+    assert_eq!(outcome.arm_label(), "detached");
     // With a 400ms slow path the results land AFTER return (T2's read) —
     // at least the slow pid is absent.
     assert!(
-        !engine.cycle.results.contains_key(&path_ids[0]),
+        !latest_results(&engine).0.contains_key(&path_ids[0]),
         "the detached arm must return at enqueue end: the slow pid is absent AT return"
     );
 }
