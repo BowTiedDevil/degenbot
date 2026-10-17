@@ -67,6 +67,9 @@ pub(crate) mod state_walk;
 #[cfg(test)]
 pub(crate) mod state_fixture;
 
+#[cfg(test)]
+mod ownership_tests;
+
 pub mod v3;
 pub mod v4;
 
