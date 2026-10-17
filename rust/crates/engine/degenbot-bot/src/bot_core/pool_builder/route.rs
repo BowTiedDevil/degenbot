@@ -469,14 +469,16 @@ mod route_tests {
                 factory: Address::new([0x44u8; 20]),
             },
             PoolBuilderError::UnknownPoolIdentity { address },
-            PoolBuilderError::Identity(parity::IdentityDivergence::Create2(AddressMismatch {
-                chain_id: 1,
-                factory: Address::new([0x55u8; 20]),
-                deployer: Address::new([0x55u8; 20]),
-                init_hash: B256::ZERO,
-                expected: address,
-                computed: Address::new([0x66u8; 20]),
-            })),
+            PoolBuilderError::Identity(Box::new(parity::IdentityDivergence::Create2(
+                AddressMismatch {
+                    chain_id: 1,
+                    factory: Address::new([0x55u8; 20]),
+                    deployer: Address::new([0x55u8; 20]),
+                    init_hash: B256::ZERO,
+                    expected: address,
+                    computed: Address::new([0x66u8; 20]),
+                },
+            ))),
         ] {
             assert!(matches!(
                 classify_builder_error(err, address),

@@ -21,6 +21,7 @@
 use std::sync::Arc;
 
 use crate::bot_core::registration_ledger::{RefusalKind, SnapshotLoadReason};
+use crate::bot_core::RegisteredPoolFamily;
 use degenbot_substrate::session_registry::SessionObjectRegistry;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::EpochDelta;
@@ -213,7 +214,7 @@ impl Bot {
     }
 
     /// The snapshot out-of-range refusal (the historical rendering).
-    fn snapshot_out_of_range(detail: String) -> RefusalKind {
+    fn snapshot_out_of_range(detail: &str) -> RefusalKind {
         RefusalKind::snapshot_load_failed(SnapshotLoadReason::OutOfRange {
             detail: format!("snapshot liquidity value out of range: {detail}"),
         })
@@ -248,8 +249,9 @@ impl Bot {
         db: &dyn degenbot_db::snapshot::TickMapDb,
         chain_id: u64,
     ) -> Result<(), RefusalKind> {
-        let chain = i64::try_from(chain_id)
-            .map_err(|_| Self::snapshot_out_of_range(format!("chain_id {chain_id} exceeds i64")))?;
+        let chain = i64::try_from(chain_id).map_err(|_| {
+            Self::snapshot_out_of_range(&format!("chain_id {chain_id} exceeds i64"))
+        })?;
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
@@ -391,6 +393,28 @@ impl Bot {
             .has_token(address)
     }
 
+    /// The family-as-data reorg-journal guard (ADR-078 D4): whether
+    /// `pool_id` serves the requested family's journal — the V2 reserve-pair
+    /// slice for [`RegisteredPoolFamily::V2`], the concentrated-liquidity
+    /// trait-object slice for V3/V4 (the V3 verbs serve both CL families),
+    /// and `false` for every other family (the per-family no-op contract the
+    /// `PyO3` wrappers pin: `0` / `Ok(())` / `Ok(None)`).
+    fn journal_family_matches(
+        state: &BotState,
+        pool_id: u64,
+        family: RegisteredPoolFamily,
+    ) -> bool {
+        match family {
+            RegisteredPoolFamily::V2 => state
+                .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+                .is_some(),
+            RegisteredPoolFamily::V3 | RegisteredPoolFamily::V4 => state
+                .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
+                .is_some(),
+            _ => false,
+        }
+    }
+
     /// Number of deltas in the reorg journal for a V2 pool. `0` when the id
     /// is unregistered or NOT a V2 pool — the per-family contract the `PyO3`
     /// wrapper's inline guard used to carry.
@@ -399,14 +423,12 @@ impl Bot {
         let state = self
             .state
             .read_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family guard: 0 for non-V2 (preserves the per-family contract).
-        if state
-            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
-            .is_none()
-        {
-            0
-        } else {
+        // Family-as-data guard (ADR-078 D4): the V2 tag; 0 for non-V2
+        // (preserves the per-family contract).
+        if Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V2) {
             state.pool_journal_len(pool_id).unwrap_or(0)
+        } else {
+            0
         }
     }
 
@@ -418,14 +440,12 @@ impl Bot {
         let state = self
             .state
             .read_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family guard: 0 for non-V3/V4 (preserves the per-family contract).
-        if state
-            .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
-            .is_none()
-        {
-            0
-        } else {
+        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both CL
+        // families); 0 for non-CL (preserves the per-family contract).
+        if Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V3) {
             state.pool_journal_len(pool_id).unwrap_or(0)
+        } else {
+            0
         }
     }
 
@@ -445,11 +465,9 @@ impl Bot {
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family guard: no-op for non-V2 (V2's contract).
-        if state
-            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
-            .is_none()
-        {
+        // Family-as-data guard (ADR-078 D4): the V2 tag; no-op for non-V2
+        // (V2's contract).
+        if !Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V2) {
             return Ok(());
         }
         state
@@ -470,11 +488,9 @@ impl Bot {
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family guard: no-op for non-V3/V4 (V3's contract).
-        if state
-            .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
-            .is_none()
-        {
+        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both CL
+        // families); no-op for non-CL (V3's contract).
+        if !Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V3) {
             return Ok(());
         }
         state
@@ -507,11 +523,9 @@ impl Bot {
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family guard: `Ok(None)` for non-V2 (the PyO3 no-op contract).
-        if state
-            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
-            .is_none()
-        {
+        // Family-as-data guard (ADR-078 D4): the V2 tag; `Ok(None)` for
+        // non-V2 (the PyO3 no-op contract).
+        if !Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V2) {
             return Ok(None);
         }
         match state.restore_pool_before_block(pool_id, block) {
@@ -557,11 +571,9 @@ impl Bot {
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family guard: `Ok(None)` for non-V3/V4 (the PyO3 no-op contract).
-        if state
-            .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
-            .is_none()
-        {
+        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both CL
+        // families); `Ok(None)` for non-CL (the PyO3 no-op contract).
+        if !Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V3) {
             return Ok(None);
         }
         match state.restore_pool_before_block(pool_id, block) {

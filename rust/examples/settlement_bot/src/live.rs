@@ -168,12 +168,7 @@ async fn build_and_register(
                     node.kind,
                     Some(detail.clone()),
                 );
-                emit_build_refusal_sample(
-                    node.kind,
-                    &node.identity,
-                    refusal.outcome.clone(),
-                    &detail,
-                );
+                emit_build_refusal_sample(node.kind, &node.identity, &refusal.outcome, &detail);
                 if refusal.stable {
                     pipeline.ledger.memoize_unregistrable(
                         node.memo_key.as_deref(),
@@ -194,7 +189,7 @@ async fn build_and_register(
         let node = &built.nodes[*node_idx];
         let row = &rows[node.row_index];
         if let Err(outcome) = verify_one(driver, pipeline, row, ctx).await {
-            return outcome;
+            return *outcome;
         }
     }
 
@@ -426,7 +421,7 @@ async fn verify_one(
     pipeline: &mut RegistrationPipeline,
     row: &DiscoveryPoolRow,
     ctx: &LiveContext<'_>,
-) -> Result<(), RegistrationUnitOutcome> {
+) -> Result<(), Box<RegistrationUnitOutcome>> {
     match row {
         DiscoveryPoolRow::V3(r) => {
             let key = format!(
@@ -451,9 +446,9 @@ async fn verify_one(
                     pipeline.ledger.memoize_verified_pool(key);
                     Ok(())
                 }
-                Err(err) => Err(RegistrationUnitOutcome::RegisterFailed {
+                Err(err) => Err(Box::new(RegistrationUnitOutcome::RegisterFailed {
                     detail: Some(format!("verify-v3: {err}")),
-                }),
+                })),
             }
         }
         DiscoveryPoolRow::V4(r) => {
@@ -476,9 +471,9 @@ async fn verify_one(
                     pipeline.ledger.memoize_verified_pool(key);
                     Ok(())
                 }
-                Err(err) => Err(RegistrationUnitOutcome::RegisterFailed {
+                Err(err) => Err(Box::new(RegistrationUnitOutcome::RegisterFailed {
                     detail: Some(format!("verify-v4: {err}")),
-                }),
+                })),
             }
         }
         DiscoveryPoolRow::V2(_) => Ok(()),
@@ -518,7 +513,7 @@ const REG_DEBUG_MAX_DISTINCT: usize = 3;
 fn emit_build_refusal_sample(
     kind: PoolKind,
     identity: &str,
-    outcome: RegistrationOutcome,
+    outcome: &RegistrationOutcome,
     detail: &str,
 ) {
     static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, usize>>> =

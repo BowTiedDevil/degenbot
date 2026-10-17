@@ -108,7 +108,7 @@ pub enum PoolBuilderError {
     #[error("decode failure: {message}")]
     Decoding { message: String },
     #[error("{0}")]
-    Identity(parity::IdentityDivergence),
+    Identity(Box<parity::IdentityDivergence>),
     #[error("DB read failed: {0}")]
     Db(#[from] DbError),
     #[error("V4 identity incomplete: {message}")]
@@ -472,7 +472,7 @@ pub async fn build_v2(
         spec_bounds::narrow_v2_reserve(r1, "reserve1").map_err(|_| PoolBuilderError::Spec)?;
 
     parity::verify_v2_create2(chain_id, imm.factory, address, imm.token0, imm.token1)
-        .map_err(PoolBuilderError::Identity)?;
+        .map_err(|divergence| PoolBuilderError::Identity(Box::new(divergence)))?;
 
     let deployer = deployments::resolve_deployer(chain_id, imm.factory);
     let init_hash: B256 = deployments::resolve_v2_init_hash(chain_id, imm.factory);
@@ -542,7 +542,7 @@ pub async fn build_aerodrome_v2(
         imm.token1,
         common.stable,
     )
-    .map_err(PoolBuilderError::Identity)?;
+    .map_err(|divergence| PoolBuilderError::Identity(Box::new(divergence)))?;
 
     let reserve0 =
         spec_bounds::narrow_v2_reserve(r0, "reserve0").map_err(|_| PoolBuilderError::Spec)?;
@@ -1254,7 +1254,7 @@ pub async fn build_v3(
         imm.token1,
         imm.fee,
     )
-    .map_err(PoolBuilderError::Identity)?;
+    .map_err(|divergence| PoolBuilderError::Identity(Box::new(divergence)))?;
 
     let deployer = deployments::resolve_deployer(chain_id, imm.factory);
     let init_hash: B256 = deployments::resolve_v3_init_hash(chain_id, imm.factory);

@@ -137,7 +137,7 @@ impl RegistrationOutcome {
     pub fn tags() -> Vec<&'static str> {
         REGISTRATION_OUTCOMES
             .iter()
-            .map(|outcome| outcome.as_str())
+            .map(RegistrationOutcome::as_str)
             .collect()
     }
 
@@ -807,7 +807,6 @@ impl RefusalKind {
     ///
     /// # Errors
     /// The mapped [`RefusalKind::RegisterRefused`] when the verdict refused.
-    #[must_use]
     pub fn from_registration_verdict(verdict: RegistrationVerdict) -> Result<u64, Self> {
         match verdict {
             RegistrationVerdict::Registered { pool_id, .. } => Ok(pool_id),
@@ -2233,7 +2232,7 @@ mod tests {
         let aerodrome =
             RefusalKind::from_identity_divergence(Some(PoolFamilyTag::AerodromeV2), &create2);
         let builder = RefusalKind::from_builder_error(
-            &PoolBuilderError::Identity(create2.clone()),
+            &PoolBuilderError::Identity(Box::new(create2.clone())),
             Some(PoolFamilyTag::V2),
             RegistrationPhase::Build,
         );
@@ -2300,7 +2299,7 @@ mod tests {
         let divergence = IdentityDivergence::Create2(address_mismatch());
         let register = RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V2), &divergence);
         let build = RefusalKind::from_builder_error(
-            &PoolBuilderError::Identity(divergence),
+            &PoolBuilderError::Identity(Box::new(divergence)),
             Some(PoolFamilyTag::V2),
             RegistrationPhase::Build,
         );
@@ -2509,13 +2508,15 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::expect_used)] // the mapper's carried failure payload is asserted present
     fn builder_mapper_carries_the_typed_refusal() {
+        type BuilderFailureCase = (PoolBuilderError, fn(&BuildFailure) -> bool);
         let address = sample_address(0x44);
         let build = RegistrationPhase::Build;
 
         // The loud class: identity and family-identity refusals.
         let create2 = RefusalKind::from_builder_error(
-            &PoolBuilderError::Identity(IdentityDivergence::Create2(address_mismatch())),
+            &PoolBuilderError::Identity(Box::new(IdentityDivergence::Create2(address_mismatch()))),
             Some(PoolFamilyTag::V2),
             build,
         );
@@ -2559,7 +2560,7 @@ mod tests {
         // The skip class: every other builder failure keeps its own typed
         // arm (the facts the shell's builder-error rendering interpolates)
         // and stays retryable on the build-refusal taxonomy.
-        let cases: [(PoolBuilderError, fn(&BuildFailure) -> bool); 8] = [
+        let cases: [BuilderFailureCase; 8] = [
             (
                 PoolBuilderError::Rpc(ProviderError::Timeout {
                     message: "blip".to_owned(),
@@ -2866,6 +2867,7 @@ mod tests {
     use degenbot_substrate::RegistrationRefusal as DoorRegistrationRefusal;
 
     /// Fold a refused door verdict and unwrap the ledger refusal.
+    #[expect(clippy::expect_used)] // the refused fold is asserted to refuse by construction
     fn fold_refusal(family: RegisteredPoolFamily, refusal: DoorRegistrationRefusal) -> RefusalKind {
         RefusalKind::from_registration_verdict(RegistrationVerdict::Refused { family, refusal })
             .expect_err("a refused verdict folds to the register refusal")
@@ -2977,9 +2979,9 @@ mod tests {
                 DoorRegistrationRefusal::Admission {
                     failure: AdmissionFailure::DynamicFee,
                     hook_flags: None,
-                    fee: Some(0x800000),
+                    fee: Some(0x0080_0000),
                 },
-                RegisterV4PoolError::DynamicFee { fee: 0x800000 },
+                RegisterV4PoolError::DynamicFee { fee: 0x0080_0000 },
             ),
             (
                 DoorRegistrationRefusal::Admission {

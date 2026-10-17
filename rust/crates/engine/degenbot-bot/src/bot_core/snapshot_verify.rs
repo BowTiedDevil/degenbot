@@ -45,7 +45,6 @@ use crate::bot_core::{TickInfo, V3PoolState, V4PoolState};
 /// (`crate::bot_core::verification_retry`) can branch on the fatal split and
 /// the Python seam can fold the two transient origins into one retryable
 /// exception type.
-
 /// The minimal on-chain RPC surface the two-phase CL verification needs
 /// (ADR-006 slice-5 candidate-2 completion).
 ///

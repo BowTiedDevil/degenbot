@@ -164,12 +164,41 @@ impl Bot {
     // === and the lock discipline live here so the standalone-Rust path   ===
     // === gets the same registrations.                                    ===
 
-    /// Register a V2 pool by contract address. Runs the JSON-sourced CREATE2
-    /// verification (Fork A) — skipped when `(chain, factory)` is not in the
-    /// shipped deployments JSON, preserving the manual/ad-hoc path — then
-    /// resolves the deployer + init hash onto the identity and registers
-    /// through the family write door (`BotState::register_pool`, ADR-078 D3)
-    /// under ONE core write guard.
+    /// The ONE registration verb on the engine `Bot` (ADR-078 D3 step 3): the
+    /// FFI shell translates Python kwargs into one [`PoolRegistration`] and
+    /// dispatches here — a new family adds a variant arm, never a pymethod.
+    /// Each family's engine-side depth (the get-or-register guard, the
+    /// CREATE2/EIP-1167 identity verify, the derived deployer/init-hash
+    /// completion) is the request interior behind this verb; the insert
+    /// itself is the substrate door (`BotState::register_pool`), so every
+    /// refusal crosses as the one [`RegistrationVerdict`] vocabulary and
+    /// folds onto [`RefusalKind`] at this seam.
+    ///
+    /// # Errors
+    /// The family's typed [`RefusalKind`] refusal.
+    pub fn register(&self, registration: PoolRegistration) -> Result<u64, RefusalKind> {
+        match registration {
+            PoolRegistration::V2(params) => self.register_v2_request(*params),
+            PoolRegistration::V3(params) => self.register_v3_request(*params),
+            PoolRegistration::V4(params) => self
+                .register_v4_pool(&params)
+                .map_err(|e| RefusalKind::from_register_v4_error(&e)),
+            PoolRegistration::Curve(params) => self.register_curve_request(*params),
+            PoolRegistration::BalancerWeighted(params) => {
+                self.register_balancer_weighted_request(*params)
+            }
+            PoolRegistration::BalancerStable(params) => {
+                self.register_balancer_stable_request(*params)
+            }
+            PoolRegistration::AerodromeV2(params) => self.register_aerodrome_request(*params),
+        }
+    }
+
+    /// Register a V2 pool by contract address — the flat-argument twin of the
+    /// door request ([`Self::register`] with [`PoolRegistration::V2`]). The
+    /// get-or-register guard, the JSON-sourced CREATE2 verification (Fork A),
+    /// the derived deployer + init-hash completion, and the door insert live
+    /// in the request interior ([`Self::register_v2_request`]).
     ///
     /// # Errors
     /// [`RefusalKind::IdentityMismatch`] on a verified CREATE2 mismatch,
@@ -191,40 +220,9 @@ impl Bot {
         stable_swap: bool,
         fee_denominator: Option<u64>,
     ) -> Result<u64, RefusalKind> {
-        // get-or-register, family-guarded: the same address + same family +
-        // same identity answers the EXISTING pool id (the `route.rs`
-        // `registered_address_pool` discipline lifted to the register entry);
-        // a different family or a disagreeing identity is wire drift and stays
-        // the loud typed `AlreadyRegistered` refusal.
-        {
-            let core = self.state_arc();
-            let registry = core.read_at(LockSite::Orchestrator);
-            if let Some((pool_id, family)) = registry.registered_pool_by_address(&address) {
-                let hit = family == RegisteredPoolFamily::V2
-                    && registry
-                        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id)
-                        .is_some_and(|ident| {
-                            ident.token0 == token0
-                                && ident.token1 == token1
-                                && ident.factory == factory
-                        });
-                if hit {
-                    return Ok(pool_id);
-                }
-                return Err(RefusalKind::from_register_v2_error(
-                    &RegisterV2PoolError::AlreadyRegistered { address },
-                ));
-            }
-        }
-        parity::verify_v2_create2(self.chain_id(), factory, address, token0, token1).map_err(
-            |divergence| {
-                RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V2), &divergence)
-            },
-        )?;
-        let deployer = degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), factory);
-        let init_hash =
-            degenbot_uniswap::deployments::resolve_v2_init_hash(self.chain_id(), factory);
-        let params = RegisterV2PoolParams {
+        // The derived deployer/init-hash identity is completed inside the
+        // request interior; the flat entry carries only caller-known fields.
+        self.register_v2_request(RegisterV2PoolParams {
             address,
             token0,
             token1,
@@ -233,13 +231,66 @@ impl Bot {
             fee_token0,
             fee_token1,
             factory,
-            deployer,
-            init_hash,
+            deployer: Address::default(),
+            init_hash: alloy::primitives::B256::default(),
             update_block,
             variant,
             stable_swap,
             fee_denominator,
-        };
+        })
+    }
+
+    /// The V2 request interior (see [`Self::register`]): the get-or-register
+    /// family guard, the JSON-sourced CREATE2 verification (Fork A) — skipped
+    /// when `(chain, factory)` is not in the shipped deployments JSON,
+    /// preserving the manual/ad-hoc path — the derived deployer + init-hash
+    /// completion, and the door insert under ONE core write guard.
+    fn register_v2_request(&self, mut params: RegisterV2PoolParams) -> Result<u64, RefusalKind> {
+        // get-or-register, family-guarded: the same address + same family +
+        // same identity answers the EXISTING pool id (the `route.rs`
+        // `registered_address_pool` discipline lifted to the register entry);
+        // a different family or a disagreeing identity is wire drift and stays
+        // the loud typed `AlreadyRegistered` refusal.
+        {
+            let core = self.state_arc();
+            let registry = core.read_at(LockSite::Orchestrator);
+            if let Some((pool_id, family)) = registry.registered_pool_by_address(&params.address) {
+                let hit = family == RegisteredPoolFamily::V2
+                    && registry
+                        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id)
+                        .is_some_and(|ident| {
+                            ident.token0 == params.token0
+                                && ident.token1 == params.token1
+                                && ident.factory == params.factory
+                        });
+                if hit {
+                    return Ok(pool_id);
+                }
+                return Err(RefusalKind::from_register_v2_error(
+                    &RegisterV2PoolError::AlreadyRegistered {
+                        address: params.address,
+                    },
+                ));
+            }
+        }
+        parity::verify_v2_create2(
+            self.chain_id(),
+            params.factory,
+            params.address,
+            params.token0,
+            params.token1,
+        )
+        .map_err(|divergence| {
+            RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V2), &divergence)
+        })?;
+        // Derived identity completes at the request interior: the deployer +
+        // init hash are a pure function of (chain_id, factory), so a caller
+        // never has to carry them (the request's carried values, if any, are
+        // overwritten with the resolved ones).
+        params.deployer =
+            degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), params.factory);
+        params.init_hash =
+            degenbot_uniswap::deployments::resolve_v2_init_hash(self.chain_id(), params.factory);
         RefusalKind::from_registration_verdict(
             self.state_arc()
                 .write_at(LockSite::Orchestrator)
@@ -247,12 +298,13 @@ impl Bot {
         )
     }
 
-    /// Register a V3 pool by contract address, with the seeded tick data
-    /// riding the family write door (see [`Self::register_v2_pool`]).
-    /// inline (ADR-006 rolling-start race closure: the pool is never visible
-    /// to the pump in an unseeded state). An explicit `Some` slot layout
-    /// wins; `None` defers to the deployment table (the `PancakeSwap` factory
-    /// check), else the canonical Uniswap layout.
+    /// Register a V3 pool by contract address — the flat-argument twin of the
+    /// door request ([`Self::register`] with [`PoolRegistration::V3`]), with
+    /// the seeded tick data riding the request (ADR-006 rolling-start race
+    /// closure: the pool is never visible to the pump in an unseeded state).
+    /// The get-or-register guard, the slot-layout defaulting, the CREATE2
+    /// verify, and the derived deployer + init-hash completion live in
+    /// [`Self::register_v3_request`].
     ///
     /// # Errors
     /// [`RefusalKind::IdentityMismatch`] on a verified CREATE2 mismatch,
@@ -276,29 +328,10 @@ impl Bot {
         tick_data_block: Option<u64>,
         slot_layout: Option<ConcentratedLiquiditySlotLayout>,
     ) -> Result<u64, RefusalKind> {
-        // get-or-register, family-guarded (see `register_v2_pool`).
-        {
-            let core = self.state_arc();
-            let registry = core.read_at(LockSite::Orchestrator);
-            if let Some((pool_id, family)) = registry.registered_pool_by_address(&address) {
-                let hit = family == RegisteredPoolFamily::V3
-                    && registry
-                        .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_id)
-                        .is_some_and(|ident| {
-                            ident.token0 == token0
-                                && ident.token1 == token1
-                                && ident.factory == factory
-                                && ident.fee == fee
-                                && ident.tick_spacing == tick_spacing
-                        });
-                if hit {
-                    return Ok(pool_id);
-                }
-                return Err(RefusalKind::from_register_v3_error(
-                    &RegisterV3PoolError::AlreadyRegistered { address },
-                ));
-            }
-        }
+        // The deployment-table slot-layout deferral stays at the flat entry:
+        // `RegisterV3PoolParams.slot_layout` is deliberately concrete (the
+        // params type's contract), so the `None` deferral resolves before the
+        // request is built.
         let slot_layout = slot_layout.unwrap_or_else(|| {
             if degenbot_uniswap::deployments::is_pancakeswap_v3_factory(self.chain_id(), factory) {
                 ConcentratedLiquiditySlotLayout::PancakeV3
@@ -306,23 +339,15 @@ impl Bot {
                 ConcentratedLiquiditySlotLayout::UniswapV3
             }
         });
-        parity::verify_v3_create2(self.chain_id(), factory, address, token0, token1, fee).map_err(
-            |divergence| {
-                RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V3), &divergence)
-            },
-        )?;
-        let deployer = degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), factory);
-        let init_hash =
-            degenbot_uniswap::deployments::resolve_v3_init_hash(self.chain_id(), factory);
-        let params = RegisterV3PoolParams {
+        self.register_v3_request(RegisterV3PoolParams {
             address,
             token0,
             token1,
             fee,
             tick_spacing,
             factory,
-            deployer,
-            init_hash,
+            deployer: Address::default(),
+            init_hash: alloy::primitives::B256::default(),
             sqrt_price_x96,
             liquidity,
             tick,
@@ -332,7 +357,57 @@ impl Bot {
             coverage,
             fetcher,
             slot_layout,
-        };
+        })
+    }
+
+    /// The V3 request interior (see [`Self::register`]): the get-or-register
+    /// family guard, the CREATE2 verify, the derived deployer + init-hash
+    /// completion, and the door insert under ONE core write guard. The
+    /// request's `slot_layout` is the caller-resolved concrete layout (the
+    /// params type carries it as mandatory).
+    fn register_v3_request(&self, mut params: RegisterV3PoolParams) -> Result<u64, RefusalKind> {
+        // get-or-register, family-guarded (see `register_v2_request`).
+        {
+            let core = self.state_arc();
+            let registry = core.read_at(LockSite::Orchestrator);
+            if let Some((pool_id, family)) = registry.registered_pool_by_address(&params.address) {
+                let hit = family == RegisteredPoolFamily::V3
+                    && registry
+                        .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_id)
+                        .is_some_and(|ident| {
+                            ident.token0 == params.token0
+                                && ident.token1 == params.token1
+                                && ident.factory == params.factory
+                                && ident.fee == params.fee
+                                && ident.tick_spacing == params.tick_spacing
+                        });
+                if hit {
+                    return Ok(pool_id);
+                }
+                return Err(RefusalKind::from_register_v3_error(
+                    &RegisterV3PoolError::AlreadyRegistered {
+                        address: params.address,
+                    },
+                ));
+            }
+        }
+        parity::verify_v3_create2(
+            self.chain_id(),
+            params.factory,
+            params.address,
+            params.token0,
+            params.token1,
+            params.fee,
+        )
+        .map_err(|divergence| {
+            RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V3), &divergence)
+        })?;
+        // Derived identity completes at the request interior (see
+        // `register_v2_request`).
+        params.deployer =
+            degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), params.factory);
+        params.init_hash =
+            degenbot_uniswap::deployments::resolve_v3_init_hash(self.chain_id(), params.factory);
         RefusalKind::from_registration_verdict(
             self.state_arc()
                 .write_at(LockSite::Orchestrator)
@@ -379,12 +454,55 @@ impl Bot {
             .register_v4_pool(params)
     }
 
-    /// Register a Curve `StableSwap` pool — the params are assembled by the
-    /// caller; the insert runs under ONE core write guard.
-    pub fn register_curve_pool(&self, params: &RegisterCurvePoolParams) -> u64 {
+    /// Register a Curve `StableSwap` pool — the params-typed twin of the door
+    /// request ([`Self::register`] with [`PoolRegistration::Curve`]); the
+    /// get-or-register guard and the door insert live in
+    /// [`Self::register_curve_request`].
+    ///
+    /// # Errors
+    /// [`RefusalKind::RegisterRefused`] when the registry refuses a
+    /// disagreeing same-address entry (the door's typed duplicate-address
+    /// arm — previously the state insert's loud panic).
+    pub fn register_curve_pool(
+        &self,
+        params: &RegisterCurvePoolParams,
+    ) -> Result<u64, RefusalKind> {
+        self.register_curve_request(params.clone())
+    }
+
+    /// Register a Balancer V2 weighted pool — the params-typed twin of the
+    /// door request (see [`Self::register_curve_pool`]).
+    ///
+    /// # Errors
+    /// [`RefusalKind::RegisterRefused`] when the registry refuses a
+    /// disagreeing same-address entry.
+    pub fn register_balancer_weighted_pool(
+        &self,
+        params: &RegisterBalancerWeightedPoolParams,
+    ) -> Result<u64, RefusalKind> {
+        self.register_balancer_weighted_request(params.clone())
+    }
+
+    /// Register a Balancer V2 stable pool — the params-typed twin of the
+    /// door request (see [`Self::register_curve_pool`]).
+    ///
+    /// # Errors
+    /// [`RefusalKind::RegisterRefused`] when the registry refuses a
+    /// disagreeing same-address entry.
+    pub fn register_balancer_stable_pool(
+        &self,
+        params: &RegisterBalancerStablePoolParams,
+    ) -> Result<u64, RefusalKind> {
+        self.register_balancer_stable_request(params.clone())
+    }
+
+    /// The Curve request interior (see [`Self::register`]): the
+    /// get-or-register guard and the door insert.
+    fn register_curve_request(&self, params: RegisterCurvePoolParams) -> Result<u64, RefusalKind> {
         // get-or-register: a same-address entry with the same coin list reuses
-        // the existing pool; a disagreeing entry falls through to the state
-        // insert, which keeps its loud already-registered panic.
+        // the existing pool; a disagreeing entry is refused by the door's
+        // typed duplicate-address arm (ADR-078 D1 — the state insert's
+        // already-registered panic no longer fires behind this verb).
         {
             let core = self.state_arc();
             let registry = core.read_at(LockSite::Orchestrator);
@@ -395,23 +513,26 @@ impl Bot {
                     .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(pool_id)
                     .is_some_and(|ident| ident.tokens.as_ref() == params.tokens.as_slice())
                 {
-                    return pool_id;
+                    return Ok(pool_id);
                 }
             }
         }
-        self.state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_curve_pool(params)
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::Curve(Box::new(params))),
+        )
     }
 
-    /// Register a Balancer V2 weighted pool — see [`Self::register_curve_pool`].
-    pub fn register_balancer_weighted_pool(
+    /// The Balancer-weighted request interior (see [`Self::register`]): the
+    /// get-or-register guard and the door insert.
+    fn register_balancer_weighted_request(
         &self,
-        params: &RegisterBalancerWeightedPoolParams,
-    ) -> u64 {
-        // get-or-register: a same-address entry with the same vault + pool id +
-        // coin list reuses the existing pool (see `register_curve_pool` for the
-        // conflict discipline).
+        params: RegisterBalancerWeightedPoolParams,
+    ) -> Result<u64, RefusalKind> {
+        // get-or-register: a same-address entry with the same vault + pool id
+        // + coin list reuses the existing pool (see `register_curve_request`
+        // for the conflict discipline).
         {
             let core = self.state_arc();
             let registry = core.read_at(LockSite::Orchestrator);
@@ -426,18 +547,24 @@ impl Bot {
                             && ident.tokens.as_ref() == params.tokens.as_slice()
                     })
                 {
-                    return pool_id;
+                    return Ok(pool_id);
                 }
             }
         }
-        self.state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_balancer_weighted_pool(params)
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::BalancerWeighted(Box::new(params))),
+        )
     }
 
-    /// Register a Balancer V2 stable pool — see [`Self::register_curve_pool`].
-    pub fn register_balancer_stable_pool(&self, params: &RegisterBalancerStablePoolParams) -> u64 {
-        // get-or-register: see `register_balancer_weighted_pool`.
+    /// The Balancer-stable request interior (see [`Self::register`]): the
+    /// get-or-register guard and the door insert.
+    fn register_balancer_stable_request(
+        &self,
+        params: RegisterBalancerStablePoolParams,
+    ) -> Result<u64, RefusalKind> {
+        // get-or-register: see `register_balancer_weighted_request`.
         {
             let core = self.state_arc();
             let registry = core.read_at(LockSite::Orchestrator);
@@ -452,20 +579,21 @@ impl Bot {
                             && ident.tokens.as_ref() == params.tokens.as_slice()
                     })
                 {
-                    return pool_id;
+                    return Ok(pool_id);
                 }
             }
         }
-        self.state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_balancer_stable_pool(params)
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::BalancerStable(Box::new(params))),
+        )
     }
 
-    /// Register an Aerodrome V2 pool. Runs the JSON-sourced EIP-1167
-    /// deployer/implementation verification (Fork A follow-on; skipped for
-    /// non-JSON `(chain, factory)` rows), then registers through the family
-    /// write door (see [`Self::register_v2_pool`]) under ONE core write
-    /// guard.
+    /// Register an Aerodrome V2 pool — the flat-argument twin of the door
+    /// request ([`Self::register`] with [`PoolRegistration::AerodromeV2`]);
+    /// the get-or-register guard, the EIP-1167 verify, and the door insert
+    /// live in [`Self::register_aerodrome_request`].
     ///
     /// # Errors
     /// [`RefusalKind::IdentityMismatch`] on a verified mismatch.
@@ -486,41 +614,7 @@ impl Bot {
         reserve1: U112,
         update_block: u64,
     ) -> Result<u64, RefusalKind> {
-        // get-or-register, family-guarded (see `register_v2_pool`).
-        {
-            let core = self.state_arc();
-            let registry = core.read_at(LockSite::Orchestrator);
-            if let Some((pool_id, family)) = registry.registered_pool_by_address(&address) {
-                let hit = family == RegisteredPoolFamily::AerodromeV2
-                    && registry
-                        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
-                            pool_id,
-                        )
-                        .is_some_and(|ident| {
-                            ident.token0 == token0
-                                && ident.token1 == token1
-                                && ident.factory == factory
-                        });
-                if hit {
-                    return Ok(pool_id);
-                }
-                return Err(RefusalKind::from_register_aerodrome_error(
-                    &RegisterAerodromePoolError::AlreadyRegistered { address },
-                ));
-            }
-        }
-        parity::verify_aerodrome_v2_create2(
-            self.chain_id(),
-            factory,
-            address,
-            token0,
-            token1,
-            stable,
-        )
-        .map_err(|divergence| {
-            RefusalKind::from_identity_divergence(Some(PoolFamilyTag::AerodromeV2), &divergence)
-        })?;
-        let params = RegisterAerodromeV2PoolParams {
+        self.register_aerodrome_request(RegisterAerodromeV2PoolParams {
             address,
             token0,
             token1,
@@ -533,7 +627,54 @@ impl Bot {
             reserve0,
             reserve1,
             update_block,
-        };
+        })
+    }
+
+    /// The Aerodrome request interior (see [`Self::register`]): the
+    /// get-or-register family guard, the JSON-sourced EIP-1167
+    /// deployer/implementation verification (Fork A follow-on; skipped for
+    /// non-JSON `(chain, factory)` rows), and the door insert under ONE core
+    /// write guard.
+    fn register_aerodrome_request(
+        &self,
+        params: RegisterAerodromeV2PoolParams,
+    ) -> Result<u64, RefusalKind> {
+        // get-or-register, family-guarded (see `register_v2_request`).
+        {
+            let core = self.state_arc();
+            let registry = core.read_at(LockSite::Orchestrator);
+            if let Some((pool_id, family)) = registry.registered_pool_by_address(&params.address) {
+                let hit = family == RegisteredPoolFamily::AerodromeV2
+                    && registry
+                        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                            pool_id,
+                        )
+                        .is_some_and(|ident| {
+                            ident.token0 == params.token0
+                                && ident.token1 == params.token1
+                                && ident.factory == params.factory
+                        });
+                if hit {
+                    return Ok(pool_id);
+                }
+                return Err(RefusalKind::from_register_aerodrome_error(
+                    &RegisterAerodromePoolError::AlreadyRegistered {
+                        address: params.address,
+                    },
+                ));
+            }
+        }
+        parity::verify_aerodrome_v2_create2(
+            self.chain_id(),
+            params.factory,
+            params.address,
+            params.token0,
+            params.token1,
+            params.stable,
+        )
+        .map_err(|divergence| {
+            RefusalKind::from_identity_divergence(Some(PoolFamilyTag::AerodromeV2), &divergence)
+        })?;
         RefusalKind::from_registration_verdict(
             self.state_arc()
                 .write_at(LockSite::Orchestrator)
@@ -972,8 +1113,8 @@ mod tests {
     fn register_curve_pool_get_or_register_reuses_the_existing_id() {
         let bot = Bot::new(1);
         let params = curve_params(Address::from([0x71u8; 20]));
-        let first = bot.register_curve_pool(&params);
-        let second = bot.register_curve_pool(&params);
+        let first = bot.register_curve_pool(&params).expect("curve registers");
+        let second = bot.register_curve_pool(&params).expect("curve reuses");
         assert_eq!(first, second, "the existing Curve handle answers");
         assert_eq!(bot.pool_count(), 1, "no second Curve pool was created");
     }
@@ -1255,50 +1396,52 @@ mod tests {
     #[test]
     fn curve_and_balancer_facades_register_under_one_core_write() {
         let bot = Bot::new(1);
-        let curve_id = bot.register_curve_pool(&RegisterCurvePoolParams {
-            address: Address::from([0x71u8; 20]),
-            tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
-            a_coefficient: 200,
-            a_precision: 100,
-            fee: 4_000_000,
-            admin_fee: 0,
-            rate_multipliers: vec![
-                alloy::primitives::U256::from(1u8),
-                alloy::primitives::U256::from(1u8),
-            ],
-            balances: vec![
-                alloy::primitives::U256::from(1_000u64),
-                alloy::primitives::U256::from(1_000u64),
-            ],
-            update_block: 5,
-            swap_style: 0,
-            lending_rate_style: 0,
-            d_variant: 0,
-            y_variant: 0,
-            yd_variant: 0,
-            base_pool: None,
-            initial_a_coefficient: None,
-            future_a_coefficient: None,
-            initial_a_coefficient_time: None,
-            future_a_coefficient_time: None,
-            create_timestamp: None,
-            fee_gamma: None,
-            mid_fee: None,
-            offpeg_fee_multiplier: None,
-            out_fee: None,
-            gamma: None,
-            lp_token: None,
-            use_lending: Vec::new(),
-            precision_multipliers: Vec::new(),
-            tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
-            data_provider: None,
-        });
+        let curve_id = bot
+            .register_curve_pool(&RegisterCurvePoolParams {
+                address: Address::from([0x71u8; 20]),
+                tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
+                a_coefficient: 200,
+                a_precision: 100,
+                fee: 4_000_000,
+                admin_fee: 0,
+                rate_multipliers: vec![
+                    alloy::primitives::U256::from(1u8),
+                    alloy::primitives::U256::from(1u8),
+                ],
+                balances: vec![
+                    alloy::primitives::U256::from(1_000u64),
+                    alloy::primitives::U256::from(1_000u64),
+                ],
+                update_block: 5,
+                swap_style: 0,
+                lending_rate_style: 0,
+                d_variant: 0,
+                y_variant: 0,
+                yd_variant: 0,
+                base_pool: None,
+                initial_a_coefficient: None,
+                future_a_coefficient: None,
+                initial_a_coefficient_time: None,
+                future_a_coefficient_time: None,
+                create_timestamp: None,
+                fee_gamma: None,
+                mid_fee: None,
+                offpeg_fee_multiplier: None,
+                out_fee: None,
+                gamma: None,
+                lp_token: None,
+                use_lending: Vec::new(),
+                precision_multipliers: Vec::new(),
+                tokens_underlying: None,
+                metapool_rate_style: 1,
+                metapool_underlying_style: 1,
+                data_provider: None,
+            })
+            .expect("curve registers");
         assert!(bot.has_pool(curve_id));
 
-        let weighted_id =
-            bot.register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
+        let weighted_id = bot
+            .register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
                 address: Address::from([0x72u8; 20]),
                 vault: Address::from([0xBAu8; 20]),
                 pool_id: [0x07u8; 32],
@@ -1318,29 +1461,32 @@ mod tests {
                     alloy::primitives::U256::from(1_000u64),
                 ],
                 update_block: 5,
-            });
+            })
+            .expect("weighted registers");
         assert!(bot.has_pool(weighted_id));
 
-        let stable_id = bot.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
-            address: Address::from([0x73u8; 20]),
-            vault: Address::from([0xBAu8; 20]),
-            pool_id: [0x08u8; 32],
-            tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
-            amp: 100,
-            scaling_factors: vec![
-                alloy::primitives::U256::from(1u8),
-                alloy::primitives::U256::from(1u8),
-            ],
-            swap_fee: 0,
-            bpt_idx: None,
-            invariant_version: 1,
-            balances: vec![
-                alloy::primitives::U256::from(1_000u64),
-                alloy::primitives::U256::from(1_000u64),
-            ],
-            update_block: 5,
-            rate_provider: None,
-        });
+        let stable_id = bot
+            .register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
+                address: Address::from([0x73u8; 20]),
+                vault: Address::from([0xBAu8; 20]),
+                pool_id: [0x08u8; 32],
+                tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
+                amp: 100,
+                scaling_factors: vec![
+                    alloy::primitives::U256::from(1u8),
+                    alloy::primitives::U256::from(1u8),
+                ],
+                swap_fee: 0,
+                bpt_idx: None,
+                invariant_version: 1,
+                balances: vec![
+                    alloy::primitives::U256::from(1_000u64),
+                    alloy::primitives::U256::from(1_000u64),
+                ],
+                update_block: 5,
+                rate_provider: None,
+            })
+            .expect("stable registers");
         assert!(bot.has_pool(stable_id));
     }
 
@@ -1448,6 +1594,7 @@ mod tests {
     }
 
     /// The intake rendering of an unparseable address.
+    #[expect(clippy::panic)] // the malformed-input invariant is by construction; the test helper asserts it loudly
     fn malformed_detail(err: &RefusalKind) -> String {
         match err {
             RefusalKind::MalformedInput { detail, .. } => detail.clone(),

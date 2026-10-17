@@ -153,9 +153,9 @@ impl Bot {
     }
 
     /// Build + register an Aerodrome V2 pool — the Aerodrome twin of
-    /// [`Self::build_and_register_v2`] (the `stable()`+`getFee()` + reserves
-    /// + CREATE2 choreography, registered into `PoolEntry::AerodromeV2`
-    /// through the family write door).
+    /// [`Self::build_and_register_v2`] (the `stable()` + `getFee()` +
+    /// reserves + CREATE2 choreography, registered into
+    /// `PoolEntry::AerodromeV2` through the family write door).
     ///
     /// # Errors
     /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`]
@@ -847,7 +847,7 @@ mod tests {
             metapool_underlying_style: 1,
             data_provider: None,
         };
-        let pool_id = bot.register_curve_pool(&params);
+        let pool_id = bot.register_curve_pool(&params).expect("curve registers");
 
         let dy = bot
             .curve_get_dy(

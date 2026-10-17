@@ -254,8 +254,8 @@ fn snapshot_reason_detail(reason: &SnapshotLoadReason) -> &str {
 
 /// Map a [`RegisterV2PoolError`] to its Python surface through the one
 /// refusal mapper (the V2 address-keyed insert refusal).
-pub(crate) fn map_register_v2_err(err: RegisterV2PoolError) -> PyErr {
-    map_refusal(RefusalKind::from_register_v2_error(&err))
+pub(crate) fn map_register_v2_err(err: &RegisterV2PoolError) -> PyErr {
+    map_refusal(RefusalKind::from_register_v2_error(err))
 }
 
 /// Map a [`RegisterV4PoolError`] to its Python surface through the one
@@ -278,8 +278,8 @@ pub(crate) fn map_register_v2_err(err: RegisterV2PoolError) -> PyErr {
 /// The message text is byte-for-byte the legacy `Err(String)` formatting, so
 /// `build_paths`'s classification (now `isinstance`, was substring) matches
 /// the same diagnostics.
-pub(crate) fn map_register_v4_err(err: RegisterV4PoolError) -> PyErr {
-    map_refusal(RefusalKind::from_register_v4_error(&err))
+pub(crate) fn map_register_v4_err(err: &RegisterV4PoolError) -> PyErr {
+    map_refusal(RefusalKind::from_register_v4_error(err))
 }
 
 /// Map the typed path-registration refusal: a full registry is the benign
@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn register_v2_err_pins_the_vocabulary() {
-        let err = map_register_v2_err(RegisterV2PoolError::AlreadyRegistered {
+        let err = map_register_v2_err(&RegisterV2PoolError::AlreadyRegistered {
             address: addr("0x0101010101010101010101010101010101010101"),
         });
         assert_eq!(
@@ -664,7 +664,7 @@ mod tests {
             "V2 pool already registered: address=0x0101010101010101010101010101010101010101"
         );
 
-        let err = map_register_v2_err(RegisterV2PoolError::SpecViolation(SpecViolation {
+        let err = map_register_v2_err(&RegisterV2PoolError::SpecViolation(SpecViolation {
             field: "reserve0",
             value: SpecValue::U256(U256::from(7u8)),
             bound: "uint112 (≤ 2^112 − 1)",
@@ -702,7 +702,7 @@ mod tests {
 
     #[test]
     fn register_v4_err_pins_the_vocabulary() {
-        let err = map_register_v4_err(RegisterV4PoolError::HookedPool { hook_flags: 1 });
+        let err = map_register_v4_err(&RegisterV4PoolError::HookedPool { hook_flags: 1 });
         assert_eq!(
             message(&err),
             format!(
@@ -711,19 +711,19 @@ mod tests {
             )
         );
 
-        let err = map_register_v4_err(RegisterV4PoolError::DynamicFee { fee: 0x80_0000 });
+        let err = map_register_v4_err(&RegisterV4PoolError::DynamicFee { fee: 0x80_0000 });
         assert_eq!(
             message(&err),
             "V4 pool has dynamic fee (fee=0x800000) — excluded from arbitrage"
         );
 
-        let err = map_register_v4_err(RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 70_000 });
+        let err = map_register_v4_err(&RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 70_000 });
         assert_eq!(
             message(&err),
             "V4 pool fee (fee=70000) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage"
         );
 
-        let err = map_register_v4_err(RegisterV4PoolError::AlreadyRegistered {
+        let err = map_register_v4_err(&RegisterV4PoolError::AlreadyRegistered {
             pool_manager: addr("0x0303030303030303030303030303030303030303"),
             pool_id: [0u8; 32],
         });
@@ -736,7 +736,7 @@ mod tests {
             )
         );
 
-        let err = map_register_v4_err(RegisterV4PoolError::SpecViolation(SpecViolation {
+        let err = map_register_v4_err(&RegisterV4PoolError::SpecViolation(SpecViolation {
             field: "tick_spacing",
             value: SpecValue::I32(0),
             bound: "nonzero",
@@ -786,9 +786,9 @@ mod tests {
         // build path both raise: the deployment table's own mismatch text.
         let mismatch = address_mismatch(1);
         assert_eq!(
-            value_error(&mapped(&PoolBuilderError::Identity(
+            value_error(&mapped(&PoolBuilderError::Identity(Box::new(
                 IdentityDivergence::Create2(mismatch),
-            ))),
+            )))),
             mismatch.to_string()
         );
         assert_eq!(
@@ -972,7 +972,7 @@ mod tests {
             &divergence,
         ));
         let build = map_refusal(RefusalKind::from_builder_error(
-            &PoolBuilderError::Identity(divergence),
+            &PoolBuilderError::Identity(Box::new(divergence)),
             Some(PoolFamilyTag::V2),
             RegistrationPhase::Build,
         ));

@@ -24,7 +24,6 @@ use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4Po
 /// divergence is the fatal tripwire ([`VerifyOrigin::Mismatch`]); an
 /// RPC/read/decode failure is a transient transport refusal
 /// ([`VerifyOrigin::Transport`]).
-
 fn map_error(error: &LiquidityMapVerifyError) -> RefusalKind {
     RefusalKind::verify_failed(
         RegistrationPhase::Verify,
@@ -586,6 +585,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[expect(clippy::too_many_lines)] // one live pass asserts every typed log fact together
     async fn live_v3_mismatch_logs_every_typed_fact() {
         let mut ticks = HashMap::new();
         ticks.insert(

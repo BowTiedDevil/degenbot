@@ -54,9 +54,11 @@ use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::RegisteredPoolFamily;
 use degenbot_bot::bot_core::{
-    Bot, RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
-    RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV4PoolParams, V4PoolKey,
+    Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
+    RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
+    RegisterV4PoolParams, V4PoolKey,
 };
+use degenbot_substrate::PoolRegistration;
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
@@ -277,7 +279,7 @@ impl PyBot {
         // ([`Bot::registered_v4_payload`]); this wrapper only releases the
         // GIL across the read and maps the typed refusal.
         py.detach(|| self.bot.registered_v4_payload(pm, pid))
-            .map_err(map_register_v4_err)
+            .map_err(|err| map_register_v4_err(&err))
     }
 
     /// ADR-006 D4 (T3): attach the pump lifecycle state owned by a
@@ -697,27 +699,36 @@ impl PyBot {
         let variant_enum = DexVariant::try_from(variant)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
-        // The write guard is acquired inside the core method
-        // ([`Bot::register_v2_pool`]); the GIL is released across this
-        // py.detach — never hold the GIL while parked on the BotState write.
-        let pool_id = py.detach(|| {
-            self.bot
-                .register_v2_pool(
-                    addr,
-                    t0,
-                    t1,
-                    r0,
-                    r1,
-                    (gamma_numer0, fee_denom0),
-                    (gamma_numer1, fee_denom1),
-                    fac,
-                    update_block,
-                    variant_enum,
-                    stable_swap,
-                    fee_denominator,
-                )
-                .map_err(map_refusal)
-        })?;
+        // ADR-078 D3 step 3: the kwargs translate into the ONE door request
+        // and dispatch through the engine verb ([`Bot::register`]); the
+        // get-or-register guard, the CREATE2 verify, and the derived
+        // deployer/init-hash completion are core-owned behind it. The write
+        // guard is acquired inside the core method; the GIL is released
+        // across this py.detach — never hold the GIL while parked on the
+        // BotState write.
+        let pool_id = py
+            .detach(|| {
+                self.bot
+                    .register(PoolRegistration::V2(Box::new(RegisterV2PoolParams {
+                        address: addr,
+                        token0: t0,
+                        token1: t1,
+                        reserve0: r0,
+                        reserve1: r1,
+                        fee_token0: (gamma_numer0, fee_denom0),
+                        fee_token1: (gamma_numer1, fee_denom1),
+                        factory: fac,
+                        // Derived identity (deployer/init-hash) is completed
+                        // core-side, inside the request interior.
+                        deployer: Address::default(),
+                        init_hash: alloy::primitives::B256::default(),
+                        update_block,
+                        variant: variant_enum,
+                        stable_swap,
+                        fee_denominator,
+                    })))
+            })
+            .map_err(map_refusal)?;
         // Telemetry: see build_v2_pool — one Jaeger node per V2 registration.
         let _reg = tracing::info_span!(
             "degenbot.pool.register",
@@ -1460,7 +1471,7 @@ impl PyBot {
                 stable_swap,
                 fee_denominator,
             })
-            .map_err(map_register_v2_err)
+            .map_err(|err| map_register_v2_err(&err))
     }
 
     /// Update a V2 pool's reserves from a Sync event.
@@ -2099,13 +2110,16 @@ impl PyBot {
                 .filter(|f| !f.is_none())
                 .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
         };
-        // The write-lock acquisition + the admission floor (which records
-        // the PRG-2 keyed verdicts) live inside the core method
-        // ([`Bot::register_v4_pool`]); the GIL is released across it (see
-        // `register_token`). `RegisterV4PoolParams` is `Send`; the error is
-        // mapped to a `PyErr` OUTSIDE the closure.
-        let result = py.detach(|| self.bot.register_v4_pool(&params));
-        result.map_err(map_register_v4_err)
+        // ADR-078 D3 step 3: the params ride the ONE door request and
+        // dispatch through the engine verb ([`Bot::register`]); the
+        // get-or-register key guard and the admission floor (which records
+        // the PRG-2 keyed verdicts) are core-owned behind it. The GIL is
+        // released across the verb (see `register_token`);
+        // `RegisterV4PoolParams` is `Send`, and the refusal is mapped to a
+        // `PyErr` OUTSIDE the closure via the one refusal mapper (the same
+        // surface the `map_register_v4_err` delegate renders).
+        py.detach(|| self.bot.register(PoolRegistration::V4(Box::new(params))))
+            .map_err(map_refusal)
     }
 
     /// Seed the Rust-owned V4 `StateView` registry (ADR-005 / Option 2):
@@ -2282,10 +2296,14 @@ impl PyBot {
             data_provider: data_provider
                 .map(|b| crate::bot::pool::make_curve_data_provider(b.unbind())),
         };
-        // The write guard is acquired inside the core method under this
-        // py.detach — the GIL is released while parked on the BotState
+        // ADR-078 D3 step 3: the params ride the ONE door request and
+        // dispatch through the engine verb ([`Bot::register`]) — the
+        // get-or-register reuse guard and the door's typed duplicate
+        // refusal (previously the state insert's loud panic) are core-owned
+        // behind it. The GIL is released while parked on the BotState
         // write.
-        Ok(py.detach(|| self.bot.register_curve_pool(&p)))
+        py.detach(|| self.bot.register(PoolRegistration::Curve(Box::new(p))))
+            .map_err(map_refusal)
     }
 
     /// Build + register a Curve `StableSwap` pool through the Rust `PoolBuilder`
@@ -2386,9 +2404,15 @@ impl PyBot {
             balances: bal_vals,
             update_block,
         };
-        // The GIL is released across this py.detach — never hold the GIL
-        // while parked on the BotState write.
-        Ok(py.detach(|| self.bot.register_balancer_weighted_pool(&p)))
+        // ADR-078 D3 step 3: the params ride the ONE door request and
+        // dispatch through the engine verb ([`Bot::register`]) — see
+        // `register_curve_pool`. The GIL is released across this py.detach —
+        // never hold the GIL while parked on the BotState write.
+        py.detach(|| {
+            self.bot
+                .register(PoolRegistration::BalancerWeighted(Box::new(p)))
+        })
+        .map_err(map_refusal)
     }
 
     /// Register a Balancer V2 stable pool (ADR-005 slice 12c state port).
@@ -2460,8 +2484,15 @@ impl PyBot {
             update_block,
             rate_provider: provider,
         };
-        // No GIL while parked on the BotState write (see `unregister_pool`).
-        Ok(py.detach(|| self.bot.register_balancer_stable_pool(&params)))
+        // ADR-078 D3 step 3: the params ride the ONE door request and
+        // dispatch through the engine verb ([`Bot::register`]) — see
+        // `register_curve_pool`. No GIL while parked on the BotState write
+        // (see `unregister_pool`).
+        py.detach(|| {
+            self.bot
+                .register(PoolRegistration::BalancerStable(Box::new(params)))
+        })
+        .map_err(map_refusal)
     }
 
     /// Register an Aerodrome V2 pool by contract address (ADR-005 Aerodrome
@@ -2513,30 +2544,30 @@ impl PyBot {
         let variant_enum = DexVariant::try_from(variant)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
-        // The EIP-1167 verify (skipped for non-JSON (chain, factory) rows) +
-        // params assembly live inside the core method
-        // ([`Bot::register_aerodrome_pool`]); the GIL is released across
-        // this py.detach — never hold the GIL while parked on the BotState
-        // write.
+        // ADR-078 D3 step 3: the params ride the ONE door request and
+        // dispatch through the engine verb ([`Bot::register`]); the EIP-1167
+        // verify (skipped for non-JSON (chain, factory) rows) is core-owned
+        // behind it. The GIL is released across this py.detach — never hold
+        // the GIL while parked on the BotState write.
         py.detach(|| {
-            self.bot
-                .register_aerodrome_pool(
-                    addr,
-                    t0,
-                    t1,
-                    fac,
-                    variant_enum,
+            self.bot.register(PoolRegistration::AerodromeV2(Box::new(
+                RegisterAerodromeV2PoolParams {
+                    address: addr,
+                    token0: t0,
+                    token1: t1,
+                    factory: fac,
+                    variant: variant_enum,
                     stable,
-                    fee_numer,
-                    fee_denom,
+                    fee: (fee_numer, fee_denom),
                     token0_decimals,
                     token1_decimals,
-                    r0,
-                    r1,
+                    reserve0: r0,
+                    reserve1: r1,
                     update_block,
-                )
-                .map_err(map_refusal)
+                },
+            )))
         })
+        .map_err(map_refusal)
     }
 
     /// Update a V3 pool's state from a Swap event.

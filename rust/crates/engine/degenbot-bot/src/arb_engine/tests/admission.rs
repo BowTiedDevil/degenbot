@@ -777,14 +777,14 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
         // Cycle 2: dirty hub_b only -> 600 affected paths again; hub_a must
         // be walked ONCE by the shared sharded cache (serial: also once).
         // The epoch's resolve census is the typed read of those walks.
-        let cycle_2a = process_updates(
+        let updates_epoch = process_updates(
             &mut engine,
             &[(Address::from([0xbb_u8; 20]), weth(880), usdc(1_230_000))],
             &[],
             501,
             &BlockMetadata::default(),
         );
-        let cycle_2b = engine.cycle.run_epoch(
+        let ticket_epoch = engine.cycle.run_epoch(
             crate::arb_engine::test_harness::cycle_ticket(
                 &crate::arb_engine::tests::test_keys::affected_keys(
                     &HashSet::from([hub_b]),
@@ -797,8 +797,8 @@ fn resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks() {
             &engine.registry,
             &mut engine.delivery,
         );
-        let projections_delta = cycle_2a.census.projections + cycle_2b.census.projections;
-        let same_state = cycle_2b.census.same_state;
+        let projections_delta = updates_epoch.census.projections + ticket_epoch.census.projections;
+        let same_state = ticket_epoch.census.same_state;
         let (results, _block) = latest_results(&engine);
         let hop_shapes: HashMap<u64, usize> = path_ids
             .iter()

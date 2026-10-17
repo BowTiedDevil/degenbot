@@ -203,7 +203,7 @@ pub fn registered_address_identity(bot: &Bot, pool_id: u64) -> Option<AddressIde
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used)] // test assertions read the refusal directly
+    #![expect(clippy::expect_used, clippy::panic)] // test assertions read the refusal directly; the divergence arms assert the variant by construction
 
     use super::*;
 
