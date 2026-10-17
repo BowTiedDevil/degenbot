@@ -59,20 +59,22 @@ pub(crate) trait SeatSink {
     /// (`ensure_arena`) at the same seam the pre-fold loop did.
     fn deliver(&self, host: &mut FleetHost, grant: Grant, unit: Unit);
 }
-/// The per-host loud-abort + wording seam of the unified triple: every
-/// context/message string stays owned by its host module so the pre-fold
-/// abort wording stays byte-identical (the pooled pair's strings ride the
-/// descriptor; solve's are its own). The unified code calls the SEMANTIC
+/// The per-host loud-abort + wording seam of the unified triple: the
+/// model-specific CONTEXT strings stay owned by their host module (the
+/// pooled pair's ride the descriptor; solve's are its own), while the
+/// stranded-pipe EMISSION is the ONE shared template (ADR-079 D3 —
+/// `seat_host::abort_unrecoverable`). The unified code calls the SEMANTIC
 /// operations only.
 pub(crate) trait HostDiscipline {
     /// Unrecoverable host failure at a SHARED context ("backlog drain",
     /// "grant start (T2)") — never returns.
     fn fail(&self, context: &str, err: &str) -> !;
-    /// The apply-time enqueue refusal (pooled: `"{noun} enqueue"`;
-    /// solve: `"solver enqueue"`).
+    /// The apply-time enqueue refusal — ONE pattern on both models:
+    /// `"{noun} enqueue"` (the keyed host rides its mirrored noun).
     fn enqueue_refused(&self, err: &str) -> !;
-    /// The `SeatDone` completion refusal (pooled: `"seat completion (T5)"`;
-    /// solve: `"seat completion (T3)"`).
+    /// The `SeatDone` completion refusal — ONE wording on both models
+    /// (ADR-079 D3): `"seat completion (T5)"` (the applied T-row itself is
+    /// slot-FSM data, keyed off the slot state — see [`HostMsg::SeatDone`]).
     fn completion_refused(&self, err: &str) -> !;
     /// The row-#6 grant-kind contract denial (context `"dispatch grant"`).
     fn foreign_grant(&self, kind: GrantKind) -> !;
@@ -97,7 +99,8 @@ pub(crate) trait HostDiscipline {
 ///   the solve pump only to die by the `seats.get(slot)` indexing
 ///   accident — or, under Nominal, to be silently SEATED on a Solver
 ///   seat; the pooled side aborted loudly).
-/// - [`HostDiscipline`] — the per-host abort wording (byte-pinned).
+/// - [`HostDiscipline`] — the per-host abort funnel into the ONE
+///   emission (ADR-079 D3; the contexts stay model-owned).
 ///
 /// # Posture consult (behavior-EXACT for solve — spike-proven)
 ///

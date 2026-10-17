@@ -58,17 +58,59 @@ pub(crate) struct SeatRoleDesc {
 /// The serial binding's named cycle seat (FF-T4): the ONE thread that
 /// runs the role's granted units in grant order on a 2-5 core host.
 pub(crate) const SERIAL_SEAT_NAME: &str = "work-fleet-serial-0";
-/// One granted unit handed to whichever pooled seat takes it next (both
-/// roles are pooled — seats contend, no pin affinity).
-struct SeatJob {
+/// One granted unit handed to a seat (ADR-079 D3): one job shape across
+/// both seat models — the pooled `WorkQueue` take and the keyed solve
+/// mailbox. The seat models stay distinct (delivery behavior is each
+/// sink's); the job is shared. The keyed context rides as data: an absent
+/// context is the pooled case. Build through the two constructors — the
+/// sinks are the intended build sites.
+pub(crate) struct SeatJob {
     /// The host-tracked slot the unit was granted to (completion carries it
-    /// back so T5 applies to the right slot).
-    slot: u64,
+    /// back so the slot's own T-row applies to the right slot).
+    pub(crate) slot: u64,
+    /// The host-tracked unit id (the seat panic log names it).
+    pub(crate) unit: u64,
     /// The work payload (`Send + 'static`). Takes the seat's `LaneCtx`
-    /// (LW-T2); pooled seats hand the detached stub (LW-T8 landed: the
-    /// executors submit through ONE seam). NO pyo3 type crosses this seam —
-    /// `Python::attach` stays at the pyo3 leaf.
-    work: Box<dyn FnOnce(&LaneCtx) + Send>,
+    /// (LW-T2): the job's own keyed context when one rides, the detached
+    /// stub when absent (LW-T8 landed: the executors submit through ONE
+    /// seam). NO pyo3 type crosses this seam — `Python::attach` stays at
+    /// the pyo3 leaf.
+    pub(crate) work: Box<dyn FnOnce(&LaneCtx) + Send>,
+    /// The keyed context minted at the T2 grant seam — the bin's pin + the
+    /// slot's warm arena identity (warm across cycles, fresh after T9).
+    /// `None` IS the pooled case (the seat takes the detached stub).
+    pub(crate) ctx: Option<LaneCtx>,
+}
+
+impl SeatJob {
+    /// The POOLED constructor (contended `WorkQueue` delivery): the context
+    /// is ABSENT — the seat resolves it to the detached stub
+    /// ([`LaneCtx::detached`]); seats contend, no pin affinity.
+    pub(crate) fn pooled(slot: u64, unit: u64, work: Box<dyn FnOnce(&LaneCtx) + Send>) -> Self {
+        Self {
+            slot,
+            unit,
+            work,
+            ctx: None,
+        }
+    }
+
+    /// The KEYED constructor (per-seat mailbox delivery): the warm-arena
+    /// context minted at the grant seam rides as data — a persistent pin
+    /// seat (T3/T6) runs its own ctx, never the detached stub.
+    pub(crate) fn keyed(
+        slot: u64,
+        unit: u64,
+        work: Box<dyn FnOnce(&LaneCtx) + Send>,
+        ctx: LaneCtx,
+    ) -> Self {
+        Self {
+            slot,
+            unit,
+            work,
+            ctx: Some(ctx),
+        }
+    }
 }
 /// The shared pooled-seat work queue (std `mpsc` receivers are not
 /// `Clone`, so the contended seat pool rides a condvar deque). Folded once
@@ -125,10 +167,8 @@ pub(crate) struct PooledSink {
 }
 impl SeatSink for PooledSink {
     fn deliver(&self, _host: &mut FleetHost, grant: Grant, unit: Unit) {
-        self.queue.push(SeatJob {
-            slot: grant.slot,
-            work: unit.work,
-        });
+        self.queue
+            .push(SeatJob::pooled(grant.slot, grant.unit, unit.work));
     }
 }
 /// The pooled hosts' discipline: the descriptor owns the tag + noun, so
@@ -146,12 +186,12 @@ impl HostDiscipline for PooledDiscipline {
     fn completion_refused(&self, err: &str) -> ! {
         abort_executor(self.desc, "seat completion (T5)", err)
     }
-    fn foreign_grant(&self, _kind: GrantKind) -> ! {
+    fn foreign_grant(&self, kind: GrantKind) -> ! {
         abort_executor(
             self.desc,
             "dispatch grant",
             &format!(
-                "non-{} grant in the {} executor",
+                "non-{} grant in the {} executor (grant kind {kind:?})",
                 self.desc.noun, self.desc.noun
             ),
         )
@@ -423,12 +463,14 @@ fn seat_loop(desc: &'static SeatRoleDesc, work: &WorkQueue, done: &mpsc::Sender<
     while let Some(job) = work.take() {
         // A panicking unit closure must not kill the seat (its pool would
         // strand receipts): keep the seat alive, log loudly, report done.
-        let ctx = LaneCtx::detached();
+        // A pooled job's context is ABSENT (ADR-079 D3) — the detached stub.
+        let ctx = job.ctx.unwrap_or_else(LaneCtx::detached);
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| (job.work)(&ctx)));
         if outcome.is_err() {
             op_error!(
                 domain = solver,
                 seat = job.slot,
+                unit = job.unit,
                 "{} {} unit panicked — the seat survives, the failure is loud",
                 desc.abort_tag,
                 desc.noun
@@ -495,28 +537,38 @@ pub(crate) fn host_loop(rx: mpsc::Receiver<HostMsg>, mut host: FleetHost, fold: 
     }
     .run(rx);
 }
-/// Loud, unrecoverable executor failure (mirror of the fleet solve
-/// executor's abort discipline): a dead host would strand in-flight
-/// receipts — an awaiting caller parks forever (stranded pipe, design doc
-/// §10) — so swallowing the error is never an option. The per-role tag and
-/// stranded-pipe noun come from the descriptor, byte-identical to the
-/// pre-fold messages.
+/// The ONE unrecoverable-abort emission (ADR-079 D3): BOTH seat models'
+/// loud-abort funnels route through this single wording home — the pooled
+/// pair rides its descriptor's tag + noun, the keyed solve host rides its
+/// own mirrored constants (`fleet_solve_executor`) — so the
+/// `{tag} unrecoverable` line and its `stranded {{noun}} receipt pipe`
+/// template cannot fork again.
 #[expect(
     clippy::print_stderr,
     reason = "the abort path must stay legible with no tracing subscriber installed (test harnesses drop the tracing event); stderr is the process's last message"
 )]
-fn abort_executor(desc: &SeatRoleDesc, context: &str, err: &str) -> ! {
+pub(crate) fn abort_unrecoverable(
+    tag: &'static str,
+    noun: &'static str,
+    context: &str,
+    err: &str,
+) -> ! {
     op_error!(domain = solver, context = %context,
         error = %err,
         "{} unrecoverable — aborting (stranded {} receipt pipe)",
-        desc.abort_tag,
-        desc.noun
+        tag,
+        noun
     );
-    eprintln!(
-        "{} UNRECOVERABLE, aborting (stranded {} receipt pipe): {context}: {err}",
-        desc.abort_tag, desc.noun
-    );
+    eprintln!("{tag} UNRECOVERABLE, aborting (stranded {noun} receipt pipe): {context}: {err}");
     std::process::abort();
+}
+
+/// The pooled pair's abort funnel: the descriptor's tag + noun into the ONE
+/// emission. Loud, unrecoverable executor failure: a dead host would strand
+/// in-flight receipts — an awaiting caller parks forever (stranded pipe,
+/// design doc §10) — so swallowing the error is never an option.
+fn abort_executor(desc: &SeatRoleDesc, context: &str, err: &str) -> ! {
+    abort_unrecoverable(desc.abort_tag, desc.noun, context, err)
 }
 /// The shared per-role submit / port / test-shim surface, defined ONCE and
 /// instantiated per pooled executor. `self.$host` names the executor's
@@ -594,5 +646,144 @@ mod loop_home_tests {
                 "{file} must define {want} host_loop fn(s) — the ONE host dispatch loop lives in seat_host"
             );
         }
+    }
+
+    /// The structural gate for ADR-079 D3: `SeatJob` is the one job shape
+    /// across both seat models — the pooled `WorkQueue` pair and the keyed
+    /// solve executor compose it, the keyed context riding as data on the
+    /// job (an absent context IS the pooled case). A second `struct
+    /// SeatJob` definition anywhere in `arb_engine` is a fold violation —
+    /// the job shape must not fork again.
+    #[test]
+    fn the_seat_job_is_defined_once_in_seat_host() {
+        let sources: [(&str, &str); 5] = [
+            ("seat_host/host.rs", include_str!("host.rs")),
+            ("seat_host/pump.rs", include_str!("pump.rs")),
+            (
+                "fleet_solve_executor.rs",
+                include_str!("../fleet_solve_executor.rs"),
+            ),
+            (
+                "fleet_sim_executor.rs",
+                include_str!("../fleet_sim_executor.rs"),
+            ),
+            (
+                "fleet_registration_executor.rs",
+                include_str!("../fleet_registration_executor.rs"),
+            ),
+        ];
+        for (file, src) in sources {
+            // A definition line is `struct SeatJob` (after any visibility
+            // qualifier) — doc mentions and this test's own needle stay out
+            // of the count.
+            let defs = src
+                .lines()
+                .filter(|line| {
+                    let line = line.trim_start();
+                    let line = line.strip_prefix("pub(crate) ").unwrap_or(line);
+                    line.starts_with("struct SeatJob")
+                })
+                .count();
+            let want = usize::from(file == "seat_host/host.rs");
+            assert_eq!(
+                defs, want,
+                "{file} must define {want} SeatJob struct(s) — the ONE job shape lives in seat_host"
+            );
+        }
+    }
+
+    /// The shape pin for ADR-079 D3: the pooled job IS the keyed job with
+    /// its context absent — one shape, two constructors, the context the
+    /// only difference.
+    #[test]
+    fn the_pooled_job_is_the_keyed_job_with_its_context_absent() {
+        use super::SeatJob;
+        use degenbot_workers::dispatcher::ArenaToken;
+        use degenbot_workers::lane::LaneCtx;
+
+        let pooled = SeatJob::pooled(3, 11, Box::new(|_ctx: &LaneCtx| {}));
+        let keyed = SeatJob::keyed(3, 11, Box::new(|_ctx: &LaneCtx| {}), LaneCtx::detached());
+        // ONE shape: the same granted slot + unit + work arity; the context
+        // is the ONLY difference, and absence IS the pooled case.
+        assert_eq!(pooled.slot, keyed.slot, "one shape: the same granted slot");
+        assert_eq!(pooled.unit, keyed.unit, "one shape: the same granted unit");
+        assert!(pooled.ctx.is_none(), "an ABSENT context IS the pooled case");
+        assert!(
+            keyed.ctx.is_some(),
+            "the keyed context rides as data on the job"
+        );
+        // Seat-side resolution: the pooled job's absent context takes the
+        // detached stub (LW-T8 — pooled seats hand the detached stub); the
+        // keyed job's context is the exact ctx it was given, never a
+        // silent swap.
+        let resolved = pooled.ctx.unwrap_or_else(LaneCtx::detached);
+        assert_eq!(
+            resolved.arena,
+            ArenaToken::DETACHED,
+            "the pooled job's absent context resolves to the detached stub"
+        );
+        assert!(
+            keyed
+                .ctx
+                .as_ref()
+                .is_some_and(|ctx| ctx.arena == LaneCtx::detached().arena),
+            "the keyed job's context resolves to the ctx it was given"
+        );
+    }
+
+    /// The wording gate for ADR-079 D3: the discipline log/message forks
+    /// are dead. One stranded-pipe abort emission (the pooled
+    /// `"stranded {{noun}} receipt pipe"` template, defined ONCE in
+    /// `host.rs` — the keyed host rides it through its mirrored tag +
+    /// noun), and one completion-refusal wording. The forked strings must
+    /// never return.
+    #[test]
+    fn the_discipline_wording_is_defined_once_across_both_models() {
+        let sources: [(&str, &str); 5] = [
+            ("seat_host/host.rs", include_str!("host.rs")),
+            ("seat_host/pump.rs", include_str!("pump.rs")),
+            (
+                "fleet_solve_executor.rs",
+                include_str!("../fleet_solve_executor.rs"),
+            ),
+            (
+                "fleet_sim_executor.rs",
+                include_str!("../fleet_sim_executor.rs"),
+            ),
+            (
+                "fleet_registration_executor.rs",
+                include_str!("../fleet_registration_executor.rs"),
+            ),
+        ];
+        // The needles are concat-built so this test's own source (read by
+        // the `include_str!` scans) never contains them contiguously.
+        let forked_pipe = concat!("stranded ", "result pipe");
+        let forked_completion = concat!("\"seat completion ", "(T3)\"");
+        let emission = concat!("aborting ", "(stranded");
+        for (file, src) in sources {
+            assert_eq!(
+                src.matches(forked_pipe).count(),
+                0,
+                "{file}: the keyed {forked_pipe:?} fork is dead — the ONE template is the pooled \"stranded {{noun}} receipt pipe\""
+            );
+            assert_eq!(
+                src.matches(forked_completion).count(),
+                0,
+                "{file}: the T3/T5 completion-refusal fork is dead — ONE wording serves both models"
+            );
+            if file != "seat_host/host.rs" {
+                assert_eq!(
+                    src.matches(emission).count(),
+                    0,
+                    "{file}: the unrecoverable-abort emission has ONE home (seat_host/host.rs)"
+                );
+            }
+        }
+        // The ONE emission home: the tracing line + the stderr last message.
+        assert_eq!(
+            include_str!("host.rs").matches(emission).count(),
+            2,
+            "the abort emission is exactly the tracing line + the stderr last message, in seat_host/host.rs"
+        );
     }
 }

@@ -80,9 +80,10 @@
 //! - The `fleet_intake.rs` frozen facade untouched: the port + 2 pub fns
 //!   surface is unchanged, and `InnerWork = Box<dyn FnOnce>` carries NO
 //!   pyo3 in any host signature (`Python::attach` stays at the pyo3 leaf).
-//! - Loud aborts: every seat/host failure funnels through `abort_executor`,
-//!   whose tag (`[fleet-sim]` / `[fleet-reg]`) and stranded-pipe noun stay
-//!   byte-identical per role.
+//! - Loud aborts: every seat/host failure funnels through the ONE abort
+//!   emission (`host::abort_unrecoverable`, ADR-079 D3) — one stranded-pipe
+//!   template, with the tag + noun per host (pooled: the descriptor's
+//!   `[fleet-sim]` / `[fleet-reg]`; keyed solve: its mirrored constants).
 //!
 //! # The lane interface (FF-T3 — lanes stay logical)
 //!
@@ -130,7 +131,7 @@ mod pump;
 
 pub(crate) use admission::GrantContract;
 pub(crate) use host::{
-    host_loop, impl_seat_hosted, intake_close_abort, HostLoop, SeatHost, SeatRoleDesc,
-    SERIAL_SEAT_NAME,
+    abort_unrecoverable, host_loop, impl_seat_hosted, intake_close_abort, HostLoop, SeatHost,
+    SeatJob, SeatRoleDesc, SERIAL_SEAT_NAME,
 };
 pub(crate) use pump::{HostDiscipline, HostMsg, SeatSink};

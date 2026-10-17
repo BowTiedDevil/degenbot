@@ -19,7 +19,7 @@
 //! on the SAME seat (T6).
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
 use crate::arb_engine::seat_host::{
-    host_loop, GrantContract, HostDiscipline, HostLoop, HostMsg, SeatSink,
+    host_loop, GrantContract, HostDiscipline, HostLoop, HostMsg, SeatJob, SeatSink,
 };
 use degenbot_core::op_error;
 use degenbot_workers::dispatcher::{
@@ -35,21 +35,19 @@ use std::sync::{mpsc, Arc, OnceLock};
 /// (`degenbot_workers::slot::MERGE_PIN_KEY`) and a Solver key must never
 /// collide with it.
 pub(crate) const SOLVE_BIN_KEY_BASE: PinKey = 1;
-/// Loud, unrecoverable executor failure (mirror of `solve_executor.rs`'s
-/// abort discipline): a dead host would strand in-flight per-path result
-/// sends in pipes nobody drains, so swallowing the error is never an
-/// option.
-#[expect(
-    clippy::print_stderr,
-    reason = "the abort path must stay legible with no tracing subscriber installed (test harnesses drop the tracing event); stderr is the process's last message"
-)]
+/// The keyed solve host's wording identity (ADR-079 D3): the abort tag and
+/// work-noun the ONE shared abort emission rides — the pooled pair's
+/// descriptor fields, mirrored as constants (the keyed model boots its own
+/// seats; it has no `SeatRoleDesc`).
+pub(crate) const SOLVE_ABORT_TAG: &str = "[fleet-solve]";
+pub(crate) const SOLVE_NOUN: &str = "solver";
+
+/// The keyed solve host's abort funnel into the ONE emission
+/// (`seat_host::abort_unrecoverable`, ADR-079 D3): a dead host would strand
+/// in-flight per-path result sends in pipes nobody drains, so swallowing
+/// the error is never an option.
 pub(crate) fn abort_executor(context: &str, err: &str) -> ! {
-    op_error!(domain = solver, context = %context,
-        error = %err,
-        "unrecoverable — aborting (stranded result pipe)"
-    );
-    eprintln!("UNRECOVERABLE, aborting (stranded result pipe): {context}: {err}");
-    std::process::abort();
+    crate::arb_engine::seat_host::abort_unrecoverable(SOLVE_ABORT_TAG, SOLVE_NOUN, context, err)
 }
 /// Public loud-stop wrapper (ADR-021; used by the solve-path submit
 /// seam for stranded-pipe terminal stops).
@@ -70,18 +68,9 @@ fn validate_bin_index(bin: usize, solver_seats: usize) -> Result<(), String> {
         ))
     }
 }
-/// One bin job as the host hands it to a Solver seat.
-struct SeatJob {
-    /// The host-tracked unit id (dispatch bookkeeping).
-    unit: u64,
-    /// The work payload (the 'static + Send `run_bin` closure — the fleet
-    /// crate has no pyo3 and simulation never round-trips Python, design
-    /// doc §8). The seat hands the unit its `LaneCtx` (LW-T2 Seam B).
-    work: Box<dyn FnOnce(&LaneCtx) + Send>,
-    /// The seat ctx minted at the T2 grant seam: the bin's pin + the
-    /// slot's warm arena identity (warm across cycles, fresh after T9).
-    ctx: LaneCtx,
-}
+// The seat job shape is the ONE shared `seat_host::SeatJob` (ADR-079 D3):
+// the keyed context rides as data on the job, minted at the sink through
+// `SeatJob::keyed`; a context-absent job IS the pooled case.
 /// The fleet-hosted solve executor. Shared by all engine cycles (the
 /// global static hands out `&'static`, mirroring the incumbent executor's
 /// construction-once contract: persistent seats keep warm L1/L2 +
@@ -223,7 +212,7 @@ impl FleetSolveExecutor {
                 .spawn(move || seat_loop(u64::try_from(seat).unwrap_or(u64::MAX), srx, &done));
             if let Err(err) = spawned {
                 // A missing seat strands its pinned bins' results — loud.
-                abort_executor("solver seat spawn", &format!("{err:?}"));
+                abort_executor(&format!("{SOLVE_NOUN} seat spawn"), &format!("{err:?}"));
             }
         }
         let host_queue_len = Arc::clone(&solver_queue_len);
@@ -261,7 +250,12 @@ impl FleetSolveExecutor {
                 );
             });
         if let Err(err) = spawned {
-            abort_executor("fleet host thread spawn", &format!("{err:?}"));
+            // ONE pattern with the pooled pair: the noun names the host's
+            // role (ADR-079 D3 — the keyed side had dropped it).
+            abort_executor(
+                &format!("fleet {SOLVE_NOUN} host thread spawn"),
+                &format!("{err:?}"),
+            );
         }
         Self {
             waker: crate::arb_engine::fleet_wake::register(&tx),
@@ -353,13 +347,31 @@ fn seat_loop(seat: u64, rx: mpsc::Receiver<SeatJob>, done: &mpsc::Sender<HostMsg
     while let Ok(job) = rx.recv() {
         // A panicking bin closure must not kill the seat (its pinned bins
         // would strand): keep the seat alive, log loudly, report done.
-        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| (job.work)(&job.ctx)));
+        let SeatJob {
+            unit, work, ctx, ..
+        } = job;
+        // A keyed job ALWAYS rides its minted context (the sink's
+        // constructor contract): a context-absent (pooled) job here is a
+        // broken sink contract — loud, never a silent detached stub (a
+        // solver unit must never observe the DETACHED arena).
+        let Some(ctx) = ctx else {
+            abort_executor(
+                "keyed seat dispatch",
+                "a context-absent (pooled) job reached a keyed seat — \
+                 the sink and the seat disagree on the seat model",
+            );
+        };
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| (work)(&ctx)));
         if outcome.is_err() {
+            // ONE panic log with the pooled seat loop (ADR-079 D3): the
+            // keyed model's former "bin job panicked" fork is dead.
             op_error!(
                 domain = solver,
                 seat,
-                unit = job.unit,
-                "bin job panicked — the seat survives, the failure is loud"
+                unit,
+                "{} {} unit panicked — the seat survives, the failure is loud",
+                SOLVE_ABORT_TAG,
+                SOLVE_NOUN
             );
         }
         if done.send(HostMsg::SeatDone { seat }).is_err() {
@@ -422,11 +434,7 @@ impl SeatSink for SolveSink<'_> {
                 .unwrap_or_else(degenbot_workers::lane::no_escalation_port),
             quit: QuitSig,
         };
-        let job = SeatJob {
-            unit: grant.unit,
-            work: unit.work,
-            ctx,
-        };
+        let job = SeatJob::keyed(grant.slot, grant.unit, unit.work, ctx);
         if seat_tx.send(job).is_err() {
             // A dead seat cannot drain its pinned bins' results —
             // stranded pipe (§10).
@@ -435,27 +443,28 @@ impl SeatSink for SolveSink<'_> {
     }
 }
 /// The solve host's abort discipline: the same free [`abort_executor`]
-/// the module has always owned — the unified triple's SHARED contexts
-/// route through here, and the solve-specific contexts keep their
-/// pre-fold strings byte-identical.
+/// funnel (now the ONE shared emission, ADR-079 D3) — the unified triple's
+/// SHARED contexts route through here, the model-specific contexts keep
+/// their strings, and the refusal patterns ride the mirrored noun.
 struct SolveDiscipline;
 impl HostDiscipline for SolveDiscipline {
     fn fail(&self, context: &str, err: &str) -> ! {
         abort_executor(context, err)
     }
     fn enqueue_refused(&self, err: &str) -> ! {
-        abort_executor("solver enqueue", err)
+        abort_executor(&format!("{SOLVE_NOUN} enqueue"), err)
     }
     fn completion_refused(&self, err: &str) -> ! {
-        abort_executor("seat completion (T3)", err)
+        // ONE wording across both models (ADR-079 D3): the pooled side's
+        // "seat completion (T5)" — neither T-number is the shared arm's
+        // own (the applied T-row is slot-FSM data), so the dispatch
+        // default held.
+        abort_executor("seat completion (T5)", err)
     }
     fn foreign_grant(&self, kind: GrantKind) -> ! {
         abort_executor(
             "dispatch grant",
-            &format!(
-                "non-solver grant in the solve executor (grant kind {kind:?} — \
-                 a non-Solver grant has no keyed seat)"
-            ),
+            &format!("non-{SOLVE_NOUN} grant in the {SOLVE_NOUN} executor (grant kind {kind:?})"),
         )
     }
 }
