@@ -27,7 +27,7 @@ config**. Two seams, typed by the borrow:
   resolve, no solve, no deps beyond solver value types. The hot cycle takes a
   **shared** `&PathRegistry` (cycles never mutate identity — the type says it);
   registration takes `&mut`.
-- **`SolveCycle`** (`arb_engine/solve_cycle.rs`) — the leaf of ADR-041's
+- **`SolveCycle`** (`arb_engine/solve_cycle/`, a module directory since ADR-076) — the leaf of ADR-041's
   Solved stage and its three sibling entrances. Owns the resolve companions
   (`path_resolved`, `path_status`, the projection caches, the same-state
   snapshots), the **cycle-transient** stash (admission draw verdict, the

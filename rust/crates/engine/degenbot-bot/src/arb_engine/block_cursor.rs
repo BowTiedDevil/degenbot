@@ -21,7 +21,7 @@
 //!   test harness) and `lifecycle.rs::set_last_processed_block`: unconditional
 //!   `last_processed_block = Some(n)` writes →
 //!   [`BlockCursor::advance_processed`].
-//! - `solve_cycle.rs` solve stamps (the empty-fanout early return, the
+//! - `solve_cycle/` solve stamps (the empty-fanout early return, the
 //!   detached enqueue tail, the in-cycle tail) and
 //!   `lifecycle.rs::solve_all_paths`: unconditional `results_block = n`
 //!   writes → [`BlockCursor::advance_solved`].

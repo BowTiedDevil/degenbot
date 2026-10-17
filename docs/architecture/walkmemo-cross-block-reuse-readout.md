@@ -10,8 +10,9 @@ explicitly separate.**
 The cross-block composition memo (`WalkMemo` in
 `rust/crates/engine/degenbot-solvers/src/concentrated_liquidity/memo.rs`) is live on the engine path:
 `arb_engine::solve_cycle` advances `begin_block(solve_block)` before the per-path
-probes (solve_cycle.rs:1176) and threads the engine-owned handle into every solve
-(`gate_deps.walk_memo = Some(&memo)`, solve_cycle.rs:2087). This note records the
+probes (`solve_cycle/mod.rs`, `BlockScope::advance`) and threads the engine-owned
+handle into every solve (`gate_deps.walk_memo = Some(&memo)`,
+`lane_walk.rs::solve_one_path`). This note records the
 before/after readout the epic asked for, plus what each follow-up decision still
 needs before anyone acts on it.
 
@@ -181,7 +182,7 @@ build cost only, with solver intake byte-exact memo on/off. They are an
 
 The live hot path already threads both: the engine passes its own runtime config
 and the engine-owned memo handle (`gate_deps.walk_memo = Some(&memo)` +
-`runtime_cfg`, solve_cycle.rs:2062-2087), and the production mixed solver
+`runtime_cfg`, `lane_walk.rs::solve_one_path`), and the production mixed solver
 forwards the memo through (`mixed/solve.rs:471,479`).
 
 Recommendation (picked from what the code shows, not preference): **document why
@@ -283,8 +284,9 @@ The tap is new in this ergo
 (`degenbot-bot/src/arb_engine/walk_telemetry.rs`): the engine-side drain the
 memo always needed (`take_stats` existed with no engine caller). One boundary
 drain per `begin_block` site, issued BEFORE the memo advances
-(solve_cycle.rs:1182 — adjacent to the `begin_block(solve_block)` the first
-readout cites at solve_cycle.rs:1176), plus one final drain at engine
+(`solve_cycle/mod.rs` — the `BlockScope::advance` call plus the
+`walk_telemetry::emit_epoch_boundary` beside it, adjacent to the
+`begin_block(solve_block)` the first readout cites), plus one final drain at engine
 teardown (engine_stages.rs:384) so the last epoch's counters are not lost.
 Emission: one JSON line to `logs/walkmemo_stats.jsonl` (CWD-relative; the
 launcher cds to the workspace root) plus the ADR-043 instruments

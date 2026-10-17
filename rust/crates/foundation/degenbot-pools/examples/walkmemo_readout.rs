@@ -160,7 +160,7 @@ fn main() {
     }
 
     // ---- Arm B: memo on + stats on (the "after" arm) ----
-    // Engine contract (solve_cycle.rs): the cross-block census advances at
+    // Engine contract (solve_cycle/mod.rs): the cross-block census advances at
     // block start, BEFORE the per-path probes.
     let memo = WalkMemo::new(true, true);
     let mut arm_b: Vec<ArmBRow> = Vec::new();

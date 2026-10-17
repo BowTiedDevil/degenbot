@@ -28,7 +28,8 @@ imbalance:
   coordinate.
 - **`solve_dirty` had a second entrance**: callers reach the solve cycle
   through `SolveCycle::run_epoch` / `register_and_solve_path` *deliberately
-  bypassing pump semantics* (`solve_cycle.rs:764`), so a "one trait for
+  bypassing pump semantics* (`solve_cycle.rs:764`; now `solve_cycle/mod.rs`,
+  `run_epoch` / `register_and_solve_path`), so a "one trait for
   everything" surface could not describe what those callers actually spoke.
 
 The vocabulary test that resolves the mess is **which layer's conversation a

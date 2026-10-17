@@ -107,7 +107,7 @@ it does not touch either simulator.
 | `src/cl_cache.rs` | `ClCacheStrategy`, `PreparedHop` | Cache-lab seam: strategies refill crossing+profile tables and solve through the production entry. | Lab seam over `IntV3TickRangeSequence`, not a walk projection. Untouched. |
 | `degenbot-bot/src/bot_core/resolve/mod.rs` | `all_cl_solve`, `mixed_solve` | Build `ClSolveTables` from the `ResolvedHop` `as_*` projections and call the entries. | Adapters; public entry shape unchanged. |
 | `degenbot-bot/src/arb_engine/solver_capture.rs` | `shape_matches`, `serialize_hops` | Selects HeavyCl / HeavyMixed by `as_int_sequence`; serializes ranges. | Capture source for the parity corpus; reads projections only. |
-| `degenbot-bot/src/arb_engine/solve_cycle.rs` | comment reference only | No `WalkHop` use. | Unaffected. |
+| `degenbot-bot/src/arb_engine/solve_cycle/` | comment reference only | No `WalkHop` use. | Unaffected. |
 | tests | `cl_cache_lab_goldens.rs`, `offline_heavy_replay.rs` | Drive `solve_cl_piecewise` / `derive_and_solve_cl_piecewise`. | Golden parity harness for the collapse. |
 | examples | `cl_solve_replay.rs`, `mixed_solve_replay.rs`, `cl_capture_gen.rs` | Replay/generate fixtures through the entries. | Corpus generation and offline parity. |
 
@@ -122,7 +122,7 @@ it does not touch either simulator.
   `as_int_sequence` / `as_crossing_table` / `as_word_profiles` and
   assembled into `ClSolveTables`.
 - `walk_piece_anchor*` are `#[cfg(test)]` only, not production arms.
-- `arb_engine/solve_cycle.rs` has no walk site (a comment mention of a
+- `arb_engine/solve_cycle/` has no walk site (a comment mention of a
   cached entry only); `workload_partition.rs` reads `as_int_sequence` only.
 
 ## Options
