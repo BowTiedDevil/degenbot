@@ -103,9 +103,9 @@ pub use degenbot_ingestion::RELEVANT_TOPICS;
 pub use pump_control::PumpControl;
 pub use registration_ledger::{
     BuildFailure, BuildRefusal, HopSignature, IdentityMismatchShape, LifecyclePrecondition,
-    PoolFamilyTag, RefusalKind, RegisterRefusal, RegistrationLedger, RegistrationOutcome,
-    RegistrationPhase, SnapshotLoadReason, UnregistrableRecord, UnsupportedSubject, VerifyOrigin,
-    REFUSAL_KIND_TAGS, REGISTRATION_OUTCOMES,
+    RefusalKind, RegisterRefusal, RegistrationLedger, RegistrationOutcome, RegistrationPhase,
+    SnapshotLoadReason, UnregistrableRecord, UnsupportedSubject, VerifyOrigin, REFUSAL_KIND_TAGS,
+    REGISTRATION_OUTCOMES,
 };
 pub use registration_lifecycle::{
     run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle,

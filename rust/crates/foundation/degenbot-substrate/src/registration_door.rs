@@ -10,29 +10,27 @@
 //!
 //! # Refusal vocabulary
 //!
-//! ADR-077's `RefusalKind` is owned by the registration outcome ledger in
-//! `degenbot-bot` (an engine crate), which depends on this foundation crate,
-//! so the vocabulary cannot live here without an upward dependency, and no
-//! shared lower home carries it. The verdict's refusal arm therefore carries a
-//! substrate-local [`RegistrationRefusal`] shaped field-for-field like
-//! ADR-077's `RegisterRefusal` (`AlreadyRegistered` / `SpecViolation` /
-//! `Admission`); [`AdmissionFailure`] carries the three immutable-pool-fact
-//! arms of the `BuildFailure` taxonomy a registration insert can raise. The
-//! ledger's `RefusalKind::RegisterRefused` maps onto it losslessly — family
-//! and phase are fixed (`family` from the request's variant,
-//! `RegistrationPhase::Register`), and each arm's fields are carried verbatim.
+//! The refusal payload is the foundation crate's ONE shared vocabulary:
+//! `degenbot_pools::registration_refusal` owns `RegisterRefusal` (the
+//! `AlreadyRegistered` / `SpecViolation` / `Admission` shapes) and the
+//! `BuildFailure` taxonomy its admission arm classifies through, derived from
+//! each family's typed `Register*PoolError` by one `From` impl per family.
+//! The engine's registration outcome ledger in `degenbot-bot` stores that
+//! exact type, so its `RefusalKind::RegisterRefused` fold is structural —
+//! family and phase are fixed at the fold (`family` from the verdict,
+//! `RegistrationPhase::Register`) — rather than a field-for-field twin joined
+//! by hand-written `From` impls.
 
 use alloy::primitives::Address;
-use degenbot_pools::aerodrome_v2_state::{
-    RegisterAerodromePoolError, RegisterAerodromeV2PoolParams,
-};
+use degenbot_pools::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
 use degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;
 use degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
 use degenbot_pools::curve_state::RegisterCurvePoolParams;
+use degenbot_pools::registration_refusal::RegisterRefusal;
 use degenbot_pools::registry::RegisteredPoolFamily;
-use degenbot_pools::v2_state::{RegisterV2PoolError, RegisterV2PoolParams};
-use degenbot_pools::v3_state::{RegisterV3PoolError, RegisterV3PoolParams};
-use degenbot_pools::v4_state::{RegisterV4PoolError, RegisterV4PoolParams};
+use degenbot_pools::v2_state::RegisterV2PoolParams;
+use degenbot_pools::v3_state::RegisterV3PoolParams;
+use degenbot_pools::v4_state::RegisterV4PoolParams;
 
 use super::BotState;
 
@@ -78,142 +76,15 @@ impl PoolRegistration {
     }
 }
 
-/// The immutable-pool-fact classification of an admission refusal — the three
-/// `BuildFailure` arms a registry insert can raise. A fee above the encoder
-/// limit is [`Self::HighFee`]; the V4 hook and dynamic-fee facts carry their
-/// own counters at the ledger, which is why they are distinct arms rather than
-/// one generic refusal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AdmissionFailure {
-    /// The V4 hooked-pool admission refusal (reserved at the register entry
-    /// since ADR-037; carried so the mapping stays total).
-    HookedPool,
-    /// The V4 dynamic-fee admission refusal.
-    DynamicFee,
-    /// A static fee above the executor's encoding limit.
-    HighFee,
-}
-
-/// The registry-insert refusal, shaped as ADR-077's `RegisterRefusal` so the
-/// ledger's `RefusalKind::RegisterRefused` maps onto it losslessly.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RegistrationRefusal {
-    /// A pool at this address (or `(pool_manager, pool_id)` key) is already
-    /// registered. The address rides when the family keys by address; the V4
-    /// `(pool_manager, pool_id)` key rides when the family keys by pair.
-    AlreadyRegistered {
-        /// The refused pool address, when the family keys by address.
-        address: Option<Address>,
-        /// The refused V4 `(pool_manager, pool_id)` key, when the family keys
-        /// by pair.
-        pool_key: Option<(Address, [u8; 32])>,
-        /// The source rendering (log-only).
-        detail: String,
-    },
-    /// An out-of-spec field, carrying the `SpecViolation`'s own rendering.
-    SpecViolation {
-        /// The source rendering (log-only).
-        detail: String,
-    },
-    /// A V4 admission refusal (hooked pool / dynamic fee / encoder limit),
-    /// with the facts the refusal's message interpolates.
-    Admission {
-        /// The admission classification.
-        failure: AdmissionFailure,
-        /// The hook flags, for the hooked-pool class.
-        hook_flags: Option<u16>,
-        /// The offending fee, for the dynamic-fee / encoder-limit classes.
-        fee: Option<u32>,
-    },
-}
-
-impl RegistrationRefusal {
-    /// A duplicate-address refusal for the families whose register entry
-    /// panics rather than returns (Curve, Balancer weighted/stable) — the door
-    /// pre-checks the registry so the refusal is typed instead of a panic. The
-    /// detail mirrors the register entry's own assertion message.
-    fn duplicate_address(address: Address) -> Self {
-        Self::AlreadyRegistered {
-            address: Some(address),
-            pool_key: None,
-            detail: format!("pool already registered: {address}"),
-        }
-    }
-
-    /// The V2 register entry's typed refusal.
-    fn from_v2(err: &RegisterV2PoolError) -> Self {
-        match err {
-            RegisterV2PoolError::AlreadyRegistered { address } => Self::AlreadyRegistered {
-                address: Some(*address),
-                pool_key: None,
-                detail: format!("{err:?}"),
-            },
-            RegisterV2PoolError::SpecViolation(v) => Self::SpecViolation {
-                detail: v.to_string(),
-            },
-        }
-    }
-
-    /// The V3 register entry's typed refusal.
-    fn from_v3(err: &RegisterV3PoolError) -> Self {
-        match err {
-            RegisterV3PoolError::AlreadyRegistered { address } => Self::AlreadyRegistered {
-                address: Some(*address),
-                pool_key: None,
-                detail: format!("{err:?}"),
-            },
-            RegisterV3PoolError::SpecViolation(v) => Self::SpecViolation {
-                detail: v.to_string(),
-            },
-        }
-    }
-
-    /// The V4 register entry's typed refusal; its admission arms ride the
-    /// [`AdmissionFailure`] classification, carrying the facts their messages
-    /// interpolate.
-    fn from_v4(err: &RegisterV4PoolError) -> Self {
-        match err {
-            RegisterV4PoolError::HookedPool { hook_flags } => Self::Admission {
-                failure: AdmissionFailure::HookedPool,
-                hook_flags: Some(*hook_flags),
-                fee: None,
-            },
-            RegisterV4PoolError::DynamicFee { fee } => Self::Admission {
-                failure: AdmissionFailure::DynamicFee,
-                hook_flags: None,
-                fee: Some(*fee),
-            },
-            RegisterV4PoolError::FeeExceedsEncoderLimit { fee } => Self::Admission {
-                failure: AdmissionFailure::HighFee,
-                hook_flags: None,
-                fee: Some(*fee),
-            },
-            RegisterV4PoolError::AlreadyRegistered {
-                pool_manager,
-                pool_id,
-            } => Self::AlreadyRegistered {
-                address: None,
-                pool_key: Some((*pool_manager, *pool_id)),
-                detail: format!("{err:?}"),
-            },
-            RegisterV4PoolError::SpecViolation(v) => Self::SpecViolation {
-                detail: v.to_string(),
-            },
-        }
-    }
-
-    /// The Aerodrome register entry's typed refusal.
-    fn from_aerodrome(err: &RegisterAerodromePoolError) -> Self {
-        match err {
-            RegisterAerodromePoolError::AlreadyRegistered { address } => Self::AlreadyRegistered {
-                address: Some(*address),
-                pool_key: None,
-                detail: format!("{err:?}"),
-            },
-            RegisterAerodromePoolError::SpecViolation(v) => Self::SpecViolation {
-                detail: v.to_string(),
-            },
-        }
+/// A duplicate-address refusal for the families whose register entry panics
+/// rather than returns (Curve, Balancer weighted/stable) — the door pre-checks
+/// the registry so the refusal is typed instead of a panic. The detail mirrors
+/// the register entry's own assertion message.
+fn duplicate_address(address: Address) -> RegisterRefusal {
+    RegisterRefusal::AlreadyRegistered {
+        address: Some(address),
+        pool_key: None,
+        detail: format!("pool already registered: {address}"),
     }
 }
 
@@ -234,8 +105,8 @@ pub enum RegistrationVerdict {
     Refused {
         /// The refused family.
         family: RegisteredPoolFamily,
-        /// The typed refusal, shaped as ADR-077's `RegisterRefusal`.
-        refusal: RegistrationRefusal,
+        /// The typed refusal — the shared register-refusal vocabulary.
+        refusal: RegisterRefusal,
     },
 }
 
@@ -248,7 +119,7 @@ impl RegistrationVerdict {
 
     /// A typed refusal.
     #[must_use]
-    pub const fn refused(family: RegisteredPoolFamily, refusal: RegistrationRefusal) -> Self {
+    pub const fn refused(family: RegisteredPoolFamily, refusal: RegisterRefusal) -> Self {
         Self::Refused { family, refusal }
     }
 
@@ -278,7 +149,7 @@ impl BotState {
     ///
     /// For the families whose register entry panics on a duplicate address
     /// (Curve, Balancer weighted/stable), the door pre-checks the registry and
-    /// answers the typed [`RegistrationRefusal::AlreadyRegistered`] instead,
+    /// answers the typed [`RegisterRefusal::AlreadyRegistered`] instead,
     /// so every family's refusal crosses the door as data.
     #[must_use]
     pub fn register_pool(&mut self, registration: PoolRegistration) -> RegistrationVerdict {
@@ -287,28 +158,28 @@ impl BotState {
                 Ok(pool_id) => RegistrationVerdict::registered(pool_id, RegisteredPoolFamily::V2),
                 Err(err) => RegistrationVerdict::refused(
                     RegisteredPoolFamily::V2,
-                    RegistrationRefusal::from_v2(&err),
+                    RegisterRefusal::from(&err),
                 ),
             },
             PoolRegistration::V3(params) => match self.register_v3_pool(&params) {
                 Ok(pool_id) => RegistrationVerdict::registered(pool_id, RegisteredPoolFamily::V3),
                 Err(err) => RegistrationVerdict::refused(
                     RegisteredPoolFamily::V3,
-                    RegistrationRefusal::from_v3(&err),
+                    RegisterRefusal::from(&err),
                 ),
             },
             PoolRegistration::V4(params) => match self.register_v4_pool(&params) {
                 Ok(pool_id) => RegistrationVerdict::registered(pool_id, RegisteredPoolFamily::V4),
                 Err(err) => RegistrationVerdict::refused(
                     RegisteredPoolFamily::V4,
-                    RegistrationRefusal::from_v4(&err),
+                    RegisterRefusal::from(&err),
                 ),
             },
             PoolRegistration::Curve(params) => {
                 if self.registry.pool_addresses.contains_key(&params.address) {
                     return RegistrationVerdict::refused(
                         RegisteredPoolFamily::Curve,
-                        RegistrationRefusal::duplicate_address(params.address),
+                        duplicate_address(params.address),
                     );
                 }
                 RegistrationVerdict::registered(
@@ -320,7 +191,7 @@ impl BotState {
                 if self.registry.pool_addresses.contains_key(&params.address) {
                     return RegistrationVerdict::refused(
                         RegisteredPoolFamily::BalancerWeighted,
-                        RegistrationRefusal::duplicate_address(params.address),
+                        duplicate_address(params.address),
                     );
                 }
                 RegistrationVerdict::registered(
@@ -332,7 +203,7 @@ impl BotState {
                 if self.registry.pool_addresses.contains_key(&params.address) {
                     return RegistrationVerdict::refused(
                         RegisteredPoolFamily::BalancerStable,
-                        RegistrationRefusal::duplicate_address(params.address),
+                        duplicate_address(params.address),
                     );
                 }
                 RegistrationVerdict::registered(
@@ -346,7 +217,7 @@ impl BotState {
                 }
                 Err(err) => RegistrationVerdict::refused(
                     RegisteredPoolFamily::AerodromeV2,
-                    RegistrationRefusal::from_aerodrome(&err),
+                    RegisterRefusal::from(&err),
                 ),
             },
         }

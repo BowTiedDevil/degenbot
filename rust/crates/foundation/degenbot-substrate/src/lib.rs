@@ -59,6 +59,7 @@ pub use ::degenbot_pools::curve_state::{
 pub use ::degenbot_pools::rate_provider::{
     BalancerRateProvider, RateProviderError, StaticRateProvider,
 };
+pub use ::degenbot_pools::registration_refusal::{BuildFailure, RegisterRefusal};
 pub use ::degenbot_pools::registry::{
     ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, PoolEntrySlice,
     RegisteredPoolFamily, TokenEntry,
@@ -95,9 +96,7 @@ pub use concentrated_liquidity_orchestration::{
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use epoch::{BlockContext, Epoch, StaleEpoch};
 pub use epoch_delta::EpochDelta;
-pub use registration_door::{
-    AdmissionFailure, PoolRegistration, RegistrationRefusal, RegistrationVerdict,
-};
+pub use registration_door::{PoolRegistration, RegistrationVerdict};
 pub use route_registry::RouteRegistry;
 pub use sim_anchor::{NoSimAnchor, SimAnchorOracle, SimAnchorState, NO_SIM_ANCHOR};
 

@@ -87,6 +87,7 @@ pub mod liquidity_event;
 pub mod liquidity_event_buffer;
 pub mod pool;
 pub mod rate_provider;
+pub mod registration_refusal;
 pub mod registry;
 pub mod simulate_swap;
 pub mod slot_layout;
@@ -146,6 +147,8 @@ pub use tick_fetch::{
     BootstrapTickError, BootstrapTickWord, FetchTickWordError, FetchedTickWord, TickBootstrapRpc,
     TickWordFetcher,
 };
+
+pub use registration_refusal::{BuildFailure, RegisterRefusal};
 
 pub use pool::{
     BalanceVectorVariant, BalanceVectorView, BinnedLiquidityVariant, ConcentratedLiquidityVariant,

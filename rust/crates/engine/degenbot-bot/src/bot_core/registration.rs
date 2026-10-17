@@ -31,7 +31,7 @@ use degenbot_uniswap::dex_identity::DexVariant;
 
 use super::bot::Bot;
 use super::registration_ledger::{
-    BuildFailure, PoolFamilyTag, RefusalKind, RegisterRefusal, RegistrationPhase,
+    BuildFailure, RefusalKind, RegisterRefusal, RegisteredPoolFamily, RegistrationPhase,
 };
 use crate::bot_core::pool_builder::builder::{self};
 use crate::bot_core::pool_builder::parity;
@@ -40,7 +40,7 @@ use crate::bot_core::{
     RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolError,
     RegisterV2PoolParams, RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError,
-    RegisterV4PoolParams, RegisteredPoolFamily, TickInfo,
+    RegisterV4PoolParams, TickInfo,
 };
 
 /// The PRG-3 stance refusal: the process's fleet stance is not `fleet`, so
@@ -281,7 +281,7 @@ impl Bot {
             params.token1,
         )
         .map_err(|divergence| {
-            RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V2), &divergence)
+            RefusalKind::from_identity_divergence(Some(RegisteredPoolFamily::V2), &divergence)
         })?;
         // Derived identity completes at the request interior: the deployer +
         // init hash are a pure function of (chain_id, factory), so a caller
@@ -400,7 +400,7 @@ impl Bot {
             params.fee,
         )
         .map_err(|divergence| {
-            RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V3), &divergence)
+            RefusalKind::from_identity_divergence(Some(RegisteredPoolFamily::V3), &divergence)
         })?;
         // Derived identity completes at the request interior (see
         // `register_v2_request`).
@@ -453,7 +453,7 @@ impl Bot {
                     pool_id: params.pool_id,
                 };
                 return Err(RefusalKind::RegisterRefused {
-                    family: Some(PoolFamilyTag::V4),
+                    family: Some(RegisteredPoolFamily::V4),
                     phase: RegistrationPhase::Register,
                     reason: RegisterRefusal::AlreadyRegistered {
                         address: None,
@@ -689,7 +689,10 @@ impl Bot {
             params.stable,
         )
         .map_err(|divergence| {
-            RefusalKind::from_identity_divergence(Some(PoolFamilyTag::AerodromeV2), &divergence)
+            RefusalKind::from_identity_divergence(
+                Some(RegisteredPoolFamily::AerodromeV2),
+                &divergence,
+            )
         })?;
         RefusalKind::from_registration_verdict(
             self.state_arc()
@@ -831,7 +834,7 @@ impl Bot {
                 },
             };
             return Err(RefusalKind::RegisterRefused {
-                family: Some(PoolFamilyTag::V4),
+                family: Some(RegisteredPoolFamily::V4),
                 phase: RegistrationPhase::Register,
                 reason,
             });
@@ -897,7 +900,7 @@ impl Bot {
     ) -> Result<builder::V4PoolBuildIdentity, RefusalKind> {
         let io = self.construction_io_arc().ok_or_else(|| {
             RefusalKind::missing_construction_io(
-                Some(PoolFamilyTag::V4),
+                Some(RegisteredPoolFamily::V4),
                 RegistrationPhase::Identity,
             )
         })?;
@@ -912,7 +915,7 @@ impl Bot {
             .map_err(|err| {
                 RefusalKind::from_builder_error(
                     &err,
-                    Some(PoolFamilyTag::V4),
+                    Some(RegisteredPoolFamily::V4),
                     RegistrationPhase::Identity,
                 )
             })

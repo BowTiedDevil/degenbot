@@ -3,13 +3,12 @@
 //! One test per family registers the SAME params through the door and through
 //! the direct `register_*` entry on a fresh `BotState`, asserting the outcomes
 //! agree (pool id, family tag, state clocks, registry census). The refusal
-//! tests pin each family's typed refusal to the shape ADR-077's
-//! `RegisterRefusal` carries, so the ledger's mapping is lossless.
+//! tests pin each family's typed refusal to the shared register-refusal
+//! vocabulary the ledger stores, so the fold is lossless.
 
 use super::*;
-use crate::registration_door::{
-    AdmissionFailure, PoolRegistration, RegistrationRefusal, RegistrationVerdict,
-};
+use crate::registration_door::{PoolRegistration, RegistrationVerdict};
+use crate::{BuildFailure, RegisterRefusal};
 use crate::{
     RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolError,
@@ -321,7 +320,7 @@ fn door_refuses_duplicate_v2_as_already_registered() {
         verdict,
         RegistrationVerdict::Refused {
             family: RegisteredPoolFamily::V2,
-            refusal: RegistrationRefusal::AlreadyRegistered {
+            refusal: RegisterRefusal::AlreadyRegistered {
                 address: Some(params.address),
                 pool_key: None,
                 detail: format!(
@@ -348,7 +347,7 @@ fn door_refuses_out_of_spec_v3_as_spec_violation() {
             verdict,
             RegistrationVerdict::Refused {
                 family: RegisteredPoolFamily::V3,
-                refusal: RegistrationRefusal::SpecViolation { .. },
+                refusal: RegisterRefusal::SpecViolation { .. },
             }
         ),
         "an out-of-spec V3 field must refuse as a SpecViolation, got {verdict:?}"
@@ -365,8 +364,8 @@ fn door_refuses_dynamic_fee_v4_as_admission() {
         verdict,
         RegistrationVerdict::Refused {
             family: RegisteredPoolFamily::V4,
-            refusal: RegistrationRefusal::Admission {
-                failure: AdmissionFailure::DynamicFee,
+            refusal: RegisterRefusal::Admission {
+                failure: BuildFailure::DynamicFee,
                 hook_flags: None,
                 fee: Some(crate::V4_DYNAMIC_FEE_FLAG),
             },
@@ -387,7 +386,7 @@ fn door_refuses_duplicate_curve_without_panicking() {
         verdict,
         RegistrationVerdict::Refused {
             family: RegisteredPoolFamily::Curve,
-            refusal: RegistrationRefusal::AlreadyRegistered {
+            refusal: RegisterRefusal::AlreadyRegistered {
                 address: Some(address),
                 pool_key: None,
                 detail: format!("pool already registered: {address}"),
@@ -410,7 +409,7 @@ fn door_refuses_duplicate_balancer_weighted_without_panicking() {
             verdict,
             RegistrationVerdict::Refused {
                 family: RegisteredPoolFamily::BalancerWeighted,
-                refusal: RegistrationRefusal::AlreadyRegistered {
+                refusal: RegisterRefusal::AlreadyRegistered {
                     address: Some(_),
                     ..
                 },
@@ -433,7 +432,7 @@ fn door_refuses_duplicate_balancer_stable_without_panicking() {
             verdict,
             RegistrationVerdict::Refused {
                 family: RegisteredPoolFamily::BalancerStable,
-                refusal: RegistrationRefusal::AlreadyRegistered {
+                refusal: RegisterRefusal::AlreadyRegistered {
                     address: Some(_),
                     ..
                 },
@@ -456,7 +455,7 @@ fn door_refuses_duplicate_aerodrome_as_already_registered() {
             verdict,
             RegistrationVerdict::Refused {
                 family: RegisteredPoolFamily::AerodromeV2,
-                refusal: RegistrationRefusal::AlreadyRegistered {
+                refusal: RegisterRefusal::AlreadyRegistered {
                     address: Some(_),
                     ..
                 },

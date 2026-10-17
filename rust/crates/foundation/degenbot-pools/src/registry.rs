@@ -28,11 +28,16 @@ pub enum PoolEntry {
     AerodromeV2(Box<(AerodromeV2PoolIdentity, AerodromeV2PoolState)>),
 }
 
-/// Family tag for the address-keyed registration readers (PRG-1
-/// registry unification): the reader returns which family owns an address so
-/// a `PyO3` build adapter can fast-path onto the registered entry of record
-/// (or see a foreign-family address and fall through to the real build).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The ONE family tag: which structural family a registration concerns.
+///
+/// It serves two readers, and there is deliberately only one type for both —
+/// the address-keyed registration readers (PRG-1 registry unification) return
+/// it so a `PyO3` build adapter can fast-path onto the registered entry of
+/// record, and the registration-refusal vocabulary
+/// ([`RegisterRefusal`](crate::registration_refusal::RegisterRefusal)) rides
+/// it beside a refusal so a consumer never re-derives the family from the
+/// request. A second tag type would be a mirror.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RegisteredPoolFamily {
     V2,
     V3,

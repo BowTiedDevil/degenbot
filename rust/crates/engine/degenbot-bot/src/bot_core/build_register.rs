@@ -34,7 +34,7 @@ use super::pool_builder::builder;
 use super::pool_builder::construction_door::PoolConstruction;
 use super::pool_builder::parity;
 use super::pool_builder::route::{self, ConstructedPool};
-use super::registration_ledger::{PoolFamilyTag, RefusalKind, RegistrationPhase};
+use super::registration_ledger::{RefusalKind, RegisteredPoolFamily, RegistrationPhase};
 use super::{ConcentratedLiquiditySlotLayout, PoolTickCoverage};
 
 /// The `calculate_tokens_out` refusal (the legacy Python surface: a
@@ -75,7 +75,7 @@ impl Bot {
     /// named family (the shell formats the pymethod-prefixed message).
     fn construction_io_required(
         &self,
-        family: Option<PoolFamilyTag>,
+        family: Option<RegisteredPoolFamily>,
     ) -> Result<Arc<ConstructionIo>, RefusalKind> {
         self.construction_io_arc()
             .ok_or_else(|| RefusalKind::missing_construction_io(family, RegistrationPhase::Build))
@@ -99,13 +99,13 @@ impl Bot {
         address: Address,
         block: Option<u64>,
     ) -> Result<PoolBuildPayload, RefusalKind> {
-        let io = self.construction_io_required(Some(PoolFamilyTag::V2))?;
+        let io = self.construction_io_required(Some(RegisteredPoolFamily::V2))?;
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_v2(self.chain_id(), address, &io, block))
             .map_err(|err| {
                 RefusalKind::from_builder_error(
                     &err,
-                    Some(PoolFamilyTag::V2),
+                    Some(RegisteredPoolFamily::V2),
                     RegistrationPhase::Build,
                 )
             })?;
@@ -133,7 +133,7 @@ impl Bot {
         // here rather than trusted across the FFI seam.
         if let Some(registered) = parity::registered_address_identity(self, pool_id) {
             parity::verify_address_identity(minted, registered).map_err(|divergence| {
-                RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V2), &divergence)
+                RefusalKind::from_identity_divergence(Some(RegisteredPoolFamily::V2), &divergence)
             })?;
         }
 
@@ -166,7 +166,7 @@ impl Bot {
         address: Address,
         block: Option<u64>,
     ) -> Result<u64, RefusalKind> {
-        let io = self.construction_io_required(Some(PoolFamilyTag::AerodromeV2))?;
+        let io = self.construction_io_required(Some(RegisteredPoolFamily::AerodromeV2))?;
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_aerodrome_v2(
                 self.chain_id(),
@@ -177,7 +177,7 @@ impl Bot {
             .map_err(|err| {
                 RefusalKind::from_builder_error(
                     &err,
-                    Some(PoolFamilyTag::AerodromeV2),
+                    Some(RegisteredPoolFamily::AerodromeV2),
                     RegistrationPhase::Build,
                 )
             })?;
@@ -347,7 +347,7 @@ impl Bot {
             ))
             .into_result()
             .map_err(|refusal| {
-                RefusalKind::from_construction_refusal(&refusal, Some(PoolFamilyTag::V3))
+                RefusalKind::from_construction_refusal(&refusal, Some(RegisteredPoolFamily::V3))
             })?;
         self.finalize_v3_construct(constructed, address)
     }
@@ -388,7 +388,7 @@ impl Bot {
                 .registered_v3_payload(&address, self.chain_id())
                 .ok_or_else(|| {
                     RefusalKind::unreadable_identity(
-                        Some(PoolFamilyTag::V3),
+                        Some(RegisteredPoolFamily::V3),
                         RegistrationPhase::Register,
                         address,
                         format!("registry GET answered {address} with no readable V3 identity"),
@@ -427,7 +427,7 @@ impl Bot {
         block: Option<u64>,
         fetcher: Option<Arc<dyn TickWordFetcher>>,
     ) -> Result<(u64, String, u32, u32), RefusalKind> {
-        let io = self.construction_io_required(Some(PoolFamilyTag::V4))?;
+        let io = self.construction_io_required(Some(RegisteredPoolFamily::V4))?;
         // Capture the span identity before `identity` moves into build_v4.
         let span_manager = identity.pool_manager;
         let span_pool_id = format!("0x{}", alloy::hex::encode(identity.pool_id));
@@ -445,7 +445,7 @@ impl Bot {
             .map_err(|err| {
                 RefusalKind::from_builder_error(
                     &err,
-                    Some(PoolFamilyTag::V4),
+                    Some(RegisteredPoolFamily::V4),
                     RegistrationPhase::Build,
                 )
             })?;
@@ -484,7 +484,10 @@ impl Bot {
         {
             parity::verify_v4_identity(minted_identity, registered_identity).map_err(
                 |divergence| {
-                    RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V4), &divergence)
+                    RefusalKind::from_identity_divergence(
+                        Some(RegisteredPoolFamily::V4),
+                        &divergence,
+                    )
                 },
             )?;
         }

@@ -27,8 +27,8 @@ use pyo3::prelude::*;
 
 use degenbot_bot::arb_engine::DriverError;
 use degenbot_bot::bot_core::registration_ledger::{
-    BuildFailure, IdentityMismatchShape, LifecyclePrecondition, PoolFamilyTag, RefusalKind,
-    RegisterRefusal, SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
+    BuildFailure, IdentityMismatchShape, LifecyclePrecondition, RefusalKind, RegisterRefusal,
+    RegisteredPoolFamily, SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
 };
 use degenbot_bot::bot_core::RegisterV2PoolError;
 use degenbot_pools::state_history::JournalError;
@@ -167,7 +167,7 @@ fn map_build_failure(failure: BuildFailure) -> PyErr {
 
 /// The registry-insert refusal's Python surface (the historical
 /// `map_register_v*_err` rendering).
-fn map_register_refusal(family: Option<PoolFamilyTag>, reason: RegisterRefusal) -> PyErr {
+fn map_register_refusal(family: Option<RegisteredPoolFamily>, reason: RegisterRefusal) -> PyErr {
     match reason {
         RegisterRefusal::AlreadyRegistered {
             address, pool_key, ..
@@ -216,11 +216,11 @@ fn map_admission(failure: BuildFailure, hook_flags: Option<u16>, fee: Option<u32
 }
 
 /// The family label the registration messages spell.
-fn family_label(family: Option<PoolFamilyTag>) -> &'static str {
+fn family_label(family: Option<RegisteredPoolFamily>) -> &'static str {
     match family {
-        Some(PoolFamilyTag::V3) => "V3",
-        Some(PoolFamilyTag::AerodromeV2) => "Aerodrome",
-        Some(PoolFamilyTag::V4) => "V4",
+        Some(RegisteredPoolFamily::V3) => "V3",
+        Some(RegisteredPoolFamily::AerodromeV2) => "Aerodrome",
+        Some(RegisteredPoolFamily::V4) => "V4",
         // The address-keyed families share the V2 rendering; only V2 reaches
         // a register refusal today.
         _ => "V2",
@@ -684,7 +684,7 @@ mod tests {
         // the pins below construct the ledger arms directly and assert the
         // shared `map_refusal` rendering.
         let kind = |reason| RefusalKind::RegisterRefused {
-            family: Some(PoolFamilyTag::V4),
+            family: Some(RegisteredPoolFamily::V4),
             phase: RegistrationPhase::Register,
             reason,
         };
@@ -867,7 +867,7 @@ mod tests {
             message(&map_build_refusal(
                 "build_v2_pool",
                 RefusalKind::missing_construction_io(
-                    Some(PoolFamilyTag::V2),
+                    Some(RegisteredPoolFamily::V2),
                     RegistrationPhase::Build,
                 ),
             )),
@@ -887,7 +887,7 @@ mod tests {
     fn v3_build_refusals_pin_the_race_answer() {
         assert_eq!(
             message(&map_refusal(RefusalKind::unreadable_identity(
-                Some(PoolFamilyTag::V3),
+                Some(RegisteredPoolFamily::V3),
                 RegistrationPhase::Register,
                 addr("0x0606060606060606060606060606060606060606"),
                 "registry GET answered 0x0606060606060606060606060606060606060606 with no readable V3 identity".to_string(),
@@ -949,7 +949,7 @@ mod tests {
         let expected = mismatch.to_string();
         assert_eq!(
             value_error(&map_refusal(RefusalKind::from_identity_divergence(
-                Some(PoolFamilyTag::V2),
+                Some(RegisteredPoolFamily::V2),
                 &IdentityDivergence::Create2(mismatch),
             ))),
             expected
@@ -978,12 +978,12 @@ mod tests {
         let divergence = IdentityDivergence::Create2(address_mismatch(1));
 
         let register = map_refusal(RefusalKind::from_identity_divergence(
-            Some(PoolFamilyTag::V2),
+            Some(RegisteredPoolFamily::V2),
             &divergence,
         ));
         let build = map_refusal(RefusalKind::from_builder_error(
             &PoolBuilderError::Identity(Box::new(divergence)),
-            Some(PoolFamilyTag::V2),
+            Some(RegisteredPoolFamily::V2),
             RegistrationPhase::Build,
         ));
 
@@ -1000,7 +1000,7 @@ mod tests {
         let expected = mismatch.to_string();
         assert_eq!(
             value_error(&map_refusal(RefusalKind::from_identity_divergence(
-                Some(PoolFamilyTag::AerodromeV2),
+                Some(RegisteredPoolFamily::AerodromeV2),
                 &IdentityDivergence::Create2(mismatch),
             ))),
             expected
@@ -1032,7 +1032,7 @@ mod tests {
             message(&map_build_refusal(
                 "resolve_v4_identity",
                 RefusalKind::missing_construction_io(
-                    Some(PoolFamilyTag::V4),
+                    Some(RegisteredPoolFamily::V4),
                     RegistrationPhase::Identity,
                 ),
             )),
