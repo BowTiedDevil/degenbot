@@ -357,9 +357,12 @@ pub(crate) fn build_int_v3_sequence<H: WalkHost>(
 }
 
 /// `V4PoolState::build_int_v4_sequence` — build an integer tick-range
-/// sequence for the V4 pool. Identical concentrated liquidity math to [`build_int_v3_sequence`];
-/// the type is named `IntV3TickRangeSequence` but applies equally to V4
-/// hops. `protocol_fee` is V4's packed `slot0.protocolFee`, passed by the
+/// sequence for the V4 pool. The type is named `IntV3TickRangeSequence` but
+/// applies equally to V4 hops. The walk is [`build_int_v3_sequence`]'s, with
+/// V4's fee convention in place of V3's `lp_fee` — including on the
+/// current-tick leading segment, which is modeled here exactly as the V3 verb
+/// models it (see below) because `Pool.sol` crosses ticks with the same
+/// semantics. `protocol_fee` is V4's packed `slot0.protocolFee`, passed by the
 /// V4 adapter (V3 has no protocol fee).
 ///
 /// Returns `None` if insufficient tick data.
@@ -387,33 +390,65 @@ pub(crate) fn build_int_v4_sequence<H: WalkHost>(
     let gamma_numer = u64::from(1_000_000u32.checked_sub(swap_fee)?);
     let fee_denom = 1_000_000u64;
 
-    let mut int_ranges = Vec::with_capacity(use_ranges.len());
-    for (i, r) in use_ranges.iter().enumerate() {
-        let sqrt_price_x96 = if i == 0 {
-            host.sqrt_price_x96()
-        } else if zero_for_one {
-            use_ranges[i - 1].sqrt_price_upper
-        } else {
-            use_ranges[i - 1].sqrt_price_lower
-        };
+    // The current-tick net (zfo only) — same semantics as the V3 case: the
+    // PoolManager swap loop resolves `tickNext = current tick` (lte,
+    // inclusive) for zfo, a zero-amount step that crosses the tick and
+    // applies `liquidity -= liquidityNet(currentTick)`. See the V3 sibling in
+    // `build_int_v3_sequence`. ofz uses `gt` (exclusive) and does NOT re-cross
+    // the current tick.
+    //
+    // The crossing is modeled as the V3 verb models it: the segment the swap
+    // sweeps BEFORE reaching sqrt(currentTick) is a leading hop at the
+    // pre-drain stored liquidity, and the net is applied to the ranges below.
+    // Folding the net into range 0 unconditionally prices that segment at the
+    // post-drain liquidity — an over-prediction for a shallow swap that
+    // partial-fills inside it (the `CurrencyNotSettled` direction) and a
+    // zero-liquidity first range when the drain equals the stored liquidity
+    // (a silent missed opportunity).
+    let current_tick_net: i128 = if zero_for_one {
+        // The low-128-bit int128 projection (shared
+        // `TickInfo::liquidity_net_i128`).
+        host.tick_data()
+            .get(&host.tick())
+            .map_or(0, TickInfo::liquidity_net_i128)
+    } else {
+        0
+    };
+    let base_liquidity: i128 = host.liquidity().cast_signed() - current_tick_net;
 
-        // V4 step-1 current-tick drain (zfo only) — same semantics as the
-        // V3 case: the PoolManager swap loop resolves `tickNext = current
-        // tick` (lte, inclusive) for zfo, a zero-amount step that crosses
-        // the tick and applies `liquidity -= liquidityNet(currentTick)`.
-        // See the V3 sibling in `build_int_v3_sequence` and the mainnet
-        // fixture logs/fixtures/v2_v3_v3_solver_divergence_25641093.md.
-        // ofz uses `gt` (exclusive) and does NOT re-cross the current tick.
-        let current_tick_drain: i128 = if zero_for_one {
-            // The low-128-bit int128 projection (shared
-            // `TickInfo::liquidity_net_i128`).
-            host.tick_data()
-                .get(&host.tick())
-                .map_or(0, TickInfo::liquidity_net_i128)
-        } else {
-            0
-        };
-        let base_liquidity: i128 = host.liquidity().cast_signed() - current_tick_drain;
+    let has_leading_current_segment = zero_for_one && host.tick_data().contains_key(&host.tick());
+
+    let mut int_ranges = Vec::with_capacity(use_ranges.len() + 1);
+
+    // Contract-faithful leading segment (zfo + initialized current tick only),
+    // fee included: the swap's first step targets sqrt(currentTick) while
+    // `state.liquidity` is still the stored (pre-drain) value, so model
+    // [current, sqrt(currentTick)] as a leading hop at stored liquidity. The
+    // below computed ranges then apply the net at the crossing.
+    if has_leading_current_segment {
+        let tick_sqrt =
+            U256::from(get_sqrt_ratio_at_tick_internal(host.tick()).unwrap_or(U160::ZERO));
+        int_ranges.push(IntV3TickRangeHop {
+            liquidity: host.liquidity(),
+            sqrt_price_x96: host.sqrt_price_x96(),
+            sqrt_price_lower_x96: tick_sqrt,
+            sqrt_price_upper_x96: tick_sqrt,
+            gamma_numer,
+            fee_denom,
+            zero_for_one,
+            word_boundary_prices: Vec::new(),
+        });
+    }
+
+    for (i, r) in use_ranges.iter().enumerate() {
+        let sqrt_price_x96 = int_range_entry_sqrt_price(
+            i,
+            has_leading_current_segment,
+            zero_for_one,
+            host.sqrt_price_x96(),
+            host.tick(),
+            use_ranges,
+        );
 
         let range_liquidity = int_range_liquidity(i, base_liquidity, zero_for_one, use_ranges);
 

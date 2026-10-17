@@ -17,8 +17,8 @@
 //! invisible in normal runs.
 //!
 //! concentrated liquidity guardrail: [`concentrated_liquidity`] holds two SELF-CONTAINED entries. There is deliberately
-//! no shared V3/V4 constructor — fee convention, current-tick drain framing,
-//! and net-sign direction differ (GLOSSARY.md "concentrated-liquidity-projection guardrail"); the
+//! no shared V3/V4 constructor — fee convention and net-sign direction differ
+//! (GLOSSARY.md "concentrated-liquidity-projection guardrail"); the
 //! shared surface is only the file + the thin `ResolvedHop` wrap + nonce
 //! return.
 

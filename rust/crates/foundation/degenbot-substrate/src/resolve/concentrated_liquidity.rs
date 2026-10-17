@@ -8,9 +8,8 @@
 //! `degenbot_pools::families::concentrated_liquidity::capture_hop` — where the
 //! design-private halves (`families/concentrated_liquidity/{v3.rs,v4.rs}`)
 //! deliberately share NO code. The `build_int_v*_sequence` builders own the
-//! three load-bearing differences — fee convention (V3 `gamma = 1e6 − lp_fee`
-//! vs V4 combined `swapFee`), current-tick drain framing (V3 leading hop vs
-//! V4 `base_liquidity` fold), and per-range net-sign direction (V4 only).
+//! load-bearing differences — fee convention (V3 `gamma = 1e6 − lp_fee` vs V4
+//! combined `swapFee`) and per-range net-sign direction (V4 only).
 //! This file keeps ONLY the state-owner seam: the registry lookups, the ADR-037
 //! hook refusal (V4's identity-side fact), the nonce, and the one
 //! `ResolvedHop` wrap per variant.
@@ -19,9 +18,9 @@
 //! builders): the promoted fused-epoch pair (cache-lab winner S1) lives in
 //! [`PreparedConcentratedLiquidityHop::derive`] — ONE crossing build derives BOTH the crossing
 //! table and the word profiles from it, and folds the sequence's derivation
-//! fingerprint once. It reinterprets nothing about fee convention,
-//! current-tick drain framing, or net-sign direction; only the (identical for
-//! both families) table derivation is shared.
+//! fingerprint once. It reinterprets nothing about fee convention or net-sign
+//! direction; only the (identical for both families) table derivation is
+//! shared.
 
 use degenbot_pools::families::concentrated_liquidity as concentrated_liquidity_read;
 use degenbot_pools::solve::concentrated_liquidity::PreparedConcentratedLiquidityHop;

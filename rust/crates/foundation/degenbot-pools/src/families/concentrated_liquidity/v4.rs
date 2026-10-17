@@ -10,9 +10,6 @@
 //!   `swapFee = calculateSwapFee(protocol_fee_dir, lp_fee)` (the identity's
 //!   `pool_key.fee` plus the packed per-direction `protocol_fee`), where V3
 //!   charges `gamma = 1e6 − lp_fee`;
-//! - **current-tick drain framing** — the V4 sequence builder folds
-//!   `base_liquidity` at the current tick first, where the V3 builder frames
-//!   a leading hop;
 //! - **per-range net-sign direction** — V4 re-derives the per-range net
 //!   liquidity sign from the walk direction (V4-only);
 //! - **engine sign convention** — V4's `amountSpecified` is NEGATIVE for

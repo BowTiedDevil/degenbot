@@ -9,9 +9,6 @@
 //! - **fee convention** — V3 charges `gamma = 1e6 − lp_fee` (the identity's
 //!   `lp_fee` pip fraction), where V4 charges the combined
 //!   `swapFee = calculateSwapFee(protocol_fee_dir, lp_fee)`;
-//! - **current-tick drain framing** — the V3 sequence builder frames the
-//!   leading hop at the current tick itself, where the V4 builder folds
-//!   `base_liquidity` first;
 //! - **per-range net-sign direction** — V3 has no per-range net-sign
 //!   re-derivation (V4-only);
 //! - **engine sign convention** — V3's `amountSpecified` is positive for
