@@ -20,6 +20,10 @@
 //!   requested pool to a constructed, registered pool (route order + DB
 //!   two-step identity + get-or-register, classified on the registration
 //!   ledger's build-refusal taxonomy).
+//! - [`construction_door`] — the construction door: the ONE
+//!   [`PoolConstruction`](construction_door::PoolConstruction) request and
+//!   [`ConstructionVerdict`](construction_door::ConstructionVerdict) outcome,
+//!   dispatching INTO [`route`]'s interior (ADR-078 D2).
 //!
 //! Note: `build_curve_pool` / `build_balancer_*` are not yet re-exported from
 //! the `degenbot` umbrella nor exposed on `PyBot` (see ADR-023/D4);
@@ -27,6 +31,7 @@
 
 pub mod builder;
 pub mod choreography;
+pub mod construction_door;
 pub mod curve_choreography;
 pub mod parity;
 pub mod route;
