@@ -8,6 +8,13 @@
 //! only dispatches, so every existing `register_*` entry compiles and behaves
 //! identically.
 //!
+//! Updates are deliberately NOT door requests: an update's dispatch axis is
+//! `(event kind, key kind, phase, presence)` — routed by the live path's
+//! total routing table into `RouteAction`/`ApplyOutcome`, with the
+//! unregistered case a documented no-op — not pool family, so a `PoolUpdate`
+//! variant enum would split one shared arm and merge two key axes. The
+//! update path's own entry is `Bot::refresh_pool`.
+//!
 //! # Refusal vocabulary
 //!
 //! The refusal payload is the foundation crate's ONE shared vocabulary:
