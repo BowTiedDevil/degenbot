@@ -2,7 +2,8 @@
 
 ``ConcentratedLiquidityView.coverage`` returns the registered pyclass enum
 ``degenbot._ffi.PoolTickCoverage`` — never the retired stringified form — and
-the Python CL state reads that enum with no ``coverage == "sparse"`` probe.
+the Python concentrated liquidity state reads that enum with no
+``coverage == "sparse"`` probe.
 The V3/V4 ``sparse_liquidity_map`` properties share one implementation via the
 ``ConcentratedLiquidityPoolState`` mixin (survey C4).
 """

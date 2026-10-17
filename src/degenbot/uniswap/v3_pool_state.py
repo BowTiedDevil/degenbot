@@ -27,7 +27,7 @@ class V3PoolState(ConcentratedLiquidityPoolState):
     - _fee: pool fee in hundredths of a bip (e.g. 3000 = 0.3%)
     - _tick_spacing: granularity of the tick bitmap
 
-    Mutable state (CL scalars + liquidity distribution):
+    Mutable state (concentrated liquidity scalars + liquidity distribution):
     - liquidity, sqrt_price_x96, tick, tick_bitmap (word keys), tick_data
     """
 

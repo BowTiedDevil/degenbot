@@ -5,13 +5,14 @@ The behavioral companion to the Rust `parity_v3_swap.rs` test. Proves the
 the PyO3 binding) produces the **same** `amount_out` as the Rust consumer
 (`BotState` directly).
 
-The V3 CL swap math has no simple closed form (the V2 test's hand-derived
-`getAmountOut` oracle doesn't apply — `v3_simulate_swap` routes through
-`compute_swap_step_v3` + the tick walk). So this Tier-2 seed asserts the
+The V3 concentrated liquidity swap math has no simple closed form (the
+V2 test's hand-derived `getAmountOut` oracle doesn't apply —
+`v3_simulate_swap` routes through `compute_swap_step_v3` + the tick
+walk). So this Tier-2 seed asserts the
 **direct FFI-seam-lossless claim**: Python-consumer == Rust-consumer ==
 recorded constant, plus monotonicity + direction-symmetry sanity checks.
-Divergence = a lossy FFI seam on the CL swap path, which the V2-only gate
-cannot catch.
+Divergence = a lossy FFI seam on the concentrated liquidity swap
+path, which the V2-only gate cannot catch.
 
 ## The shared contract
 
@@ -83,11 +84,12 @@ def _register_canonical_v3_pool(py_bot: Bot) -> int:
 def test_python_consumer_v3_swap_matches_recorded_constant() -> None:
     """The Bot Python driver reproduces the recorded V3 swap constant.
 
-    Python side of the Tier-2 dual-driver gate (V3 CL path). The Rust side
+    Python side of the Tier-2 dual-driver gate (V3 concentrated
+    liquidity path). The Rust side
     (`rust/crates/facade/degenbot/tests/parity_v3_swap.rs`) loads the same fixture
     file and drives it through `BotState` directly; both MUST equal
-    `_EXPECTED_AMOUNT_OUT_ZFO`. Divergence = a lossy FFI seam on the CL swap
-    path.
+    `_EXPECTED_AMOUNT_OUT_ZFO`. Divergence = a lossy FFI seam on the
+    concentrated liquidity swap path.
     """
     py_bot = Bot()
     pool_id = _register_canonical_v3_pool(py_bot)
@@ -98,8 +100,9 @@ def test_python_consumer_v3_swap_matches_recorded_constant() -> None:
     )
     assert amount_out == _EXPECTED_AMOUNT_OUT_ZFO, (
         "Python consumer V3 swap must match the recorded constant — divergence "
-        "from the Rust consumer means the PyO3 delegation is lossy on the CL "
-        f"swap path (got {amount_out}, want {_EXPECTED_AMOUNT_OUT_ZFO})"
+        "from the Rust consumer means the PyO3 delegation is lossy on the "
+        f"concentrated liquidity swap path (got {amount_out}, "
+        f"want {_EXPECTED_AMOUNT_OUT_ZFO})"
     )
 
     # Monotonicity sanity: a larger in-tick input -> strictly-larger output.

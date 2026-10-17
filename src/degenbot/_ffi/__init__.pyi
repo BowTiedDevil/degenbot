@@ -37,7 +37,7 @@ class HighFeePoolRejectedError(PoolRegistrationError):
 
 class HookedPoolRejectedError(PoolRegistrationError):
     """
-    A V4 pool with an amount-modifying hook was rejected at registration: the solver's CL math assumes no hook intervention.
+    A V4 pool with an amount-modifying hook was rejected at registration: the solver's concentrated-liquidity math assumes no hook intervention.
     """
 
 class PathRegistryFullError(ValueError):

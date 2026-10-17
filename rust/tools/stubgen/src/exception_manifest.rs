@@ -88,7 +88,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         rust_path: "bot::engine::errors",
         name: "HookedPoolRejectedError",
         base: "PoolRegistrationError",
-        message: "A V4 pool with an amount-modifying hook was rejected at registration: the solver's CL math assumes no hook intervention.",
+        message: "A V4 pool with an amount-modifying hook was rejected at registration: the solver's concentrated-liquidity math assumes no hook intervention.",
     },
     ExceptionIsland {
         python_module: "degenbot._ffi",

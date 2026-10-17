@@ -281,8 +281,9 @@ class EngineRegistry:
         applies buffered events on top of stale snapshot data.
 
         Pool admission (amount-modifying hooks / dynamic fees) is enforced
-        by the Rust core as a *correctness floor* — the solver's V3-CL math
-        assumes no hook intervention + a fixed fee. A rejection surfaces as a
+        by the Rust core as a *correctness floor* — the solver's
+        V3 concentrated-liquidity math assumes no hook intervention + a
+        fixed fee. A rejection surfaces as a
         typed ``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``
         (both subclass ``ValueError``); ``build_paths`` classifies by type.
 

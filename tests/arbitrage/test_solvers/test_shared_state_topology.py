@@ -435,8 +435,9 @@ class TestSharedStateTopologyV3:
         )
         v2_handle = core.get_pool(v2_pool_id)
         assert v2_handle is not None
-        # A non-CL family has no tick state: the CL-only write is refused
-        # loudly (a V2 pool receiving a CL liquidity update is a misuse).
+        # A non-concentrated-liquidity family has no tick state: the
+        # concentrated-liquidity-only write is refused loudly (a V2 pool
+        # receiving a concentrated-liquidity update is a misuse).
         with pytest.raises(ValueError, match="has no concentrated-liquidity"):
             v2_handle.apply_liquidity_update(
                 tick_lower=tick_lower,
@@ -1320,8 +1321,9 @@ class TestSharedStateTopologyBalancerWeighted:
         silent no-op (``False``) — the structural-family dispatch contract
         (ADR-017 D1): the balance-vector apply dispatcher matches
         ``Curve | BalancerWeighted | BalancerStable`` and is ``None`` on any
-        non-balance-vector pool. A V3 pool registered under the CL family must
-        NOT be mutated by a balance-vector companion.
+        non-balance-vector pool. A V3 pool registered under the
+        concentrated liquidity family must NOT be mutated by a
+        balance-vector companion.
         """
         core = Bot()
         v3_pool_id = core.register_v3_pool(
@@ -1533,8 +1535,9 @@ class TestSharedStateTopologyBalancerStable:
         silent no-op (``False``) — the structural-family dispatch contract
         (ADR-017 D1): the balance-vector apply dispatcher matches
         ``Curve | BalancerWeighted | BalancerStable`` and is ``None`` on any
-        non-balance-vector pool. A V3 pool registered under the CL family must
-        NOT be mutated by a balance-vector companion.
+        non-balance-vector pool. A V3 pool registered under the
+        concentrated liquidity family must NOT be mutated by a
+        balance-vector companion.
         """
         core = Bot()
         v3_pool_id = core.register_v3_pool(

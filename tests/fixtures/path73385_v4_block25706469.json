@@ -1,5 +1,5 @@
 {
- "_doc": "Exact V4 CL pool state (path 73385 V3-V4-V3, USDC/USDT fee10 ts1) at block 25706469. DB liquidity snapshot + on-chain scalars read at TARGET; populated by capture_path73385_v4_fixture.py.",
+ "_doc": "Exact V4 concentrated liquidity pool state (path 73385 V3-V4-V3, USDC/USDT fee10 ts1) at block 25706469. DB liquidity snapshot + on-chain scalars read at TARGET; populated by capture_path73385_v4_fixture.py.",
  "target_block": 25706469,
  "recorded_solve": {
   "optimal_input": "44421383036608956",

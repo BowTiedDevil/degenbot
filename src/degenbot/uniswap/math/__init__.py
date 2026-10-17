@@ -10,9 +10,9 @@ across future Rust reshuffles, and lets the Rust crate structure
 (``degenbot-concentrated-liquidity-math``) show through to Python.
 
 The functions are thin PyO3 wrappers over the pure-Rust ``degenbot-concentrated-liquidity-math``
-core crate. The CL math is shared across Uniswap V3 and V4, so this companion
-lives at ``degenbot.uniswap.math`` (variant-neutral), shared by the V3 and V4
-families.
+core crate. The concentrated liquidity math is shared across Uniswap
+V3 and V4, so this companion lives at ``degenbot.uniswap.math``
+(variant-neutral), shared by the V3 and V4 families.
 """
 
 from degenbot._ffi.concentrated_liquidity_math import (

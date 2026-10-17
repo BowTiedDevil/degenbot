@@ -1,11 +1,11 @@
-"""Shared concentrated-liquidity (CL) companion surface.
+"""Shared concentrated-liquidity companion surface.
 
 ``UniswapV3Pool`` and ``UniswapV4Pool`` carried duplicated copies of the
-same CL write-back surface — the tick-map reads, the 3-format
+same concentrated liquidity write-back surface — the tick-map reads, the 3-format
 ``update_tick_data`` normalisation, ``external_update``,
 ``update_liquidity_map`` and the discard/restore delegation. This module
-collapses that surface into one base so "CL state write-back + the sparse
-backfill gate" is written once.
+collapses that surface into one base so "concentrated liquidity state
+write-back + the sparse backfill gate" is written once.
 
 What stays on the subclasses: identity (address/factory/tokens/fee/
 pool_key/hook/protocol-fees), the family calc mixins, and ``__eq__``/
@@ -42,18 +42,20 @@ if TYPE_CHECKING:
     )
 
 
-# A CL state (the family NamedTuple the ``state`` property builds).
+# A concentrated liquidity state (the family NamedTuple the ``state`` property builds).
 type CLState = Any
 
 
 class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
-    """Shared CL companion surface over a Rust-owned ``Pool`` handle.
+    """Shared concentrated liquidity companion surface.
+
+    Wraps a Rust-owned ``Pool`` handle.
 
     Subclasses: ``UniswapV3Pool`` / ``UniswapV4Pool`` (and anything built
-    over the CL handle, e.g. ``AerodromeV3Pool``). The subclass state
-    mixins supply ``tick_spacing`` and the identity; this base supplies the
-    Rust-owned scalar/tick-map reads + the write-back delegation + the
-    unified sparse-word backfill gate.
+    over the concentrated liquidity handle, e.g. ``AerodromeV3Pool``).
+    The subclass state mixins supply ``tick_spacing`` and the identity;
+    this base supplies the Rust-owned scalar/tick-map reads + the
+    write-back delegation + the unified sparse-word backfill gate.
     """
 
     _py_pool: Pool
@@ -62,7 +64,8 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
     address: ChecksummedAddress
 
     @property
-    def tick_spacing(self) -> int:  # pragma: no cover - overridden by both CL families
+    # Both concentrated liquidity families override this.
+    def tick_spacing(self) -> int:  # pragma: no cover
         """Tick spacing (overridden: V3 state mixin, V4 pool key)."""
         msg = "tick_spacing must be provided by the family"
         raise NotImplementedError(msg)
@@ -135,7 +138,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         """
         return self._initial_state_block
 
-    # --- shared CL write-back ----------------------------------------------
+    # --- shared concentrated liquidity write-back --------------------------
 
     def swap_is_viable(  # ruff:ignore[no-self-use]
         self,

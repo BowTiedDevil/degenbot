@@ -4,8 +4,9 @@ Background — ``EngineRegistry.register_v4_pool`` and ``build_paths``
 previously classified V4 pool rejections by string-matching
 ``"amount-modifying hooks"`` / ``"dynamic fees"`` inside a ``ValueError``.
 That is the same fragile pattern TODO-53b7453b removed for verification
-errors. Pool admission is a *correctness floor* (the solver's CL math
-assumes no hook intervention; a dynamic fee breaks the fixed-fee solve), so
+errors. Pool admission is a *correctness floor* (the solver's
+concentrated liquidity math assumes no hook intervention; a dynamic fee
+breaks the fixed-fee solve), so
 the Rust core refuses such pools — and the refusal must surface as a typed
 Python exception (subclassing ``ValueError`` so existing broad
 ``except ValueError`` handlers still catch it) so Python classifies by type.
