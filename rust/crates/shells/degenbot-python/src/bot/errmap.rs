@@ -10,8 +10,9 @@
 //! (ADR-077 D2): every registration-phase refusal — the register, build,
 //! identity, verify, lifecycle, and snapshot-load families — is a
 //! [`RefusalKind`] variant, and this module renders it. The typed
-//! `degenbot_pools` register errors keep a thin entry (`map_register_v*_err`)
-//! that delegates to it.
+//! `degenbot_pools` register errors keep a thin entry (`map_register_v2_err`)
+//! that delegates to it; the V4 family's refusals cross only as the one
+//! [`RefusalKind`] vocabulary (no typed-error mapper).
 //!
 //! Address parsing shares the same contract:
 //! [`degenbot_bot::bot_core::registration::parse_address_str`] owns the
@@ -29,7 +30,7 @@ use degenbot_bot::bot_core::registration_ledger::{
     BuildFailure, IdentityMismatchShape, LifecyclePrecondition, PoolFamilyTag, RefusalKind,
     RegisterRefusal, SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
 };
-use degenbot_bot::bot_core::{RegisterV2PoolError, RegisterV4PoolError};
+use degenbot_bot::bot_core::RegisterV2PoolError;
 use degenbot_pools::state_history::JournalError;
 
 use crate::bot::engine::{
@@ -193,8 +194,8 @@ fn map_register_refusal(family: Option<PoolFamilyTag>, reason: RegisterRefusal) 
     }
 }
 
-/// The V4 admission refusals' Python surface (the historical
-/// `map_register_v4_err` rendering).
+/// The V4 admission refusals' Python surface (the historical register
+/// refusal's rendering, now the shared `map_refusal` path).
 fn map_admission(failure: BuildFailure, hook_flags: Option<u16>, fee: Option<u32>) -> PyErr {
     match failure {
         BuildFailure::HookedPool => HookedPoolRejectedError::new_err(format!(
@@ -256,30 +257,6 @@ fn snapshot_reason_detail(reason: &SnapshotLoadReason) -> &str {
 /// refusal mapper (the V2 address-keyed insert refusal).
 pub(crate) fn map_register_v2_err(err: &RegisterV2PoolError) -> PyErr {
     map_refusal(RefusalKind::from_register_v2_error(err))
-}
-
-/// Map a [`RegisterV4PoolError`] to its Python surface through the one
-/// refusal mapper.
-///
-/// - `HookedPool` → [`HookedPoolRejectedError`] (V4 amount-modifying-hook
-///   admission floor — the solver's concentrated liquidity math assumes no hook intervention).
-/// - `DynamicFee` → [`DynamicFeePoolRejectedError`] (V4 dynamic-fee
-///   admission floor — the solver assumes a fixed fee).
-/// - `FeeExceedsEncoderLimit` → [`HighFeePoolRejectedError`] (V4 static-fee
-///   exceeds the `cmd_executor`'s 2-byte encoding field; the fee is
-///   protocol-valid but un-encodable and unprofitable).
-/// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`] (duplicate
-///   `(pool_manager, pool_id)` registration — a wiring/programming error
-///   surfaced at admission time, unified with the V2/V3 twins under
-///   `PoolRegistrationError`).
-/// - `SpecViolation` → [`SpecViolationError`] (out-of-spec
-///   sqrtPriceX96/tick/fee/tickSpacing).
-///
-/// The message text is byte-for-byte the legacy `Err(String)` formatting, so
-/// `build_paths`'s classification (now `isinstance`, was substring) matches
-/// the same diagnostics.
-pub(crate) fn map_register_v4_err(err: &RegisterV4PoolError) -> PyErr {
-    map_refusal(RefusalKind::from_register_v4_error(err))
 }
 
 /// Map the typed path-registration refusal: a full registry is the benign
@@ -702,7 +679,21 @@ mod tests {
 
     #[test]
     fn register_v4_err_pins_the_vocabulary() {
-        let err = map_register_v4_err(&RegisterV4PoolError::HookedPool { hook_flags: 1 });
+        // The V4 refusals cross only as the one `RefusalKind` vocabulary —
+        // the admission arms ride `BuildFailure` per the ledger's fold — so
+        // the pins below construct the ledger arms directly and assert the
+        // shared `map_refusal` rendering.
+        let kind = |reason| RefusalKind::RegisterRefused {
+            family: Some(PoolFamilyTag::V4),
+            phase: RegistrationPhase::Register,
+            reason,
+        };
+
+        let err = map_refusal(kind(RegisterRefusal::Admission {
+            failure: BuildFailure::HookedPool,
+            hook_flags: Some(1),
+            fee: None,
+        }));
         assert_eq!(
             message(&err),
             format!(
@@ -711,22 +702,38 @@ mod tests {
             )
         );
 
-        let err = map_register_v4_err(&RegisterV4PoolError::DynamicFee { fee: 0x80_0000 });
+        let err = map_refusal(kind(RegisterRefusal::Admission {
+            failure: BuildFailure::DynamicFee,
+            hook_flags: None,
+            fee: Some(0x80_0000),
+        }));
         assert_eq!(
             message(&err),
             "V4 pool has dynamic fee (fee=0x800000) — excluded from arbitrage"
         );
 
-        let err = map_register_v4_err(&RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 70_000 });
+        let err = map_refusal(kind(RegisterRefusal::Admission {
+            failure: BuildFailure::HighFee,
+            hook_flags: None,
+            fee: Some(70_000),
+        }));
         assert_eq!(
             message(&err),
             "V4 pool fee (fee=70000) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage"
         );
 
-        let err = map_register_v4_err(&RegisterV4PoolError::AlreadyRegistered {
+        let already = RegisterV4PoolError::AlreadyRegistered {
             pool_manager: addr("0x0303030303030303030303030303030303030303"),
             pool_id: [0u8; 32],
-        });
+        };
+        let err = map_refusal(kind(RegisterRefusal::AlreadyRegistered {
+            address: None,
+            pool_key: Some((
+                addr("0x0303030303030303030303030303030303030303"),
+                [0u8; 32],
+            )),
+            detail: format!("{already:?}"),
+        }));
         assert_eq!(
             message(&err),
             format!(
@@ -736,10 +743,13 @@ mod tests {
             )
         );
 
-        let err = map_register_v4_err(&RegisterV4PoolError::SpecViolation(SpecViolation {
-            field: "tick_spacing",
-            value: SpecValue::I32(0),
-            bound: "nonzero",
+        let err = map_refusal(kind(RegisterRefusal::SpecViolation {
+            detail: SpecViolation {
+                field: "tick_spacing",
+                value: SpecValue::I32(0),
+                bound: "nonzero",
+            }
+            .to_string(),
         }));
         assert_eq!(
             message(&err),

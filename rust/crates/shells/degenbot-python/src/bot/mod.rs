@@ -36,7 +36,7 @@ use alloy::primitives::Address;
 use crate::bot::engine::{hex_string_to_pool_id, SpecViolationError};
 use crate::bot::errmap::{
     journal_err_to_py, map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err,
-    map_driver_err, map_no_construction_io, map_refusal, map_register_v2_err, map_register_v4_err,
+    map_driver_err, map_no_construction_io, map_refusal, map_register_v2_err,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -274,12 +274,12 @@ impl PyBot {
         // PRG-2: the keyed registration gate refuses an immutable-admission
         // pool (dynamic fee / fee-exceeds-encoder-limit) BEFORE any RPC work
         // on the registration path, with the exact exception class the live
-        // registration refusal would have raised (map_register_v4_err). The
+        // registration refusal would have raised (map_refusal). The
         // verdict consult + payload shaping are core-owned
         // ([`Bot::registered_v4_payload`]); this wrapper only releases the
         // GIL across the read and maps the typed refusal.
         py.detach(|| self.bot.registered_v4_payload(pm, pid))
-            .map_err(|err| map_register_v4_err(&err))
+            .map_err(map_refusal)
     }
 
     /// ADR-006 D4 (T3): attach the pump lifecycle state owned by a
@@ -2116,8 +2116,8 @@ impl PyBot {
         // the PRG-2 keyed verdicts) are core-owned behind it. The GIL is
         // released across the verb (see `register_token`);
         // `RegisterV4PoolParams` is `Send`, and the refusal is mapped to a
-        // `PyErr` OUTSIDE the closure via the one refusal mapper (the same
-        // surface the `map_register_v4_err` delegate renders).
+        // `PyErr` OUTSIDE the closure via the one refusal mapper
+        // (`map_refusal`).
         py.detach(|| self.bot.register(PoolRegistration::V4(Box::new(params))))
             .map_err(map_refusal)
     }

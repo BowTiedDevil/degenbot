@@ -30,7 +30,9 @@ use degenbot_substrate::PoolRegistration;
 use degenbot_uniswap::dex_identity::DexVariant;
 
 use super::bot::Bot;
-use super::registration_ledger::{PoolFamilyTag, RefusalKind, RegistrationPhase};
+use super::registration_ledger::{
+    BuildFailure, PoolFamilyTag, RefusalKind, RegisterRefusal, RegistrationPhase,
+};
 use crate::bot_core::pool_builder::builder::{self};
 use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{
@@ -180,9 +182,7 @@ impl Bot {
         match registration {
             PoolRegistration::V2(params) => self.register_v2_request(*params),
             PoolRegistration::V3(params) => self.register_v3_request(*params),
-            PoolRegistration::V4(params) => self
-                .register_v4_pool(&params)
-                .map_err(|e| RefusalKind::from_register_v4_error(&e)),
+            PoolRegistration::V4(params) => self.register_v4_request(*params),
             PoolRegistration::Curve(params) => self.register_curve_request(*params),
             PoolRegistration::BalancerWeighted(params) => {
                 self.register_balancer_weighted_request(*params)
@@ -415,20 +415,25 @@ impl Bot {
         )
     }
 
-    /// Register a V4 pool by `(pool_manager, pool_id)` — the params (with
-    /// the FULL hook address riding the pool key and the derived 16-bit
-    /// mask) are assembled by the caller; the admission floor (dynamic fee /
-    /// fee-exceeds-encoder-limit, recording the PRG-2 keyed verdicts) and
-    /// the seeded-inline tick data discipline live in
-    /// `BotState::register_v4_pool`, driven here under ONE core write guard.
+    /// Register a V4 pool by `(pool_manager, pool_id)` — the params-typed
+    /// twin of the door request ([`Self::register`] with
+    /// [`PoolRegistration::V4`]); the get-or-register guard and the door
+    /// insert live in [`Self::register_v4_request`].
     ///
     /// # Errors
-    /// [`RegisterV4PoolError`] (hooked/dynamic-fee/high-fee admission,
-    /// already registered, spec violation).
-    pub fn register_v4_pool(
-        &self,
-        params: &RegisterV4PoolParams,
-    ) -> Result<u64, RegisterV4PoolError> {
+    /// [`RefusalKind::RegisterRefused`] on an admission-floor refusal
+    /// (dynamic fee / fee-exceeds-encoder-limit), an already-registered
+    /// disagreement, or a spec violation.
+    pub fn register_v4_pool(&self, params: &RegisterV4PoolParams) -> Result<u64, RefusalKind> {
+        self.register_v4_request(params.clone())
+    }
+
+    /// The V4 request interior (see [`Self::register`]): the get-or-register
+    /// guard and the door insert under ONE core write guard. The guard stays
+    /// core-side: the substrate door's V4 arm refuses every duplicate
+    /// `(pool_manager, pool_id)` without the currency-match nuance, so the
+    /// reuse rule cannot live behind it.
+    fn register_v4_request(&self, params: RegisterV4PoolParams) -> Result<u64, RefusalKind> {
         // get-or-register on the `(pool_manager, pool_id)` pair: a matching
         // pool key answers the EXISTING pool id; a disagreeing key (same pair,
         // different currencies) is the loud `AlreadyRegistered`.
@@ -443,15 +448,26 @@ impl Bot {
                 if hit {
                     return Ok(existing.pool_id);
                 }
-                return Err(RegisterV4PoolError::AlreadyRegistered {
+                let refused = RegisterV4PoolError::AlreadyRegistered {
                     pool_manager: params.pool_manager,
                     pool_id: params.pool_id,
+                };
+                return Err(RefusalKind::RegisterRefused {
+                    family: Some(PoolFamilyTag::V4),
+                    phase: RegistrationPhase::Register,
+                    reason: RegisterRefusal::AlreadyRegistered {
+                        address: None,
+                        pool_key: Some((params.pool_manager, params.pool_id)),
+                        detail: format!("{refused:?}"),
+                    },
                 });
             }
         }
-        self.state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_v4_pool(params)
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::V4(Box::new(params))),
+        )
     }
 
     /// Register a Curve `StableSwap` pool — the params-typed twin of the door
@@ -785,30 +801,40 @@ impl Bot {
     /// the already-registered fast path. PRG-2: the keyed registration gate
     /// refuses an immutable-admission pool (dynamic fee /
     /// fee-exceeds-encoder-limit) BEFORE any registry read or RPC work on
-    /// the registration path, with the exact typed error the live
-    /// registration refusal raised.
+    /// the registration path, with the exact typed refusal the live
+    /// registration folds.
     ///
     /// # Errors
-    /// [`RegisterV4PoolError::DynamicFee`] / `FeeExceedsEncoderLimit` when a
+    /// [`RefusalKind::RegisterRefused`] (the V4 admission arms) when a
     /// recorded admission verdict refuses the pool.
     pub fn registered_v4_payload(
         &self,
         pm: Address,
         pid: &[u8; 32],
-    ) -> Result<Option<V4RegisteredPayload>, RegisterV4PoolError> {
+    ) -> Result<Option<V4RegisteredPayload>, RefusalKind> {
         if let Some(verdict) = self
             .state_arc()
             .read_at(LockSite::Orchestrator)
             .concentrated_liquidity()
             .admission_verdict(pm, pid)
         {
-            let core_err = match verdict {
-                AdmissionVerdict::DynamicFee { fee } => RegisterV4PoolError::DynamicFee { fee },
-                AdmissionVerdict::FeeExceedsEncoderLimit { fee } => {
-                    RegisterV4PoolError::FeeExceedsEncoderLimit { fee }
-                }
+            let reason = match verdict {
+                AdmissionVerdict::DynamicFee { fee } => RegisterRefusal::Admission {
+                    failure: BuildFailure::DynamicFee,
+                    hook_flags: None,
+                    fee: Some(fee),
+                },
+                AdmissionVerdict::FeeExceedsEncoderLimit { fee } => RegisterRefusal::Admission {
+                    failure: BuildFailure::HighFee,
+                    hook_flags: None,
+                    fee: Some(fee),
+                },
             };
-            return Err(core_err);
+            return Err(RefusalKind::RegisterRefused {
+                family: Some(PoolFamilyTag::V4),
+                phase: RegistrationPhase::Register,
+                reason,
+            });
         }
         let Some(existing) = self
             .state_arc()
@@ -1309,7 +1335,16 @@ mod tests {
             .register_v4_pool(&dynamic_fee_params)
             .expect_err("dynamic fee is admission-refused");
         assert!(
-            matches!(err, RegisterV4PoolError::DynamicFee { .. }),
+            matches!(
+                err,
+                RefusalKind::RegisterRefused {
+                    reason: RegisterRefusal::Admission {
+                        failure: BuildFailure::DynamicFee,
+                        ..
+                    },
+                    ..
+                }
+            ),
             "{err:?}"
         );
 
@@ -1318,7 +1353,16 @@ mod tests {
         let gate_err = bot
             .registered_v4_payload(pm, &pid)
             .expect_err("the recorded verdict refuses the fast path too");
-        assert!(matches!(gate_err, RegisterV4PoolError::DynamicFee { .. }));
+        assert!(matches!(
+            gate_err,
+            RefusalKind::RegisterRefused {
+                reason: RegisterRefusal::Admission {
+                    failure: BuildFailure::DynamicFee,
+                    ..
+                },
+                ..
+            }
+        ));
     }
 
     /// The registered V4 fast path shapes the identity from the core's

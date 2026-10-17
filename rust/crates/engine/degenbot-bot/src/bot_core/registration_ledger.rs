@@ -756,46 +756,6 @@ impl RefusalKind {
         }
     }
 
-    /// The V4 registry insert's refusal: its admission arms ride the one
-    /// [`BuildFailure`] taxonomy, carrying the facts their messages
-    /// interpolate.
-    #[must_use]
-    pub fn from_register_v4_error(err: &RegisterV4PoolError) -> Self {
-        let reason = match err {
-            RegisterV4PoolError::HookedPool { hook_flags } => RegisterRefusal::Admission {
-                failure: BuildFailure::HookedPool,
-                hook_flags: Some(*hook_flags),
-                fee: None,
-            },
-            RegisterV4PoolError::DynamicFee { fee } => RegisterRefusal::Admission {
-                failure: BuildFailure::DynamicFee,
-                hook_flags: None,
-                fee: Some(*fee),
-            },
-            RegisterV4PoolError::FeeExceedsEncoderLimit { fee } => RegisterRefusal::Admission {
-                failure: BuildFailure::HighFee,
-                hook_flags: None,
-                fee: Some(*fee),
-            },
-            RegisterV4PoolError::AlreadyRegistered {
-                pool_manager,
-                pool_id,
-            } => RegisterRefusal::AlreadyRegistered {
-                address: None,
-                pool_key: Some((*pool_manager, *pool_id)),
-                detail: format!("{err:?}"),
-            },
-            RegisterV4PoolError::SpecViolation(v) => RegisterRefusal::SpecViolation {
-                detail: v.to_string(),
-            },
-        };
-        Self::RegisterRefused {
-            family: Some(PoolFamilyTag::V4),
-            phase: RegistrationPhase::Register,
-            reason,
-        }
-    }
-
     /// The family write door's verdict (ADR-078 D3 step 2): the one
     /// `BotState::register_pool` outcome folds onto the ledger's
     /// [`RefusalKind::RegisterRefused`]. The door's refusal is shaped
@@ -2339,16 +2299,6 @@ mod tests {
             assert_tags(&kind, Some(family), RegistrationPhase::Register);
         }
 
-        // The V4 pair-keyed family.
-        assert_tags(
-            &RefusalKind::from_register_v4_error(&RegisterV4PoolError::AlreadyRegistered {
-                pool_manager: address,
-                pool_id: [0u8; 32],
-            }),
-            Some(PoolFamilyTag::V4),
-            RegistrationPhase::Register,
-        );
-
         // Identity parity is the identity phase at the register door too.
         assert_tags(
             &RefusalKind::from_identity_divergence(
@@ -2663,61 +2613,6 @@ mod tests {
                 ..
             }) if *found == address
         ));
-
-        // V4's admission arms ride the one build-refusal taxonomy, carrying
-        // the facts their messages interpolate.
-        for (err, failure, hook_flags, fee) in [
-            (
-                RegisterV4PoolError::HookedPool { hook_flags: 0xCC },
-                BuildFailure::HookedPool,
-                Some(0xCC),
-                None,
-            ),
-            (
-                RegisterV4PoolError::DynamicFee { fee: 0x10_0000 },
-                BuildFailure::DynamicFee,
-                None,
-                Some(0x10_0000),
-            ),
-            (
-                RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 65_536 },
-                BuildFailure::HighFee,
-                None,
-                Some(65_536),
-            ),
-        ] {
-            let kind = RefusalKind::from_register_v4_error(&err);
-            assert_tags(&kind, Some(PoolFamilyTag::V4), RegistrationPhase::Register);
-            assert!(matches!(
-                register_reason(&kind),
-                Some(RegisterRefusal::Admission {
-                    failure: found,
-                    hook_flags: found_flags,
-                    fee: found_fee,
-                }) if *found == failure && *found_flags == hook_flags && *found_fee == fee
-            ));
-        }
-
-        let v4_key = RefusalKind::from_register_v4_error(&RegisterV4PoolError::AlreadyRegistered {
-            pool_manager: address,
-            pool_id: [0u8; 32],
-        });
-        assert!(matches!(
-            register_reason(&v4_key),
-            Some(RegisterRefusal::AlreadyRegistered {
-                address: None,
-                pool_key: Some((manager, _)),
-                ..
-            }) if *manager == address
-        ));
-
-        let v4_spec = RefusalKind::from_register_v4_error(&RegisterV4PoolError::SpecViolation(
-            spec_violation(),
-        ));
-        assert!(matches!(
-            register_reason(&v4_spec),
-            Some(RegisterRefusal::SpecViolation { .. })
-        ));
     }
 
     #[test]
@@ -2964,8 +2859,12 @@ mod tests {
     }
 
     #[test]
-    fn the_door_verdict_folds_v4_onto_the_direct_entrys_refusal() {
+    fn the_door_verdict_folds_v4_onto_the_ledger_refusal() {
         let (manager, pool_id) = (Address::from([0x44u8; 20]), [0xeeu8; 32]);
+        let v4_duplicate = RegisterV4PoolError::AlreadyRegistered {
+            pool_manager: manager,
+            pool_id,
+        };
         let cases = [
             (
                 DoorRegistrationRefusal::Admission {
@@ -2973,7 +2872,11 @@ mod tests {
                     hook_flags: Some(0x00C0),
                     fee: None,
                 },
-                RegisterV4PoolError::HookedPool { hook_flags: 0x00C0 },
+                RegisterRefusal::Admission {
+                    failure: BuildFailure::HookedPool,
+                    hook_flags: Some(0x00C0),
+                    fee: None,
+                },
             ),
             (
                 DoorRegistrationRefusal::Admission {
@@ -2981,7 +2884,11 @@ mod tests {
                     hook_flags: None,
                     fee: Some(0x0080_0000),
                 },
-                RegisterV4PoolError::DynamicFee { fee: 0x0080_0000 },
+                RegisterRefusal::Admission {
+                    failure: BuildFailure::DynamicFee,
+                    hook_flags: None,
+                    fee: Some(0x0080_0000),
+                },
             ),
             (
                 DoorRegistrationRefusal::Admission {
@@ -2989,37 +2896,43 @@ mod tests {
                     hook_flags: None,
                     fee: Some(1_000_001),
                 },
-                RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 1_000_001 },
+                RegisterRefusal::Admission {
+                    failure: BuildFailure::HighFee,
+                    hook_flags: None,
+                    fee: Some(1_000_001),
+                },
             ),
             (
                 DoorRegistrationRefusal::AlreadyRegistered {
                     address: None,
                     pool_key: Some((manager, pool_id)),
-                    detail: format!(
-                        "{:?}",
-                        RegisterV4PoolError::AlreadyRegistered {
-                            pool_manager: manager,
-                            pool_id
-                        }
-                    ),
+                    detail: format!("{v4_duplicate:?}"),
                 },
-                RegisterV4PoolError::AlreadyRegistered {
-                    pool_manager: manager,
-                    pool_id,
+                RegisterRefusal::AlreadyRegistered {
+                    address: None,
+                    pool_key: Some((manager, pool_id)),
+                    detail: format!("{v4_duplicate:?}"),
                 },
             ),
             (
                 DoorRegistrationRefusal::SpecViolation {
                     detail: spec_violation().to_string(),
                 },
-                RegisterV4PoolError::SpecViolation(spec_violation()),
+                RegisterRefusal::SpecViolation {
+                    detail: spec_violation().to_string(),
+                },
             ),
         ];
-        for (door_refusal, direct) in cases {
+        for (door_refusal, ledger_reason) in cases {
+            let kind = fold_refusal(RegisteredPoolFamily::V4, door_refusal);
+            assert_tags(&kind, Some(PoolFamilyTag::V4), RegistrationPhase::Register);
             assert_eq!(
-                fold_refusal(RegisteredPoolFamily::V4, door_refusal),
-                RefusalKind::from_register_v4_error(&direct),
-                "{direct:?}"
+                kind,
+                RefusalKind::RegisterRefused {
+                    family: Some(PoolFamilyTag::V4),
+                    phase: RegistrationPhase::Register,
+                    reason: ledger_reason,
+                },
             );
         }
     }
