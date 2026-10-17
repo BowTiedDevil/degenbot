@@ -26,6 +26,7 @@ use degenbot_pools::tick_fetch::{TickBootstrapRpc, TickWordFetcher};
 use degenbot_substrate::registration_gate::AdmissionVerdict;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::tick_assembly::TickMapAssemblyError;
+use degenbot_substrate::PoolRegistration;
 use degenbot_uniswap::dex_identity::DexVariant;
 
 use super::bot::Bot;
@@ -167,6 +168,7 @@ impl Bot {
     /// verification (Fork A) — skipped when `(chain, factory)` is not in the
     /// shipped deployments JSON, preserving the manual/ad-hoc path — then
     /// resolves the deployer + init hash onto the identity and registers
+    /// through the family write door (`BotState::register_pool`, ADR-078 D3)
     /// under ONE core write guard.
     ///
     /// # Errors
@@ -238,13 +240,15 @@ impl Bot {
             stable_swap,
             fee_denominator,
         };
-        self.state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_v2_pool(&params)
-            .map_err(|err| RefusalKind::from_register_v2_error(&err))
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::V2(Box::new(params))),
+        )
     }
 
     /// Register a V3 pool by contract address, with the seeded tick data
+    /// riding the family write door (see [`Self::register_v2_pool`]).
     /// inline (ADR-006 rolling-start race closure: the pool is never visible
     /// to the pump in an unseeded state). An explicit `Some` slot layout
     /// wins; `None` defers to the deployment table (the `PancakeSwap` factory
@@ -329,10 +333,11 @@ impl Bot {
             fetcher,
             slot_layout,
         };
-        self.state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_v3_pool(&params)
-            .map_err(|err| RefusalKind::from_register_v3_error(&err))
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::V3(Box::new(params))),
+        )
     }
 
     /// Register a V4 pool by `(pool_manager, pool_id)` — the params (with
@@ -458,8 +463,9 @@ impl Bot {
 
     /// Register an Aerodrome V2 pool. Runs the JSON-sourced EIP-1167
     /// deployer/implementation verification (Fork A follow-on; skipped for
-    /// non-JSON `(chain, factory)` rows), then registers under ONE core
-    /// write guard.
+    /// non-JSON `(chain, factory)` rows), then registers through the family
+    /// write door (see [`Self::register_v2_pool`]) under ONE core write
+    /// guard.
     ///
     /// # Errors
     /// [`RefusalKind::IdentityMismatch`] on a verified mismatch.
@@ -528,10 +534,11 @@ impl Bot {
             reserve1,
             update_block,
         };
-        self.state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_aerodrome_pool(&params)
-            .map_err(|err| RefusalKind::from_register_aerodrome_error(&err))
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::AerodromeV2(Box::new(params))),
+        )
     }
 
     /// Register a token (the pure-Rust insertion the shell released the GIL
@@ -1502,5 +1509,185 @@ mod tests {
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         }
+    }
+
+    use degenbot_substrate::RegistrationVerdict;
+
+    // ── ADR-078 D3 step 2: the facade register entries ride the write door ──
+    //
+    // Per-family parity: the SAME params through the converged
+    // `Bot::register_*` entry and through the substrate write door
+    // (`BotState::register_pool`) answer the same pool id, family tag,
+    // census, and genesis journal — the facade's registration IS the door's
+    // insert, so the converged entry stays observationally identical.
+
+    /// V2 door parity at the facade.
+    #[test]
+    fn register_v2_facade_parity_with_the_write_door() {
+        let factory = adhoc_factory();
+        let params = RegisterV2PoolParams {
+            address: Address::from([0x11u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U112::from(1000),
+            reserve1: U112::from(2000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory,
+            deployer: degenbot_uniswap::deployments::resolve_deployer(1, factory),
+            init_hash: degenbot_uniswap::deployments::resolve_v2_init_hash(1, factory),
+            update_block: 10,
+            variant: DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
+        };
+        let facade = Bot::new(1);
+        let facade_id = facade
+            .register_v2_pool(
+                params.address,
+                params.token0,
+                params.token1,
+                params.reserve0,
+                params.reserve1,
+                params.fee_token0,
+                params.fee_token1,
+                params.factory,
+                params.update_block,
+                params.variant,
+                params.stable_swap,
+                params.fee_denominator,
+            )
+            .expect("the facade registers");
+        let door = Bot::new(1);
+        let verdict = door
+            .state_arc()
+            .write_at(LockSite::Orchestrator)
+            .register_pool(PoolRegistration::V2(Box::new(params)));
+        assert_eq!(
+            verdict,
+            RegistrationVerdict::Registered {
+                pool_id: facade_id,
+                family: RegisteredPoolFamily::V2,
+            },
+        );
+        assert_eq!(facade.pool_count(), door.pool_count());
+        assert_eq!(
+            facade.v2_journal_len(facade_id),
+            door.v2_journal_len(facade_id),
+            "the same genesis journal delta"
+        );
+    }
+
+    /// V3 door parity at the facade.
+    #[test]
+    fn register_v3_facade_parity_with_the_write_door() {
+        let factory = adhoc_factory();
+        let params = RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: hashbrown::HashMap::new(),
+            update_block: 100,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
+            deployer: degenbot_uniswap::deployments::resolve_deployer(1, factory),
+            init_hash: degenbot_uniswap::deployments::resolve_v3_init_hash(1, factory),
+            slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+        };
+        let facade = Bot::new(1);
+        let facade_id = facade
+            .register_v3_pool(
+                params.address,
+                params.token0,
+                params.token1,
+                params.fee,
+                params.tick_spacing,
+                params.factory,
+                params.sqrt_price_x96,
+                params.liquidity,
+                params.tick,
+                params.tick_data.clone(),
+                params.update_block,
+                params.coverage,
+                params.fetcher.clone(),
+                params.tick_data_block,
+                Some(params.slot_layout),
+            )
+            .expect("the facade registers");
+        let door = Bot::new(1);
+        let verdict = door
+            .state_arc()
+            .write_at(LockSite::Orchestrator)
+            .register_pool(PoolRegistration::V3(Box::new(params)));
+        assert_eq!(
+            verdict,
+            RegistrationVerdict::Registered {
+                pool_id: facade_id,
+                family: RegisteredPoolFamily::V3,
+            },
+        );
+        assert_eq!(facade.pool_count(), door.pool_count());
+        assert_eq!(
+            facade.v3_journal_len(facade_id),
+            door.v3_journal_len(facade_id),
+            "the same genesis journal delta"
+        );
+    }
+
+    /// Aerodrome V2 door parity at the facade.
+    #[test]
+    fn register_aerodrome_facade_parity_with_the_write_door() {
+        let params = RegisterAerodromeV2PoolParams {
+            address: Address::from([0x44u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            factory: adhoc_factory(),
+            variant: DexVariant::AerodromeV2Volatile,
+            stable: false,
+            fee: (30, 10_000),
+            token0_decimals: 18,
+            token1_decimals: 18,
+            reserve0: U112::from(1000),
+            reserve1: U112::from(2000),
+            update_block: 10,
+        };
+        let facade = Bot::new(8453);
+        let facade_id = facade
+            .register_aerodrome_pool(
+                params.address,
+                params.token0,
+                params.token1,
+                params.factory,
+                params.variant,
+                params.stable,
+                params.fee.0,
+                params.fee.1,
+                params.token0_decimals,
+                params.token1_decimals,
+                params.reserve0,
+                params.reserve1,
+                params.update_block,
+            )
+            .expect("the facade registers");
+        let door = Bot::new(8453);
+        let verdict = door
+            .state_arc()
+            .write_at(LockSite::Orchestrator)
+            .register_pool(PoolRegistration::AerodromeV2(Box::new(params)));
+        assert_eq!(
+            verdict,
+            RegistrationVerdict::Registered {
+                pool_id: facade_id,
+                family: RegisteredPoolFamily::AerodromeV2,
+            },
+        );
+        assert_eq!(facade.pool_count(), door.pool_count());
     }
 }

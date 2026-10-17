@@ -26,10 +26,12 @@ use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::tick_fetch::TickWordFetcher;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
+use degenbot_substrate::PoolRegistration;
 
 use super::bot::Bot;
 use super::construction_io::ConstructionIo;
 use super::pool_builder::builder;
+use super::pool_builder::construction_door::PoolConstruction;
 use super::pool_builder::parity;
 use super::pool_builder::route::{self, ConstructedPool};
 use super::registration_ledger::{PoolFamilyTag, RefusalKind, RegistrationPhase};
@@ -82,8 +84,9 @@ impl Bot {
     /// Build + register a V2 pool: the core `builder::build_v2` choreography
     /// (immutable data, reserves, DEX resolution incl. the Camelot branch,
     /// CREATE2 verify, deployer/init-hash, narrow reserves) on the attached
-    /// `ConstructionIo`, then the `BotState` registration under ONE core
-    /// write guard. Returns `(pool_id, identity)` with the core-computed
+    /// `ConstructionIo`, then the family write door's registration
+    /// (`BotState::register_pool`, ADR-078 D3) under ONE core write guard.
+    /// Returns `(pool_id, identity)` with the core-computed
     /// identity `(token0, token1, address, variant)` — the builder's return
     /// surface, so a facade-free registration driver consumes it directly.
     ///
@@ -112,25 +115,24 @@ impl Bot {
             params.address.to_checksum(None),
             params.variant.as_str().to_string(),
         );
-        let pool_id = self
-            .state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_v2_pool(&params)
-            .map_err(|err| RefusalKind::from_register_v2_error(&err))?;
+        // The minted identity rides the parity guard; capture it before
+        // `params` moves into the door's request.
+        let minted = parity::AddressIdentity {
+            token0: params.token0,
+            token1: params.token1,
+            address: params.address,
+        };
+        let pool_id = RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::V2(Box::new(params))),
+        )?;
         // Core-side identity-parity guard (at the mint site): the echo minted
         // from `params` must equal the identity the registry of record now
         // holds for `pool_id`. A divergence is a core/driver seam bug — refused
         // here rather than trusted across the FFI seam.
         if let Some(registered) = parity::registered_address_identity(self, pool_id) {
-            parity::verify_address_identity(
-                parity::AddressIdentity {
-                    token0: params.token0,
-                    token1: params.token1,
-                    address: params.address,
-                },
-                registered,
-            )
-            .map_err(|divergence| {
+            parity::verify_address_identity(minted, registered).map_err(|divergence| {
                 RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V2), &divergence)
             })?;
         }
@@ -152,7 +154,8 @@ impl Bot {
 
     /// Build + register an Aerodrome V2 pool — the Aerodrome twin of
     /// [`Self::build_and_register_v2`] (the `stable()`+`getFee()` + reserves
-    /// + CREATE2 choreography, registered into `PoolEntry::AerodromeV2`).
+    /// + CREATE2 choreography, registered into `PoolEntry::AerodromeV2`
+    /// through the family write door).
     ///
     /// # Errors
     /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`]
@@ -178,10 +181,11 @@ impl Bot {
                     RegistrationPhase::Build,
                 )
             })?;
-        self.state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_aerodrome_pool(&params)
-            .map_err(|err| RefusalKind::from_register_aerodrome_error(&err))
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::AerodromeV2(Box::new(params))),
+        )
     }
 
     /// Build + register a Balancer V2 **weighted** pool (the `getPoolId` +
@@ -202,10 +206,11 @@ impl Bot {
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_balancer_weighted(vault, address, &io, block))
             .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
-        Ok(self
-            .state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_balancer_weighted_pool(&params))
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::BalancerWeighted(Box::new(params))),
+        )
     }
 
     /// Build + register a Balancer V2 **stable** pool (the `getPoolId` +
@@ -234,10 +239,11 @@ impl Bot {
                 invariant_version,
             ))
             .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
-        Ok(self
-            .state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_balancer_stable_pool(&params))
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::BalancerStable(Box::new(params))),
+        )
     }
 
     /// Build + register a Curve `StableSwap` pool (the full detection
@@ -263,10 +269,11 @@ impl Bot {
                 block,
             ))
             .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
-        Ok(self
-            .state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_curve_pool(&params))
+        RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::Curve(Box::new(params))),
+        )
     }
 
     /// Build + register an ERC-20 token: `builder::build_erc20_metadata`
@@ -300,15 +307,16 @@ impl Bot {
         Ok((name, symbol, decimals))
     }
 
-    /// Build + register a V3 pool through the ONE core construction entry
-    /// (`route::construct_pool` — get-or-register + route order + build +
-    /// register), then shape the identity echo via
+    /// Build + register a V3 pool through the ONE core construction door
+    /// ([`Bot::construct_pool`](super::pool_builder::construction_door) —
+    /// get-or-register + route order + build + register over the route
+    /// interior), then shape the identity echo via
     /// [`Self::finalize_v3_construct`].
     ///
     /// The construction io is a parameter (the shell fetched it via
     /// [`Self::require_construction_io`] — its error message carries the
     /// pymethod prefix); the sparse-backfill fetcher, DB handle, and slot
-    /// layout ride [`route::V3RouteInputs`].
+    /// layout ride the door's [`PoolConstruction::V3`] variant.
     ///
     /// # Errors
     /// [`RefusalKind::BuildRefused`] (or [`RefusalKind::UnsupportedFamily`])
@@ -326,18 +334,18 @@ impl Bot {
         block: Option<u64>,
     ) -> Result<PoolBuildPayload, RefusalKind> {
         let constructed = degenbot_core::runtime::get_runtime()
-            .block_on(route::construct_pool(
-                self,
+            .block_on(self.construct_pool(
                 plan,
-                &route::RequestedPool::V3 { address },
-                io,
-                route::V3RouteInputs {
+                PoolConstruction::V3 {
+                    address,
                     db,
                     fetcher,
                     slot_layout,
                 },
+                io,
                 block,
             ))
+            .into_result()
             .map_err(|refusal| {
                 RefusalKind::from_construction_refusal(&refusal, Some(PoolFamilyTag::V3))
             })?;
@@ -403,9 +411,10 @@ impl Bot {
 
     /// Build + register a V4 pool: the core `builder::build_v4` (LIVE
     /// scalars off `state_view` + the Chain/Db tick-map arm) with the
-    /// caller-supplied identity, then the `BotState` registration under ONE
-    /// core write guard. Returns `(pool_id, coverage, protocol_fee,
-    /// lp_fee)`; the identity echo is derived from the caller-supplied
+    /// caller-supplied identity, then the family write door's registration
+    /// under ONE core write guard. Returns `(pool_id, coverage,
+    /// protocol_fee, lp_fee)`; the identity echo is derived from the
+    /// caller-supplied
     /// `identity` (the shell keeps shaping its own parsed values).
     ///
     /// # Errors
@@ -453,11 +462,11 @@ impl Bot {
             PoolTickCoverage::Tracked => "tracked",
             PoolTickCoverage::Sparse => "sparse",
         };
-        let registered = self
-            .state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_v4_pool(&params)
-            .map_err(|err| RefusalKind::from_register_v4_error(&err))?;
+        let registered = RefusalKind::from_registration_verdict(
+            self.state_arc()
+                .write_at(LockSite::Orchestrator)
+                .register_pool(PoolRegistration::V4(Box::new(params))),
+        )?;
         // Core-side identity-parity guard (at the mint site): the minted
         // pool-key identity must equal the registered identity's key. A
         // divergence is a core/driver seam bug — refused here rather than

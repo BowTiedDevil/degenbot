@@ -34,9 +34,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::aerodrome_v2_state::RegisterAerodromePoolError;
+use degenbot_pools::registry::RegisteredPoolFamily;
 use degenbot_pools::v2_state::RegisterV2PoolError;
 use degenbot_pools::v3_state::RegisterV3PoolError;
 use degenbot_pools::v4_state::RegisterV4PoolError;
+use degenbot_substrate::{AdmissionFailure, RegistrationRefusal, RegistrationVerdict};
 
 use super::pool_builder::builder::PoolBuilderError;
 use super::pool_builder::parity::IdentityDivergence;
@@ -221,6 +223,22 @@ pub enum PoolFamilyTag {
     Curve,
 }
 
+impl From<RegisteredPoolFamily> for PoolFamilyTag {
+    /// The write door's family tag rides the verdict (ADR-078); the ledger's
+    /// family tag is the one vocabulary the refusals carry.
+    fn from(family: RegisteredPoolFamily) -> Self {
+        match family {
+            RegisteredPoolFamily::V2 => Self::V2,
+            RegisteredPoolFamily::V3 => Self::V3,
+            RegisteredPoolFamily::V4 => Self::V4,
+            RegisteredPoolFamily::AerodromeV2 => Self::AerodromeV2,
+            RegisteredPoolFamily::BalancerWeighted => Self::BalancerWeighted,
+            RegisteredPoolFamily::BalancerStable => Self::BalancerStable,
+            RegisteredPoolFamily::Curve => Self::Curve,
+        }
+    }
+}
+
 /// The identity-parity refusal shape — the ONE home of the historical
 /// identity-mismatch vocabularies.
 ///
@@ -285,6 +303,41 @@ pub enum RegisterRefusal {
         /// The offending fee, for the dynamic-fee / encoder-limit classes.
         fee: Option<u32>,
     },
+}
+
+impl From<RegistrationRefusal> for RegisterRefusal {
+    /// The substrate write door's refusal (ADR-078 D1) is shaped
+    /// field-for-field like the ledger's [`RegisterRefusal`] (ADR-077); the
+    /// one rename is the admission classification, whose three arms map onto
+    /// the ledger's [`BuildFailure`] taxonomy. The fold is lossless — a
+    /// converged caller observes the same refusal the direct path returned.
+    fn from(refusal: RegistrationRefusal) -> Self {
+        match refusal {
+            RegistrationRefusal::AlreadyRegistered {
+                address,
+                pool_key,
+                detail,
+            } => Self::AlreadyRegistered {
+                address,
+                pool_key,
+                detail,
+            },
+            RegistrationRefusal::SpecViolation { detail } => Self::SpecViolation { detail },
+            RegistrationRefusal::Admission {
+                failure,
+                hook_flags,
+                fee,
+            } => Self::Admission {
+                failure: match failure {
+                    AdmissionFailure::HookedPool => BuildFailure::HookedPool,
+                    AdmissionFailure::DynamicFee => BuildFailure::DynamicFee,
+                    AdmissionFailure::HighFee => BuildFailure::HighFee,
+                },
+                hook_flags,
+                fee,
+            },
+        }
+    }
 }
 
 /// Why a persisted snapshot could not be loaded.
@@ -740,6 +793,29 @@ impl RefusalKind {
             family: Some(PoolFamilyTag::V4),
             phase: RegistrationPhase::Register,
             reason,
+        }
+    }
+
+    /// The family write door's verdict (ADR-078 D3 step 2): the one
+    /// `BotState::register_pool` outcome folds onto the ledger's
+    /// [`RefusalKind::RegisterRefused`]. The door's refusal is shaped
+    /// field-for-field like the ledger's [`RegisterRefusal`] (ADR-077), so
+    /// the fold is lossless — family and phase are fixed (the family rides
+    /// the verdict, [`RegistrationPhase::Register`]) and each arm's fields
+    /// carry verbatim; the parity tests pin the fold equal to the
+    /// direct-entry `from_register_*_error` mappers' output.
+    ///
+    /// # Errors
+    /// The mapped [`RefusalKind::RegisterRefused`] when the verdict refused.
+    #[must_use]
+    pub fn from_registration_verdict(verdict: RegistrationVerdict) -> Result<u64, Self> {
+        match verdict {
+            RegistrationVerdict::Registered { pool_id, .. } => Ok(pool_id),
+            RegistrationVerdict::Refused { family, refusal } => Err(Self::RegisterRefused {
+                family: Some(PoolFamilyTag::from(family)),
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::from(refusal),
+            }),
         }
     }
 
@@ -2775,6 +2851,243 @@ mod tests {
                 stable,
                 "the carried failure classifies through the ledger's one taxonomy"
             );
+        }
+    }
+
+    // ── ADR-078 D3 step 2: the write door's verdict folds losslessly ─────
+    //
+    // The substrate door's `RegistrationRefusal` is shaped field-for-field
+    // like the ledger's `RegisterRefusal` (ADR-077's vocabulary — the door's
+    // own parity tests in degenbot-substrate pin the shapes it produces), so
+    // the fold must land EXACTLY the `RefusalKind` the direct-entry mappers
+    // produce: a converged caller observes the same refusal the direct path
+    // returned.
+
+    use degenbot_substrate::RegistrationRefusal as DoorRegistrationRefusal;
+
+    /// Fold a refused door verdict and unwrap the ledger refusal.
+    fn fold_refusal(family: RegisteredPoolFamily, refusal: DoorRegistrationRefusal) -> RefusalKind {
+        RefusalKind::from_registration_verdict(RegistrationVerdict::Refused { family, refusal })
+            .expect_err("a refused verdict folds to the register refusal")
+    }
+
+    #[test]
+    fn the_door_verdict_folds_v2_onto_the_direct_entrys_refusal() {
+        let address = Address::from([0x11u8; 20]);
+        assert_eq!(
+            fold_refusal(
+                RegisteredPoolFamily::V2,
+                DoorRegistrationRefusal::AlreadyRegistered {
+                    address: Some(address),
+                    pool_key: None,
+                    detail: format!("{:?}", RegisterV2PoolError::AlreadyRegistered { address }),
+                },
+            ),
+            RefusalKind::from_register_v2_error(&RegisterV2PoolError::AlreadyRegistered {
+                address
+            }),
+        );
+        assert_eq!(
+            fold_refusal(
+                RegisteredPoolFamily::V2,
+                DoorRegistrationRefusal::SpecViolation {
+                    detail: spec_violation().to_string(),
+                },
+            ),
+            RefusalKind::from_register_v2_error(&RegisterV2PoolError::SpecViolation(
+                spec_violation()
+            )),
+        );
+    }
+
+    #[test]
+    fn the_door_verdict_folds_v3_onto_the_direct_entrys_refusal() {
+        let address = Address::from([0x22u8; 20]);
+        assert_eq!(
+            fold_refusal(
+                RegisteredPoolFamily::V3,
+                DoorRegistrationRefusal::AlreadyRegistered {
+                    address: Some(address),
+                    pool_key: None,
+                    detail: format!("{:?}", RegisterV3PoolError::AlreadyRegistered { address }),
+                },
+            ),
+            RefusalKind::from_register_v3_error(&RegisterV3PoolError::AlreadyRegistered {
+                address
+            }),
+        );
+        assert_eq!(
+            fold_refusal(
+                RegisteredPoolFamily::V3,
+                DoorRegistrationRefusal::SpecViolation {
+                    detail: spec_violation().to_string(),
+                },
+            ),
+            RefusalKind::from_register_v3_error(&RegisterV3PoolError::SpecViolation(
+                spec_violation()
+            )),
+        );
+    }
+
+    #[test]
+    fn the_door_verdict_folds_aerodrome_onto_the_direct_entrys_refusal() {
+        let address = Address::from([0xaeu8; 20]);
+        assert_eq!(
+            fold_refusal(
+                RegisteredPoolFamily::AerodromeV2,
+                DoorRegistrationRefusal::AlreadyRegistered {
+                    address: Some(address),
+                    pool_key: None,
+                    detail: format!(
+                        "{:?}",
+                        RegisterAerodromePoolError::AlreadyRegistered { address }
+                    ),
+                },
+            ),
+            RefusalKind::from_register_aerodrome_error(
+                &RegisterAerodromePoolError::AlreadyRegistered { address }
+            ),
+        );
+        assert_eq!(
+            fold_refusal(
+                RegisteredPoolFamily::AerodromeV2,
+                DoorRegistrationRefusal::SpecViolation {
+                    detail: spec_violation().to_string(),
+                },
+            ),
+            RefusalKind::from_register_aerodrome_error(&RegisterAerodromePoolError::SpecViolation(
+                spec_violation()
+            )),
+        );
+    }
+
+    #[test]
+    fn the_door_verdict_folds_v4_onto_the_direct_entrys_refusal() {
+        let (manager, pool_id) = (Address::from([0x44u8; 20]), [0xeeu8; 32]);
+        let cases = [
+            (
+                DoorRegistrationRefusal::Admission {
+                    failure: AdmissionFailure::HookedPool,
+                    hook_flags: Some(0x00C0),
+                    fee: None,
+                },
+                RegisterV4PoolError::HookedPool { hook_flags: 0x00C0 },
+            ),
+            (
+                DoorRegistrationRefusal::Admission {
+                    failure: AdmissionFailure::DynamicFee,
+                    hook_flags: None,
+                    fee: Some(0x800000),
+                },
+                RegisterV4PoolError::DynamicFee { fee: 0x800000 },
+            ),
+            (
+                DoorRegistrationRefusal::Admission {
+                    failure: AdmissionFailure::HighFee,
+                    hook_flags: None,
+                    fee: Some(1_000_001),
+                },
+                RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 1_000_001 },
+            ),
+            (
+                DoorRegistrationRefusal::AlreadyRegistered {
+                    address: None,
+                    pool_key: Some((manager, pool_id)),
+                    detail: format!(
+                        "{:?}",
+                        RegisterV4PoolError::AlreadyRegistered {
+                            pool_manager: manager,
+                            pool_id
+                        }
+                    ),
+                },
+                RegisterV4PoolError::AlreadyRegistered {
+                    pool_manager: manager,
+                    pool_id,
+                },
+            ),
+            (
+                DoorRegistrationRefusal::SpecViolation {
+                    detail: spec_violation().to_string(),
+                },
+                RegisterV4PoolError::SpecViolation(spec_violation()),
+            ),
+        ];
+        for (door_refusal, direct) in cases {
+            assert_eq!(
+                fold_refusal(RegisteredPoolFamily::V4, door_refusal),
+                RefusalKind::from_register_v4_error(&direct),
+                "{direct:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_door_folds_the_balance_vector_duplicate_onto_the_typed_refusal() {
+        // The state inserts for these families panic on a duplicate; the door
+        // pre-checks and refuses AS DATA — the fold carries the door's own
+        // rendering (there is no legacy mapper to equal).
+        for family in [
+            RegisteredPoolFamily::Curve,
+            RegisteredPoolFamily::BalancerWeighted,
+            RegisteredPoolFamily::BalancerStable,
+        ] {
+            let address = Address::from([0x71u8; 20]);
+            let kind = fold_refusal(
+                family,
+                DoorRegistrationRefusal::AlreadyRegistered {
+                    address: Some(address),
+                    pool_key: None,
+                    detail: format!("pool already registered: {address}"),
+                },
+            );
+            assert_tags(
+                &kind,
+                Some(PoolFamilyTag::from(family)),
+                RegistrationPhase::Register,
+            );
+            assert!(matches!(
+                register_reason(&kind),
+                Some(RegisterRefusal::AlreadyRegistered {
+                    address: Some(hit),
+                    pool_key: None,
+                    detail,
+                }) if *hit == address && *detail == format!("pool already registered: {address}")
+            ));
+        }
+    }
+
+    #[test]
+    fn the_door_registered_verdict_folds_to_the_pool_id_and_the_family_tags() {
+        for (family, tag) in [
+            (RegisteredPoolFamily::V2, PoolFamilyTag::V2),
+            (RegisteredPoolFamily::V3, PoolFamilyTag::V3),
+            (RegisteredPoolFamily::V4, PoolFamilyTag::V4),
+            (RegisteredPoolFamily::Curve, PoolFamilyTag::Curve),
+            (
+                RegisteredPoolFamily::BalancerWeighted,
+                PoolFamilyTag::BalancerWeighted,
+            ),
+            (
+                RegisteredPoolFamily::BalancerStable,
+                PoolFamilyTag::BalancerStable,
+            ),
+            (
+                RegisteredPoolFamily::AerodromeV2,
+                PoolFamilyTag::AerodromeV2,
+            ),
+        ] {
+            assert_eq!(
+                RefusalKind::from_registration_verdict(RegistrationVerdict::registered(7, family)),
+                Ok(7),
+            );
+            let kind = fold_refusal(
+                family,
+                DoorRegistrationRefusal::SpecViolation {
+                    detail: "x".to_owned(),
+                },
+            );
+            assert_tags(&kind, Some(tag), RegistrationPhase::Register);
         }
     }
 }
