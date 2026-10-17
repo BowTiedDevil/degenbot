@@ -45,6 +45,11 @@
 /// The family's solve entry (ADR-073 endgame): the solve half re-homed from
 /// the dissolved solver crate — the family story is ONE tree again.
 pub(crate) mod solve;
+
+/// The state module: the family's shared state verbs, written once
+/// data-generically over the two designs' state structs.
+pub(crate) mod state_journal;
+
 pub mod v3;
 pub mod v4;
 

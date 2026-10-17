@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U160, U256};
 
+use crate::families::concentrated_liquidity::state_journal;
 use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use crate::liquidity_event::LiquidityEvent;
 use crate::state_history::{
@@ -760,78 +761,64 @@ impl V4PoolState {
     }
 }
 
-// ADR-016 — pool-owned reorg rollback for the CL family. The field-write
-// previously duplicated across `BotState::v3_restore_before_block` /
-// `v4_restore_before_block` (scalar-priors write-back + tick reverse-apply)
-// is absorbed into the state struct; `V3RestoreResult` stays internal to
-// this impl and never escapes. The CL journal's `restore_before_block`
-// returns `V3RestoreResult` directly (panics on empty — the empty-journal
-// case is an invariant violation for a registered pool, not a recoverable
-// error), so this impl returns `Ok(())` after applying the landed-at state.
-// Byte-identical to the V3 impl modulo the struct name. See ADR-016 D4.
+// The reorg-journal verbs live once in the CL state module
+// (`families/concentrated_liquidity/state_journal.rs`); this impl forwards
+// through the `JournalHost` field seam and carries no restore logic of its
+// own.
 impl ReorgPoolState for V4PoolState {
     fn restore_before_block(&mut self, block: u64) -> Result<(), JournalError> {
-        let result = self.journal.restore_before_block(block);
-
-        // Sync scalar fields if the rolled-back range had scalar changes.
-        // If scalar_priors is None (tick-only event(s) rolled back), the
-        // current slot0 scalars were never changed by the rolled-back events
-        // and are already correct — skip the write-back. See ADR-004.
-        if let Some(p) = &result.scalar_priors {
-            self.sqrt_price_x96 = p.sqrt_price_x96_before;
-            self.liquidity = p.liquidity_before;
-            self.tick = p.tick_before;
-        }
-        // Reorg is the sole sanctioned rewind of both clocks (two-stamp
-        // ) — see `V3PoolState::restore_before_block`.
-        if let Some(b) = result.update_block_before {
-            self.update_block = b;
-        }
-        if let Some(b) = result.tick_data_block_before {
-            self.tick_data_block = b;
-        }
-        self.state_nonce = self.state_nonce.wrapping_add(1);
-        self.invalidate_tick_range_cache();
-
-        // Reverse-apply tick priors accumulated across all popped deltas. Each
-        // prior carries the tick's FULL pre-range row, its `block` stamp
-        // included, so the restored map is bit-identical to a fresh replay of
-        // every event before the target — a tick last mutated at 97 says 97
-        // again even when a sibling tick moved the liquidity clock to 99 in
-        // between.
-        for (tick_idx, tick_before) in &result.tick_priors {
-            match tick_before.liquidity_gross_before {
-                Some(gross_before) => {
-                    // Tick existed before — restore its prior row.
-                    self.tick_data.insert(
-                        *tick_idx,
-                        TickInfo {
-                            liquidity_gross: gross_before,
-                            liquidity_net: tick_before.liquidity_net_before,
-                            block: tick_before.block_before,
-                        },
-                    );
-                }
-                None => {
-                    // Tick was newly initialized in this block — remove it.
-                    self.tick_data.remove(tick_idx);
-                }
-            }
-        }
-
+        state_journal::restore_before_block(self, block);
         Ok(())
     }
 
     fn discard_before_block(&mut self, block: u64) -> Result<(), JournalError> {
-        self.journal.discard_before_block(block)
+        state_journal::discard_before_block(self, block)
     }
 
     fn journal_len(&self) -> usize {
-        self.journal.len()
+        state_journal::journal_len(self)
     }
 
     fn newest_block(&self) -> Option<u64> {
-        self.journal.newest_block()
+        state_journal::newest_block(self)
+    }
+}
+
+impl state_journal::JournalHost for V4PoolState {
+    fn journal(&self) -> &ReorgJournal<V3BlockDelta> {
+        &self.journal
+    }
+
+    fn journal_mut(&mut self) -> &mut ReorgJournal<V3BlockDelta> {
+        &mut self.journal
+    }
+
+    fn tick_data_mut(&mut self) -> &mut HashMap<i32, TickInfo> {
+        &mut self.tick_data
+    }
+
+    fn apply_scalar_priors(&mut self, priors: &ScalarPriors) {
+        self.sqrt_price_x96 = priors.sqrt_price_x96_before;
+        self.liquidity = priors.liquidity_before;
+        self.tick = priors.tick_before;
+    }
+
+    fn apply_clock_priors(
+        &mut self,
+        update_block_before: Option<u64>,
+        tick_data_block_before: Option<u64>,
+    ) {
+        if let Some(b) = update_block_before {
+            self.update_block = b;
+        }
+        if let Some(b) = tick_data_block_before {
+            self.tick_data_block = b;
+        }
+    }
+
+    fn bump_state_nonce_and_invalidate_cache(&mut self) {
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+        self.invalidate_tick_range_cache();
     }
 }
 
