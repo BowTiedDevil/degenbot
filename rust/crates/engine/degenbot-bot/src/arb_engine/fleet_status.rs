@@ -68,7 +68,7 @@ pub struct FleetRuntimeStatus {
 /// caller-reachable arm.
 #[must_use]
 pub fn fleet_runtime_status() -> FleetRuntimeStatus {
-    let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
+    let registry = crate::arb_engine::fleet_boot::FleetBootRegistry::process();
     // candidate 4: the canonical process boot is the registry's
     // first-wins latch — whichever registry role (sim/registration) installed
     // first — never a role module's private static.
@@ -226,7 +226,7 @@ mod tests {
     /// candidate4 pin 2 - RED at HEAD (the registry does not exist yet;
     /// `fleet_runtime_status` reads `fleet_registration_executor`'s module
     /// statics). TARGET (post-T2): `fleet_status` reads the ONE
-    /// `seat_host::FleetBootRegistry`; whichever role installs first owns the
+    /// `fleet_boot::FleetBootRegistry`; whichever role installs first owns the
     /// canonical process boot, stamped exactly once, and
     /// `fleet_runtime_status()` reports the SAME boot facts regardless of
     /// install order.
@@ -236,7 +236,7 @@ mod tests {
         reason = "exact equality is intended: both sides read the same canonical FleetBoot"
     )]
     fn candidate4_runtime_status_ignores_install_order_first_wins_once() {
-        let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
+        let registry = crate::arb_engine::fleet_boot::FleetBootRegistry::process();
         // The keyed accessors expose each role's descriptor (the boot stamp
         // rides `BootRole`), so the registry owns both rows.
         assert_eq!(

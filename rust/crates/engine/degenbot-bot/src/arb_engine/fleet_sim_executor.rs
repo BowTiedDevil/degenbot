@@ -73,7 +73,7 @@ impl FleetSimExecutor {
     /// # Errors
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
     pub(crate) fn boot(boot: FleetBoot) -> Result<Self, BootError> {
-        let desc = crate::arb_engine::seat_host::FleetBootRegistry::process()
+        let desc = crate::arb_engine::fleet_boot::FleetBootRegistry::process()
             .sim()
             .descriptor();
         let host = SeatHost::boot(desc, boot, None)?;
@@ -111,7 +111,7 @@ mod tests {
     /// directly so the expect fires WITHOUT a real `FleetHost` boot.
     #[test]
     fn fleet_sim_materializer_without_a_stamp_is_loud() {
-        let slot = crate::arb_engine::seat_host::FleetBootRegistry::process().sim();
+        let slot = crate::arb_engine::fleet_boot::FleetBootRegistry::process().sim();
         if slot.boot_installed() {
             eprintln!(
                 "skipping: another test already installed the sim boot stamp in this process"
@@ -561,7 +561,7 @@ mod fleet_sim_stance_tests {
     /// this, the stance tests' outcome depends on whether a concurrently
     /// running engine-construction test happened to construct first.
     fn ensure_sim_boot_installed() {
-        let slot = crate::arb_engine::seat_host::FleetBootRegistry::process().sim();
+        let slot = crate::arb_engine::fleet_boot::FleetBootRegistry::process().sim();
         if !slot.boot_installed() {
             slot.install(crate::arb_engine::boot_stamp::BootStamp::of(
                 degenbot_workers::dispatcher::FleetBoot::from_config(
@@ -652,7 +652,7 @@ mod fleet_sim_stance_tests {
         // the pinned seat-shape assertion can only bind on a pinned-tier
         // host. Skip there (the F-suite's documented self-skip channel)
         // rather than asserting a topology this host cannot host.
-        match crate::arb_engine::seat_host::FleetBootRegistry::process()
+        match crate::arb_engine::fleet_boot::FleetBootRegistry::process()
             .sim()
             .global_executor(crate::arb_engine::fleet_sim_executor::FleetSimExecutor::boot)
         {

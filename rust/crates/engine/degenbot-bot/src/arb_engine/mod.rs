@@ -116,6 +116,11 @@ mod retune;
 pub mod fleet_wake;
 mod seat_host;
 
+// The process-wide boot statics (`install_boot`, `global_executor`, the
+// `BootSlot`/`FleetBootRegistry` keyed boot owner) — process-wide, not
+// seat-scoped (ADR-079 D1).
+mod fleet_boot;
+
 // the per-bin lane walk's home — `solve_one_path` (the per-path
 // solve + diagnostics body the Solver seats' bins execute) lives here; the
 // walk driver and Lane* policy types are later tasks' inhabitants.

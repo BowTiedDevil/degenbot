@@ -80,7 +80,7 @@ impl FleetRegistrationExecutor {
         fault_watch: Option<Arc<IntakeFaultWatch>>,
     ) -> Result<Self, BootError> {
         let fault_watch = fault_watch.unwrap_or_else(|| Arc::new(IntakeFaultWatch::new()));
-        let desc = crate::arb_engine::seat_host::FleetBootRegistry::process()
+        let desc = crate::arb_engine::fleet_boot::FleetBootRegistry::process()
             .registration()
             .descriptor();
         let host = SeatHost::boot(desc, boot, Some(Arc::clone(&fault_watch)))?;
@@ -120,7 +120,7 @@ mod tests {
     /// directly so the expect fires WITHOUT a real `FleetHost` boot.
     #[test]
     fn fleet_registration_materializer_without_a_stamp_is_loud() {
-        let slot = crate::arb_engine::seat_host::FleetBootRegistry::process().registration();
+        let slot = crate::arb_engine::fleet_boot::FleetBootRegistry::process().registration();
         if slot.boot_installed() {
             eprintln!(
                 "skipping: another test already installed the registration boot stamp in this process"
@@ -171,7 +171,7 @@ mod tests {
     )]
     #[test]
     fn a_refused_boot_is_typed_and_sticky_never_an_abort() {
-        let slot = crate::arb_engine::seat_host::FleetBootRegistry::process().registration();
+        let slot = crate::arb_engine::fleet_boot::FleetBootRegistry::process().registration();
         if slot.boot_installed() {
             eprintln!(
                 "skipping: another test already installed the registration boot stamp in this process"

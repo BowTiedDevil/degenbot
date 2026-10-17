@@ -69,7 +69,7 @@ pub(crate) fn install_engine_stances(
     // registration's — the boot is shared). ADR-042 F4: the SimDriver seat
     // pool shares the boot descriptor; PRG-3: registration shares it too
     // (duty-counted PoolStateUpdater slots, Deferrable cordon class).
-    let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
+    let registry = crate::arb_engine::fleet_boot::FleetBootRegistry::process();
     registry.install_boot(
         crate::arb_engine::boot_stamp::BootRole::Sim,
         boot_stamp.clone(),
