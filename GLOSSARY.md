@@ -443,9 +443,9 @@ _Naming_: code identifiers spell the family name out — `concentrated_liquidity
 `cl` / `Cl…` abbreviations in code (`cl/`, `cl.rs`, `ClOrchestration`, `ClHop`,
 `PreparedClHop`, `BotState::cl()`) are renamed to the expanded form, and living
 prose spells the name out too ("concentrated liquidity"; "concentrated-liquidity"
-as a compound modifier). The bare abbreviation survives only in wire values
-(`"kind": "CL"`) and in the dated historical record (ADR bodies 001-074), never
-as shorthand in living prose.
+as a compound modifier). Wire values spell the family out too — the capture `kind` discriminant is
+`"concentrated_liquidity"` — and the bare abbreviation survives only in the
+dated historical record (ADR bodies 001-074), never as shorthand in living prose.
 _Avoid_: `cl` as a module, type, method, or crate-fragment name; `CL` as a prose
 shorthand; two conventions for one family in one tree.
 

@@ -116,7 +116,7 @@ fn parse_path(
                 )));
                 concentrated_liquidity_seqs.push(None);
             }
-            "concentrated liquidity" => {
+            "concentrated_liquidity" => {
                 let ranges = hop
                     .get("ranges")
                     .and_then(Value::as_array)

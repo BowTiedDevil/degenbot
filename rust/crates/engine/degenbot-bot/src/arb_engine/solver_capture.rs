@@ -87,7 +87,8 @@ pub(crate) fn gate_capture_from_cfg(
 /// [`CaptureVariant`]: [`CaptureVariant::HeavyConcentratedLiquidity`] keeps all-concentrated-liquidity paths and emits
 /// the `IntV3TickRangeSequence` range body (default
 /// `.../concentrated_liquidity_heavy_paths.jsonl`), while [`CaptureVariant::HeavyMixed`] keeps
-/// paths with >=1 V2 and >=1 CL hop and emits a `kind`-discriminated V2/CL body
+/// paths with >=1 V2 and >=1 concentrated-liquidity hop and emits a `kind`-discriminated
+/// V2/`concentrated_liquidity` body
 /// plus `hop_order` (default `.../concentrated_liquidity_mixed_paths.jsonl`; a
 /// `DEGENBOT_SOLVER_CAPTURE_OUT` override gets a `_mixed` filename suffix so it
 /// cannot clobber the all-concentrated-liquidity fixture).
@@ -165,7 +166,7 @@ impl CaptureVariant {
     }
     /// Serialize the per-hop body as `(hop_order, hops)`. `hop_order` is only
     /// emitted by the mixed variant (it drives the replay's reconstruction of
-    /// the V2/CL interleave).
+    /// the V2/`concentrated_liquidity` interleave).
     fn serialize_hops(
         self,
         resolved: &ResolvedMixedPath,
@@ -185,7 +186,7 @@ impl CaptureVariant {
             Self::HeavyMixed => {
                 // Per-hop serialization: a `kind` discriminant + the hop's raw
                 // fields. V2 -> reserve_in/out + gamma + fee_denom (decimal
-                // strings, no alloy serde). CL -> the same
+                // strings, no alloy serde). A concentrated-liquidity hop -> the same
                 // `IntV3TickRangeSequence.ranges` shape the all-concentrated-liquidity fixture
                 // uses, so the replay harness shares a concentrated-liquidity-range parser.
                 let hop_order = resolved
@@ -206,7 +207,10 @@ impl CaptureVariant {
                         }),
                         ResolvedHop::V3 { prepared, .. } | ResolvedHop::V4 { prepared, .. } => {
                             serde_json::json!({
-                                "kind": "concentrated liquidity",
+                                // Wire-stable discriminant, not vocabulary shorthand: the
+                                // replay/readout harnesses match this exact string against
+                                // captured fixtures.
+                                "kind": "concentrated_liquidity",
                                 "ranges": concentrated_liquidity_ranges_json(&prepared.int_seq),
                             })
                         }

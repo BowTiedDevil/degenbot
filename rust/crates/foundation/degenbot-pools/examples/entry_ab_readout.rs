@@ -106,9 +106,9 @@ fn route_of(doc: &Value) -> Route {
         // Mixed-schema row: per-hop `kind` discriminant.
         let all_concentrated_liquidity = hops
             .iter()
-            .all(|h| h.get("kind").and_then(Value::as_str) == Some("concentrated liquidity"));
+            .all(|h| h.get("kind").and_then(Value::as_str) == Some("concentrated_liquidity"));
         let any_foreign = hops.iter().any(
-            |h| matches!(h.get("kind").and_then(Value::as_str), Some(k) if k != "concentrated liquidity" && k != "V2"),
+            |h| matches!(h.get("kind").and_then(Value::as_str), Some(k) if k != "concentrated_liquidity" && k != "V2"),
         );
         if any_foreign {
             Route::Other
@@ -128,7 +128,7 @@ fn route_of(doc: &Value) -> Route {
 
 /// The sequences of a row the production branch would route to the `all-concentrated-liquidity`
 /// entry, schema-aware: `pure-concentrated-liquidity` rows parse through the shared concentrated liquidity parser;
-/// mixed-schema rows are measured only when every hop is `kind = "concentrated liquidity"`
+/// mixed-schema rows are measured only when every hop is `kind = "concentrated_liquidity"`
 /// (the branch's exact test) — anything else is the mixed entry's own
 /// traffic, unaffected by the unification question.
 fn all_concentrated_liquidity_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeSequence>> {
@@ -136,7 +136,7 @@ fn all_concentrated_liquidity_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeS
     if doc.get("hop_order").is_some() {
         let mut seqs = Vec::with_capacity(hops.len());
         for h in hops {
-            if h.get("kind").and_then(Value::as_str) != Some("concentrated liquidity") {
+            if h.get("kind").and_then(Value::as_str) != Some("concentrated_liquidity") {
                 return None;
             }
             let ranges = h.get("ranges").and_then(Value::as_array)?;
