@@ -1052,18 +1052,31 @@ pub struct UnregistrableRecord {
     pub counts_as_skip: bool,
 }
 
+/// The strategy pre-filter's verdict on one candidate path, submitted to the
+/// eligibility gate as data.
+///
+/// The pre-filter is policy and stays with the strategy (a Python-side
+/// pre-filter), so the ledger is handed the verdict, never a callback. A
+/// [`PolicyVerdict::Denied`] is deterministic per hop signature, so the gate
+/// records it in the rejected-path memo and answers
+/// [`PathAdmission::PolicyDenied`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PolicyVerdict {
+    /// The pre-filter accepted the candidate.
+    Admitted,
+    /// The pre-filter denied the candidate.
+    Denied,
+}
+
 /// What the eligibility gate answers for one candidate path.
 ///
 /// The gate owns the MECHANICAL eligibility decisions in front of verify and
-/// registration: direction agreement, the rejected-path memo, and the
-/// registered-path dup fast-path. The strategy's path-composition pre-filter
-/// is policy and stays with the strategy (a Python-side pre-filter), so the
-/// gate is asked twice per candidate — [`RegistrationLedger::admit_path`]
-/// before the pre-filter runs and
-/// [`RegistrationLedger::confirm_admitted_path`] after it accepted — and a
-/// pre-filter deny enters through [`RegistrationLedger::refuse_path`], which
-/// records the deny and answers the vocabulary's policy/predicate-deny
-/// outcome.
+/// registration — direction agreement, the rejected-path memo, the submitted
+/// policy verdict, and the registered-path dup fast-path — in ONE ordered
+/// pass ([`RegistrationLedger::admit_path_with_policy`]). The strategy's
+/// path-composition pre-filter is policy and stays with the strategy (a
+/// Python-side pre-filter): the driver runs it BEFORE the ask and submits the
+/// verdict as data, so the policy deny never needs a second ask.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PathAdmission {
     /// Operator-pinned directions disagree with the path's hop count.
@@ -1071,6 +1084,9 @@ pub enum PathAdmission {
     /// The hop signature already hit a deterministic deny (the rejected-path
     /// memo).
     RejectedPathMemo,
+    /// The submitted policy verdict denied the candidate; the deny is now in
+    /// the rejected-path memo.
+    PolicyDenied,
     /// The candidate may proceed; `hop_sig` is the signature the memos key on.
     Admitted {
         /// The hop signature `(pool_id, zero_for_one)` per hop, in hop order.
@@ -1083,9 +1099,10 @@ pub enum PathAdmission {
 impl PathAdmission {
     /// The closed verdict set, in declaration order — the vocabulary a
     /// cross-language consumer builds its verdict labels from.
-    pub const KINDS: [&'static str; 4] = [
+    pub const KINDS: [&'static str; 5] = [
         "direction-mismatch",
         "rejected-path-memo",
+        "policy-denied",
         "admitted",
         "already-registered",
     ];
@@ -1096,6 +1113,7 @@ impl PathAdmission {
         match self {
             Self::DirectionMismatch => "direction-mismatch",
             Self::RejectedPathMemo => "rejected-path-memo",
+            Self::PolicyDenied => "policy-denied",
             Self::Admitted { .. } => "admitted",
             Self::AlreadyRegistered => "already-registered",
         }
@@ -1243,8 +1261,7 @@ impl RegistrationLedger {
 
     // ── the eligibility gate ──
 
-    /// The eligibility gate's pre-filter ask: direction agreement and the
-    /// rejected-path memo.
+    /// The eligibility gate: ONE ordered pass over a candidate path.
     ///
     /// `hop_pool_ids` is one engine pool id per hop, in hop order.
     /// `pinned_directions` is the operator's pinned per-hop direction answer
@@ -1252,17 +1269,27 @@ impl RegistrationLedger {
     /// answer the caller holds (the pin when it agrees, else the resolver's
     /// answer) — `None` when the caller could not agree one. A candidate
     /// whose directions cannot be agreed is not admissible, whatever the
-    /// reason, and never reaches the strategy's pre-filter.
+    /// reason. `policy` is the strategy's path-composition pre-filter
+    /// verdict, evaluated by the driver BEFORE this ask and submitted as
+    /// data (the pre-filter is policy and stays with the strategy — the
+    /// ledger is handed the verdict, never a callback).
     ///
-    /// The dup fast-path is the gate's second ask
-    /// ([`Self::confirm_admitted_path`]), because the strategy's pre-filter
-    /// sits between the two memos.
-    #[must_use]
-    pub fn admit_path(
-        &self,
+    /// The pass, in order: direction agreement → the rejected-path memo →
+    /// the policy verdict → the registered-path dup fast-path. A policy deny
+    /// is deterministic per hop signature — the pre-filter is a pure policy
+    /// over the path's composition — so it enters the rejected-path memo and
+    /// is answered as [`PathAdmission::PolicyDenied`].
+    ///
+    /// A driver reads the rejected-path memo itself ([`Self::path_rejected`])
+    /// before running its pre-filter — a memoized deny must never re-run the
+    /// predicate — so a memo hit at THIS ask answers the seat race where
+    /// another unit memoized the signature between that read and here.
+    pub fn admit_path_with_policy(
+        &mut self,
         hop_pool_ids: &[u64],
         pinned_directions: Option<&[bool]>,
         resolved_directions: Option<&[bool]>,
+        policy: PolicyVerdict,
     ) -> PathAdmission {
         if pinned_directions.is_some_and(|pinned| pinned.len() != hop_pool_ids.len()) {
             return PathAdmission::DirectionMismatch;
@@ -1282,36 +1309,14 @@ impl RegistrationLedger {
         if self.path_rejected(&hop_sig) {
             return PathAdmission::RejectedPathMemo;
         }
-        PathAdmission::Admitted { hop_sig }
-    }
-
-    /// The eligibility gate's post-filter ask: the registered-path dup
-    /// fast-path, asked only after the strategy's pre-filter accepted the
-    /// candidate.
-    #[must_use]
-    pub fn confirm_admitted_path(&self, hop_sig: &[(u64, bool)]) -> PathAdmission {
-        if self.path_registered(hop_sig) {
+        if policy == PolicyVerdict::Denied {
+            self.memoize_rejected_path(hop_sig);
+            return PathAdmission::PolicyDenied;
+        }
+        if self.path_registered(&hop_sig) {
             return PathAdmission::AlreadyRegistered;
         }
-        PathAdmission::Admitted {
-            hop_sig: hop_sig.to_vec(),
-        }
-    }
-
-    /// Record the strategy's path-composition pre-filter deny for a hop
-    /// signature and answer the outcome it is expressed through.
-    ///
-    /// The deny is deterministic per hop signature — the pre-filter is a pure
-    /// policy over the path's composition — so it enters the rejected-path
-    /// memo. The answer is the outcome vocabulary's policy/predicate-deny arm
-    /// ([`RegistrationOutcome::PathRejected`]), so a driver reports a bounded
-    /// tag the ledger minted rather than an interpolated class name. The
-    /// pre-filter itself stays with the strategy: the ledger is handed the
-    /// verdict, never a callback.
-    #[must_use]
-    pub fn refuse_path(&mut self, hop_sig: HopSignature) -> RegistrationOutcome {
-        self.memoize_rejected_path(hop_sig);
-        RegistrationOutcome::PathRejected
+        PathAdmission::Admitted { hop_sig }
     }
 }
 
@@ -1719,11 +1724,11 @@ mod tests {
         assert!(ledger.path_rejected(&[(2, false)]));
     }
 
-    /// The eligibility gate owns the mechanical decisions: direction
-    /// agreement, the rejected-path memo, and the registered-path dup
-    /// fast-path. The strategy's pre-filter sits between the two memos, so
-    /// the gate is asked before and after it, and its deny enters through
-    /// `refuse_path`.
+    /// The eligibility gate owns the mechanical decisions in ONE ordered
+    /// pass: direction agreement, the rejected-path memo, the submitted
+    /// policy verdict, and the registered-path dup fast-path. The driver
+    /// runs the strategy's pre-filter first and submits the verdict as data;
+    /// a deny is memoized here and answered as `PolicyDenied`.
     #[test]
     fn eligibility_gate_owns_the_mechanical_decisions() {
         let mut ledger = RegistrationLedger::new();
@@ -1732,67 +1737,80 @@ mod tests {
         // Direction agreement: a pin that disagrees with the hop count is not
         // admissible, and it is judged against the hop ids alone.
         assert_eq!(
-            ledger.admit_path(&[1, 2], Some(&[true]), Some(&[true])),
+            ledger.admit_path_with_policy(
+                &[1, 2],
+                Some(&[true]),
+                Some(&[true]),
+                PolicyVerdict::Admitted
+            ),
             PathAdmission::DirectionMismatch,
             "a pin that does not cover the path is a mismatch"
         );
         // A resolved answer that does not cover the path is not admissible.
         assert_eq!(
-            ledger.admit_path(&[1, 2], None, Some(&[true])),
+            ledger.admit_path_with_policy(&[1, 2], None, Some(&[true]), PolicyVerdict::Admitted),
             PathAdmission::DirectionMismatch
         );
-        // No direction answer at all is not admissible.
+        // No direction answer at all is not admissible — the policy verdict
+        // is never consulted for a candidate that fails direction agreement.
         assert_eq!(
-            ledger.admit_path(&[1, 2], None, None),
+            ledger.admit_path_with_policy(&[1, 2], None, None, PolicyVerdict::Denied),
             PathAdmission::DirectionMismatch
         );
 
         // Agreement builds the signature the memos key on, in hop order.
         assert_eq!(
-            ledger.admit_path(&[1, 2], None, Some(&[true, false])),
+            ledger.admit_path_with_policy(
+                &[1, 2],
+                None,
+                Some(&[true, false]),
+                PolicyVerdict::Admitted
+            ),
             PathAdmission::Admitted {
                 hop_sig: sig.clone()
             }
         );
         assert_eq!(
-            ledger.admit_path(&[1, 2], Some(&[true, false]), Some(&[true, false])),
+            ledger.admit_path_with_policy(
+                &[1, 2],
+                Some(&[true, false]),
+                Some(&[true, false]),
+                PolicyVerdict::Admitted
+            ),
             PathAdmission::Admitted {
                 hop_sig: sig.clone()
             },
             "an agreeing pin is the direction answer"
         );
 
-        // The rejected-path memo answers before the strategy's pre-filter can
-        // run; the pre-filter's own deny is what fills that memo.
-        ledger.memoize_rejected_path(sig.clone());
+        // A denied candidate is answered PolicyDenied and its deny enters the
+        // rejected-path memo.
         assert_eq!(
-            ledger.admit_path(&[1, 2], None, Some(&[true, false])),
-            PathAdmission::RejectedPathMemo
+            ledger.admit_path_with_policy(&[3], None, Some(&[true]), PolicyVerdict::Denied),
+            PathAdmission::PolicyDenied
         );
+        assert!(ledger.path_rejected(&[(3, true)]));
 
-        let refusal = ledger.refuse_path(vec![(3, true)]);
+        // The memo answers before the policy verdict on every later ask: a
+        // memoized deny is never re-decided.
         assert_eq!(
-            refusal,
-            RegistrationOutcome::PathRejected,
-            "the pre-filter's deny is expressed through the bounded outcome vocabulary"
-        );
-        assert_eq!(refusal.as_str(), "path-rejected-memo");
-        assert_eq!(
-            ledger.admit_path(&[3], None, Some(&[true])),
+            ledger.admit_path_with_policy(&[3], None, Some(&[true]), PolicyVerdict::Admitted),
             PathAdmission::RejectedPathMemo,
-            "the strategy's deny is memoized by the ledger, never re-asked"
+            "the deny is memoized by the ledger, never re-asked"
         );
 
-        // The dup fast-path is the second ask, after the pre-filter accepted.
+        // The dup fast-path follows the policy verdict: an admitted candidate
+        // on a fresh signature is Admitted; on a registered one it answers
+        // AlreadyRegistered.
         assert_eq!(
-            ledger.confirm_admitted_path(&[(4, true)]),
+            ledger.admit_path_with_policy(&[4], None, Some(&[true]), PolicyVerdict::Admitted),
             PathAdmission::Admitted {
                 hop_sig: vec![(4, true)]
             }
         );
         ledger.memoize_registered_path(vec![(4, true)]);
         assert_eq!(
-            ledger.confirm_admitted_path(&[(4, true)]),
+            ledger.admit_path_with_policy(&[4], None, Some(&[true]), PolicyVerdict::Admitted),
             PathAdmission::AlreadyRegistered
         );
 
@@ -1800,6 +1818,7 @@ mod tests {
         let kinds: Vec<&str> = [
             PathAdmission::DirectionMismatch,
             PathAdmission::RejectedPathMemo,
+            PathAdmission::PolicyDenied,
             PathAdmission::Admitted {
                 hop_sig: Vec::new(),
             },

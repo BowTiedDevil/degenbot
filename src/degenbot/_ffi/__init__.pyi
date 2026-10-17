@@ -3775,21 +3775,19 @@ class RegistrationLedger:
         """
         A ledger with empty memos.
         """
-    def admit_path(
+    def admit_path_with_policy(
         self,
         /,
         hop_pool_ids: Sequence[int],
         pinned_directions: Sequence[bool] | None,
         resolved_directions: Sequence[bool] | None,
+        policy: str,
     ) -> PathAdmission:
         """
-        The eligibility gate's pre-filter ask: direction agreement and the
-        rejected-path memo.
-        """
-    def confirm_admitted_path(self, /, hop_signature: Sequence[tuple[int, bool]]) -> PathAdmission:
-        """
-        The eligibility gate's post-filter ask: the registered-path dup
-        fast-path.
+        The eligibility gate: direction agreement, the rejected-path memo,
+        the submitted policy verdict, and the registered-path dup fast-path,
+        in one ordered pass. `policy` is the strategy pre-filter's verdict,
+        evaluated by the caller before this ask and submitted as data.
         """
     def memoize_registered_path(self, /, hop_signature: Sequence[tuple[int, bool]]) -> None:
         """
@@ -3818,11 +3816,6 @@ class RegistrationLedger:
     def pool_verified(self, /, key: str) -> bool:
         """
         Whether this pool's verify lifecycle already completed.
-        """
-    def refuse_path(self, /, hop_signature: Sequence[tuple[int, bool]]) -> str:
-        """
-        Record the strategy's path-composition pre-filter deny for a hop
-        signature; the answer is the bounded policy/predicate-deny tag.
         """
     def unregistrable_record(self, /, key: str | None) -> UnregistrablePoolRecord | None:
         """

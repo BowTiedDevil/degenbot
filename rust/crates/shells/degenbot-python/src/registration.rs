@@ -14,7 +14,7 @@ use crate::prelude::*;
 
 use degenbot_bot::bot_core::registration_ledger::{
     BuildFailure, BuildRefusal, HopSignature, OutcomeLabel, PathAdmission, PipelineReport,
-    RegistrationLedger, RegistrationOutcome, RegistrationUnitOutcome,
+    PolicyVerdict, RegistrationLedger, RegistrationOutcome, RegistrationUnitOutcome,
 };
 use degenbot_pathfinding::PoolKind;
 
@@ -197,49 +197,32 @@ impl PyRegistrationLedger {
         py.detach(|| self.lock().memoize_rejected_path(hop_signature));
     }
 
-    /// The eligibility gate's pre-filter ask: direction agreement and the
-    /// rejected-path memo.
-    #[pyo3(signature = (hop_pool_ids, pinned_directions, resolved_directions))]
+    /// The eligibility gate: direction agreement, the rejected-path memo,
+    /// the submitted policy verdict, and the registered-path dup fast-path,
+    /// in one ordered pass. `policy` is the strategy pre-filter's verdict,
+    /// evaluated by the caller before this ask and submitted as data.
+    #[pyo3(signature = (hop_pool_ids, pinned_directions, resolved_directions, policy))]
     #[expect(
         clippy::needless_pass_by_value,
         reason = "pyo3 extracts these by value and the core gate takes slices, so there is no consumed form"
     )]
-    fn admit_path(
+    fn admit_path_with_policy(
         &self,
         py: Python<'_>,
         hop_pool_ids: Vec<u64>,
         pinned_directions: Option<Vec<bool>>,
         resolved_directions: Option<Vec<bool>>,
-    ) -> PyPathAdmission {
-        py.detach(|| {
-            to_admission(self.lock().admit_path(
+        policy: &str,
+    ) -> PyResult<PyPathAdmission> {
+        let policy = to_policy_verdict(policy)?;
+        Ok(py.detach(|| {
+            to_admission(self.lock().admit_path_with_policy(
                 &hop_pool_ids,
                 pinned_directions.as_deref(),
                 resolved_directions.as_deref(),
+                policy,
             ))
-        })
-    }
-
-    /// The eligibility gate's post-filter ask: the registered-path dup
-    /// fast-path.
-    #[pyo3(signature = (hop_signature))]
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "pyo3 extracts the signature by value; there is no borrowed form"
-    )]
-    fn confirm_admitted_path(
-        &self,
-        py: Python<'_>,
-        hop_signature: HopSignature,
-    ) -> PyPathAdmission {
-        py.detach(|| to_admission(self.lock().confirm_admitted_path(hop_signature.as_slice())))
-    }
-
-    /// Record the strategy's path-composition pre-filter deny for a hop
-    /// signature; the answer is the bounded policy/predicate-deny tag.
-    #[pyo3(signature = (hop_signature))]
-    fn refuse_path(&self, py: Python<'_>, hop_signature: HopSignature) -> String {
-        py.detach(|| self.lock().refuse_path(hop_signature).as_str().to_owned())
+        }))
     }
 }
 
@@ -250,9 +233,26 @@ fn to_admission(admission: PathAdmission) -> PyPathAdmission {
         PathAdmission::Admitted { hop_sig } => hop_sig,
         PathAdmission::DirectionMismatch
         | PathAdmission::RejectedPathMemo
+        | PathAdmission::PolicyDenied
         | PathAdmission::AlreadyRegistered => Vec::new(),
     };
     PyPathAdmission { kind, hop_sig }
+}
+
+/// The strategy pre-filter verdict a driver submits with its gate ask.
+///
+/// # Errors
+///
+/// `ValueError` for a verdict outside the closed set: wire drift, never a
+/// guessed branch.
+fn to_policy_verdict(policy: &str) -> PyResult<PolicyVerdict> {
+    match policy {
+        "admitted" => Ok(PolicyVerdict::Admitted),
+        "denied" => Ok(PolicyVerdict::Denied),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown policy verdict {other:?}: expected admitted or denied"
+        ))),
+    }
 }
 
 impl PyRegistrationLedger {
@@ -691,6 +691,7 @@ mod tests {
             vec![
                 "direction-mismatch",
                 "rejected-path-memo",
+                "policy-denied",
                 "admitted",
                 "already-registered"
             ]
@@ -711,6 +712,7 @@ mod tests {
             for refusal in [
                 PathAdmission::DirectionMismatch,
                 PathAdmission::RejectedPathMemo,
+                PathAdmission::PolicyDenied,
                 PathAdmission::AlreadyRegistered,
             ] {
                 let view = to_admission(refusal.clone());

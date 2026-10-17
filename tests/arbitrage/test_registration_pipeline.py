@@ -690,6 +690,36 @@ def test_policy_gate_denial_memoizes_the_path(tmp_path: Path) -> None:
     assert len(gate_calls) == 1
 
 
+def test_the_eligibility_gate_is_asked_once_per_candidate(tmp_path: Path) -> None:
+    """One core gate ask per candidate — the two-stage admit is gone.
+
+    The strategy pre-filter runs BEFORE the single
+    ``admit_path_with_policy`` ask and its verdict rides the ask as data, so
+    a candidate costs the gate exactly once. A dup candidate still sees the
+    pre-filter first and answers ``already-registered`` from that same ask.
+    """
+    registry = _RecordingRegistry()
+    pipeline = _pipeline_over_registry(tmp_path / "unused.db", registry)
+    core_gate = pipeline._ledger.admit_path_with_policy
+    gate_asks: list[int] = []
+
+    def _counting_gate(*args: object, **kwargs: object) -> object:
+        gate_asks.append(1)
+        return core_gate(*args, **kwargs)  # type: ignore[arg-type]
+
+    pipeline._ledger.admit_path_with_policy = _counting_gate  # type: ignore[method-assign]
+    steps = _closed_v3_cycle_steps()
+
+    first = pipeline._registration_unit(steps)
+    assert first.kind == "registered"
+    assert len(gate_asks) == 1, "one gate ask per candidate"
+
+    second = pipeline._registration_unit(steps)
+    assert second.kind == "registered"
+    assert second.created is False
+    assert len(gate_asks) == 2, "still exactly one ask for the dup candidate"
+
+
 def test_pinned_direction_mismatch_skips_before_verify_or_registration(tmp_path: Path) -> None:
     """Operator-pinned directions that do not cover the path are a SKIP.
 

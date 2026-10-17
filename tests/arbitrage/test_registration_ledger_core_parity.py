@@ -39,6 +39,7 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.pathfinding import PoolKind
 from degenbot.runner._registration_ledger import (
     PathAdmissionKind,
+    PolicyVerdict,
     RegistrationLedger,
     RegistrationOutcome,
     RegistrationUnitKind,
@@ -105,6 +106,7 @@ def test_the_python_unit_kind_enum_is_built_from_the_core_list() -> None:
 EXPECTED_ADMISSION_KINDS = frozenset({
     "direction-mismatch",
     "rejected-path-memo",
+    "policy-denied",
     "admitted",
     "already-registered",
 })
@@ -121,39 +123,42 @@ def test_the_python_admission_enum_is_built_from_the_core_list() -> None:
 
 
 def test_the_eligibility_gate_verdicts_are_the_cores() -> None:
-    """The gate's mechanical decisions are answered core-side: direction
-    agreement, the rejected-path memo, and the registered-path dup fast-path.
+    """The gate's mechanical decisions are answered core-side, in ONE ask:
+    direction agreement, the rejected-path memo, the submitted policy
+    verdict, and the registered-path dup fast-path.
 
     The cockpit renders these verdicts; it never decides one. FALSIFICATION:
-    a Python-side re-derivation of any of the three.
+    a Python-side re-derivation of any of the four.
     """
     ledger = RegistrationLedger()
 
-    # Direction agreement is judged against the path's hop ids.
-    mismatch = ledger.admit_path([1, 2], [True], [True])
+    # Direction agreement is judged against the path's hop ids, before any
+    # memo or the submitted verdict.
+    mismatch = ledger.admit_path_with_policy([1, 2], [True], [True], PolicyVerdict.ADMITTED)
     assert mismatch.kind == PathAdmissionKind.DIRECTION_MISMATCH.value
     assert mismatch.hop_sig == [], "a refusal hands back no plan"
 
-    admitted = ledger.admit_path([1, 2], None, [True, False])
+    admitted = ledger.admit_path_with_policy([1, 2], None, [True, False], PolicyVerdict.ADMITTED)
     assert admitted.kind == PathAdmissionKind.ADMITTED.value
     assert admitted.hop_sig == [(1, True), (2, False)], "the core builds the signature"
 
-    # The strategy pre-filter's deny is absorbed by the ledger and expressed
-    # through the bounded outcome vocabulary.
-    refusal = ledger.refuse_path(admitted.hop_sig)
-    assert refusal is RegistrationOutcome.PATH_REJECTED_MEMO
+    # The strategy pre-filter's deny is submitted as data, absorbed by the
+    # ledger into the rejected-path memo, and answered as its own verdict.
+    denied = ledger.admit_path_with_policy([1, 2], None, [True, False], PolicyVerdict.DENIED)
+    assert denied.kind == PathAdmissionKind.POLICY_DENIED.value
+    assert denied.hop_sig == [], "a refusal hands back no plan"
     assert ledger.path_rejected(admitted.hop_sig) is True
     assert (
-        ledger.admit_path([1, 2], None, [True, False]).kind
+        ledger.admit_path_with_policy([1, 2], None, [True, False], PolicyVerdict.ADMITTED).kind
         == PathAdmissionKind.REJECTED_PATH_MEMO.value
     )
 
-    # The dup fast-path is the gate's second ask.
-    fresh = ledger.confirm_admitted_path(((9, True),))
+    # The dup fast-path rides the same single ask, after the verdict.
+    fresh = ledger.admit_path_with_policy([9], None, [True], PolicyVerdict.ADMITTED)
     assert fresh.kind == PathAdmissionKind.ADMITTED.value
     ledger.memoize_registered_path(((9, True),))
     assert (
-        ledger.confirm_admitted_path(((9, True),)).kind
+        ledger.admit_path_with_policy([9], None, [True], PolicyVerdict.ADMITTED).kind
         == PathAdmissionKind.ALREADY_REGISTERED.value
     )
 
