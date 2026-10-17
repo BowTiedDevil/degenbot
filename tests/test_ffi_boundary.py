@@ -44,19 +44,18 @@ ALLOWED_LEAF_FFI_IMPORTS: dict[str, frozenset[str]] = {
     # no Python domain home for the vocabulary — it IS the Rust vocabulary, and
     # re-exporting it through a package would only add a second name for one
     # owner.
-    "src/degenbot/runner/_registration_ledger.py": frozenset(
-        {
-            "BuildRefusalView",
-            "RegistrationFoldDelta",
-            "RegistrationLedger",
-            "UnregistrablePoolRecord",
-            "classify_build_refusal",
-            "fold_registration_unit",
-            "registration_outcome_tags",
-            "registration_pool_memo_key",
-            "registration_unit_kinds",
-        }
-    ),
+    "src/degenbot/runner/_registration_ledger.py": frozenset({
+        "BuildRefusalView",
+        "RegistrationFoldDelta",
+        "RegistrationLedger",
+        "UnregistrablePoolRecord",
+        "classify_build_refusal",
+        "fold_registration_unit",
+        "registration_admission_kinds",
+        "registration_outcome_tags",
+        "registration_pool_memo_key",
+        "registration_unit_kinds",
+    }),
 }
 
 

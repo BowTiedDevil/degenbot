@@ -13,8 +13,8 @@
 use crate::prelude::*;
 
 use degenbot_bot::bot_core::registration_ledger::{
-    BuildFailure, BuildRefusal, HopSignature, OutcomeLabel, PipelineReport, RegistrationLedger,
-    RegistrationOutcome, RegistrationUnitOutcome,
+    BuildFailure, BuildRefusal, HopSignature, OutcomeLabel, PathAdmission, PipelineReport,
+    RegistrationLedger, RegistrationOutcome, RegistrationUnitOutcome,
 };
 use degenbot_pathfinding::PoolKind;
 
@@ -73,6 +73,33 @@ impl PyBuildRefusal {
     #[getter]
     fn detail(&self) -> Option<&str> {
         self.detail.as_deref()
+    }
+}
+
+/// One eligibility-gate answer, as the Python registration pipeline reads it.
+///
+/// The gate's mechanical decisions — direction agreement, the rejected-path
+/// memo, and the registered-path dup fast-path — are the core's; the Python
+/// pipeline renders the verdict it is handed.
+#[pyclass(name = "PathAdmission", module = "degenbot._ffi")]
+pub struct PyPathAdmission {
+    kind: String,
+    hop_sig: HopSignature,
+}
+
+#[pymethods]
+impl PyPathAdmission {
+    /// The bounded verdict tag (one of `registration_admission_kinds()`).
+    #[getter]
+    fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// The hop signature `(pool_id, zero_for_one)` per hop — the signature
+    /// the memos key on. Empty unless the verdict is `admitted`.
+    #[getter]
+    fn hop_sig(&self) -> HopSignature {
+        self.hop_sig.clone()
     }
 }
 
@@ -169,6 +196,63 @@ impl PyRegistrationLedger {
     fn memoize_rejected_path(&self, py: Python<'_>, hop_signature: HopSignature) {
         py.detach(|| self.lock().memoize_rejected_path(hop_signature));
     }
+
+    /// The eligibility gate's pre-filter ask: direction agreement and the
+    /// rejected-path memo.
+    #[pyo3(signature = (hop_pool_ids, pinned_directions, resolved_directions))]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "pyo3 extracts these by value and the core gate takes slices, so there is no consumed form"
+    )]
+    fn admit_path(
+        &self,
+        py: Python<'_>,
+        hop_pool_ids: Vec<u64>,
+        pinned_directions: Option<Vec<bool>>,
+        resolved_directions: Option<Vec<bool>>,
+    ) -> PyPathAdmission {
+        py.detach(|| {
+            to_admission(self.lock().admit_path(
+                &hop_pool_ids,
+                pinned_directions.as_deref(),
+                resolved_directions.as_deref(),
+            ))
+        })
+    }
+
+    /// The eligibility gate's post-filter ask: the registered-path dup
+    /// fast-path.
+    #[pyo3(signature = (hop_signature))]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "pyo3 extracts the signature by value; there is no borrowed form"
+    )]
+    fn confirm_admitted_path(
+        &self,
+        py: Python<'_>,
+        hop_signature: HopSignature,
+    ) -> PyPathAdmission {
+        py.detach(|| to_admission(self.lock().confirm_admitted_path(hop_signature.as_slice())))
+    }
+
+    /// Record the strategy's path-composition pre-filter deny for a hop
+    /// signature; the answer is the bounded policy/predicate-deny tag.
+    #[pyo3(signature = (hop_signature))]
+    fn refuse_path(&self, py: Python<'_>, hop_signature: HopSignature) -> String {
+        py.detach(|| self.lock().refuse_path(hop_signature).as_str().to_owned())
+    }
+}
+
+/// The Python view of one [`PathAdmission`] verdict.
+fn to_admission(admission: PathAdmission) -> PyPathAdmission {
+    let kind = admission.as_str().to_owned();
+    let hop_sig = match admission {
+        PathAdmission::Admitted { hop_sig } => hop_sig,
+        PathAdmission::DirectionMismatch
+        | PathAdmission::RejectedPathMemo
+        | PathAdmission::AlreadyRegistered => Vec::new(),
+    };
+    PyPathAdmission { kind, hop_sig }
 }
 
 impl PyRegistrationLedger {
@@ -353,6 +437,16 @@ impl PyRegistrationFoldDelta {
             .map(|(label, count)| (label.clone(), *count))
             .collect()
     }
+}
+
+/// The closed eligibility-verdict set — the vocabulary a Python consumer
+/// builds its verdict labels from, so a verdict cannot drift between the core
+/// and a driver.
+#[must_use]
+#[pyfunction]
+#[pyo3(name = "registration_admission_kinds")]
+pub fn registration_admission_kinds() -> Vec<&'static str> {
+    PathAdmission::KINDS.to_vec()
 }
 
 /// The closed unit-kind set — the vocabulary a Python consumer builds its
@@ -586,5 +680,43 @@ mod tests {
             registration_unit_kinds(),
             vec!["skip", "reject", "cap", "register-fail", "registered"]
         );
+    }
+
+    /// The eligibility verdicts are the closed set the Python adapter builds
+    /// its verdict labels from — pinned here and in the core.
+    #[test]
+    fn registration_admission_kinds_is_the_closed_set() {
+        assert_eq!(
+            registration_admission_kinds(),
+            vec![
+                "direction-mismatch",
+                "rejected-path-memo",
+                "admitted",
+                "already-registered"
+            ]
+        );
+    }
+
+    /// The Python view carries the verdict tag and the plan, and nothing
+    /// else: a refusal has no hop signature to hand back.
+    #[test]
+    fn admission_view_carries_the_verdict_and_the_plan() {
+        pyo3::Python::attach(|_py| {
+            let admitted = to_admission(PathAdmission::Admitted {
+                hop_sig: vec![(7, true), (9, false)],
+            });
+            assert_eq!(admitted.kind(), "admitted");
+            assert_eq!(admitted.hop_sig(), vec![(7, true), (9, false)]);
+
+            for refusal in [
+                PathAdmission::DirectionMismatch,
+                PathAdmission::RejectedPathMemo,
+                PathAdmission::AlreadyRegistered,
+            ] {
+                let view = to_admission(refusal.clone());
+                assert_eq!(view.kind(), refusal.as_str());
+                assert!(view.hop_sig().is_empty(), "a refusal carries no plan");
+            }
+        });
     }
 }

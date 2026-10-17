@@ -41,6 +41,7 @@ from degenbot.exceptions import (
     VerificationMismatchError,
 )
 from degenbot.pathfinding import PoolKind
+from degenbot.runner._registration_ledger import RegistrationOutcome
 from degenbot.runner.build_paths import (
     REG_INTAKE_WINDOW,
     PathRegistrationPipeline,
@@ -672,20 +673,43 @@ def test_policy_gate_denial_memoizes_the_path(tmp_path: Path) -> None:
 
     first = pipeline._registration_unit(steps)
     assert first.kind == "reject"
-    assert first.tag is not None
-    assert first.tag.startswith("PathRejectedError")
+    # The denial is expressed through the ledger's bounded vocabulary — the
+    # policy/predicate-deny arm the core mints — never an interpolated class
+    # name. The exception text rides the detail, for the log only.
+    assert first.tag == RegistrationOutcome.PATH_REJECTED_MEMO.value
+    assert first.detail is not None and first.detail.startswith("PathRejectedError")
     assert registry.verifies == []  # the gate precedes verify
     pipeline._absorb_outcome(first)
 
     second = pipeline._registration_unit(steps)
     assert second.kind == "reject"
-    # The memo answers with a STABLE tag (the first sighting's tag
-    # interpolates the exception text; the memo's must stay greppable).
     assert second.tag == "path-rejected-memo"
     assert registry.verifies == []
 
     # The gate ran exactly once; the second sighting answered from the memo.
     assert len(gate_calls) == 1
+
+
+def test_pinned_direction_mismatch_skips_before_verify_or_registration(tmp_path: Path) -> None:
+    """Operator-pinned directions that do not cover the path are a SKIP.
+
+    The direction-agreement check is the core eligibility gate's, so the
+    pinned per-hop count is judged against the path's hop ids before any memo
+    is consulted, before the strategy's pre-filter runs, and before any
+    verify/registration work.
+    """
+    registry = _RecordingRegistry()
+    pipeline = _pipeline_over_registry(tmp_path / "unused.db", registry)
+
+    outcome = pipeline._registration_unit(
+        _closed_v3_cycle_steps(),
+        directions=[True],  # two hops: the pin does not cover the path
+    )
+    assert outcome.kind == "skip"
+    assert outcome.tag == RegistrationOutcome.DIRECTION_MISMATCH.value
+    assert outcome.v4_hops == 0
+    assert registry.verifies == []
+    assert registry.registrations == []
 
 
 async def test_trigger_discovery_stops_once_sweep_completes_for_edition(tmp_path: Path) -> None:
@@ -934,7 +958,6 @@ def test_transient_build_skip_tag_uses_the_bounded_vocabulary(tmp_path: Path) ->
     reaching the metric path; the tag must be closed-set, the class name
     log-only in the detail.
     """
-    from degenbot.runner._registration_ledger import RegistrationOutcome
 
     def _build_pool(address: str, *, silent: bool = True, **_route: object) -> None:
         msg = "rpc blip"

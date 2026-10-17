@@ -2748,6 +2748,27 @@ class IntakeReceipt:
         """
 
 @final
+class PathAdmission:
+    """
+    One eligibility-gate answer, as the Python registration pipeline reads it.
+
+    The gate's mechanical decisions — direction agreement, the rejected-path
+    memo, and the registered-path dup fast-path — are the core's; the Python
+    pipeline renders the verdict it is handed.
+    """
+    @property
+    def hop_sig(self, /) -> list[tuple[int, bool]]:
+        """
+        The hop signature `(pool_id, zero_for_one)` per hop — the signature
+        the memos key on. Empty unless the verdict is `admitted`.
+        """
+    @property
+    def kind(self, /) -> str:
+        """
+        The bounded verdict tag (one of `registration_admission_kinds()`).
+        """
+
+@final
 class PathBatchIterator:
     """
     A batched **async** iterator over the lazy DFS.
@@ -3754,6 +3775,22 @@ class RegistrationLedger:
         """
         A ledger with empty memos.
         """
+    def admit_path(
+        self,
+        /,
+        hop_pool_ids: Sequence[int],
+        pinned_directions: Sequence[bool] | None,
+        resolved_directions: Sequence[bool] | None,
+    ) -> PathAdmission:
+        """
+        The eligibility gate's pre-filter ask: direction agreement and the
+        rejected-path memo.
+        """
+    def confirm_admitted_path(self, /, hop_signature: Sequence[tuple[int, bool]]) -> PathAdmission:
+        """
+        The eligibility gate's post-filter ask: the registered-path dup
+        fast-path.
+        """
     def memoize_registered_path(self, /, hop_signature: Sequence[tuple[int, bool]]) -> None:
         """
         Record a completed registration (engine-created or engine-dedup'd).
@@ -3781,6 +3818,11 @@ class RegistrationLedger:
     def pool_verified(self, /, key: str) -> bool:
         """
         Whether this pool's verify lifecycle already completed.
+        """
+    def refuse_path(self, /, hop_signature: Sequence[tuple[int, bool]]) -> str:
+        """
+        Record the strategy's path-composition pre-filter deny for a hop
+        signature; the answer is the bounded policy/predicate-deny tag.
         """
     def unregistrable_record(self, /, key: str | None) -> UnregistrablePoolRecord | None:
         """
@@ -4618,6 +4660,13 @@ def prepare_traversal_plan(
     the effective minimum depth at that length.
     """
 
+def registration_admission_kinds() -> list[str]:
+    """
+    The closed eligibility-verdict set — the vocabulary a Python consumer
+    builds its verdict labels from, so a verdict cannot drift between the core
+    and a driver.
+    """
+
 def registration_outcome_tags() -> list[str]:
     """
     The bounded outcome tag list — the vocabulary a Python consumer builds its
@@ -4893,6 +4942,7 @@ __all__ = [
     "HookedPoolRejectedError",
     "HypotheticalConfig",
     "IntakeReceipt",
+    "PathAdmission",
     "PathBatchIterator",
     "PathGraph",
     "PathIterator",
@@ -4945,6 +4995,7 @@ __all__ = [
     "keccak256",
     "pool_family_tags",
     "prepare_traversal_plan",
+    "registration_admission_kinds",
     "registration_outcome_tags",
     "registration_pool_memo_key",
     "registration_unit_kinds",

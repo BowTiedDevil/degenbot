@@ -42,6 +42,7 @@ from degenbot.pathfinding import (
     resolve_directions as core_resolve_directions,
 )
 from degenbot.runner._registration_ledger import (
+    PathAdmissionKind,
     RegistrationLedger,
     RegistrationOutcome,
     RegistrationUnitKind,
@@ -664,57 +665,84 @@ class PathRegistrationPipeline:
         directions: list[bool] | None,
         v4_hops: int,
     ) -> tuple[list[tuple[int, bool]], tuple[tuple[int, bool], ...]] | RegistrationUnitOutcome:
-        """Resolve directions and run the pre-verify gates for one path.
+        """Run the core eligibility gate for one path, then the strategy pre-filter.
 
-        Returns the (engine_hops, hop_sig) plan to verify + register, or an
-        early outcome: a direction mismatch (skip), a memoized deny
-        (reject), or a hop signature already registered (registered dup).
-        The deployment-policy gate and the dup fast-path both sit in front of
-        ALL verify/RPC work.
+        The MECHANICAL decisions — direction agreement, the rejected-path
+        memo, and the registered-path dup fast-path — are the core ledger's
+        eligibility gate, so this method only hands it the candidate's hop ids
+        and direction answer and renders its verdict. The strategy's
+        path-composition pre-filter stays here (policy stays with the
+        strategy) and runs between the gate's two asks: its deny is recorded
+        through the ledger (``refuse_path``), which answers the bounded
+        outcome the denial is expressed through. Everything the gate and the
+        pre-filter answer sits in front of ALL verify/RPC work.
 
         Returns:
             The ``(engine_hops, hop_sig)`` plan, or an early
             ``RegistrationUnitOutcome``.
 
         Raises:
-            PathRejectedError: When the deployment-policy gate denies the
-                path (the deny memoizes, then re-raises).
+            DegenbotValueError: On a gate verdict outside the core's closed
+                set — wire drift, never a guessed branch (the unit's counted
+                rejection net reports it).
 
         """
-        zfo_list = self._resolve_path_directions(pools, directions)
-        if zfo_list is None:
+        pool_ids = [self._pool_engine_id(pool) for pool in pools]
+        pinned = list(directions) if directions is not None else None
+        # The direction answer the caller holds: the operator's pin when one
+        # was supplied, else the resolver's. `_resolve_path_directions`
+        # answers None when a pin disagrees with the path, and the gate then
+        # refuses the candidate without consulting any memo.
+        resolved = self._resolve_path_directions(pools, directions)
+
+        admission = self._ledger.admit_path(pool_ids, pinned, resolved)
+        if admission.kind == PathAdmissionKind.DIRECTION_MISMATCH:
             # Operator-pinned directions whose per-hop count disagrees with
-            # the resolved path — name it rather than letting the later
-            # zip(strict=True) raise a cryptic TypeError.
+            # the resolved path — named rather than left to a cryptic
+            # zip(strict=True) TypeError.
             return RegistrationUnitOutcome(
                 kind=RegistrationUnitKind.SKIP,
                 tag=RegistrationOutcome.DIRECTION_MISMATCH.value,
             )
-
-        engine_hops = [
-            (self._pool_engine_id(pool), zfo) for pool, zfo in zip(pools, zfo_list, strict=True)
-        ]
-        hop_sig = tuple(engine_hops)
-
-        # The policy deny is deterministic per hop signature, so a re-yielded
-        # candidate is answered without a second gate evaluation.
-        if self._ledger.path_rejected(hop_sig):
+        if admission.kind == PathAdmissionKind.REJECTED_PATH_MEMO:
             return RegistrationUnitOutcome(
                 kind=RegistrationUnitKind.REJECT,
                 tag=RegistrationOutcome.PATH_REJECTED_MEMO.value,
             )
+        if admission.kind != PathAdmissionKind.ADMITTED:
+            msg = (
+                f"Unrecognized eligibility verdict {admission.kind!r}: the gate "
+                "answers direction-mismatch, rejected-path-memo, or admitted "
+                "before the pre-filter — Rust/Python wire drift."
+            )
+            raise DegenbotValueError(message=msg)
+        hop_sig = tuple((pool_id, zfo) for pool_id, zfo in admission.hop_sig)
+        engine_hops = list(hop_sig)
+        zfo_list = [zfo for _, zfo in hop_sig]
 
         try:
             self.engine_registry.path_predicate.evaluate(list(zip(pools, zfo_list, strict=True)))
-        except PathRejectedError:
-            self._ledger.memoize_rejected_path(hop_sig)
-            raise
+        except PathRejectedError as exc:
+            # The strategy's pre-filter denied the path. The ledger absorbs
+            # the deny (deterministic per hop signature) and mints the bounded
+            # outcome it is expressed through; the exception text rides the
+            # detail for the log, never the tag.
+            refusal = self._ledger.refuse_path(hop_sig)
+            bot_logger.info(
+                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
+            )
+            return RegistrationUnitOutcome(
+                kind=RegistrationUnitKind.REJECT,
+                tag=refusal.value,
+                detail=f"{type(exc).__name__}: {exc}",
+                v4_hops=v4_hops,
+            )
 
         # Dup fast-path: answer hop signatures already registered with the
         # same outcome shape the engine dedup produces (created=False). The
         # engine path registry stays the source of truth; a memo miss merely
-        # re-pays the old cost, and the only mutation is a GIL-atomic set.add.
-        if self._ledger.path_registered(hop_sig):
+        # re-pays the old cost.
+        if self._ledger.confirm_admitted_path(hop_sig).kind == PathAdmissionKind.ALREADY_REGISTERED:
             return RegistrationUnitOutcome(
                 kind=RegistrationUnitKind.REGISTERED,
                 created=False,
@@ -848,7 +876,10 @@ class PathRegistrationPipeline:
                 v4_hops=v4_hops,
             )
         except PathRejectedError:
-            self._ledger.memoize_rejected_path(hop_sig)
+            # The engine's own predicate deny: same home as the crawl's
+            # pre-filter deny — the ledger absorbs it and mints the bounded
+            # outcome it is expressed through.
+            self._ledger.refuse_path(hop_sig)
             raise
         except (
             VerificationMismatchError,

@@ -16,7 +16,13 @@ What stays here is only the translation Python owns:
   :meth:`RegistrationLedger.classify_build_refusal` are STATIC: a Python
   caller holds a discovery edge object and a Python exception, and mapping
   those onto the core's typed inputs is the adapter's job — the core decides
-  the outcome, stability, and skip accounting that follow.
+  the outcome, stability, and skip accounting that follow;
+* the eligibility gate's verdicts are the core's too:
+  :meth:`RegistrationLedger.admit_path` owns direction agreement and the
+  rejected-path memo, :meth:`RegistrationLedger.confirm_admitted_path` owns
+  the registered-path dup fast-path, and
+  :meth:`RegistrationLedger.refuse_path` absorbs the strategy pre-filter's
+  deny — the cockpit renders the verdict, never decides one.
 
 Four memos (the cold-soak negative-memoization set):
 
@@ -47,6 +53,7 @@ from degenbot._ffi import (
     fold_registration_unit as _core_fold_registration_unit,
 )
 from degenbot._ffi import (
+    registration_admission_kinds,
     registration_outcome_tags,
     registration_pool_memo_key,
     registration_unit_kinds,
@@ -61,7 +68,12 @@ from degenbot.pathfinding import PoolKind
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
-    from degenbot._ffi import BuildRefusalView, RegistrationFoldDelta, UnregistrablePoolRecord
+    from degenbot._ffi import (
+        BuildRefusalView,
+        PathAdmission,
+        RegistrationFoldDelta,
+        UnregistrablePoolRecord,
+    )
 
 #: A path's hop signature: tuple of ``(engine pool_id, zero_for_one)``.
 HopSignature = tuple[tuple[int, bool], ...]
@@ -97,6 +109,22 @@ RegistrationUnitKind = StrEnum(
     [(kind.upper().replace("-", "_"), kind) for kind in registration_unit_kinds()],
     module=__name__,
     qualname="RegistrationUnitKind",
+)
+
+#: The eligibility gate's verdicts, BUILT from the core's kind list.
+#:
+#: The gate itself is the core's (`RegistrationLedger::admit_path` /
+#: `confirm_admitted_path`): direction agreement, the rejected-path memo, and
+#: the registered-path dup fast-path are mechanical decisions, so the cockpit
+#: renders the verdict rather than deciding one. These members are minted FROM
+#: ``registration_admission_kinds()`` so a verdict added or renamed in the
+#: core shows up on the next build instead of drifting into a Python-only
+#: spelling.
+PathAdmissionKind = StrEnum(
+    "PathAdmissionKind",
+    [(kind.upper().replace("-", "_"), kind) for kind in registration_admission_kinds()],
+    module=__name__,
+    qualname="PathAdmissionKind",
 )
 
 
@@ -168,11 +196,12 @@ def _core_pool_kind_label(pool_kind: PoolKind) -> str:
 
 
 class RegistrationLedger:
-    """The four registration memos + typed build-refusal classification.
+    """The four registration memos, the eligibility gate, and the build-refusal classification.
 
     Thin adapter: every instance method forwards to the core ledger held in
     `_core`, and the two static classification asks translate Python inputs
-    into the core's typed vocabulary. No memo, tag, or rule is defined here.
+    into the core's typed vocabulary. No memo, tag, verdict, or rule is
+    defined here.
     """
 
     def __init__(self) -> None:
@@ -300,3 +329,51 @@ class RegistrationLedger:
     def memoize_rejected_path(self, hop_sig: HopSignature) -> None:
         """Record a deterministic policy/predicate deny for a hop signature."""
         self._core.memoize_rejected_path(hop_sig)
+
+    # ── the eligibility gate ──
+
+    def admit_path(
+        self,
+        hop_pool_ids: list[int],
+        pinned_directions: list[bool] | None,
+        resolved_directions: list[bool] | None,
+    ) -> PathAdmission:
+        """Ask the gate's pre-filter stage: direction agreement + deny memo.
+
+        `pinned_directions` is the operator's pinned answer (``None`` when the
+        caller pinned none); `resolved_directions` is the direction answer the
+        caller holds — ``None`` when it could not agree one. The verdict, and
+        the hop signature an ``admitted`` one carries, are the core's.
+
+        Returns:
+            The gate's verdict (``direction-mismatch`` / ``rejected-path-memo``
+            / ``admitted``).
+
+        """
+        return self._core.admit_path(hop_pool_ids, pinned_directions, resolved_directions)
+
+    def confirm_admitted_path(self, hop_sig: HopSignature) -> PathAdmission:
+        """Ask the gate's post-filter stage: the registered-path dup fast-path.
+
+        Asked only after the strategy's path-composition pre-filter accepted
+        the candidate, because the pre-filter sits between the gate's two
+        memos.
+
+        Returns:
+            ``already-registered``, or ``admitted`` when the signature is new.
+
+        """
+        return self._core.confirm_admitted_path(hop_sig)
+
+    def refuse_path(self, hop_sig: HopSignature) -> RegistrationOutcome:
+        """Record the strategy pre-filter's deny and answer its bounded outcome.
+
+        The deny is deterministic per hop signature, so the ledger absorbs it
+        (the rejected-path memo) and mints the outcome vocabulary's
+        policy/predicate-deny arm — never a driver-interpolated class name.
+
+        Returns:
+            The bounded outcome the denial is expressed through.
+
+        """
+        return RegistrationOutcome(self._core.refuse_path(hop_sig))

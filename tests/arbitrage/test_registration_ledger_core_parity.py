@@ -25,7 +25,11 @@ from __future__ import annotations
 import pytest
 
 from degenbot._ffi import RegistrationLedger as CoreRegistrationLedger
-from degenbot._ffi import registration_outcome_tags, registration_unit_kinds
+from degenbot._ffi import (
+    registration_admission_kinds,
+    registration_outcome_tags,
+    registration_unit_kinds,
+)
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
@@ -34,6 +38,7 @@ from degenbot.exceptions import (
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.pathfinding import PoolKind
 from degenbot.runner._registration_ledger import (
+    PathAdmissionKind,
     RegistrationLedger,
     RegistrationOutcome,
     RegistrationUnitKind,
@@ -48,25 +53,24 @@ class _Step:
     address = None
     hash = None
 
+
 #: The closed tag set, pinned. Any change here is a change to the bounded
 #: metric vocabulary in the core, not a Python-side edit.
-EXPECTED_TAGS = frozenset(
-    {
-        "registered",
-        "dup",
-        "path-cap",
-        "direction-mismatch",
-        "unknown-pool-type",
-        "v4-no-hash",
-        "v4-hook-rejected",
-        "v4-dynamic-fee-rejected",
-        "path-rejected-memo",
-        "build-v2-refused",
-        "build-v3-refused",
-        "build-v4-refused",
-        "register-fail",
-    }
-)
+EXPECTED_TAGS = frozenset({
+    "registered",
+    "dup",
+    "path-cap",
+    "direction-mismatch",
+    "unknown-pool-type",
+    "v4-no-hash",
+    "v4-hook-rejected",
+    "v4-dynamic-fee-rejected",
+    "path-rejected-memo",
+    "build-v2-refused",
+    "build-v3-refused",
+    "build-v4-refused",
+    "register-fail",
+})
 
 
 def test_the_core_tag_list_is_the_closed_set() -> None:
@@ -93,6 +97,65 @@ def test_the_python_unit_kind_enum_is_built_from_the_core_list() -> None:
     """The kind labels are minted from the core's list, not re-declared."""
     assert {member.value for member in RegistrationUnitKind} == EXPECTED_UNIT_KINDS
     assert len(list(RegistrationUnitKind)) == len(EXPECTED_UNIT_KINDS), "no duplicate kinds"
+
+
+#: The closed eligibility-verdict set, pinned for the same reason as the tag
+#: and unit-kind sets. The Rust pin:
+#: `registration_ledger::tests::eligibility_gate_owns_the_mechanical_decisions`.
+EXPECTED_ADMISSION_KINDS = frozenset({
+    "direction-mismatch",
+    "rejected-path-memo",
+    "admitted",
+    "already-registered",
+})
+
+
+def test_the_core_admission_kind_list_is_the_closed_set() -> None:
+    assert set(registration_admission_kinds()) == EXPECTED_ADMISSION_KINDS
+
+
+def test_the_python_admission_enum_is_built_from_the_core_list() -> None:
+    """The verdict labels are minted from the core's list, not re-declared."""
+    assert {member.value for member in PathAdmissionKind} == EXPECTED_ADMISSION_KINDS
+    assert len(list(PathAdmissionKind)) == len(EXPECTED_ADMISSION_KINDS)
+
+
+def test_the_eligibility_gate_verdicts_are_the_cores() -> None:
+    """The gate's mechanical decisions are answered core-side: direction
+    agreement, the rejected-path memo, and the registered-path dup fast-path.
+
+    The cockpit renders these verdicts; it never decides one. FALSIFICATION:
+    a Python-side re-derivation of any of the three.
+    """
+    ledger = RegistrationLedger()
+
+    # Direction agreement is judged against the path's hop ids.
+    mismatch = ledger.admit_path([1, 2], [True], [True])
+    assert mismatch.kind == PathAdmissionKind.DIRECTION_MISMATCH.value
+    assert mismatch.hop_sig == [], "a refusal hands back no plan"
+
+    admitted = ledger.admit_path([1, 2], None, [True, False])
+    assert admitted.kind == PathAdmissionKind.ADMITTED.value
+    assert admitted.hop_sig == [(1, True), (2, False)], "the core builds the signature"
+
+    # The strategy pre-filter's deny is absorbed by the ledger and expressed
+    # through the bounded outcome vocabulary.
+    refusal = ledger.refuse_path(admitted.hop_sig)
+    assert refusal is RegistrationOutcome.PATH_REJECTED_MEMO
+    assert ledger.path_rejected(admitted.hop_sig) is True
+    assert (
+        ledger.admit_path([1, 2], None, [True, False]).kind
+        == PathAdmissionKind.REJECTED_PATH_MEMO.value
+    )
+
+    # The dup fast-path is the gate's second ask.
+    fresh = ledger.confirm_admitted_path(((9, True),))
+    assert fresh.kind == PathAdmissionKind.ADMITTED.value
+    ledger.memoize_registered_path(((9, True),))
+    assert (
+        ledger.confirm_admitted_path(((9, True),)).kind
+        == PathAdmissionKind.ALREADY_REGISTERED.value
+    )
 
 
 def test_the_ledger_holds_no_python_side_memo_state() -> None:
@@ -127,9 +190,7 @@ def test_memos_round_trip_through_the_core_ledger() -> None:
     ledger.memoize_rejected_path(hop_sig)
     assert ledger.path_rejected(hop_sig) is True
 
-    ledger.memoize_unregistrable(
-        "p:0x1", RegistrationOutcome.BUILD_V3_REFUSED, counts_as_skip=True
-    )
+    ledger.memoize_unregistrable("p:0x1", RegistrationOutcome.BUILD_V3_REFUSED, counts_as_skip=True)
     record = ledger.unregistrable_record("p:0x1")
     assert record is not None
     assert record.outcome == RegistrationOutcome.BUILD_V3_REFUSED.value
@@ -139,9 +200,7 @@ def test_memos_round_trip_through_the_core_ledger() -> None:
 
 def test_the_first_stable_refusal_wins() -> None:
     ledger = RegistrationLedger()
-    ledger.memoize_unregistrable(
-        "p:0x1", RegistrationOutcome.BUILD_V3_REFUSED, counts_as_skip=True
-    )
+    ledger.memoize_unregistrable("p:0x1", RegistrationOutcome.BUILD_V3_REFUSED, counts_as_skip=True)
     ledger.memoize_unregistrable(
         "p:0x1", RegistrationOutcome.V4_HOOK_REJECTED, counts_as_skip=False
     )
