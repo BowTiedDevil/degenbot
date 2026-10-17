@@ -14,6 +14,7 @@ use std::sync::Arc;
 use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::families::concentrated_liquidity::state_journal;
+use crate::families::concentrated_liquidity::state_seeding;
 use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use crate::liquidity_event::LiquidityEvent;
 use crate::state_history::{
@@ -24,7 +25,6 @@ use crate::tick_fetch::TickWordFetcher;
 use crate::v3_state::{PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, V3SwapOutcome};
 use crate::TickInfo;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
-use degenbot_math::concentrated_liquidity::functions::tick_position;
 use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v4;
 use degenbot_math::concentrated_liquidity::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
@@ -446,20 +446,18 @@ impl V4PoolState {
         }
     }
 
-    /// Word position holding `tick` (V3/V4-shared helper).
+    /// Word position holding `tick` (V3/V4-shared helper); the verb lives
+    /// once in the CL family state module
+    /// (`families/concentrated_liquidity/state_seeding.rs`).
     #[must_use]
     pub fn word_of(tick: i32, tick_spacing: i32) -> i32 {
-        i32::from(tick_position(tick.div_euclid(tick_spacing)).0)
+        state_seeding::word_of(tick, tick_spacing)
     }
 
     /// Seed `known_bitmap_words` from the current `tick_data` keys' word
     /// positions (Sparse pools only; Tracked bypasses detection).
     pub fn seed_known_bitmap_words(&mut self, tick_spacing: i32) {
-        self.known_bitmap_words = self
-            .tick_data
-            .keys()
-            .map(|&t| Self::word_of(t, tick_spacing))
-            .collect();
+        state_seeding::seed_known_bitmap_words(self, tick_spacing);
     }
 
     /// Monotonic advance of the **price** clock — see
@@ -513,17 +511,7 @@ impl V4PoolState {
     /// `tick_data_block` when registration seeds price at HEAD past the DB map
     /// block.
     pub fn seed_genesis(&mut self, block: u64) {
-        self.journal.push_delta(V3BlockDelta {
-            block,
-            scalar_priors: Some(ScalarPriors {
-                sqrt_price_x96_before: self.sqrt_price_x96,
-                liquidity_before: self.liquidity,
-                tick_before: self.tick,
-            }),
-            update_block_before: Some(self.update_block),
-            tick_data_block_before: Some(self.tick_data_block),
-            tick_priors: Vec::new(),
-        });
+        state_seeding::seed_genesis(self, block);
     }
 
     /// Construct from registration params with a journal of the given depth.
@@ -551,11 +539,7 @@ impl V4PoolState {
             // `Sparse` pools stay `Live`/direct-apply (no pin, no step-2
             // verify to protect — quarantining would re-raise the retained-tail
             // flush hazard at `set_live`).
-            registration_lifecycle: if params.coverage == PoolTickCoverage::Tracked {
-                RegistrationLifecycle::Quarantined
-            } else {
-                RegistrationLifecycle::Live
-            },
+            registration_lifecycle: state_seeding::registration_lifecycle_for(params.coverage),
             protocol_fee: params.protocol_fee,
             tick_data: params.tick_data,
             coverage: params.coverage,
@@ -580,11 +564,7 @@ impl V4PoolState {
         // pin the snapshot seed for Tracked pools so step-1 verify
         // compares the seed (not pump-mutated `tick_data`) against
         // on-chain@snapshot_block. Sparse pools have no complete seed.
-        state.snapshot_seed = if params.coverage == PoolTickCoverage::Tracked {
-            Some(state.tick_data.clone())
-        } else {
-            None
-        };
+        state.snapshot_seed = state_seeding::snapshot_seed_for(&state.tick_data, params.coverage);
         (identity, state)
     }
 
@@ -819,6 +799,40 @@ impl state_journal::JournalHost for V4PoolState {
     fn bump_state_nonce_and_invalidate_cache(&mut self) {
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
+    }
+}
+
+impl state_seeding::SeedingHost for V4PoolState {
+    fn tick_data(&self) -> &HashMap<i32, TickInfo> {
+        &self.tick_data
+    }
+
+    fn known_bitmap_words_mut(&mut self) -> &mut HashSet<i32> {
+        &mut self.known_bitmap_words
+    }
+
+    fn sqrt_price_x96(&self) -> U256 {
+        self.sqrt_price_x96
+    }
+
+    fn liquidity(&self) -> u128 {
+        self.liquidity
+    }
+
+    fn tick(&self) -> i32 {
+        self.tick
+    }
+
+    fn update_block(&self) -> u64 {
+        self.update_block
+    }
+
+    fn tick_data_block(&self) -> u64 {
+        self.tick_data_block
+    }
+
+    fn journal_mut(&mut self) -> &mut ReorgJournal<V3BlockDelta> {
+        &mut self.journal
     }
 }
 

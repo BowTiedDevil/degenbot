@@ -50,6 +50,11 @@ pub(crate) mod solve;
 /// data-generically over the two designs' state structs.
 pub(crate) mod state_journal;
 
+/// Bitmap-word seeding and registration-coverage bookkeeping: the family's
+/// shared seeding verbs, written once data-generically over the two designs'
+/// state structs.
+pub(crate) mod state_seeding;
+
 pub mod v3;
 pub mod v4;
 
