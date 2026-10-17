@@ -168,11 +168,16 @@ async fn build_and_register(
                     node.kind,
                     Some(detail.clone()),
                 );
-                emit_build_refusal_sample(node.kind, &node.identity, refusal.outcome, &detail);
+                emit_build_refusal_sample(
+                    node.kind,
+                    &node.identity,
+                    refusal.outcome.clone(),
+                    &detail,
+                );
                 if refusal.stable {
                     pipeline.ledger.memoize_unregistrable(
                         node.memo_key.as_deref(),
-                        refusal.outcome,
+                        refusal.outcome.clone(),
                         refusal.counts_as_skip,
                     );
                 }

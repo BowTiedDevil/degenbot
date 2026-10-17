@@ -180,7 +180,7 @@ impl RegistrationPipeline {
             );
             if let Some(record) = self.ledger.unregistrable_record(memo_key.as_deref()) {
                 return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
-                    label: OutcomeLabel::Vocabulary(record.outcome),
+                    label: OutcomeLabel::Vocabulary(record.outcome.clone()),
                     counts_as_skip: record.counts_as_skip,
                     detail: None,
                 });

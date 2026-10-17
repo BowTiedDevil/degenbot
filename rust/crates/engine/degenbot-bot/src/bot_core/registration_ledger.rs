@@ -31,8 +31,27 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
+use degenbot_pools::aerodrome_v2_state::RegisterAerodromePoolError;
+use degenbot_pools::v2_state::RegisterV2PoolError;
+use degenbot_pools::v3_state::RegisterV3PoolError;
 use degenbot_pools::v4_state::RegisterV4PoolError;
+use degenbot_uniswap::deployments::AddressMismatch;
+
+use super::build_register::{
+    AerodromeBuildError, BuildError, V2BuildError, V3BuildError, V4BuildError,
+};
+use super::liquidity_verifier::LiquidityVerifyError;
+use super::pool_builder::builder::PoolBuilderError;
+use super::pool_builder::parity::IdentityDivergence;
+use super::pool_builder::route::ConstructionRefusal;
+use super::registration::{
+    AerodromeRegistrationError, ParseAddressError, ResolveV4IdentityError, V2RegistrationError,
+    V3RegistrationError,
+};
+use super::registration_lifecycle::RegistrationLifecycleError;
+use super::snapshot_verify::{SnapshotLoadError, VerifyError};
 
 /// A path's hop signature: `(pool_id, zero_for_one)` per hop.
 pub type HopSignature = Vec<(u64, bool)>;
@@ -42,7 +61,7 @@ pub type HopSignature = Vec<(u64, bool)>;
 /// The tag strings are the cross-language contract: the Python registration
 /// pipeline builds its own label enum from this list, so a tag can never
 /// drift between the core and a driver.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RegistrationOutcome {
     /// A completed registration (`created == true`).
     Registered,
@@ -70,10 +89,19 @@ pub enum RegistrationOutcome {
     BuildV4Refused,
     /// A transient register failure.
     RegisterFailed,
+    /// A refusal classified through the one refusal vocabulary (ADR-077).
+    ///
+    /// The carried [`RefusalKind`] holds the family/phase tags and the
+    /// load-bearing classification. Its tag is a refusal-kind tag
+    /// ([`REFUSAL_KIND_TAGS`]), not one of the bounded
+    /// [`REGISTRATION_OUTCOMES`] tags, so it does not round-trip through
+    /// [`RegistrationOutcome::from_tag`].
+    Refused(RefusalKind),
 }
 
-/// Every outcome, in declaration order — the vocabulary a cross-language
-/// consumer enumerates.
+/// Every BOUNDED outcome, in declaration order — the vocabulary a
+/// cross-language consumer enumerates. The refusal arm's kind tags are the
+/// separate [`REFUSAL_KIND_TAGS`] set.
 pub const REGISTRATION_OUTCOMES: [RegistrationOutcome; 13] = [
     RegistrationOutcome::Registered,
     RegistrationOutcome::Dup,
@@ -93,7 +121,7 @@ pub const REGISTRATION_OUTCOMES: [RegistrationOutcome; 13] = [
 impl RegistrationOutcome {
     /// The bounded metric/log tag string.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Registered => "registered",
             Self::Dup => "dup",
@@ -108,6 +136,7 @@ impl RegistrationOutcome {
             Self::BuildV3Refused => "build-v3-refused",
             Self::BuildV4Refused => "build-v4-refused",
             Self::RegisterFailed => "register-fail",
+            Self::Refused(kind) => kind.tag(),
         }
     }
 
@@ -145,12 +174,805 @@ impl RegistrationOutcome {
     }
 }
 
+// ── The refusal vocabulary ──────────────────────────────────────────────────
+//
+// One closed vocabulary for every registration-phase refusal. Family and
+// phase ride as DATA on a variant, never as forked variants per family, and
+// the load-bearing classifications ride there too: the stable-vs-transient
+// build-refusal taxonomy ([`BuildFailure`]) and the fatal-vs-transient verify
+// split. The per-family register / build / lifecycle / verify enums still
+// carry their own throw sites; the `from_*` mappers below are the proof this
+// vocabulary can absorb them (the migration lands per ADR-077).
+
+/// The phase of the registration pipeline a refusal arose in.
+///
+/// Phase rides as data on a [`RefusalKind`] variant, so one family's register
+/// and build refusals are one variant carrying different tags rather than
+/// forked variants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RegistrationPhase {
+    /// Intake: an operator-supplied address or list entry that would not
+    /// parse.
+    Intake,
+    /// Identity resolution: the `CREATE2` / EIP-1167 recomputation and the
+    /// minted-vs-registered parity guard.
+    Identity,
+    /// Pool construction: the builder run and the construction-route rung
+    /// walk.
+    Build,
+    /// The registry insert (`BotState::register_*_pool`).
+    Register,
+    /// The snapshot store: loading or decoding a persisted snapshot.
+    Snapshot,
+    /// The liquidity-map verify tripwire.
+    Verify,
+    /// The verify-lifecycle orchestration around the verify steps.
+    Lifecycle,
+}
+
+/// The family a refusal concerns — the registration taxonomy's family tag.
+///
+/// `None` on a [`RefusalKind`] means the refusal is family-agnostic (a
+/// malformed input line, a missing construction I/O).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PoolFamilyTag {
+    /// A Uniswap-V2-style reserve pair.
+    V2,
+    /// A Uniswap-V3-style concentrated-liquidity pool.
+    V3,
+    /// A Uniswap-V4 pool, keyed by `(PoolManager, pool_id)`.
+    V4,
+    /// An Aerodrome V2 (Solidly) pair.
+    AerodromeV2,
+    /// A Balancer V2 weighted pool.
+    BalancerWeighted,
+    /// A Balancer V2 stable pool.
+    BalancerStable,
+    /// A Curve pool.
+    Curve,
+}
+
+/// The identity-parity refusal shape — the ONE home of the three historical
+/// identity-mismatch vocabularies.
+///
+/// The construction side owns identity parity: the register path's `Create2`
+/// arms, the builder's discarded `CREATE2` check, and the
+/// minted-vs-registered parity guard all describe the same refusal — a
+/// recomputed or minted identity that disagrees with the declared or
+/// registered one.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum IdentityMismatchShape {
+    /// A `CREATE2` / EIP-1167 recomputation disagreed with the declared
+    /// address: the declared and recomputed addresses ride verbatim, and the
+    /// full source rendering (chain, factory, deployer, init hash) rides in
+    /// `detail`.
+    Create2 {
+        /// The declared (expected) pool address.
+        declared: Address,
+        /// The recomputed address.
+        computed: Address,
+        /// The source rendering (log-only, never a label).
+        detail: String,
+    },
+    /// A freshly minted construction identity disagreed with the identity the
+    /// registry of record holds — the field-by-field parity guard's
+    /// divergence.
+    MintedVsRegistered {
+        /// The address the divergence concerns.
+        address: Address,
+        /// The field-by-field divergence (log-only).
+        detail: String,
+    },
+    /// A builder's `CREATE2` verification failed and its source vocabulary
+    /// discarded the two addresses.
+    UnverifiedCreate2,
+}
+
+/// Why a registry insert refused.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RegisterRefusal {
+    /// A pool at this address (or `(pool_manager, pool_id)` key) is already
+    /// registered. The address rides when the family keys by address; a V4
+    /// key rides in `detail`.
+    AlreadyRegistered {
+        /// The refused pool address, when the family keys by address.
+        address: Option<Address>,
+        /// The source rendering (log-only).
+        detail: String,
+    },
+    /// An out-of-spec field.
+    SpecViolation {
+        /// The source rendering (log-only).
+        detail: String,
+    },
+    /// A V4 admission refusal (hooked pool / dynamic fee / encoder limit):
+    /// the [`BuildFailure`] taxonomy is its one home.
+    Admission(BuildFailure),
+}
+
+/// Why a persisted snapshot could not be loaded.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SnapshotLoadReason {
+    /// A DB read failed.
+    Db {
+        /// The source rendering (log-only).
+        detail: String,
+    },
+    /// A hex / tick decode failed.
+    Decode {
+        /// The source rendering (log-only).
+        detail: String,
+    },
+    /// A value exceeded the range the snapshot store can hold.
+    OutOfRange {
+        /// The source rendering (log-only).
+        detail: String,
+    },
+}
+
+/// The provenance of a verify failure.
+///
+/// The fatal-vs-transient classification rides beside it on the
+/// [`RefusalKind::VerifyFailed`] variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum VerifyOrigin {
+    /// A typed map divergence — the tripwire.
+    Mismatch,
+    /// A per-call RPC read / transport failure.
+    Transport,
+    /// Verify-provider construction failed.
+    ProviderConstruction,
+    /// The verify protocol was violated (`insert()` with no snapshot stream
+    /// in progress).
+    ProtocolViolation,
+    /// A failure outside the named categories.
+    Other,
+}
+
+/// Why a verify-lifecycle precondition was unavailable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum LifecyclePrecondition {
+    /// A tracked pool reached a verify step with no provider configured.
+    MissingVerifyProvider,
+    /// The registered pool's immutable tick spacing was unavailable.
+    MissingTickSpacing,
+}
+
+/// What a family-level refusal could not serve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum UnsupportedSubject {
+    /// No construction-route rung serves this pool address.
+    Pool {
+        /// The pool address no rung served.
+        address: Address,
+    },
+    /// The factory has no built-in DEX variant preset.
+    Factory {
+        /// The factory with no preset.
+        factory: Address,
+    },
+    /// No identity selector answered at this address.
+    UnknownIdentity {
+        /// The address no selector answered for.
+        address: Address,
+    },
+}
+
+/// The ONE closed refusal vocabulary the registration outcome ledger owns.
+///
+/// Every registration-phase refusal is a variant here. Family and phase ride
+/// as data on the variant; so do the load-bearing classifications — a build
+/// refusal carries the [`BuildFailure`] taxonomy (stable pool fact vs
+/// retryable failure), and a verify refusal carries `fatal` (the mismatch
+/// tripwire vs a transient read).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RefusalKind {
+    /// Intake: an operator-supplied address or list entry would not parse.
+    MalformedInput {
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// The rejected input, verbatim.
+        input: String,
+        /// The parser's rendering (log-only).
+        detail: String,
+    },
+    /// Identity parity: a recomputed or minted identity disagreed with the
+    /// declared or registered one.
+    IdentityMismatch {
+        /// The family the refusal concerns.
+        family: Option<PoolFamilyTag>,
+        /// The pipeline phase (always [`RegistrationPhase::Identity`]: this
+        /// refusal IS identity resolution, whichever entry raised it).
+        phase: RegistrationPhase,
+        /// The divergence shape.
+        shape: IdentityMismatchShape,
+    },
+    /// No `ConstructionIo` was attached, so no build could run.
+    MissingConstructionIo {
+        /// The family the refusal concerns.
+        family: Option<PoolFamilyTag>,
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+    },
+    /// A family-level stable refusal: no route rung serves the family, the
+    /// factory has no preset, or no identity selector answered. Loud, never a
+    /// benign skip.
+    UnsupportedFamily {
+        /// The family the refusal concerns.
+        family: Option<PoolFamilyTag>,
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// What could not be served.
+        subject: UnsupportedSubject,
+        /// The source rendering (log-only).
+        detail: String,
+    },
+    /// A construction refusal that keeps skip semantics; the
+    /// stable-vs-transient classification rides on the carried
+    /// [`BuildFailure`].
+    BuildRefused {
+        /// The family the refusal concerns.
+        family: Option<PoolFamilyTag>,
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// The typed build failure.
+        failure: BuildFailure,
+    },
+    /// The registry insert refused (already registered / out-of-spec / V4
+    /// admission).
+    RegisterRefused {
+        /// The family the refusal concerns.
+        family: Option<PoolFamilyTag>,
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// The insert refusal.
+        reason: RegisterRefusal,
+    },
+    /// The registry GET answered an address with no readable identity of the
+    /// expected family.
+    UnreadableIdentity {
+        /// The family the refusal concerns.
+        family: Option<PoolFamilyTag>,
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// The address that answered without a readable identity.
+        address: Address,
+        /// The source rendering (log-only).
+        detail: String,
+    },
+    /// The persisted snapshot could not be loaded or decoded.
+    SnapshotLoadFailed {
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// The load failure.
+        reason: SnapshotLoadReason,
+    },
+    /// A verification failed. `fatal` is the load-bearing classification: a
+    /// mismatch or a protocol violation is the tripwire (never auto-repair);
+    /// a read / transport / provider-construction failure is transient.
+    VerifyFailed {
+        /// The family the refusal concerns.
+        family: Option<PoolFamilyTag>,
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// The fatal-vs-transient classification.
+        fatal: bool,
+        /// Where the failure came from.
+        origin: VerifyOrigin,
+        /// The source rendering (log-only).
+        detail: String,
+    },
+    /// Verification was requested but its configuration was absent — a fatal
+    /// misconfiguration: the bot must never operate on an unverified map.
+    VerifyNotConfigured {
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// The missing-configuration rendering (log-only).
+        detail: String,
+    },
+    /// A verify-lifecycle precondition was unavailable.
+    LifecyclePrecondition {
+        /// The pipeline phase.
+        phase: RegistrationPhase,
+        /// The missing precondition.
+        reason: LifecyclePrecondition,
+    },
+}
+
+/// Every refusal-kind tag, in declaration order — the closed set a
+/// cross-language consumer builds its refusal labels from.
+///
+/// The bounded [`REGISTRATION_OUTCOMES`] tag list stays the pre-cutover
+/// outcome vocabulary; this list is the refusal arm's own.
+pub const REFUSAL_KIND_TAGS: [&str; 11] = [
+    "malformed-input",
+    "identity-mismatch",
+    "missing-construction-io",
+    "unsupported-family",
+    "build-refused",
+    "register-refused",
+    "unreadable-identity",
+    "snapshot-load-failed",
+    "verify-failed",
+    "verify-not-configured",
+    "lifecycle-precondition",
+];
+
+impl RefusalKind {
+    /// The bounded tag of this refusal kind.
+    #[must_use]
+    pub const fn tag(&self) -> &'static str {
+        match self {
+            Self::MalformedInput { .. } => "malformed-input",
+            Self::IdentityMismatch { .. } => "identity-mismatch",
+            Self::MissingConstructionIo { .. } => "missing-construction-io",
+            Self::UnsupportedFamily { .. } => "unsupported-family",
+            Self::BuildRefused { .. } => "build-refused",
+            Self::RegisterRefused { .. } => "register-refused",
+            Self::UnreadableIdentity { .. } => "unreadable-identity",
+            Self::SnapshotLoadFailed { .. } => "snapshot-load-failed",
+            Self::VerifyFailed { .. } => "verify-failed",
+            Self::VerifyNotConfigured { .. } => "verify-not-configured",
+            Self::LifecyclePrecondition { .. } => "lifecycle-precondition",
+        }
+    }
+
+    /// Identity parity: a `CREATE2` / EIP-1167 recomputation that disagreed
+    /// with the declared address (the register path's `Create2` arm).
+    #[must_use]
+    pub fn from_create2_mismatch(family: PoolFamilyTag, mismatch: &AddressMismatch) -> Self {
+        Self::IdentityMismatch {
+            family: Some(family),
+            phase: RegistrationPhase::Identity,
+            shape: IdentityMismatchShape::Create2 {
+                declared: mismatch.expected,
+                computed: mismatch.computed,
+                detail: mismatch.to_string(),
+            },
+        }
+    }
+
+    /// Identity parity: the minted-vs-registered parity guard's divergence.
+    #[must_use]
+    pub fn from_identity_divergence(
+        family: Option<PoolFamilyTag>,
+        divergence: &IdentityDivergence,
+    ) -> Self {
+        Self::IdentityMismatch {
+            family,
+            phase: RegistrationPhase::Identity,
+            shape: IdentityMismatchShape::MintedVsRegistered {
+                address: divergence.address,
+                detail: divergence.detail.clone(),
+            },
+        }
+    }
+
+    /// Identity parity: a builder's `CREATE2` verification failure, whose
+    /// source vocabulary discarded the two addresses.
+    #[must_use]
+    pub const fn from_builder_create2(family: Option<PoolFamilyTag>) -> Self {
+        Self::IdentityMismatch {
+            family,
+            phase: RegistrationPhase::Identity,
+            shape: IdentityMismatchShape::UnverifiedCreate2,
+        }
+    }
+
+    /// Intake: an address (or list entry) that would not parse.
+    #[must_use]
+    pub fn from_parse_address_error(err: &ParseAddressError) -> Self {
+        match err {
+            ParseAddressError::InvalidAddress { input, .. } => Self::MalformedInput {
+                phase: RegistrationPhase::Intake,
+                input: input.clone(),
+                detail: err.to_string(),
+            },
+        }
+    }
+
+    /// The construction route's typed refusal.
+    #[must_use]
+    pub fn from_construction_refusal(
+        refusal: &ConstructionRefusal,
+        family: Option<PoolFamilyTag>,
+    ) -> Self {
+        match refusal {
+            ConstructionRefusal::UnsupportedFamily { address, detail } => Self::UnsupportedFamily {
+                family,
+                phase: RegistrationPhase::Build,
+                subject: UnsupportedSubject::Pool { address: *address },
+                detail: detail.clone(),
+            },
+            ConstructionRefusal::Skipped(failure) => Self::BuildRefused {
+                family,
+                phase: RegistrationPhase::Build,
+                failure: failure.clone(),
+            },
+        }
+    }
+
+    /// The builder's typed failure. The factory-identity class is the loud
+    /// abort; every other builder failure is I/O-derived and stays a
+    /// retriable skip on the one build-refusal taxonomy.
+    #[must_use]
+    pub fn from_builder_error(
+        err: &PoolBuilderError,
+        family: Option<PoolFamilyTag>,
+        phase: RegistrationPhase,
+    ) -> Self {
+        match err {
+            PoolBuilderError::Create2 => Self::from_builder_create2(family),
+            PoolBuilderError::UnknownVariant { factory } => Self::UnsupportedFamily {
+                family,
+                phase,
+                subject: UnsupportedSubject::Factory { factory: *factory },
+                detail: err.to_string(),
+            },
+            PoolBuilderError::UnknownPoolIdentity { address } => Self::UnsupportedFamily {
+                family,
+                phase,
+                subject: UnsupportedSubject::UnknownIdentity { address: *address },
+                detail: err.to_string(),
+            },
+            other => Self::BuildRefused {
+                family,
+                phase,
+                failure: BuildFailure::Transient(other.to_string()),
+            },
+        }
+    }
+
+    /// The V2 registry insert's refusal.
+    #[must_use]
+    pub fn from_register_v2_error(err: &RegisterV2PoolError) -> Self {
+        match err {
+            RegisterV2PoolError::AlreadyRegistered { address } => Self::RegisterRefused {
+                family: Some(PoolFamilyTag::V2),
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::AlreadyRegistered {
+                    address: Some(*address),
+                    detail: format!("{err:?}"),
+                },
+            },
+            RegisterV2PoolError::SpecViolation(_) => Self::RegisterRefused {
+                family: Some(PoolFamilyTag::V2),
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::SpecViolation {
+                    detail: format!("{err:?}"),
+                },
+            },
+        }
+    }
+
+    /// The V3 registry insert's refusal.
+    #[must_use]
+    pub fn from_register_v3_error(err: &RegisterV3PoolError) -> Self {
+        match err {
+            RegisterV3PoolError::AlreadyRegistered { address } => Self::RegisterRefused {
+                family: Some(PoolFamilyTag::V3),
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::AlreadyRegistered {
+                    address: Some(*address),
+                    detail: format!("{err:?}"),
+                },
+            },
+            RegisterV3PoolError::SpecViolation(_) => Self::RegisterRefused {
+                family: Some(PoolFamilyTag::V3),
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::SpecViolation {
+                    detail: format!("{err:?}"),
+                },
+            },
+        }
+    }
+
+    /// The Aerodrome registry insert's refusal.
+    #[must_use]
+    pub fn from_register_aerodrome_error(err: &RegisterAerodromePoolError) -> Self {
+        match err {
+            RegisterAerodromePoolError::AlreadyRegistered { address } => Self::RegisterRefused {
+                family: Some(PoolFamilyTag::AerodromeV2),
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::AlreadyRegistered {
+                    address: Some(*address),
+                    detail: format!("{err:?}"),
+                },
+            },
+            RegisterAerodromePoolError::SpecViolation(_) => Self::RegisterRefused {
+                family: Some(PoolFamilyTag::AerodromeV2),
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::SpecViolation {
+                    detail: format!("{err:?}"),
+                },
+            },
+        }
+    }
+
+    /// The V4 registry insert's refusal: its admission arms ride the one
+    /// [`BuildFailure`] taxonomy.
+    #[must_use]
+    pub fn from_register_v4_error(err: &RegisterV4PoolError) -> Self {
+        let reason = match err {
+            RegisterV4PoolError::HookedPool { .. } => {
+                RegisterRefusal::Admission(BuildFailure::HookedPool)
+            }
+            RegisterV4PoolError::DynamicFee { .. } => {
+                RegisterRefusal::Admission(BuildFailure::DynamicFee)
+            }
+            RegisterV4PoolError::FeeExceedsEncoderLimit { .. } => {
+                RegisterRefusal::Admission(BuildFailure::HighFee)
+            }
+            RegisterV4PoolError::AlreadyRegistered { .. } => RegisterRefusal::AlreadyRegistered {
+                address: None,
+                detail: format!("{err:?}"),
+            },
+            RegisterV4PoolError::SpecViolation(_) => RegisterRefusal::SpecViolation {
+                detail: format!("{err:?}"),
+            },
+        };
+        Self::RegisterRefused {
+            family: Some(PoolFamilyTag::V4),
+            phase: RegistrationPhase::Register,
+            reason,
+        }
+    }
+
+    /// The register path's V2 refusal.
+    #[must_use]
+    pub fn from_v2_registration_error(err: &V2RegistrationError) -> Self {
+        match err {
+            V2RegistrationError::Create2(mismatch) => {
+                Self::from_create2_mismatch(PoolFamilyTag::V2, mismatch)
+            }
+            V2RegistrationError::Register(inner) => Self::from_register_v2_error(inner),
+        }
+    }
+
+    /// The register path's V3 refusal.
+    #[must_use]
+    pub fn from_v3_registration_error(err: &V3RegistrationError) -> Self {
+        match err {
+            V3RegistrationError::Create2(mismatch) => {
+                Self::from_create2_mismatch(PoolFamilyTag::V3, mismatch)
+            }
+            V3RegistrationError::Register(inner) => Self::from_register_v3_error(inner),
+        }
+    }
+
+    /// The register path's Aerodrome refusal.
+    #[must_use]
+    pub fn from_aerodrome_registration_error(err: &AerodromeRegistrationError) -> Self {
+        match err {
+            AerodromeRegistrationError::Create2(mismatch) => {
+                Self::from_create2_mismatch(PoolFamilyTag::AerodromeV2, mismatch)
+            }
+            AerodromeRegistrationError::Register(inner) => {
+                Self::from_register_aerodrome_error(inner)
+            }
+        }
+    }
+
+    /// `Bot::resolve_v4_identity`'s refusal.
+    #[must_use]
+    pub fn from_resolve_v4_identity_error(err: &ResolveV4IdentityError) -> Self {
+        match err {
+            ResolveV4IdentityError::NoConstructionIo => Self::MissingConstructionIo {
+                family: Some(PoolFamilyTag::V4),
+                phase: RegistrationPhase::Identity,
+            },
+            ResolveV4IdentityError::Builder(inner) => Self::from_builder_error(
+                inner,
+                Some(PoolFamilyTag::V4),
+                RegistrationPhase::Identity,
+            ),
+        }
+    }
+
+    /// The bare build refusal (`Bot`'s non-family build entries).
+    #[must_use]
+    pub fn from_build_error(err: &BuildError) -> Self {
+        match err {
+            BuildError::NoConstructionIo => Self::MissingConstructionIo {
+                family: None,
+                phase: RegistrationPhase::Build,
+            },
+            BuildError::Builder(inner) => {
+                Self::from_builder_error(inner, None, RegistrationPhase::Build)
+            }
+        }
+    }
+
+    /// The V2 build-and-register refusal.
+    #[must_use]
+    pub fn from_v2_build_error(err: &V2BuildError) -> Self {
+        match err {
+            V2BuildError::NoConstructionIo => Self::MissingConstructionIo {
+                family: Some(PoolFamilyTag::V2),
+                phase: RegistrationPhase::Build,
+            },
+            V2BuildError::Builder(inner) => {
+                Self::from_builder_error(inner, Some(PoolFamilyTag::V2), RegistrationPhase::Build)
+            }
+            V2BuildError::Register(inner) => Self::from_register_v2_error(inner),
+            V2BuildError::IdentityDivergence(divergence) => {
+                Self::from_identity_divergence(Some(PoolFamilyTag::V2), divergence)
+            }
+        }
+    }
+
+    /// The Aerodrome build-and-register refusal.
+    #[must_use]
+    pub fn from_aerodrome_build_error(err: &AerodromeBuildError) -> Self {
+        match err {
+            AerodromeBuildError::NoConstructionIo => Self::MissingConstructionIo {
+                family: Some(PoolFamilyTag::AerodromeV2),
+                phase: RegistrationPhase::Build,
+            },
+            AerodromeBuildError::Builder(inner) => Self::from_builder_error(
+                inner,
+                Some(PoolFamilyTag::AerodromeV2),
+                RegistrationPhase::Build,
+            ),
+            AerodromeBuildError::Register(inner) => Self::from_register_aerodrome_error(inner),
+        }
+    }
+
+    /// The V4 build-and-register refusal.
+    #[must_use]
+    pub fn from_v4_build_error(err: &V4BuildError) -> Self {
+        match err {
+            V4BuildError::NoConstructionIo => Self::MissingConstructionIo {
+                family: Some(PoolFamilyTag::V4),
+                phase: RegistrationPhase::Build,
+            },
+            V4BuildError::Builder(inner) => {
+                Self::from_builder_error(inner, Some(PoolFamilyTag::V4), RegistrationPhase::Build)
+            }
+            V4BuildError::Register(inner) => Self::from_register_v4_error(inner),
+            V4BuildError::IdentityDivergence(divergence) => {
+                Self::from_identity_divergence(Some(PoolFamilyTag::V4), divergence)
+            }
+        }
+    }
+
+    /// The V3 build-and-register refusal.
+    #[must_use]
+    pub fn from_v3_build_error(err: &V3BuildError) -> Self {
+        match err {
+            V3BuildError::Refusal(refusal) => {
+                Self::from_construction_refusal(refusal, Some(PoolFamilyTag::V3))
+            }
+            V3BuildError::NoReadableIdentity { address } => Self::UnreadableIdentity {
+                family: Some(PoolFamilyTag::V3),
+                phase: RegistrationPhase::Register,
+                address: *address,
+                detail: format!("registry GET answered {address} with no readable V3 identity"),
+            },
+        }
+    }
+
+    /// The verify-lifecycle refusal.
+    #[must_use]
+    pub fn from_registration_lifecycle_error(err: &RegistrationLifecycleError) -> Self {
+        match err {
+            RegistrationLifecycleError::Verify(inner) => {
+                Self::from_liquidity_verify_error_at(inner, RegistrationPhase::Lifecycle)
+            }
+            RegistrationLifecycleError::MissingProvider => Self::LifecyclePrecondition {
+                phase: RegistrationPhase::Lifecycle,
+                reason: LifecyclePrecondition::MissingVerifyProvider,
+            },
+            RegistrationLifecycleError::MissingTickSpacing => Self::LifecyclePrecondition {
+                phase: RegistrationPhase::Lifecycle,
+                reason: LifecyclePrecondition::MissingTickSpacing,
+            },
+        }
+    }
+
+    /// The liquidity-map verify refusal.
+    #[must_use]
+    pub fn from_liquidity_verify_error(err: &LiquidityVerifyError) -> Self {
+        Self::from_liquidity_verify_error_at(err, RegistrationPhase::Verify)
+    }
+
+    /// The liquidity-map verify refusal at a named phase (the lifecycle
+    /// wrapper carries its own).
+    fn from_liquidity_verify_error_at(
+        err: &LiquidityVerifyError,
+        phase: RegistrationPhase,
+    ) -> Self {
+        match err {
+            LiquidityVerifyError::Mismatch(mismatch) => Self::VerifyFailed {
+                family: None,
+                phase,
+                fatal: true,
+                origin: VerifyOrigin::Mismatch,
+                detail: mismatch.message.clone(),
+            },
+            LiquidityVerifyError::Rpc { message } => Self::VerifyFailed {
+                family: None,
+                phase,
+                fatal: false,
+                origin: VerifyOrigin::Transport,
+                detail: message.clone(),
+            },
+        }
+    }
+
+    /// The snapshot-store load refusal.
+    #[must_use]
+    pub fn from_snapshot_load_error(err: &SnapshotLoadError) -> Self {
+        let reason = match err {
+            SnapshotLoadError::Db(_) => SnapshotLoadReason::Db {
+                detail: err.to_string(),
+            },
+            SnapshotLoadError::Hex(_) => SnapshotLoadReason::Decode {
+                detail: err.to_string(),
+            },
+            SnapshotLoadError::Range(_) => SnapshotLoadReason::OutOfRange {
+                detail: err.to_string(),
+            },
+        };
+        Self::SnapshotLoadFailed {
+            phase: RegistrationPhase::Snapshot,
+            reason,
+        }
+    }
+
+    /// The snapshot verify-pipeline refusal.
+    #[must_use]
+    pub fn from_verify_error(err: &VerifyError) -> Self {
+        match err {
+            VerifyError::NoSnapshotStream => Self::VerifyFailed {
+                family: None,
+                phase: RegistrationPhase::Verify,
+                fatal: true,
+                origin: VerifyOrigin::ProtocolViolation,
+                detail: err.to_string(),
+            },
+            VerifyError::Snapshot(message) => Self::VerifyFailed {
+                family: None,
+                phase: RegistrationPhase::Verify,
+                fatal: true,
+                origin: VerifyOrigin::Mismatch,
+                detail: message.clone(),
+            },
+            VerifyError::Provider(message) => Self::VerifyFailed {
+                family: None,
+                phase: RegistrationPhase::Verify,
+                fatal: false,
+                origin: VerifyOrigin::ProviderConstruction,
+                detail: message.clone(),
+            },
+            VerifyError::Rpc(message) => Self::VerifyFailed {
+                family: None,
+                phase: RegistrationPhase::Verify,
+                fatal: false,
+                origin: VerifyOrigin::Transport,
+                detail: message.clone(),
+            },
+            VerifyError::NotConfigured(message) => Self::VerifyNotConfigured {
+                phase: RegistrationPhase::Verify,
+                detail: message.clone(),
+            },
+            VerifyError::Other(message) => Self::VerifyFailed {
+                family: None,
+                phase: RegistrationPhase::Verify,
+                fatal: true,
+                origin: VerifyOrigin::Other,
+                detail: message.clone(),
+            },
+        }
+    }
+}
+
 /// The build failure a caller observed, before classification.
 ///
 /// The variants are the *typed* refusals a registration can hit; anything
 /// the caller cannot name is [`BuildFailure::Transient`] and stays
 /// retryable.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BuildFailure {
     /// The V4 hooked-pool admission refusal.
     HookedPool,
@@ -885,5 +1707,804 @@ mod tests {
             report.fold_identities_hold(),
             "the identities stay consistent even across a driver's double fold"
         );
+    }
+
+    // ── The refusal vocabulary (ADR-077) ─────────────────────────────────
+    //
+    // The acceptance bar for the one refusal vocabulary: every variant of
+    // every registration-refusal enum in the census maps into a `RefusalKind`
+    // and carries the right family, phase, and load-bearing classification.
+
+    use alloy::primitives::{B256, U256};
+    use degenbot_core::errors::ProviderError;
+    use degenbot_core::hex_utils::HexError;
+    use degenbot_db::error::DbError;
+    use degenbot_pools::spec_bounds::{SpecValue, SpecViolation};
+    use degenbot_pools::tick_fetch::BootstrapTickError;
+    use degenbot_substrate::tick_assembly::TickMapAssemblyError;
+
+    use crate::bot_core::liquidity_verifier::VerificationMismatch;
+
+    /// The family/phase tags a kind carries — an exhaustive classifier, so a
+    /// new variant does not compile until it declares where it sits in the
+    /// pipeline.
+    fn tags(kind: &RefusalKind) -> (Option<PoolFamilyTag>, RegistrationPhase) {
+        match kind {
+            RefusalKind::MalformedInput { phase, .. }
+            | RefusalKind::SnapshotLoadFailed { phase, .. }
+            | RefusalKind::VerifyNotConfigured { phase, .. }
+            | RefusalKind::LifecyclePrecondition { phase, .. } => (None, *phase),
+            RefusalKind::IdentityMismatch { family, phase, .. }
+            | RefusalKind::MissingConstructionIo { family, phase }
+            | RefusalKind::UnsupportedFamily { family, phase, .. }
+            | RefusalKind::BuildRefused { family, phase, .. }
+            | RefusalKind::RegisterRefused { family, phase, .. }
+            | RefusalKind::UnreadableIdentity { family, phase, .. }
+            | RefusalKind::VerifyFailed { family, phase, .. } => (*family, *phase),
+        }
+    }
+
+    fn assert_tags(kind: &RefusalKind, family: Option<PoolFamilyTag>, phase: RegistrationPhase) {
+        assert_eq!(tags(kind), (family, phase), "kind: {kind:?}");
+    }
+
+    fn identity_shape(
+        kind: &RefusalKind,
+    ) -> Option<(
+        Option<PoolFamilyTag>,
+        RegistrationPhase,
+        &IdentityMismatchShape,
+    )> {
+        match kind {
+            RefusalKind::IdentityMismatch {
+                family,
+                phase,
+                shape,
+            } => Some((*family, *phase, shape)),
+            _ => None,
+        }
+    }
+
+    fn create2_shape(kind: &RefusalKind) -> Option<(Address, Address, String)> {
+        match kind {
+            RefusalKind::IdentityMismatch {
+                shape:
+                    IdentityMismatchShape::Create2 {
+                        declared,
+                        computed,
+                        detail,
+                    },
+                ..
+            } => Some((*declared, *computed, detail.clone())),
+            _ => None,
+        }
+    }
+
+    fn minted_shape(kind: &RefusalKind) -> Option<(Address, String)> {
+        match kind {
+            RefusalKind::IdentityMismatch {
+                shape: IdentityMismatchShape::MintedVsRegistered { address, detail },
+                ..
+            } => Some((*address, detail.clone())),
+            _ => None,
+        }
+    }
+
+    fn build_failure(kind: &RefusalKind) -> Option<&BuildFailure> {
+        match kind {
+            RefusalKind::BuildRefused { failure, .. } => Some(failure),
+            _ => None,
+        }
+    }
+
+    fn register_reason(kind: &RefusalKind) -> Option<&RegisterRefusal> {
+        match kind {
+            RefusalKind::RegisterRefused { reason, .. } => Some(reason),
+            _ => None,
+        }
+    }
+
+    fn verify_failure(kind: &RefusalKind) -> Option<(bool, VerifyOrigin)> {
+        match kind {
+            RefusalKind::VerifyFailed { fatal, origin, .. } => Some((*fatal, *origin)),
+            _ => None,
+        }
+    }
+
+    fn snapshot_reason(kind: &RefusalKind) -> Option<&SnapshotLoadReason> {
+        match kind {
+            RefusalKind::SnapshotLoadFailed { reason, .. } => Some(reason),
+            _ => None,
+        }
+    }
+
+    fn lifecycle_precondition(kind: &RefusalKind) -> Option<LifecyclePrecondition> {
+        match kind {
+            RefusalKind::LifecyclePrecondition { reason, .. } => Some(*reason),
+            _ => None,
+        }
+    }
+
+    fn sample_address(byte: u8) -> Address {
+        Address::repeat_byte(byte)
+    }
+
+    fn address_mismatch() -> AddressMismatch {
+        AddressMismatch {
+            chain_id: 1,
+            factory: sample_address(0x11),
+            deployer: sample_address(0x22),
+            init_hash: B256::repeat_byte(0x33),
+            expected: sample_address(0x44),
+            computed: sample_address(0x55),
+        }
+    }
+
+    fn identity_divergence() -> IdentityDivergence {
+        IdentityDivergence {
+            address: sample_address(0x44),
+            detail: "minted != registered".to_owned(),
+        }
+    }
+
+    fn spec_violation() -> SpecViolation {
+        SpecViolation {
+            field: "reserve0",
+            value: SpecValue::U256(U256::MAX),
+            bound: "uint112",
+        }
+    }
+
+    #[test]
+    fn refusal_kind_tag_set_is_closed_and_unique() {
+        let kinds = [
+            RefusalKind::MalformedInput {
+                phase: RegistrationPhase::Intake,
+                input: String::new(),
+                detail: String::new(),
+            },
+            RefusalKind::IdentityMismatch {
+                family: None,
+                phase: RegistrationPhase::Identity,
+                shape: IdentityMismatchShape::UnverifiedCreate2,
+            },
+            RefusalKind::MissingConstructionIo {
+                family: None,
+                phase: RegistrationPhase::Build,
+            },
+            RefusalKind::UnsupportedFamily {
+                family: None,
+                phase: RegistrationPhase::Build,
+                subject: UnsupportedSubject::Pool {
+                    address: sample_address(0x01),
+                },
+                detail: String::new(),
+            },
+            RefusalKind::BuildRefused {
+                family: None,
+                phase: RegistrationPhase::Build,
+                failure: BuildFailure::Transient(String::new()),
+            },
+            RefusalKind::RegisterRefused {
+                family: None,
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::SpecViolation {
+                    detail: String::new(),
+                },
+            },
+            RefusalKind::UnreadableIdentity {
+                family: None,
+                phase: RegistrationPhase::Register,
+                address: sample_address(0x01),
+                detail: String::new(),
+            },
+            RefusalKind::SnapshotLoadFailed {
+                phase: RegistrationPhase::Snapshot,
+                reason: SnapshotLoadReason::Db {
+                    detail: String::new(),
+                },
+            },
+            RefusalKind::VerifyFailed {
+                family: None,
+                phase: RegistrationPhase::Verify,
+                fatal: true,
+                origin: VerifyOrigin::Mismatch,
+                detail: String::new(),
+            },
+            RefusalKind::VerifyNotConfigured {
+                phase: RegistrationPhase::Verify,
+                detail: String::new(),
+            },
+            RefusalKind::LifecyclePrecondition {
+                phase: RegistrationPhase::Lifecycle,
+                reason: LifecyclePrecondition::MissingVerifyProvider,
+            },
+        ];
+
+        let kind_tags: Vec<&str> = kinds.iter().map(RefusalKind::tag).collect();
+        assert_eq!(kind_tags, REFUSAL_KIND_TAGS.to_vec());
+        let unique: std::collections::BTreeSet<&str> = kind_tags.iter().copied().collect();
+        assert_eq!(unique.len(), kind_tags.len(), "kind tags are unique");
+    }
+
+    /// The three identity-mismatch vocabularies land on ONE refusal kind: the
+    /// register path's `Create2` arms, the builder's discarded `CREATE2`
+    /// check, and the minted-vs-registered parity guard. Nothing is lost in
+    /// the mapping.
+    #[test]
+    fn identity_parity_vocabularies_round_trip_through_one_refusal_kind() {
+        let mismatch = address_mismatch();
+
+        let v2 = RefusalKind::from_v2_registration_error(&V2RegistrationError::Create2(mismatch));
+        let v3 = RefusalKind::from_v3_registration_error(&V3RegistrationError::Create2(mismatch));
+        let aerodrome = RefusalKind::from_aerodrome_registration_error(
+            &AerodromeRegistrationError::Create2(mismatch),
+        );
+        let builder = RefusalKind::from_builder_error(
+            &PoolBuilderError::Create2,
+            None,
+            RegistrationPhase::Build,
+        );
+        let guard = RefusalKind::from_identity_divergence(None, &identity_divergence());
+
+        for kind in [&v2, &v3, &aerodrome, &builder, &guard] {
+            assert!(
+                matches!(kind, RefusalKind::IdentityMismatch { .. }),
+                "every identity-mismatch vocabulary lands on the identity-parity kind: {kind:?}"
+            );
+            assert_eq!(
+                tags(kind).1,
+                RegistrationPhase::Identity,
+                "identity parity is the identity phase wherever it is raised"
+            );
+        }
+
+        // The declared / recomputed pair survives the register-path mapping.
+        assert_eq!(identity_shape(&v2).unwrap().0, Some(PoolFamilyTag::V2));
+        let (declared, computed, detail) = create2_shape(&v2).unwrap();
+        assert_eq!(declared, mismatch.expected);
+        assert_eq!(computed, mismatch.computed);
+        assert!(detail.contains("does not match CREATE2"));
+
+        // The other two families tag themselves without forking the kind.
+        assert_eq!(identity_shape(&v3).unwrap().0, Some(PoolFamilyTag::V3));
+        assert_eq!(
+            identity_shape(&aerodrome).unwrap().0,
+            Some(PoolFamilyTag::AerodromeV2)
+        );
+
+        // The parity guard's divergence survives verbatim.
+        let (family, phase, _) = identity_shape(&guard).unwrap();
+        assert_eq!(family, None);
+        assert_eq!(phase, RegistrationPhase::Identity);
+        let (address, detail) = minted_shape(&guard).unwrap();
+        assert_eq!(address, sample_address(0x44));
+        assert_eq!(detail, "minted != registered");
+
+        // The builder's arm carries no address pair: its source discarded
+        // them.
+        assert_eq!(
+            identity_shape(&builder).unwrap().2,
+            &IdentityMismatchShape::UnverifiedCreate2
+        );
+    }
+
+    #[test]
+    fn register_path_census_maps_into_refusal_kinds() {
+        let address = sample_address(0x44);
+        let mismatch = address_mismatch();
+
+        assert_tags(
+            &RefusalKind::from_v2_registration_error(&V2RegistrationError::Create2(mismatch)),
+            Some(PoolFamilyTag::V2),
+            RegistrationPhase::Identity,
+        );
+        assert_tags(
+            &RefusalKind::from_v2_registration_error(&V2RegistrationError::Register(
+                RegisterV2PoolError::AlreadyRegistered { address },
+            )),
+            Some(PoolFamilyTag::V2),
+            RegistrationPhase::Register,
+        );
+        assert_tags(
+            &RefusalKind::from_v3_registration_error(&V3RegistrationError::Create2(mismatch)),
+            Some(PoolFamilyTag::V3),
+            RegistrationPhase::Identity,
+        );
+        assert_tags(
+            &RefusalKind::from_v3_registration_error(&V3RegistrationError::Register(
+                RegisterV3PoolError::SpecViolation(spec_violation()),
+            )),
+            Some(PoolFamilyTag::V3),
+            RegistrationPhase::Register,
+        );
+        assert_tags(
+            &RefusalKind::from_aerodrome_registration_error(&AerodromeRegistrationError::Create2(
+                mismatch,
+            )),
+            Some(PoolFamilyTag::AerodromeV2),
+            RegistrationPhase::Identity,
+        );
+        assert_tags(
+            &RefusalKind::from_aerodrome_registration_error(&AerodromeRegistrationError::Register(
+                RegisterAerodromePoolError::AlreadyRegistered { address },
+            )),
+            Some(PoolFamilyTag::AerodromeV2),
+            RegistrationPhase::Register,
+        );
+        assert_tags(
+            &RefusalKind::from_resolve_v4_identity_error(&ResolveV4IdentityError::NoConstructionIo),
+            Some(PoolFamilyTag::V4),
+            RegistrationPhase::Identity,
+        );
+        assert_tags(
+            &RefusalKind::from_resolve_v4_identity_error(&ResolveV4IdentityError::Builder(
+                PoolBuilderError::UnknownPoolIdentity { address },
+            )),
+            Some(PoolFamilyTag::V4),
+            RegistrationPhase::Identity,
+        );
+
+        let malformed = RefusalKind::from_parse_address_error(&ParseAddressError::InvalidAddress {
+            input: "0xnope".to_owned(),
+            source: Box::new(std::io::Error::other("bad hex")),
+        });
+        assert_tags(&malformed, None, RegistrationPhase::Intake);
+        assert!(matches!(
+            malformed,
+            RefusalKind::MalformedInput { ref input, .. } if input.as_str() == "0xnope"
+        ));
+    }
+
+    #[test]
+    fn build_path_census_maps_into_refusal_kinds() {
+        let address = sample_address(0x44);
+        let build = RegistrationPhase::Build;
+
+        assert_tags(
+            &RefusalKind::from_build_error(&BuildError::NoConstructionIo),
+            None,
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_build_error(&BuildError::Builder(PoolBuilderError::Spec)),
+            None,
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_v2_build_error(&V2BuildError::NoConstructionIo),
+            Some(PoolFamilyTag::V2),
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_v2_build_error(&V2BuildError::Builder(PoolBuilderError::Spec)),
+            Some(PoolFamilyTag::V2),
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_v2_build_error(&V2BuildError::Register(
+                RegisterV2PoolError::AlreadyRegistered { address },
+            )),
+            Some(PoolFamilyTag::V2),
+            RegistrationPhase::Register,
+        );
+        assert_tags(
+            &RefusalKind::from_v2_build_error(&V2BuildError::IdentityDivergence(
+                identity_divergence(),
+            )),
+            Some(PoolFamilyTag::V2),
+            RegistrationPhase::Identity,
+        );
+        assert_tags(
+            &RefusalKind::from_aerodrome_build_error(&AerodromeBuildError::NoConstructionIo),
+            Some(PoolFamilyTag::AerodromeV2),
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_aerodrome_build_error(&AerodromeBuildError::Builder(
+                PoolBuilderError::Spec,
+            )),
+            Some(PoolFamilyTag::AerodromeV2),
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_aerodrome_build_error(&AerodromeBuildError::Register(
+                RegisterAerodromePoolError::AlreadyRegistered { address },
+            )),
+            Some(PoolFamilyTag::AerodromeV2),
+            RegistrationPhase::Register,
+        );
+        assert_tags(
+            &RefusalKind::from_v4_build_error(&V4BuildError::NoConstructionIo),
+            Some(PoolFamilyTag::V4),
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_v4_build_error(&V4BuildError::Builder(PoolBuilderError::Spec)),
+            Some(PoolFamilyTag::V4),
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_v4_build_error(&V4BuildError::Register(
+                RegisterV4PoolError::AlreadyRegistered {
+                    pool_manager: address,
+                    pool_id: [0u8; 32],
+                },
+            )),
+            Some(PoolFamilyTag::V4),
+            RegistrationPhase::Register,
+        );
+        assert_tags(
+            &RefusalKind::from_v4_build_error(&V4BuildError::IdentityDivergence(
+                identity_divergence(),
+            )),
+            Some(PoolFamilyTag::V4),
+            RegistrationPhase::Identity,
+        );
+        assert_tags(
+            &RefusalKind::from_v3_build_error(&V3BuildError::Refusal(
+                ConstructionRefusal::UnsupportedFamily {
+                    address,
+                    detail: "no rung serves this pool".to_owned(),
+                },
+            )),
+            Some(PoolFamilyTag::V3),
+            build,
+        );
+        assert_tags(
+            &RefusalKind::from_v3_build_error(&V3BuildError::NoReadableIdentity { address }),
+            Some(PoolFamilyTag::V3),
+            RegistrationPhase::Register,
+        );
+    }
+
+    #[test]
+    fn construction_refusal_census_maps_into_refusal_kinds() {
+        let address = sample_address(0x44);
+
+        let unsupported = RefusalKind::from_construction_refusal(
+            &ConstructionRefusal::UnsupportedFamily {
+                address,
+                detail: "no rung".to_owned(),
+            },
+            Some(PoolFamilyTag::V3),
+        );
+        assert_tags(
+            &unsupported,
+            Some(PoolFamilyTag::V3),
+            RegistrationPhase::Build,
+        );
+        assert!(matches!(
+            unsupported,
+            RefusalKind::UnsupportedFamily {
+                subject: UnsupportedSubject::Pool { .. },
+                ..
+            }
+        ));
+
+        let skipped = RefusalKind::from_construction_refusal(
+            &ConstructionRefusal::Skipped(BuildFailure::HighFee),
+            Some(PoolFamilyTag::V3),
+        );
+        assert_tags(&skipped, Some(PoolFamilyTag::V3), RegistrationPhase::Build);
+        assert_eq!(build_failure(&skipped), Some(&BuildFailure::HighFee));
+    }
+
+    #[test]
+    fn builder_census_maps_into_refusal_kinds() {
+        let address = sample_address(0x44);
+        let build = RegistrationPhase::Build;
+
+        // The loud class: identity and family-identity refusals.
+        let create2 = RefusalKind::from_builder_error(
+            &PoolBuilderError::Create2,
+            Some(PoolFamilyTag::V2),
+            build,
+        );
+        assert_tags(
+            &create2,
+            Some(PoolFamilyTag::V2),
+            RegistrationPhase::Identity,
+        );
+        assert_eq!(
+            identity_shape(&create2).unwrap().2,
+            &IdentityMismatchShape::UnverifiedCreate2
+        );
+
+        let unknown_variant = RefusalKind::from_builder_error(
+            &PoolBuilderError::UnknownVariant { factory: address },
+            None,
+            build,
+        );
+        assert_tags(&unknown_variant, None, build);
+        assert!(matches!(
+            unknown_variant,
+            RefusalKind::UnsupportedFamily {
+                subject: UnsupportedSubject::Factory { .. },
+                ..
+            }
+        ));
+
+        let unknown_identity = RefusalKind::from_builder_error(
+            &PoolBuilderError::UnknownPoolIdentity { address },
+            None,
+            build,
+        );
+        assert_tags(&unknown_identity, None, build);
+        assert!(matches!(
+            unknown_identity,
+            RefusalKind::UnsupportedFamily {
+                subject: UnsupportedSubject::UnknownIdentity { .. },
+                ..
+            }
+        ));
+
+        // The skip class: every other builder failure is I/O-derived and
+        // stays retryable on the build-refusal taxonomy.
+        let skips = [
+            PoolBuilderError::Rpc(ProviderError::Timeout {
+                message: "blip".to_owned(),
+            }),
+            PoolBuilderError::Spec,
+            PoolBuilderError::Decoding {
+                message: "bad bytes".to_owned(),
+            },
+            PoolBuilderError::Db(DbError::Decode("bad row".to_owned())),
+            PoolBuilderError::MissingIdentity {
+                message: "incomplete key".to_owned(),
+            },
+            PoolBuilderError::TickAssembly(TickMapAssemblyError::Chain(BootstrapTickError::Rpc)),
+            PoolBuilderError::TickAssembly(TickMapAssemblyError::ChainUnavailable),
+            PoolBuilderError::TickAssembly(TickMapAssemblyError::InconsistentTickMap {
+                word: 0,
+                bit: 1,
+                tick: 60,
+                bitmap_bit: false,
+                row_gross_positive: true,
+            }),
+        ];
+        for err in skips {
+            let kind = RefusalKind::from_builder_error(&err, Some(PoolFamilyTag::V3), build);
+            assert_tags(&kind, Some(PoolFamilyTag::V3), build);
+            assert!(
+                matches!(build_failure(&kind), Some(BuildFailure::Transient(_))),
+                "a builder I/O failure stays retryable: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn register_refusal_census_maps_into_refusal_kinds() {
+        let address = sample_address(0x44);
+
+        // The address-keyed families share the two-variant insert shape.
+        let spec_cases = [
+            (
+                RefusalKind::from_register_v2_error(&RegisterV2PoolError::SpecViolation(
+                    spec_violation(),
+                )),
+                PoolFamilyTag::V2,
+            ),
+            (
+                RefusalKind::from_register_v3_error(&RegisterV3PoolError::SpecViolation(
+                    spec_violation(),
+                )),
+                PoolFamilyTag::V3,
+            ),
+            (
+                RefusalKind::from_register_aerodrome_error(
+                    &RegisterAerodromePoolError::SpecViolation(spec_violation()),
+                ),
+                PoolFamilyTag::AerodromeV2,
+            ),
+        ];
+        for (kind, family) in spec_cases {
+            assert_tags(&kind, Some(family), RegistrationPhase::Register);
+            assert!(matches!(
+                register_reason(&kind),
+                Some(RegisterRefusal::SpecViolation { .. })
+            ));
+        }
+
+        let already =
+            RefusalKind::from_register_v2_error(&RegisterV2PoolError::AlreadyRegistered {
+                address,
+            });
+        assert!(matches!(
+            register_reason(&already),
+            Some(RegisterRefusal::AlreadyRegistered {
+                address: Some(found),
+                ..
+            }) if *found == address
+        ));
+
+        // V4's admission arms ride the one build-refusal taxonomy.
+        for (err, failure) in [
+            (
+                RegisterV4PoolError::HookedPool { hook_flags: 0xCC },
+                BuildFailure::HookedPool,
+            ),
+            (
+                RegisterV4PoolError::DynamicFee { fee: 0x10_0000 },
+                BuildFailure::DynamicFee,
+            ),
+            (
+                RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 65_536 },
+                BuildFailure::HighFee,
+            ),
+        ] {
+            let kind = RefusalKind::from_register_v4_error(&err);
+            assert_tags(&kind, Some(PoolFamilyTag::V4), RegistrationPhase::Register);
+            assert_eq!(
+                register_reason(&kind),
+                Some(&RegisterRefusal::Admission(failure))
+            );
+        }
+
+        let v4_key = RefusalKind::from_register_v4_error(&RegisterV4PoolError::AlreadyRegistered {
+            pool_manager: address,
+            pool_id: [0u8; 32],
+        });
+        assert!(matches!(
+            register_reason(&v4_key),
+            Some(RegisterRefusal::AlreadyRegistered { address: None, .. })
+        ));
+
+        let v4_spec = RefusalKind::from_register_v4_error(&RegisterV4PoolError::SpecViolation(
+            spec_violation(),
+        ));
+        assert!(matches!(
+            register_reason(&v4_spec),
+            Some(RegisterRefusal::SpecViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn verify_census_maps_into_refusal_kinds() {
+        let verify = RegistrationPhase::Verify;
+
+        let mismatch = RefusalKind::from_liquidity_verify_error(&LiquidityVerifyError::Mismatch(
+            VerificationMismatch {
+                message: "tick 1 disagrees".to_owned(),
+            },
+        ));
+        assert_tags(&mismatch, None, verify);
+        assert_eq!(
+            verify_failure(&mismatch),
+            Some((true, VerifyOrigin::Mismatch)),
+            "a map divergence is the fatal tripwire"
+        );
+
+        let transport = RefusalKind::from_liquidity_verify_error(&LiquidityVerifyError::Rpc {
+            message: "timeout".to_owned(),
+        });
+        assert_tags(&transport, None, verify);
+        assert_eq!(
+            verify_failure(&transport),
+            Some((false, VerifyOrigin::Transport)),
+            "a read failure stays retryable"
+        );
+
+        // The lifecycle wrapper preserves the verify classification and names
+        // its own phase.
+        let lifecycle =
+            RefusalKind::from_registration_lifecycle_error(&RegistrationLifecycleError::Verify(
+                LiquidityVerifyError::Mismatch(VerificationMismatch {
+                    message: "tick 1 disagrees".to_owned(),
+                }),
+            ));
+        assert_tags(&lifecycle, None, RegistrationPhase::Lifecycle);
+        assert_eq!(
+            verify_failure(&lifecycle),
+            Some((true, VerifyOrigin::Mismatch))
+        );
+
+        for (err, expected) in [
+            (
+                RegistrationLifecycleError::MissingProvider,
+                LifecyclePrecondition::MissingVerifyProvider,
+            ),
+            (
+                RegistrationLifecycleError::MissingTickSpacing,
+                LifecyclePrecondition::MissingTickSpacing,
+            ),
+        ] {
+            let kind = RefusalKind::from_registration_lifecycle_error(&err);
+            assert_tags(&kind, None, RegistrationPhase::Lifecycle);
+            assert_eq!(lifecycle_precondition(&kind), Some(expected));
+        }
+
+        // snapshot_verify.rs's verify pipeline, variant by variant.
+        for (err, fatal, origin) in [
+            (
+                VerifyError::NoSnapshotStream,
+                true,
+                VerifyOrigin::ProtocolViolation,
+            ),
+            (
+                VerifyError::Snapshot("block 5 disagrees".to_owned()),
+                true,
+                VerifyOrigin::Mismatch,
+            ),
+            (
+                VerifyError::Provider("no provider".to_owned()),
+                false,
+                VerifyOrigin::ProviderConstruction,
+            ),
+            (
+                VerifyError::Rpc("transport".to_owned()),
+                false,
+                VerifyOrigin::Transport,
+            ),
+            (
+                VerifyError::Other("driver failure".to_owned()),
+                true,
+                VerifyOrigin::Other,
+            ),
+        ] {
+            let kind = RefusalKind::from_verify_error(&err);
+            assert_tags(&kind, None, verify);
+            assert_eq!(verify_failure(&kind), Some((fatal, origin)), "{err:?}");
+        }
+
+        let not_configured = RefusalKind::from_verify_error(&VerifyError::NotConfigured(
+            "set the rpc url".to_owned(),
+        ));
+        assert_tags(&not_configured, None, verify);
+        assert!(matches!(
+            not_configured,
+            RefusalKind::VerifyNotConfigured { .. }
+        ));
+    }
+
+    #[test]
+    fn snapshot_load_census_maps_into_refusal_kinds() {
+        let db = RefusalKind::from_snapshot_load_error(&SnapshotLoadError::Db(DbError::Decode(
+            "bad row".to_owned(),
+        )));
+        assert_tags(&db, None, RegistrationPhase::Snapshot);
+        assert!(matches!(
+            snapshot_reason(&db),
+            Some(SnapshotLoadReason::Db { .. })
+        ));
+
+        let hex = RefusalKind::from_snapshot_load_error(&SnapshotLoadError::Hex(
+            HexError::InvalidHex("zz".to_owned()),
+        ));
+        assert_tags(&hex, None, RegistrationPhase::Snapshot);
+        assert!(matches!(
+            snapshot_reason(&hex),
+            Some(SnapshotLoadReason::Decode { .. })
+        ));
+
+        let range = RefusalKind::from_snapshot_load_error(&SnapshotLoadError::Range(
+            "liquidity out of range".to_owned(),
+        ));
+        assert_tags(&range, None, RegistrationPhase::Snapshot);
+        assert!(matches!(
+            snapshot_reason(&range),
+            Some(SnapshotLoadReason::OutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn build_refusals_carry_the_stable_vs_transient_taxonomy() {
+        for (failure, stable) in [
+            (BuildFailure::HookedPool, true),
+            (BuildFailure::DynamicFee, true),
+            (BuildFailure::HighFee, true),
+            (BuildFailure::Transient("blip".to_owned()), false),
+        ] {
+            let kind = RefusalKind::from_construction_refusal(
+                &ConstructionRefusal::Skipped(failure.clone()),
+                Some(PoolFamilyTag::V2),
+            );
+            assert_eq!(build_failure(&kind), Some(&failure));
+            assert_eq!(
+                RegistrationLedger::classify_build_refusal(&failure, PoolKind::V2, None).stable,
+                stable,
+                "the carried failure classifies through the ledger's one taxonomy"
+            );
+        }
     }
 }
