@@ -19,6 +19,8 @@ Yours:
 - `cargo fmt --manifest-path rust/Cargo.toml -p <touched crate> -- --check` for any Rust edit (the commit hook rustfmts staged files; a P4a chunk needed a manager-side fix)
 - `uv run --no-sync pytest <the test files you touched>`
 - `uv run --no-sync ruff check <touched files>` AND `uv run --no-sync ruff format --check <touched files>` — the commit hook formats every staged file, so a format miss blocks the manager's commit (two chunks have needed manager-side format fixes; check both)
+- `just lint-rust-check` when your change alters a public type's size or shape (enum variant payloads, `Result` error types, struct fields crossing crates) — clippy's type-size/`result_large_err` lints only fire on the full-feature lane, so the crate's nextest gate stays green while the workspace lint lane breaks
+- `just gen-stubs` when degenbot_rs or a doc-comment feeding the stubs changed — the stub-drift gate fails closed on any FFI-crate doc/signature touch; run it before signing off
 
 Not yours (the dispatcher runs these across all workers):
 
