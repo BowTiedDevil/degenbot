@@ -9,7 +9,7 @@ commit-by-commit from this file alone.
 
 ## 0. Scope, method, and the one-paragraph problem
 
-The CL walk machinery writes its telemetry **ambiently**: fourteen thread-locals (thirteen `Cell`s
+The concentrated-liquidity walk machinery writes its telemetry **ambiently**: fourteen thread-locals (thirteen `Cell`s
 plus one `RefCell`) and twenty process-global `AtomicU64`s inside
 `rust/crates/engine/degenbot-solvers/src/concentrated_liquidity/telemetry.rs` (503 lines), all behind the crate's
 `telemetry` cargo feature (`rust/crates/engine/degenbot-solvers/Cargo.toml:43-49`, default OFF) plus

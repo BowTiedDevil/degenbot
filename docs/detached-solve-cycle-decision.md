@@ -6,7 +6,7 @@ Epic BXZBWY shipped streamed solve orchestration (dedicated tokio solve runtime 
 per-path delivery) but kept ONE engine-Mutex hold spanning the whole solve cycle
 — for a heavy 1700-path cycle that hold is multi-second, and `register_path`/
 `deregister_path` (GIL-released, concurrent with the pump) serialize behind it.
-The offline detach-strategy A/B probe (commit 881c098f5, heavy-CL corpus,
+The offline detach-strategy A/B probe (commit 881c098f5, heavy concentrated-liquidity corpus,
 156 paths x 5 passes) measured the merge seam directly:
 
 | disposition | engine-Mutex hold | cycle return | makespan |

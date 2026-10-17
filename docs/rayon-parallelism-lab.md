@@ -23,9 +23,9 @@ to bin paths before the solve.
 ### Harness
 
 `degenbot-solvers/examples/rayon_scale_probe.rs` reconstructs production
-`ResolvedMixedPath` inputs (V3 CL hops carrying the production
+`ResolvedMixedPath` inputs (V3 concentrated-liquidity hops carrying the production
 `build_concentrated_liquidity_word_profiles` + `build_concentrated_liquidity_crossing_table` precomputes) from the
-committed heavy-CL capture fixture (`tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`,
+committed heavy concentrated-liquidity capture fixture (`tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl`,
 420 paths / 87 MB) and re-runs the production solver entry
 `mixed::solve_path_with_min_profit` under controlled thread counts.
 
@@ -97,7 +97,7 @@ across different blocks), three at ~7.3s (path 500), three at ~6.6s (path 400).
 
 ### Root cause
 
-The heavy-CL capture workload has extreme cost skew: the top 8 of 80 paths
+The heavy concentrated-liquidity capture workload has extreme cost skew: the top 8 of 80 paths
 (10%) account for **60% of total CPU**. Path 501 alone costs ~18 seconds —
 longer than the ideal 8-thread makespan for 72 of the 80 paths.
 
@@ -133,7 +133,7 @@ these paths every drain; they are the same shapes as path 501 in the harness.
 | 4 | Thread-local accumulators replacing per-item atomics | <1% (diag overhead is noise) | Low | Low |
 
 **Recommended:** T3 implements #1. Cost proxy for LPT binning at resolve time:
-`∑ word_boundary_prices.len()` across the path's CL hops (available without
+`∑ word_boundary_prices.len()` across the path's concentrated-liquidity hops (available without
 solving, correlates with walk combinatorics). The per-drain solve then uses
 `std::thread::scope` with 8 LPT bins instead of `par_iter`.
 

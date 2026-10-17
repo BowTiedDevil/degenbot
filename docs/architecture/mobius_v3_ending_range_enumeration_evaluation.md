@@ -1,4 +1,4 @@
-# Evaluation: combinatorial ending-range enumeration in the Möbius V3/CL solver
+# Evaluation: combinatorial ending-range enumeration in the Möbius V3/concentrated-liquidity solver
 
 > Ergo task `TT4VOX`. Triggered by the V2-V3-V3 solver divergence fixture
 > (`logs/fixtures/v2_v3_v3_solver_divergence_25641093.md`, a gitignored logs/
@@ -45,11 +45,11 @@ Hot path: `arb_engine/solve_cycle/` resolves each hop; V3/V4 hops call
 (`rust/crates/foundation/degenbot-pools/src/v3_state.rs`), which slices
 `get_cached_tick_ranges(..., max_ranges=15)` (`compute_tick_ranges` in
 `tick_bitmap.rs`) down to an `IntV3TickRangeSequence`
-(`rust/crates/foundation/degenbot-pools/src/int_v3_hop.rs`). The all-CL dispatcher calls
+(`rust/crates/foundation/degenbot-pools/src/int_v3_hop.rs`). The all-concentrated-liquidity dispatcher calls
 `int_solve_concentrated_liquidity_path` (`rust/crates/engine/degenbot-solvers/src/mobius_v3_int.rs`);
-mixed V2+CL paths go through `exact_solve_mixed_path_n` /
+mixed V2+concentrated liquidity paths go through `exact_solve_mixed_path_n` /
 `exact_solve_mixed_v2_v3_sequence`. All of these enumerate ending-range
-tuples: `max_candidates = 10` per CL hop, mixed-radix counter, per-tuple
+tuples: `max_candidates = 10` per concentrated-liquidity hop, mixed-radix counter, per-tuple
 `exact_mobius_solve` on the *unshifted* ending-range `IntHopState`s, then
 `total_optimal_input = piecewise_optimal + Σ crossing_gross_input`, then a
 ±2 neighbor sweep validated by the piecewise simulator

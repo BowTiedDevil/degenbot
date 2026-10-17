@@ -45,7 +45,7 @@ Span children of `degenbot.arb.solve` (phase spans, MQUKB6-T2 pattern):
 `degenbot.arb.lpt`, `degenbot.arb.merge`. Time between two adjacent child
 spans is a regression signal — on trace `f701ccd3` (block 25906841,
 2026-09-04) 647 ms sat unattributed between resolve and lpt (per-path deep
-clones of the resolved CL tick-range sequences during staging). Fixed by
+clones of the resolved concentrated liquidity tick-range sequences during staging). Fixed by
 Arc-sharing the resolved snapshots into the dispatch (staging is refcount
 bumps; measured 0.3–0.5 µs/path vs 25-30 µs/path steady-state before, and the
 cold-ramp 150-420 µs/path pathology eliminated). If a resolve→lpt gap reappears
@@ -177,9 +177,9 @@ per-pool viability flags maintained in BotState — removes them from
 
 ### S4. Clamp phase growing (clamp.phase_us)
 
-Cost model: one twin simulation per CL hop across clamped paths
+Cost model: one twin simulation per concentrated-liquidity hop across clamped paths
 (`clamp.twins`). Observed 10–69ms for 700–2900 twins — linear, cheap.
-Investigate only if twins-per-path jumps (path shape shift toward CL-heavy) or
+Investigate only if twins-per-path jumps (path shape shift toward concentrated-liquidity-heavy) or
 phase exceeds ~100ms. Location: `clamp_cl_hop_capacity` loop after the merge;
 twin simulators are `v3_simulate_swap`/`v4_simulate_swap` in degenbot-pools.
 
@@ -274,6 +274,6 @@ RETIRED with the stage machine), `degenbot_stage_streaming_age_seconds`,
    structural waste when invalidity spikes recur.
 2. Per-pool viability flags at activation time (S3 alt) — shrinks the
    affected set itself.
-3. Watch clamp growth if path mix shifts CL-heavy (S4).
+3. Watch clamp growth if path mix shifts concentrated-liquidity-heavy (S4).
 4. If parallelism ever drops below ~7× on quiet boxes, check CPU quota in the
    devcontainer before blaming the solver (S2).

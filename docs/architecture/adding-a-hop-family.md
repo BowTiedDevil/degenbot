@@ -76,7 +76,7 @@ nothing else:
    `apply_liquidity_update_by_pool_id`, `restore_pool_before_block`), and the
    registration entries (`register_<family>_pool` — the named seams D3
    preserves). Zero family-shaped names remain on `BotState`'s surface; a
-   family's live-state story lives on its orchestration capability (the CL
+   family's live-state story lives on its orchestration capability (the concentrated-liquidity
    pattern), not on `BotState`.
 4. **The census gate.**
    `rust/crates/foundation/degenbot-substrate/tests/central_matcher_census.rs`
@@ -152,7 +152,7 @@ One module owns everything the family contributes to a solve and its bound
   `balancer_stable_rise` (`:371`); `curve_hop_lines` (`curve_stableswap.rs:213`) /
   `curve_stableswap_lines` (`:247`).
 
-CL is the extreme case: V3 and V4 share one solve (ADR-069), so `concentrated_liquidity.rs` owns
+Concentrated liquidity is the extreme case: V3 and V4 share one solve (ADR-069), so `concentrated_liquidity.rs` owns
 `ConcentratedLiquidityHop` (`concentrated_liquidity.rs:37`), the walkable-path entry `solve_walkable_path_int` (`:84`),
 and the tangent-fan builder `concentrated_liquidity_hop_lines` (`:463`). It also owns `refine_bounds`
 (`:62`), the seam that translates the envelope's composed lines into the kernel's
@@ -187,9 +187,9 @@ variant and its `ALL` entry:
   the invariant and whether the family is concentrated-liquidity, and **one
   `HopType::ALL` entry** (`:89`). `Ord` is the discriminant order, used only for
   deterministic key sorting (`AffectedKey`), so append rather than reorder.
-  `is_concentrated_liquidity` (`:103`) needs no arm unless the family is CL.
+  `is_concentrated_liquidity` (`:103`) needs no arm unless the family is concentrated liquidity.
 - **one `ResolvedHop` arm** (`:201`) plus its `hop_type()` arm (`:232`); add the
-  variant to the four non-CL accessor `None` arms (`as_int_sequence` `:255`,
+  variant to the four non-concentrated-liquidity accessor `None` arms (`as_int_sequence` `:255`,
   `as_word_profiles` `:271`, `as_crossing_table` `:286`, `as_prepared_concentrated_liquidity_hop`
   `:300`). Add a family accessor (mirror `as_solidly_state` `:313`) only when a
   caller needs one — the Balancer and Curve variants carry none and are matched
@@ -240,7 +240,7 @@ Every family decides two things, and both are load-bearing for the bound:
    [the evaluation doc §1 the faithful-arithmetic window guard and §4](stableswap-gate-bounds-and-solve-method-evaluation.md#4-balancer-v2-stable-an-exact-curvature-test-and-a-zero-allowance-tangent).
 
 A family also declares whether it is concentrated-liquidity (it drives
-`is_concentrated_liquidity` and the non-CL accessor arms): CL and V2 are the only
+`is_concentrated_liquidity` and the non-concentrated-liquidity accessor arms): concentrated liquidity and V2 are the only
 families with accessors; the rest carry none.
 
 ## 6. The acceptance surface
@@ -278,7 +278,7 @@ families with accessors; the rest carry none.
    V2-equivalent projection, simulate triple, solve entry, and envelope lines in
    **byte-identical** (ADR-071 D5).
 2. Add the `HopType` variant, its doc comment, and its `HopType::ALL` entry (§4).
-3. Add the `ResolvedHop` arm, its `hop_type()` arm, and the four non-CL accessor
+3. Add the `ResolvedHop` arm, its `hop_type()` arm, and the four non-concentrated-liquidity accessor
    `None` arms (§4).
 4. Add the `FamilyRow` and its two `FAMILY_DISPATCH` rows, in order (§3).
 5. Add the `HopMath` arm and its one-line `family_row()` delegation (§4).

@@ -20,7 +20,7 @@ Start with {doc}`getting-started` — or open {doc}`adr/README` if you want the 
 - {doc}`architecture/executor-command-grammar` — the execution layer's command language
 - {doc}`architecture/rust-owned-bot` — what moved into the Rust core and why
 
-…plus 14 more in the sidebar: executor grammar usage, CL tickmaps, Curve stableswap, revm diagnostics, storage layouts.
+…plus 14 more in the sidebar: executor grammar usage, concentrated-liquidity tickmaps, Curve stableswap, revm diagnostics, storage layouts.
 
 **{doc}`adr/README`** — the settled design decisions, grouped by whether they still bind; the "why" behind the code.
 

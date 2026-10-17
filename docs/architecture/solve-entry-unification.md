@@ -9,8 +9,8 @@ readout's gated follow-up (b) shares the fingerprint history and links here.
 ## Entry unification (ergo A47GNH): UNIFY — the split buys no measurable cost
 
 Decision on the question deferred with the entry surface: do the two solve
-entries unify (mixed subsumes all-CL) or stay split? **UNIFY.** The split was
-justified only by keeping the hotter all-CL path free of the mixed entry's
+entries unify (mixed subsumes all-concentrated-liquidity) or stay split? **UNIFY.** The split was
+justified only by keeping the hotter all-concentrated-liquidity path free of the mixed entry's
 per-hop `Option` surface; both required bench inputs find that surface costs
 nothing measurable, while the split's own route pays a prepared-hop clone the
 unified route does not. Scoped implementation replacement: **ergo XW3H5V**.
@@ -22,7 +22,7 @@ The live node was unavailable in this environment (the regeneration-path
 inputs are offline over the committed captured corpora — recorded here as a
 substitution, not hidden. The harness is
 `rust/crates/engine/degenbot-solvers/examples/entry_ab_readout.rs`; it times
-TWO routes over the same captured all-CL paths, interleaved reps with
+TWO routes over the same captured all-concentrated-liquidity paths, interleaved reps with
 alternating order (median/p95 per path, 25–49 reps):
 
 - **Arm "today"** — the production branch route in `mixed::families::cl`: the
@@ -83,29 +83,29 @@ no systematic direction**; 477 captured paths x 25–49 reps x 2 arms, **0
 parity divergences**, `sims` columns equal. The memo-active stance collapses
 the totals (reps 2+ are memo hits: per-probe fold + probe ≈ 7 µs p50) and
 still shows no arm difference — the mixed entry's two `Option`-vec +
-order-vec fingerprint fold costs the same as the all-CL seq fold at the
+order-vec fingerprint fold costs the same as the all-concentrated-liquidity seq fold at the
 probe.
 
 ### Which entry is hotter (the split's whole justification)
 
 Row census of the captured corpora by the route the production branch picks
-(all hops CL -> all-CL entry; any V2 hop -> mixed entry):
+(all hops concentrated liquidity -> all-concentrated-liquidity entry; any V2 hop -> mixed entry):
 
-| corpus | rows | -> all-CL entry | -> mixed entry |
+| corpus | rows | -> all-concentrated-liquidity entry | -> mixed entry |
 |---|---|---|---|
 | `live_capture_loop13` | 104 | 104 | 0 |
 | `live_capture_loop17` | 217 | 217 | 0 |
 | `heavy_concentrated_liquidity_solve_captures` | 156 | 156 | 0 |
 | `heavy_mixed_solve_captures` | 369 | 0 | 369 |
 
-In captured live traffic the all-CL entry takes **425 of 425** solve
+In captured live traffic the all-concentrated-liquidity entry takes **425 of 425** solve
 dispatches — the split protects exactly the hot path it claimed to, and the
 measured protection is 0.13% per call at the label level and unmeasurable at
 the route level.
 
 ### Decision
 
-**UNIFY.** Route all-CL workloads through the mixed entry (borrowed
+**UNIFY.** Route all-concentrated-liquidity workloads through the mixed entry (borrowed
 `MixedHopView::ConcentratedLiquidity`) and delete the duplicated entry surface. The split's only
 justification is worth ≤0.13% per call and unmeasurable in route totals,
 while the split route pays a prepared-hop clone (three `Arc` bumps per hop)
@@ -114,7 +114,7 @@ Unification is a pure refactor at the result level: byte-equal
 `(optimal_input, profit, hop_outputs)` on every measured solve. Implementation
 lands as scoped replacement **ergo XW3H5V**, which carries the three
 behavioral notes the refactor must handle (the 1-hop guard asymmetry at the
-substrate intake, the CL-only memo-key re-projection through
+substrate intake, the concentrated-liquidity-only memo-key re-projection through
 `walk_mixed_path_fingerprint`, and the offline-caller surface).
 
 The harness's own 1-hop probe (a truncated corpus row) returns `None` on both
@@ -137,8 +137,8 @@ entries — non-discriminating on this corpus; the guard asymmetry
 The scoped replacement landed: `mixed::families/concentrated_liquidity.rs` carries ONE route for
 every path the arm accepts (one borrowed `MixedHopView` per position into the
 unified body — the prepared-hop clone is gone), `solve_concentrated_liquidity_piecewise` is a
-forwarding intake convenience, and the duplicated all-CL solve body and its
-all-CL-only fingerprint are retired (CL-only compositions fold through
+forwarding intake convenience, and the duplicated all-concentrated-liquidity solve body and its
+all-concentrated-liquidity-only fingerprint are retired (concentrated-liquidity-only compositions fold through
 `walk_mixed_path_fingerprint`: one entry, one key space). The contract is
 uniform — paths shorter than two hops are refused at every solve surface,
 pinned in the solvers tests and at the substrate intake (whose pin also

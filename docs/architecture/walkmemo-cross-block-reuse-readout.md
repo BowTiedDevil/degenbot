@@ -126,7 +126,7 @@ with data" in the live-capture section.
 The concern: the memo entries re-derive fingerprints the resolve intake already
 computed (`ClSolveTables::source_fingerprint` is checked against the path
 composition key at every solve entry — since the entry unification, one fold
-over the hop views; the all-CL-only `walk_path_fingerprint` this section
+over the hop views; the all-concentrated-liquidity-only `walk_path_fingerprint` this section
 originally named is retired with the duplicated solve body), roughly three
 passes over the tick data per solve, before the memo probe can even run.
 
@@ -139,7 +139,7 @@ Facts established from code (no measurement):
   (`hotpath = ["hotpath/hotpath", "hotpath/threads"]`).
 - The span labels that exist and would decide this:
   - `concentrated_liquidity_solve.int_solve_concentrated_liquidity_path` — `solve_concentrated_liquidity_piecewise` (the forwarding
-    all-CL intake in `concentrated_liquidity/entries.rs`),
+    all-concentrated-liquidity intake in `concentrated_liquidity/entries.rs`),
   - `concentrated_liquidity_solve.exact_solve_mixed_path_n` — `solve_piecewise` (the one
     solve body in `concentrated_liquidity/entries.rs`).
 
@@ -444,6 +444,6 @@ landing notes now live in
 [`solve-entry-unification.md`](solve-entry-unification.md) — one concern per
 document. The short version: the per-hop `Option` surface costs nothing
 measurable (0.13% per call at the `concentrated_liquidity_solve.*` labels; route totals inside the
-noise band), captured live traffic routed 425 of 425 dispatches to the all-CL
+noise band), captured live traffic routed 425 of 425 dispatches to the all-concentrated-liquidity
 entry, and the entries are now ONE solve body (`solve_piecewise`) with a
-forwarding all-CL intake.
+forwarding all-concentrated-liquidity intake.

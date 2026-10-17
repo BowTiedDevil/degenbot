@@ -130,7 +130,7 @@ alone.
   skip count moves **0 → 32** (the unprofitable directions no longer pay a
   golden-section solve).
 - The committed mixed corpora carry **no** Solidly leg (`heavy_mixed_solve_captures`
-  = 369 paths, V2/CL only; `live_gatebursts_mixed` = 24 paths, CL only), so the
+  = 369 paths, V2/concentrated liquidity only; `live_gatebursts_mixed` = 24 paths, concentrated liquidity only), so the
   Solidly coverage is synthesized in-test.
 
 ### Decision and what would change it
@@ -406,7 +406,7 @@ explicitly instead).
   (`solve_golden_section_path_int`).
 - Glossary: `GLOSSARY.md`, "Profit envelope".
 - Related evaluations: [combinatorial ending-range enumeration in the Möbius
-  V3/CL solver](mobius_v3_ending_range_enumeration_evaluation.md) (the CL
+  V3/concentrated-liquidity solver](mobius_v3_ending_range_enumeration_evaluation.md) (the concentrated-liquidity
   concavity / active-set evaluation), [hull-edge seed
   evaluation](hull-edge-seed-evaluation.md).
 - Tests: `rust/crates/engine/degenbot-solvers/tests/profit_envelope_tests.rs`,

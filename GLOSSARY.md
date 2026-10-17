@@ -349,15 +349,15 @@ _Avoid_: "fallback rung" living at the driver's edge.
 
 ## Pool registration lifecycle
 
-Canonical phases for the CL (V3/V4) registration verify lifecycle:
+Canonical phases for the concentrated-liquidity (V3/V4) registration verify lifecycle:
 `Quarantined → drain + verify → Live`.
 
 **Registration lifecycle**:
-The per-pool state a registered CL pool occupies: a Sparse pool is always `Live`; a
+The per-pool state a registered concentrated-liquidity pool occupies: a Sparse pool is always `Live`; a
 Tracked pool is `Quarantined` until its verification passes.
 
 **Quarantined**:
-A registered CL pool whose live events are deferred to the pump buffer until registration
+A registered concentrated-liquidity pool whose live events are deferred to the pump buffer until registration
 verification completes. A Quarantined pool is not solvable.
 
 **Live**:
@@ -434,32 +434,35 @@ A family holding two `U112` reserves plus `update_block`, with full-state block 
 A family holding a balance vector plus `update_block`, with full-state block deltas
 (Curve, Balancer weighted, Balancer stable).
 
-**Concentrated liquidity (CL)**:
+**Concentrated liquidity**:
 A family holding slot0 scalars plus per-tick data, with partial-prior block deltas
 (V3, V4).
 _Naming_: code identifiers spell the family name out — `concentrated_liquidity` /
 `ConcentratedLiquidity…` — matching the names already in force
 (`degenbot-concentrated-liquidity-math`, `concentrated_liquidity_math`); the
 `cl` / `Cl…` abbreviations in code (`cl/`, `cl.rs`, `ClOrchestration`, `ClHop`,
-`PreparedClHop`, `BotState::cl()`) are renamed to the expanded form. "CL" survives
-only as the prose abbreviation defined here, never as a code name.
-_Avoid_: `cl` as a module, type, method, or crate-fragment name; two conventions for
-one family in one tree.
+`PreparedClHop`, `BotState::cl()`) are renamed to the expanded form, and living
+prose spells the name out too ("concentrated liquidity"; "concentrated-liquidity"
+as a compound modifier). The bare abbreviation survives only in wire values
+(`"kind": "CL"`) and in the dated historical record (ADR bodies 001-074), never
+as shorthand in living prose.
+_Avoid_: `cl` as a module, type, method, or crate-fragment name; `CL` as a prose
+shorthand; two conventions for one family in one tree.
 
 **Hop**:
 The solver's snapshot-and-classifier adapter observed at resolve time: it captures pool
-state (a selective projection for CL) so the solve runs lock-free off a copied value, and
+state (a selective projection for concentrated liquidity) so the solve runs lock-free off a copied value, and
 its variants let the solver pick the algorithm from path composition. Not a pool concept
 and not math-leaf vocabulary.
 
-**Pool family axes**: two axes a species' family can live on — the **structural** axis (registry entry kind and state/delta shape: V2, Curve, Balancer meta/weighted/stable, CL) and the **behavioral** axis (math family: reserve-pair constant product, Curve, Balancer, Solidly — Camelot/Aerodrome stable — CL). They coincide for every species but two: Camelot-stable (V2-shaped entry, Solidly math) and Aerodrome-volatile (its own entry kind, reserve-pair math). **Reads route at the behavioral axis; state lives at the structural axis** — a `stable_swap` V2 entry reads through the Solidly door's Camelot arm with token scales carried at construction (ADR-003), never through constant-product math (ADR-073, ADR-059 D3).
+**Pool family axes**: two axes a species' family can live on — the **structural** axis (registry entry kind and state/delta shape: V2, Curve, Balancer meta/weighted/stable, concentrated liquidity) and the **behavioral** axis (math family: reserve-pair constant product, Curve, Balancer, Solidly — Camelot/Aerodrome stable — concentrated liquidity). They coincide for every species but two: Camelot-stable (V2-shaped entry, Solidly math) and Aerodrome-volatile (its own entry kind, reserve-pair math). **Reads route at the behavioral axis; state lives at the structural axis** — a `stable_swap` V2 entry reads through the Solidly door's Camelot arm with token scales carried at construction (ADR-003), never through constant-product math (ADR-073, ADR-059 D3).
 
 **Family module**:
 The solver crate's module owning everything one hop family contributes to a solve and
 its bound: the gate projection (`to_math`), the V2-equivalent projection,
 the simulate triple, the solve entry (built on the shared golden template where the
 stable-family search applies), and the family's envelope lines (its rise line beside its
-cap, or a CL family's tangent fan). One of the family's two homes — its read side lives
+cap, or a concentrated-liquidity family's tangent fan). One of the family's two homes — its read side lives
 in the **Family read module**, which defines the hop payload this module solves over.
 The residual central sites are one dispatch row and one
 enum arm in each of `ResolvedHop` and `HopMath`; the shared kernels — the golden-section template,
@@ -497,7 +500,7 @@ same seam, and a new family adds a params variant, never a method.
 _Avoid_: a family×verb method matrix on any consumer; payload construction in the PyO3
 wrapper; a driver-side construction fallback chain (see **Pool construction**).
 
-**CL state module**:
+**Concentrated-liquidity state module**:
 The concentrated-liquidity family tree's state half (ADR-080): the journals,
 bitmap-word seeding and coverage, viability, and tick-range cache shared by the V3/V4
 designs, data-generic and monomorphic in hot loops (ADR-059 D6). `v3_state`/`v4_state`
@@ -599,14 +602,14 @@ serialization stamp, and the per-table digests — owned in both directions (ren
 validated parse) by the digest writer.
 _Avoid_: opaque pre-rendered strings; hand-parsed JSON inverses.
 
-## Piecewise CL solving
+## Piecewise concentrated-liquidity solving
 
 **Concentrated Liquidity Kernel**:
 The data-parameterized module that is the concrete home of everything the
 concentrated-liquidity solve shares across the Uniswap V3 and V4 designs: crossing
 derivation from a tick-range sequence, the active-set walk over the piecewise-Möbius
-segments, the CL hop and path simulation, and the word-profile build over the prepared
-hop's tables. CL is a mild generic over the V3/V4 designs — the two differ in storage
+segments, the concentrated-liquidity hop and path simulation, and the word-profile build over the prepared
+hop's tables. Concentrated liquidity is a mild generic over the V3/V4 designs — the two differ in storage
 slots, event shapes, and state reads (slot0 vs state-view, hooks hashed into the PoolId),
 not in solve structure — so the kernel is generic over *data* (the prepared hop value,
 ADR-069 D2), never over a trait per pool, and the hottest walk in the solver stays
@@ -618,14 +621,14 @@ by the family module's bound side, and the engine-owned fan cache stays borrowed
 owned. Home: `degenbot-math`'s `concentrated_liquidity` module (sibling of the `v2` and `balancer` leaves,
 ADR-035) once a second tier consumer reaches it; the solver crate's `concentrated_liquidity` tree until then.
 _Avoid_: a trait hierarchy over pools on the solve path; the kernel as an unowned tree
-inside the solver crate; envelope types inside the kernel; "CL family" naming the kernel.
+inside the solver crate; envelope types inside the kernel; "concentrated-liquidity family" naming the kernel.
 
 **Refine bound**:
 The walk-side refine-window bound in the kernel's own vocabulary: one affine upper bound on the
 path output at input `x`, expressed as the predicate `(a + b·x)/c ≥ best` with `c > 0`, which marks
 the inputs a composed envelope bound cannot disprove. The active-set walk intersects its refine
 window against these bounds and skips the disproven sub-window without a simulation, so no
-envelope type (`Line`, verdict, cap) reaches into the kernel. The CL family module translates
+envelope type (`Line`, verdict, cap) reaches into the kernel. The concentrated-liquidity family module translates
 the envelope's composed lines into refine bounds at the seam (`refine_bounds`).
 
 _Avoid_: an envelope type inside the kernel; re-deriving the bound inside the walk instead of at
@@ -644,13 +647,13 @@ resolve time). A hop state does not carry an origin block.
 _Avoid_: using "hop" for the evaluation-time form.
 
 **Word profile**:
-The precomputed prefix of per-word-boundary swap steps for a dense CL range, where the
+The precomputed prefix of per-word-boundary swap steps for a dense concentrated-liquidity range, where the
 boundary list, entry state, and fee are fixed — converts a sim query into a partition
 search plus one live landing step. Built once per range, shared by the walk across paths.
 _Avoid_: "caching table", "profile cache".
 
 **Prepared hop**:
-One CL hop's walk intake: the tick-range sequence paired structurally with its crossing
+One concentrated-liquidity hop's walk intake: the tick-range sequence paired structurally with its crossing
 table, word profiles, and derivation fingerprint — built once per (pool, direction) by the
 projection and shared across paths. The composition memo's key is folded from the same
 value the walk consumes.
@@ -702,7 +705,7 @@ _Avoid_: reading it as a per-solve value; resetting it mid-solve.
 A piecewise-linear concave upper bound on a hop's output curve, derived from projection
 data the solve already builds, and the point-wise minimum of its hop tangent lines and
 per-hop caps. A constant-product-family hop contributes its exact post-fee entry tangent
-beside the fee-agnostic rise; a CL hop contributes its pool-static tangent fan. A
+beside the fee-agnostic rise; a concentrated-liquidity hop contributes its pool-static tangent fan. A
 Balancer V2 weighted hop contributes its entry tangent (its output curve is concave in the
 input) beside its asymptotic reserve cap. A Solidly/Aerodrome/Camelot stable hop
 contributes its entry tangent (its output curve is
@@ -730,8 +733,8 @@ fee-agnostic `r_out / r_in` line; taking the point-wise minimum of both stays a 
 upper bound and is strictly tighter than either alone.
 _Avoid_: using a fee-agnostic rise where the retained fee is known.
 
-**Tangent fan (CL)**:
-The pool-static set of sampled crossing-entry tangent lines a CL hop contributes, plus the
+**Tangent fan**:
+The pool-static set of sampled crossing-entry tangent lines a concentrated-liquidity hop contributes, plus the
 asymptotic cap from its last crossing. It is a pure function of the crossing table after
 the live in-range price, which anchors a head tangent rebuilt per call, so reuse is keyed
 by fan content and scoped to the solve-cycle epoch.
@@ -815,7 +818,7 @@ _Avoid_: "payload" (reserved for the solve-result → strategy seam).
 
 **Encode request**:
 The per-path intake value the composer consumes: the path, the solver's amounts, and the
-operator's declared axes. It is the contract the CL overfeed-clamp invariant attaches to.
+operator's declared axes. It is the contract the concentrated-liquidity overfeed-clamp invariant attaches to.
 _Avoid_: "command stream" (the bytes it encodes into), "payload", "EncodeOptions".
 
 **Execution context**:
@@ -1089,21 +1092,21 @@ _Avoid_: confusing it with the `PyBot` adapter (the thin PyO3 shell) or with
 `RegistryCore` — the shared registry struct `BotState` composes: `pools`,
 `pool_addresses`, `tokens`, `next_pool_id`, `journal_depth`, and the
 ADR-040 `quarantined_pools` set — the one canonical object space every handle
-reads through, and the view CL-orchestration fns receive as their `reg`
+reads through, and the view concentrated-liquidity-orchestration fns receive as their `reg`
 parameter.
 _Avoid_: "session registry" for it; the `SessionObjectRegistry` is the
 identity-only layer, the registry core is the live state.
 
-**CL orchestration capability**:
-`ConcentratedLiquidityOrchestration` — the one struct owning every CL-local state surface:
+**Concentrated-liquidity orchestration capability**:
+`ConcentratedLiquidityOrchestration` — the one struct owning every concentrated-liquidity-local state surface:
 the V3/V4 liquidity event buffers, `v4_pool_ids`, the V4 state-view registry,
 the registration gate, the snapshot seed block, the pump delivery cutoff, and
 the per-pool event horizons. `BotState` stays the composition root and
-delegates its public CL surface to it one-line-at-a-time; callers that need
-only CL-local state reach the capability directly through `BotState::concentrated_liquidity()` /
+delegates its public concentrated-liquidity surface to it one-line-at-a-time; callers that need
+only concentrated-liquidity-local state reach the capability directly through `BotState::concentrated_liquidity()` /
 `concentrated_liquidity_mut()` over the capability's `pub` method set, capability fns reach the
 registry core only through the `RegistryCore` view their callers pass, and
 registry-side consumers (the sim-anchor projection, the storage probe) see
 V4 registration only through `registered_v4_pools()`.
 _Avoid_: reaching into `state.concentrated_liquidity.<field>` from registry-side code or growing
-CL policy outside the capability's method set.
+concentrated-liquidity policy outside the capability's method set.

@@ -1,11 +1,11 @@
-# V2-as-degenerate-CL swap-step parity probe
+# V2-as-degenerate-concentrated-liquidity swap-step parity probe
 
 Probe harness: `rust/crates/engine/degenbot-solvers/examples/v2_concentrated_liquidity_parity_probe.rs`
 Run: `cargo run -p degenbot-solvers --example v2_concentrated_liquidity_parity_probe`
 
 This probe answers the decision question in ADR-060 ("Collapse the V2 walk
 dispatch — representation vs interface"): can a V2 constant-product hop be
-represented as a degenerate single-range CL tick sequence without changing the
+represented as a degenerate single-range concentrated-liquidity tick sequence without changing the
 per-step arithmetic? It measures the **swap-step** level, which is the site that
 flips the ADR decision; the full-path returned-tuple bar is a downstream
 concern.
@@ -24,23 +24,23 @@ For a V2 hop `(R_in, R_out, gamma_numer, fee_denom)` and a chosen direction:
   this floor is lossy by construction and is the first expected parity break.
 - **Spot price**: `sqrt_price_x96 = floor(L * 2^96 / R_in)`, placing the
   projected spot at the reserve ratio. Also generally non-integral.
-- **Range span**: one range with **empty interior word boundaries**, so the CL
+- **Range span**: one range with **empty interior word boundaries**, so the concentrated-liquidity
   step degenerates to a single `compute_swap_step_v3` to the exit boundary.
   The span is widened by `2^32` on the swap side
   (`[sqrtP >> 32, sqrtP]` for zero-for-one, `[sqrtP, sqrtP << 32]` for
   one-for-zero). Every tested input is orders of magnitude below the resulting
   capacity, so the step stays in the target-unreachable (open-AMM) branch — the
   only branch with a V2 analogue.
-- **Fee**: the V2 fraction is mapped onto the identical CL fraction,
+- **Fee**: the V2 fraction is mapped onto the identical concentrated-liquidity fraction,
   `fee_pips = 1e6 * (fee_denom - gamma_numer) / fee_denom`, giving
   `gamma_CL = 1e6 - fee_pips` over `fee_denom_CL = 1e6`. Exact for
   997/1000, 9975/10000, 9995/10000 and 99/100.
 - **Direction**: both projections are measured. Zero-for-one projects
-  `R_in -> token0`, one-for-zero projects `R_out -> token0`. The two CL
+  `R_in -> token0`, one-for-zero projects `R_out -> token0`. The two concentrated-liquidity
   rounding paths differ (zero-for-one floors `amount1`; one-for-zero floors
   `amount0`), so a representation must clear both.
 
-The candidate's net input is `floor(x * gamma/fee_denom)` (the CL
+The candidate's net input is `floor(x * gamma/fee_denom)` (the concentrated-liquidity
 `amount_remaining_less_fee`); the baseline keeps the fee inside the rational
 `floor(x * gamma * R_out / (fee_denom * R_in + x * gamma))`.
 
@@ -48,7 +48,7 @@ The candidate's net input is `floor(x * gamma/fee_denom)` (the CL
 
 | Source | V2 hop states | Notes |
 |---|---|---|
-| `tests/fixtures/heavy_mixed_solve_captures.jsonl.zst` | 27 unique (369 occurrences) | real mixed V2+CL solver captures |
+| `tests/fixtures/heavy_mixed_solve_captures.jsonl.zst` | 27 unique (369 occurrences) | real mixed V2+concentrated liquidity solver captures |
 | `tests/fixtures/path5000_v2v4v3_block25704509.json` | 1 | real UniV2 hop with recorded input |
 | `tests/fixtures/path110302_v3v4v2_block25711761.json` | 1 | real UniV2 hop, recorded 58,233,015 input |
 | `tests/fixtures/path182449_v4v4v2_block25731019.json` | 1 | real SushiV2 hop, recorded 9,085,365 input |
@@ -111,10 +111,10 @@ x=58233015     R_in=7456337076646   R_out=3886685670626625517819
 
 1. **Post-fee net input is floored before the invariant.** This is the dominant
    and decisive break. V2's `getAmountOut` keeps the fee as an exact rational:
-   `out = floor(x·gamma·R_out / (fee_denom·R_in + x·gamma))`. The CL exact-in
+   `out = floor(x·gamma·R_out / (fee_denom·R_in + x·gamma))`. The concentrated-liquidity exact-in
    step first computes `amount_remaining_less_fee = floor(x·gamma/fee_denom)`
    (a `muldiv`), then derives the price move from that floored quantity. For a
-   non-unit `gamma`, small inputs floor to zero: at `x = 1` and 0.3% the CL step
+   non-unit `gamma`, small inputs floor to zero: at `x = 1` and 0.3% the concentrated-liquidity step
    sees `floor(0.997) = 0` and returns zero output while V2 returns
    hundreds of millions of wei. This produces the `-530,594,942` real-fixture
    miss and the zero-for-one one-sidedness.
@@ -124,7 +124,7 @@ x=58233015     R_in=7456337076646   R_out=3886685670626625517819
    scales with `R_out` and with the reserve ratio.
 3. **Spot-price floor.** `floor(L·2^96/R_in)` sits off the exact reserve ratio
    by up to one Q96 unit, shifting the projected price.
-4. **Per-step rounding shape.** Even with exact `L` and sqrt price, the CL step
+4. **Per-step rounding shape.** Even with exact `L` and sqrt price, the concentrated-liquidity step
    rounds `sqrt_price_next` up and floors the output delta in two stages, while
    V2 performs a single terminal `DIV`. That asymmetry is why the zero-for-one
    arm is one-sided (candidate ≤ baseline) but the one-for-zero arm can exceed
@@ -148,7 +148,7 @@ found 225 of 1236 comparisons (18.2%) with a non-zero output delta, including a
 real captured hop whose `x = 1` output differs by 530,594,942 wei and a real
 `x = 58,233,015` comparison differing by 2,378 wei. No wei tolerance applies:
 the structural cause — flooring the post-fee input before the invariant, plus
-the geometric-mean and spot-price floors — is inherent to the CL step, not an
+the geometric-mean and spot-price floors — is inherent to the concentrated-liquidity step, not an
 accumulation a probe could erase. A representation swap would therefore change
 landed range geometry and any candidate sitting on a `crossing_gross_input`
 boundary, which is an observable result change dressed as a refactor.

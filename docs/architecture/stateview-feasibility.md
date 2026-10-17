@@ -7,7 +7,7 @@
 
 **Cheap-read (mechanism (a)) for every pool family: V2-family scalars, V3 tickmaps (Uniswap / PancakeSwap / SushiSwap), and V4 tickmaps.** Materialization and COW pass the view-construction leg of the rule with three orders of magnitude of headroom, but the second leg fails: measured solve-gate holds under cheap-read are ≤ 5 ms p99 per path (≤ 1 ms for the gate itself), far below the 100 ms p99 threshold, and once writes are structurally confined to the Streaming stage, the existing `StateLock<RwLock<BotState>>` reads during Resolved..Solved are uncontended by construction. No family qualifies for an exception; no mechanism exception is needed.
 
-| Family | Mechanism | Rule leg 1 (view p99 ≤ 2 ms @ p90 CL density) | Rule leg 2 (cheap-read > 100 ms p99 solve-gate?) |
+| Family | Mechanism | Rule leg 1 (view p99 ≤ 2 ms @ p90 concentrated-liquidity density) | Rule leg 2 (cheap-read > 100 ms p99 solve-gate?) |
 |---|---|---|---|
 | V2 (Uniswap/Pancake/Sushi) | **cheap-read** | n/a (scalars; clone-able in ~76–124 µs full 100k-pool set) | No — 1 ms p99 |
 | V3 (Uniswap) | **cheap-read** | full-clone 40–50 ns @ p90=2 ticks (16 µs p99 even at registry max 1536) | No |
@@ -18,7 +18,7 @@
 
 ### 1.1 Corpus locations (confirmed on disk)
 
-- Heavy-CL solver-replay corpus: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl.zst` (420 paths / 87 MB decoded; packaged 80 KB), referenced by `docs/rayon-parallelism-lab.md` and read transparently via `rust/crates/engine/degenbot-solvers/src/capture_fixture.rs` (`read_fixture`, `DEGENBOT_SOLVER_CAPTURE_*` producer knobs in `rust/crates/engine/degenbot-bot/src/arb_engine/solver_capture.rs`).
+- Heavy concentrated-liquidity solver-replay corpus: `rust/crates/engine/degenbot-solvers/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl.zst` (420 paths / 87 MB decoded; packaged 80 KB), referenced by `docs/rayon-parallelism-lab.md` and read transparently via `rust/crates/engine/degenbot-solvers/src/capture_fixture.rs` (`read_fixture`, `DEGENBOT_SOLVER_CAPTURE_*` producer knobs in `rust/crates/engine/degenbot-bot/src/arb_engine/solver_capture.rs`).
 - Other committed captures: `heavy_mixed_solve_captures.jsonl.zst`, `live_capture_loop13/17.jsonl.zst`, `live_gatebursts_mixed.jsonl`, `concentrated_liquidity_capture_offline.jsonl` (same fixture dir).
 - **Tickmap size distribution has no producer-side capture:** the solver captures record precomputed tick-*range* views, not raw map cardinalities. The authoritative size/mix source is therefore the live registry the captures are drawn from: the running bot's pool database (below), read `-readonly` beside the live WAL.
 
@@ -36,7 +36,7 @@
 
 Takeaways:
 
-- **90th-percentile CL density is 2–4 ticks/pool.** The p99 is ≤ 22 (Pancake V3); the registry maximum is 1536 ticks (one Uniswap V3 pool).
+- **90th-percentile concentrated-liquidity density is 2–4 ticks/pool.** The p99 is ≤ 22 (Pancake V3); the registry maximum is 1536 ticks (one Uniswap V3 pool).
 - V2-family (533,881 pools) state is scalars; V4 maps are sparser than V3 (median empty, avg < 1 tick).
 - The predecessor's 682/1536-entry probe sizes bracket the real distribution's tail: 682 ≈ dense-region working set, 1536 = the exact registry maximum.
 
@@ -99,9 +99,9 @@ Production journals carry typically 0–4 priors/block/pool (task body); even th
 ### 2.5 M6 — memory anchors
 
 - `TickInfo` 48 B; `V3BlockDelta` 144 B; `HashMap` clone RSS ≈ **125.8 bytes/entry** (measured 65,536-entry map × 32 clones); ≈ 130 B/entry steady across sizes.
-- Per mechanism, whole-registry memory delta at current corpus (280,444 CL tick entries; 533,881 V2 scalar pools):
+- Per mechanism, whole-registry memory delta at current corpus (280,444 concentrated-liquidity tick entries; 533,881 V2 scalar pools):
   - **cheap-read: zero** (state and journals already resident).
-  - **COW:** + ~36 MB per retained CL-tickmap snapshot (280,444 × 130 B) + ~21 MB per V2 scalar snapshot (~40 B/pool), per retained epoch.
+  - **COW:** + ~36 MB per retained concentrated-liquidity-tickmap snapshot (280,444 × 130 B) + ~21 MB per V2 scalar snapshot (~40 B/pool), per retained epoch.
   - **journal-replay:** + `V3BlockDelta` 144 B per dirty pool-block (+ ~40 B per tick prior) at journal depth 32, only for pools with in-window activity.
 
 ## 3. Cheap-read solve-gate hold analysis (rule leg 2)
@@ -126,7 +126,7 @@ Jaeger corroboration (`degenbot.arb.solve`, 15 spans / 2 h lookback): p50 369 ms
 
 ## 4. Decision rule evaluation, per family
 
-1. **Leg 1** (view-construction p99 ≤ 2 ms at 90th-pctile CL density — i.e. 2–4 ticks/pool, max 1,536): *all three non-default mechanisms pass with ~10⁵ headroom* (clone 40–50 ns; journal-replay ≤ 23 µs; Arc 30 ns).
+1. **Leg 1** (view-construction p99 ≤ 2 ms at 90th-pctile concentrated-liquidity density — i.e. 2–4 ticks/pool, max 1,536): *all three non-default mechanisms pass with ~10⁵ headroom* (clone 40–50 ns; journal-replay ≤ 23 µs; Arc 30 ns).
 2. **Leg 2** (cheap-read would exceed 100 ms p99 solve-gate hold): *fails* for every family — measured per-path gate/solve p99 of 1/5 ms, zero measurable lock wait.
 
 Since cheap-read only loses if **both** legs pass, **cheap-read wins for all families**. The journal-replay and COW results remain in §2 as sizing input for the Rewind path (2UVG3E) and any future out-of-corpus growth of the tickmap distribution.

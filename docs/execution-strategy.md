@@ -72,7 +72,7 @@ class SolveResult(Protocol):
     hop_count: int
     optimal_input: int          # the flash input (u256 integer)
     hop_outputs: list[int]      # per-hop outputs (integers, NOT floats)
-    consumed_inputs: list[int]  # per-hop consumed inputs (CL clamp matters)
+    consumed_inputs: list[int]  # per-hop consumed inputs (concentrated-liquidity clamp matters)
     net_profit: int
 ```
 

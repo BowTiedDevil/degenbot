@@ -20,7 +20,7 @@ let cmd_bytes = encode_cmd_stream(
     &path.path_info,            // the ordered hops (PathInfo)
     path.optimal_input,         // entry capital (u128)
     &path.hop_outputs,          // per-hop forward outputs (solver-computed)
-    &path.consumed_inputs,      // per-hop executable input (CL-clamped)
+    &path.consumed_inputs,      // per-hop executable input (concentrated-liquidity clamped)
     ctx.executor_address,      // the cmd_executor contract
     ctx.pool_manager_address,   // the Uniswap V4 PoolManager
     ctx.weth_address,           // WETH9

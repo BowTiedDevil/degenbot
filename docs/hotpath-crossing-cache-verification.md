@@ -51,7 +51,7 @@ winner; KGXFT7 wired the promotion in behind the default-on cutover gate
 engine construction). The parity gates
 `memo_off_all_concentrated_liquidity_solve_is_byte_exact_v3_v4` and
 `memo_off_mixed_v2_concentrated_liquidity_solve_is_byte_exact` prove byte-exact solver intake
-for V3+V4 all-CL and V2+CL mixed paths with the memo on (cache hits) or off
+for V3+V4 all-concentrated-liquidity and V2+concentrated liquidity mixed paths with the memo on (cache hits) or off
 (fresh builds).
 
 Three profiled runs on mainnet (node host.containers.internal, block

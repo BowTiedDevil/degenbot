@@ -1,6 +1,6 @@
-# CL cache-lab sweep & rebuild matrix (S0-S7)
+# Concentrated-liquidity cache-lab sweep & rebuild matrix (S0-S7)
 
-Task: Z5NOPD (epic KIMRKS) — 369-line corpus sweep of the instrumented CL-table
+Task: Z5NOPD (epic KIMRKS) — 369-line corpus sweep of the instrumented concentrated-liquidity-table
 cache strategies, every solve byte-compared against the full-rebuild reference.
 
 ## How the cache layer works (high level)
