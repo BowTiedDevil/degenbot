@@ -128,10 +128,9 @@ mod admission;
 mod host;
 mod pump;
 
-pub(crate) use admission::{
-    intake_backstop, intake_no_progress_ticks, GrantContract, NoProgressGuard,
-};
+pub(crate) use admission::GrantContract;
 pub(crate) use host::{
-    impl_seat_hosted, intake_close_abort, SeatHost, SeatRoleDesc, SERIAL_SEAT_NAME,
+    host_loop, impl_seat_hosted, intake_close_abort, HostLoop, SeatHost, SeatRoleDesc,
+    SERIAL_SEAT_NAME,
 };
-pub(crate) use pump::{HostDiscipline, HostMsg, HostPump, SeatSink};
+pub(crate) use pump::{HostDiscipline, HostMsg, SeatSink};

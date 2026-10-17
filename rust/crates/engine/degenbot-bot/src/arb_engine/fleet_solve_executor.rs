@@ -19,7 +19,7 @@
 //! on the SAME seat (T6).
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
 use crate::arb_engine::seat_host::{
-    intake_backstop, GrantContract, HostDiscipline, HostMsg, HostPump, SeatSink,
+    host_loop, GrantContract, HostDiscipline, HostLoop, HostMsg, SeatSink,
 };
 use degenbot_core::op_error;
 use degenbot_workers::dispatcher::{
@@ -28,7 +28,6 @@ use degenbot_workers::dispatcher::{
 use degenbot_workers::lane::{LaneCtx, QuitSig};
 use degenbot_workers::role::WorkerRole;
 use degenbot_workers::slot::PinKey;
-use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
@@ -231,7 +230,35 @@ impl FleetSolveExecutor {
         let spawned = std::thread::Builder::new()
             .name("work-fleet-solver-host".to_string())
             .spawn(move || {
-                host_loop(rx, host, &seat_senders, &host_queue_len);
+                // The keyed seat model (per-seat keyed mailboxes, warm
+                // arenas) stays HERE as the adapter; the dispatch loop is
+                // the ONE shared seat_host loop (ADR-079 D2) — the
+                // seat model is a sink behind it, never a second loop.
+                let sink = SolveSink {
+                    seats: &seat_senders,
+                };
+                host_loop(
+                    rx,
+                    host,
+                    HostLoop {
+                        role: WorkerRole::Solver,
+                        grants: GrantContract::SolverPins,
+                        sink: &sink,
+                        // The typed-submit receipt's advisory stamp — present
+                        // iff the host serves a typed-receipt submit seam (the
+                        // pooled port has nothing to inform). It stores the
+                        // BOUNDED role-queue length at the last stamp (spill or
+                        // SeatDone).
+                        mirror: Some(host_queue_len.as_ref()),
+                        discipline: &SolveDiscipline,
+                        // S2 scope cut: the solve host has no pyo3-owned intake
+                        // receipts, so it never enters Faulted (progress()
+                        // requires a fault watch); held solve work under a lane
+                        // death follows the pre-existing lane-death flows, not
+                        // this task's intake resolution path.
+                        fault: None,
+                    },
+                );
             });
         if let Err(err) = spawned {
             abort_executor("fleet host thread spawn", &format!("{err:?}"));
@@ -341,49 +368,8 @@ fn seat_loop(seat: u64, rx: mpsc::Receiver<SeatJob>, done: &mpsc::Sender<HostMsg
         }
     }
 }
-/// The solve host's dispatch loop: build the unified [`HostPump`] for the
-/// Solver pin role (the FOLD MAP — everything per-host is a field) and run
-/// the ONE recv → apply → pump loop. The seat model (per-seat
-/// keyed mailboxes, warm arenas) stays HERE; only the message
-/// triple joined `seat_host`. (`rx` moves into
-/// [`HostPump::run`] — the thread-boundary move the pre-fold loop
-/// needed a lint expectation for is now `run`'s.)
-fn host_loop(
-    rx: mpsc::Receiver<HostMsg>,
-    mut host: FleetHost,
-    seats: &[mpsc::Sender<SeatJob>],
-    solver_queue_len: &std::sync::atomic::AtomicUsize,
-) {
-    let sink = SolveSink { seats };
-    let discipline = SolveDiscipline;
-    let mut backlog = VecDeque::new();
-    HostPump {
-        host: &mut host,
-        backlog: &mut backlog,
-        role: WorkerRole::Solver,
-        grants: GrantContract::SolverPins,
-        sink: &sink,
-        // The typed-submit receipt's advisory stamp — present iff the host
-        // serves a typed-receipt submit seam (the pooled port has nothing
-        // to inform). It stores the BOUNDED role-queue length at the last
-        // stamp (spill or SeatDone).
-        mirror: Some(solver_queue_len),
-        discipline: &discipline,
-        backstop: intake_backstop(),
-        no_progress: &mut crate::arb_engine::seat_host::NoProgressGuard::new(
-            crate::arb_engine::seat_host::intake_no_progress_ticks(),
-        ),
-        // S2 scope cut: the solve host has no pyo3-owned intake receipts, so
-        // it never enters Faulted (progress() requires a fault watch); held
-        // solve work under a lane death follows the pre-existing lane-death
-        // flows, not this task's intake resolution path.
-        fault: None,
-        #[cfg(test)]
-        ticks: None,
-    }
-    .run(rx);
-}
-/// The solve host's seat `model::` per-seat
+
+/// The solve host's seat model: per-seat
 /// keyed mailboxes — a seat is a persistent pin (T3/T6 warm arenas), so a
 /// granted unit routes POSITIONALLY to the grant slot's mailbox:
 /// seat i <-> `SlotLayout::solver.start` + i).

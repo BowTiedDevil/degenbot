@@ -16,7 +16,7 @@ use degenbot_workers::lane::LaneCtx;
 use degenbot_workers::role::WorkerRole;
 use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 /// The role descriptor: everything that differs between the two pooled
 /// `WorkQueue` executors, and nothing else. The executors are THIN over
@@ -253,7 +253,24 @@ impl SeatHost {
         let spawned = std::thread::Builder::new()
             .name(desc.host_thread.to_string())
             .spawn(move || {
-                host_loop(rx, host, desc, Arc::clone(&work), fault);
+                let sink = PooledSink {
+                    queue: Arc::clone(&work),
+                };
+                let discipline = PooledDiscipline { desc };
+                host_loop(
+                    rx,
+                    host,
+                    HostLoop {
+                        role: desc.role,
+                        grants: GrantContract::Single(desc.grant),
+                        sink: &sink,
+                        // The pooled port is fire-and-forget (`Result<(), ()>`):
+                        // there is no typed receipt to inform, so no mirror.
+                        mirror: None,
+                        discipline: &discipline,
+                        fault: fault.as_deref(),
+                    },
+                );
                 // Process teardown: the submission channel closed. Retire
                 // the seats so no worker parks forever on an empty queue.
                 work.close();
@@ -314,7 +331,24 @@ impl SeatHost {
         let spawned = std::thread::Builder::new()
             .name(desc.host_thread.to_string())
             .spawn(move || {
-                host_loop(rx, host, desc, Arc::clone(&work), fault);
+                let sink = PooledSink {
+                    queue: Arc::clone(&work),
+                };
+                let discipline = PooledDiscipline { desc };
+                host_loop(
+                    rx,
+                    host,
+                    HostLoop {
+                        role: desc.role,
+                        grants: GrantContract::Single(desc.grant),
+                        sink: &sink,
+                        // The pooled port is fire-and-forget (`Result<(), ()>`):
+                        // there is no typed receipt to inform, so no mirror.
+                        mirror: None,
+                        discipline: &discipline,
+                        fault: fault.as_deref(),
+                    },
+                );
                 work.close();
             });
         if let Err(err) = spawned {
@@ -406,39 +440,56 @@ fn seat_loop(desc: &'static SeatRoleDesc, work: &WorkQueue, done: &mpsc::Sender<
         }
     }
 }
-/// The pooled hosts' dispatch loop: build the unified [`HostPump`] for the
-/// descriptor's role (the FOLD MAP — everything per-host is a field) and
-/// run the ONE recv → apply → pump loop.
-/// (`rx` moves into [`HostPump::run`] — the thread-boundary move the
-/// pre-fold loop needed a lint expectation for is now `run`'s.)
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the Arc moves into the spawned host thread — a borrow cannot cross the thread boundary"
-)]
-fn host_loop(
-    rx: mpsc::Receiver<HostMsg>,
-    mut host: FleetHost,
-    desc: &'static SeatRoleDesc,
-    queue: Arc<WorkQueue>,
-    fault: Option<std::sync::Arc<crate::arb_engine::fleet_intake::IntakeFaultWatch>>,
-) {
-    let sink = PooledSink { queue };
-    let discipline = PooledDiscipline { desc };
+/// The ONE host dispatch loop's fold map (ADR-079 D2) — everything
+/// per-host is a field, exactly the [`HostPump`] field list the loop
+/// builds. BOTH seat models compose [`host_loop`] with one of these: the
+/// pooled `WorkQueue` pair (via [`PooledSink`] / [`PooledDiscipline`]) and
+/// the keyed solve executor (its own `SolveSink` / `SolveDiscipline` over
+/// `GrantContract::SolverPins`).
+#[derive(Clone, Copy)]
+pub(crate) struct HostLoop<'a> {
+    /// The hosted role — the descriptor's pooled role or the Solver pin
+    /// role; drives the queue len/cap keys and the posture consult.
+    pub(crate) role: WorkerRole,
+    /// The row-#6 grant-kind contract.
+    pub(crate) grants: GrantContract,
+    /// The seat model.
+    pub(crate) sink: &'a dyn SeatSink,
+    /// The typed-receipt advisory mirror (solve only; `None` = pooled).
+    pub(crate) mirror: Option<&'a AtomicUsize>,
+    /// The per-host abort wording owner.
+    pub(crate) discipline: &'a dyn HostDiscipline,
+    /// The S2 fault watch (`None` on hosts whose receipts are not
+    /// pyo3-owned — they never enter Faulted).
+    pub(crate) fault: Option<&'a crate::arb_engine::fleet_intake::IntakeFaultWatch>,
+}
+/// The ONE host dispatch loop (ADR-079 D2): build the unified [`HostPump`]
+/// from the caller's [`HostLoop`] fold map and run the ONE
+/// recv → apply → pump loop. (`rx` moves into [`HostPump::run`] — the
+/// thread-boundary move the pre-fold loop needed a lint expectation for is
+/// now `run`'s.)
+pub(crate) fn host_loop(rx: mpsc::Receiver<HostMsg>, mut host: FleetHost, fold: HostLoop<'_>) {
+    let HostLoop {
+        role,
+        grants,
+        sink,
+        mirror,
+        discipline,
+        fault,
+    } = fold;
     let mut backlog = VecDeque::new();
     let mut no_progress = NoProgressGuard::new(intake_no_progress_ticks());
     HostPump {
         host: &mut host,
         backlog: &mut backlog,
-        role: desc.role,
-        grants: GrantContract::Single(desc.grant),
-        sink: &sink,
-        // The pooled port is fire-and-forget (`Result<(), ()>`): there is
-        // no typed receipt to inform, so no mirror.
-        mirror: None,
-        discipline: &discipline,
+        role,
+        grants,
+        sink,
+        mirror,
+        discipline,
         backstop: intake_backstop(),
         no_progress: &mut no_progress,
-        fault: fault.as_deref(),
+        fault,
         #[cfg(test)]
         ticks: None,
     }
@@ -499,3 +550,49 @@ macro_rules! impl_seat_hosted {
     };
 }
 pub(crate) use impl_seat_hosted;
+
+#[cfg(test)]
+mod loop_home_tests {
+    /// The structural gate for ADR-079 D2: `seat_host` is the ONE home of
+    /// the host dispatch loop. The keyed solve executor composes the
+    /// shared loop behind its own seat model (`SolveSink`); a second
+    /// `fn host_loop` definition anywhere in `arb_engine` is a fold
+    /// violation — the loop vocabulary must not fork again.
+    #[test]
+    fn the_host_loop_is_defined_once_in_seat_host() {
+        let sources: [(&str, &str); 5] = [
+            ("seat_host/host.rs", include_str!("host.rs")),
+            ("seat_host/pump.rs", include_str!("pump.rs")),
+            (
+                "fleet_solve_executor.rs",
+                include_str!("../fleet_solve_executor.rs"),
+            ),
+            (
+                "fleet_sim_executor.rs",
+                include_str!("../fleet_sim_executor.rs"),
+            ),
+            (
+                "fleet_registration_executor.rs",
+                include_str!("../fleet_registration_executor.rs"),
+            ),
+        ];
+        for (file, src) in sources {
+            // A definition line is `fn host_loop` (after any visibility
+            // qualifier) — doc mentions and this test's own needle stay out
+            // of the count.
+            let defs = src
+                .lines()
+                .filter(|line| {
+                    let line = line.trim_start();
+                    let line = line.strip_prefix("pub(crate) ").unwrap_or(line);
+                    line.starts_with("fn host_loop")
+                })
+                .count();
+            let want = usize::from(file == "seat_host/host.rs");
+            assert_eq!(
+                defs, want,
+                "{file} must define {want} host_loop fn(s) — the ONE host dispatch loop lives in seat_host"
+            );
+        }
+    }
+}
