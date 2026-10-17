@@ -15,20 +15,20 @@ use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::families::concentrated_liquidity::state_journal;
 use crate::families::concentrated_liquidity::state_seeding;
-use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use crate::families::concentrated_liquidity::state_walk::{self, TickRangeCache};
+use crate::int_v3_hop::IntV3TickRangeSequence;
 use crate::liquidity_event::LiquidityEvent;
 use crate::state_history::{
     JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, V3BlockDelta,
 };
-use crate::tick_bitmap::{compute_tick_ranges, gen_ticks_iter, V3TickRangeForSolver};
+use crate::tick_bitmap::gen_ticks_iter;
 use crate::tick_fetch::TickWordFetcher;
 use crate::v3_state::{PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, V3SwapOutcome};
 use crate::TickInfo;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v4;
 use degenbot_math::concentrated_liquidity::tick_math::{
-    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
-    MIN_SQRT_RATIO,
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal,
 };
 
 // ---------------------------------------------------------------------------
@@ -282,13 +282,6 @@ pub struct V4SwapUpdate {
 // V4 pool state
 // ---------------------------------------------------------------------------
 
-/// Cached tick ranges for a single pool, keyed by direction.
-#[derive(Clone, Debug, Default)]
-struct TickRangeCache {
-    zfo: crate::v3_state::CachedTickRanges,
-    ofz: crate::v3_state::CachedTickRanges,
-}
-
 /// Immutable V4 registration identity (ADR-005 identity slice).
 ///
 /// Pure registration data — the pool manager, on-chain `pool_id`, and
@@ -413,37 +406,13 @@ impl Clone for V4PoolState {
 }
 
 impl V4PoolState {
-    /// Directional swap viability — V4 twin of [`V3PoolState::swap_is_viable`].
-    /// Same O(1) extremes check; see that method for the full contract.
+    /// Directional swap viability — the V4 twin of
+    /// [`V3PoolState::swap_is_viable`] (same O(1) extremes check); the verb
+    /// lives once in the CL family state module
+    /// (`families/concentrated_liquidity/state_walk.rs`).
     #[must_use]
     pub fn swap_is_viable(&self, zero_for_one: bool) -> bool {
-        if self.sqrt_price_x96.is_zero() {
-            return false;
-        }
-        let sp = self.sqrt_price_x96;
-        if zero_for_one {
-            if sp <= U256::from(MIN_SQRT_RATIO) + U256::from(1u64) {
-                return false;
-            }
-            match self.tick_data.keys().min() {
-                Some(&min_tick) => match get_sqrt_ratio_at_tick_internal(min_tick) {
-                    Ok(t) => U256::from(t) < sp,
-                    Err(_) => false,
-                },
-                None => false,
-            }
-        } else {
-            if sp >= U256::from(MAX_SQRT_RATIO) - U256::from(1u64) {
-                return false;
-            }
-            match self.tick_data.keys().max() {
-                Some(&max_tick) => match get_sqrt_ratio_at_tick_internal(max_tick) {
-                    Ok(t) => U256::from(t) > sp,
-                    Err(_) => false,
-                },
-                None => false,
-            }
-        }
+        state_walk::swap_is_viable(self, zero_for_one)
     }
 
     /// Word position holding `tick` (V3/V4-shared helper); the verb lives
@@ -461,39 +430,17 @@ impl V4PoolState {
     }
 
     /// Monotonic advance of the **price** clock — see
-    /// [`V3PoolState::advance_update_block`] (V4 twin, two-stamp rule).
-    ///
-    /// # Panics
-    ///
-    /// Panics with `PoolState monotonicity violated: update_block attempted
-    /// {block} < current {cur} outside a reorg — ABORT` when `block < cur`.
+    /// [`V3PoolState::advance_update_block`] (V4 twin, two-stamp rule); the
+    /// verb lives once in the CL family state module
+    /// (`families/concentrated_liquidity/state_walk.rs`).
     pub fn advance_update_block(&mut self, block: u64) {
-        assert!(
-            block >= self.update_block,
-            "PoolState monotonicity violated: update_block attempted {block} < current {} outside a reorg — ABORT",
-            self.update_block
-        );
-        if block > self.update_block {
-            self.update_block = block;
-        }
+        state_walk::advance_update_block(self, block);
     }
 
     /// Monotonic advance of the **liquidity** clock — see
     /// [`V3PoolState::advance_tick_data_block`] (V4 twin, two-stamp rule).
-    ///
-    /// # Panics
-    ///
-    /// Panics with `PoolState monotonicity violated: tick_data_block attempted
-    /// {block} < current {cur} outside a reorg — ABORT` when `block < cur`.
     pub fn advance_tick_data_block(&mut self, block: u64) {
-        assert!(
-            block >= self.tick_data_block,
-            "PoolState monotonicity violated: tick_data_block attempted {block} < current {} outside a reorg — ABORT",
-            self.tick_data_block
-        );
-        if block > self.tick_data_block {
-            self.tick_data_block = block;
-        }
+        state_walk::advance_tick_data_block(self, block);
     }
 
     // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait
@@ -573,62 +520,19 @@ impl V4PoolState {
     // were byte-identical twins across V3/V4; the trait dedups the two.
     // See `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
 
-    /// Invalidate the cached tick ranges (call after any state mutation).
+    /// Invalidate the cached tick ranges (call after any state mutation) —
+    /// the verb lives once in the CL family state module
+    /// (`families/concentrated_liquidity/state_walk.rs`).
     pub fn invalidate_tick_range_cache(&self) {
-        let mut cache = self.cached_tick_ranges.lock();
-        cache.zfo = crate::v3_state::CachedTickRanges::StillEmpty;
-        cache.ofz = crate::v3_state::CachedTickRanges::StillEmpty;
-    }
-
-    fn get_cached_tick_ranges(
-        &self,
-        tick_spacing: i32,
-        zero_for_one: bool,
-    ) -> Option<Arc<[V3TickRangeForSolver]>> {
-        {
-            let cache = self.cached_tick_ranges.lock();
-            let slot = if zero_for_one { &cache.zfo } else { &cache.ofz };
-            match slot {
-                crate::v3_state::CachedTickRanges::Hit(ranges) => return Some(Arc::clone(ranges)),
-                crate::v3_state::CachedTickRanges::Miss => return None,
-                crate::v3_state::CachedTickRanges::StillEmpty => {}
-            }
-        }
-
-        let ranges = compute_tick_ranges(
-            &self.tick_data,
-            self.tick,
-            tick_spacing,
-            self.liquidity,
-            zero_for_one,
-        )
-        .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
-
-        // Cache the result regardless of Some/None (twin of V3).
-        let mut cache = self.cached_tick_ranges.lock();
-        match ranges {
-            Some(ref r) => {
-                if zero_for_one {
-                    cache.zfo = crate::v3_state::CachedTickRanges::Hit(Arc::clone(r));
-                } else {
-                    cache.ofz = crate::v3_state::CachedTickRanges::Hit(Arc::clone(r));
-                }
-            }
-            None => {
-                if zero_for_one {
-                    cache.zfo = crate::v3_state::CachedTickRanges::Miss;
-                } else {
-                    cache.ofz = crate::v3_state::CachedTickRanges::Miss;
-                }
-            }
-        }
-
-        ranges
+        state_walk::invalidate_tick_range_cache(self);
     }
 
     /// Build an integer tick-range sequence for the V4 pool. Identical CL math
     /// to V3's `build_int_v3_sequence`; the type is named `IntV3TickRange-
-    /// Sequence` but applies equally to V4 hops.
+    /// Sequence` but applies equally to V4 hops. The walk verb lives once in
+    /// the CL family state module
+    /// (`families/concentrated_liquidity/state_walk.rs`); V4's packed
+    /// `slot0.protocolFee` scalar rides the call as the fee-combine input.
     ///
     /// Returns `None` if insufficient tick data.
     #[must_use]
@@ -638,106 +542,7 @@ impl V4PoolState {
         fee: u32,
         zero_for_one: bool,
     ) -> Option<IntV3TickRangeSequence> {
-        let ranges = self.get_cached_tick_ranges(tick_spacing, zero_for_one)?;
-        let use_ranges: &[V3TickRangeForSolver] = &ranges;
-
-        // V4 charges the COMBINED `swapFee = calculateSwapFee(protocol_fee_dir,
-        // lp_fee)`, NOT `lp_fee` alone, when `slot0.protocolFee > 0`. See
-        // `v4_simulate_swap` + the sim_v4_swap_step_rounding diagnosis (removed in the stale-docs cleanup `71ec78b2`).
-        let direction_protocol_fee = if zero_for_one {
-            degenbot_math::concentrated_liquidity::swap_math::protocol_fee_zero_for_one(
-                self.protocol_fee,
-            )
-        } else {
-            degenbot_math::concentrated_liquidity::swap_math::protocol_fee_one_for_zero(
-                self.protocol_fee,
-            )
-        };
-        let swap_fee = degenbot_math::concentrated_liquidity::swap_math::calculate_swap_fee(
-            direction_protocol_fee,
-            fee,
-        )
-        .ok()?;
-        let gamma_numer = u64::from(1_000_000u32.checked_sub(swap_fee)?);
-        let fee_denom = 1_000_000u64;
-
-        let mut int_ranges = Vec::with_capacity(use_ranges.len());
-        for (i, r) in use_ranges.iter().enumerate() {
-            let sqrt_price_x96 = if i == 0 {
-                self.sqrt_price_x96
-            } else if zero_for_one {
-                use_ranges[i - 1].sqrt_price_upper
-            } else {
-                use_ranges[i - 1].sqrt_price_lower
-            };
-
-            // V4 step-1 current-tick drain (zfo only) — same semantics as the
-            // V3 case: the PoolManager swap loop resolves `tickNext = current
-            // tick` (lte, inclusive) for zfo, a zero-amount step that crosses
-            // the tick and applies `liquidity -= liquidityNet(currentTick)`.
-            // See the V3 sibling in `v3_state.rs` and the mainnet fixture
-            // logs/fixtures/v2_v3_v3_solver_divergence_25641093.md. ofz uses
-            // `gt` (exclusive) and does NOT re-cross the current tick.
-            let current_tick_drain: i128 = if zero_for_one {
-                // The low-128-bit int128 projection (shared
-                // `TickInfo::liquidity_net_i128`).
-                self.tick_data
-                    .get(&self.tick)
-                    .map_or(0, TickInfo::liquidity_net_i128)
-            } else {
-                0
-            };
-            let base_liquidity: i128 = self.liquidity.cast_signed() - current_tick_drain;
-
-            let range_liquidity = if i == 0 {
-                if base_liquidity < 0 {
-                    0
-                } else {
-                    base_liquidity.cast_unsigned()
-                }
-            } else {
-                let mut l = base_liquidity;
-                for prev_range in &use_ranges[..i] {
-                    let net = prev_range.liquidity_net;
-                    if zero_for_one {
-                        l -= net;
-                    } else {
-                        l += net;
-                    }
-                }
-                if l.is_negative() {
-                    0u128
-                } else {
-                    l.cast_unsigned()
-                }
-            };
-
-            int_ranges.push(IntV3TickRangeHop {
-                liquidity: range_liquidity,
-                sqrt_price_x96,
-                sqrt_price_lower_x96: r.sqrt_price_lower,
-                sqrt_price_upper_x96: r.sqrt_price_upper,
-                gamma_numer,
-                fee_denom,
-                zero_for_one,
-                // Convert collapsed interior word-boundary ticks → sqrt
-                // prices (swap order) so `compute_crossing` /
-                // `simulate_v3_range_swap` re-walk them per boundary. V4 shares `compute_tick_ranges` + the V3-family
-                // solver hop, so V4 gets the same per-step flooring parity fix.
-                word_boundary_prices: r
-                    .interior_boundaries
-                    .iter()
-                    .map(|&t| {
-                        U256::from(
-                            degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal(t)
-                                .unwrap_or(alloy::primitives::U160::ZERO),
-                        )
-                    })
-                    .collect(),
-            });
-        }
-
-        IntV3TickRangeSequence::new(int_ranges).ok()
+        state_walk::build_int_v4_sequence(self, self.protocol_fee, tick_spacing, fee, zero_for_one)
     }
 }
 
@@ -833,6 +638,47 @@ impl state_seeding::SeedingHost for V4PoolState {
 
     fn journal_mut(&mut self) -> &mut ReorgJournal<V3BlockDelta> {
         &mut self.journal
+    }
+}
+
+// The walk/clock/cache verbs live once in the CL state module
+// (`families/concentrated_liquidity/state_walk.rs`); this impl is the
+// family-specific field access those verbs go through.
+impl state_walk::WalkHost for V4PoolState {
+    fn sqrt_price_x96(&self) -> U256 {
+        self.sqrt_price_x96
+    }
+
+    fn liquidity(&self) -> u128 {
+        self.liquidity
+    }
+
+    fn tick(&self) -> i32 {
+        self.tick
+    }
+
+    fn tick_data(&self) -> &HashMap<i32, TickInfo> {
+        &self.tick_data
+    }
+
+    fn tick_range_cache(&self) -> &parking_lot::Mutex<TickRangeCache> {
+        &self.cached_tick_ranges
+    }
+
+    fn update_block(&self) -> u64 {
+        self.update_block
+    }
+
+    fn tick_data_block(&self) -> u64 {
+        self.tick_data_block
+    }
+
+    fn set_update_block(&mut self, block: u64) {
+        self.update_block = block;
+    }
+
+    fn set_tick_data_block(&mut self, block: u64) {
+        self.tick_data_block = block;
     }
 }
 
@@ -1104,6 +950,7 @@ mod apply_inherent_tests {
     use crate::v3_state::PoolTickCoverage;
     use crate::TickInfo;
     use alloy::primitives::{Address, I256, U128, U256};
+    use degenbot_math::concentrated_liquidity::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
     use hashbrown::{HashMap, HashSet};
 
     /// Minimal V4 state at tick 0, 1:1 price, liquidity `liq`, with a
@@ -2254,7 +2101,7 @@ mod exact_rewind_tests {
     fn rollback_bumps_nonce_and_invalidates_the_tick_range_cache() {
         let mut state = seeded_state();
         state.apply_liquidity_update(-60, 60, 7_000, 97);
-        let _ = state.get_cached_tick_ranges(60, true);
+        let _ = state_walk::get_cached_tick_ranges(&state, 60, true);
         {
             let cache = state.cached_tick_ranges.lock();
             assert!(

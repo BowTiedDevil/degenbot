@@ -55,6 +55,12 @@ pub(crate) mod state_journal;
 /// state structs.
 pub(crate) mod state_seeding;
 
+/// Swap-walk state verbs — the directional viability gate, the two-stamp
+/// clock advances, the lazy tick-range cache, and the integer tick-range
+/// sequence walks — written once data-generically over the two designs'
+/// state structs.
+pub(crate) mod state_walk;
+
 pub mod v3;
 pub mod v4;
 
