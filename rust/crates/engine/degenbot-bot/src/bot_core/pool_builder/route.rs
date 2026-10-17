@@ -245,7 +245,10 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
             address,
             detail: "no identity selector answered".to_owned(),
         },
-        PoolBuilderError::Create2 => ConstructionRefusal::UnsupportedFamily {
+        // The identity verdict's CREATE2 arm keeps the loud-abort class
+        // (ADR-055 D4); the route's refusal vocabulary is a separate axis from
+        // the ledger's identity kind, so the classification is unchanged.
+        PoolBuilderError::Identity(_) => ConstructionRefusal::UnsupportedFamily {
             address,
             detail: "CREATE2 address verification failed".to_owned(),
         },
@@ -438,6 +441,10 @@ async fn construct_v4(
 mod route_tests {
     #![expect(clippy::expect_used)] // test assertions read the refusal arms directly
     use super::*;
+    use alloy::primitives::B256;
+    use degenbot_uniswap::deployments::AddressMismatch;
+
+    use crate::bot_core::pool_builder::parity;
 
     #[test]
     fn route_serves_answers_the_policy_order() {
@@ -462,7 +469,14 @@ mod route_tests {
                 factory: Address::new([0x44u8; 20]),
             },
             PoolBuilderError::UnknownPoolIdentity { address },
-            PoolBuilderError::Create2,
+            PoolBuilderError::Identity(parity::IdentityDivergence::Create2(AddressMismatch {
+                chain_id: 1,
+                factory: Address::new([0x55u8; 20]),
+                deployer: Address::new([0x55u8; 20]),
+                init_hash: B256::ZERO,
+                expected: address,
+                computed: Address::new([0x66u8; 20]),
+            })),
         ] {
             assert!(matches!(
                 classify_builder_error(err, address),

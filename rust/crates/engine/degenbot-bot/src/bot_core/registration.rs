@@ -26,11 +26,11 @@ use degenbot_pools::tick_fetch::{TickBootstrapRpc, TickWordFetcher};
 use degenbot_substrate::registration_gate::AdmissionVerdict;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::tick_assembly::TickMapAssemblyError;
-use degenbot_uniswap::deployments::AddressMismatch;
 use degenbot_uniswap::dex_identity::DexVariant;
 
 use super::bot::Bot;
 use crate::bot_core::pool_builder::builder::{self, PoolBuilderError};
+use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterAerodromePoolError,
     RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
@@ -39,16 +39,17 @@ use crate::bot_core::{
     RegisterV4PoolParams, RegisteredPoolFamily, TickInfo,
 };
 
-/// Error from [`Bot::register_v2_pool`]: the CREATE2 address verification
-/// (`Create2`) is distinguishable from the registration refusal (`Register`)
+/// Error from [`Bot::register_v2_pool`]: the identity-parity verdict
+/// (`Identity`) is distinguishable from the registration refusal (`Register`)
 /// so the `PyO3` shell preserves its two historical surfaces byte-identically
 /// (the bare-address-mismatch `ValueError` and the `PoolRegistrationError`
-/// hierarchy map).
+/// hierarchy map). The verdict is the construction side's ONE
+/// [`parity::IdentityDivergence`] — the same type the build path consumes.
 #[derive(Debug)]
 pub enum V2RegistrationError {
     /// The recomputed CREATE2 address differs from the declared address (a
     /// shipped `(chain, factory)` row only — otherwise the check is skipped).
-    Create2(AddressMismatch),
+    Identity(parity::IdentityDivergence),
     /// `BotState::register_v2_pool` refused (already registered / spec).
     Register(RegisterV2PoolError),
 }
@@ -58,7 +59,7 @@ pub enum V2RegistrationError {
 #[derive(Debug)]
 pub enum V3RegistrationError {
     /// The recomputed CREATE2 address differs from the declared address.
-    Create2(AddressMismatch),
+    Identity(parity::IdentityDivergence),
     /// `BotState::register_v3_pool` refused (already registered / spec).
     Register(RegisterV3PoolError),
 }
@@ -71,7 +72,7 @@ pub enum V3RegistrationError {
 #[derive(Debug)]
 pub enum AerodromeRegistrationError {
     /// The recomputed EIP-1167 address differs from the declared address.
-    Create2(AddressMismatch),
+    Identity(parity::IdentityDivergence),
     /// `BotState::register_aerodrome_pool` refused (already registered / spec).
     Register(RegisterAerodromePoolError),
 }
@@ -251,7 +252,7 @@ impl Bot {
     /// under ONE core write guard.
     ///
     /// # Errors
-    /// [`V2RegistrationError::Create2`] on a verified CREATE2 mismatch,
+    /// [`V2RegistrationError::Identity`] on a verified CREATE2 mismatch,
     /// [`V2RegistrationError::Register`] when the registry refuses (already
     /// registered / spec violation).
     #[expect(clippy::too_many_arguments)]
@@ -295,14 +296,8 @@ impl Bot {
                 ));
             }
         }
-        degenbot_uniswap::deployments::verify_v2_pool_address(
-            self.chain_id(),
-            factory,
-            address,
-            token0,
-            token1,
-        )
-        .map_err(V2RegistrationError::Create2)?;
+        parity::verify_v2_create2(self.chain_id(), factory, address, token0, token1)
+            .map_err(V2RegistrationError::Identity)?;
         let deployer = degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), factory);
         let init_hash =
             degenbot_uniswap::deployments::resolve_v2_init_hash(self.chain_id(), factory);
@@ -335,7 +330,7 @@ impl Bot {
     /// check), else the canonical Uniswap layout.
     ///
     /// # Errors
-    /// [`V3RegistrationError::Create2`] on a verified CREATE2 mismatch,
+    /// [`V3RegistrationError::Identity`] on a verified CREATE2 mismatch,
     /// [`V3RegistrationError::Register`] when the registry refuses.
     #[expect(clippy::too_many_arguments)]
     pub fn register_v3_pool(
@@ -386,15 +381,8 @@ impl Bot {
                 ConcentratedLiquiditySlotLayout::UniswapV3
             }
         });
-        degenbot_uniswap::deployments::verify_v3_pool_address(
-            self.chain_id(),
-            factory,
-            address,
-            token0,
-            token1,
-            fee,
-        )
-        .map_err(V3RegistrationError::Create2)?;
+        parity::verify_v3_create2(self.chain_id(), factory, address, token0, token1, fee)
+            .map_err(V3RegistrationError::Identity)?;
         let deployer = degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), factory);
         let init_hash =
             degenbot_uniswap::deployments::resolve_v3_init_hash(self.chain_id(), factory);
@@ -550,7 +538,7 @@ impl Bot {
     /// write guard.
     ///
     /// # Errors
-    /// [`AerodromeRegistrationError::Create2`] on a verified mismatch.
+    /// [`AerodromeRegistrationError::Identity`] on a verified mismatch.
     #[expect(clippy::too_many_arguments)]
     pub fn register_aerodrome_pool(
         &self,
@@ -591,7 +579,7 @@ impl Bot {
                 ));
             }
         }
-        degenbot_uniswap::deployments::verify_aerodrome_v2_pool_address(
+        parity::verify_aerodrome_v2_create2(
             self.chain_id(),
             factory,
             address,
@@ -599,7 +587,7 @@ impl Bot {
             token1,
             stable,
         )
-        .map_err(AerodromeRegistrationError::Create2)?;
+        .map_err(AerodromeRegistrationError::Identity)?;
         let params = RegisterAerodromeV2PoolParams {
             address,
             token0,
@@ -941,7 +929,7 @@ mod tests {
             .unwrap();
         let err =
             register_v2(&bot, Address::from([0x99u8; 20]), factory).expect_err("CREATE2 mismatch");
-        assert!(matches!(err, V2RegistrationError::Create2(_)), "{err:?}");
+        assert!(matches!(err, V2RegistrationError::Identity(_)), "{err:?}");
         assert_eq!(bot.pool_count(), 0, "nothing registered on refusal");
     }
 

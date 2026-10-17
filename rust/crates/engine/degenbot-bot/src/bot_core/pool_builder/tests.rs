@@ -2118,5 +2118,12 @@ async fn construction_identity_parity_guard_reads_registered_identity_and_refuse
     };
     let err = parity::verify_address_identity(wrong, registered)
         .expect_err("a divergent minted identity is refused core-side");
-    assert_eq!(err.address, pool);
+    match err {
+        parity::IdentityDivergence::MintedVsRegistered { address, .. } => {
+            assert_eq!(address, pool);
+        }
+        other @ parity::IdentityDivergence::Create2(_) => {
+            panic!("a minted-vs-registered divergence: {other:?}")
+        }
+    }
 }

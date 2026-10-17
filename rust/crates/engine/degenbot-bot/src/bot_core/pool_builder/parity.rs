@@ -10,22 +10,109 @@
 //!
 //! A divergence is a core/driver seam bug (the echoed handle would disagree
 //! with shared state), refused LOUD rather than silently returned.
+//!
+//! The module also owns the shared `CREATE2` / EIP-1167 identity verify the
+//! register path and the build path both consume (ADR-077 D3), so an
+//! identity mismatch has one verdict and one shape whichever door reached it.
 
 use alloy::primitives::Address;
 use degenbot_substrate::state_lock::LockSite;
+use degenbot_uniswap::deployments::AddressMismatch;
 
 use crate::bot_core::Bot;
 
-/// The construction identity-parity refusal: the minted identity disagreed
-/// with the identity the registry of record holds for the just-registered
-/// pool.
+/// The construction identity-parity refusal — the ONE verdict the register
+/// path and the build path both consume (ADR-077 D3).
+///
+/// A recomputed, minted, or echoed identity that disagrees with the declared
+/// or registered one is the SAME fact whichever entry raised it: the register
+/// path's `CREATE2` recomputation, the builder's `CREATE2` check, and the
+/// minted-vs-registered guard below all answer with this type.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("construction identity parity violated for {address}: {detail}")]
-pub struct IdentityDivergence {
-    /// The pool the divergence concerns (the minted echo's address).
-    pub address: Address,
-    /// The field-by-field divergence, for the shell's diagnostic message.
-    pub detail: String,
+pub enum IdentityDivergence {
+    /// A `CREATE2` / EIP-1167 recomputation disagreed with the declared
+    /// address. Display is the source rendering verbatim, so the register
+    /// path's historical `ValueError` text is unchanged.
+    #[error(transparent)]
+    Create2(AddressMismatch),
+    /// A freshly minted construction identity disagreed with the identity the
+    /// registry of record holds for the just-registered pool.
+    #[error("construction identity parity violated for {address}: {detail}")]
+    MintedVsRegistered {
+        /// The pool the divergence concerns (the minted echo's address).
+        address: Address,
+        /// The field-by-field divergence, for the shell's diagnostic message.
+        detail: String,
+    },
+}
+
+// ── The shared `CREATE2` identity verify ────────────────────────────────────
+//
+// The register path (`Bot::register_v2/v3/aerodrome_pool`) and the build path
+// (`builder::build_v2/v3/aerodrome_v2`) both recompute a pool's `CREATE2` /
+// EIP-1167 identity against the shipped deployment row and refuse a
+// divergence. The recompute itself lives in the deployment tables; these
+// wrappers are the ONE verdict both entries consume (ADR-077 D3), so an
+// identity mismatch has one shape whichever door reached it.
+
+/// Recompute the V2 `CREATE2` address and refuse a divergence.
+///
+/// # Errors
+///
+/// [`IdentityDivergence::Create2`] when the declared address disagrees with
+/// the recomputed one. A `(chain_id, factory)` row the deployment table does
+/// not ship verifies as a match (the ad-hoc path).
+pub fn verify_v2_create2(
+    chain_id: u64,
+    factory: Address,
+    address: Address,
+    token0: Address,
+    token1: Address,
+) -> Result<(), IdentityDivergence> {
+    degenbot_uniswap::deployments::verify_v2_pool_address(
+        chain_id, factory, address, token0, token1,
+    )
+    .map_err(IdentityDivergence::Create2)
+}
+
+/// Recompute the V3 `CREATE2` address (the salt includes the fee) and refuse
+/// a divergence. The V3 twin of [`verify_v2_create2`].
+///
+/// # Errors
+///
+/// [`IdentityDivergence::Create2`] on a verified mismatch.
+pub fn verify_v3_create2(
+    chain_id: u64,
+    factory: Address,
+    address: Address,
+    token0: Address,
+    token1: Address,
+    fee: u32,
+) -> Result<(), IdentityDivergence> {
+    degenbot_uniswap::deployments::verify_v3_pool_address(
+        chain_id, factory, address, token0, token1, fee,
+    )
+    .map_err(IdentityDivergence::Create2)
+}
+
+/// Recompute the Aerodrome V2 EIP-1167 address (deployer + implementation +
+/// the `stable` flag's salt) and refuse a divergence.
+///
+/// # Errors
+///
+/// [`IdentityDivergence::Create2`] on a verified mismatch.
+pub fn verify_aerodrome_v2_create2(
+    chain_id: u64,
+    factory: Address,
+    address: Address,
+    token0: Address,
+    token1: Address,
+    stable: bool,
+) -> Result<(), IdentityDivergence> {
+    degenbot_uniswap::deployments::verify_aerodrome_v2_pool_address(
+        chain_id, factory, address, token0, token1, stable,
+    )
+    .map_err(IdentityDivergence::Create2)
 }
 
 /// The address-keyed construction identity `(token0, token1, address)` — the
@@ -52,7 +139,7 @@ pub fn verify_address_identity(
     if minted == registered {
         return Ok(());
     }
-    Err(IdentityDivergence {
+    Err(IdentityDivergence::MintedVsRegistered {
         address: minted.address,
         detail: format!("minted {minted:?} != registered {registered:?}"),
     })
@@ -85,7 +172,7 @@ pub fn verify_v4_identity(
     if minted == registered {
         return Ok(());
     }
-    Err(IdentityDivergence {
+    Err(IdentityDivergence::MintedVsRegistered {
         address: minted.currency0,
         detail: format!("minted {minted:?} != registered {registered:?}"),
     })
@@ -141,7 +228,15 @@ mod tests {
             address: a(3),
         };
         let err = verify_address_identity(minted, registered).expect_err("divergence refused");
-        assert_eq!(err.address, a(3));
+        match err {
+            IdentityDivergence::MintedVsRegistered { address, detail } => {
+                assert_eq!(address, a(3));
+                assert!(detail.contains("minted"), "{detail}");
+            }
+            other @ IdentityDivergence::Create2(_) => {
+                panic!("a minted-vs-registered divergence: {other:?}")
+            }
+        }
     }
 
     #[test]
@@ -161,6 +256,29 @@ mod tests {
             ..registered
         };
         let err = verify_v4_identity(minted, registered).expect_err("divergence refused");
-        assert_eq!(err.address, a(4));
+        match err {
+            IdentityDivergence::MintedVsRegistered { address, .. } => assert_eq!(address, a(4)),
+            other @ IdentityDivergence::Create2(_) => {
+                panic!("a minted-vs-registered divergence: {other:?}")
+            }
+        }
+    }
+
+    /// The shared `CREATE2` verdict renders the deployment table's own
+    /// mismatch text verbatim, so the register path's historical `ValueError`
+    /// is unchanged by the collapse (ADR-077 D3).
+    #[test]
+    fn create2_divergence_renders_the_source_rendering_verbatim() {
+        let mismatch = AddressMismatch {
+            chain_id: 1,
+            factory: a(1),
+            deployer: a(2),
+            init_hash: alloy::primitives::B256::ZERO,
+            expected: a(3),
+            computed: a(4),
+        };
+        let divergence = IdentityDivergence::Create2(mismatch);
+        assert_eq!(divergence.to_string(), mismatch.to_string());
+        assert!(divergence.to_string().contains("CREATE2"));
     }
 }

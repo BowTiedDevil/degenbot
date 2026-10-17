@@ -40,6 +40,7 @@ use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
 
 use super::choreography::{self};
 use super::curve_choreography;
+use super::parity;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
 use crate::bot_core::{PoolTickCoverage, TickInfo};
@@ -106,8 +107,8 @@ pub enum PoolBuilderError {
     Spec,
     #[error("decode failure: {message}")]
     Decoding { message: String },
-    #[error("CREATE2 address verification failed")]
-    Create2,
+    #[error("{0}")]
+    Identity(parity::IdentityDivergence),
     #[error("DB read failed: {0}")]
     Db(#[from] DbError),
     #[error("V4 identity incomplete: {message}")]
@@ -449,7 +450,7 @@ async fn fetch_fee_denominator(
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::UnknownVariant`] for an unregistered factory,
-/// [`PoolBuilderError::Create2`] on a CREATE2 mismatch (when the factory ships
+/// [`PoolBuilderError::Identity`] on a CREATE2 mismatch (when the factory ships
 /// in the JSON), or an RPC/spec error.
 pub async fn build_v2(
     chain_id: u64,
@@ -470,8 +471,8 @@ pub async fn build_v2(
     let reserve1 =
         spec_bounds::narrow_v2_reserve(r1, "reserve1").map_err(|_| PoolBuilderError::Spec)?;
 
-    deployments::verify_v2_pool_address(chain_id, imm.factory, address, imm.token0, imm.token1)
-        .map_err(|_| PoolBuilderError::Create2)?;
+    parity::verify_v2_create2(chain_id, imm.factory, address, imm.token0, imm.token1)
+        .map_err(PoolBuilderError::Identity)?;
 
     let deployer = deployments::resolve_deployer(chain_id, imm.factory);
     let init_hash: B256 = deployments::resolve_v2_init_hash(chain_id, imm.factory);
@@ -515,7 +516,7 @@ pub async fn build_v2(
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
 /// [`PoolBuilderError::Spec`] on an out-of-u112 bounds reserve, or
-/// [`PoolBuilderError::Create2`] on an EIP-1167 address mismatch.
+/// [`PoolBuilderError::Identity`] on an EIP-1167 address mismatch.
 pub async fn build_aerodrome_v2(
     chain_id: u64,
     address: Address,
@@ -533,7 +534,7 @@ pub async fn build_aerodrome_v2(
         dex_identity::AERODROME_V2_VOLATILE
     };
 
-    deployments::verify_aerodrome_v2_pool_address(
+    parity::verify_aerodrome_v2_create2(
         chain_id,
         imm.factory,
         address,
@@ -541,7 +542,7 @@ pub async fn build_aerodrome_v2(
         imm.token1,
         common.stable,
     )
-    .map_err(|_| PoolBuilderError::Create2)?;
+    .map_err(PoolBuilderError::Identity)?;
 
     let reserve0 =
         spec_bounds::narrow_v2_reserve(r0, "reserve0").map_err(|_| PoolBuilderError::Spec)?;
@@ -1208,7 +1209,7 @@ async fn fetch_erc20_decimals(
 ///
 /// # Errors
 ///
-/// Returns [`PoolBuilderError::Create2`] on a CREATE2 mismatch (when the
+/// Returns [`PoolBuilderError::Identity`] on a CREATE2 mismatch (when the
 /// factory ships in the JSON) or an RPC/decode error.
 pub async fn build_v3(
     chain_id: u64,
@@ -1245,7 +1246,7 @@ pub async fn build_v3(
         update_block
     };
 
-    deployments::verify_v3_pool_address(
+    parity::verify_v3_create2(
         chain_id,
         imm.factory,
         address,
@@ -1253,7 +1254,7 @@ pub async fn build_v3(
         imm.token1,
         imm.fee,
     )
-    .map_err(|_| PoolBuilderError::Create2)?;
+    .map_err(PoolBuilderError::Identity)?;
 
     let deployer = deployments::resolve_deployer(chain_id, imm.factory);
     let init_hash: B256 = deployments::resolve_v3_init_hash(chain_id, imm.factory);

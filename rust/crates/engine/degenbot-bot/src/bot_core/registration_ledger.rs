@@ -37,7 +37,6 @@ use degenbot_pools::aerodrome_v2_state::RegisterAerodromePoolError;
 use degenbot_pools::v2_state::RegisterV2PoolError;
 use degenbot_pools::v3_state::RegisterV3PoolError;
 use degenbot_pools::v4_state::RegisterV4PoolError;
-use degenbot_uniswap::deployments::AddressMismatch;
 
 use super::build_register::{
     AerodromeBuildError, BuildError, V2BuildError, V3BuildError, V4BuildError,
@@ -232,14 +231,14 @@ pub enum PoolFamilyTag {
     Curve,
 }
 
-/// The identity-parity refusal shape — the ONE home of the three historical
+/// The identity-parity refusal shape — the ONE home of the historical
 /// identity-mismatch vocabularies.
 ///
-/// The construction side owns identity parity: the register path's `Create2`
-/// arms, the builder's discarded `CREATE2` check, and the
-/// minted-vs-registered parity guard all describe the same refusal — a
-/// recomputed or minted identity that disagrees with the declared or
-/// registered one.
+/// The construction side owns identity parity: the register path's `CREATE2`
+/// recomputation, the builder's `CREATE2` check, and the minted-vs-registered
+/// parity guard all describe the same refusal — a recomputed or minted
+/// identity that disagrees with the declared or registered one — and all
+/// arrive here through the one [`IdentityDivergence`] verdict.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum IdentityMismatchShape {
     /// A `CREATE2` / EIP-1167 recomputation disagreed with the declared
@@ -263,9 +262,6 @@ pub enum IdentityMismatchShape {
         /// The field-by-field divergence (log-only).
         detail: String,
     },
-    /// A builder's `CREATE2` verification failed and its source vocabulary
-    /// discarded the two addresses.
-    UnverifiedCreate2,
 }
 
 /// Why a registry insert refused.
@@ -517,45 +513,32 @@ impl RefusalKind {
         }
     }
 
-    /// Identity parity: a `CREATE2` / EIP-1167 recomputation that disagreed
-    /// with the declared address (the register path's `Create2` arm).
-    #[must_use]
-    pub fn from_create2_mismatch(family: PoolFamilyTag, mismatch: &AddressMismatch) -> Self {
-        Self::IdentityMismatch {
-            family: Some(family),
-            phase: RegistrationPhase::Identity,
-            shape: IdentityMismatchShape::Create2 {
-                declared: mismatch.expected,
-                computed: mismatch.computed,
-                detail: mismatch.to_string(),
-            },
-        }
-    }
-
-    /// Identity parity: the minted-vs-registered parity guard's divergence.
+    /// Identity parity: the construction side's ONE divergence verdict — a
+    /// `CREATE2` / EIP-1167 recomputation or the minted-vs-registered guard.
+    /// The register path and the build path both carry the same verdict, so
+    /// they land on the same shape for the same fact.
     #[must_use]
     pub fn from_identity_divergence(
         family: Option<PoolFamilyTag>,
         divergence: &IdentityDivergence,
     ) -> Self {
-        Self::IdentityMismatch {
-            family,
-            phase: RegistrationPhase::Identity,
-            shape: IdentityMismatchShape::MintedVsRegistered {
-                address: divergence.address,
-                detail: divergence.detail.clone(),
+        let shape = match divergence {
+            IdentityDivergence::Create2(mismatch) => IdentityMismatchShape::Create2 {
+                declared: mismatch.expected,
+                computed: mismatch.computed,
+                detail: mismatch.to_string(),
             },
-        }
-    }
-
-    /// Identity parity: a builder's `CREATE2` verification failure, whose
-    /// source vocabulary discarded the two addresses.
-    #[must_use]
-    pub const fn from_builder_create2(family: Option<PoolFamilyTag>) -> Self {
+            IdentityDivergence::MintedVsRegistered { address, detail } => {
+                IdentityMismatchShape::MintedVsRegistered {
+                    address: *address,
+                    detail: detail.clone(),
+                }
+            }
+        };
         Self::IdentityMismatch {
             family,
             phase: RegistrationPhase::Identity,
-            shape: IdentityMismatchShape::UnverifiedCreate2,
+            shape,
         }
     }
 
@@ -602,7 +585,9 @@ impl RefusalKind {
         phase: RegistrationPhase,
     ) -> Self {
         match err {
-            PoolBuilderError::Create2 => Self::from_builder_create2(family),
+            PoolBuilderError::Identity(divergence) => {
+                Self::from_identity_divergence(family, divergence)
+            }
             PoolBuilderError::UnknownVariant { factory } => Self::UnsupportedFamily {
                 family,
                 phase,
@@ -722,8 +707,8 @@ impl RefusalKind {
     #[must_use]
     pub fn from_v2_registration_error(err: &V2RegistrationError) -> Self {
         match err {
-            V2RegistrationError::Create2(mismatch) => {
-                Self::from_create2_mismatch(PoolFamilyTag::V2, mismatch)
+            V2RegistrationError::Identity(divergence) => {
+                Self::from_identity_divergence(Some(PoolFamilyTag::V2), divergence)
             }
             V2RegistrationError::Register(inner) => Self::from_register_v2_error(inner),
         }
@@ -733,8 +718,8 @@ impl RefusalKind {
     #[must_use]
     pub fn from_v3_registration_error(err: &V3RegistrationError) -> Self {
         match err {
-            V3RegistrationError::Create2(mismatch) => {
-                Self::from_create2_mismatch(PoolFamilyTag::V3, mismatch)
+            V3RegistrationError::Identity(divergence) => {
+                Self::from_identity_divergence(Some(PoolFamilyTag::V3), divergence)
             }
             V3RegistrationError::Register(inner) => Self::from_register_v3_error(inner),
         }
@@ -744,8 +729,8 @@ impl RefusalKind {
     #[must_use]
     pub fn from_aerodrome_registration_error(err: &AerodromeRegistrationError) -> Self {
         match err {
-            AerodromeRegistrationError::Create2(mismatch) => {
-                Self::from_create2_mismatch(PoolFamilyTag::AerodromeV2, mismatch)
+            AerodromeRegistrationError::Identity(divergence) => {
+                Self::from_identity_divergence(Some(PoolFamilyTag::AerodromeV2), divergence)
             }
             AerodromeRegistrationError::Register(inner) => {
                 Self::from_register_aerodrome_error(inner)
@@ -1413,6 +1398,7 @@ impl PipelineReport {
 #[expect(clippy::unwrap_used, reason = "tests assert on known-valid inputs")]
 mod tests {
     use super::*;
+    use degenbot_uniswap::deployments::AddressMismatch;
 
     /// The vocabulary is a cross-language contract, so its exact tag set is
     /// pinned: a rename must be a deliberate edit here and in the Python
@@ -1841,7 +1827,7 @@ mod tests {
     }
 
     fn identity_divergence() -> IdentityDivergence {
-        IdentityDivergence {
+        IdentityDivergence::MintedVsRegistered {
             address: sample_address(0x44),
             detail: "minted != registered".to_owned(),
         }
@@ -1866,7 +1852,10 @@ mod tests {
             RefusalKind::IdentityMismatch {
                 family: None,
                 phase: RegistrationPhase::Identity,
-                shape: IdentityMismatchShape::UnverifiedCreate2,
+                shape: IdentityMismatchShape::MintedVsRegistered {
+                    address: sample_address(0x44),
+                    detail: String::new(),
+                },
             },
             RefusalKind::MissingConstructionIo {
                 family: None,
@@ -1927,22 +1916,27 @@ mod tests {
         assert_eq!(unique.len(), kind_tags.len(), "kind tags are unique");
     }
 
-    /// The three identity-mismatch vocabularies land on ONE refusal kind: the
-    /// register path's `Create2` arms, the builder's discarded `CREATE2`
-    /// check, and the minted-vs-registered parity guard. Nothing is lost in
-    /// the mapping.
+    /// The historical identity-mismatch vocabularies land on ONE refusal kind
+    /// through ONE verdict: the register path's `CREATE2` recomputation, the
+    /// builder's `CREATE2` check, and the minted-vs-registered parity guard.
+    /// Nothing is lost in the mapping.
     #[test]
     fn identity_parity_vocabularies_round_trip_through_one_refusal_kind() {
         let mismatch = address_mismatch();
+        let create2 = IdentityDivergence::Create2(mismatch);
 
-        let v2 = RefusalKind::from_v2_registration_error(&V2RegistrationError::Create2(mismatch));
-        let v3 = RefusalKind::from_v3_registration_error(&V3RegistrationError::Create2(mismatch));
+        let v2 = RefusalKind::from_v2_registration_error(&V2RegistrationError::Identity(
+            create2.clone(),
+        ));
+        let v3 = RefusalKind::from_v3_registration_error(&V3RegistrationError::Identity(
+            create2.clone(),
+        ));
         let aerodrome = RefusalKind::from_aerodrome_registration_error(
-            &AerodromeRegistrationError::Create2(mismatch),
+            &AerodromeRegistrationError::Identity(create2.clone()),
         );
         let builder = RefusalKind::from_builder_error(
-            &PoolBuilderError::Create2,
-            None,
+            &PoolBuilderError::Identity(create2.clone()),
+            Some(PoolFamilyTag::V2),
             RegistrationPhase::Build,
         );
         let guard = RefusalKind::from_identity_divergence(None, &identity_divergence());
@@ -1958,6 +1952,14 @@ mod tests {
                 "identity parity is the identity phase wherever it is raised"
             );
         }
+
+        // The builder path carries the SAME verdict as the register path, so
+        // the declared / recomputed pair survives there too — the builder no
+        // longer discards it.
+        assert_eq!(
+            builder, v2,
+            "one fact, one refusal: the register path and the build path agree"
+        );
 
         // The declared / recomputed pair survives the register-path mapping.
         assert_eq!(identity_shape(&v2).unwrap().0, Some(PoolFamilyTag::V2));
@@ -1980,13 +1982,38 @@ mod tests {
         let (address, detail) = minted_shape(&guard).unwrap();
         assert_eq!(address, sample_address(0x44));
         assert_eq!(detail, "minted != registered");
+    }
 
-        // The builder's arm carries no address pair: its source discarded
-        // them.
+    /// The identity-mismatch fact has ONE home (ADR-077 D3): the register
+    /// path and the builder path both surface the SAME refusal for the same
+    /// recomputed-vs-declared divergence, and the closed vocabulary names
+    /// exactly one identity-mismatch kind.
+    #[test]
+    fn identity_mismatch_has_one_home_and_both_paths_surface_it() {
         assert_eq!(
-            identity_shape(&builder).unwrap().2,
-            &IdentityMismatchShape::UnverifiedCreate2
+            REFUSAL_KIND_TAGS
+                .iter()
+                .filter(|tag| **tag == "identity-mismatch")
+                .count(),
+            1,
+            "exactly one identity-mismatch kind in the closed vocabulary"
         );
+
+        let divergence = IdentityDivergence::Create2(address_mismatch());
+        let register = RefusalKind::from_v2_registration_error(&V2RegistrationError::Identity(
+            divergence.clone(),
+        ));
+        let build = RefusalKind::from_builder_error(
+            &PoolBuilderError::Identity(divergence),
+            Some(PoolFamilyTag::V2),
+            RegistrationPhase::Build,
+        );
+        assert_eq!(
+            register, build,
+            "the register path and the build path surface the SAME identity refusal"
+        );
+        assert!(matches!(register, RefusalKind::IdentityMismatch { .. }));
+        assert_eq!(register.tag(), "identity-mismatch");
     }
 
     #[test]
@@ -1995,7 +2022,9 @@ mod tests {
         let mismatch = address_mismatch();
 
         assert_tags(
-            &RefusalKind::from_v2_registration_error(&V2RegistrationError::Create2(mismatch)),
+            &RefusalKind::from_v2_registration_error(&V2RegistrationError::Identity(
+                IdentityDivergence::Create2(mismatch),
+            )),
             Some(PoolFamilyTag::V2),
             RegistrationPhase::Identity,
         );
@@ -2007,7 +2036,9 @@ mod tests {
             RegistrationPhase::Register,
         );
         assert_tags(
-            &RefusalKind::from_v3_registration_error(&V3RegistrationError::Create2(mismatch)),
+            &RefusalKind::from_v3_registration_error(&V3RegistrationError::Identity(
+                IdentityDivergence::Create2(mismatch),
+            )),
             Some(PoolFamilyTag::V3),
             RegistrationPhase::Identity,
         );
@@ -2019,8 +2050,8 @@ mod tests {
             RegistrationPhase::Register,
         );
         assert_tags(
-            &RefusalKind::from_aerodrome_registration_error(&AerodromeRegistrationError::Create2(
-                mismatch,
+            &RefusalKind::from_aerodrome_registration_error(&AerodromeRegistrationError::Identity(
+                IdentityDivergence::Create2(mismatch),
             )),
             Some(PoolFamilyTag::AerodromeV2),
             RegistrationPhase::Identity,
@@ -2197,7 +2228,7 @@ mod tests {
 
         // The loud class: identity and family-identity refusals.
         let create2 = RefusalKind::from_builder_error(
-            &PoolBuilderError::Create2,
+            &PoolBuilderError::Identity(IdentityDivergence::Create2(address_mismatch())),
             Some(PoolFamilyTag::V2),
             build,
         );
@@ -2206,10 +2237,9 @@ mod tests {
             Some(PoolFamilyTag::V2),
             RegistrationPhase::Identity,
         );
-        assert_eq!(
-            identity_shape(&create2).unwrap().2,
-            &IdentityMismatchShape::UnverifiedCreate2
-        );
+        let (declared, computed, _) = create2_shape(&create2).unwrap();
+        assert_eq!(declared, address_mismatch().expected);
+        assert_eq!(computed, address_mismatch().computed);
 
         let unknown_variant = RefusalKind::from_builder_error(
             &PoolBuilderError::UnknownVariant { factory: address },

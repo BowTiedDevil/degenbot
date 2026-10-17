@@ -207,10 +207,26 @@ pub(crate) fn map_path_registration_err(
 
 // --- Builder / build families ---
 
-/// Map a Rust `PoolBuilder` error (the delegation adapter's
-/// builder stage) to a Python `RuntimeError` carrying the RPC/CREATE2/spec/DB
-/// failure cause. Registration-stage errors are mapped by the `map_register_v*`
-/// fns above, so this covers only the pre-registration build stage.
+/// Map the ONE identity-parity refusal (ADR-077 D3) to its Python surface.
+///
+/// The register path ([`map_v2_registration_err`] and its V3 / Aerodrome
+/// twins) and the build path ([`map_builder_err`]) both consume the same
+/// `parity::IdentityDivergence` verdict, so the same fact raises the same
+/// `ValueError` whichever door reached it. The rendering is the verdict's own
+/// `Display` — the historical CREATE2 mismatch text for a recomputation, so
+/// the register path's message is unchanged.
+fn map_identity_divergence(
+    err: &degenbot_bot::bot_core::pool_builder::parity::IdentityDivergence,
+) -> pyo3::PyErr {
+    PyValueError::new_err(err.to_string())
+}
+
+/// Map a Rust `PoolBuilder` error (the delegation adapter's builder stage) to
+/// its Python surface: a `RuntimeError` carrying the RPC/spec/DB failure
+/// cause, or the shared identity-parity `ValueError` for the `CREATE2`
+/// verdict — the SAME exception the register path raises for the same fact.
+/// Registration-stage errors are mapped by the `map_register_v*` fns above, so
+/// this covers only the pre-registration build stage.
 pub(crate) fn map_builder_err(
     err: degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError,
 ) -> pyo3::PyErr {
@@ -224,9 +240,7 @@ pub(crate) fn map_builder_err(
             "pool build unknown identity at {address}: no identity selector answered"
         )),
         PoolBuilderError::Spec => PyRuntimeError::new_err("pool build out-of-spec V2 reserve"),
-        PoolBuilderError::Create2 => {
-            PyRuntimeError::new_err("pool build CREATE2 address verification failed")
-        }
+        PoolBuilderError::Identity(e) => map_identity_divergence(&e),
         PoolBuilderError::Db(e) => {
             PyRuntimeError::new_err(format!("pool build DB read failed: {e}"))
         }
@@ -385,7 +399,7 @@ pub(crate) fn map_v2_registration_err(
 ) -> pyo3::PyErr {
     use degenbot_bot::bot_core::registration::V2RegistrationError;
     match err {
-        V2RegistrationError::Create2(m) => PyValueError::new_err(m.to_string()),
+        V2RegistrationError::Identity(e) => map_identity_divergence(&e),
         V2RegistrationError::Register(e) => map_register_v2_err(e),
     }
 }
@@ -396,7 +410,7 @@ pub(crate) fn map_v3_registration_err(
 ) -> pyo3::PyErr {
     use degenbot_bot::bot_core::registration::V3RegistrationError;
     match err {
-        V3RegistrationError::Create2(m) => PyValueError::new_err(m.to_string()),
+        V3RegistrationError::Identity(e) => map_identity_divergence(&e),
         V3RegistrationError::Register(e) => map_register_v3_err(e),
     }
 }
@@ -411,7 +425,7 @@ pub(crate) fn map_aerodrome_registration_err(
 ) -> pyo3::PyErr {
     use degenbot_bot::bot_core::registration::AerodromeRegistrationError;
     match err {
-        AerodromeRegistrationError::Create2(m) => PyValueError::new_err(m.to_string()),
+        AerodromeRegistrationError::Identity(e) => map_identity_divergence(&e),
         AerodromeRegistrationError::Register(e) => map_register_aerodrome_err(e),
     }
 }
@@ -554,6 +568,7 @@ mod tests {
     use super::*;
     use alloy::primitives::{Address, B256, U256};
     use degenbot_bot::bot_core::liquidity_verifier::VerificationMismatch;
+    use degenbot_bot::bot_core::pool_builder::parity::IdentityDivergence;
     use degenbot_bot::bot_core::registration::{
         AerodromeRegistrationError, ResolveV4IdentityError, V2RegistrationError,
     };
@@ -564,6 +579,19 @@ mod tests {
 
     fn addr(s: &str) -> Address {
         s.parse().unwrap()
+    }
+
+    /// A `CREATE2` recomputation mismatch — the ONE fact the register path and
+    /// the build path both report.
+    fn address_mismatch(chain_id: u64) -> degenbot_uniswap::deployments::AddressMismatch {
+        degenbot_uniswap::deployments::AddressMismatch {
+            chain_id,
+            factory: addr("0x0101010101010101010101010101010101010101"),
+            deployer: addr("0x0202020202020202020202020202020202020202"),
+            init_hash: B256::ZERO,
+            expected: addr("0x0303030303030303030303030303030303030303"),
+            computed: addr("0x0404040404040404040404040404040404040404"),
+        }
     }
 
     /// `PyErr`'s `Display` renders `<ExceptionClass>: <message>`; the pins
@@ -817,9 +845,14 @@ mod tests {
             message(&map_builder_err(PoolBuilderError::Spec)),
             "pool build out-of-spec V2 reserve"
         );
+        // The identity verdict is the ONE exception the register path and the
+        // build path both raise: the deployment table's own mismatch text.
+        let mismatch = address_mismatch(1);
         assert_eq!(
-            message(&map_builder_err(PoolBuilderError::Create2)),
-            "pool build CREATE2 address verification failed"
+            value_error(&map_builder_err(PoolBuilderError::Identity(
+                IdentityDivergence::Create2(mismatch),
+            ))),
+            mismatch.to_string()
         );
         assert_eq!(
             message(&map_builder_err(PoolBuilderError::Decoding {
@@ -958,18 +991,11 @@ mod tests {
 
     #[test]
     fn v2_registration_err_pins_the_create2_and_admission_vocabulary() {
-        let mismatch = degenbot_uniswap::deployments::AddressMismatch {
-            chain_id: 1,
-            factory: addr("0x0101010101010101010101010101010101010101"),
-            deployer: addr("0x0202020202020202020202020202020202020202"),
-            init_hash: B256::ZERO,
-            expected: addr("0x0303030303030303030303030303030303030303"),
-            computed: addr("0x0404040404040404040404040404040404040404"),
-        };
+        let mismatch = address_mismatch(1);
         let expected = mismatch.to_string();
         assert_eq!(
-            value_error(&map_v2_registration_err(V2RegistrationError::Create2(
-                mismatch
+            value_error(&map_v2_registration_err(V2RegistrationError::Identity(
+                IdentityDivergence::Create2(mismatch),
             ))),
             expected
         );
@@ -989,20 +1015,32 @@ mod tests {
         );
     }
 
+    /// ADR-077 D3: the register path and the build path consume ONE identity
+    /// verdict, so the same mismatch fact raises the SAME Python exception
+    /// (type and message) whichever door reached it.
+    #[test]
+    fn identity_mismatch_raises_one_python_shape_for_both_paths() {
+        let divergence = IdentityDivergence::Create2(address_mismatch(1));
+
+        let register = map_v2_registration_err(V2RegistrationError::Identity(divergence.clone()));
+        let build = map_builder_err(
+            degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Identity(divergence),
+        );
+
+        assert_eq!(
+            value_error(&register),
+            value_error(&build),
+            "one identity fact, one Python exception shape"
+        );
+    }
+
     #[test]
     fn aerodrome_registration_err_pins_the_create2_and_admission_vocabulary() {
-        let mismatch = degenbot_uniswap::deployments::AddressMismatch {
-            chain_id: 8453,
-            factory: addr("0x0101010101010101010101010101010101010101"),
-            deployer: addr("0x0202020202020202020202020202020202020202"),
-            init_hash: B256::ZERO,
-            expected: addr("0x0303030303030303030303030303030303030303"),
-            computed: addr("0x0404040404040404040404040404040404040404"),
-        };
+        let mismatch = address_mismatch(8453);
         let expected = mismatch.to_string();
         assert_eq!(
             value_error(&map_aerodrome_registration_err(
-                AerodromeRegistrationError::Create2(mismatch),
+                AerodromeRegistrationError::Identity(IdentityDivergence::Create2(mismatch)),
             )),
             expected
         );
