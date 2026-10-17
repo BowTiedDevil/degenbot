@@ -8,6 +8,7 @@ mod apply_routes;
 mod pool_identity;
 mod quarantine;
 mod registration;
+mod registration_door;
 mod session_path;
 mod session_position;
 mod session_registry;
