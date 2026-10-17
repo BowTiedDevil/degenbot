@@ -27,7 +27,7 @@ pub(crate) fn project_curve(
     let state = core
         .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
-    let hop = curve_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(cl_refusal)?;
+    let hop = curve_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(curve_refusal)?;
     Ok((
         ResolvedHop::CurveStableswap {
             state: CurveStableswapHopState {
@@ -52,7 +52,7 @@ pub(crate) fn project_curve(
 
 /// Map the family read module's capture refusal onto the resolve
 /// invalidation vocabulary — the row's one mapping site.
-fn cl_refusal(refusal: curve_read::CaptureRefusal) -> MissingHopReason {
+fn curve_refusal(refusal: curve_read::CaptureRefusal) -> MissingHopReason {
     match refusal {
         curve_read::CaptureRefusal::TooFewTokens => MissingHopReason::TooFewTokens,
         curve_read::CaptureRefusal::UnknownVariant => MissingHopReason::UnknownVariant,

@@ -33,7 +33,8 @@ pub(crate) fn project_balancer_stable(
             pool_ref.pool_key,
         )
         .ok_or(MissingHopReason::MissingState)?;
-    let hop = stable_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(cl_refusal)?;
+    let hop = stable_read::capture_hop(state, id, pool_ref.zero_for_one)
+        .map_err(balancer_stable_refusal)?;
     Ok((
         ResolvedHop::BalancerStable {
             state: BalancerStableHopState {
@@ -53,7 +54,7 @@ pub(crate) fn project_balancer_stable(
 
 /// Map the family read module's capture refusal onto the resolve
 /// invalidation vocabulary — the row's one mapping site.
-fn cl_refusal(refusal: stable_read::CaptureRefusal) -> MissingHopReason {
+fn balancer_stable_refusal(refusal: stable_read::CaptureRefusal) -> MissingHopReason {
     match refusal {
         stable_read::CaptureRefusal::TooFewTokens => MissingHopReason::TooFewTokens,
         stable_read::CaptureRefusal::OutOfRange => MissingHopReason::OutOfRange,

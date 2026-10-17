@@ -33,7 +33,8 @@ pub(crate) fn project_balancer_weighted(
             pool_ref.pool_key,
         )
         .ok_or(MissingHopReason::MissingState)?;
-    let hop = weighted_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(cl_refusal)?;
+    let hop = weighted_read::capture_hop(state, id, pool_ref.zero_for_one)
+        .map_err(balancer_weighted_refusal)?;
     Ok((
         ResolvedHop::BalancerWeighted {
             state: BalancerWeightedHopState {
@@ -53,7 +54,7 @@ pub(crate) fn project_balancer_weighted(
 
 /// Map the family read module's capture refusal onto the resolve
 /// invalidation vocabulary — the row's one mapping site.
-fn cl_refusal(refusal: weighted_read::CaptureRefusal) -> MissingHopReason {
+fn balancer_weighted_refusal(refusal: weighted_read::CaptureRefusal) -> MissingHopReason {
     match refusal {
         weighted_read::CaptureRefusal::TooFewTokens => MissingHopReason::TooFewTokens,
         weighted_read::CaptureRefusal::UnknownVariant => MissingHopReason::UnknownVariant,

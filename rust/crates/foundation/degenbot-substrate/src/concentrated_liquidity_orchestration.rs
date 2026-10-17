@@ -20,7 +20,7 @@ use degenbot_core::diag;
 use degenbot_core::op_warn;
 use hashbrown::HashMap;
 
-use ::degenbot_pools::families::concentrated_liquidity as cl;
+use ::degenbot_pools::families::concentrated_liquidity;
 use ::degenbot_pools::families::door::{FamilyApply, Observe, Observed};
 
 use alloy::primitives::{Address, U256};
@@ -990,18 +990,21 @@ impl ConcentratedLiquidityOrchestration {
         // module's observe door (TickFingerprint probe); this method keeps
         // the registry lookup.
         let design = match reg.pools.get(&pool_id) {
-            Some(PoolEntry::V3(p)) => cl::ConcentratedLiquidityState::V3 {
+            Some(PoolEntry::V3(p)) => concentrated_liquidity::ConcentratedLiquidityState::V3 {
                 state: &p.1,
-                scalars: cl::DesignScalars::new(p.0.fee, p.0.tick_spacing),
+                scalars: concentrated_liquidity::DesignScalars::new(p.0.fee, p.0.tick_spacing),
             },
-            Some(PoolEntry::V4(p)) => cl::ConcentratedLiquidityState::V4 {
+            Some(PoolEntry::V4(p)) => concentrated_liquidity::ConcentratedLiquidityState::V4 {
                 state: &p.1,
-                scalars: cl::DesignScalars::new(p.0.pool_key.fee, p.0.pool_key.tick_spacing),
+                scalars: concentrated_liquidity::DesignScalars::new(
+                    p.0.pool_key.fee,
+                    p.0.pool_key.tick_spacing,
+                ),
                 hooks: p.0.pool_key.hooks,
             },
             _ => return None,
         };
-        match cl::observe(design, Observe::TickFingerprint) {
+        match concentrated_liquidity::observe(design, Observe::TickFingerprint) {
             Observed::TickFingerprint(fingerprint) => fingerprint,
             _ => unreachable!("the fingerprint probe answers"),
         }
@@ -2340,11 +2343,11 @@ impl BotState {
         let &pool_id = self.registry.pool_addresses.get(&address)?;
         match self.registry.pools.get(&pool_id) {
             Some(PoolEntry::V3(p)) => {
-                let design = cl::ConcentratedLiquidityState::V3 {
+                let design = concentrated_liquidity::ConcentratedLiquidityState::V3 {
                     state: &p.1,
-                    scalars: cl::DesignScalars::new(p.0.fee, p.0.tick_spacing),
+                    scalars: concentrated_liquidity::DesignScalars::new(p.0.fee, p.0.tick_spacing),
                 };
-                match cl::observe(design, Observe::Coverage) {
+                match concentrated_liquidity::observe(design, Observe::Coverage) {
                     Observed::Coverage(coverage) => Some(coverage),
                     _ => unreachable!("the coverage probe answers"),
                 }
@@ -2369,12 +2372,15 @@ impl BotState {
             .pool_id_by_key(pool_manager, pool_id)?;
         match self.registry.pools.get(&pid) {
             Some(PoolEntry::V4(p)) => {
-                let design = cl::ConcentratedLiquidityState::V4 {
+                let design = concentrated_liquidity::ConcentratedLiquidityState::V4 {
                     state: &p.1,
-                    scalars: cl::DesignScalars::new(p.0.pool_key.fee, p.0.pool_key.tick_spacing),
+                    scalars: concentrated_liquidity::DesignScalars::new(
+                        p.0.pool_key.fee,
+                        p.0.pool_key.tick_spacing,
+                    ),
                     hooks: p.0.pool_key.hooks,
                 };
-                match cl::observe(design, Observe::Coverage) {
+                match concentrated_liquidity::observe(design, Observe::Coverage) {
                     Observed::Coverage(coverage) => Some(coverage),
                     _ => unreachable!("the coverage probe answers"),
                 }

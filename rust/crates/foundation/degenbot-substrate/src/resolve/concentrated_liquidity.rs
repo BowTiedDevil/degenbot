@@ -23,7 +23,7 @@
 //! current-tick drain framing, or net-sign direction; only the (identical for
 //! both families) table derivation is shared.
 
-use degenbot_pools::families::concentrated_liquidity as cl_read;
+use degenbot_pools::families::concentrated_liquidity as concentrated_liquidity_read;
 use degenbot_pools::solve::concentrated_liquidity::PreparedConcentratedLiquidityHop;
 use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop};
 
@@ -45,7 +45,7 @@ pub(crate) fn project(
 }
 
 /// V3 resolve row: read pool state + identity off `core` (ADR-003), then the
-/// family read module's [`cl_read::capture_hop`] door builds the integer
+/// family read module's [`concentrated_liquidity_read::capture_hop`] door builds the integer
 /// tick-range sequence the CL solver consumes lock-free. The row wraps the
 /// solver-vocabulary hop (`ResolvedHop::V3`) — the hop is solver vocabulary,
 /// so the wrapper stays at the row.
@@ -62,14 +62,17 @@ pub(crate) fn project_v3(
     // Build the sequence ONCE through the family door and Arc-share it -
     // every path reusing this (pool, direction) clones an Arc, not the
     // ranges Vec.
-    let int_seq = cl_read::capture_hop(
-        cl_read::ConcentratedLiquidityState::V3 {
+    let int_seq = concentrated_liquidity_read::capture_hop(
+        concentrated_liquidity_read::ConcentratedLiquidityState::V3 {
             state: pool_state,
-            scalars: cl_read::DesignScalars::new(identity.fee, identity.tick_spacing),
+            scalars: concentrated_liquidity_read::DesignScalars::new(
+                identity.fee,
+                identity.tick_spacing,
+            ),
         },
         pool_ref.zero_for_one,
     )
-    .map_err(cl_refusal)?;
+    .map_err(concentrated_liquidity_refusal)?;
 
     // Derive the crossing table + word profiles + fingerprint ONCE (the fused
     // S1 derivation) — the row constructs the carried solver value here.
@@ -100,10 +103,10 @@ pub(crate) fn project_v4(
     if ::degenbot_pools::v4_state::has_amount_modifying_hook(identity.pool_key.hooks) {
         return Err(MissingHopReason::HookedPool);
     }
-    let int_seq = cl_read::capture_hop(
-        cl_read::ConcentratedLiquidityState::V4 {
+    let int_seq = concentrated_liquidity_read::capture_hop(
+        concentrated_liquidity_read::ConcentratedLiquidityState::V4 {
             state: pool_state,
-            scalars: cl_read::DesignScalars::new(
+            scalars: concentrated_liquidity_read::DesignScalars::new(
                 identity.pool_key.fee,
                 identity.pool_key.tick_spacing,
             ),
@@ -111,7 +114,7 @@ pub(crate) fn project_v4(
         },
         pool_ref.zero_for_one,
     )
-    .map_err(cl_refusal)?;
+    .map_err(concentrated_liquidity_refusal)?;
 
     // Derive as the V3 row: ONE crossing build, word profiles from it, the
     // sequence's fingerprint folded once at derivation.
@@ -121,11 +124,15 @@ pub(crate) fn project_v4(
 
 /// Map the family read module's capture refusal onto the resolve
 /// invalidation vocabulary — the row's one mapping site.
-fn cl_refusal(refusal: cl_read::CaptureRefusal) -> MissingHopReason {
+fn concentrated_liquidity_refusal(
+    refusal: concentrated_liquidity_read::CaptureRefusal,
+) -> MissingHopReason {
     match refusal {
-        cl_read::CaptureRefusal::NotViable => MissingHopReason::NotViable,
-        cl_read::CaptureRefusal::SequenceUnavailable => MissingHopReason::SequenceUnavailable,
-        cl_read::CaptureRefusal::HookedPool => MissingHopReason::HookedPool,
+        concentrated_liquidity_read::CaptureRefusal::NotViable => MissingHopReason::NotViable,
+        concentrated_liquidity_read::CaptureRefusal::SequenceUnavailable => {
+            MissingHopReason::SequenceUnavailable
+        }
+        concentrated_liquidity_read::CaptureRefusal::HookedPool => MissingHopReason::HookedPool,
     }
 }
 

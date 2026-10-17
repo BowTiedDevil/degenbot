@@ -12,7 +12,7 @@ Combines the swap-path math functions in `lib.rs` (`BitMath`/`FullMath`/
 `TickMath` boundary constants (`MIN_TICK`/`MAX_TICK`/
 `MIN_SQRT_RATIO`/`MAX_SQRT_RATIO`) — previously all flat on the root
 `_ffi` namespace — onto one real submodule with un-prefixed names
-(`muldiv`, not `cl_muldiv`). The parent module registers the submodule
+(`muldiv`, not `concentrated_liquidity_muldiv`). The parent module registers the submodule
 itself; the `sys.modules` entry lives in the parent's shared helper.
 
 The companion `src/degenbot/uniswap/math.py` re-exports these as the

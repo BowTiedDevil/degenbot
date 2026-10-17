@@ -93,7 +93,7 @@ pub fn simulate_swap(
             let Ok(spec) = I256::try_from(amount_in) else {
                 return Err(SimulateSwapError::NotComputable);
             };
-            cl_stateless_row(
+            concentrated_liquidity_stateless_row(
                 ConcentratedLiquidityState::V3 {
                     state,
                     scalars: DesignScalars::new(identity.fee, identity.tick_spacing),
@@ -114,7 +114,7 @@ pub fn simulate_swap(
             let Ok(spec) = I256::try_from(amount_in) else {
                 return Err(SimulateSwapError::NotComputable);
             };
-            cl_stateless_row(
+            concentrated_liquidity_stateless_row(
                 ConcentratedLiquidityState::V4 {
                     state,
                     scalars: DesignScalars::new(
@@ -200,7 +200,7 @@ pub fn simulate_swap(
 /// preserved: a sparse-map miss surfaces as
 /// [`SimulateSwapError::MissingTickWord`] data for the caller's fetch + retry
 /// shell.
-fn cl_stateless_row(
+fn concentrated_liquidity_stateless_row(
     design: ConcentratedLiquidityState<'_>,
     zero_for_one: bool,
     amount_specified: alloy::primitives::I256,

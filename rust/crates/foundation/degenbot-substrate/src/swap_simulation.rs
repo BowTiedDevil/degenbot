@@ -33,7 +33,7 @@ use ::degenbot_pools::tick_fetch::TickWordFetcher;
 
 use alloy::primitives::{I256, U256};
 
-use ::degenbot_pools::families::concentrated_liquidity as cl;
+use ::degenbot_pools::families::concentrated_liquidity;
 use ::degenbot_pools::families::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 use ::degenbot_pools::families::reserve_pair;
 use ::degenbot_pools::families::{balancer_stable, balancer_weighted};
@@ -432,15 +432,15 @@ impl BotState {
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..)
             | PoolEntry::AerodromeV2(..) => return Some(Vec::new()),
-            PoolEntry::V3(p) => cl::SwapReadSource::Discovery(
-                cl::ConcentratedLiquidityTransientSource::V3 {
+            PoolEntry::V3(p) => concentrated_liquidity::SwapReadSource::Discovery(
+                concentrated_liquidity::ConcentratedLiquidityTransientSource::V3 {
                     identity: &p.0,
                     state: &p.1,
                 },
                 self.registry.journal_depth,
             ),
-            PoolEntry::V4(p) => cl::SwapReadSource::Discovery(
-                cl::ConcentratedLiquidityTransientSource::V4 {
+            PoolEntry::V4(p) => concentrated_liquidity::SwapReadSource::Discovery(
+                concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
                     identity: &p.0,
                     state: &p.1,
                 },
@@ -448,14 +448,14 @@ impl BotState {
             ),
         };
         Some(
-            cl::read_swap(
+            concentrated_liquidity::read_swap(
                 source,
                 SwapReadRequest::ConcentratedLiquidity {
                     zero_for_one: request.zero_for_one,
                     amount_specified: request.amount_specified,
                     sqrt_price_limit: request.sqrt_price_limit,
                 },
-                cl::FetchMode::Discovery,
+                concentrated_liquidity::FetchMode::Discovery,
             )
             .missing_words(),
         )
@@ -477,7 +477,7 @@ impl BotState {
     ///
     /// The stored word fetcher for a registered pool, if any — the staged
     /// pre-pass fetches through it OUTSIDE any state lock. The registry seam
-    /// for the family door's [`cl::FetchMode::Armed`] mode (the fetcher is a
+    /// for the family door's [`concentrated_liquidity::FetchMode::Armed`] mode (the fetcher is a
     /// registration-time fact on the slice; cloning it here keeps the read
     /// lock-free).
     #[must_use]
@@ -518,12 +518,12 @@ impl BotState {
         // checked-word set is NOT mirrored (a hypothetical has no
         // established words) and registered state is never touched.
         let source = match entry {
-            PoolEntry::V3(p) => cl::SwapReadSource::Override(
-                cl::ConcentratedLiquidityTransientSource::V3 {
+            PoolEntry::V3(p) => concentrated_liquidity::SwapReadSource::Override(
+                concentrated_liquidity::ConcentratedLiquidityTransientSource::V3 {
                     identity: &p.0,
                     state: &p.1,
                 },
-                cl::OverrideScalars {
+                concentrated_liquidity::OverrideScalars {
                     sqrt_price_x96: over.sqrt_price_x96,
                     liquidity: over.liquidity,
                     tick: over.tick,
@@ -532,12 +532,12 @@ impl BotState {
                 p.1.update_block,
                 self.registry.journal_depth,
             ),
-            PoolEntry::V4(p) => cl::SwapReadSource::Override(
-                cl::ConcentratedLiquidityTransientSource::V4 {
+            PoolEntry::V4(p) => concentrated_liquidity::SwapReadSource::Override(
+                concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
                     identity: &p.0,
                     state: &p.1,
                 },
-                cl::OverrideScalars {
+                concentrated_liquidity::OverrideScalars {
                     sqrt_price_x96: over.sqrt_price_x96,
                     liquidity: over.liquidity,
                     tick: over.tick,
@@ -549,14 +549,14 @@ impl BotState {
             _ => return Some(Vec::new()),
         };
         Some(
-            cl::read_swap(
+            concentrated_liquidity::read_swap(
                 source,
                 SwapReadRequest::ConcentratedLiquidity {
                     zero_for_one: over.request.zero_for_one,
                     amount_specified: over.request.amount_specified,
                     sqrt_price_limit: over.request.sqrt_price_limit,
                 },
-                cl::FetchMode::Discovery,
+                concentrated_liquidity::FetchMode::Discovery,
             )
             .missing_words(),
         )
@@ -596,12 +596,12 @@ impl BotState {
         let (fetcher, source) = match entry {
             PoolEntry::V3(p) => (
                 p.1.fetcher.clone(),
-                cl::SwapReadSource::Override(
-                    cl::ConcentratedLiquidityTransientSource::V3 {
+                concentrated_liquidity::SwapReadSource::Override(
+                    concentrated_liquidity::ConcentratedLiquidityTransientSource::V3 {
                         identity: &p.0,
                         state: &p.1,
                     },
-                    cl::OverrideScalars {
+                    concentrated_liquidity::OverrideScalars {
                         sqrt_price_x96: over.sqrt_price_x96,
                         liquidity: over.liquidity,
                         tick: over.tick,
@@ -613,12 +613,12 @@ impl BotState {
             ),
             PoolEntry::V4(p) => (
                 p.1.fetcher.clone(),
-                cl::SwapReadSource::Override(
-                    cl::ConcentratedLiquidityTransientSource::V4 {
+                concentrated_liquidity::SwapReadSource::Override(
+                    concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
                         identity: &p.0,
                         state: &p.1,
                     },
-                    cl::OverrideScalars {
+                    concentrated_liquidity::OverrideScalars {
                         sqrt_price_x96: over.sqrt_price_x96,
                         liquidity: over.liquidity,
                         tick: over.tick,
@@ -636,15 +636,15 @@ impl BotState {
             }
         };
         let mode = match &fetcher {
-            Some(f) if !disarm_fetch => cl::FetchMode::Armed {
+            Some(f) if !disarm_fetch => concentrated_liquidity::FetchMode::Armed {
                 fetcher: f,
                 pool_id: over.pool_id,
                 block,
             },
-            _ => cl::FetchMode::Disarmed,
+            _ => concentrated_liquidity::FetchMode::Disarmed,
         };
         Ok(
-            match cl::read_swap(
+            match concentrated_liquidity::read_swap(
                 source,
                 SwapReadRequest::ConcentratedLiquidity {
                     zero_for_one: over.request.zero_for_one,
@@ -781,10 +781,10 @@ impl BotState {
 
     /// The ONE registered-state CL swap-read row: classify the entry (the
     /// registry seam), then everything design-specific happens behind the
-    /// family read module's [`cl::read_swap`] door. Caveats assembly (the
+    /// family read module's [`concentrated_liquidity::read_swap`] door. Caveats assembly (the
     /// outcome-shape adapter) stays here because [`Caveats`] is this crate's
     /// type; the door supplies every per-design fact the caveats need
-    /// (coverage via [`cl::observe`], V4 hooks included).
+    /// (coverage via [`concentrated_liquidity::observe`], V4 hooks included).
     #[expect(
         clippy::too_many_lines,
         reason = "the length is the row's dispatch shape (classify the registry \
@@ -806,11 +806,15 @@ impl BotState {
             };
             match entry {
                 PoolEntry::V3(p) => {
-                    let design = cl::ConcentratedLiquidityState::V3 {
+                    let design = concentrated_liquidity::ConcentratedLiquidityState::V3 {
                         state: &p.1,
-                        scalars: cl::DesignScalars::new(p.0.fee, p.0.tick_spacing),
+                        scalars: concentrated_liquidity::DesignScalars::new(
+                            p.0.fee,
+                            p.0.tick_spacing,
+                        ),
                     };
-                    let Observed::Coverage(coverage) = cl::observe(design, Observe::Coverage)
+                    let Observed::Coverage(coverage) =
+                        concentrated_liquidity::observe(design, Observe::Coverage)
                     else {
                         unreachable!("coverage probe answers")
                     };
@@ -819,25 +823,28 @@ impl BotState {
                         Caveats::default(),
                         SwapOutcomeFamily::V3,
                         p.1.fetcher.clone(),
-                        cl::DesignScalars::new(p.0.fee, p.0.tick_spacing),
+                        concentrated_liquidity::DesignScalars::new(p.0.fee, p.0.tick_spacing),
                         None,
                     )
                 }
                 PoolEntry::V4(p) => {
                     let hooks = p.0.pool_key.hooks;
-                    let design = cl::ConcentratedLiquidityState::V4 {
+                    let design = concentrated_liquidity::ConcentratedLiquidityState::V4 {
                         state: &p.1,
-                        scalars: cl::DesignScalars::new(
+                        scalars: concentrated_liquidity::DesignScalars::new(
                             p.0.pool_key.fee,
                             p.0.pool_key.tick_spacing,
                         ),
                         hooks,
                     };
-                    let Observed::Coverage(coverage) = cl::observe(design, Observe::Coverage)
+                    let Observed::Coverage(coverage) =
+                        concentrated_liquidity::observe(design, Observe::Coverage)
                     else {
                         unreachable!("coverage probe answers")
                     };
-                    let Observed::Hooked(hooked) = cl::observe(design, Observe::Hooked) else {
+                    let Observed::Hooked(hooked) =
+                        concentrated_liquidity::observe(design, Observe::Hooked)
+                    else {
                         unreachable!("hooked probe answers")
                     };
                     let extra_caveats = if hooked {
@@ -850,7 +857,10 @@ impl BotState {
                         extra_caveats,
                         SwapOutcomeFamily::V4,
                         p.1.fetcher.clone(),
-                        cl::DesignScalars::new(p.0.pool_key.fee, p.0.pool_key.tick_spacing),
+                        concentrated_liquidity::DesignScalars::new(
+                            p.0.pool_key.fee,
+                            p.0.pool_key.tick_spacing,
+                        ),
                         Some(hooks),
                     )
                 }
@@ -858,30 +868,30 @@ impl BotState {
             }
         };
         let mode = match &fetcher {
-            Some(f) if !disarm_fetch => cl::FetchMode::Armed {
+            Some(f) if !disarm_fetch => concentrated_liquidity::FetchMode::Armed {
                 fetcher: f,
                 pool_id,
                 block,
             },
-            _ => cl::FetchMode::Disarmed,
+            _ => concentrated_liquidity::FetchMode::Disarmed,
         };
         let Some(state_mut) = self.registry.pools.get_mut(&pool_id) else {
             return SwapRead::NotComputable;
         };
         let target = match state_mut {
-            PoolEntry::V3(p) => cl::ConcentratedLiquidityStateMut::V3 {
+            PoolEntry::V3(p) => concentrated_liquidity::ConcentratedLiquidityStateMut::V3 {
                 state: &mut p.1,
                 scalars,
             },
-            PoolEntry::V4(p) => cl::ConcentratedLiquidityStateMut::V4 {
+            PoolEntry::V4(p) => concentrated_liquidity::ConcentratedLiquidityStateMut::V4 {
                 state: &mut p.1,
                 scalars,
                 hooks: hooks.unwrap_or_default(),
             },
             _ => return SwapRead::NotComputable,
         };
-        let read = cl::read_swap(
-            cl::SwapReadSource::Slice(target),
+        let read = concentrated_liquidity::read_swap(
+            concentrated_liquidity::SwapReadSource::Slice(target),
             SwapReadRequest::ConcentratedLiquidity {
                 zero_for_one: request.zero_for_one,
                 amount_specified: request.amount_specified,
