@@ -52,13 +52,69 @@ pub enum RegisteredPoolFamily {
     Curve,
 }
 
+impl RegisteredPoolFamily {
+    /// Every variant, in declaration order — the closed set
+    /// [`Self::from_tag`] admits a tag against, and the census [`Self::tag`]
+    /// is pinned over.
+    pub const ALL: [Self; 7] = [
+        Self::V2,
+        Self::V3,
+        Self::V4,
+        Self::AerodromeV2,
+        Self::BalancerWeighted,
+        Self::BalancerStable,
+        Self::Curve,
+    ];
+
+    /// The kebab-case tag naming this family — the ONE spelling of the tag
+    /// vocabulary.
+    ///
+    /// The registered-entry projection (`PoolEntry::registered_family`), the
+    /// session identity (`PoolIdentity::family_tag`), and `BotState`'s
+    /// `pool_family` string reader all render through here, so a family tag
+    /// cannot be spelled two ways.
+    #[must_use]
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::V2 => "v2",
+            Self::V3 => "v3",
+            Self::V4 => "v4",
+            Self::AerodromeV2 => "aerodrome-v2",
+            Self::BalancerWeighted => "balancer-weighted",
+            Self::BalancerStable => "balancer-stable",
+            Self::Curve => "curve",
+        }
+    }
+
+    /// Parse a family tag back into the enum — the inverse of [`Self::tag`],
+    /// and the closed set a tag received as a string is admitted against.
+    ///
+    /// `None` for anything outside the vocabulary. The vocabulary is
+    /// deliberately exact (kebab-case, no aliases, case-sensitive): the tag
+    /// is a wire value the core itself emits, so a near-miss is a caller bug,
+    /// never a spelling to tolerate.
+    #[must_use]
+    pub const fn from_tag(tag: &str) -> Option<Self> {
+        match tag.as_bytes() {
+            b"v2" => Some(Self::V2),
+            b"v3" => Some(Self::V3),
+            b"v4" => Some(Self::V4),
+            b"aerodrome-v2" => Some(Self::AerodromeV2),
+            b"balancer-weighted" => Some(Self::BalancerWeighted),
+            b"balancer-stable" => Some(Self::BalancerStable),
+            b"curve" => Some(Self::Curve),
+            _ => None,
+        }
+    }
+}
+
 impl PoolEntry {
     /// Project the entry onto its registration family tag (ADR-059 D1). Total
     /// over the variants; the address-keyed reader consults it and rejects
     /// [`RegisteredPoolFamily::V4`] because an address query cannot name a
     /// V4 pool.
     #[must_use]
-    pub fn registered_family(&self) -> RegisteredPoolFamily {
+    pub const fn registered_family(&self) -> RegisteredPoolFamily {
         match self {
             Self::V2(..) => RegisteredPoolFamily::V2,
             Self::V3(..) => RegisteredPoolFamily::V3,
@@ -67,6 +123,57 @@ impl PoolEntry {
             Self::BalancerWeighted(..) => RegisteredPoolFamily::BalancerWeighted,
             Self::BalancerStable(..) => RegisteredPoolFamily::BalancerStable,
             Self::AerodromeV2(..) => RegisteredPoolFamily::AerodromeV2,
+        }
+    }
+}
+
+#[cfg(test)]
+mod family_tag_tests {
+    use super::RegisteredPoolFamily;
+
+    #[test]
+    fn tags_are_the_kebab_vocabulary_in_declaration_order() {
+        // What: the closed set and its one spelling. A variant added to `ALL`
+        // without a `tag` arm (or the reverse) fails to compile; the array
+        // length is the census.
+        assert_eq!(
+            RegisteredPoolFamily::ALL.map(RegisteredPoolFamily::tag),
+            [
+                "v2",
+                "v3",
+                "v4",
+                "aerodrome-v2",
+                "balancer-weighted",
+                "balancer-stable",
+                "curve",
+            ],
+        );
+    }
+
+    #[test]
+    fn from_tag_inverts_tag_over_the_closed_set() {
+        for family in RegisteredPoolFamily::ALL {
+            assert_eq!(RegisteredPoolFamily::from_tag(family.tag()), Some(family));
+        }
+    }
+
+    #[test]
+    fn from_tag_refuses_anything_outside_the_closed_set() {
+        // The parse is exact: no aliases, no case folding, no trimming. The tag
+        // is a value the core itself emits, so a near miss is a caller bug.
+        for raw in [
+            "",
+            "V2",
+            "v2 ",
+            " v2",
+            "uniswap_v2",
+            "aerodrome",
+            "concentrated_liquidity",
+            "constant_product",
+            "weighted",
+            "stableswap",
+        ] {
+            assert_eq!(RegisteredPoolFamily::from_tag(raw), None, "{raw:?}");
         }
     }
 }

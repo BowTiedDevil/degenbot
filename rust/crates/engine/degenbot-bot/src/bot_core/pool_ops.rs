@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
 use degenbot_pools::curve_data_provider::CurveDataProvider;
+use degenbot_pools::registry::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::swap_simulation::{
     simulate_pair_in_given_out, simulate_pair_out, Caveats, OverrideSwap, SwapOutcome, SwapRead,
@@ -96,9 +97,24 @@ pub enum StagedSwapOutcome {
 }
 
 /// The registered family tag for `pool_id` (`None` = not registered).
+///
+/// The string rendering of [`registered_family`], for the surfaces that report
+/// a family to Python.
 #[must_use]
 pub fn pool_family(state: &StateLock<BotState>, pool_id: u64) -> Option<&'static str> {
     state.read_at(LockSite::Orchestrator).pool_family(pool_id)
+}
+
+/// The registered family of `pool_id`, typed (`None` = not registered) — what
+/// a family dispatch matches on.
+#[must_use]
+pub fn registered_family(
+    state: &StateLock<BotState>,
+    pool_id: u64,
+) -> Option<RegisteredPoolFamily> {
+    state
+        .read_at(LockSite::Orchestrator)
+        .registered_family(pool_id)
 }
 
 /// Clone-out the stored `CurveDataProvider` (if any) for `pool_id`'s Curve

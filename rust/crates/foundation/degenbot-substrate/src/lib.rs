@@ -211,16 +211,11 @@ pub enum ConcentratedLiquidityApplyError {
 
 /// The family tag for a registered entry — the single family-name source so
 /// [`BotState::pool_family`] and the typed dispatchers cannot drift.
+///
+/// The spelling lives in [`RegisteredPoolFamily::tag`]; this projects an entry
+/// onto it rather than repeating the tag table.
 const fn entry_family(entry: &PoolEntry) -> &'static str {
-    match entry {
-        PoolEntry::V2(..) => "v2",
-        PoolEntry::V3(..) => "v3",
-        PoolEntry::V4(..) => "v4",
-        PoolEntry::Curve(..) => "curve",
-        PoolEntry::BalancerWeighted(..) => "balancer-weighted",
-        PoolEntry::BalancerStable(..) => "balancer-stable",
-        PoolEntry::AerodromeV2(..) => "aerodrome-v2",
-    }
+    entry.registered_family().tag()
 }
 
 /// Concentrated-liquidity dispatch bucket for a registered pool, computed as
@@ -534,19 +529,36 @@ impl BotState {
 
     // --- ADR-005 slice 12c: Balancer V2 stable state port --------------
 
-    /// Return the pool-family tag for `pool_id` as a kebab-case string
-    /// (`"v2"`, `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
-    /// `"balancer-stable"`), or `None` for an unregistered `pool_id`.
+    /// Return the pool-family tag for `pool_id` as a kebab-case string — the
+    /// spelling [`RegisteredPoolFamily::tag`] owns — or `None` for an
+    /// unregistered `pool_id`.
     ///
-    /// This is the uniform family-guard primitive every `from_handle`
-    /// seam asserts against — dispatches on the `PoolEntry` variant directly,
-    /// so it is correct for every registered family (unlike the V2-only
-    /// `variant` getter on `PyLiquidityPool`, which returns `""` for non-V2).
-    /// `None` is explicit so a caller cannot mistake an unregistered pool for
-    /// a family gap via an `""` sentinel.
+    /// The string twin of [`Self::registered_family`]. This is the uniform
+    /// family-guard primitive every `from_handle` seam asserts against, so it
+    /// is correct for every registered family (unlike the V2-only `variant`
+    /// getter on `PyLiquidityPool`, which returns `""` for non-V2). `None` is
+    /// explicit so a caller cannot mistake an unregistered pool for a family
+    /// gap via an `""` sentinel.
     #[must_use]
     pub fn pool_family(&self, pool_id: u64) -> Option<&'static str> {
-        self.registry.pools.get(&pool_id).map(entry_family)
+        self.registered_family(pool_id)
+            .map(RegisteredPoolFamily::tag)
+    }
+
+    /// The registered family of `pool_id` as the typed
+    /// [`RegisteredPoolFamily`] — the enum twin of [`Self::pool_family`].
+    ///
+    /// This is what a family dispatch matches on: the match is exhaustive over
+    /// the registered families, so adding a family is a compile error at every
+    /// dispatch instead of a runtime fallthrough. `None` means the id is not
+    /// registered — the same answer [`Self::pool_family`] gives as an absent
+    /// tag.
+    #[must_use]
+    pub fn registered_family(&self, pool_id: u64) -> Option<RegisteredPoolFamily> {
+        self.registry
+            .pools
+            .get(&pool_id)
+            .map(PoolEntry::registered_family)
     }
 
     /// Get the pool ID for a given contract address.

@@ -23,7 +23,12 @@ use std::sync::OnceLock;
 /// The pinned post-C5 census value (manager pattern:
 /// `rg 'match entry' rust/crates -g '!*tests*'`; the one excluded hit is the
 /// cli-core exchange-arm test fixture, not a pool matcher).
-const PINNED_MATCH_ENTRY_CENSUS: usize = 22;
+///
+/// The count is 21 because the entry-side tag table is not a central matcher:
+/// `BotState::pool_family` reads the typed family and renders
+/// `RegisteredPoolFamily::tag`, so the only family-name spelling lives on the
+/// enum.
+const PINNED_MATCH_ENTRY_CENSUS: usize = 21;
 
 /// The reintroduction marker the census counts (shared by the workspace scan
 /// and the synthetic-fixture negative probe, so the probe witnesses the same

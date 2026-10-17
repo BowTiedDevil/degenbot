@@ -1060,7 +1060,7 @@ fn registered_family_readers_tag_every_registered_family() {
     // V4: the PoolManager address cannot name the pool at the address-keyed
     // reader; the keyed reader resolves the arm.
     let v4 = make_v4_params_in_spec();
-    core.register_v4_pool(&v4).expect("V4 registration");
+    let v4_id = core.register_v4_pool(&v4).expect("V4 registration");
     assert_eq!(
         core.registered_pool_by_address(&v4.pool_manager),
         None,
@@ -1069,6 +1069,26 @@ fn registered_family_readers_tag_every_registered_family() {
     assert_eq!(
         core.registered_family_at(v4.pool_manager, &v4.pool_id),
         Some(RegisteredPoolFamily::V4),
+    );
+
+    // The typed by-id reader is the twin of the string tag reader: every
+    // registered family answers its enum, and the tag is that enum's spelling.
+    for (pool_id, family) in [
+        (v2_id, RegisteredPoolFamily::V2),
+        (v3_id, RegisteredPoolFamily::V3),
+        (curve_id, RegisteredPoolFamily::Curve),
+        (bal_weighted_id, RegisteredPoolFamily::BalancerWeighted),
+        (bal_stable_id, RegisteredPoolFamily::BalancerStable),
+        (aero_id, RegisteredPoolFamily::AerodromeV2),
+        (v4_id, RegisteredPoolFamily::V4),
+    ] {
+        assert_eq!(core.registered_family(pool_id), Some(family));
+        assert_eq!(core.pool_family(pool_id), Some(family.tag()));
+    }
+    assert_eq!(
+        core.registered_family(u64::MAX),
+        None,
+        "an unregistered id has no family",
     );
 }
 

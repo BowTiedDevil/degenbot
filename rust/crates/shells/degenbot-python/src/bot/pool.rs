@@ -2926,9 +2926,8 @@ impl PyLiquidityPool {
     /// on-chain state already matches.
     ///
     /// Raises:
-    ///     `ValueError`: The handle's pool id is not registered, its family has
-    ///         no refresh path, or `block_number` is a string that is not a
-    ///         canonical tag.
+    ///     `ValueError`: The handle's pool id is not registered, or
+    ///         `block_number` is a string that is not a canonical tag.
     #[pyo3(signature = (io, block_number=None))]
     fn refresh_via(
         &self,
@@ -2955,11 +2954,6 @@ impl PyLiquidityPool {
         match outcome {
             Ok(RefreshOutcome::Changed) => Ok(true),
             Ok(RefreshOutcome::Unchanged) => Ok(false),
-            Err(RefreshError::UnsupportedFamily { family, .. }) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "pool {pool_id} family {family:?} has no refresh path"
-                )))
-            }
             Err(RefreshError::Spec { message, .. }) => {
                 Err(crate::bot::engine::SpecViolationError::new_err(message))
             }

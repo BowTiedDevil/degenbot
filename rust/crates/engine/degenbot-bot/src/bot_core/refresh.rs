@@ -7,8 +7,9 @@
 //! builder `update()` methods (and their Python twins) lives here instead, so
 //! a new family is a new arm in this dispatcher — never a new Python branch.
 //!
-//! Family dispatch keys on the registered family tag
-//! ([`pool_ops::pool_family`]), the same tag `BotState` already exposes; the
+//! Family dispatch keys on [`RegisteredPoolFamily`], read typed from the state
+//! owner (`BotState::registered_family`) and matched exhaustively, so adding a
+//! family is a compile error here rather than a runtime gap; the
 //! fetch half composes the core construction-I/O choreography
 //! (`pool_builder::choreography`) over the shared [`ConstructionIo`], and the
 //! apply half drives the state owner's typed dispatchers
@@ -27,6 +28,7 @@
 
 use alloy::primitives::U256;
 use degenbot_core::errors::ProviderError;
+use degenbot_pools::registry::RegisteredPoolFamily;
 use degenbot_pools::spec_bounds::narrow_v2_reserve;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
@@ -52,14 +54,6 @@ pub enum RefreshError {
     /// The id is not registered.
     #[error("pool {0} is not registered")]
     UnknownPool(u64),
-    /// The registered family has no refresh path.
-    #[error("pool {pool_id} family {family:?} has no refresh path")]
-    UnsupportedFamily {
-        /// The requested pool id.
-        pool_id: u64,
-        /// The registered family tag.
-        family: &'static str,
-    },
     /// The pool's on-chain identity is missing from its registered state.
     #[error("pool {pool_id} is missing the identity its family refreshes from")]
     MissingIdentity {
@@ -92,27 +86,32 @@ async fn resolve_block(io: &ConstructionIo, block: Option<u64>) -> Result<u64, P
 ///
 /// # Errors
 ///
-/// Returns [`RefreshError`] for an unregistered pool, a family without a
-/// refresh path, a missing identity, a spec-bound violation on a fetched
-/// reserve, or an RPC/decode failure.
+/// Returns [`RefreshError`] for an unregistered pool, a missing identity, a
+/// spec-bound violation on a fetched reserve, or an RPC/decode failure.
 pub async fn refresh_pool(
     state: &StateLock<BotState>,
     pool_id: u64,
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RefreshOutcome, RefreshError> {
-    let family = pool_ops::pool_family(state, pool_id).ok_or(RefreshError::UnknownPool(pool_id))?;
+    // The family comes typed from the state owner — the one reader of record —
+    // and this match is exhaustive over `RegisteredPoolFamily`. A family added
+    // to the enum is a compile error right here, never a runtime fallthrough.
+    let family =
+        pool_ops::registered_family(state, pool_id).ok_or(RefreshError::UnknownPool(pool_id))?;
     match family {
-        "v2" | "aerodrome-v2" => refresh_reserve_pair(state, pool_id, io, block).await,
-        "v3" => refresh_v3(state, pool_id, io, block).await,
-        "v4" => refresh_v4(state, pool_id, io, block).await,
-        "curve" => refresh_curve(state, pool_id, io, block).await,
-        "balancer-weighted" => refresh_balancer(state, pool_id, io, block, false).await,
-        "balancer-stable" => refresh_balancer(state, pool_id, io, block, true).await,
-        other => Err(RefreshError::UnsupportedFamily {
-            pool_id,
-            family: other,
-        }),
+        RegisteredPoolFamily::V2 | RegisteredPoolFamily::AerodromeV2 => {
+            refresh_reserve_pair(state, pool_id, io, block).await
+        }
+        RegisteredPoolFamily::V3 => refresh_v3(state, pool_id, io, block).await,
+        RegisteredPoolFamily::V4 => refresh_v4(state, pool_id, io, block).await,
+        RegisteredPoolFamily::Curve => refresh_curve(state, pool_id, io, block).await,
+        RegisteredPoolFamily::BalancerWeighted => {
+            refresh_balancer(state, pool_id, io, block, false).await
+        }
+        RegisteredPoolFamily::BalancerStable => {
+            refresh_balancer(state, pool_id, io, block, true).await
+        }
     }
 }
 
@@ -333,4 +332,128 @@ where
     }
     let _ = guard.apply_balance_update_by_pool_id(pool_id, balances, block);
     Ok(RefreshOutcome::Changed)
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::expect_used)]
+
+    use alloy::primitives::aliases::U112;
+    use alloy::primitives::{Address, Bytes};
+    use async_trait::async_trait;
+    use degenbot_substrate::RegisterV2PoolParams;
+
+    use super::*;
+    use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
+
+    /// An RPC that refuses every read. The family arms are then observable
+    /// without a chain: an arm that runs stops at its fetch, so the failure is
+    /// a [`RefreshError::Provider`] — never a family refusal.
+    struct RefusingRpc;
+
+    fn unavailable() -> ProviderError {
+        ProviderError::ConnectionFailed {
+            message: "no node in a unit test".to_string(),
+        }
+    }
+
+    #[async_trait]
+    impl RpcConstruction for RefusingRpc {
+        async fn get_block_number(&self) -> Result<u64, ProviderError> {
+            Ok(1)
+        }
+
+        async fn get_block(
+            &self,
+            _block_number: u64,
+        ) -> Result<Option<degenbot_rpc::provider::EthBlock>, ProviderError> {
+            Ok(None)
+        }
+
+        async fn get_block_timestamp(
+            &self,
+            _block_number: u64,
+        ) -> Result<Option<u64>, ProviderError> {
+            Ok(None)
+        }
+
+        async fn get_code(
+            &self,
+            _address: Address,
+            _block_number: Option<u64>,
+        ) -> Result<Bytes, ProviderError> {
+            Err(unavailable())
+        }
+
+        async fn get_balance(
+            &self,
+            _address: Address,
+            _block_number: Option<u64>,
+        ) -> Result<U256, ProviderError> {
+            Err(unavailable())
+        }
+
+        async fn call(
+            &self,
+            _to: Address,
+            _data: Bytes,
+            _block_number: Option<u64>,
+        ) -> Result<Bytes, ProviderError> {
+            Err(unavailable())
+        }
+    }
+
+    fn io() -> ConstructionIo {
+        ConstructionIo::new(std::sync::Arc::new(NoDb), std::sync::Arc::new(RefusingRpc))
+    }
+
+    /// A core holding one registered V2 pool, keyed by the id registration
+    /// returns (the dispatch reads the family off the registry, never an
+    /// argument).
+    fn v2_state() -> (StateLock<BotState>, u64) {
+        let state = StateLock::new(BotState::new());
+        let pool_id = state
+            .write_at(LockSite::Orchestrator)
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: Address::from([0xccu8; 20]),
+                token0: Address::from([0xa0u8; 20]),
+                token1: Address::from([0xa1u8; 20]),
+                reserve0: U112::from(1_000u64),
+                reserve1: U112::from(2_000u64),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: Address::from([0xf0u8; 20]),
+                update_block: 100,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
+        (state, pool_id)
+    }
+
+    #[tokio::test]
+    async fn an_unregistered_id_is_refused_by_the_typed_family_read() {
+        // The family read is the dispatch's admission gate: `None` is the
+        // unregistered pool, not a family the dispatcher cannot name.
+        let state = StateLock::new(BotState::new());
+        let error = refresh_pool(&state, 7, &io(), Some(1))
+            .await
+            .expect_err("an unregistered id has nothing to refresh");
+        assert!(matches!(error, RefreshError::UnknownPool(7)));
+    }
+
+    #[tokio::test]
+    async fn the_dispatch_reaches_the_registered_familys_fetch() {
+        // The V2 arm runs: the refusing node fails the `getReserves()` fetch.
+        let (state, pool_id) = v2_state();
+        let error = refresh_pool(&state, pool_id, &io(), Some(1))
+            .await
+            .expect_err("the refusing node fails the fetch");
+        assert!(
+            matches!(error, RefreshError::Provider(_)),
+            "expected the V2 fetch to run, got {error:?}"
+        );
+    }
 }

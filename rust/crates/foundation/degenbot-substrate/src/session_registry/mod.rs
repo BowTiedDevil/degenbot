@@ -73,6 +73,7 @@ use std::sync::{Arc, OnceLock};
 use alloy::primitives::Address;
 use dashmap::DashMap;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
+use degenbot_pools::registry::RegisteredPoolFamily;
 
 /// Canonical identity of one session's pool object.
 ///
@@ -144,14 +145,18 @@ impl PoolIdentity {
     /// consumer uses [`PoolIdentity::v4`].
     #[must_use]
     pub const fn for_address_family(family_tag: &str, address: Address) -> Option<Self> {
-        match family_tag.as_bytes() {
-            b"v2" => Some(Self::V2(address)),
-            b"v3" => Some(Self::V3(address)),
-            b"curve" => Some(Self::Curve(address)),
-            b"balancer-weighted" => Some(Self::BalancerWeighted(address)),
-            b"balancer-stable" => Some(Self::BalancerStable(address)),
-            b"aerodrome-v2" => Some(Self::AerodromeV2(address)),
-            _ => None,
+        // The tag parse is [`RegisteredPoolFamily::from_tag`]; this maps the
+        // family it resolves onto the address-keyed identity shape.
+        match RegisteredPoolFamily::from_tag(family_tag) {
+            Some(RegisteredPoolFamily::V2) => Some(Self::V2(address)),
+            Some(RegisteredPoolFamily::V3) => Some(Self::V3(address)),
+            Some(RegisteredPoolFamily::AerodromeV2) => Some(Self::AerodromeV2(address)),
+            Some(RegisteredPoolFamily::BalancerWeighted) => Some(Self::BalancerWeighted(address)),
+            Some(RegisteredPoolFamily::BalancerStable) => Some(Self::BalancerStable(address)),
+            Some(RegisteredPoolFamily::Curve) => Some(Self::Curve(address)),
+            // V4's identity is a `(PoolManager, pool_id)` pair, never an
+            // address; a tag outside the vocabulary names no family at all.
+            Some(RegisteredPoolFamily::V4) | None => None,
         }
     }
 
@@ -209,14 +214,20 @@ impl PoolIdentity {
     /// [`PoolIdentity::for_address_family`].
     #[must_use]
     pub const fn family_tag(&self) -> &'static str {
+        self.registered_family().tag()
+    }
+
+    /// The family this identity belongs to, as the one family enum.
+    #[must_use]
+    pub const fn registered_family(&self) -> RegisteredPoolFamily {
         match self {
-            Self::V2(..) => "v2",
-            Self::V3(..) => "v3",
-            Self::V4 { .. } => "v4",
-            Self::AerodromeV2(..) => "aerodrome-v2",
-            Self::BalancerWeighted(..) => "balancer-weighted",
-            Self::BalancerStable(..) => "balancer-stable",
-            Self::Curve(..) => "curve",
+            Self::V2(..) => RegisteredPoolFamily::V2,
+            Self::V3(..) => RegisteredPoolFamily::V3,
+            Self::V4 { .. } => RegisteredPoolFamily::V4,
+            Self::AerodromeV2(..) => RegisteredPoolFamily::AerodromeV2,
+            Self::BalancerWeighted(..) => RegisteredPoolFamily::BalancerWeighted,
+            Self::BalancerStable(..) => RegisteredPoolFamily::BalancerStable,
+            Self::Curve(..) => RegisteredPoolFamily::Curve,
         }
     }
 }

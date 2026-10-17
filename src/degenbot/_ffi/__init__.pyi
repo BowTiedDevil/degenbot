@@ -3543,9 +3543,8 @@ class Pool:
         on-chain state already matches.
 
         Raises:
-            `ValueError`: The handle's pool id is not registered, its family has
-                no refresh path, or `block_number` is a string that is not a
-                canonical tag.
+            `ValueError`: The handle's pool id is not registered, or
+                `block_number` is a string that is not a canonical tag.
         """
     def reserve_pair(self, /) -> ReservePairView:
         """
