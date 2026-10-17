@@ -28,19 +28,20 @@ use crate::pipeline::{PrepareOutcome, PreparedCandidate, RegistrationPipeline};
 use crate::progress::{progress_line, ProgressCadence};
 use alloy::primitives::Address;
 use degenbot::bot::bot_core::registration_ledger::{
-    BuildFailure, OutcomeLabel, PipelineReport, RegistrationLedger, RegistrationOutcome,
-    RegistrationUnitOutcome,
+    BuildFailure, OutcomeLabel, PipelineReport, RefusalKind, RegisterRefusal, RegistrationLedger,
+    RegistrationOutcome, RegistrationUnitOutcome,
 };
 use degenbot::bot_core::construction_io::ConstructionIo;
 use degenbot::bot_core::pool_builder::builder::{
     build_v2, build_v3, build_v4, V4PoolBuildIdentity,
 };
-use degenbot::bot_core::{Bot, RegisterV2PoolError, RegisterV3PoolError, RegisterV4PoolError};
+use degenbot::bot_core::Bot;
 use degenbot::db::discovery_read::DiscoveryPoolRow;
 use degenbot::db::snapshot::TickMapDb;
 use degenbot::pathfinding::PoolKind;
 use degenbot::solvers::mixed::PoolHop;
 use degenbot::substrate::state_lock::LockSite;
+use degenbot::substrate::PoolRegistration;
 use degenbot::EngineDriver;
 
 /// The live construction context (constructed once per boot).
@@ -233,10 +234,14 @@ async fn build_and_register(
 /// IRUMXD single-registry discipline, mirroring the Python `build_v2_pool`
 /// adapter's reuse fast path): a hop the engine already registered is answered
 /// by the existing `pool_id`, never re-built and never refused. The
-/// build+register turn only runs on a genuine miss. If a concurrent writer
-/// registers the hop between the pre-check and the write (`AlreadyRegistered`
-/// despite the pre-check — a benign race artifact, never a pool fact), the
-/// failed admission folds back to the freshly-readable `pool_id`.
+/// build+register turn only runs on a genuine miss, and the insert goes
+/// through the ONE family write door (ADR-078: `Bot::register` over
+/// `PoolRegistration` — the same seam the FFI shell and `bot_core` cross).
+/// The door's get-or-register guard answers a concurrent writer whose
+/// registration completed before the insert; a residual `AlreadyRegistered`
+/// (a writer acquiring the write guard between the door's guard read and its
+/// insert — a benign race artifact, never a pool fact) folds back to the
+/// freshly-readable `pool_id`.
 async fn build_one(
     driver: &EngineDriver,
     row: &DiscoveryPoolRow,
@@ -256,15 +261,11 @@ async fn build_one(
             let params = build_v2(ctx.chain_id, r.pool.address, ctx.io, Some(build_block))
                 .await
                 .map_err(|e| BuildFailure::Transient(e.to_string()))?;
-            let result = bot
-                .state_arc()
-                .write_at(LockSite::Core)
-                .register_v2_pool(&params);
+            let result = bot.register(PoolRegistration::V2(Box::new(params)));
             fold_already_registered(
                 result,
-                |e| matches!(e, RegisterV2PoolError::AlreadyRegistered { .. }),
                 || reuse_address_pool(bot, &r.pool.address),
-                |e| BuildFailure::Transient(format!("{e:?}")),
+                transient_refusal,
             )
         }
         DiscoveryPoolRow::V3(r) => {
@@ -277,15 +278,11 @@ async fn build_one(
             )
             .await
             .map_err(|e| BuildFailure::Transient(e.to_string()))?;
-            let result = bot
-                .state_arc()
-                .write_at(LockSite::Core)
-                .register_v3_pool(&params);
+            let result = bot.register(PoolRegistration::V3(Box::new(params)));
             fold_already_registered(
                 result,
-                |e| matches!(e, RegisterV3PoolError::AlreadyRegistered { .. }),
                 || reuse_address_pool(bot, &r.pool.address),
-                |e| BuildFailure::Transient(format!("{e:?}")),
+                transient_refusal,
             )
         }
         DiscoveryPoolRow::V4(r) => {
@@ -304,15 +301,11 @@ async fn build_one(
             let result = build_v4(identity, ctx.db, ctx.io, Some(build_block))
                 .await
                 .map_err(|e| BuildFailure::Transient(e.to_string()))?;
-            let registered = bot
-                .state_arc()
-                .write_at(LockSite::Core)
-                .register_v4_pool(&result.params);
+            let registered = bot.register(PoolRegistration::V4(Box::new(result.params)));
             fold_already_registered(
                 registered,
-                |e| matches!(e, RegisterV4PoolError::AlreadyRegistered { .. }),
                 || reuse_v4_pool(bot, r.manager.address, &pool_id),
-                BuildFailure::from,
+                v4_build_failure,
             )
         }
     }
@@ -390,28 +383,66 @@ pub fn resolve_verify_state_view(rows: &[DiscoveryPoolRow]) -> Option<Address> {
     })
 }
 
-/// Fold an admission result into a registry reuse when the engine reports a
-/// concurrent `AlreadyRegistered`.
+/// The address-keyed (V2/V3) door refusal's `BuildFailure` classification —
+/// the historical mapping: every non-race refusal was transient (the V2/V3
+/// register entries raise no admission arms).
+fn transient_refusal(kind: &RefusalKind) -> BuildFailure {
+    BuildFailure::Transient(kind.to_string())
+}
+
+/// The V4 door refusal's `BuildFailure` classification — the historical
+/// `From<RegisterV4PoolError>` mapping carried through the door's
+/// field-for-field refusal shape: the admission arms ride their typed
+/// `BuildFailure` counters, a spec violation stays the encoder-limit class,
+/// and anything else is transient.
+fn v4_build_failure(kind: &RefusalKind) -> BuildFailure {
+    match kind {
+        RefusalKind::RegisterRefused {
+            reason: RegisterRefusal::Admission { failure, .. },
+            ..
+        } => failure.clone(),
+        RefusalKind::RegisterRefused {
+            reason: RegisterRefusal::SpecViolation { .. },
+            ..
+        } => BuildFailure::HighFee,
+        other => transient_refusal(other),
+    }
+}
+
+/// Fold the family write door's refusal into a registry reuse when the door
+/// reports a concurrent `AlreadyRegistered`.
 ///
-/// The pre-check can race a concurrent writer (the engine admits pools from
-/// other tasks), so `AlreadyRegistered` here is benign: `reuse_registered`
-/// re-reads the registry AFTER the failed write guard is dropped and returns
-/// the id the winner installed. Only a re-read miss (a refusal with no
-/// registry entry to reuse) stays a transient build failure.
-fn fold_already_registered<T, E: std::fmt::Debug>(
-    result: Result<T, E>,
-    is_already_registered: impl FnOnce(&E) -> bool,
-    reuse_registered: impl FnOnce() -> Option<T>,
-    map_refusal: impl FnOnce(E) -> BuildFailure,
-) -> Result<T, BuildFailure> {
+/// The door's get-or-register guard re-reads the registry before its insert,
+/// so a writer whose registration completed before the insert is answered by
+/// the guard itself. The residual window — a writer acquiring the write guard
+/// between the door's guard read and its insert — is benign (the engine admits
+/// pools from other tasks): `reuse_registered` re-reads the registry AFTER the
+/// failed write and returns the id the winner installed. Only a re-read miss
+/// (a refusal with no registry entry to reuse) stays a transient build
+/// failure.
+fn fold_already_registered(
+    result: Result<u64, RefusalKind>,
+    reuse_registered: impl FnOnce() -> Option<u64>,
+    map_refusal: impl FnOnce(&RefusalKind) -> BuildFailure,
+) -> Result<u64, BuildFailure> {
     match result {
         Ok(pool_id) => Ok(pool_id),
-        Err(err) if is_already_registered(&err) => reuse_registered().ok_or_else(|| {
-            BuildFailure::Transient(format!(
-                "already-registered admission race with no registry entry to reuse ({err:?})"
-            ))
-        }),
-        Err(err) => Err(map_refusal(err)),
+        Err(kind) => {
+            if matches!(
+                &kind,
+                RefusalKind::RegisterRefused {
+                    reason: RegisterRefusal::AlreadyRegistered { .. },
+                    ..
+                }
+            ) {
+                return reuse_registered().ok_or_else(|| {
+                    BuildFailure::Transient(format!(
+                        "already-registered admission race with no registry entry to reuse ({kind})"
+                    ))
+                });
+            }
+            Err(map_refusal(&kind))
+        }
     }
 }
 
@@ -581,7 +612,7 @@ mod tests {
     use degenbot::bot::bot_core::registration_ledger::{
         OutcomeLabel, PipelineReport, RegistrationOutcome, RegistrationUnitOutcome,
     };
-    use degenbot::bot_core::RegisterV2PoolParams;
+    use degenbot::bot_core::{RegisterV2PoolError, RegisterV2PoolParams};
 
     /// A minimal in-spec V2 fixture keyed by `address`.
     fn v2_params(address: Address) -> RegisterV2PoolParams {
@@ -595,11 +626,10 @@ mod tests {
         }
     }
 
-    /// Register the fixture into the bot's shared `BotState` (test setup).
+    /// Register the fixture into the bot's shared `BotState` through the
+    /// family write door (test setup).
     fn register_v2(bot: &Bot, address: Address) -> u64 {
-        bot.state_arc()
-            .write_at(LockSite::Core)
-            .register_v2_pool(&v2_params(address))
+        bot.register(PoolRegistration::V2(Box::new(v2_params(address))))
             .expect("test setup: register V2 pool")
     }
 
@@ -694,10 +724,11 @@ mod tests {
         let address = Address::from([0x22u8; 20]);
         let id = register_v2(&bot, address);
         let folded = fold_already_registered(
-            Err::<u64, _>(RegisterV2PoolError::AlreadyRegistered { address }),
-            |e| matches!(e, RegisterV2PoolError::AlreadyRegistered { .. }),
+            Err(RefusalKind::from_register_v2_error(
+                &RegisterV2PoolError::AlreadyRegistered { address },
+            )),
             || reuse_address_pool(&bot, &address),
-            |e| BuildFailure::Transient(format!("{e:?}")),
+            transient_refusal,
         );
         assert_eq!(folded, Ok(id));
     }
