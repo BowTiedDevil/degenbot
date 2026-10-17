@@ -3,9 +3,9 @@
 //! so the offline replay harnesses can be optimized against real captured
 //! pool state without a full bot run.
 //!
-//! Extracted from the retired grab file so the diagnostic corpus stops riding the hot solve-path file:
-//! its ~500 lines (writer + variants + tests) churn independently of the
-//! lane walk.
+//! Extracted from the retired grab file so the diagnostic corpus stops
+//! riding the hot solve-path file: its ~500 lines (writer + variants + tests)
+//! churn independently of the lane walk.
 use ::degenbot_pools::solve::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
 use ::degenbot_pools::solve::profit_envelope::{DegeneratePathEvent, DegeneratePathSink};
 
@@ -76,16 +76,17 @@ pub(crate) fn gate_capture_from_cfg(
     })
 }
 /// One-shot capture of heavy solver inputs, so the offline replay harnesses
-/// (`solve_concentrated_liquidity_piecewise` for all-concentrated-liquidity, `examples/mixed_solve_replay.rs` for mixed
-/// V2+concentrated liquidity) can be optimized against real captured pool state without a full bot
-/// run.
+/// (`solve_concentrated_liquidity_piecewise` for all-concentrated-liquidity,
+/// `examples/mixed_solve_replay.rs` for mixed V2+concentrated liquidity) can
+/// be optimized against real captured pool state without a full bot run.
 ///
 /// One writer owns the shared capture plumbing: the heavy gate
 /// (`time_us >= MIN_US` OR `sims >= MIN_SIMS`), the 2-hop floor, path-id dedup,
 /// the `DEGENBOT_SOLVER_CAPTURE_CAP` cap, parent-dir creation, and the append
 /// (see [`Self::maybe_capture`]). The two variants differ only in DATA via
-/// [`CaptureVariant`]: [`CaptureVariant::HeavyConcentratedLiquidity`] keeps all-concentrated-liquidity paths and emits
-/// the `IntV3TickRangeSequence` range body (default
+/// [`CaptureVariant`]: [`CaptureVariant::HeavyConcentratedLiquidity`] keeps
+/// all-concentrated-liquidity paths and emits the `IntV3TickRangeSequence`
+/// range body (default
 /// `.../concentrated_liquidity_heavy_paths.jsonl`), while [`CaptureVariant::HeavyMixed`] keeps
 /// paths with >=1 V2 and >=1 concentrated-liquidity hop and emits a `kind`-discriminated
 /// V2/`concentrated_liquidity` body
@@ -152,8 +153,10 @@ impl CaptureVariant {
                 resolved.hops.iter().all(|h| h.as_int_sequence().is_some())
             }
             Self::HeavyMixed => {
-                // >=1 V2 hop AND >=1 concentrated liquidity hop. The all-concentrated-liquidity capture owns pure-concentrated-liquidity;
-                // all-V2 dispatches to the closed-form Mobius solver.
+                // >=1 V2 hop AND >=1 concentrated liquidity hop. The
+                // all-concentrated-liquidity capture owns
+                // pure-concentrated-liquidity; all-V2 dispatches to the
+                // closed-form Mobius solver.
                 let has_v2 = resolved
                     .hops
                     .iter()

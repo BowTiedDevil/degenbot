@@ -234,8 +234,8 @@ fn liquidity_update_replay_at_or_before_seed_block_does_not_adjust_scalar<F: ClS
     // solver exactly one in-range position-net BELOW on-chain with
     // identical sqrt/tick (the observed mainnet desync).
     let liq = 1_000_000u128;
+    // Seed against head at block 100: scalar already reflects events <= 100.
     let mut state = F::with_position(liq); // tick 0 ∈ [-60, 60)
-                                           // Seed against head at block 100: scalar already reflects events <= 100.
     state.set_initial_state_block(100);
     let pre_liq = WalkHost::liquidity(&state);
 

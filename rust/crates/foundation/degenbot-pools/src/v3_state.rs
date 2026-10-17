@@ -358,9 +358,10 @@ pub struct V3PoolIdentity {
     pub tick_spacing: i32,
     /// Pool factory address.
     pub factory: Address,
-    /// The CREATE2 deployer the pool's address was verified against (Fork A). The JSON row's `deployer` (or `factory` for null), or the
-    /// factory itself for non-JSON pools. Stored on the identity so the
-    /// companion reads it off the handle.
+    /// The CREATE2 deployer the pool's address was verified against (Fork A).
+    /// The JSON row's `deployer` (or `factory` for null), or the factory
+    /// itself for non-JSON pools. Stored on the identity so the companion
+    /// reads it off the handle.
     pub deployer: Address,
     /// The CREATE2 init code hash (Fork A). The JSON row's `init_hash`
     /// when shipped, else the Uniswap V3 mainnet fallback const. Off the
@@ -877,9 +878,10 @@ pub struct V3SwapOutcome {
     /// it is `< |amount_specified|` the requested input was NOT fully consumed
     /// (the walk hit the price limit with input left over — the pool could not
     /// convert the whole amount). That leftover is the over-swap signal: a
-    /// solver must clamp its concentrated-liquidity-hop input to this value (with a rounding margin)
-    /// so the exact-in loop terminates on `amountRemaining == 0` at the last
-    /// funded tick instead of marching empty bitmap words to the price limit
+    /// solver must clamp its concentrated-liquidity-hop input to this value
+    /// (with a rounding margin) so the exact-in loop terminates on
+    /// `amountRemaining == 0` at the last funded tick instead of marching
+    /// empty bitmap words to the price limit
     /// (the path-5000 20M-gas EMPTY-HALT). For an **exact-output** swap it is
     /// the input required to produce the requested output (≤ the input that an
     /// unbounded exact-in would spend). Identical to Solidity's
@@ -1017,7 +1019,8 @@ pub enum SimulateSwapError {
 /// `TickBitmap`, `TickMath`).
 // `tick` tracks the contract's post-step tick; kept faithful to the V3
 // `_calculate_swap` loop even though this pure simulator returns only amounts.
-#[expect(clippy::too_many_lines)] // faithful port of V3's `_calculate_swap`; splitting would obscure the loop.
+// Faithful port of V3's `_calculate_swap`; splitting would obscure the loop.
+#[expect(clippy::too_many_lines)]
 pub fn v3_simulate_swap(
     state: &V3PoolState,
     fee: u32,

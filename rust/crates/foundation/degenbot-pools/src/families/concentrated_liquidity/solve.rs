@@ -1,14 +1,16 @@
 //! The concentrated-liquidity family module (ADR-071 D1/D2).
 //!
 //! GLOSSARY.md "Family module": the solver crate's single module owning
-//! everything the concentrated liquidity hop family contributes to a solve and its bound. concentrated liquidity is
-//! the extreme case: V3 and V4 share one solve (ADR-069), so both project to
-//! the same gate view and walk the one walkable-path entry.
+//! everything the concentrated liquidity hop family contributes to a solve
+//! and its bound. concentrated liquidity is the extreme case: V3 and V4
+//! share one solve (ADR-069), so both project to the same gate view and walk
+//! the one walkable-path entry.
 //!
 //! What lives here:
 //! - the walkable-path solve entry ([`solve_walkable_path_int`]) — the
 //!   family's path-level solve, registered on its `FAMILY_DISPATCH` row;
-//! - the gate projection ([`concentrated_liquidity_to_math`]) — V3/V4 → `HopMath::ConcentratedLiquidity`;
+//! - the gate projection ([`concentrated_liquidity_to_math`]) — V3/V4 →
+//!   `HopMath::ConcentratedLiquidity`;
 //! - the family's envelope lines ([`concentrated_liquidity_hop_lines`]) — the tangent fan derived
 //!   from the hop's carried crossing table, plus its pool-static fan/key
 //!   derivation.
@@ -73,9 +75,10 @@ pub(crate) fn refine_bounds(lines: &[Line]) -> Vec<RefineBound> {
 /// Solve a walkable path — every hop is V2, V3, or V4 — with the active-set
 /// piecewise Möbius walk.
 ///
-/// All-concentrated-liquidity and mixed V2+concentrated liquidity paths share this ONE construction flow: one
-/// borrowed hop view per position (V2 state or prepared concentrated liquidity hop) into the one
-/// solve body — nothing cloned, derived, or rebuilt per solve.
+/// All-concentrated-liquidity and mixed V2+concentrated liquidity paths share
+/// this ONE construction flow: one borrowed hop view per position (V2 state
+/// or prepared concentrated liquidity hop) into the one solve body — nothing
+/// cloned, derived, or rebuilt per solve.
 ///
 /// The pre-built `IntV3TickRangeSequence` from `resolve_path` was constructed
 /// directly from U256 values (no f64 conversion); V3 and V4 hops produce the

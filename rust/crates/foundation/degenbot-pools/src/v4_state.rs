@@ -424,7 +424,9 @@ impl V4PoolState {
     }
 
     /// Seed `known_bitmap_words` from the current `tick_data` keys' word
-    /// positions (Sparse pools only; Tracked bypasses detection).
+    /// positions. Unlike V3, registration seeds for every coverage; the
+    /// shared verb (`families/concentrated_liquidity/state_seeding.rs`)
+    /// leaves the coverage scope to the caller.
     pub fn seed_known_bitmap_words(&mut self, tick_spacing: i32) {
         state_seeding::seed_known_bitmap_words(self, tick_spacing);
     }
@@ -707,7 +709,8 @@ impl state_walk::WalkHost for V4PoolState {
 /// for zero amount / overflow / invariant violations;
 /// [`SimulateSwapError::MissingTickWord(w)`] when `coverage == Sparse` and the
 /// walk entered an unfetched tick-bitmap word (caller fetches + retries).
-#[expect(clippy::too_many_lines)] // faithful port of V3/V4's `_calculate_swap`; mirroring `v3_simulate_swap`.
+// Faithful port of V3/V4's `_calculate_swap`; mirroring `v3_simulate_swap`.
+#[expect(clippy::too_many_lines)]
 pub fn v4_simulate_swap(
     state: &V4PoolState,
     fee: u32,
@@ -815,8 +818,10 @@ pub fn v4_simulate_swap(
         sqrt_price_x96 = step.sqrt_price_next;
 
         // V4 accounting — matches Uniswap V4 `Pool.sol::swap()` (lines 371-381):
-        //   exactInput  (amountSpecified < 0): remaining += (amountIn + feeAmount); calculated += amountOut
-        //   exactOutput (amountSpecified > 0): remaining -= amountOut;              calculated -= (amountIn + feeAmount)
+        //   exactInput  (amountSpecified < 0): remaining += (amountIn + feeAmount);
+        //                                      calculated += amountOut
+        //   exactOutput (amountSpecified > 0): remaining -= amountOut;
+        //                                      calculated -= (amountIn + feeAmount)
         // The earlier code had both the flag polarity inverted (is_positive vs
         // V4's is_negative) AND the quantities swapped between remaining/
         // calculated — they partially cancelled, producing a ~1-wei over-count
