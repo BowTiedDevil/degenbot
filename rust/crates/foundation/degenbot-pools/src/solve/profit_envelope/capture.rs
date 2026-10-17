@@ -16,7 +16,7 @@ use crate::int_v3_hop::IntV3TickRangeSequence;
 use super::derive::HopMath;
 
 /// One hop slot of a degenerate-path capture event: its index, a
-/// family/rejection descriptor string, and (CL only) the full tick-range
+/// family/rejection descriptor string, and (concentrated liquidity only) the full tick-range
 /// sequence the offline replay harness reconstructs from.
 #[derive(Clone, Debug)]
 pub struct CapturedHop<'a> {
@@ -25,7 +25,7 @@ pub struct CapturedHop<'a> {
     /// (e.g. `v2(r_in=..,r_out=..)`) — the row's `family` field. Produced by
     /// [`HopMath::family_label`], shared with the gate's diagnostic.
     pub family: String,
-    /// The hop's CL tick-range sequence, or `None` for every non-CL family
+    /// The hop's concentrated liquidity tick-range sequence, or `None` for every non-concentrated-liquidity family
     /// (serialized as JSON `null`).
     pub ranges: Option<&'a IntV3TickRangeSequence>,
 }
@@ -44,9 +44,9 @@ pub struct DegeneratePathEvent<'a> {
 }
 
 impl<'a> DegeneratePathEvent<'a> {
-    /// Build the event from the gate's hop views: serialize every hop's CL
+    /// Build the event from the gate's hop views: serialize every hop's concentrated liquidity
     /// ranges (V2/Solidly/Weighted/ReserveCap are captured as their family
-    /// name + key scalars — the off-line harness reconstructs CL from ranges,
+    /// name + key scalars — the off-line harness reconstructs concentrated liquidity from ranges,
     /// V2 from `(reserve_in, reserve_out)`, etc.).
     #[must_use]
     pub fn from_hops(
@@ -110,7 +110,7 @@ impl<'a> DegeneratePathEvent<'a> {
     }
 }
 
-/// Serialize a CL hop's tick-range sequence to a JSON value for the
+/// Serialize a concentrated liquidity hop's tick-range sequence to a JSON value for the
 /// degenerate-path capture harness. Each range carries the 8 primitive fields
 /// the offline replay harness needs to reconstruct an `IntV3TickRangeSequence`
 /// (decimal-string big-ints, matching the `HeavyPathCapture` JSONL schema in

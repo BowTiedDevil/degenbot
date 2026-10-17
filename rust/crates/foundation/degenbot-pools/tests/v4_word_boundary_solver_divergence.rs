@@ -113,8 +113,8 @@ fn build_sparse_v4_state(base_liquidity: u128, ticks: &[(i32, i128)]) -> V4PoolS
     state
 }
 
-/// The solver's CL-hop output for `amount_in` (exact-in) — same assembly
-/// `int_simulate_mixed_path_n` uses for a CL hop's `hop_outputs[i]`.
+/// The solver's concentrated-liquidity-hop output for `amount_in` (exact-in) — same assembly
+/// `int_simulate_mixed_path_n` uses for a concentrated liquidity hop's `hop_outputs[i]`.
 fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Option<U256> {
     let n = seq.ranges.len();
     let mut chosen_k = 0usize;

@@ -606,7 +606,7 @@ mod tests {
         results
     }
     /// FLEET FIXTURE (LW-T9 single-arm): the fleet-hosted solve
-    /// executor produces exact, honest outcomes on the committed heavy-CL
+    /// executor produces exact, honest outcomes on the committed heavy-concentrated-liquidity
     /// capture fixture — outcomes can never exceed submissions, every
     /// submitted path yields exactly one outcome (`solve_one_path` verdict
     /// or failure), and the pinned-seat parity semantics carry (

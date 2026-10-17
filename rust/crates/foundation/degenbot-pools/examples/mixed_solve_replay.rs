@@ -1,5 +1,5 @@
 // Dev/example-only harness: offline replay + profiler for captured *mixed*
-// V2+CL solver fixtures. Pedantic lints production code denies are relaxed.
+// V2+concentrated liquidity solver fixtures. Pedantic lints production code denies are relaxed.
 #![expect(
     clippy::cast_lossless,
     clippy::cast_possible_truncation,
@@ -14,7 +14,7 @@
     clippy::unnecessary_cast
 )]
 
-//! Offline heavy mixed V2+CL path replay harness with N-repeat stable timing.
+//! Offline heavy mixed V2+concentrated liquidity path replay harness with N-repeat stable timing.
 //! Mirrors `concentrated_liquidity_solve_replay.rs` for paths that dispatch to
 //! `solve_piecewise` (V2→V3→V3, V2→V3→V4, …).
 //!
@@ -25,7 +25,7 @@
 //! Re-reads a `heavy_mixed_solve_captures.jsonl`-FORMAT capture produced by
 //! the live hook
 //! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`), rebuilds
-//! `IntHopState` per V2 hop + `IntV3TickRangeSequence` per CL hop from the
+//! `IntHopState` per V2 hop + `IntV3TickRangeSequence` per concentrated liquidity hop from the
 //! captured fields, and re-runs `solve_piecewise` — the exact
 //! decomposed call `mixed::solve_mixed_path_int` makes — OFFLINE, with no
 //! bot / RPC / DB. Each path is solved N times; the median / p95 / min wall
@@ -116,7 +116,7 @@ fn parse_path(
                 )));
                 concentrated_liquidity_seqs.push(None);
             }
-            "CL" => {
+            "concentrated liquidity" => {
                 let ranges = hop
                     .get("ranges")
                     .and_then(Value::as_array)

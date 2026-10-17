@@ -1,4 +1,4 @@
-//! Tick-map assembly: the one `Db → Chain` precedence for CL pools.
+//! Tick-map assembly: the one `Db → Chain` precedence for concentrated liquidity pools.
 //!
 //! [`resolve_tick_map_arm`] is the single precedence decision — the Db read
 //! first, then (on a Db miss) the Chain transport — shared by every caller:
@@ -165,7 +165,7 @@ pub(crate) fn dump_tick_map_seed(
     );
 }
 
-/// Which arm supplied a resolved CL tick map — the precedence decision before
+/// Which arm supplied a resolved concentrated liquidity tick map — the precedence decision before
 /// the seed vocabulary stamps provenance.
 pub enum TickMapArm {
     /// A Db hit: the complete map, or a legitimately-empty `Tracked` pool.
@@ -209,7 +209,7 @@ impl TickMapArm {
     }
 }
 
-/// The one `Db → Chain` precedence decision for CL tick maps.
+/// The one `Db → Chain` precedence decision for concentrated liquidity tick maps.
 ///
 /// The Db read is always attempted first, and its outcome alone decides
 /// whether the Chain transport runs. `Ok(Some(seed))` means the Db arm is

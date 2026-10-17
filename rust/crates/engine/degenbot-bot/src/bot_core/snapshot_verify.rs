@@ -1,4 +1,4 @@
-//! Snapshot store + CL-registration orchestration (ADR-006 slice 5b / D4).
+//! Snapshot store + concentrated-liquidity-registration orchestration (ADR-006 slice 5b / D4).
 //!
 //! Extracted from `py_binding.rs` so the pure-logic core is testable without
 //! `PyO3`. `py_binding.rs` (in `degenbot-python`) keeps the `PyO3` arg-parsing
@@ -18,7 +18,7 @@
 //! `degenbot-python::bot::engine::register`.
 //!
 //! ## What's pure here
-//! - [`register_with_concentrated_liquidity_buffers`] — the CL pool-registration orchestration:
+//! - [`register_with_concentrated_liquidity_buffers`] — the concentrated liquidity pool-registration orchestration:
 //!   register → apply backfill buffer → capture backfill-boundary snapshot →
 //!   apply pump buffer, all under a single engine-lock acquisition (so the pump
 //!   cannot race between registration and verification). Pure: generic over
@@ -45,7 +45,7 @@ use crate::bot_core::{TickInfo, V3PoolState, V4PoolState};
 /// (`crate::bot_core::verification_retry`) can branch on the fatal split and
 /// the Python seam can fold the two transient origins into one retryable
 /// exception type.
-/// The minimal on-chain RPC surface the two-phase CL verification needs
+/// The minimal on-chain RPC surface the two-phase concentrated liquidity verification needs
 /// (ADR-006 slice-5 candidate-2 completion).
 ///
 /// The pure orchestrator [`run_concentrated_liquidity_verification`] drives this trait without
@@ -121,7 +121,7 @@ pub trait VerifyRpc {
     ) -> Result<(), RefusalKind>;
 }
 
-/// Run the two-phase CL verification (snapshot block + backfill block) if
+/// Run the two-phase concentrated liquidity verification (snapshot block + backfill block) if
 /// configured, in order.
 ///
 /// Lifted verbatim-in-shape from `py_binding.rs` (ADR-006 slice-5 candidate-2):
@@ -177,7 +177,7 @@ where
     Ok(())
 }
 
-/// Helper that registers a CL pool, applies backfill/pump buffers, and captures
+/// Helper that registers a concentrated liquidity pool, applies backfill/pump buffers, and captures
 /// a backfill-boundary snapshot while the engine lock is held.
 ///
 /// The lock ordering is load-bearing: `register` + `apply_backfill` +

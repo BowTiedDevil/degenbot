@@ -14,7 +14,7 @@
 //! against independent literals. Re-deriving slot indices at a call site
 //! is how layout drift returns (the pancake classification incident — a
 //! fork pool read through canonical Uniswap indices misreads every field).
-//! CL-family mapping slots delegate to [`crate::v3_storage_slots`] /
+//! concentrated-liquidity-family mapping slots delegate to [`crate::v3_storage_slots`] /
 //! [`crate::v3_pancakeswap_storage_slots`] through the [`ConcentratedLiquiditySlotLayout`]
 //! selector.
 // Solidity/EVM identifiers (uint112, slot0, liquidity, uint256, SSTORE,
@@ -26,7 +26,7 @@ use crate::v3_storage_slots::{sign_extend_int16, sign_extend_int24};
 use crate::ConcentratedLiquiditySlotLayout;
 
 /// Mask selecting the low 160 bits of a `U256` (the `uint160 sqrtPriceX96`
-/// field width inside CL `slot0`).
+/// field width inside concentrated liquidity `slot0`).
 const MASK_160: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0xffff_ffff, 0]);
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -76,15 +76,15 @@ pub fn decode_v2_reserves_word(word: U256) -> V2ReservesParts {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// CL (V3/V4) — slot0, liquidity, per-tick words, mapping slots, masks
+// concentrated liquidity (V3/V4) — slot0, liquidity, per-tick words, mapping slots, masks
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Tracked bits of a CL `slot0` word: `uint160 sqrtPriceX96 | int24 tick`
+/// Tracked bits of a concentrated liquidity `slot0` word: `uint160 sqrtPriceX96 | int24 tick`
 /// (low 184 bits). The observation/fee-protocol/unlocked bits are NOT
 /// tracked — packed zero, masked out of comparisons.
 pub const CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK: B256 = low_bits_mask(184);
 
-/// Tracked bits of a CL `liquidity` word — the low-128 `uint128`.
+/// Tracked bits of a concentrated liquidity `liquidity` word — the low-128 `uint128`.
 pub const CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK: B256 = low_bits_mask(128);
 
 /// Tracked bits of a per-tick `ticks(tick)` slot+0 word — the FULL 256 bits
@@ -92,7 +92,7 @@ pub const CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK: B256 = low_bits_mask(12
 /// carries both).
 pub const CONCENTRATED_LIQUIDITY_TICK_WORD_MASK: B256 = low_bits_mask(256);
 
-/// Pack a CL `slot0` word with untracked bits zeroed:
+/// Pack a concentrated liquidity `slot0` word with untracked bits zeroed:
 /// `uint160 sqrtPriceX96 | int24 tick << 160`. sqrtPriceX96 is masked to
 /// 160 bits first so a stray high bit cannot bleed into the tick field.
 ///
@@ -112,7 +112,7 @@ pub fn concentrated_liquidity_slot0_tracked_word(sqrt_price_x96: U256, tick: i32
         .into()
 }
 
-/// Pack a CL `liquidity` word (`uint128`, high half zero on-chain).
+/// Pack a concentrated liquidity `liquidity` word (`uint128`, high half zero on-chain).
 #[must_use]
 pub fn concentrated_liquidity_liquidity_tracked_word(liquidity: u128) -> B256 {
     U256::from(liquidity).to_be_bytes::<32>().into()
@@ -139,7 +139,7 @@ pub fn decode_tick_word(word: U256) -> (u128, i128) {
     (gross, net)
 }
 
-/// The `ticks(tick)` mapping slot for a per-layout CL pool: ticks live at
+/// The `ticks(tick)` mapping slot for a per-layout concentrated liquidity pool: ticks live at
 /// base 5 (Uniswap V3) or base 6 (Pancake V3 fork).
 #[must_use]
 pub fn concentrated_liquidity_tick_mapping_slot(
@@ -149,7 +149,7 @@ pub fn concentrated_liquidity_tick_mapping_slot(
     tick_mapping_slot_at_base(tick, U256::from(layout.ticks_mapping_slot()))
 }
 
-/// The `tickBitmap` per-word slot for a per-layout CL pool: base 6
+/// The `tickBitmap` per-word slot for a per-layout concentrated liquidity pool: base 6
 /// (Uniswap V3) or base 7 (Pancake V3 fork).
 #[must_use]
 pub fn concentrated_liquidity_tick_bitmap_word_slot(
@@ -185,7 +185,7 @@ pub fn tick_mapping_slot_at_base(tick: i32, base: U256) -> U256 {
 }
 
 /// Recover the tick index whose `ticks(tick)` slot equals `slot` against a
-/// per-layout CL pool's mapping base — the preimage side of
+/// per-layout concentrated liquidity pool's mapping base — the preimage side of
 /// [`concentrated_liquidity_tick_mapping_slot`].
 ///
 /// Delegates to [`recover_tick_from_slot_at_base`] with the layout's ticks

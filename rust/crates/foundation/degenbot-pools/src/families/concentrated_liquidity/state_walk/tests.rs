@@ -257,7 +257,7 @@ fn none_tick_ranges_cached_to_avoid_rewalk_on_both_adapters() {
 
 // ------------------------------------------------------------------
 // build_int_v3_sequence / build_int_v4_sequence — the integer
-// tick-range walks (identical CL math; V4's packed `slot0.protocolFee`
+// tick-range walks (identical concentrated liquidity math; V4's packed `slot0.protocolFee`
 // rides its adapter call as the fee-combine input).
 // ------------------------------------------------------------------
 

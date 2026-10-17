@@ -830,7 +830,7 @@ impl SimulatePath {
     }
 
     /// The ADR-033 encode intake for this path — the strategy's per-path
-    /// projection that owns the amount-triple invariants (the CL overfeed
+    /// projection that owns the amount-triple invariants (the concentrated liquidity overfeed
     /// clamp lands on `consumed_inputs` before this point). The encoder keeps
     /// its two-slice intake (the plan-path clamp rewrites consumed values),
     /// so this cold-path projection materializes the two views from the
@@ -1101,7 +1101,7 @@ where
         profit: None,
     };
     // C3 — int128 check (mirrors the oracle's guard). The amount fed into each
-    // V4 hop is `consumed_inputs[i]` (the CL-hop clamp's executable forward),
+    // V4 hop is `consumed_inputs[i]` (the concentrated-liquidity-hop clamp's executable forward),
     // so the guard checks the clamped input, not hop_outputs[i-1].
     if path.steps.len() != path.path_info.hops.len() {
         return Ok(None);
@@ -2780,7 +2780,7 @@ mod tests {
     }
 
     /// The end-to-end clamp attestation:
-    /// the CL-hop clamp (`consumed_inputs`) reaches EXECUTABLE BYTES through
+    /// the concentrated-liquidity-hop clamp (`consumed_inputs`) reaches EXECUTABLE BYTES through
     /// `encode_cmd_stream` — the exact fn `simulate_path_on_evm` calls to build
     /// the executor command stream.
     ///
@@ -2802,7 +2802,7 @@ mod tests {
             path_id: 5000,
             optimal_input: 1_000_000_000_000_000_000u128,
             // V2 out = 2e9, V4 out = 2_001e15, V3 out = 2_001e6.
-            // The CL clamp: V4 (idx 1) swap-in is ONE BELOW its forward.
+            // The concentrated liquidity clamp: V4 (idx 1) swap-in is ONE BELOW its forward.
             steps: Box::new([
                 SolveStep {
                     output: 2_000_000_000u128,

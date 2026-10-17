@@ -1,7 +1,7 @@
 //! The concentrated-liquidity family module (ADR-071 D1/D2).
 //!
 //! GLOSSARY.md "Family module": the solver crate's single module owning
-//! everything the CL hop family contributes to a solve and its bound. CL is
+//! everything the concentrated liquidity hop family contributes to a solve and its bound. concentrated liquidity is
 //! the extreme case: V3 and V4 share one solve (ADR-069), so both project to
 //! the same gate view and walk the one walkable-path entry.
 //!
@@ -32,7 +32,7 @@ use crate::solve::profit_envelope::{
 };
 use crate::solve::runtime::SolveRuntimeConfig;
 
-/// One CL hop's gate view: the sequence plus its crossing table.
+/// One concentrated liquidity hop's gate view: the sequence plus its crossing table.
 #[derive(Clone, Debug)]
 pub struct ConcentratedLiquidityHop<'a> {
     pub seq: &'a IntV3TickRangeSequence,
@@ -56,7 +56,7 @@ pub(crate) fn concentrated_liquidity_to_math(hop: &ResolvedHop) -> Option<HopMat
 }
 
 /// Translate the envelope's composed bound lines into the kernel's own
-/// refine-window vocabulary at the seam. The CL family module is the bound
+/// refine-window vocabulary at the seam. The concentrated liquidity family module is the bound
 /// side; the kernel names no envelope type.
 #[must_use]
 pub(crate) fn refine_bounds(lines: &[Line]) -> Vec<RefineBound> {
@@ -73,8 +73,8 @@ pub(crate) fn refine_bounds(lines: &[Line]) -> Vec<RefineBound> {
 /// Solve a walkable path — every hop is V2, V3, or V4 — with the active-set
 /// piecewise Möbius walk.
 ///
-/// All-CL and mixed V2+CL paths share this ONE construction flow: one
-/// borrowed hop view per position (V2 state or prepared CL hop) into the one
+/// All-concentrated-liquidity and mixed V2+concentrated liquidity paths share this ONE construction flow: one
+/// borrowed hop view per position (V2 state or prepared concentrated liquidity hop) into the one
 /// solve body — nothing cloned, derived, or rebuilt per solve.
 ///
 /// The pre-built `IntV3TickRangeSequence` from `resolve_path` was constructed
@@ -96,11 +96,11 @@ pub(crate) fn solve_walkable_path_int(
     // side; the kernel names no envelope type).
     let window = walk_env.map(|env| refine_bounds(&env.lines));
 
-    // ONE route for every path this arm accepts (all-CL included): one
-    // borrowed hop view per position — V2 borrows the resolved state; CL
+    // ONE route for every path this arm accepts (all-concentrated-liquidity included): one
+    // borrowed hop view per position — V2 borrows the resolved state; concentrated liquidity
     // borrows the projection's prepared value (the tick-range sequence paired
     // with its `Arc` tables), so the positional pairing is structural and
-    // nothing is cloned, derived, or rebuilt per solve. The all-CL dispatch
+    // nothing is cloned, derived, or rebuilt per solve. The all-concentrated-liquidity dispatch
     // branch this replaces cloned the prepared hops (three `Arc` bumps per
     // hop) into a second solve body; the intake shape survives only as the
     // forwarding `solve_concentrated_liquidity_piecewise` convenience for offline callers.
@@ -120,7 +120,7 @@ pub(crate) fn solve_walkable_path_int(
                     ),
                 );
             }
-            // Not a walkable V2/CL path (the caller routes other families
+            // Not a walkable V2/concentrated liquidity path (the caller routes other families
             // elsewhere); refuse rather than solve a partial composition.
             _ => {
                 return crate::solve::mixed::SolveArmOutcome::refused(
@@ -162,10 +162,10 @@ pub(crate) fn solve_walkable_path_int(
 }
 
 // ---------------------------------------------------------------------------
-// CL envelope lines: the tangent fan + its pool-static cache key
+// concentrated liquidity envelope lines: the tangent fan + its pool-static cache key
 // ---------------------------------------------------------------------------
 
-/// The first eligible crossing's tangent: the only CL line that anchors at the
+/// The first eligible crossing's tangent: the only concentrated liquidity line that anchors at the
 /// table's live in-range price, so it is derived per call and never cached.
 enum ConcentratedLiquidityHead {
     /// No crossing carried liquidity (the table is degenerate).
@@ -251,7 +251,7 @@ fn concentrated_liquidity_keep_selection(
         // Loop-20 mass-weighted sampling: rank keep-indices by their range's
         // input capacity (max gross in range) instead of even index spacing,
         // keeping the heaviest shelves plus the first and last (which anchor
-        // the envelope at both domain endpoints). The CL tangents sit on the
+        // the envelope at both domain endpoints). The concentrated liquidity tangents sit on the
         // Pareto front (increasing intercept, decreasing slope), so ORDER
         // never matters to min() — only membership.
         let mut ranked: Vec<(U512, usize)> = Vec::with_capacity(n_keeps);
@@ -286,7 +286,7 @@ fn concentrated_liquidity_keep_selection(
     (n_keeps, sel)
 }
 
-/// Pool-static CL tangent set: every sampled line after the head, plus the
+/// Pool-static concentrated liquidity tangent set: every sampled line after the head, plus the
 /// asymptotic cap from the last crossing. A pure function of the crossing
 /// table (the head alone anchors at the live price), so it is cacheable by
 /// content.
@@ -397,7 +397,7 @@ fn sample_tangent_lines(lines: &[Line], max_tangent_lines: usize) -> Vec<Line> {
     sampled
 }
 
-/// CL hop lines + domain cap. The head tangent (live in-range price) is
+/// concentrated liquidity hop lines + domain cap. The head tangent (live in-range price) is
 /// derived per call; the pool-static fan after it is reused from `fan_cache`
 /// when present, keyed by the fan's content hash and generationed by the
 /// solve-cycle epoch.
@@ -470,8 +470,8 @@ pub(crate) fn concentrated_liquidity_hop_lines(
         return None;
     };
     let seq = ch.seq;
-    // Tangent-line budget: dense CL pools emit one tangent per range,
-    // and composition across two CL hops multiplies them (K² not
+    // Tangent-line budget: dense concentrated liquidity pools emit one tangent per range,
+    // and composition across two concentrated liquidity hops multiplies them (K² not
     // R1×R2) — so the set is sampled to `max_tangent_lines`. Keeping
     // fewer tangents only LOOSENS the envelope (every tangent is a
     // global upper bound), so the gate never skips a profitable path.
@@ -494,7 +494,7 @@ pub(crate) fn concentrated_liquidity_hop_lines(
     )
 }
 
-/// Static-content key for a CL hop's pool-static tangent fan. The fan is a
+/// Static-content key for a concentrated liquidity hop's pool-static tangent fan. The fan is a
 /// function of the SELECTED crossings only (the head anchors at the live
 /// in-range price and is rebuilt per call), so the key hashes just those
 /// entries' derivation inputs plus the cap-tail inputs — re-hashing the whole
@@ -593,7 +593,7 @@ mod tests {
         U256::from(get_sqrt_ratio_at_tick_internal(tick).unwrap_or_default())
     }
 
-    /// Dense zero-for-one CL sequence: `n` contiguous 1-tick ranges below the
+    /// Dense zero-for-one concentrated liquidity sequence: `n` contiguous 1-tick ranges below the
     /// anchor, all with `liq` — a fat table that trips the tangent sample cap.
     fn fat_concentrated_liquidity_seq(n: i32, liq: u128) -> IntV3TickRangeSequence {
         let ranges = (0..n)

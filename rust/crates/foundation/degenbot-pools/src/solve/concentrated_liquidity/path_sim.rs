@@ -1,10 +1,10 @@
-//! Public, byte-exact path simulator over precomputed CL hop tables.
+//! Public, byte-exact path simulator over precomputed concentrated liquidity hop tables.
 //!
 //! External harnesses (benchmarks, offline replays) need to evaluate path
 //! profit through the SAME integer oracle the active-set walk uses, without
 //! reaching into the walk's private machinery. [`ConcentratedLiquidityPathSim`] mirrors
 //! [`crate::solve::concentrated_liquidity::active_set::simulate_walk_path`] — the self-determined-crossing
-//! forward simulator — over a path of CL sequences, deriving (or reusing) each
+//! forward simulator — over a path of concentrated liquidity sequences, deriving (or reusing) each
 //! hop's crossing table once at construction so per-candidate evaluation is
 //! pure integer arithmetic.
 
@@ -17,7 +17,7 @@ use super::hop_sim::simulate_v3_range_swap;
 use super::tally::WalkTally;
 use super::IntV3TickRangeSequence;
 
-/// The forward simulation of a CL path at one input: per-hop outputs, the
+/// The forward simulation of a concentrated liquidity path at one input: per-hop outputs, the
 /// ending-range index landed in per hop, and the final output.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConcentratedLiquidityPathOutcome {
@@ -29,7 +29,7 @@ pub struct ConcentratedLiquidityPathOutcome {
     pub landed: Vec<usize>,
 }
 
-/// A reusable, byte-exact CL path simulator.
+/// A reusable, byte-exact concentrated liquidity path simulator.
 ///
 /// Construction derives each hop's crossing table and word profiles once (or
 /// O(1)-clones them from supplied prepared hops); [`ConcentratedLiquidityPathSim::output`] then
@@ -134,7 +134,7 @@ mod tests {
         U256::from(get_sqrt_ratio_at_tick_internal(tick).unwrap())
     }
 
-    /// Build a multi-range CL sequence in swap order around `anchor_tick`
+    /// Build a multi-range concentrated liquidity sequence in swap order around `anchor_tick`
     /// (the construction pattern of `examples/synth_corpus_gen.rs`).
     fn multi_range_sequence(
         anchor_tick: i32,
@@ -178,7 +178,7 @@ mod tests {
     /// (anchor, anchor±1..8, every crossing boundary ±1 and +37, plus 0/1).
     fn assert_parity(sequences: &[&IntV3TickRangeSequence], label: &str) {
         let cfg = SolveRuntimeConfig::default();
-        // The projection's shape is one `PreparedConcentratedLiquidityHop` per CL hop.
+        // The projection's shape is one `PreparedConcentratedLiquidityHop` per concentrated liquidity hop.
         let prepared_hops: Vec<PreparedConcentratedLiquidityHop> = sequences
             .iter()
             .map(|s| {

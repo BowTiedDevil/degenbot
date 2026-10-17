@@ -18,9 +18,9 @@
 
 //! Offline solver-parallelism scaling probe .
 //!
-//! Reconstructs production ResolvedMixedPath inputs (V3 CL hops carrying the
+//! Reconstructs production ResolvedMixedPath inputs (V3 concentrated liquidity hops carrying the
 //! production build_concentrated_liquidity_word_profiles + build_concentrated_liquidity_crossing_table precomputes)
-//! from the committed heavy-CL capture fixture and re-runs the production
+//! from the committed heavy-concentrated-liquidity capture fixture and re-runs the production
 //! solver entry mixed::solve_path_with_min_profit under controlled thread
 //! counts. Measures wall / sum-CPU / efficiency per configuration so the
 //! production drain's achieved parallelism (4.21/8 in the KGXFT7 gate-on run)

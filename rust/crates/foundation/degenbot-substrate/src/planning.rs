@@ -212,7 +212,7 @@ pub enum ExplicitPoolState {
         /// consumer agrees. Never defaulted.
         slot_layout: ConcentratedLiquiditySlotLayout,
     },
-    /// V4 CL state with its manager-keyed identity: the shared
+    /// V4 concentrated liquidity state with its manager-keyed identity: the shared
     /// [`PlanningPoolParams`] carries the generic `address` + token pair,
     /// which map to the `PoolManager` and `currency0`/`currency1`; the bytes32
     /// `pool_id` and the key's fee/spacing/hooks are V4-only and ride here.

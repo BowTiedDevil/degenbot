@@ -75,7 +75,7 @@ pub struct Caveats(u8);
 impl Caveats {
     /// Sparse tick coverage: the walk may have traversed unfetched regions.
     pub const SPARSE_COVERAGE: Self = Self(1 << 0);
-    /// The pool carries an amount-modifying V4 hook — standard CL math may
+    /// The pool carries an amount-modifying V4 hook — standard concentrated liquidity math may
     /// mis-price the swap. (Reachable since hooked pools were admitted.)
     pub const HOOKED_POOL: Self = Self(1 << 1);
 
@@ -148,7 +148,7 @@ pub struct ConcentratedLiquiditySwapOutcome {
 }
 
 /// Per-family simulation payloads (invalid states unrepresentable: a V2 hop
-/// has no end-state detail to fake; CL outcomes always carry full state).
+/// has no end-state detail to fake; concentrated liquidity outcomes always carry full state).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SwapOutcome {
     /// Constant-product family result.
@@ -225,10 +225,10 @@ pub enum SwapRead {
     FetchExhausted { word: i32 },
 }
 
-/// A non-CL pool was asked for an override (hypothetical CL) simulation.
+/// A non-concentrated-liquidity pool was asked for an override (hypothetical concentrated liquidity) simulation.
 ///
 /// The override seam builds a transient V3/V4 state from override scalars; a
-/// registered non-CL family has no such state, so the request is a typed
+/// registered non-concentrated-liquidity family has no such state, so the request is a typed
 /// refusal instead of a bare `None` indistinguishable from a compute miss.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsupportedOverrideFamily {
@@ -256,7 +256,7 @@ fn unsigned_to_user_delta(x: U256) -> I256 {
     I256::try_from(x).unwrap_or(I256::MAX)
 }
 
-/// Build the rich CL payload from a raw engine outcome.
+/// Build the rich concentrated liquidity payload from a raw engine outcome.
 #[must_use]
 pub(crate) fn concentrated_liquidity_payload(
     outcome: &V3SwapOutcome,
@@ -397,14 +397,14 @@ pub struct OverrideSwap {
     pub tick_data: HashMap<i32, ::degenbot_pools::TickInfo>,
 }
 
-// The transient (hypothetical) CL target machinery, the per-family compute
+// The transient (hypothetical) concentrated liquidity target machinery, the per-family compute
 // arms, the engine sign mapping, and the fetch→merge→retry policy moved to
 // the family read module (ADR-073 D1):
 // degenbot_pools::families::concentrated_liquidity — the swap-read door owns
 // ALL variants (registered stateless / armed / disarm-fetch / override /
 // discovery) behind `read_swap`.
 impl BotState {
-    /// the missing bitmap words a CL swap
+    /// the missing bitmap words a concentrated liquidity swap
     /// would need, WITHOUT fetching and WITHOUT mutating registered state
     /// (a forged-empty drive walks a TRANSIENT clone). Multi-word safe: one
     /// pass lists every missing word on the crossing (pair-review condition
@@ -419,14 +419,14 @@ impl BotState {
         if request.amount_specified.is_zero() {
             return Some(Vec::new());
         }
-        // One CL dispatch row (ADR-073 D2): the discovery pass is the
+        // One concentrated liquidity dispatch row (ADR-073 D2): the discovery pass is the
         // family read module's read_swap door in Discovery mode over a
         // transient the door builds; the door never fetches and never
         // touches registered state.
         let _ = block;
         let entry = self.registry.pools.get(&pool_id)?;
         let source = match entry {
-            // Non-CL families never fetch: nothing to stage.
+            // Non-concentrated-liquidity families never fetch: nothing to stage.
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
@@ -492,7 +492,7 @@ impl BotState {
     /// # Errors
     ///
     /// [`UnsupportedOverrideFamily`] when the pool is registered under a
-    /// non-CL family (no transient CL state to build).
+    /// non-concentrated-liquidity family (no transient concentrated liquidity state to build).
     pub fn simulate_override_disarmed(
         &self,
         over: &OverrideSwap,
@@ -512,7 +512,7 @@ impl BotState {
             return Some(Vec::new());
         }
         let entry = self.registry.pools.get(&over.pool_id)?;
-        // One CL dispatch row (ADR-073 D2): the override discovery pass is
+        // One concentrated liquidity dispatch row (ADR-073 D2): the override discovery pass is
         // the family read module's read_swap door in Discovery mode over a
         // Sparse transient the door builds from the override scalars. The
         // checked-word set is NOT mirrored (a hypothetical has no
@@ -565,7 +565,7 @@ impl BotState {
     /// # Errors
     ///
     /// [`UnsupportedOverrideFamily`] when the pool is registered under a
-    /// non-CL family (no transient CL state to build).
+    /// non-concentrated-liquidity family (no transient concentrated liquidity state to build).
     pub fn simulate_override(
         &self,
         over: &OverrideSwap,
@@ -586,7 +586,7 @@ impl BotState {
         let Some(entry) = self.registry.pools.get(&over.pool_id) else {
             return Ok(None);
         };
-        // One CL dispatch row (ADR-073 D2): the override sim is the family
+        // One concentrated liquidity dispatch row (ADR-073 D2): the override sim is the family
         // read module's read_swap door over a Sparse transient the door
         // builds from the override scalars. Registered pools passed the
         // hook/dynamic-fee admission gate, so the transient's zeroed
@@ -769,7 +769,7 @@ impl BotState {
                     family: super::entry_family(entry),
                 },
             },
-            // One CL dispatch row (ADR-073 D2): the swap-read goes through
+            // One concentrated liquidity dispatch row (ADR-073 D2): the swap-read goes through
             // the family read module's read_swap door — registered state,
             // armed or disarmed miss recovery, engine sign mapping and
             // per-design compute all behind the door.
@@ -779,7 +779,7 @@ impl BotState {
         }
     }
 
-    /// The ONE registered-state CL swap-read row: classify the entry (the
+    /// The ONE registered-state concentrated liquidity swap-read row: classify the entry (the
     /// registry seam), then everything design-specific happens behind the
     /// family read module's [`concentrated_liquidity::read_swap`] door. Caveats assembly (the
     /// outcome-shape adapter) stays here because [`Caveats`] is this crate's
@@ -926,7 +926,7 @@ impl BotState {
     }
 }
 
-/// Which outcome variant a CL drive should assemble.
+/// Which outcome variant a concentrated liquidity drive should assemble.
 #[derive(Clone, Copy)]
 enum SwapOutcomeFamily {
     V3,
@@ -934,7 +934,7 @@ enum SwapOutcomeFamily {
 }
 
 // finish_concentrated_liquidity retired with the drive policy: the payload
-// assembly now runs at the ONE CL row ([`BotState::concentrated_liquidity_swap_read`])
+// assembly now runs at the ONE concentrated liquidity row ([`BotState::concentrated_liquidity_swap_read`])
 // directly over the family door's outcome.
 
 #[cfg(test)]
@@ -1031,7 +1031,7 @@ mod tests {
         };
         let missing = core
             .swap_missing_words(99, pool_id, &request)
-            .expect("CL pool yields discovery");
+            .expect("concentrated liquidity pool yields discovery");
         assert_eq!(missing.len(), 1, "single crossing -> one word here");
         assert_eq!(calls.load(Ordering::Relaxed), 0, "discovery never fetches");
     }
@@ -1058,7 +1058,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // CL payload: user-perspective signs from unsigned engine amounts.
+    // concentrated liquidity payload: user-perspective signs from unsigned engine amounts.
     #[test]
     fn concentrated_liquidity_payload_signs_follow_user_perspective() {
         let outcome = V3SwapOutcome {
@@ -1243,7 +1243,7 @@ mod tests {
         );
     }
 
-    /// An override (hypothetical CL) request against a non-CL family is a
+    /// An override (hypothetical concentrated liquidity) request against a non-concentrated-liquidity family is a
     /// typed refusal, not a bare `None` an override miss could produce.
     #[test]
     fn override_simulation_on_a_non_concentrated_liquidity_family_is_typed() {

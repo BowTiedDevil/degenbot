@@ -126,7 +126,7 @@ pub(super) fn lpt_bins(
     // Loop-12 lab: previous-block measured walk sims refine the
     // LPT cost; the ledger's typed snapshot is taken once (single
     // lock) before binning. Loop-18: measured gate us rides the same
-    // snapshot - gate-heavy paths (dense-CL compose) need the bins to
+    // snapshot - gate-heavy paths (dense-concentrated-liquidity compose) need the bins to
     // know they are expensive despite sims~0.
     let last_cost = shared.path_cost_ledger.snapshot();
     let costs: Vec<usize> = to_solve
@@ -189,7 +189,7 @@ pub(super) fn solve_epoch(
     // the affected-path set. The solve dispatch is a free-standing function
     // (no cycle-state read); each work item takes the `path_id` + an **Arc-
     // shared** `ResolvedMixedPath` snapshot (f701ccd3 staging fix: the
-    // former per-path deep clone copied every CL
+    // former per-path deep clone copied every concentrated liquidity
     // `IntV3TickRangeSequence` every cycle — the "clone is cheap" claim
     // was disproven by telemetry at ~25 µs/path steady state, 150-420
     // µs/path on the cold-heap ramp), `path_resolved` entries being
@@ -254,16 +254,16 @@ pub(super) fn solve_epoch(
     // composition cache is generationed by the block epoch inside the
     // gate deps (no public reset to call anymore).
     let gate_capture = gate_capture_from_cfg(ctx.cfg);
-    // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
-    // the exact all-CL pool state the solver consumed for heavy paths so
-    // the CL solver can be optimized offline. None (no-op) unless gated.
+    // Optional offline concentrated-liquidity-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
+    // the exact all-concentrated-liquidity pool state the solver consumed for heavy paths so
+    // the concentrated liquidity solver can be optimized offline. None (no-op) unless gated.
     let capture = HeavyPathCapture::from_capture(
         &ctx.cfg.capture,
         CaptureVariant::HeavyConcentratedLiquidity,
     );
-    // Optional mixed V2+CL solver capture (same gate): heavy
+    // Optional mixed V2+concentrated liquidity solver capture (same gate): heavy
     // mixed paths (e.g. path 7042 V2->V3->V3) dispatch to
-    // `solve_piecewise_cached`, which the all-CL capture skips.
+    // `solve_piecewise_cached`, which the all-concentrated-liquidity capture skips.
     // Defaults OUT of the fixtures dir (loop-18: working rows never
     // accrete there; goldens are produced only by concentrated_liquidity_capture_gen).
     let capture_mixed =

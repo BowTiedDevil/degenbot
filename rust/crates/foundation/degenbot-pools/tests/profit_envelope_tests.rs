@@ -253,7 +253,7 @@ fn mixed_v2_concentrated_liquidity_path_pointwise_dominance() {
             &degenbot_pools::solve::runtime::SolveRuntimeConfig::default(),
         )
         .expect("derives");
-        // Chain the oracles: V2 → CL → V2.
+        // Chain the oracles: V2 → concentrated liquidity → V2.
         let y1 = mobius(v2.reserve_in, v2.reserve_out, 997_000, 1_000_000, x);
         let y1_u = narrow512(y1).expect("V2 output within U256");
         let mid = ref_walk(&concentrated_liquidity, y1_u).expect("walks");
@@ -403,7 +403,7 @@ fn m6776w_none_cause_classifies_each_exit() {
 
 // ---------------------------------------------------------------------------
 // Golden-capture soundness: the bound must dominate the recorded golden
-// profit of every heavy-CL capture path.
+// profit of every heavy-concentrated-liquidity capture path.
 // ---------------------------------------------------------------------------
 
 static CAPTURES: LazyLock<String> = LazyLock::new(|| {
@@ -535,7 +535,7 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
 
 #[test]
 fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
-    // Loop-16 T3: two paths share the identical CL-prefix crossing tables
+    // Loop-16 T3: two paths share the identical concentrated-liquidity-prefix crossing tables
     // but differ in the V2 tail's reserve (r_out = the hop cap, so the
     // x-domain differs). Cross-domain reuse is SOUND by construction
     // (every stored line globally dominates the true output; see the
@@ -644,7 +644,7 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
 #[test]
 fn prefix_cache_chains_through_v2_hops() {
     // Loop-16 T3: Möbius-family (V2) hops no longer break the prefix
-    // chain — a mixed [V2, CL, CL] path must reuse composed boundaries on
+    // chain — a mixed [V2, concentrated liquidity, concentrated liquidity] path must reuse composed boundaries on
     // re-solve and stay byte-identical to the cacheless solve.
     let v2 = IntHopState::new(
         U256::from(1_000_000_u64) << 96,
@@ -688,7 +688,7 @@ fn prefix_cache_chains_through_v2_hops() {
     assert_eq!(warm, expected, "mixed-prefix reuse must be byte-identical");
     assert!(
         gs.prefix_hits > 0,
-        "mixed [V2, CL] prefixes must produce cache hits (V2 no longer breaks the chain)"
+        "mixed [V2, concentrated liquidity] prefixes must produce cache hits (V2 no longer breaks the chain)"
     );
 }
 
@@ -742,7 +742,7 @@ fn bound_dominates_golden_profit_on_heavy_concentrated_liquidity_captures() {
             .unwrap();
         let golden_profit = go_last.saturating_sub(go_in);
 
-        let bound = bound(&views).expect("all-CL capture derives");
+        let bound = bound(&views).expect("all-concentrated-liquidity capture derives");
         let doc_pid = doc.get("path_id").cloned().unwrap_or_default();
         let doc_block = doc.get("block").cloned().unwrap_or_default();
         if bound < golden_profit {
@@ -822,7 +822,7 @@ impl degenbot_pools::solve::profit_envelope::DegeneratePathSink for InMemoryCapt
     }
 }
 
-/// The capture harness must serialize a degenerate CL path's full range state
+/// The capture harness must serialize a degenerate concentrated liquidity path's full range state
 /// to a JSONL row through the caller-supplied sink so it can be replayed
 /// offline for fix experimentation. The row is pinned byte-for-byte against the
 /// historical schema.
@@ -831,7 +831,7 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     // The gate keeps no thread-local counters now; the capture cap is driven
     // by the sink alone.
 
-    // A CL path with a zero-liquidity crossing range (the 40% bucket).
+    // A concentrated liquidity path with a zero-liquidity crossing range (the 40% bucket).
     let good_price = p_at_tick(0);
     let range = mk_range(0, good_price, p_at_tick(-10), p_at_tick(10));
     let seq = mk_seq(vec![range]);
@@ -910,7 +910,7 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     );
 }
 
-/// The envelope must NOT reject a CL hop with an extreme entry price.
+/// The envelope must NOT reject a concentrated liquidity hop with an extreme entry price.
 /// A pool pushed far from fair value by a misrouted swap IS a real arbitrage
 /// opportunity — the extreme price is not evidence of infeasibility, and for
 /// zero_for_one it is exactly the recovery direction (price moving DOWN from
@@ -942,7 +942,7 @@ fn extreme_entry_price_is_not_rejected() {
 }
 
 // -----------------------------------------------------------------
-// Cap-tail overflow probe: synthetic CL sequences where the LAST range
+// Cap-tail overflow probe: synthetic concentrated liquidity sequences where the LAST range
 // has deep liquidity at an extreme price (or extreme liquidity), to
 // confirm the U512-based cap-tail computation accepts these without
 // rejecting the whole hop. The old code path
@@ -1504,7 +1504,7 @@ fn solidly_stable_tangent_tightens_below_reserve_cap() {
 
 /// Before/after skip-count delta on a Solidly-bearing mixed corpus, reported
 /// through the existing `GateStats` counters. Neither committed mixed corpus
-/// carries a Solidly leg (both are V2/CL only), so the Solidly corpus is
+/// carries a Solidly leg (both are V2/concentrated liquidity only), so the Solidly corpus is
 /// synthesized here: healthy pools whose true max profit is far below the
 /// floor while their reserve caps sit far above it.
 #[test]

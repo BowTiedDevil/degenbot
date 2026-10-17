@@ -1,7 +1,7 @@
 //! The tick-map verification seam (ADR-021 D3 slice 2).
 //!
 //! One pure per-tick comparison shared by every consumer that asks
-//! "does the stored CL tick-map state match the chain at block B?"
+//! "does the stored concentrated liquidity tick-map state match the chain at block B?"
 //! (registration lifecycle verify, the Python engine verify). Consumers
 //! supply their own tick COVERAGE (which ticks to read) and keep their own
 //! REACTION (typed registration error / bridge error); the seam converges
@@ -30,7 +30,7 @@ pub struct TickDivergence {
     pub on_chain: Option<(u128, i128)>,
 }
 
-/// The CL slot0 head scalars — the same fact family the
+/// The concentrated liquidity slot0 head scalars — the same fact family the
 /// `[sim-revert-swap]` diagnostic records as fix-enablers. Shared so the
 /// log surfaces speak one type language.
 ///

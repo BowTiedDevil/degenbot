@@ -5,7 +5,7 @@
 //!
 //! Incident: at the V2 CROSSING the production solver's terminal V2 hop
 //! output was 1 wei of input worth above the byte-exact `getAmountOut` at the
-//! delivered input — the upstream CL hop's twin-aligned FORWARD CLAMP reduced
+//! delivered input — the upstream concentrated liquidity hop's twin-aligned FORWARD CLAMP reduced
 //! the V2 hop's committed input without re-deriving the walk-frozen V2 output
 //! (`clamp_concentrated_liquidity_hop_capacity`'s V2 branch was a bare `continue`). The stale
 //! prediction reached the executor, was encoded as the V2 exact-OUT

@@ -1,4 +1,4 @@
-//! The single authoritative routing table for decoded CL pool events.
+//! The single authoritative routing table for decoded concentrated liquidity pool events.
 //!
 //! Root cause: a decoded event's fate was decided in three
 //! places with divergent partial policies (`LogDispatcher::dispatch`'s

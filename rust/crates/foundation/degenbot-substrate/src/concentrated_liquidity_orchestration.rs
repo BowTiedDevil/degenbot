@@ -1,18 +1,18 @@
-//! Concentrated-liquidity (CL) structural family — orchestration capability (V3 + V4).
+//! Concentrated-liquidity (concentrated liquidity) structural family — orchestration capability (V3 + V4).
 //!
-//! This module owns the CL family's state surfaces — V3/V4 registration +
-//! apply, the CL-common dual liquidity buffer, the snapshot seeds, and the
+//! This module owns the concentrated liquidity family's state surfaces — V3/V4 registration +
+//! apply, the concentrated-liquidity-common dual liquidity buffer, the snapshot seeds, and the
 //! coverage/quarantine/lifecycle state accessors — on [`ConcentratedLiquidityOrchestration`],
 //! the capability struct `BotState` composes as its `concentrated_liquidity` field. The family
 //! state types live in `degenbot-pools` (I/O-free, ADR-001), and the
-//! `ConcentratedLiquidityPool(Mut)` trait is the CL family's unified seam.
+//! `ConcentratedLiquidityPool(Mut)` trait is the concentrated liquidity family's unified seam.
 //! The routing verbs the orchestration shares with the event pump live in
 //! `concentrated_liquidity_route.rs`.
 //!
-//! CL methods never touch `BotState`'s private fields: they reach the
+//! concentrated liquidity methods never touch `BotState`'s private fields: they reach the
 //! family-agnostic pool tables through the [`RegistryCore`] view parameter
 //! each caller passes — a split borrow that lets one call mutate capability
-//! state and registry core together. `BotState`'s public CL surface stays on
+//! state and registry core together. `BotState`'s public concentrated liquidity surface stays on
 //! `BotState` as one-line delegation wrappers (the delegating
 //! composition-root impl at the bottom of this module).
 
@@ -49,13 +49,13 @@ use super::{
 use super::RegistryCore;
 
 /// The concentrated-liquidity (V3 + V4) orchestration capability - the ONE
-/// struct owning every CL-local state surface the state owner carries: the
+/// struct owning every concentrated-liquidity-local state surface the state owner carries: the
 /// dual liquidity buffers, the `(pool_manager, pool_id)` V4 registry, the
 /// state-view registry, the keyed registration gate, the snapshot seed
 /// block, the pump delivery cutoff, and the per-pool event horizons. The
 /// capability's method set (this module) reaches the registry core through
 /// the [`RegistryCore`] view its callers pass; `BotState` remains the
-/// composition root and delegates its public CL surface here.
+/// composition root and delegates its public concentrated liquidity surface here.
 pub struct ConcentratedLiquidityOrchestration {
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
     /// registration (ADR-003: the accurate-state buffer lives on the state
@@ -502,11 +502,11 @@ impl ConcentratedLiquidityOrchestration {
             return false;
         };
         match entry {
-            // CL-family collapse (ADR-014 D2b): the 4-line replace body lives
+            // concentrated-liquidity-family collapse (ADR-014 D2b): the 4-line replace body lives
             // once in `ConcentratedLiquidityPoolMut::replace_tick_data`; each
             // arm only reads its identity's `tick_spacing` (V3 carries it
             // directly, V4 nests it in `pool_key`) and delegates. The
-            // `_ => false` arm is the single non-CL / unregistered no-op.
+            // `_ => false` arm is the single non-concentrated-liquidity / unregistered no-op.
             PoolEntry::V3(p) => {
                 p.1.replace_tick_data(tick_data, update_block, p.0.tick_spacing)
             }
@@ -520,7 +520,7 @@ impl ConcentratedLiquidityOrchestration {
             | PoolEntry::AerodromeV2(..) => false,
         }
     }
-    /// Record `words` as known on the CL pool behind `pool_id` — the
+    /// Record `words` as known on the concentrated liquidity pool behind `pool_id` — the
     /// write-path twin of [`Self::sync_tick_data_by_pool_id`] (arch-review
     /// cand 4, T1). Sparse pools only: the trait writer no-ops for Tracked
     /// (their bitmap is complete). The FFI `update_tick_data` seam calls
@@ -528,7 +528,7 @@ impl ConcentratedLiquidityOrchestration {
     /// caller's checked words recorded (the contract that retires the
     /// companion's `_bitmap_override` shadow).
     ///
-    /// Returns `false` for V2 / non-CL / unregistered (the family-dispatch
+    /// Returns `false` for V2 / non-concentrated-liquidity / unregistered (the family-dispatch
     /// silent no-op contract).
     #[must_use]
     pub(crate) fn mark_bitmap_words_known_by_pool_id(
@@ -986,7 +986,7 @@ impl ConcentratedLiquidityOrchestration {
         reg: &RegistryCore,
         pool_id: u64,
     ) -> Option<(u64, usize, u64)> {
-        // One CL row (ADR-073 D2): the slice observation is the family read
+        // One concentrated liquidity row (ADR-073 D2): the slice observation is the family read
         // module's observe door (TickFingerprint probe); this method keeps
         // the registry lookup.
         let design = match reg.pools.get(&pool_id) {
@@ -1143,7 +1143,7 @@ impl ConcentratedLiquidityOrchestration {
         // ADR-017 slice 1: dispatch through `ConcentratedLiquidityPoolMut`
         // (the body lived inlined in V3/V4 arms here; the trait dedups the
         // two). The `bool` wraps the trait's always-`true` return: `false`
-        // for non-CL / unregistered pools (the non-CL no-op).
+        // for non-concentrated-liquidity / unregistered pools (the non-concentrated-liquidity no-op).
         let Some(entry) = reg.pools.get_mut(&pool_id) else {
             return false;
         };
@@ -1202,7 +1202,7 @@ impl ConcentratedLiquidityOrchestration {
     /// `tick`, V4 `fee`, or `tick_spacing` violates its Solidity-bounded
     /// on-chain invariant (see [`spec_bounds`]). These checks fire *first* —
     /// before the dynamic-fee / high-fee / already-registered rejections — so
-    /// an impossible-CL-config rejection surfaces the primitive at fault.
+    /// an impossible-concentrated-liquidity-config rejection surfaces the primitive at fault.
     ///
     /// Returns `Err` if the pool uses a dynamic fee (`fee == 0x100000`),
     /// has a static fee exceeding the executor's `u16` encoding field
@@ -2043,14 +2043,14 @@ impl ConcentratedLiquidityOrchestration {
 }
 
 impl BotState {
-    /// Read access to the CL orchestration capability — the seam for callers
-    /// that need only CL-local state and never the registry core.
+    /// Read access to the concentrated liquidity orchestration capability — the seam for callers
+    /// that need only concentrated-liquidity-local state and never the registry core.
     #[must_use]
     pub fn concentrated_liquidity(&self) -> &ConcentratedLiquidityOrchestration {
         &self.concentrated_liquidity
     }
 
-    /// Mutable access to the CL orchestration capability. Operations that
+    /// Mutable access to the concentrated liquidity orchestration capability. Operations that
     /// must also mutate the registry core go through the composition-root
     /// methods, which own the split borrow.
     pub fn concentrated_liquidity_mut(&mut self) -> &mut ConcentratedLiquidityOrchestration {
@@ -2058,11 +2058,11 @@ impl BotState {
     }
 }
 
-/// Delegating composition-root surface: every CL capability method stays
+/// Delegating composition-root surface: every concentrated liquidity capability method stays
 /// reachable on `BotState` (the pub surface external crates consume);
 /// each wrapper is a one-line split-borrow delegation.
 impl BotState {
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::register_v3_pool`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::register_v3_pool`].
     ///
     /// # Errors
     ///
@@ -2076,7 +2076,7 @@ impl BotState {
             .register_v3_pool(&mut self.registry, params)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::update_v3_pool`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::update_v3_pool`].
     pub fn update_pool(
         &mut self,
         pool_address: Address,
@@ -2097,7 +2097,7 @@ impl BotState {
         );
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_tick_data_by_pool_id`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_tick_data_by_pool_id`].
     pub fn sync_tick_data_by_pool_id(
         &mut self,
         pool_id: u64,
@@ -2112,13 +2112,13 @@ impl BotState {
         )
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::mark_bitmap_words_known_by_pool_id`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::mark_bitmap_words_known_by_pool_id`].
     pub fn mark_bitmap_words_known_by_pool_id(&mut self, pool_id: u64, words: &[i32]) -> bool {
         self.concentrated_liquidity
             .mark_bitmap_words_known_by_pool_id(&mut self.registry, pool_id, words)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::buffer_backfill_v3_liquidity_update`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::buffer_backfill_v3_liquidity_update`].
     pub fn buffer_backfill_liquidity_update(
         &mut self,
         pool_address: Address,
@@ -2138,36 +2138,36 @@ impl BotState {
             );
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer_v3`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer_v3`].
     pub fn apply_backfill_buffer(&mut self, address: &Address) {
         self.concentrated_liquidity
             .apply_backfill_buffer_v3(&mut self.registry, address);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer_v3`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer_v3`].
     pub fn apply_pump_buffer(&mut self, address: &Address) {
         self.concentrated_liquidity
             .apply_pump_buffer_v3(&mut self.registry, address);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_snapshot_seed_block`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_snapshot_seed_block`].
     pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
         self.concentrated_liquidity.set_snapshot_seed_block(s);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v3_snapshot_seed`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v3_snapshot_seed`].
     pub fn take_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
         self.concentrated_liquidity
             .take_v3_snapshot_seed(&mut self.registry, address)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::pin_v3_post_drain_snapshot`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::pin_v3_post_drain_snapshot`].
     pub fn pin_post_drain_snapshot(&mut self, address: Address) {
         self.concentrated_liquidity
             .pin_v3_post_drain_snapshot(&mut self.registry, address);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v3_post_drain_snapshot`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v3_post_drain_snapshot`].
     pub fn take_post_drain_snapshot(
         &mut self,
         address: Address,
@@ -2176,7 +2176,7 @@ impl BotState {
             .take_v3_post_drain_snapshot(&mut self.registry, address)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v3_pool_state`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v3_pool_state`].
     pub fn sync_pool_state(
         &mut self,
         pool_address: Address,
@@ -2197,14 +2197,14 @@ impl BotState {
         );
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::tick_fingerprint`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::tick_fingerprint`].
     #[must_use]
     pub fn tick_fingerprint(&self, pool_id: u64) -> Option<(u64, usize, u64)> {
         self.concentrated_liquidity
             .tick_fingerprint(&self.registry, pool_id)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::stage_word_fetch_by_pool_id`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::stage_word_fetch_by_pool_id`].
     pub fn stage_word_fetch_by_pool_id(
         &mut self,
         pool_id: u64,
@@ -2221,7 +2221,7 @@ impl BotState {
         )
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::install_word_fetch`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::install_word_fetch`].
     pub fn install_word_fetch(
         &mut self,
         staged: &StagedWordFetch,
@@ -2231,7 +2231,7 @@ impl BotState {
             .install_word_fetch(&mut self.registry, staged, fetched)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::ensure_word_known_by_pool_id`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::ensure_word_known_by_pool_id`].
     pub fn ensure_word_known_by_pool_id(&mut self, pool_id: u64, word: i32, block: u64) -> bool {
         self.concentrated_liquidity.ensure_word_known_by_pool_id(
             &mut self.registry,
@@ -2241,7 +2241,7 @@ impl BotState {
         )
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::merge_tick_word`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::merge_tick_word`].
     pub fn merge_tick_word(
         &mut self,
         pool_id: u64,
@@ -2251,7 +2251,7 @@ impl BotState {
             .merge_tick_word(&mut self.registry, pool_id, fetched)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::register_v4_state_view`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::register_v4_state_view`].
     pub fn register_state_view(&mut self, pool_manager: Address, state_view: Address) {
         self.concentrated_liquidity
             .register_v4_state_view(pool_manager, state_view);
@@ -2273,7 +2273,7 @@ impl BotState {
         self.concentrated_liquidity.state_view_for(manager)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::register_v4_pool`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::register_v4_pool`].
     ///
     /// # Errors
     ///
@@ -2288,7 +2288,7 @@ impl BotState {
             .register_v4_pool(&mut self.registry, params)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::buffer_backfill_v4_liquidity_update`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::buffer_backfill_v4_liquidity_update`].
     pub fn buffer_backfill_liquidity_update_by_key(
         &mut self,
         pool_manager: Address,
@@ -2310,7 +2310,7 @@ impl BotState {
             );
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer_v4`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer_v4`].
     pub fn apply_backfill_buffer_by_key(
         &mut self,
         pool_manager: Address,
@@ -2323,7 +2323,7 @@ impl BotState {
         );
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer_v4`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer_v4`].
     pub fn apply_pump_buffer_by_key(
         &mut self,
         pool_manager: Address,
@@ -2389,13 +2389,13 @@ impl BotState {
         }
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v3_pool_quarantined`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v3_pool_quarantined`].
     pub fn set_pool_quarantined(&mut self, address: Address) {
         self.concentrated_liquidity
             .set_v3_pool_quarantined(&mut self.registry, address);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_quarantined`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_quarantined`].
     pub fn set_pool_quarantined_by_key(
         &mut self,
         pool_manager: Address,
@@ -2408,13 +2408,13 @@ impl BotState {
         );
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v3_pool_live`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v3_pool_live`].
     pub fn set_pool_live(&mut self, address: Address) {
         self.concentrated_liquidity
             .set_v3_pool_live(&mut self.registry, address);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_live`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_live`].
     pub fn set_pool_live_by_key(
         &mut self,
         pool_manager: Address,
@@ -2424,13 +2424,13 @@ impl BotState {
             .set_v4_pool_live(&mut self.registry, pool_manager, pool_id);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::release_all_v3_v4_quarantined`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::release_all_v3_v4_quarantined`].
     pub fn release_all_quarantined(&mut self) {
         self.concentrated_liquidity
             .release_all_v3_v4_quarantined(&mut self.registry);
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::pool_id_by_key`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::pool_id_by_key`].
     #[must_use]
     pub fn pool_id_by_key(
         &self,
@@ -2441,7 +2441,7 @@ impl BotState {
             .pool_id_by_key(pool_manager, pool_id)
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::try_registered_v4`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::try_registered_v4`].
     #[must_use]
     pub fn try_registered_by_key(
         &self,
@@ -2708,7 +2708,7 @@ impl BotState {
             .collect()
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v4_pool_state`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v4_pool_state`].
     pub fn sync_pool_state_by_key(
         &mut self,
         pool_manager: Address,
@@ -2723,7 +2723,7 @@ impl BotState {
         );
     }
 
-    /// Delegates to the CL orchestration capability - see [`ConcentratedLiquidityOrchestration::snapshot_seed_block`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::snapshot_seed_block`].
     #[must_use]
     pub const fn snapshot_seed_block(&self) -> Option<u64> {
         self.concentrated_liquidity.snapshot_seed_block()
@@ -2886,7 +2886,7 @@ mod known_word_dispatcher_tests {
         let (mut core, pool_id) = register_v3(PoolTickCoverage::Sparse);
         assert!(
             core.mark_bitmap_words_known_by_pool_id(pool_id, &[7]),
-            "dispatcher must report a CL apply"
+            "dispatcher must report a concentrated liquidity apply"
         );
         let state = core
             .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)

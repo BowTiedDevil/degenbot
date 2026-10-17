@@ -1,7 +1,7 @@
 //! Typed boundary for the {Slot0 Head / Tick Bookkeeping Map} split (ADR-004).
 //!
 //! The [`TickMap`] / [`TickMapMut`] traits expose **only** the tick bookkeeping
-//! map side of a CL pool's state — the immutable pool identification
+//! map side of a concentrated liquidity pool's state — the immutable pool identification
 //! (`address` / `tick_spacing`), the read-only `active_tick` slot0 scalar
 //! (needed for the ±2-word bitmap scan during verification), and the
 //! `tick_data` map itself. The slot0 head's mutable scalars
@@ -33,7 +33,7 @@ use crate::TickInfo;
 // The traits
 // ---------------------------------------------------------------------------
 
-/// Read-only view of a CL pool's tick bookkeeping map + the immutable
+/// Read-only view of a concentrated liquidity pool's tick bookkeeping map + the immutable
 /// identification needed to verify/restore it on-chain.
 ///
 /// Consumers take `&impl TickMap` to access only the tick map; the slot0 head
@@ -69,7 +69,7 @@ pub trait TickMap {
     }
 }
 
-/// Mutable view of a CL pool's tick bookkeeping map. Extends [`TickMap`] with
+/// Mutable view of a concentrated liquidity pool's tick bookkeeping map. Extends [`TickMap`] with
 /// `tick_data_mut` for the apply path (Mint/Burn V3, `ModifyLiquidity` V4)
 /// which mutates only the tick map. The slot0 head scalars remain out of
 /// reach under this trait — see ADR-004.
@@ -79,7 +79,7 @@ pub trait TickMapMut: TickMap {
 }
 
 // ---------------------------------------------------------------------------
-// Concrete impls for the two CL pool families (V4 parity — ADR-004)
+// Concrete impls for the two concentrated liquidity pool families (V4 parity — ADR-004)
 // ---------------------------------------------------------------------------
 
 impl TickMap for (V3PoolIdentity, V3PoolState) {
@@ -132,7 +132,7 @@ impl TickMap for (V4PoolIdentity, V4PoolState) {
 mod tests {
     use super::*;
 
-    /// Compile-time assertion that both CL pool families implement `TickMap`.
+    /// Compile-time assertion that both concentrated liquidity pool families implement `TickMap`.
     /// If a future change to `V3PoolState` / `V4PoolState` drops a field that
     /// the impl reads, this test fails to compile.
     #[test]

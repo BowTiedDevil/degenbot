@@ -3,7 +3,7 @@
 //! Carved out of `bot_core/mod.rs` (the `BotState` god-file). This module owns the reserve-pair
 //! capability's LIVE-STATE surfaces — `V2`/`AerodromeV2` registration, the unified
 //! sync-apply row, and the identity/state getters. State ownership is NOT family
-//! behavior (GLOSSARY "CL orchestration capability" pattern): the registration
+//! behavior (GLOSSARY "concentrated liquidity orchestration capability" pattern): the registration
 //! entries and the family-neutral apply/get rows stay here (ADR-073 D3 keeps the
 //! named seams), while the family behavior — the swap reads and the resolve
 //! projection — folds through the family read module's intent doors
@@ -129,7 +129,7 @@ impl BotState {
     /// pools (Solidly mirrors v2-core's `Sync(uint112, uint112)`).
     ///
     /// Returns `Some(pool_id)` if the pool is a reserve-pair family
-    /// (V2 / `AerodromeV2`); `None` otherwise (silent no-op — a CL / Curve /
+    /// (V2 / `AerodromeV2`); `None` otherwise (silent no-op — a concentrated liquidity / Curve /
     /// Balancer `pool_id` yields `None`).
     pub fn apply_sync_by_pool_id(
         &mut self,

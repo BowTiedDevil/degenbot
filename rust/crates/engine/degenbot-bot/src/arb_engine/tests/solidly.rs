@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn solidly_hop_variant_is_not_v2_and_not_concentrated_liquidity() {
     // The new variant must be excluded from the existing all-V2 and
-    // all-CL dispatch branches — otherwise solve_path would mis-dispatch.
+    // all-concentrated-liquidity dispatch branches — otherwise solve_path would mis-dispatch.
     assert!(!HopType::SolidlyStable.is_concentrated_liquidity());
 }
 #[test]
@@ -35,7 +35,7 @@ fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
     assert!(got.stable);
     // hop_type() maps to the new variant.
     assert_eq!(hop.hop_type(), HopType::SolidlyStable);
-    // The Solidly hop is excluded from the V2 + CL accessors — the
+    // The Solidly hop is excluded from the V2 + concentrated liquidity accessors — the
     // existing dispatch arms must not pick it up.
     assert!(hop.as_v2_state().is_none());
     assert!(hop.as_int_sequence().is_none());
@@ -49,7 +49,7 @@ fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
 // solve_solidly_path_int — the two-stage Möbius precheck +
 // golden-section search. Tests cover all four AC cases: (1) all-Solidly
 // 2-hop, (2) V2+Solidly mixed, (3) unprofitable → None (precheck),
-// (4) Solidly+CL → None (scope rejection).
+// (4) Solidly+concentrated liquidity → None (scope rejection).
 // -----------------------------------------------------------------
 /// Brute-force grid scan over `[1, max_reserve]` in `grid_step` increments,
 /// returning the best profit `simulate_solidly_path(x) - x` finds. Shared by
@@ -404,7 +404,7 @@ fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
     )
     .expect("path registers (resolve is per-arm)");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
-    // Solidly + CL is out of scope (p): solve_path returns None.
+    // Solidly + concentrated liquidity is out of scope (p): solve_path returns None.
     assert!(::degenbot_pools::solve::mixed::solve_path(
         resolved,
         &::degenbot_pools::solve::profit_envelope::GateDeps::offline()

@@ -788,7 +788,7 @@ fn v4_int128_overflow_path_rejected() {
 /// `clamp_concentrated_liquidity_hop_capacity` directly and assert it caps the V4 hop's
 /// `consumed_inputs[1]` to the pools twin's `input_consumed - 1` (the 1-wei
 /// Forward-clamp staleness (the path-182449/110302 1-wei over-prediction
-/// class): when the upstream CL hop's twin forward-clamps the DOWNSTREAM
+/// class): when the upstream concentrated liquidity hop's twin forward-clamps the DOWNSTREAM
 /// V2 hop's committed input, the V2 hop's REPORTED output must be
 /// re-derived byte-exact at the clamped input. Pre-fix the V2 branch of
 /// the clamp loop was a bare `continue`, so the V2 `hop_outputs[i]` kept
@@ -1081,7 +1081,7 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
         result.consumed_inputs[1], expected,
         "clamped input must equal input_consumed - margin (1 wei)"
     );
-    // The V2 hop (index 0) is untouched — only CL hops are clamped.
+    // The V2 hop (index 0) is untouched — only concentrated liquidity hops are clamped.
     assert_eq!(result.consumed_inputs[0], huge);
     // hop_outputs[1] is now ALIGNED to the byte-exact twin output (the
     // path-73385 fix): the solver's reported output = the on-chain truth, so
@@ -1218,7 +1218,7 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
         "hop1 forward must be clamped"
     );
 }
-/// The clamp is a strict no-op when a CL hop's committed input is within
+/// The clamp is a strict no-op when a concentrated liquidity hop's committed input is within
 /// the pool's max-convertible capacity — the exact-in loop already
 /// terminates on `amountRemaining==0`. Prevents the clamp from corrupting
 /// `consumed_inputs` for the (common) fully-fed-hop case.

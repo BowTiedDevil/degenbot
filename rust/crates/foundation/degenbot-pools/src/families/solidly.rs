@@ -902,7 +902,7 @@ pub(crate) mod solve {
         )
     }
 
-    /// Solve an all-V2-or-Solidly (no CL hops, ≥1 Solidly) path with the shared
+    /// Solve an all-V2-or-Solidly (no concentrated liquidity hops, ≥1 Solidly) path with the shared
     /// golden-section template (`solve_golden_section_path_int`).
     ///
     /// Faithful port of `arbitrage.solvers.solidly_stable.SolidlyStableSolver`
@@ -986,7 +986,7 @@ pub(crate) mod solve {
                 ResolvedHop::V2 { state } => state.swap(amount).unwrap_or(U256::ZERO),
                 ResolvedHop::SolidlyStable { state } => simulate_solidly_hop(amount, state),
                 // Non-V2/Solidly hops can't reach here — the solve dispatch
-                // rejects Solidly+CL paths before calling this.
+                // rejects Solidly+concentrated liquidity paths before calling this.
                 _ => U256::ZERO,
             };
             outputs.push(out);

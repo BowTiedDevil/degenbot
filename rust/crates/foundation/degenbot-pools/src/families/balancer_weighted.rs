@@ -192,7 +192,7 @@ pub fn read_swap(
             override_balances,
         ),
         // A variant this family doesn't answer is a typed refusal: an
-        // exact-output read over the token0/1 pair, the CL canonical
+        // exact-output read over the token0/1 pair, the concentrated liquidity canonical
         // request, and the stable family's scaling-factor override bit (a
         // weighted pool's scaling factors are registration-immutable
         // identity fields — there is no caller view to override, so a
@@ -458,7 +458,7 @@ pub(crate) mod solve {
         )
     }
 
-    /// Solve an all-V2-or-Balancer-weighted (no CL hops, ≥1 weighted) path with
+    /// Solve an all-V2-or-Balancer-weighted (no concentrated liquidity hops, ≥1 weighted) path with
     /// the shared golden-section template (`solve_golden_section_path_int`).
     ///
     /// Per-hop simulation calls

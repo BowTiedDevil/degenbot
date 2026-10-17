@@ -29,8 +29,8 @@ const OUT_C: u128 = 1_000_000_000_000_000_000;
 // build_v4v4_plan's redundant-take removal). out_c is not encoded in the swap
 // bytes (exact-input + amount-less take), so this only affects the validator.
 const OUT_C_PROFIT: u128 = 1_500_000_000_000_000_000; // the profitable bridge terminal
-const OUT_A_CLAMP: u128 = 499_999_999_999_999_999; // OUT_A - 1 (CL gap-branch swap-in)
-const OUT_B_CLAMP: u128 = 1_899_999_999_999_999_999; // OUT_B - 1 (CL gap-branch swap-in)
+const OUT_A_CLAMP: u128 = 499_999_999_999_999_999; // OUT_A - 1 (concentrated liquidity gap-branch swap-in)
+const OUT_B_CLAMP: u128 = 1_899_999_999_999_999_999; // OUT_B - 1 (concentrated liquidity gap-branch swap-in)
 
 /// V4-V4-V4 with a native→WETH gap at the A→B boundary (`bridge_ab` = Wrap).
 ///

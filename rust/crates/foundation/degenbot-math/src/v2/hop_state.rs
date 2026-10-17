@@ -27,7 +27,7 @@ use alloy::primitives::{U256, U512};
 /// Replaces the former parallel `hop_outputs` / `consumed_inputs` Vec pair
 /// (the Cloudflare "fewer lists, fewer pointers" pattern): a single boxed
 /// slice pays one allocation instead of two and keeps every hop's (output,
-/// consumed) pair on one cache line. For V3/V4 hops the CL-clamp makes it
+/// consumed) pair on one cache line. For V3/V4 hops the concentrated-liquidity-clamp makes it
 /// possible for `consumed_input < output` when the range boundary is hit; the
 /// unused remainder is retained by the caller (ADR-025).
 #[derive(Clone, Debug, PartialEq, Eq)]

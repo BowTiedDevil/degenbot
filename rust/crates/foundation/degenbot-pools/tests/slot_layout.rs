@@ -7,7 +7,7 @@
 //! - A packed V2 reserves word is the low-224-bit `reserve0 | reserve1`
 //!   layout with the untracked timestamp zeroed, and decodes back exactly;
 //!   the timestamp the engine does not carry reads through decode.
-//! - The layout-generic CL mapping-slot helpers agree with the per-family
+//! - The layout-generic concentrated liquidity mapping-slot helpers agree with the per-family
 //!   forward fns (Uniswap V3 base 5 / Pancake V3 base 6) and with a
 //!   hand-built keccak preimage (negative ticks sign-extend).
 //! - A per-tick word decodes `liquidityGross | liquidityNet` (two's-

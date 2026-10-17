@@ -1,6 +1,6 @@
 //! Exact affine-shifted Möbius closed form for a single path piece .
 //!
-//! Within one ending-range tuple piece, an N-hop V2/CL path's output is
+//! Within one ending-range tuple piece, an N-hop V2/concentrated liquidity path's output is
 //! EXACTLY Möbius in the path input `x`: per-hop constant-product maps
 //! `m_i(u) = γ_i·s_i·u / (γ_i·u + D_i·r_i)` composed with the tick-crossing
 //! translations — each hop's crossing consumes an input-independent
@@ -96,7 +96,7 @@ type I1024 = alloy::primitives::Signed<1024, 16>;
 type I2048 = alloy::primitives::Signed<2048, 32>;
 
 /// One hop of a piecewise path piece: the hop's constant-product state
-/// (a V2 pool, or a CL pool's ending range as effective reserves) plus the
+/// (a V2 pool, or a concentrated liquidity pool's ending range as effective reserves) plus the
 /// input-independent crossing translations.
 #[derive(Clone, Debug)]
 pub struct ShiftedPieceHop {

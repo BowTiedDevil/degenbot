@@ -4,14 +4,14 @@
 //! affine upper bound on the path output; this module owns that window's data
 //! shape and its exact integer clamp. The bound's coefficients are expressed
 //! in the kernel's own terms — the predicate `(a + b·x)/c ≥ best` — so no
-//! envelope type (`Line`, verdict, cap) reaches into the kernel. The CL family
+//! envelope type (`Line`, verdict, cap) reaches into the kernel. The concentrated liquidity family
 //! module builds these from the envelope's composed lines at the seam.
 
 use alloy::primitives::{aliases::I512, U256, U512};
 
 /// One affine upper bound on the path output at input `x`, in the kernel's own
 /// vocabulary: the predicate `(a + b·x)/c ≥ best` (with `c > 0`) marks the
-/// inputs a composed upper bound cannot disprove. The CL family module builds
+/// inputs a composed upper bound cannot disprove. The concentrated liquidity family module builds
 /// these from the envelope's composed lines at the seam; the kernel names no
 /// envelope type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

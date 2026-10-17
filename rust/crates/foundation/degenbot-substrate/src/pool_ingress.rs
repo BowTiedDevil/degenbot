@@ -142,7 +142,7 @@ pub enum TickMapSampleTarget {
     V4 { manager: Address, pool_id: B256 },
 }
 
-/// A chain-sample verifier for a staged CL tick map. The concrete
+/// A chain-sample verifier for a staged concentrated liquidity tick map. The concrete
 /// [`AlloySampleVerifier`] delegates both families to the shared full-map
 /// verifier; this seam exists only for ingress policy and test doubles.
 #[async_trait::async_trait]

@@ -3,7 +3,7 @@
 //! WalkMemo contention baseline — TODAY's single-mutex shape, documented.
 //!
 //! Rayon workers drive the CURRENT single-`parking_lot::Mutex` `WalkMemo`
-//! through the public all-CL solve entry ([`solve_concentrated_liquidity_piecewise`]) — the
+//! through the public all-concentrated-liquidity solve entry ([`solve_concentrated_liquidity_piecewise`]) — the
 //! production probe/store path: an unlocked `walk_path_fingerprint`, one
 //! locked probe (census insert + cache consult, result clone on a `Hit`),
 //! and on a `Miss` the inner walk plus the locked `note_cost`/`store`
@@ -94,7 +94,7 @@ fn one_range_seq(liquidity: u128, zfo: bool) -> IntV3TickRangeSequence {
     IntV3TickRangeSequence::new(vec![hop_at_1to1(liquidity, zfo)]).unwrap()
 }
 
-/// Multi-range CL sequence in swap order around `anchor_tick` — the memo
+/// Multi-range concentrated liquidity sequence in swap order around `anchor_tick` — the memo
 /// tests' `multi_range_sequence` helper shape.
 fn multi_range_sequence(
     anchor_tick: i32,

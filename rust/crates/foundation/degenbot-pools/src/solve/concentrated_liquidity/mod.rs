@@ -1,11 +1,11 @@
-//! The **Concentrated Liquidity Kernel** — the CL family's home and the
+//! The **Concentrated Liquidity Kernel** — the concentrated liquidity family's home and the
 //! library the typed V3/V4 adapters call at the resolve seam.
 //!
 //! GLOSSARY.md "Concentrated Liquidity Kernel": the data-parameterized module
 //! that is the concrete home of everything the concentrated-liquidity solve
 //! shares across the Uniswap V3 and V4 designs — crossing derivation from a
 //! tick-range sequence, the active-set walk over the piecewise-Möbius
-//! segments, the CL hop and path simulation, and the word-profile build over
+//! segments, the concentrated liquidity hop and path simulation, and the word-profile build over
 //! the prepared hop's tables.
 //!
 //! # Interface
@@ -13,7 +13,7 @@
 //! The kernel's intake is the **prepared hop** (ADR-069 D2): the tick-range
 //! sequence plus the crossing table and word profiles derived from it, built
 //! once per `(pool, direction)` by the projection and shared via `Arc`. The
-//! solve entries take `&[PreparedConcentratedLiquidityHop]` (all-CL) or one [`MixedHopView`] per
+//! solve entries take `&[PreparedConcentratedLiquidityHop]` (all-concentrated-liquidity) or one [`MixedHopView`] per
 //! position (mixed), so the tables travel with the sequence that produced them
 //! and nothing is re-derived per solve.
 //!
@@ -28,12 +28,12 @@
 //! # Import direction
 //!
 //! `concentrated_liquidity/*` carries no envelope vocabulary — no `Line`, verdict, or cap. The
-//! tangent fan is derived from the kernel's crossing tables by the CL family
+//! tangent fan is derived from the kernel's crossing tables by the concentrated liquidity family
 //! module's bound side, and the engine-owned fan cache stays borrowed, never
 //! owned.
 //!
 //! The walk's refine-window intake is kernel-side data ([`RefineBound`]), not
-//! an envelope type: the CL family module translates the composed
+//! an envelope type: the concentrated liquidity family module translates the composed
 //! `PathBoundLines` into windows at the seam (see `concentrated_liquidity::window`).
 //!
 //! # Module layout
@@ -101,7 +101,7 @@ pub use entries::{
 };
 pub use hop_sim::{simulate_v3_range_swap, V3RangeSwapResult};
 pub use memo::{WalkMemo, WalkMemoStats};
-// The byte-exact forward path simulator is the CL kernel's public harness
+// The byte-exact forward path simulator is the concentrated liquidity kernel's public harness
 // surface (external benchmarks/offline replays evaluate path profit through
 // it), so it stays public API: the family module owns the solve/bound surface,
 // not this simulator.

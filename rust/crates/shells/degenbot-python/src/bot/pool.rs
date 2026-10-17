@@ -557,7 +557,7 @@ impl PyLiquidityPool {
         }
     }
 
-    /// Shared override-sim inner: reads the hypothetical scalars off a CL
+    /// Shared override-sim inner: reads the hypothetical scalars off a concentrated liquidity
     /// pool-state object and drives the gate's transient-state fetch+retry.
     fn sim_override_inner(
         &self,
@@ -609,7 +609,7 @@ impl PyLiquidityPool {
             py.detach(move || pool_ops::simulate_override_with_fetch(&core, &mut over, block));
         match outcome {
             Ok(o) => Ok(o),
-            // A non-CL family has no transient CL state to simulate — a typed
+            // A non-concentrated-liquidity family has no transient concentrated liquidity state to simulate — a typed
             // refusal, never a bare `None` an override miss could produce.
             Err(u) => Err(override_family_gap(u.pool_id, u.family)),
         }
@@ -703,7 +703,7 @@ impl PyLiquidityPool {
 
     /// Calculate the output token amount for a given input amount.
     /// Surfaces the cdbc03bb on-chain-equivalent revert: when the constant-
-    /// product / CL swap math overflows a `uint256` intermediate (mirroring
+    /// product / concentrated liquidity swap math overflows a `uint256` intermediate (mirroring
     /// on-chain `getAmountOut` `SafeMath` revert), this raises `ValueError` so the
     /// Python companion can translate it to a domain `LiquidityPoolError`.
     /// A V3/V4 sparse-map miss is still mapped to 0 — callers needing the miss
@@ -944,7 +944,7 @@ impl PyLiquidityPool {
     /// output). Returns a typed read dict — `status` is `computed` (with
     /// signed per-token deltas in the deposited-`+`/sent-`-` convention, the
     /// end state, and `specified_met`), `not_computable`, `fetch_failed`, or
-    /// `fetch_exhausted`. Pass `override_state` (a CL pool-state object) to
+    /// `fetch_exhausted`. Pass `override_state` (a concentrated liquidity pool-state object) to
     /// simulate against a hypothetical.
     #[pyo3(signature = (zero_for_one, amount_specified, block, sqrt_price_limit_x96=None, override_state=None))]
     fn simulate(
@@ -1655,7 +1655,7 @@ impl PyLiquidityPool {
     /// advancing either clock, so a split-seed (price at HEAD, tick map at the
     /// DB block) pool keeps a non-empty journal for mid-window reorg restore.
     /// Returns `True` on a registered V3/V4 pool; raises `ValueError` for a
-    /// registered non-CL family (no CL journal to seed) or an unregistered id.
+    /// registered non-concentrated-liquidity family (no concentrated liquidity journal to seed) or an unregistered id.
     #[pyo3(signature = (block_number))]
     fn seed_genesis(&self, py: Python<'_>, block_number: u64) -> PyResult<bool> {
         match self.with_state_mut(py, |s| {
@@ -1677,7 +1677,7 @@ impl PyLiquidityPool {
     /// (7347dcdc3), journaled as a scalar event for reorg rollback.
     /// `sqrt_price_x96`/`tick` are never changed — no scalar write back out.
     /// Returns `True` when the update applied to a registered V3/V4 pool;
-    /// raises `ValueError` for a registered non-CL family (no CL tick state to
+    /// raises `ValueError` for a registered non-concentrated-liquidity family (no concentrated liquidity tick state to
     /// mutate) or an unregistered id.
     #[pyo3(signature = (tick_lower, tick_upper, liquidity_delta, block_number))]
     fn apply_liquidity_update(
@@ -3111,7 +3111,7 @@ fn build_simulate_read(
     Ok(read.into_any().unbind())
 }
 
-/// The `not_computable` typed read (zero amount, miss, or non-CL payload).
+/// The `not_computable` typed read (zero amount, miss, or non-concentrated-liquidity payload).
 fn not_computable_read(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let read = PyDict::new(py);
     read.set_item("status", "not_computable")?;
@@ -3171,7 +3171,7 @@ impl TickData {
     }
 
     /// Override-state seed form: the Python `{tick: LiquidityAtTick}` mapping
-    /// the CL companions carry, whose rows expose `liquidity_gross` /
+    /// the concentrated liquidity companions carry, whose rows expose `liquidity_gross` /
     /// `liquidity_net` / `block` by name. The `TickInfo` translation stays in
     /// this one boundary, so no Python caller re-flattens the rows.
     pub(crate) fn from_py_liquidity_rows(
@@ -3338,7 +3338,7 @@ impl PyReservePairView {
     }
 }
 
-/// The CL tick-map coverage discriminant crossing the FFI (survey C7):
+/// The concentrated liquidity tick-map coverage discriminant crossing the FFI (survey C7):
 /// Python compares this enum instead of probing a stringified twin.
 /// Mirrors `degenbot_pools::v3_state::PoolTickCoverage` (the fact's home).
 #[pyclass(

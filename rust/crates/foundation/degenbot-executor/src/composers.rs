@@ -366,10 +366,10 @@ impl EncodeContext {
 /// without its path is the shape that lets amounts be synthesized blind to
 /// what the path constrains — so path and amounts are one unit.
 ///
-/// **The CL overfeed-clamp invariant (path-5000 EMPTY-HALT) attaches
+/// **The concentrated liquidity overfeed-clamp invariant (path-5000 EMPTY-HALT) attaches
 /// to this value**: `consumed_inputs[i]` is the *executable* input fed to hop
-/// `i`. For a non-over-fed CL hop (and for V2/Balancer/Curve/Solidly hops) it
-/// equals `hop_outputs[i − 1]`; for an over-fed CL hop the producer clamps it
+/// `i`. For a non-over-fed concentrated liquidity hop (and for V2/Balancer/Curve/Solidly hops) it
+/// equals `hop_outputs[i − 1]`; for an over-fed concentrated liquidity hop the producer clamps it
 /// to `input_consumed − 1` (the solver's `clamp_concentrated_liquidity_hop_capacity`, whose bound
 /// is the pools-layer `exact_input_clamp_bound` rule) so the on-chain
 /// exact-in loop terminates on `amountRemaining == 0` instead of marching
@@ -385,7 +385,7 @@ pub struct EncodeRequest {
     /// Per-hop output amounts. `hop_outputs[i]` = the output after hop `i`
     /// (`[forward_out, final_output]` for a 2-hop path).
     pub hop_outputs: Vec<u128>,
-    /// Per-hop executable input amounts (the CL-clamp swap-in — see the type
+    /// Per-hop executable input amounts (the concentrated-liquidity-clamp swap-in — see the type
     /// doc for the invariant).
     pub consumed_inputs: Vec<u128>,
     /// The declared per-path axes (funding / capture / bribe + the opcode
@@ -451,9 +451,9 @@ pub struct ComposerInputs<'a> {
     pub optimal_input: u128,
     pub hop_outputs: &'a [u128],
     /// The per-hop executable input fed into each pool, as set by the solver's
-    /// CL-hop clamp (`consumed_inputs[i]`). For a non-over-fed CL hop (and for
+    /// concentrated-liquidity-hop clamp (`consumed_inputs[i]`). For a non-over-fed concentrated liquidity hop (and for
     /// V2/Curve/Balancer/Solidly hops) this equals `hop_outputs[i-1]`; for an
-    /// over-fed CL hop the clamp reduces it to `input_consumed - 1` so the
+    /// over-fed concentrated liquidity hop the clamp reduces it to `input_consumed - 1` so the
     /// on-chain exact-in loop terminates on `amountRemaining == 0` instead of
     /// marching empty bitmap words (path-5000 EMPTY-HALT).
     pub consumed_inputs: &'a [u128],
@@ -468,7 +468,7 @@ pub struct ComposerInputs<'a> {
 ///
 /// The intake contract is the pair [`EncodeContext`] (session-scoped
 /// deployment addresses) + [`EncodeRequest`] (per path: the path + the
-/// solver's amount triple + the declared axes — ADR-033). The CL
+/// solver's amount triple + the declared axes — ADR-033). The concentrated liquidity
 /// overfeed-clamp invariant attaches to the request (`consumed_inputs[i]`
 /// is the executable input to hop `i`) — it is owned where the request is
 /// built, not re-derived here. Bribes never ride the stream: the caller
@@ -773,13 +773,13 @@ mod tests {
     #[test]
     #[expect(clippy::similar_names)] // canonical a/b/c + c0/c1 V4 currency-index names
     fn three_hop_v2_v4_v3_feeds_clamped_consumed_input_as_v4_swap_in() {
-        // Proves the CL-hop clamp reaches the executor: with the V4 hop
+        // Proves the concentrated-liquidity-hop clamp reaches the executor: with the V4 hop
         // over-fed (consumed_inputs[1] < hop_outputs[0]), the encoded V4
         // swap-in amount equals consumed_inputs[1], NOT hop_outputs[0].
         // (Cannot use `v4_simulate_swap` here — the encoder only needs the
         // amounts, which the engine clamp already set.)
         let forward = 2_000_000_000u128;
-        let clamped = 1_999_999_999u128; // 1-wei CL clamp margin
+        let clamped = 1_999_999_999u128; // 1-wei concentrated liquidity clamp margin
         let rust = encode_cmd_3_hop(
             &PathInfo::new(vec![
                 HopInfo::V2(V2HopInfo {
@@ -856,7 +856,7 @@ mod tests {
         v4_inner.extend_from_slice(&encoders::enc_v4_sync(forward_a_idx));
         v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, true, pm_idx, 30));
         v4_inner.extend_from_slice(&encoders::enc_v4_settle());
-        // V4 swap-in amount = the CL clamp = clamped, NOT forward.
+        // V4 swap-in amount = the concentrated liquidity clamp = clamped, NOT forward.
         v4_inner.extend_from_slice(
             &encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, 500, 10, zero_idx, true, clamped)
                 .unwrap(),
@@ -866,7 +866,7 @@ mod tests {
             // swap-in), NOT the solver's over-predictable out_b (path-73385).
             &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000).unwrap(),
         );
-        // The CL clamp caps the V4 swap-in below the settled V2 forward, leaving
+        // The concentrated liquidity clamp caps the V4 swap-in below the settled V2 forward, leaving
         // a residual on the settled currency (forward_a). Sweep it back so the
         // unlock nets to zero (else CurrencyNotSettled at unlock exit).
         v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_a_idx));

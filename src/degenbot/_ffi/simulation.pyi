@@ -217,8 +217,8 @@ class DispatchCandidate:
                 (that's `SimResult::gross_profit`).
             `hop_outputs`: the per-hop solver outputs (`list[int]`).
             `consumed_inputs`: the per-hop executable inputs fed into each pool
-                (`list[int]`) — the solver's CL-hop clamp; the encoder feeds
-                these (not `hop_outputs`) as each CL pool's swap-in. May be
+                (`list[int]`) — the solver's concentrated-liquidity-hop clamp; the encoder feeds
+                these (not `hop_outputs`) as each concentrated liquidity pool's swap-in. May be
                 shorter than `hop_outputs` only in a degenerate/solver-defect
                 case, surfaced as `ValueError`.
             `solve_block`: the block the solver produced the result on.

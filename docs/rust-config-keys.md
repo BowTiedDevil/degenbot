@@ -125,13 +125,13 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_SOLVE_ADMISSION_TARGET_DEPTH` | `solve.admission_target_depth` | `usize` | `8` | QTZGFL: un-merged-result pipe depth target in KEYS (pools) — the draw budget headroom. Clamped at engine construction to 1..=DETACHED_INFLIGHT_CAP (DETACHED_INFLIGHT_CAP is only the default/clamp for this key now, no longer a runtime cap verdict); default 8 = DETACHED_INFLIGHT_CAP. |
 | `DEGENBOT_SOLVE_ADMISSION_RETENTION` | `solve.admission_retention_blocks` | `u64` | `50` | QTZGFL: retained (carried) key retention window W in blocks — on each block advance the ledger prunes buckets older than head - W and counts degenbot.detached.leads_expired. Default 50. |
 | `DEGENBOT_MIN_PROFIT_WEI` | `solve.min_profit_wei` | `u128 (decimal text)` | `0` | Minimum path profit floor in wei (decimal text; TOML: quoted string). |
-| `DEGENBOT_CLAMP_MARGIN_WEI` | `solve.clamp_margin_wei` | `u128 (decimal text)` | `1` | CL-hop clamp margin in wei: the amount subtracted from a hop's committed input before the exact-in loop runs. Default 1 wei commits input - 1, so the loop converts nearly everything and stops at the last funded tick (maximum extraction). The margin must stay strictly greater than the worst solver-vs-engine over-prediction, which a parity sweep pins; raise it only when investigating a runaway swap. |
+| `DEGENBOT_CLAMP_MARGIN_WEI` | `solve.clamp_margin_wei` | `u128 (decimal text)` | `1` | concentrated-liquidity-hop clamp margin in wei: the amount subtracted from a hop's committed input before the exact-in loop runs. Default 1 wei commits input - 1, so the loop converts nearly everything and stops at the last funded tick (maximum extraction). The margin must stay strictly greater than the worst solver-vs-engine over-prediction, which a parity sweep pins; raise it only when investigating a runaway swap. |
 | `DEGENBOT_WALK_EVENT_SOLVER` | `solve.walk_event_solver_legacy` | `bool (inverted: `0` enables)` | `false` | Legacy event-solver path is enabled by `DEGENBOT_WALK_EVENT_SOLVER=0` (inverted flag). |
-| `DEGENBOT_WALK_EVENT_CENSUS` | `solve.walk_event_census` | `bool` | `false` | Loop-15 nested event census counters in the CL walker (`1` enables). |
+| `DEGENBOT_WALK_EVENT_CENSUS` | `solve.walk_event_census` | `bool` | `false` | Loop-15 nested event census counters in the concentrated liquidity walker (`1` enables). |
 | `DEGENBOT_WALK_ANCHOR_SWEEP` | `solve.walk_anchor_sweep` | `AnchorSweep(Off|CenterOnly|Full)` | `full` | Walk anchor-sweep posture: `off` (0), `center-only` (2), or `full` (default/anything else). |
 | `DEGENBOT_ENVELOPE_MAX_TANGENT_LINES` | `solve.envelope_max_tangent_lines` | `usize` | `32` | Profit-envelope max tangent lines cap. |
 | `DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES` | `solve.envelope_sampled_compose_lines` | `usize` | `48` | Profit-envelope sampled-compose lines cap. |
-| `DEGENBOT_SOLVER_WALK_MEMO` | `solve.solver_walk_memo` | `bool` | `false` | CL-solver walk memo (result caching) (`1` enables). |
+| `DEGENBOT_SOLVER_WALK_MEMO` | `solve.solver_walk_memo` | `bool` | `false` | concentrated-liquidity-solver walk memo (result caching) (`1` enables). |
 | `DEGENBOT_SOLVER_WALK_MEMO_STATS` | `solve.solver_walk_memo_stats` | `bool` | `false` | Walk-memo recomposition census (`1` enables). |
 | `DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE` | `solve.concentrated_liquidity_projection_cache` | `bool` | `true` | Concentrated-liquidity projection memo cache; `0`/`off`/`false`/`disabled` disables. |
 ## `fleet`
@@ -158,7 +158,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_GATE_CAPTURE` | `capture.gate_capture` | `bool` | `false` | Gate degenerate-path capture (presence gates; loader parses a bool). |
 | `DEGENBOT_GATE_CAPTURE_OUT` | `capture.gate_capture_out` | `path` | `/tmp/gate_degenerate.jsonl` | Gate-capture output JSONL path. |
 | `DEGENBOT_GATE_CAPTURE_CAP` | `capture.gate_capture_cap` | `usize` | `50` | Max paths captured per gate-capture run. |
-| `DEGENBOT_SOLVER_CAPTURE` | `capture.solver_capture` | `bool` | `false` | Heavy CL-path solve capture (presence gates; loader parses a bool). |
+| `DEGENBOT_SOLVER_CAPTURE` | `capture.solver_capture` | `bool` | `false` | Heavy concentrated-liquidity-path solve capture (presence gates; loader parses a bool). |
 | `DEGENBOT_SOLVER_CAPTURE_CAP` | `capture.solver_capture_cap` | `usize` | `16` | Max captures per run (deduped by path id). |
 | `DEGENBOT_SOLVER_CAPTURE_MIN_SIMS` | `capture.solver_capture_min_sims` | `u64` | `2000` | Capture only paths with at least this many walk sims. |
 | `DEGENBOT_SOLVER_CAPTURE_MIN_US` | `capture.solver_capture_min_us` | `u64` | `50000` | Capture only paths whose solve time is at least this many microseconds. |
@@ -263,11 +263,11 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_CLCAP_RPC` | `offline.clcap_rpc` | `Option<string>` | `(unset; required by the capture examples)` | RPC URL for the offline CL capture/boundary-scan examples (network-gated). |
-| `DEGENBOT_CLCAP_BLOCK` | `offline.clcap_block` | `Option<u64>` | `(unset)` | Pinned block for the CL capture generator. |
-| `DEGENBOT_CLCAP_MAX_FETCHES` | `offline.clcap_max_fetches` | `usize` | `320` | Max active-set fetches backfilled by the CL capture generator. |
-| `DEGENBOT_CLCAP_PATH_CAP` | `offline.clcap_path_cap` | `usize` | `12` | Per-block path cap for the CL capture generator. |
-| `DEGENBOT_SCAN_BLOCK` | `offline.scan_block` | `Option<u64>` | `(unset)` | Block for the CL boundary-scan examples. |
+| `DEGENBOT_CLCAP_RPC` | `offline.clcap_rpc` | `Option<string>` | `(unset; required by the capture examples)` | RPC URL for the offline concentrated liquidity capture/boundary-scan examples (network-gated). |
+| `DEGENBOT_CLCAP_BLOCK` | `offline.clcap_block` | `Option<u64>` | `(unset)` | Pinned block for the concentrated liquidity capture generator. |
+| `DEGENBOT_CLCAP_MAX_FETCHES` | `offline.clcap_max_fetches` | `usize` | `320` | Max active-set fetches backfilled by the concentrated liquidity capture generator. |
+| `DEGENBOT_CLCAP_PATH_CAP` | `offline.clcap_path_cap` | `usize` | `12` | Per-block path cap for the concentrated liquidity capture generator. |
+| `DEGENBOT_SCAN_BLOCK` | `offline.scan_block` | `Option<u64>` | `(unset)` | Block for the concentrated liquidity boundary-scan examples. |
 | `DEGENBOT_FIXTURE_DB` | `offline.fixture_db` | `Option<path>` | `(unset)` | Database path for the standalone-consumer fixture example. |
 | `DEGENBOT_V3_FIXTURE_RPC` | `offline.v3_fixture_rpc` | `Option<string>` | `(unset)` | Network-gated V3 IIA fixture reproduction RPC endpoint (test-only). |
 | `DEGENBOT_V3_FIXTURE_BLOCK` | `offline.v3_fixture_block` | `Option<u64>` | `(unset)` | Network-gated V3 IIA fixture reproduction block (test-only). |

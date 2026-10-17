@@ -16,7 +16,7 @@ use super::kernel::Line;
 /// What the gate needs from one resolved hop. `None` slots (unsupported
 /// families) poison the whole path: no skip without a rigorous bound.
 ///
-/// The gate extends beyond V2/CL to the Solidly/Curve/Balancer hop
+/// The gate extends beyond V2/concentrated liquidity to the Solidly/Curve/Balancer hop
 /// families. Each added variant carries a RIGOROUS upper bound proven against
 /// the family's real math leaf by the proptest suite in `profit_envelope_tests`.
 /// The Solidly/Aerodrome/Camelot STABLE invariant is concave in the input
@@ -322,7 +322,7 @@ pub(crate) fn hop_lines_and_cap(
     hop_lines_and_cap_cached(hop, cfg, None, stats)
 }
 
-/// [`hop_lines_and_cap`] with the owner's pool-static CL fan cache threaded
+/// [`hop_lines_and_cap`] with the owner's pool-static concentrated liquidity fan cache threaded
 /// in: `fan_cache` is the prefix store plus the solve-cycle epoch. `None`
 /// disables reuse (offline deps and direct callers).
 pub(crate) fn hop_lines_and_cap_cached(
@@ -394,7 +394,7 @@ pub(crate) fn refuse_lines(
     None
 }
 
-/// Classify WHY a CL hop was rejected by `hop_lines_and_cap` (diagnostic). Runs only when production returned `None`, so it reports
+/// Classify WHY a concentrated liquidity hop was rejected by `hop_lines_and_cap` (diagnostic). Runs only when production returned `None`, so it reports
 /// the *first* range that survived the zero-liq skip but failed (zero
 /// price, `compute_crossing` failure, all-zero, or `cap_tail` overflow).
 #[must_use]
@@ -434,7 +434,7 @@ pub(crate) fn classify_concentrated_liquidity_rejection(seq: &IntV3TickRangeSequ
 }
 
 /// Prefix-composition cache (loop-8): composed lower-envelope line sets
-/// between hop boundaries, keyed by a FULL-CONTENT key per hop — the CL
+/// between hop boundaries, keyed by a FULL-CONTENT key per hop — the concentrated liquidity
 /// hop's whole crossing table hashed, the Möbius hop a reserves+fee hash
 /// (the allocation-pointer key + endpoint-fingerprint revalidation pair is
 /// retired: identical content is the common case across a block's paths,
@@ -456,7 +456,7 @@ pub(crate) fn content_mix_u256(mut h: u128, v: &U256) -> u128 {
     h
 }
 
-/// Full-content key of one CL hop's crossing table. Hashing the whole table
+/// Full-content key of one concentrated liquidity hop's crossing table. Hashing the whole table
 /// per path costs a few ns/entry — far below the tangent-derivation +
 /// compose work the cache saves, and immune to the allocator address reuse
 /// the old pointer key only partially guarded against (its endpoint
@@ -488,7 +488,7 @@ struct PrefixCacheState {
 }
 
 /// Engine-owned gate memo (C4; loop-8 origin — the former process static
-/// `PREFIX_CACHE`): composed prefix line sets plus the pool-static CL tangent
+/// `PREFIX_CACHE`): composed prefix line sets plus the pool-static concentrated liquidity tangent
 /// fans. Entries are epoch-generationed: first touch of a new epoch clears
 /// older entries, so no entry survives a block boundary and no public reset
 /// exists. One instance per solve owner — two engines in one process no
@@ -538,7 +538,7 @@ impl PrefixCache {
         }
     }
 
-    /// Pool-static CL tangent fan against `epoch` (the same rollover-on-first
+    /// Pool-static concentrated liquidity tangent fan against `epoch` (the same rollover-on-first
     /// touch rule as the prefix map). Poisoned lock → miss.
     pub(crate) fn get_concentrated_liquidity_fan(
         &self,
@@ -558,7 +558,7 @@ impl PrefixCache {
         }
     }
 
-    /// Pool-static CL tangent fan write against `epoch`.
+    /// Pool-static concentrated liquidity tangent fan write against `epoch`.
     pub(crate) fn insert_concentrated_liquidity_fan(
         &self,
         epoch: u64,

@@ -140,7 +140,9 @@ pub(super) fn observe(state: &V3PoolState, probe: Observe) -> Observed {
             state.tick_data.len(),
             state.tick_data.values().map(|t| t.block).sum(),
         ))),
-        _ => unreachable!("a CL slice answers only the CL probes"),
+        _ => unreachable!(
+            "a concentrated liquidity slice answers only the concentrated liquidity probes"
+        ),
     }
 }
 

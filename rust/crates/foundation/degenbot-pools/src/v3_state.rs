@@ -55,7 +55,7 @@ pub enum PoolTickCoverage {
 // Pool registration lifecycle (Quarantined / Live)
 // ---------------------------------------------------------------------------
 
-/// The per-pool registration lifecycle for V3/V4 CL pools. Controls whether
+/// The per-pool registration lifecycle for V3/V4 concentrated liquidity pools. Controls whether
 /// the live pump applies events directly (`Live`) or defers them to the pump
 /// buffer (`Quarantined`).
 ///
@@ -333,7 +333,7 @@ pub struct V3SwapUpdate {
 // V3 pool state
 // ---------------------------------------------------------------------------
 
-// The lazy tick-range cache types live once in the CL family state module
+// The lazy tick-range cache types live once in the concentrated liquidity family state module
 // (`families/concentrated_liquidity/state_walk.rs`); re-exported here for
 // the out-of-crate suites that construct `TickRangeCache` directly.
 pub use crate::families::concentrated_liquidity::state_walk::{CachedTickRanges, TickRangeCache};
@@ -540,7 +540,7 @@ impl Clone for V3PoolState {
 impl V3PoolState {
     /// Directional swap viability — can this pool host a swap in the given
     /// direction with its CURRENT state? The O(1) extremes verb lives once
-    /// in the CL family state module
+    /// in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`).
     #[must_use]
     pub fn swap_is_viable(&self, zero_for_one: bool) -> bool {
@@ -563,7 +563,7 @@ impl V3PoolState {
 
     /// Word position (`tick_position(tick.div_euclid(tick_spacing))`) holding
     /// the given tick. Shared by V3/V4 sparse miss-detection; the verb lives
-    /// once in the CL family state module
+    /// once in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_seeding.rs`).
     #[must_use]
     pub fn word_of(tick: i32, tick_spacing: i32) -> i32 {
@@ -579,7 +579,7 @@ impl V3PoolState {
     }
 
     /// Monotonic advance of the **price** clock (`update_block`) — the verb
-    /// lives once in the CL family state module
+    /// lives once in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`); a backward stamp
     /// outside a reorg panics (two-stamp rule).
     pub fn advance_update_block(&mut self, block: u64) {
@@ -687,7 +687,7 @@ impl V3PoolState {
     // were byte-identical twins across V3/V4; the trait dedups the two.
     // See `impl ConcentratedLiquidityPoolMut for V3PoolState` in `registry.rs`.
     /// Invalidate the cached tick ranges (call after any state mutation) —
-    /// the verb lives once in the CL family state module
+    /// the verb lives once in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`).
     pub fn invalidate_tick_range_cache(&self) {
         state_walk::invalidate_tick_range_cache(self);
@@ -695,7 +695,7 @@ impl V3PoolState {
 
     /// Build an integer V3 tick range sequence using original U256 sqrt prices
     /// and i128→u128 liquidity (no f64 conversion) — the walk verb lives once
-    /// in the CL family state module
+    /// in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`).
     ///
     /// Returns `None` if insufficient tick data.
@@ -710,7 +710,7 @@ impl V3PoolState {
     }
 }
 
-// The reorg-journal verbs live once in the CL state module
+// The reorg-journal verbs live once in the concentrated liquidity state module
 // (`families/concentrated_liquidity/state_journal.rs`); this impl forwards
 // through the `JournalHost` field seam and carries no restore logic of its
 // own.
@@ -805,7 +805,7 @@ impl state_seeding::SeedingHost for V3PoolState {
     }
 }
 
-// The walk/clock/cache verbs live once in the CL state module
+// The walk/clock/cache verbs live once in the concentrated liquidity state module
 // (`families/concentrated_liquidity/state_walk.rs`); this impl is the
 // family-specific field access those verbs go through.
 impl state_walk::WalkHost for V3PoolState {
@@ -877,7 +877,7 @@ pub struct V3SwapOutcome {
     /// it is `< |amount_specified|` the requested input was NOT fully consumed
     /// (the walk hit the price limit with input left over — the pool could not
     /// convert the whole amount). That leftover is the over-swap signal: a
-    /// solver must clamp its CL-hop input to this value (with a rounding margin)
+    /// solver must clamp its concentrated-liquidity-hop input to this value (with a rounding margin)
     /// so the exact-in loop terminates on `amountRemaining == 0` at the last
     /// funded tick instead of marching empty bitmap words to the price limit
     /// (the path-5000 20M-gas EMPTY-HALT). For an **exact-output** swap it is
@@ -908,7 +908,7 @@ impl V3SwapOutcome {
 #[cfg(test)]
 mod exact_input_clamp_tests {
     //! Unit tests for `V3SwapOutcome::exact_input_clamp_bound` — the solver's
-    //! CL-hop input clamp that prevents over-feeding a pool past its capacity
+    //! concentrated-liquidity-hop input clamp that prevents over-feeding a pool past its capacity
     //! (the path-5000 20M-gas EMPTY-HALT class, ).
     use super::V3SwapOutcome;
     use alloy::primitives::U256;
@@ -1241,10 +1241,10 @@ pub fn v3_simulate_swap(
 }
 
 // ===========================================================================
-// Tests for the relocated apply methods (ADR-014 D1 — CL half of Q1).
+// Tests for the relocated apply methods (ADR-014 D1 — concentrated liquidity half of Q1).
 // These exercise `V3PoolState::apply_swap` / `apply_liquidity_update` directly
 // against a constructed state, with no `BotState` registry, no buffer, no
-// address index — the unit layer for the CL-family apply contract. The
+// address index — the unit layer for the concentrated-liquidity-family apply contract. The
 // integration coverage that previously lived on `BotState` (exercise through
 // the registry dispatch) stays in `bot_core/v3_state.rs` / `bot_core/mod.rs`
 // as the dispatch regression net.
@@ -1519,7 +1519,7 @@ mod apply_inherent_tests {
     }
 
     // ------------------------------------------------------------------
-    // ReorgPoolState trait (ADR-016 D4 — CL family adopts the trait).
+    // ReorgPoolState trait (ADR-016 D4 — concentrated liquidity family adopts the trait).
     // `restore_before_block` returns `()`; the landed-at state lives in the
     // struct's own fields (read-after-restore). `V3RestoreResult` stays
     // internal to the impl and never escapes.
@@ -2045,7 +2045,7 @@ mod tests {
     }
 }
 
-/// The V3 adapter's fixture seam for the merged CL state test suites
+/// The V3 adapter's fixture seam for the merged concentrated liquidity state test suites
 /// (ADR-080 D4).
 #[cfg(test)]
 mod fixture_impl;

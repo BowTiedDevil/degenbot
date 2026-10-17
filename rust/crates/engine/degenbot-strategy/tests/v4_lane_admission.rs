@@ -277,7 +277,7 @@ fn typed_v4_post_admits_and_declares_a_v4_v2_solve() {
         .find(|a| a.address == P)
         .expect("the V2 connector admits");
 
-    // The V4 lane declares as a `HopType::V4` hop and the solver's CL
+    // The V4 lane declares as a `HopType::V4` hop and the solver's concentrated liquidity
     // dispatch solves it: a projection miss would surface as a typed reject.
     let chain = vec![
         BackrunHopRef {

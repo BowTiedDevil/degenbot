@@ -3,7 +3,7 @@
 //! + state (ADR-005 standalone claim, the behavioral tier).
 //!
 //! The V3 builder parity (`parity_pool_builder.rs`) proves the FFI seam on
-//! the pool a `PoolBuilder` emits is lossless for CL pools. This Aerodrome
+//! the pool a `PoolBuilder` emits is lossless for concentrated liquidity pools. This Aerodrome
 //! twin does the same for the Aerodrome V2 family: the **same** canonical
 //! identity+state fixture, driven through the **Rust consumer**
 //! (`BotState`/`register_aerodrome_pool` — the exact `RegisterAerodromeV2PoolParams`

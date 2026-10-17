@@ -100,8 +100,8 @@ pub struct SolveResult {
     /// after hop `i`).
     pub hop_outputs: Vec<U256>,
     /// Per-hop consumed input amounts (`consumed_inputs`, uint256 integers).
-    /// The CL-clamp swap-in matters: for an over-fed CL hop this is reduced to
-    /// `input_consumed − 1` (ADR-025 CL-clamp resolution).
+    /// The concentrated-liquidity-clamp swap-in matters: for an over-fed concentrated liquidity hop this is reduced to
+    /// `input_consumed − 1` (ADR-025 concentrated-liquidity-clamp resolution).
     pub consumed_inputs: Vec<U256>,
     /// The net profit (`net_profit`, uint256) — `final_output −
     /// consumed_inputs[0]`.

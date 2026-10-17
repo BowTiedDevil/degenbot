@@ -462,7 +462,7 @@ mod solve_path_span_tests {
     use opentelemetry_sdk::trace::InMemorySpanExporter;
     use tracing_subscriber::layer::SubscriberExt;
     /// ADR-043 §8 behavioral volume gate : one fixture solve
-    /// cycle over the committed heavy-CL corpus must stay within the INFO
+    /// cycle over the committed heavy-concentrated-liquidity corpus must stay within the INFO
     /// volume budget, and every INFO+ record must land on a closed
     /// `degenbot::<domain>` target.
     ///

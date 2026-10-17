@@ -381,7 +381,7 @@ pub struct V3RestoreResult {
 /// than receiving a typed return.
 ///
 /// Balance-vector family: the three impls (Curve + Balancer weighted + stable)
-/// are byte-identical; V2/Aerodrome (reserve-pair) and V3/V4 (CL) adopt the
+/// are byte-identical; V2/Aerodrome (reserve-pair) and V3/V4 (concentrated liquidity) adopt the
 /// trait in follow-on slices (V3 keeps `V3RestoreResult` *internally* — it
 /// never escapes the impl).
 pub trait ReorgPoolState {

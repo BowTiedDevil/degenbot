@@ -1,4 +1,4 @@
-//! The V3 adapter's fixture seam for the merged CL state test suites
+//! The V3 adapter's fixture seam for the merged concentrated liquidity state test suites
 //! (ADR-080 D4): construction + event application for [`V3PoolState`],
 //! reached through the shared `ClStateFixture` trait. Everything the shared
 //! batteries assert lives in the state modules' tests

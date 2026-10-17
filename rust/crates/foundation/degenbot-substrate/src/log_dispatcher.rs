@@ -295,7 +295,7 @@ impl DecodedPoolEvent {
     /// Backfill-phase apply: the backfill chunk loop's ONE apply entry —
     /// the `Backfilled` phase invariant is "state advanced, no solve cycle, no
     /// batches emitted", so no telemetry prelude and no `EpochDelta` record.
-    /// Returns `None` for a V2 Sync: backfill is CL-only (scalar state
+    /// Returns `None` for a V2 Sync: backfill is concentrated-liquidity-only (scalar state
     /// arrives via the snapshot; the historical inline chain never routed V2
     /// backfill logs).
     pub fn apply_backfill(self, bot_state: &mut BotState) -> Option<ApplyOutcome> {
@@ -1327,7 +1327,7 @@ mod tests {
         );
     }
 
-    /// `apply_backfill` skips V2 Sync (backfill is CL-only: historical
+    /// `apply_backfill` skips V2 Sync (backfill is concentrated-liquidity-only: historical
     /// behavior).
     #[test]
     fn apply_backfill_ignores_v2_sync() {
@@ -1340,7 +1340,7 @@ mod tests {
         let mut state = BotState::new();
         assert!(
             ev.apply_backfill(&mut state).is_none(),
-            "V2 Sync must remain out of backfill scope (CL-only)"
+            "V2 Sync must remain out of backfill scope (concentrated-liquidity-only)"
         );
     }
 }

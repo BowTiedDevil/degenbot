@@ -129,8 +129,8 @@ fn sim_out_with_protocol_fee(state: &V4PoolState, amount_in: U256) -> U256 {
     outcome.amount0 // ofz exact-in: amount0 is the output (caller receives token0=USDC)
 }
 
-/// The solver's CL-hop output for `amount_in` against a pre-built sequence —
-/// the exact assembly `int_simulate_mixed_path_n` uses for a CL hop's
+/// The solver's concentrated-liquidity-hop output for `amount_in` against a pre-built sequence —
+/// the exact assembly `int_simulate_mixed_path_n` uses for a concentrated liquidity hop's
 /// `hop_outputs[i]`.
 fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Option<U256> {
     let n = seq.ranges.len();

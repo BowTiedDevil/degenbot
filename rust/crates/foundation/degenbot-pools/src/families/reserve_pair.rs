@@ -333,7 +333,7 @@ fn read_v2_swap(
                 .map_err(|_| SimulateSwapError::NotComputable)
         }
         // A variant this family doesn't answer (the N-token pair reads, the
-        // CL canonical request) is a typed refusal.
+        // concentrated liquidity canonical request) is a typed refusal.
         _ => Err(SimulateSwapError::NotComputable),
     }
 }

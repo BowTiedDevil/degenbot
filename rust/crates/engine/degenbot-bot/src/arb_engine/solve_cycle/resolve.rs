@@ -154,7 +154,7 @@ pub(super) fn resolve_epoch(
     .entered();
     // chunked fan-out over the affected paths. The
     // sharded hop cache keeps cross-path hit reuse intact (a chunk-local
-    // cache would multiply the expensive CL tick-walk per shared pool),
+    // cache would multiply the expensive concentrated liquidity tick-walk per shared pool),
     // so chunks contend only on shard locks, never on each other's work.
     // Per-path chunk outputs merge serially below in deterministic order;
     // `resolve_hops` semantics are byte-identical (same core-read window,

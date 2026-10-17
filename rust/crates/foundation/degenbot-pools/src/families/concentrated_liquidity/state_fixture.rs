@@ -1,4 +1,4 @@
-//! The shared test fixture for the CL state modules' merged test suites
+//! The shared test fixture for the concentrated liquidity state modules' merged test suites
 //! (ADR-080 D4). The former V3/V4 twin batteries converge at the state
 //! modules' interface: every shared behavior is written ONCE, generic over
 //! [`ClStateFixture`], in the three state modules' `tests` mods. Each adapter

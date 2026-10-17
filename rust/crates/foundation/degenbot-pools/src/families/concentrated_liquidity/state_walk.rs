@@ -1,4 +1,4 @@
-//! The CL family's swap-walk state verbs (ADR-080 D2, step 3) — the
+//! The concentrated liquidity family's swap-walk state verbs (ADR-080 D2, step 3) — the
 //! state-side half of the family tree, beside the read door.
 //!
 //! The V3 and V4 state structs (`crate::v3_state` / `crate::v4_state`) carry
@@ -357,7 +357,7 @@ pub(crate) fn build_int_v3_sequence<H: WalkHost>(
 }
 
 /// `V4PoolState::build_int_v4_sequence` — build an integer tick-range
-/// sequence for the V4 pool. Identical CL math to [`build_int_v3_sequence`];
+/// sequence for the V4 pool. Identical concentrated liquidity math to [`build_int_v3_sequence`];
 /// the type is named `IntV3TickRangeSequence` but applies equally to V4
 /// hops. `protocol_fee` is V4's packed `slot0.protocolFee`, passed by the
 /// V4 adapter (V3 has no protocol fee).

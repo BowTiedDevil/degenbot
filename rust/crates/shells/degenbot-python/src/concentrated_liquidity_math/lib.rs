@@ -3,7 +3,7 @@
 //! Thin binding layer that extracts Python arguments, calls the pure Rust
 //! core, and converts results back to Python types.
 //!
-//! The GIL is held (not released) during computation because CL math
+//! The GIL is held (not released) during computation because concentrated liquidity math
 //! operations take ~20ns — far less than the ~200ns GIL release/reacquire
 //! overhead.
 

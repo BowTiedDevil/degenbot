@@ -2956,7 +2956,7 @@ class Pool:
         (7347dcdc3), journaled as a scalar event for reorg rollback.
         `sqrt_price_x96`/`tick` are never changed — no scalar write back out.
         Returns `True` when the update applied to a registered V3/V4 pool;
-        raises `ValueError` for a registered non-CL family (no CL tick state to
+        raises `ValueError` for a registered non-concentrated-liquidity family (no concentrated liquidity tick state to
         mutate) or an unregistered id.
         """
     def apply_swap(
@@ -3123,7 +3123,7 @@ class Pool:
         """
         Calculate the output token amount for a given input amount.
         Surfaces the cdbc03bb on-chain-equivalent revert: when the constant-
-        product / CL swap math overflows a `uint256` intermediate (mirroring
+        product / concentrated liquidity swap math overflows a `uint256` intermediate (mirroring
         on-chain `getAmountOut` `SafeMath` revert), this raises `ValueError` so the
         Python companion can translate it to a domain `LiquidityPoolError`.
         A V3/V4 sparse-map miss is still mapped to 0 — callers needing the miss
@@ -3566,7 +3566,7 @@ class Pool:
         advancing either clock, so a split-seed (price at HEAD, tick map at the
         DB block) pool keeps a non-empty journal for mid-window reorg restore.
         Returns `True` on a registered V3/V4 pool; raises `ValueError` for a
-        registered non-CL family (no CL journal to seed) or an unregistered id.
+        registered non-concentrated-liquidity family (no concentrated liquidity journal to seed) or an unregistered id.
         """
     def simulate(
         self,
@@ -3584,7 +3584,7 @@ class Pool:
         output). Returns a typed read dict — `status` is `computed` (with
         signed per-token deltas in the deposited-`+`/sent-`-` convention, the
         end state, and `specified_met`), `not_computable`, `fetch_failed`, or
-        `fetch_exhausted`. Pass `override_state` (a CL pool-state object) to
+        `fetch_exhausted`. Pass `override_state` (a concentrated liquidity pool-state object) to
         simulate against a hypothetical.
         """
     @property
@@ -3671,7 +3671,7 @@ class PoolKind:
 @final
 class PoolTickCoverage:
     """
-    The CL tick-map coverage discriminant crossing the FFI (survey C7):
+    The concentrated liquidity tick-map coverage discriminant crossing the FFI (survey C7):
     Python compares this enum instead of probing a stringified twin.
     Mirrors `degenbot_pools::v3_state::PoolTickCoverage` (the fact's home).
     """

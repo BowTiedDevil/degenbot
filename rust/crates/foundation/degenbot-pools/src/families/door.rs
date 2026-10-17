@@ -21,7 +21,7 @@ use crate::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
 /// direction (and, for the pair reads, token selection). The token0/1
 /// exact-input row is the seat engine's hop universe; the pair rows are the
 /// standalone-driver N-token surface; the concentrated-liquidity variant is
-/// the CL family's canonical signed request.
+/// the concentrated liquidity family's canonical signed request.
 #[derive(Clone, Copy, Debug)]
 pub enum SwapReadRequest<'a> {
     /// Exact-input swap (on-chain `getAmountOut`); a zero request answers the
@@ -76,14 +76,14 @@ pub enum SwapReadRequest<'a> {
     },
     /// The concentrated-liquidity family's canonical request (ADR-037 sign
     /// convention: positive `amount_specified` = exact output, negative =
-    /// exact input). The CL design files map it onto their engine
+    /// exact input). The concentrated liquidity design files map it onto their engine
     /// conventions — callers never do.
     ConcentratedLiquidity {
         /// Direction of the swap (token0 → token1 when `true`).
         zero_for_one: bool,
         /// Signed canonical amount — see the variant-level convention.
         amount_specified: I256,
-        /// Price-limit bound; `None` selects the shared CL default.
+        /// Price-limit bound; `None` selects the shared concentrated liquidity default.
         sqrt_price_limit: Option<U256>,
     },
 }
@@ -101,7 +101,7 @@ pub enum ReadOutcome {
     /// Arithmetic overflow / invariant violation / non-positive amount / a
     /// typed family refusal — the simple doors' only error verdict.
     NotComputable,
-    /// A completed CL read: the raw engine outcome (V3-shaped; both CL
+    /// A completed concentrated liquidity read: the raw engine outcome (V3-shaped; both concentrated liquidity
     /// designs return it) + the words fetched during miss recovery, in fetch
     /// order.
     Computed {
@@ -153,7 +153,7 @@ impl ReadOutcome {
     ///
     /// # Panics
     ///
-    /// Never for a verdict a simple door produced; the CL-only variants are
+    /// Never for a verdict a simple door produced; the concentrated-liquidity-only variants are
     /// unreachable here.
     pub fn amount(self) -> Result<U256, SimulateSwapError> {
         match self {
@@ -186,7 +186,7 @@ pub enum Observe {
     StateNonce,
     /// The token count (the balance vector's arity).
     TokenCount,
-    /// Registration coverage (`Tracked` / `Sparse`) — the CL family's probe.
+    /// Registration coverage (`Tracked` / `Sparse`) — the concentrated liquidity family's probe.
     Coverage,
     /// Whether the design's hook surface can modify swap amounts (V3: always
     /// `false` — no hook concept; V4: the amount-modifying permission bits).
@@ -209,7 +209,7 @@ pub enum Observed {
     Coverage(PoolTickCoverage),
     /// Whether the design's hook surface can modify swap amounts.
     Hooked(bool),
-    /// The tick-data fingerprint; `Some` for every CL slice (every CL probe
+    /// The tick-data fingerprint; `Some` for every concentrated liquidity slice (every concentrated liquidity probe
     /// is answerable over the family's slices).
     TickFingerprint(Option<(u64, usize, u64)>),
 }

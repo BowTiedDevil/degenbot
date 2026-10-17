@@ -11,7 +11,7 @@
 //! 1. **Stale active state** — engine `V4PoolState` lags the solve-block RPC
 //!    state the sim reads.
 //! 2. **A residual in `compute_crossing` / `simulate_v3_range_swap`** — the
-//!    solver's hand-rolled 2-range→N-range CL model diverges from V4's
+//!    solver's hand-rolled 2-range→N-range concentrated liquidity model diverges from V4's
 //!    stepwise `compute_swap_step_v4` walk on a multi-tick crossing.
 //!
 //! This test feeds the **IDENTICAL** synthetic `V4PoolState` to BOTH:
@@ -21,7 +21,7 @@
 //!   Python `compute_swap_step` oracle suite).
 //! - the solver's crossing path: `IntV3TickRangeSequence::compute_crossing`
 //!   + `simulate_v3_range_swap` for the ending partial step — exactly what
-//!   `int_simulate_mixed_path_n` assembles for a CL hop's `hop_outputs[i]`.
+//!   `int_simulate_mixed_path_n` assembles for a concentrated liquidity hop's `hop_outputs[i]`.
 //!
 //! Because the input state is byte-identical, ANY divergence is pure solver
 //! math — hypothesis (2) — and stale state (1) is exonerated by construction
@@ -132,8 +132,8 @@ fn build_multi_tick_v4_state(
     state
 }
 
-/// The solver's CL-hop output for `amount_in` against a pre-built sequence —
-/// the exact assembly `int_simulate_mixed_path_n` uses for a CL hop's
+/// The solver's concentrated-liquidity-hop output for `amount_in` against a pre-built sequence —
+/// the exact assembly `int_simulate_mixed_path_n` uses for a concentrated liquidity hop's
 /// `hop_outputs[i]`: find the range `k` the input lands in (largest k with
 /// `crossing_gross_input(k) ≤ amount_in`), then sum the crossing output +
 /// the ending-range partial-step output.
@@ -383,7 +383,7 @@ fn build_fee1_tiny_state(
 ///
 /// SOURCE OF THE ROUNDING ERROR (found via the revm-powered V4 parity harness,
 /// grounded by the tier-3 `v4_simulate_swap` == on-chain PoolManager oracle):
-/// the int-solve crossing path over-predicted output on **zero-for-one** CL
+/// the int-solve crossing path over-predicted output on **zero-for-one** concentrated liquidity
 /// hops by a few wei because its `build_int_v4_sequence` → `compute_crossing` /
 /// `simulate_v3_range_swap` range-collapse evaluated each tick range as a SINGLE
 /// floored step, MISSING the zero-amount current-tick flooring the on-chain
@@ -1751,7 +1751,7 @@ fn fee1_zfo_true_two_step_floored_equivalence() {
     assert_eq!(onchain, U256::from(4724u64));
 }
 
-/// Margin-policy measurement for the CL-hop clamp : quantify the
+/// Margin-policy measurement for the concentrated-liquidity-hop clamp : quantify the
 /// worst solver-vs-`v4_simulate_swap` OVER-prediction magnitude across the
 /// covered corpus (fee-1/ts=1 in both directions, plus the fee-3000/ts=60
 /// multi-tick topology) — the quantity the VAASFM clamp margin (1 wei) must

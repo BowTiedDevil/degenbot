@@ -14,7 +14,7 @@ use super::{
 };
 use crate::solve::runtime::SolveRuntimeConfig;
 
-/// One CL hop's DERIVATION value: the tick-range sequence it was derived from,
+/// One concentrated liquidity hop's DERIVATION value: the tick-range sequence it was derived from,
 /// paired with the crossing table + word profiles built from that sequence,
 /// built ONCE per (pool, direction) by the projection.
 ///
@@ -70,9 +70,9 @@ impl PreparedConcentratedLiquidityHop {
     }
 }
 
-/// One hop of a mixed V2+CL path as the walk consumes it — the mixed entry's
+/// One hop of a mixed V2+concentrated liquidity path as the walk consumes it — the mixed entry's
 /// WHOLE intake, one borrowed view per position: either a V2 constant-product
-/// state or the projection's prepared CL hop. One slice of these makes the
+/// state or the projection's prepared concentrated liquidity hop. One slice of these makes the
 /// positional pairing (which position is which family, and where the prepared
 /// tables live) structural, so the parallel positional slices and the
 /// per-solve table rebuild they forced are gone.
@@ -80,12 +80,12 @@ impl PreparedConcentratedLiquidityHop {
 pub enum MixedHopView<'a> {
     /// V2 constant-product hop: the walk borrows the resolved state.
     V2(&'a IntHopState),
-    /// CL hop: the projection's [`PreparedConcentratedLiquidityHop`] derivation value.
+    /// concentrated liquidity hop: the projection's [`PreparedConcentratedLiquidityHop`] derivation value.
     ConcentratedLiquidity(&'a PreparedConcentratedLiquidityHop),
 }
 
 impl<'a> MixedHopView<'a> {
-    /// This hop's walk [`PieceView`]: V2 borrows the state; CL O(1)-clones the
+    /// This hop's walk [`PieceView`]: V2 borrows the state; concentrated liquidity O(1)-clones the
     /// projection's `Arc` tables (nothing is derived or rebuilt per solve).
     fn piece_view(self) -> PieceView<'a> {
         match self {
@@ -145,7 +145,7 @@ pub fn derive_and_solve_concentrated_liquidity_piecewise(
     solve_concentrated_liquidity_piecewise(&prepared, None, None, cfg, None)
 }
 
-/// The all-CL intake convenience: the projection's prepared hops plus the
+/// The all-concentrated-liquidity intake convenience: the projection's prepared hops plus the
 /// caller's engine-owned cross-block memo handle, forwarded to the ONE solve
 /// body ([`solve_piecewise`]) over borrowed [`MixedHopView::ConcentratedLiquidity`] views.
 /// This is an intake shape, not a second solve body — the memo fold, hop
@@ -158,9 +158,9 @@ pub fn derive_and_solve_concentrated_liquidity_piecewise(
 /// — so the table source and the tables travel as one value and no positional
 /// re-derivation is needed.
 ///
-/// Memo keys are the unified entry's: a CL-only composition folds through
+/// Memo keys are the unified entry's: a concentrated-liquidity-only composition folds through
 /// the one composition key like every other composition (the key values are
-/// transient in-memory memo keys; the all-CL-only key this replaces was
+/// transient in-memory memo keys; the all-concentrated-liquidity-only key this replaces was
 /// retired with the duplicated solve body).
 #[must_use]
 #[hotpath::measure(label = "concentrated_liquidity_solve.int_solve_concentrated_liquidity_path")]
@@ -169,7 +169,7 @@ pub fn solve_concentrated_liquidity_piecewise(
     memo: Option<&WalkMemo>,
     tele: Option<&WalkTelemetry>,
     cfg: &SolveRuntimeConfig,
-    // Kernel-side refine-window data: the CL family module translates the
+    // Kernel-side refine-window data: the concentrated liquidity family module translates the
     // envelope's composed bound lines into [`RefineBound`]s at the seam, so no
     // envelope type reaches into the kernel.
     env: Option<&[RefineBound]>,
@@ -185,12 +185,12 @@ pub fn solve_concentrated_liquidity_piecewise(
 // Integer V3 Exact Solver
 // ---------------------------------------------------------------------------
 
-/// Solve an N-hop mixed V2 + CL (V3/V4) arbitrage path with the active-set
+/// Solve an N-hop mixed V2 + concentrated liquidity (V3/V4) arbitrage path with the active-set
 /// piecewise Möbius walk (replaces the capped mixed-radix
-/// enumeration over CL ending ranges — there is no tuple budget any more).
+/// enumeration over concentrated liquidity ending ranges — there is no tuple budget any more).
 ///
 /// `hops` is ONE borrowed [`MixedHopView`] per position — `V2(&IntHopState)`
-/// for a constant-product position, `ConcentratedLiquidity(&PreparedConcentratedLiquidityHop)` for a prepared CL
+/// for a constant-product position, `ConcentratedLiquidity(&PreparedConcentratedLiquidityHop)` for a prepared concentrated liquidity
 /// hop — so which family each position carries, and where the prepared
 /// tables live, are structural rather than positional. Offline/replay callers
 /// that only hold sequences derive a [`PreparedConcentratedLiquidityHop`] per hop (their cost).
@@ -198,16 +198,16 @@ pub fn solve_concentrated_liquidity_piecewise(
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 ///
 /// THE solve entry — the ONE solve body for every walkable composition
-/// (all-CL, V2+CL mixed, pure-V2). `memo` (mirroring [`solve_concentrated_liquidity_piecewise`]
+/// (all-concentrated-liquidity, V2+concentrated liquidity mixed, pure-V2). `memo` (mirroring [`solve_concentrated_liquidity_piecewise`]
 /// position-for-position) is the caller's engine-owned cross-block
 /// composition memo: the entry probes by `walk_mixed_path_fingerprint`
 /// BEFORE hop assembly — the key needs only the hop states, sequences, and
 /// order, so a cached `Hit` replays the solution and a cached `Negative`
 /// skips the walk, `note_cost`, and store without paying for assembly; a
 /// `Miss` falls through to hop assembly + solve + `note_cost` + `store`.
-/// Pure-V2 compositions (no CL hops at all) route through this entry from
+/// Pure-V2 compositions (no concentrated liquidity hops at all) route through this entry from
 /// `mixed::solve` too, so they gain memo coverage here as well. (The
-/// per-CL-hop table source gate this entry once ran is gone: the projection
+/// per-concentrated-liquidity-hop table source gate this entry once ran is gone: the projection
 /// hands each hop a prepared value paired with its own sequence, so the
 /// pairing is structural and no table is rebuilt per solve.)
 #[must_use]
@@ -244,7 +244,7 @@ pub fn solve_piecewise(
     }
 
     // Hop assembly, after the memo probe: each view becomes its `PieceView`
-    // (V2 borrows the state; CL O(1)-clones the projection's `Arc` tables, so
+    // (V2 borrows the state; concentrated liquidity O(1)-clones the projection's `Arc` tables, so
     // nothing is derived or rebuilt per solve).
     let pieces: Vec<PieceView> = hops.iter().map(|h| h.piece_view()).collect();
 

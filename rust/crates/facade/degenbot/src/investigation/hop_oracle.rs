@@ -31,7 +31,7 @@ pub fn v2_get_amount_out(
     numerator / denominator
 }
 
-/// The exact-in output token amount for a CL swap outcome: the currency that is
+/// The exact-in output token amount for a concentrated liquidity swap outcome: the currency that is
 /// TAKEN. `zero_for_one` false → token0 is output; true → token1 is output.
 pub fn concentrated_liquidity_exact_in_output(outcome: &V3SwapOutcome, zero_for_one: bool) -> U256 {
     if zero_for_one {
@@ -117,7 +117,7 @@ pub fn v4_hop_output(
 /// exact-in passes a negative amount, so the input is negated internally.
 ///
 /// Returns the pool's max-convertible input (`input_consumed`) alongside the
-/// output, so a caller can derive the CL-hop input clamp (feed
+/// output, so a caller can derive the concentrated-liquidity-hop input clamp (feed
 /// `exact_input_clamp_bound` the returned consumption).
 pub fn v4_hop_output_consumed(
     state: &V4PoolState,
@@ -156,7 +156,7 @@ pub fn v4_hop_output_consumed(
 
 /// An [`OracleOutcome`] plus the pool's max-convertible input for the queried
 /// swap (the `input_consumed` the oracle twin reports), so the caller can
-/// derive the CL-hop input clamp without re-querying.
+/// derive the concentrated-liquidity-hop input clamp without re-querying.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OracleWithConsumed {
     /// The output / error classification (see [`OracleOutcome`]).

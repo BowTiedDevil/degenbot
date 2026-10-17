@@ -32,7 +32,7 @@
 //! | Module | Concern |
 //! |--------|---------|
 //! | [`lane_walk`] | THE ONE lane walk: per-bin solve, the pipelined-sim pacing, and the walk-adjacent clamp/flush helpers |
-//! | [`solve_cycle`] | The solve cycle as a deep module (ADR-045): the CL-hop clamp + profit recompute live here |
+//! | [`solve_cycle`] | The solve cycle as a deep module (ADR-045): the concentrated-liquidity-hop clamp + profit recompute live here |
 //! | [`delivery_lifecycle`] | Delivery lifecycle: channel open/send/close + the end-of-stream contract (incident 2026-08-20 #2) |
 //! | [`delivery_policy`] | Delivery policy: diff computation, thresholds, delivered-bookkeeping |
 //! | [`block_cursor`] | The engine block cursor — one owner of the engine-side block-coordinate residue |
@@ -152,7 +152,7 @@ mod solve_cycle;
 // stage row (`bot_core::AffectedPaths`) carries it from the draw to the epoch,
 // so the stage machine can name its payload without reaching into the module.
 pub(crate) use solve_cycle::CycleTicket;
-// the executor A/B probe fixtures (heavy-CL corpus loader, shared
+// the executor A/B probe fixtures (heavy-concentrated-liquidity corpus loader, shared
 // solve-cycle fixture, production LPT bin packer) live test-only beside their
 // consumers; `#[cfg(test)]` so the fixtures never compile into production.
 #[cfg(test)]

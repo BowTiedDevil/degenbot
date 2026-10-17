@@ -5,7 +5,7 @@
 //! "Family read module": it reads no state owner and consumes no solver
 //! kernel, so the family's read story is one file named for the family.
 //! Since the ADR-073 endgame re-home each family file ALSO carries the
-//! family's solve entry (its nested `solve` module; the CL tree's
+//! family's solve entry (its nested `solve` module; the concentrated liquidity tree's
 //! [`concentrated_liquidity::solve`]) — the two-homes pattern is literally
 //! ONE file per family.
 //!

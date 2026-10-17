@@ -134,7 +134,7 @@ impl WalkMemoState {
 }
 
 /// The engine's OWNED cross-block walk-composition handle:
-/// an `Arc<WalkMemo>` passed into the CL solve entry — no global state, and
+/// an `Arc<WalkMemo>` passed into the concentrated liquidity solve entry — no global state, and
 /// no environment read inside the solver (the enabled flags are constructor
 /// fields; the owner builds them from its config, `build` at the
 /// engine-construction boundary). Internal mutex is shared under rayon.
@@ -348,7 +348,7 @@ fn mix_u256(acc: &mut u64, v: U256) {
         ^ 0xD6E8_FEB8_6659_FD93;
 }
 
-/// Fold one CL sequence's per-range state into the two lanes — the EXACT
+/// Fold one concentrated liquidity sequence's per-range state into the two lanes — the EXACT
 /// mixing body [`walk_concentrated_liquidity_path_fingerprint`] folds per position: the
 /// empty-sequence tag, the full per-range state (liquidity, prices, gamma,
 /// swap direction) into lane_a, and the derived gross/cross accumulators +
@@ -413,9 +413,9 @@ fn fold_v2_hop(lane_a: &mut u64, lane_b: &mut u64, hop: &IntHopState) {
     mix_u256(lane_b, hop.reserve_out);
 }
 
-/// The unified entry's memo key for an all-CL composition: the mixed key
-/// projected over CL-only positions. Production folds every all-CL path
-/// through this projection (the all-CL-only key was retired with the
+/// The unified entry's memo key for an all-concentrated-liquidity composition: the mixed key
+/// projected over concentrated-liquidity-only positions. Production folds every all-concentrated-liquidity path
+/// through this projection (the all-concentrated-liquidity-only key was retired with the
 /// duplicated solve body), so the fingerprint suites pin exactly this fold.
 #[cfg(test)]
 #[must_use]
@@ -437,15 +437,15 @@ pub(crate) fn walk_concentrated_liquidity_path_fingerprint(
 /// derive from the envelope's composed `PathBoundLines`, folding the V2
 /// reserves and fee params via the family line builders' `hop_lines_and_cap` →
 /// `mobius_lines`), so folding every position's determining state makes the key
-/// exact for every composition — all-CL, V2+CL mixed, and pure-V2 alike. One
+/// exact for every composition — all-concentrated-liquidity, V2+concentrated liquidity mixed, and pure-V2 alike. One
 /// entry, one key space: fingerprint identity is composition identity.
 ///
 /// Per position it folds the hop index (the `(i + 3)` / `(i + 5)` lane
-/// mixing), a V2/CL discriminator tag, and the hop state: V2 via
-/// [`fold_v2_hop`] (every field `PieceView::constant_product` consumes), CL
-/// via [`fold_sequence_ranges`] (every field the CL walk consumes), with the
-/// `gross`/`cross` accumulators threaded path-wide across the CL positions;
-/// V2 positions contribute nothing to them (the original CL-only
+/// mixing), a V2/concentrated liquidity discriminator tag, and the hop state: V2 via
+/// [`fold_v2_hop`] (every field `PieceView::constant_product` consumes), concentrated liquidity
+/// via [`fold_sequence_ranges`] (every field the concentrated liquidity walk consumes), with the
+/// `gross`/`cross` accumulators threaded path-wide across the concentrated liquidity positions;
+/// V2 positions contribute nothing to them (the original concentrated-liquidity-only
 /// accumulation discipline). The keys are transient in-memory memo keys — a
 /// value shift here is inert. The u128 two-lane output discipline is kept.
 // The entries fold through `walk_views_fingerprint` (the native-intake
@@ -456,7 +456,7 @@ pub(crate) fn walk_concentrated_liquidity_path_fingerprint(
 pub(crate) fn walk_mixed_path_fingerprint(
     v2_hops: &[Option<IntHopState>],
     concentrated_liquidity_sequences: &[Option<&IntV3TickRangeSequence>],
-    hop_order: &[bool], // true = V2, false = CL
+    hop_order: &[bool], // true = V2, false = concentrated liquidity
 ) -> u128 {
     let mut fold = Fold::new();
     for (i, &is_v2) in hop_order.iter().enumerate() {
@@ -509,7 +509,7 @@ impl Fold {
         }
     }
 
-    /// One position's fold share: the hop-index lane mixing, the V2/CL
+    /// One position's fold share: the hop-index lane mixing, the V2/concentrated liquidity
     /// discriminator tag, and the hop state.
     fn position(
         &mut self,
@@ -617,13 +617,13 @@ mod tests {
         ])
     }
 
-    /// The all-CL memo key for a single-sequence path — what the sweep pins
+    /// The all-concentrated-liquidity memo key for a single-sequence path — what the sweep pins
     /// (folded from the sequence directly; no stored per-hop value remains).
     fn prepared_key(seq: &IntV3TickRangeSequence) -> u128 {
         walk_concentrated_liquidity_path_fingerprint(&[seq])
     }
 
-    /// Perturb one CL-range field and assert the folded key moves.
+    /// Perturb one concentrated-liquidity-range field and assert the folded key moves.
     fn assert_concentrated_liquidity_field_moves_key(
         label: &str,
         mutate: impl Fn(&mut IntV3TickRangeSequence),
@@ -635,7 +635,7 @@ mod tests {
         assert_ne!(
             key,
             prepared_key(&perturbed),
-            "fingerprint did not move when PieceView-consumed CL field `{label}` changed"
+            "fingerprint did not move when PieceView-consumed concentrated liquidity field `{label}` changed"
         );
     }
 
@@ -763,7 +763,7 @@ mod tests {
         let concentrated_liquidity_key =
             walk_mixed_path_fingerprint(&[None], &[Some(&seq)], &[false]);
         let v2_key = mixed_v2_key(&v2);
-        // The V2/CL discriminator is part of the key.
+        // The V2/concentrated liquidity discriminator is part of the key.
         assert_ne!(
             concentrated_liquidity_key, v2_key,
             "family tag did not move the key"
@@ -776,7 +776,7 @@ mod tests {
         );
         assert_ne!(
             absent, concentrated_liquidity_key,
-            "absent CL position collided with a present one"
+            "absent concentrated liquidity position collided with a present one"
         );
     }
 }

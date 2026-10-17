@@ -225,7 +225,7 @@ pub(crate) struct SolveCycleShared {
     /// The pre-solve profitability floor as an instance value, set at
     /// construction from `cfg.solve.min_profit_wei`.
     pub(crate) min_profit: U256,
-    /// The CL-hop clamp margin (wei) as an instance value, packed from
+    /// The concentrated-liquidity-hop clamp margin (wei) as an instance value, packed from
     /// `solve.clamp_margin_wei` through `EngineRetune` — never a process
     /// static read.
     pub(crate) clamp_margin: U256,
@@ -414,7 +414,7 @@ pub(crate) struct SolveCycle {
     /// Resolved path states (mutated on each solve). Entries are Arc-shared
     /// into the parallel solve dispatch (f701ccd3 staging fix) — immutable
     /// between resolve passes, so staging is refcount bumps, not deep clones
-    /// of the CL tick-range sequences.
+    /// of the concentrated liquidity tick-range sequences.
     pub(crate) path_resolved: HashMap<u64, Arc<ResolvedMixedPath>>,
     /// Path solve-eligibility state machine: per registered path the
     /// [`PathSolveStatus`] that decides whether a dirty-pool fan-out must
@@ -484,7 +484,7 @@ pub(crate) struct SolveCycle {
     /// The pre-solve profitability floor. A packed instance
     /// value, never a process static.
     pub(crate) min_profit_floor: U256,
-    /// The CL-hop clamp margin packed from the typed config
+    /// The concentrated-liquidity-hop clamp margin packed from the typed config
     /// (`solve.clamp_margin_wei`) via `EngineRetune`.
     pub(crate) clamp_margin: U256,
     /// The inline-sim stance as an engine instance value (documented stance
@@ -600,7 +600,7 @@ pub(crate) struct EpochContext<'a> {
     pub(crate) path_cost_history: &'a Arc<super::path_cost_ledger::PathCostHistory>,
     /// The pre-solve profitability floor (packed instance value).
     pub(crate) min_profit_floor: U256,
-    /// The CL-hop clamp margin (packed instance value).
+    /// The concentrated-liquidity-hop clamp margin (packed instance value).
     pub(crate) clamp_margin: U256,
     /// The inline-sim stance (instance value).
     pub(crate) inline_sim_enabled: bool,
@@ -1155,7 +1155,7 @@ impl SolveCycle {
         // Pre-collect work items (path_id + Arc-shared resolved). The Arc
         // clones drop the immutable borrow on self.path_resolved so the
         // 'static bin jobs don't capture &self at all (f701ccd3 staging fix:
-        // Arc clones are refcount bumps, not deep clones of the CL
+        // Arc clones are refcount bumps, not deep clones of the concentrated liquidity
         // tick-range sequences).
         let to_solve: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)> = self
             .path_resolved
@@ -1984,7 +1984,7 @@ mod clamp_recompute_tests {
     /// Path-142603 (V4-V4-V3 @25723658) regression: the solver reported a
     /// phantom +346,369,630 wei profit because its V3 hop2 output
     /// (351,476,391,576,684) over-predicted the byte-exact twin
-    /// (351,475,872,056,229) by 519,520,455 wei. After the CL clamp aligns
+    /// (351,475,872,056,229) by 519,520,455 wei. After the concentrated liquidity clamp aligns
     /// `hop_outputs`/`consumed_inputs` to the twin, the selection profit MUST
     /// be recomputed from the clamped values: the round trip nets
     /// -173,150,825 wei -> saturates to 0 -> dropped by the `profit > min_profit`
@@ -1997,7 +1997,7 @@ mod clamp_recompute_tests {
             // Profit the SOLVER computed on its over-predicted raw hop2 output
             // (= 351_476_391_576_684 - 351_476_045_207_054 = +346,369,630).
             profit: U256::from(346_369_630u64),
-            // Twin-aligned outputs after the CL clamp: hop2 (last) clamped
+            // Twin-aligned outputs after the concentrated liquidity clamp: hop2 (last) clamped
             // DOWN to the byte-exact twin 351,475,872,056,229.
             hop_outputs: vec![
                 U256::from(676_293u64),

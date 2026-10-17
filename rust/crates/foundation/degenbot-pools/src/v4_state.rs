@@ -4,7 +4,7 @@
 //! deleted as orphan dead code (the unified `ArbitrageEngine` already handles V4
 //! paths via `HopType::V4` in its `register_path`/`solve_path`).
 //!
-//! V4 shares identical CL math with V3 (same tick structure, same
+//! V4 shares identical concentrated liquidity math with V3 (same tick structure, same
 //! `sqrtPriceX96`, same liquidity tracking). The `build_int_v4_sequence`
 //! produces the same `IntV3TickRangeSequence` the V3 path solver consumes.
 
@@ -55,7 +55,7 @@ pub const AMOUNT_MODIFYING_HOOK_MASK: u16 = 0x80 | 0x40 | 0x08 | 0x04; // = 0xCC
 /// `archive/main-20260721` branch). The swap-relevant bits are
 /// `0x80 | 0x40 | 0x08 | 0x04` (`BEFORE`/`AFTER_SWAP` plus the two
 /// return-delta twins) — they can
-/// alter swap deltas, so standard CL math may mis-price such pools.
+/// alter swap deltas, so standard concentrated liquidity math may mis-price such pools.
 #[must_use]
 pub fn has_amount_modifying_hook(hooks: Address) -> bool {
     let flags = u16::from_be_bytes([hooks.as_slice()[18], hooks.as_slice()[19]]);
@@ -197,7 +197,7 @@ pub struct RegisterV4PoolParams {
 
 /// Typed rejection from [`crate::BotState::register_v4_pool`].
 ///
-/// Pool admission is a *correctness floor*: the solver's V3-CL math assumes
+/// Pool admission is a *correctness floor*: the solver's V3-concentrated-liquidity math assumes
 /// no hook intervention, and a fixed fee. Per ADR-005 the standalone-core
 /// target means a Rust consumer (no Python) must be protected, so the refusal
 /// lives in the Rust core and surfaces at the `PyO3` seam as typed Python
@@ -408,7 +408,7 @@ impl Clone for V4PoolState {
 impl V4PoolState {
     /// Directional swap viability — the V4 twin of
     /// [`V3PoolState::swap_is_viable`] (same O(1) extremes check); the verb
-    /// lives once in the CL family state module
+    /// lives once in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`).
     #[must_use]
     pub fn swap_is_viable(&self, zero_for_one: bool) -> bool {
@@ -416,7 +416,7 @@ impl V4PoolState {
     }
 
     /// Word position holding `tick` (V3/V4-shared helper); the verb lives
-    /// once in the CL family state module
+    /// once in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_seeding.rs`).
     #[must_use]
     pub fn word_of(tick: i32, tick_spacing: i32) -> i32 {
@@ -431,7 +431,7 @@ impl V4PoolState {
 
     /// Monotonic advance of the **price** clock — see
     /// [`V3PoolState::advance_update_block`] (V4 twin, two-stamp rule); the
-    /// verb lives once in the CL family state module
+    /// verb lives once in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`).
     pub fn advance_update_block(&mut self, block: u64) {
         state_walk::advance_update_block(self, block);
@@ -521,16 +521,16 @@ impl V4PoolState {
     // See `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
 
     /// Invalidate the cached tick ranges (call after any state mutation) —
-    /// the verb lives once in the CL family state module
+    /// the verb lives once in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`).
     pub fn invalidate_tick_range_cache(&self) {
         state_walk::invalidate_tick_range_cache(self);
     }
 
-    /// Build an integer tick-range sequence for the V4 pool. Identical CL math
+    /// Build an integer tick-range sequence for the V4 pool. Identical concentrated liquidity math
     /// to V3's `build_int_v3_sequence`; the type is named `IntV3TickRange-
     /// Sequence` but applies equally to V4 hops. The walk verb lives once in
-    /// the CL family state module
+    /// the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`); V4's packed
     /// `slot0.protocolFee` scalar rides the call as the fee-combine input.
     ///
@@ -546,7 +546,7 @@ impl V4PoolState {
     }
 }
 
-// The reorg-journal verbs live once in the CL state module
+// The reorg-journal verbs live once in the concentrated liquidity state module
 // (`families/concentrated_liquidity/state_journal.rs`); this impl forwards
 // through the `JournalHost` field seam and carries no restore logic of its
 // own.
@@ -641,7 +641,7 @@ impl state_seeding::SeedingHost for V4PoolState {
     }
 }
 
-// The walk/clock/cache verbs live once in the CL state module
+// The walk/clock/cache verbs live once in the concentrated liquidity state module
 // (`families/concentrated_liquidity/state_walk.rs`); this impl is the
 // family-specific field access those verbs go through.
 impl state_walk::WalkHost for V4PoolState {
@@ -686,7 +686,7 @@ impl state_walk::WalkHost for V4PoolState {
 // V4 single-pool swap simulation (ADR-003: "Pool's authority over its own math")
 // ---------------------------------------------------------------------------
 //
-// V4 uses identical CL math to V3 with one sign-convention divergence: V3
+// V4 uses identical concentrated liquidity math to V3 with one sign-convention divergence: V3
 // uses `amountSpecified > 0` for exact-in, V4 uses `amountSpecified < 0`.
 // (Verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`
 // for V3.) The V4 `compute_swap_step_v4` clamp + flow match V3 after the
@@ -936,8 +936,8 @@ pub fn v4_simulate_swap(
 }
 
 // ===========================================================================
-// Tests for the relocated apply methods (ADR-014 D1 — CL half of Q1).
-// V4 shares identical CL math + the V3BlockDelta journal type with V3, so the
+// Tests for the relocated apply methods (ADR-014 D1 — concentrated liquidity half of Q1).
+// V4 shares identical concentrated liquidity math + the V3BlockDelta journal type with V3, so the
 // apply contract is the same shape (scalars-on-swap, tick-only-on-mint). These
 // exercise `V4PoolState::apply_swap` / `apply_liquidity_update` directly.
 // ===========================================================================
@@ -1068,7 +1068,10 @@ mod apply_inherent_tests {
         let concentrated_liquidity: &mut dyn ConcentratedLiquidityPoolMut = &mut state;
         let applied = concentrated_liquidity.merge_tick_word(&fetched);
 
-        assert!(applied, "trait merge_tick_word returns true on a CL pool");
+        assert!(
+            applied,
+            "trait merge_tick_word returns true on a concentrated liquidity pool"
+        );
         assert_eq!(
             state.tick_data.get(&420),
             Some(&TickInfo {
@@ -1140,14 +1143,14 @@ mod apply_inherent_tests {
     }
 
     // ------------------------------------------------------------------
-    // ReorgPoolState trait (ADR-016 D4 — CL family adopts the trait).
+    // ReorgPoolState trait (ADR-016 D4 — concentrated liquidity family adopts the trait).
     // `restore_before_block` returns `()`; the landed-at state lives in the
     // struct's own fields (read-after-restore). `V3RestoreResult` stays
     // internal to the impl and never escapes. Byte-identical to the V3 impl.
     // ------------------------------------------------------------------
 }
 
-/// The V4 adapter's fixture seam for the merged CL state test suites
+/// The V4 adapter's fixture seam for the merged concentrated liquidity state test suites
 /// (ADR-080 D4).
 #[cfg(test)]
 mod fixture_impl;

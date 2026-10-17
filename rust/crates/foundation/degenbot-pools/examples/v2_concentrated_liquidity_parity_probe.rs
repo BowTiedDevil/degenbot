@@ -1,5 +1,5 @@
 //! Swap-step byte-parity probe: a V2 constant-product hop projected as a
-//! degenerate single-range CL tick sequence.
+//! degenerate single-range concentrated liquidity tick sequence.
 //!
 //! Reads the real V2 hop states available in the solver capture corpus
 //! (`heavy_mixed_solve_captures.jsonl` plus the committed single-path pool
@@ -7,14 +7,14 @@
 //! and for every `(state, input)` compares
 //!
 //!   * baseline: `IntHopState::swap(x)` — the V2 one-DIV rational floor, and
-//!   * candidate: the same state projected to one CL range (`L =
+//!   * candidate: the same state projected to one concentrated liquidity range (`L =
 //!     floor(sqrt(R_in * R_out))`, `sqrt_price_x96 = floor(L * 2^96 / R_in)`,
 //!     empty interior word boundaries, fee mapped onto the identical
 //!     `gamma/fee_denom` fraction) then run through the production
 //!     `simulate_v3_range_swap`.
 //!
 //! Both directions of the projection are measured for every state, because the
-//! CL rounding path is direction-specific (zfo floors `amount1`, ofz floors
+//! concentrated liquidity rounding path is direction-specific (zfo floors `amount1`, ofz floors
 //! `amount0`). The probe never special-cases the production step math.
 //!
 //! Output: one `DIVERGENCE {...}` JSON line per non-zero step delta, followed
@@ -23,7 +23,7 @@
 //! zero-tolerance verdict.
 //!
 //! The single-range span is deliberately chosen far wider than every grid input
-//! so the CL step stays in the open-AMM (target-unreachable) branch — the only
+//! so the concentrated liquidity step stays in the open-AMM (target-unreachable) branch — the only
 //! branch with a V2 analogue. A range-boundary hit is therefore a projection
 //! artifact, not a V2 behaviour; the probe reports it separately and treats it
 //! as a divergence because the consumed input then differs from V2's full-`x`
@@ -88,11 +88,11 @@ impl V2State {
     }
 }
 
-/// Project a V2 hop to one degenerate CL range. `zero_for_one` chooses which
+/// Project a V2 hop to one degenerate concentrated liquidity range. `zero_for_one` chooses which
 /// reserve is projected onto token0; the other projection is the reverse.
 ///
 /// Returns `None` when the state cannot be represented (zero reserve, zero
-/// geometric-mean liquidity, or a fee fraction not expressible in the CL
+/// geometric-mean liquidity, or a fee fraction not expressible in the concentrated liquidity
 /// millionths-pip grid).
 fn project(state: V2State, zero_for_one: bool) -> Option<IntV3TickRangeHop> {
     let (r_in, r_out) = if zero_for_one {
@@ -122,7 +122,7 @@ fn project(state: V2State, zero_for_one: bool) -> Option<IntV3TickRangeHop> {
         return None;
     }
 
-    // Map the V2 fraction gamma/fee_denom onto CL millionths-of-a-pip. Exact for
+    // Map the V2 fraction gamma/fee_denom onto concentrated liquidity millionths-of-a-pip. Exact for
     // the standard 0.3% (997/1000), 0.25% (9975/10000), 0.05% (9995/10000), and
     // 1% (99/100) conventions; a non-exact fee fraction is out of scope.
     let fee_pips = 1_000_000u128 * u128::from(state.fee_denom - state.gamma_numer)

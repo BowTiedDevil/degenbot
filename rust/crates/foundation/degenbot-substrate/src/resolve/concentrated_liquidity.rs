@@ -1,4 +1,4 @@
-//! CL family resolve rows (V3 + V4) — the registry-lookup + solver-vocabulary
+//! concentrated liquidity family resolve rows (V3 + V4) — the registry-lookup + solver-vocabulary
 //! wrap seam. ONE dispatch row in [`super::resolve_hops`]
 //! (`HopType::V3 | HopType::V4`) routes here; the two entries below share
 //! only that row, the thin `ResolvedHop::V3/V4` wrap, and the nonce return.
@@ -30,7 +30,7 @@ use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop};
 use super::super::BotState;
 use super::MissingHopReason;
 
-/// The ONE CL resolve row (ADR-073 D2): both designs route here from the
+/// The ONE concentrated liquidity resolve row (ADR-073 D2): both designs route here from the
 /// dispatcher; the design match happens on the hop type and each arm keeps
 /// its own thin wrap.
 pub(crate) fn project(
@@ -46,7 +46,7 @@ pub(crate) fn project(
 
 /// V3 resolve row: read pool state + identity off `core` (ADR-003), then the
 /// family read module's [`concentrated_liquidity_read::capture_hop`] door builds the integer
-/// tick-range sequence the CL solver consumes lock-free. The row wraps the
+/// tick-range sequence the concentrated liquidity solver consumes lock-free. The row wraps the
 /// solver-vocabulary hop (`ResolvedHop::V3`) — the hop is solver vocabulary,
 /// so the wrapper stays at the row.
 pub(crate) fn project_v3(
@@ -80,7 +80,7 @@ pub(crate) fn project_v3(
     Ok((ResolvedHop::V3 { prepared }, pool_state.state_nonce))
 }
 
-/// V4 resolve row: identical CL math as V3 (BotState-owned, ADR-003), with
+/// V4 resolve row: identical concentrated liquidity math as V3 (BotState-owned, ADR-003), with
 /// V4's own fee/protocol-fee convention handled behind the door (inside
 /// `build_int_v4_sequence`), plus the ADR-037 hook refusal at the row (the
 /// hook permission bits live on V4's registration identity).
@@ -95,7 +95,7 @@ pub(crate) fn project_v4(
         .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     // ADR-037: hooked pools are ADMITTED at registration but are
-    // not solvable — the CL math assumes no hook intervention. Paths that
+    // not solvable — the concentrated liquidity math assumes no hook intervention. Paths that
     // would traverse one die here with a named reason so the existing
     // invalidation telemetry counts them. The door re-checks in capture
     // order (viability, then hook, then walk) — this row-side check keeps
@@ -158,7 +158,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Per-family projection tests. CL guardrail: V3 and
+    // Per-family projection tests. concentrated liquidity guardrail: V3 and
     // V4 are two adapters behind the shared `ConcentratedLiquidityPool`
     // interface with genuinely distinct builders — the tests here stay
     // per-adapter and never share a construction path.
@@ -281,7 +281,9 @@ mod tests {
 
         for zero_for_one in [true, false] {
             let (hop, nonce) = proj3(&core, &v3_ref(v3_id, zero_for_one)).unwrap();
-            let seq = hop.as_int_sequence().expect("hop is a CL sequence");
+            let seq = hop
+                .as_int_sequence()
+                .expect("hop is a concentrated liquidity sequence");
             assert!(
                 !seq.ranges.is_empty(),
                 "initialized ticks -> non-empty walk"
@@ -357,7 +359,9 @@ mod tests {
         let v4_id = register_v4(&mut core, two_ticks());
 
         let (hop, nonce) = proj4(&core, &v4_ref(v4_id, true)).unwrap();
-        let seq = hop.as_int_sequence().expect("hop is a CL sequence");
+        let seq = hop
+            .as_int_sequence()
+            .expect("hop is a concentrated liquidity sequence");
         assert!(
             !seq.ranges.is_empty(),
             "initialized ticks -> non-empty walk"

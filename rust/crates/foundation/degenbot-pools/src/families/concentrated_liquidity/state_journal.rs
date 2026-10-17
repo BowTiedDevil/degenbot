@@ -1,4 +1,4 @@
-//! The CL family's reorg-journal state verbs (ADR-080 D1, step 1) — the
+//! The concentrated liquidity family's reorg-journal state verbs (ADR-080 D1, step 1) — the
 //! state-side half of the family tree, beside the read door.
 //!
 //! The V3 and V4 state structs (`crate::v3_state` / `crate::v4_state`) carry

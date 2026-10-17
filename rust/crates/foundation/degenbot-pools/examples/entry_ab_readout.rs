@@ -3,7 +3,7 @@
 // Pedantic + restriction lints that production code denies are relaxed here.
 #![expect(clippy::print_stderr, clippy::print_stdout, clippy::too_many_lines)]
 
-//! Entry-level A/B readout: the retained `all-CL` intake convenience vs
+//! Entry-level A/B readout: the retained `all-concentrated-liquidity` intake convenience vs
 //! the unified solve entry directly, on real captured paths. This harness
 //! was the entry-level bench input for the solve-entry unification decision
 //! (the other was the functions-timing run over the `concentrated_liquidity_solve.*` labels —
@@ -26,10 +26,10 @@
 //!   HOTPATH_REPORT=functions-timing,threads
 //! ```
 //!
-//! Arms measured per `all-CL` path (interleaved reps, order alternates per
+//! Arms measured per `all-concentrated-liquidity` path (interleaved reps, order alternates per
 //! rep):
 //!
-//! - Arm "intake": the retained `all-CL` convenience route — the prepared
+//! - Arm "intake": the retained `all-concentrated-liquidity` convenience route — the prepared
 //!   hops CLONED (three `Arc` bumps per hop, the caller shape this harness
 //!   models) and handed to the forwarding `solve_concentrated_liquidity_piecewise`.
 //! - Arm "direct": one borrowed `MixedHopView::ConcentratedLiquidity` per position handed to
@@ -41,7 +41,7 @@
 //!
 //! The row census answers "which entry is hotter": each captured row is
 //! classified by the route the pre-unification dispatch branch picked (all
-//! hops CL -> `all-CL` entry; any `V2` hop -> mixed entry; other families ->
+//! hops concentrated liquidity -> `all-concentrated-liquidity` entry; any `V2` hop -> mixed entry; other families ->
 //! refused here) — the decision record's traffic-mix input.
 
 use alloy::primitives::U256;
@@ -88,7 +88,7 @@ fn p95_us(samples: &mut [u128]) -> u128 {
 /// decision record's traffic-mix input).
 #[derive(Clone, Copy)]
 enum Route {
-    /// Every hop carries an int sequence: the all-CL entry.
+    /// Every hop carries an int sequence: the all-concentrated-liquidity entry.
     AllConcentratedLiquidity,
     /// Any V2 hop: the mixed entry.
     Mixed,
@@ -97,7 +97,7 @@ enum Route {
 }
 
 /// Row route classification at the JSON level, mirroring the pre-unification
-/// branch test (all hops carry an int sequence -> `all-CL` entry).
+/// branch test (all hops carry an int sequence -> `all-concentrated-liquidity` entry).
 fn route_of(doc: &Value) -> Route {
     let Some(hops) = doc.get("hops").and_then(Value::as_array) else {
         return Route::Other;
@@ -106,9 +106,9 @@ fn route_of(doc: &Value) -> Route {
         // Mixed-schema row: per-hop `kind` discriminant.
         let all_concentrated_liquidity = hops
             .iter()
-            .all(|h| h.get("kind").and_then(Value::as_str) == Some("CL"));
+            .all(|h| h.get("kind").and_then(Value::as_str) == Some("concentrated liquidity"));
         let any_foreign = hops.iter().any(
-            |h| matches!(h.get("kind").and_then(Value::as_str), Some(k) if k != "CL" && k != "V2"),
+            |h| matches!(h.get("kind").and_then(Value::as_str), Some(k) if k != "concentrated liquidity" && k != "V2"),
         );
         if any_foreign {
             Route::Other
@@ -118,7 +118,7 @@ fn route_of(doc: &Value) -> Route {
             Route::Mixed
         }
     } else {
-        // Pure-CL-schema row: hops are arrays of CL ranges.
+        // Pure-concentrated-liquidity-schema row: hops are arrays of concentrated liquidity ranges.
         match parse_concentrated_liquidity_hops(hops) {
             Ok(_) => Route::AllConcentratedLiquidity,
             Err(_) => Route::Other,
@@ -126,9 +126,9 @@ fn route_of(doc: &Value) -> Route {
     }
 }
 
-/// The sequences of a row the production branch would route to the `all-CL`
-/// entry, schema-aware: `pure-CL` rows parse through the shared CL parser;
-/// mixed-schema rows are measured only when every hop is `kind = "CL"`
+/// The sequences of a row the production branch would route to the `all-concentrated-liquidity`
+/// entry, schema-aware: `pure-concentrated-liquidity` rows parse through the shared concentrated liquidity parser;
+/// mixed-schema rows are measured only when every hop is `kind = "concentrated liquidity"`
 /// (the branch's exact test) — anything else is the mixed entry's own
 /// traffic, unaffected by the unification question.
 fn all_concentrated_liquidity_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeSequence>> {
@@ -136,7 +136,7 @@ fn all_concentrated_liquidity_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeS
     if doc.get("hop_order").is_some() {
         let mut seqs = Vec::with_capacity(hops.len());
         for h in hops {
-            if h.get("kind").and_then(Value::as_str) != Some("CL") {
+            if h.get("kind").and_then(Value::as_str) != Some("concentrated liquidity") {
                 return None;
             }
             let ranges = h.get("ranges").and_then(Value::as_array)?;
@@ -231,7 +231,7 @@ fn main() {
         }
         n_paths += 1;
         // Production shape: derive the prepared hops ONCE per path (the
-        // projection hands the branch a prepared value per CL hop).
+        // projection hands the branch a prepared value per concentrated liquidity hop).
         let prepared: Vec<PreparedConcentratedLiquidityHop> = seqs
             .iter()
             .map(|s| {
@@ -252,7 +252,7 @@ fn main() {
             for arm_intake in [intake_first, !intake_first] {
                 if arm_intake {
                     // The intake route: clone (three Arc bumps per hop),
-                    // then the forwarding all-CL convenience.
+                    // then the forwarding all-concentrated-liquidity convenience.
                     let t0 = std::time::Instant::now();
                     let cloned: Vec<PreparedConcentratedLiquidityHop> = prepared.clone();
                     let out = solve_concentrated_liquidity_piecewise(
@@ -359,7 +359,7 @@ fn main() {
     println!("== Row census (production branch route) ==");
     println!("rows={n_rows} route_all_concentrated_liquidity={n_all_concentrated_liquidity} route_mixed={n_mixed} route_other={n_other}");
     println!();
-    println!("== Entry A/B over {n_paths} all-CL path(s), {iters} reps per arm (interleaved) ==");
+    println!("== Entry A/B over {n_paths} all-concentrated-liquidity path(s), {iters} reps per arm (interleaved) ==");
     println!("parity: {parity_fail} divergence(s); sims intake={sims_intake} direct={sims_direct}");
     println!(
         "1-hop edge (uniform len<2 guard): intake refused={} | direct refused={}",

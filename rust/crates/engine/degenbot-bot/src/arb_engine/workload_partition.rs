@@ -27,7 +27,7 @@ pub(crate) fn solve_bin_count() -> usize {
 /// indices into the original items slice, one Vec per bin.
 ///
 /// The lab (docs/rayon-parallelism-lab.md) showed rayon work-stealing
-/// par_iter achieves only 4.91/8 efficiency on the heavy-CL capture corpus
+/// par_iter achieves only 4.91/8 efficiency on the heavy-concentrated-liquidity capture corpus
 /// because the workload has extreme cost skew (top 8 of 80 paths = 60% of CPU).
 /// LPT pre-balances so no thread gets stuck with an unsplittable giant while
 /// others idle — achieving 7.80/8 (35% wall reduction). Same solver, same
@@ -116,7 +116,7 @@ pub(crate) fn plan_bins(intended_bins: usize, structural_seats: usize) -> SeatPl
 }
 #[expect(clippy::doc_markdown)]
 /// Resolve-time cost proxy for LPT binning: the total number of word-boundary
-/// prices across all CL hops. Correlates with walk combinatorics without
+/// prices across all concentrated liquidity hops. Correlates with walk combinatorics without
 /// requiring a solve, so it is available at to_solve collection time.
 pub(crate) fn path_cost_proxy(resolved: &ResolvedMixedPath) -> usize {
     resolved
@@ -441,7 +441,7 @@ mod direct_seam_tests {
         }
     }
     /// `path_cost_proxy` is the structural LPT cost: the total count of
-    /// interior word-boundary prices across the CL hops (0 for an empty path).
+    /// interior word-boundary prices across the concentrated liquidity hops (0 for an empty path).
     #[test]
     fn path_cost_proxy_sums_concentrated_liquidity_word_boundaries() {
         let empty = ResolvedMixedPath {

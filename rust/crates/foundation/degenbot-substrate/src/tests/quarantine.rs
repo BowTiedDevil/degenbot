@@ -105,7 +105,7 @@ fn register_v4_on_core_with_pid(
     .expect("test setup: V4 registration")
 }
 
-/// A freshly-registered CL pool's lifecycle is COVERAGE-AWARE:
+/// A freshly-registered concentrated liquidity pool's lifecycle is COVERAGE-AWARE:
 /// `Tracked` (complete liquidity map, pins + step-2 verifies) defaults to
 /// `Quarantined` so no live event direct-applies before the two-step
 /// verify; `Sparse` (no complete map → no pin / step-2 verify) stays
@@ -244,7 +244,7 @@ fn sparse_pool_ignores_set_quarantined() {
 /// `Quarantined` — the orphan sweep that stops a Tracked pool registered
 /// but never reaching `set_live` (path skipped before registration) from
 /// deferring events to its buffer indefinitely. Already-`Live` (Sparse) and
-/// non-CL pools are untouched.
+/// non-concentrated-liquidity pools are untouched.
 #[test]
 fn release_all_quarantined_flushes_and_marks_live() {
     use alloy::primitives::U128;

@@ -3,7 +3,7 @@
 //! Carved out of `bot_core/mod.rs` (the `BotState` god-file). This module owns the balance-vector
 //! capability's LIVE-STATE surfaces — `Curve` and `Balancer` (weighted + stable) registration,
 //! the unified balance-apply row, and the identity/state getters. State ownership is NOT family
-//! behavior (GLOSSARY "CL orchestration capability" pattern): the registration entries and the
+//! behavior (GLOSSARY "concentrated liquidity orchestration capability" pattern): the registration entries and the
 //! family-neutral apply/get rows stay here (ADR-073 D3 keeps the named seams), while the family
 //! behavior — the swap reads, the resolve projections, and the get/calc math — folds through the
 //! family read modules' intent doors (`degenbot_pools::families::{curve_stableswap,

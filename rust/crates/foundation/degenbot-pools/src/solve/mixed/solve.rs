@@ -7,7 +7,7 @@
 //! `degenbot-bot/src/solvers/arb_engine/solver_dispatch.rs` (where they were
 //! `impl ArbitrageEngine` associated fns with `#[allow(unused_self)]`).
 //!
-//! The CL hop uses `crate::solve::concentrated_liquidity::*` (same crate); the V2 + CL
+//! The concentrated liquidity hop uses `crate::solve::concentrated_liquidity::*` (same crate); the V2 + concentrated liquidity
 //! Möbius arms call `crate::solve::mobius_int::*` / `crate::solve::mobius_int_exact::*`.
 
 use std::collections::BTreeSet;
@@ -37,7 +37,7 @@ use crate::solve::mixed::{
 
 /// Dispatches based on path composition:
 /// - V2-V2: integer-exact Möbius solver (closed-form U512 isqrt)
-/// - V3-V3 / V4-V4 / V3-V4 / V4-V3: integer piecewise-Möbius (CL × CL)
+/// - V3-V3 / V4-V4 / V3-V4 / V4-V3: integer piecewise-Möbius (concentrated liquidity × concentrated liquidity)
 /// - V2-V3 / V3-V2 / V2-V4 / V4-V2: mixed integer-exact solver
 ///
 /// ADR-005 slice 15b-1: signature dropped the `&self` receiver (it was
@@ -111,7 +111,7 @@ pub fn solve_path_with_min_profit(
     // Loop-21 `envelope_pruned_refine`: hand the walk the composed bound so
     // its refine windows skip the inputs the bound disproves. This is the
     // SECOND query against the gate's chain-composition path — it shares the
-    // gate's prefix store, so the CL tangent fans and composed prefixes are
+    // gate's prefix store, so the concentrated liquidity tangent fans and composed prefixes are
     // reused rather than re-derived. Its derive / prune / exact-compose
     // counters merge into the same returned `GateStats` the gate call
     // produced.
@@ -234,7 +234,7 @@ pub(crate) struct FamilyRow {
 /// present) selects the row. A path matching no row falls to [`WALKABLE_ROW`].
 ///
 /// The order is load-bearing, not cosmetic: a V2+Solidly path must reach the
-/// Solidly row before the CL/mixed walk, and a Solidly+CL pairing (or a
+/// Solidly row before the concentrated liquidity/mixed walk, and a Solidly+concentrated liquidity pairing (or a
 /// Solidly hop beside a weighted/stable/Curve hop) must be refused rather
 /// than walked. Each refusal row therefore requires its family with no
 /// allowed-set constraint — it fires only once the narrower rows above it have
@@ -249,7 +249,7 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         lines: named_fn!(v2_hop_lines),
         label: "v2",
     },
-    // Concentrated liquidity: every hop V3/V4 → the all-CL walk.
+    // Concentrated liquidity: every hop V3/V4 → the all-concentrated-liquidity walk.
     FamilyRow {
         allowed: Some(&[HopType::V3, HopType::V4]),
         required: None,
@@ -268,7 +268,7 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         lines: named_fn!(solidly_hop_lines),
         label: "solidly",
     },
-    // Solidly refusal row: Solidly beside a CL hop (or a second non-V2 family).
+    // Solidly refusal row: Solidly beside a concentrated liquidity hop (or a second non-V2 family).
     FamilyRow {
         allowed: None,
         required: Some(HopType::SolidlyStable),
@@ -277,7 +277,7 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         lines: named_fn!(refuse_lines),
         label: "unsupported",
     },
-    // Weighted accept row, then its refusal row beside a CL hop.
+    // Weighted accept row, then its refusal row beside a concentrated liquidity hop.
     FamilyRow {
         allowed: Some(&[HopType::V2, HopType::BalancerWeighted]),
         required: Some(HopType::BalancerWeighted),
@@ -294,7 +294,7 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         lines: named_fn!(refuse_lines),
         label: "unsupported",
     },
-    // Stable accept row, then its refusal row beside a CL hop / second family.
+    // Stable accept row, then its refusal row beside a concentrated liquidity hop / second family.
     FamilyRow {
         allowed: Some(&[HopType::V2, HopType::BalancerStable]),
         required: Some(HopType::BalancerStable),
@@ -311,7 +311,7 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         lines: named_fn!(refuse_lines),
         label: "unsupported",
     },
-    // Curve accept row, then its refusal row beside a CL hop.
+    // Curve accept row, then its refusal row beside a concentrated liquidity hop.
     FamilyRow {
         allowed: Some(&[HopType::V2, HopType::CurveStableswap]),
         required: Some(HopType::CurveStableswap),
@@ -330,7 +330,7 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
     },
 ];
 
-/// The mixed V2+CL walk — the fallback for a path matching no row above, and
+/// The mixed V2+concentrated liquidity walk — the fallback for a path matching no row above, and
 /// the ONLY cross-family composition the walk supports.
 static WALKABLE_ROW: FamilyRow = FamilyRow {
     allowed: None,
@@ -928,13 +928,13 @@ mod gate_tests {
     /// row reorder or predicate edit cannot silently change the selection.
     ///
     /// WHY the FOUR refusal rows and the default exist: a path that pairs a
-    /// Solidly, Balancer, or Curve hop with a CL hop — or with a second such
+    /// Solidly, Balancer, or Curve hop with a concentrated liquidity hop — or with a second such
     /// family — has no single engine. The per-hop `swap_fn` solves are
-    /// incompatible with CL tick-range enumeration (Python rejects these too),
+    /// incompatible with concentrated liquidity tick-range enumeration (Python rejects these too),
     /// so such a path MUST be refused, not silently composed. The rows above
     /// each refusal row are the narrower accept rows; the refusal rows are the
     /// `allowed: None` catch-alls that fire only once those fail. `WALKABLE_ROW`
-    /// is the fallback — the mixed V2+CL case, the ONLY cross-family
+    /// is the fallback — the mixed V2+concentrated liquidity case, the ONLY cross-family
     /// composition the walk supports — and a refusal that fell through to it
     /// would walk an unsupported path. The empty-set case is defensive: an
     /// empty family set is vacuously `⊆ {V2}`, so it selects the V2 row exactly
@@ -950,7 +950,7 @@ mod gate_tests {
             // V2 row: every hop V2 (a SET, so a duplicate V2 collapses).
             (&[HopType::V2], "v2"),
             (&[HopType::V2, HopType::V2], "v2"),
-            // CL row: every hop CL (V3/V4).
+            // concentrated liquidity row: every hop concentrated liquidity (V3/V4).
             (&[HopType::V3], "concentrated_liquidity"),
             (&[HopType::V4], "concentrated_liquidity"),
             (&[HopType::V3, HopType::V4], "concentrated_liquidity"),
@@ -958,16 +958,16 @@ mod gate_tests {
             // Solidly path is the family's own len<2 concern, not dispatch's.
             (&[HopType::V2, HopType::SolidlyStable], "solidly"),
             (&[HopType::SolidlyStable], "solidly"),
-            // Solidly refusal row: Solidly beside a CL hop (or both CLs).
+            // Solidly refusal row: Solidly beside a concentrated liquidity hop (or two concentrated-liquidity hops).
             (&[HopType::SolidlyStable, HopType::V3], "unsupported"),
             (
                 &[HopType::SolidlyStable, HopType::V3, HopType::V4],
                 "unsupported",
             ),
-            // Weighted accept row, then its refusal row beside a CL hop.
+            // Weighted accept row, then its refusal row beside a concentrated liquidity hop.
             (&[HopType::V2, HopType::BalancerWeighted], "weighted"),
             (&[HopType::BalancerWeighted, HopType::V3], "unsupported"),
-            // Stable accept row, then its refusal row beside a CL hop and
+            // Stable accept row, then its refusal row beside a concentrated liquidity hop and
             // beside a second non-V2 family.
             (&[HopType::V2, HopType::BalancerStable], "balancer_stable"),
             (
@@ -982,10 +982,10 @@ mod gate_tests {
                 ],
                 "unsupported",
             ),
-            // Curve accept row, then its refusal row beside a CL hop.
+            // Curve accept row, then its refusal row beside a concentrated liquidity hop.
             (&[HopType::V2, HopType::CurveStableswap], "curve_stableswap"),
             (&[HopType::CurveStableswap, HopType::V3], "unsupported"),
-            // Walkable default: mixed V2+CL is the only cross-family walk; the
+            // Walkable default: mixed V2+concentrated liquidity is the only cross-family walk; the
             // set is unordered, so the hop order must not matter.
             (&[HopType::V2, HopType::V3], "walkable"),
             (&[HopType::V2, HopType::V3, HopType::V4], "walkable"),
@@ -1007,7 +1007,7 @@ mod gate_tests {
         // the envelope line builder, and the path solve its row registers —
         // must appear in the table, registering the EXACT fn the family owns.
         // A dropped row, a refusal stub, or a CROSS-WIRED live builder (e.g.
-        // the CL row pointing at `weighted_hop_lines`) fails here: the check
+        // the concentrated liquidity row pointing at `weighted_hop_lines`) fails here: the check
         // is POSITIVE identity, not merely "not the refusal stub".
         //
         // Identity is the fn ITEM's spelling, captured by `named_fn!` at the

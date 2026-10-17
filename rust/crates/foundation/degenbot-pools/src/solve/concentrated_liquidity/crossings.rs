@@ -11,7 +11,7 @@ use super::{
 };
 use crate::solve::runtime::SolveRuntimeConfig;
 
-/// Smallest input into this CL hop, while it lands exactly in the crossing's
+/// Smallest input into this concentrated liquidity hop, while it lands exactly in the crossing's
 /// ending range, whose realized output is >= `w`. `None` when `w` exceeds
 /// the landing's capacity.
 pub(super) fn concentrated_liquidity_hop_min_input_for_output(
@@ -35,7 +35,7 @@ pub(super) fn concentrated_liquidity_hop_min_input_for_output(
     crossing.crossing_gross_input.checked_add(r)
 }
 
-/// The predicted first-above input for tuple `ks`: the minimum over CL hops
+/// The predicted first-above input for tuple `ks`: the minimum over concentrated liquidity hops
 /// of the nested exact-out inversion — hop `i`'s next-boundary gross demand
 /// `T_i` propagated upstream through each hop's `min-input-for-output`
 /// (each within its current landing, guarded by the next-boundary gross so
@@ -265,7 +265,7 @@ fn piece_window_right_edge_seeded(
     (Some(lo), hi)
 }
 
-/// Pre-compute the crossing data for every ending-range index of a CL
+/// Pre-compute the crossing data for every ending-range index of a concentrated liquidity
 /// sequence.
 #[hotpath::measure(label = "concentrated_liquidity_solve.build_crossing_table")]
 pub(super) fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossing> {
@@ -311,7 +311,7 @@ pub(super) fn build_word_profiles(
         .collect()
 }
 
-/// Cache-less crossing data for a CL sequence (every ending-range index).
+/// Cache-less crossing data for a concentrated liquidity sequence (every ending-range index).
 /// The projection wraps this in an `Arc` and stores it on the resolved hop so
 /// the same table is shared across every path reusing the pool.
 #[must_use]
@@ -321,7 +321,7 @@ pub fn build_concentrated_liquidity_crossing_table(
     build_crossing_table(seq)
 }
 
-/// Cache-less dense-range profiles for a CL sequence (offline replays and the
+/// Cache-less dense-range profiles for a concentrated liquidity sequence (offline replays and the
 /// direct `solve_concentrated_liquidity_piecewise` path, which build per call). Result is parallel to
 /// `seq.ranges` (`None` for ranges below `WORD_PROFILE_THRESHOLD`).
 #[must_use]
@@ -346,8 +346,8 @@ pub fn build_concentrated_liquidity_word_profiles_from_crossings(
     build_word_profiles(crossings, &mut tally)
 }
 
-/// Build a `PieceView` for one CL
-/// sequence - the single place a CL walk hop is assembled. `crossings`/`profiles`
+/// Build a `PieceView` for one concentrated liquidity
+/// sequence - the single place a concentrated liquidity walk hop is assembled. `crossings`/`profiles`
 /// are precomputed projection tables (Arc-shared through the hop memoization),
 /// cloned in O(1); `None` builds that table here.
 #[hotpath::measure(label = "concentrated_liquidity_solve.concentrated_liquidity_walk_hop")]

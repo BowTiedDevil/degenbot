@@ -1121,7 +1121,7 @@ impl PyBot {
                 let fetcher = tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.unbind()));
-                // CL slot layout : explicit override (the Python
+                // concentrated liquidity slot layout : explicit override (the Python
                 // driver knows the pool class for non-JSON deployments) wins over the
                 // builder's deployment-table resolution.
                 let slot_override = match slot_layout {
@@ -1947,7 +1947,7 @@ impl PyBot {
             }
         };
 
-        // CL slot layout : an explicit "pancakeswap" override forces the
+        // concentrated liquidity slot layout : an explicit "pancakeswap" override forces the
         // PancakeV3 layout (the Python driver knows the pool class for
         // non-JSON deployments); "uniswap"/None defer to the deployment
         // table, resolved inside the core method. Validated BEFORE any

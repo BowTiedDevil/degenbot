@@ -37,7 +37,7 @@ use crate::solve::runtime::{AnchorSweep, SolveRuntimeConfig};
 /// place a constant-product hop and a concentrated-liquidity hop differ.
 pub(super) struct PieceView<'a> {
     family: PieceFamily<'a>,
-    /// Walk pieces this hop contributes: one per ending range for CL, one
+    /// Walk pieces this hop contributes: one per ending range for concentrated liquidity, one
     /// for constant product.
     piece_count: usize,
     /// True when the hop is a single walk piece; the walk skips the
@@ -53,7 +53,7 @@ pub(super) struct PieceView<'a> {
 enum PieceFamily<'a> {
     /// V2-family constant-product hop. The landed tuple entry is always 0.
     ConstantProduct(&'a IntHopState),
-    /// CL hop with its pre-computed per-index crossing table (`crossings[k]`
+    /// concentrated liquidity hop with its pre-computed per-index crossing table (`crossings[k]`
     /// is [`IntV3TickRangeSequence::compute_crossing`]`(k)`).
     ConcentratedLiquidity {
         /// Crossing data for every ending-range index `k` in `0..ranges.len()`.
@@ -176,7 +176,7 @@ impl<'a> PieceView<'a> {
 
     /// Smallest input into this hop that lands in range `k` and yields at
     /// least `demand`; `None` when the demand is unreachable within the
-    /// landing (constant-product overflow-revert, CL capacity, or an
+    /// landing (constant-product overflow-revert, concentrated liquidity capacity, or an
     /// upstream exit preempting the next boundary).
     pub(super) fn min_input_for_output(
         &self,
@@ -219,7 +219,7 @@ pub(super) struct WalkPathOutcome {
     pub(super) landed: Vec<usize>,
 }
 
-/// Simulate the path with SELF-DETERMINED crossings: each CL hop's ending
+/// Simulate the path with SELF-DETERMINED crossings: each concentrated liquidity hop's ending
 /// range is derived from the gross input actually available at that hop
 /// (hop 0: `amount_in`; hop i: hop `i−1`'s output).
 ///
@@ -409,7 +409,7 @@ fn anchor_sweep_mode(cfg: &SolveRuntimeConfig) -> AnchorSweep {
 /// so its range edge is the sharp kink the unclamped smooth anchor can
 /// overshoot — `P(x) = O(x) − x` turns down past it, so the peak can sit right
 /// at the edge where an anchor-±2 probe already lands in the negative
-/// post-cliff region. Only `hops[0]` is in path-input units: a later CL hop's
+/// post-cliff region. Only `hops[0]` is in path-input units: a later concentrated liquidity hop's
 /// range edge is in ITS input units (the upstream output) and is deliberately
 /// not compared to the path input here (such a kink is still bracketed by the
 /// smooth anchor, see `single_piece_hop1_binding_kink_is_not_dropped`). The
@@ -608,7 +608,7 @@ pub struct WalkStats {
     /// Full path simulations (`simulate_walk_path` calls).
     pub sims: usize,
     /// `compute_swap_step_v3` word-boundary steps inside every sim — the
-    /// per-simulation cost driver for dense (many-word) CL ranges.
+    /// per-simulation cost driver for dense (many-word) concentrated liquidity ranges.
     pub word_steps: usize,
     /// Stop-time refinement probes (`walk_refine_window` ternary + grid).
     pub refine_sims: usize,

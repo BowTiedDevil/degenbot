@@ -108,7 +108,7 @@ pub struct V3RouteInputs<'a> {
     /// The lazy tick-word fetcher stored on the registered V3 pool for
     /// swap-time boundary detection.
     pub fetcher: Option<Arc<dyn TickWordFetcher>>,
-    /// Explicit CL slot-layout override (a non-JSON fork deployment the
+    /// Explicit concentrated liquidity slot-layout override (a non-JSON fork deployment the
     /// caller resolved from the DB descriptor); `None` = the builder's
     /// deployment-table resolution wins.
     pub slot_layout: Option<ConcentratedLiquiditySlotLayout>,

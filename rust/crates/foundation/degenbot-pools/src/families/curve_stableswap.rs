@@ -26,7 +26,7 @@
 //!
 //! The family-local calc doors ([`get_dy`], [`calc_token_amount`],
 //! [`calc_withdraw_one_coin`]) are the pure-over-slice halves of the
-//! orchestration rows in `degenbot-substrate` (GLOSSARY "CL orchestration
+//! orchestration rows in `degenbot-substrate` (GLOSSARY "concentrated liquidity orchestration
 //! capability" pattern): the state owner keeps the registry lookups, the
 //! base-pool port, and the live-state bookkeeping; this module owns the
 //! family behavior.
@@ -192,7 +192,7 @@ pub fn read_swap(
     request: SwapReadRequest<'_>,
 ) -> ReadOutcome {
     // The family answers only the exact-input read; every other variant of
-    // the shared request vocabulary (the pair reads, the CL canonical
+    // the shared request vocabulary (the pair reads, the concentrated liquidity canonical
     // request) is a typed refusal.
     let SwapReadRequest::ExactIn {
         zero_for_one,

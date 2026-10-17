@@ -99,7 +99,7 @@ impl HopType {
 
     /// Whether this hop type uses concentrated-liquidity math.
     ///
-    /// V3 and V4 hops are both CL — they share the same solver dispatch.
+    /// V3 and V4 hops are both concentrated liquidity — they share the same solver dispatch.
     #[must_use]
     pub const fn is_concentrated_liquidity(&self) -> bool {
         matches!(self, Self::V3 | Self::V4)
@@ -196,7 +196,7 @@ pub struct MixedPath {
 /// variant itself, not a separate index.
 ///
 /// Variant sizes differ because V2 carries full reserve/fee state while
-/// CL hops only carry a pre-built integer sequence pointer. This is
+/// concentrated liquidity hops only carry a pre-built integer sequence pointer. This is
 /// intentional and not a hot allocation path.
 #[derive(Clone, Debug)]
 pub enum ResolvedHop {
@@ -210,7 +210,7 @@ pub enum ResolvedHop {
     V3 {
         prepared: PreparedConcentratedLiquidityHop,
     },
-    /// V4 concentrated-liquidity hop (same CL math as V3, different
+    /// V4 concentrated-liquidity hop (same concentrated liquidity math as V3, different
     /// settlement). `prepared`: as `Self::V3`.
     V4 {
         prepared: PreparedConcentratedLiquidityHop,
@@ -255,7 +255,7 @@ impl ResolvedHop {
         }
     }
 
-    /// The integer tick-range sequence, if this is a CL hop (V3 or V4).
+    /// The integer tick-range sequence, if this is a concentrated liquidity hop (V3 or V4).
     #[must_use]
     pub fn as_int_sequence(&self) -> Option<&IntV3TickRangeSequence> {
         // The sequence is Arc-shared (built once per projection;
@@ -271,7 +271,7 @@ impl ResolvedHop {
     }
 
     /// The precomputed dense-range word-boundary profile table (Stage-1 cache),
-    /// if this is a CL hop (V3 or V4). `Arc`-shared across paths reusing the hop.
+    /// if this is a concentrated liquidity hop (V3 or V4). `Arc`-shared across paths reusing the hop.
     #[must_use]
     pub fn as_word_profiles(
         &self,
@@ -286,7 +286,7 @@ impl ResolvedHop {
         }
     }
 
-    /// The precomputed per-ending-range crossing table, if this is a CL hop
+    /// The precomputed per-ending-range crossing table, if this is a concentrated liquidity hop
     /// (V3 or V4). `Arc`-shared across paths reusing the hop; entries parallel
     /// `int_seq.ranges`.
     #[must_use]
@@ -302,7 +302,7 @@ impl ResolvedHop {
     }
 
     /// The projection's [`PreparedConcentratedLiquidityHop`] derivation value (sequence +
-    /// `Arc` tables), if this is a CL hop (V3 or V4).
+    /// `Arc` tables), if this is a concentrated liquidity hop (V3 or V4).
     #[must_use]
     pub fn as_prepared_concentrated_liquidity_hop(
         &self,
@@ -329,7 +329,7 @@ impl ResolvedHop {
 
 /// Resolved state for a mixed path, ready for solving.
 ///
-/// V3 and V4 hops both use the same `IntV3TickRangeSequence` type (CL math
+/// V3 and V4 hops both use the same `IntV3TickRangeSequence` type (concentrated liquidity math
 /// is identical). The [`ResolvedHop`] enum variant distinguishes which engine
 /// owns each hop at the path level.
 #[derive(Clone, Debug, Default)]
@@ -344,7 +344,7 @@ pub struct ResolvedMixedPath {
     /// hop's current nonce and skips candidates whose nonce has advanced —
     /// the solver computed against state the pump has since superseded.
     pub state_nonces: Vec<u64>,
-    /// The max price-clock `update_block` across the path's CL (and V2) hops,
+    /// The max price-clock `update_block` across the path's concentrated liquidity (and V2) hops,
     /// captured at resolve time (two-stamp). The dispatch seam rejects a path
     /// whose max `update_block` is AHEAD of the solve `block_number` (the
     /// backfill/dispatch race, live path 10956) — solving with a future price

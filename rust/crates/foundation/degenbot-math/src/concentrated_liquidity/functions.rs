@@ -1,6 +1,6 @@
 //! Helper functions: mulmod, compress, safe casts.
 //!
-//! These are small utility functions used across the CL math libraries.
+//! These are small utility functions used across the concentrated liquidity math libraries.
 //! They correspond to the Solidity Yul builtins and `OpenZeppelin` safe-cast
 //! helpers.
 

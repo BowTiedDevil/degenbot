@@ -1,6 +1,6 @@
 //! Offline heavy-path replay bench over live captures.
 //! Reads the capture JSONL (env `DBENCH_CAPTURES`; default the committed
-//! heavy-CL corpus under `tests/fixtures/`) and reports per-path release-mode
+//! heavy-concentrated-liquidity corpus under `tests/fixtures/`) and reports per-path release-mode
 //! solve time + walk
 //! stats. Diagnostic only — asserts nothing about goldens here.
 #![expect(
@@ -69,7 +69,7 @@ fn replay_captured_heavy_paths() {
         merge_enum: u64,
         merge_fallbacks: u64,
     }
-    // Default to the committed heavy-CL corpus (via the .zst-aware fixture
+    // Default to the committed heavy-concentrated-liquidity corpus (via the .zst-aware fixture
     // reader) so the test is reproducible on CI; DBENCH_CAPTURES still points
     // at a fresh local capture for diagnostic runs.
     let path = std::env::var("DBENCH_CAPTURES").unwrap_or_else(|_| {

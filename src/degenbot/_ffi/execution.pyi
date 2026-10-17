@@ -65,7 +65,7 @@ class SolveResult:
     def consumed_inputs(self, /) -> Any:
         """
         Per-hop consumed input amounts (`consumed_inputs`, list of uint256
-        integers). The CL-clamp swap-in matters: an over-fed CL hop is reduced
+        integers). The concentrated-liquidity-clamp swap-in matters: an over-fed concentrated liquidity hop is reduced
         to `input_consumed − 1`.
         """
     @property

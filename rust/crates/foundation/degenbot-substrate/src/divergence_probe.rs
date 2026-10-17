@@ -180,7 +180,7 @@ pub(crate) struct ScalarSlotRow {
     pub engine_word: B256,
 }
 
-/// The CL (V3) family's tracked scalar rows, enumerated in family-aware slot
+/// The concentrated liquidity (V3) family's tracked scalar rows, enumerated in family-aware slot
 /// order. Slot0 word 0 (index 0) packs the same low-184 tracked shape on
 /// both layouts; `liquidity` sits at the layout's slot (Uniswap 4 / pancake
 /// 5). Two rows always (the surface the sim consults is fixed per layout).
@@ -202,7 +202,7 @@ fn concentrated_liquidity_scalar_rows(
     ]
 }
 
-/// Reverse-map an SLOAD'd index to a CL tracked row: the scalar pair, else
+/// Reverse-map an SLOAD'd index to a concentrated liquidity tracked row: the scalar pair, else
 /// the per-tick `ticks(tick)` slot at the layout's ticks base.
 fn concentrated_liquidity_row_for_index(
     layout: ConcentratedLiquiditySlotLayout,
@@ -440,7 +440,7 @@ pub(crate) fn derive_v4_pool_state_base(
     degenbot_pools::v4_storage_slots::v4_pool_state_base_slot(B256::new(*pool_id))
 }
 
-/// Reverse-map a per-tick `ticks(tick)` storage slot for a CL pool: for
+/// Reverse-map a per-tick `ticks(tick)` storage slot for a concentrated liquidity pool: for
 /// each tick the engine tracks, compute `keccak256(sign_extend_24(tick) .
 /// base)` + return the probe if it equals `index`. O(`tick_count`) per cold
 /// tick-slot read — cached by the outer `CacheDB` after the first read, so

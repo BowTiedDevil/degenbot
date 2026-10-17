@@ -76,7 +76,7 @@ fn pool_state_head_is_max_update_block_across_all_pools() {
 
 #[test]
 fn pool_tick_data_block_exposes_staged_liquidity_clock() {
-    // Two-stamp rule / the `0x5653` staged-clock class: a CL pool whose
+    // Two-stamp rule / the `0x5653` staged-clock class: a concentrated liquidity pool whose
     // PRICE clock (`update_block`) is fresh but whose LIQUIDITY clock
     // (`tick_data_block`) lags. The scalar-only ADR-021 diff keys on
     // `update_block` and therefore cannot see this stagger; the new
@@ -98,7 +98,7 @@ fn pool_tick_data_block_exposes_staged_liquidity_clock() {
     // Simulate a buggy scalar-only advance that moves the price clock
     // without touching the tick map (direct poke — the two-stamp mutators
     // keep them in lockstep, which is exactly why this class only arises
-    // from a bug / non-CL-advancing path).
+    // from a bug / non-concentrated-liquidity-advancing path).
     if let Some(crate::PoolEntry::V3(p)) = core.registry.pools.get_mut(&pool_id) {
         let state = &mut p.1;
         state.update_block = 200;
@@ -109,7 +109,7 @@ fn pool_tick_data_block_exposes_staged_liquidity_clock() {
         100,
         "liquidity clock still lags → the stagger is observable"
     );
-    // Non-CL families fall back to `update_block` for the total accessor.
+    // Non-concentrated-liquidity families fall back to `update_block` for the total accessor.
     let v2_id = core
         .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
         .expect("test setup: V2 registration");

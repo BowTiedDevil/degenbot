@@ -7,7 +7,7 @@
 //! Tier-2 behavioral dual-driver parity — V4 concentrated-liquidity swap
 //! (ADR-005 standalone claim, the behavioral tier).
 //!
-//! The V4 dual-driver seed. V4 uses the **same CL math** as V3 but the
+//! The V4 dual-driver seed. V4 uses the **same concentrated liquidity math** as V3 but the
 //! `amountSpecified` sign convention flips (V4 exact-input is *negative*,
 //! opposite to V3's positive — see `simulate_swap`'s `PoolEntry::V4` arm).
 //! So this test exercises a distinct FFI-seam path from the V3 seed: the
@@ -15,7 +15,7 @@
 //! admission (pool_manager + pool_id + pool_key + hook_flags). Divergence
 //! between the Rust and Python consumers = a lossy seam on the V4 path.
 //!
-//! Like the V3 seed, the CL swap has no simple closed form, so the shared
+//! Like the V3 seed, the concentrated liquidity swap has no simple closed form, so the shared
 //! oracle is the recorded constant in the shared fixture file. Plus
 //! monotonicity + direction-symmetry sanity checks.
 //!
@@ -117,9 +117,9 @@ fn load_shared_v4_fixture() -> V4FixtureFile {
 
 #[test]
 fn standalone_rust_consumer_v4_swap_matches_recorded_constant() {
-    // Tier-2 dual-driver gate — Rust consumer side (V4 CL path).
+    // Tier-2 dual-driver gate — Rust consumer side (V4 concentrated liquidity path).
     //
-    // V4 uses the same CL math as V3 but the `amountSpecified` sign flips
+    // V4 uses the same concentrated liquidity math as V3 but the `amountSpecified` sign flips
     // (V4 exact-input is negative — see `simulate_swap`'s `PoolEntry::V4`
     // arm's `-spec`). So this exercises a distinct FFI-seam path from the
     // V3 seed: the Rust core's sign flip + the V4 `register_v4_pool`

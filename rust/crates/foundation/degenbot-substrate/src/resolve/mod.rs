@@ -16,9 +16,9 @@
 //! `debug` so "why was this path rejected" is answerable on demand but
 //! invisible in normal runs.
 //!
-//! CL guardrail: [`concentrated_liquidity`] holds two SELF-CONTAINED entries. There is deliberately
+//! concentrated liquidity guardrail: [`concentrated_liquidity`] holds two SELF-CONTAINED entries. There is deliberately
 //! no shared V3/V4 constructor — fee convention, current-tick drain framing,
-//! and net-sign direction differ (GLOSSARY.md "CL-projection guardrail"); the
+//! and net-sign direction differ (GLOSSARY.md "concentrated-liquidity-projection guardrail"); the
 //! shared surface is only the file + the thin `ResolvedHop` wrap + nonce
 //! return.
 
@@ -47,7 +47,7 @@ pub enum CachedProjection {
     /// same (pool, direction) clone one allocation instead of re-walking.
     Hop(Arc<ResolvedHop>),
     /// The projection failed for this nonce (e.g. `SequenceUnavailable`).
-    /// Cached too: the failed CL tick-walk is the expensive case, and live
+    /// Cached too: the failed concentrated liquidity tick-walk is the expensive case, and live
     /// data shows roughly half of affected paths die here every cycle.
     Invalid(MissingHopReason),
 }
@@ -57,7 +57,7 @@ impl CachedProjection {
     /// clone for `Ok`, the reason for an invalid entry. (Nonces are re-read
     /// from `core` by the caller — never trusted from a cached entry.)
     fn materialize(&self) -> Result<ResolvedHop, MissingHopReason> {
-        // The clone is now cheap for CL hops - the tick-range
+        // The clone is now cheap for concentrated liquidity hops - the tick-range
         // sequence rides in an Arc built once per (pool, direction, nonce),
         // so N paths sharing a memo hit clone an enum of Arc bumps.
         match self {
@@ -77,7 +77,7 @@ impl CachedProjection {
 /// Growth is bounded by the number of distinct (pool, direction) pairs ever
 /// touched by resolution — the registered pool universe, not per-path work.
 ///
-/// EXPIRY GRANULARITY (crossing-table cache review): CL crossing tables ride
+/// EXPIRY GRANULARITY (crossing-table cache review): concentrated liquidity crossing tables ride
 /// inside the cached `ResolvedHop` and therefore share this whole-pool nonce
 /// invalidation. A crossing table is prefix-cumulative
 /// (`crossing_gross_input[k]` sums the gross inputs of ranges `0..k-1`), so a
@@ -91,7 +91,7 @@ impl CachedProjection {
 /// `HashMap<(HopType, pool_key, zero_for_one), (CachedProjection, u64)>`
 /// : the per-path resolve loop runs across parallel chunks, so the
 /// memo must be shared by reference - chunk-local caches would multiply the
-/// expensive CL tick-walk per shared pool (the cache exists so one walk
+/// expensive concentrated liquidity tick-walk per shared pool (the cache exists so one walk
 /// serves N paths). Shard locks guard only map access; the projection walk
 /// happens OUTSIDE the lock (misses are the CPU-heavy case), so cross-path
 /// hit reuse survives without serializing the loop.
@@ -459,7 +459,7 @@ pub fn resolve_hops(
 
         let project_family = || match pool_ref.hop_type {
             HopType::V2 => v2::project_v2(core, pool_ref),
-            // ONE CL dispatch row (ADR-073 D2): both CL designs route
+            // ONE concentrated liquidity dispatch row (ADR-073 D2): both concentrated liquidity designs route
             // through the family read module's capture_hop door; the row
             // does the registry lookup and the ResolvedHop wrap.
             HopType::V3 | HopType::V4 => concentrated_liquidity::project(core, pool_ref),
@@ -779,7 +779,7 @@ mod tests {
     // ---------------------------------------------------------------
     // Winner-promotion parity gates: the fused-epoch memo
     // must change build COST only — solver intake is byte-exact for
-    // all-CL (V3+V4) and mixed (V2+CL) paths with memo on or off.
+    // all-concentrated-liquidity (V3+V4) and mixed (V2+concentrated liquidity) paths with memo on or off.
     // ---------------------------------------------------------------
 
     /// Register a V3 pool whose sqrt price is 0.9 (2^96 scaled): token1 is
@@ -866,7 +866,7 @@ mod tests {
         .expect("v4 registration")
     }
 
-    /// Register a V2 pool whose price is skewed vs the CL fixtures:
+    /// Register a V2 pool whose price is skewed vs the concentrated liquidity fixtures:
     /// 1200 token0 : 1000 token1 makes token1 expensive on V2, so
     /// V4(zfo=true, t0->t1) -> V2 sells the bought token1 at a premium.
     fn register_v2_skew(core: &mut BotState) -> u64 {
@@ -923,11 +923,11 @@ mod tests {
             .collect()
     }
 
-    /// The all-CL intake: resolve -> prepared hops -> the forwarding all-CL
+    /// The all-concentrated-liquidity intake: resolve -> prepared hops -> the forwarding all-concentrated-liquidity
     /// convenience (`solve_concentrated_liquidity_piecewise`, which builds views and calls the one
     /// solve body).
     fn all_concentrated_liquidity_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
-        // The projection's derivation value rides each CL hop and IS the
+        // The projection's derivation value rides each concentrated liquidity hop and IS the
         // intake's shape: clone the hop (three `Arc` bumps) as the caller side
         // of callers that own prepared hops.
         let prepared: Vec<_> = r
@@ -948,7 +948,7 @@ mod tests {
 
     /// The mixed intake: resolve -> one borrowed hop view -> `solve_piecewise`.
     fn mixed_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
-        // One borrowed view per position: V2 borrows the resolved state; CL
+        // One borrowed view per position: V2 borrows the resolved state; concentrated liquidity
         // borrows the projection's prepared value (sequence + `Arc` tables).
         let mut hops: Vec<degenbot_pools::solve::concentrated_liquidity::MixedHopView<'_>> =
             Vec::with_capacity(r.hops.len());
@@ -975,7 +975,7 @@ mod tests {
         .result
     }
 
-    /// Memo ON vs OFF parity on an all-CL (V3 -> V4) two-hop path: solving
+    /// Memo ON vs OFF parity on an all-concentrated-liquidity (V3 -> V4) two-hop path: solving
     /// through cache hits or freshly built tables differs in build cost only —
     /// the crossing tables and the solved result are byte-identical.
     #[test]
@@ -1015,17 +1015,20 @@ mod tests {
 
         let on = all_concentrated_liquidity_solve(&r2);
         let off = all_concentrated_liquidity_solve(&r3);
-        assert!(on.is_some(), "fixture must be profitable for all-CL solve");
+        assert!(
+            on.is_some(),
+            "fixture must be profitable for all-concentrated-liquidity solve"
+        );
         assert_eq!(
             on, off,
-            "memo ON/OFF solves are byte-equal on the all-CL intake"
+            "memo ON/OFF solves are byte-equal on the all-concentrated-liquidity intake"
         );
     }
 
     /// Path arity is layered: a single-hop input projects nothing at
     /// resolution, so no shorter-than-two path ever reaches a solve surface
     /// through this intake — and the intake's unified contract refuses one
-    /// regardless (the retired all-CL body used to solve single hops).
+    /// regardless (the retired all-concentrated-liquidity body used to solve single hops).
     #[test]
     fn all_concentrated_liquidity_solve_refuses_a_single_hop_path() {
         let mut core = BotState::new();

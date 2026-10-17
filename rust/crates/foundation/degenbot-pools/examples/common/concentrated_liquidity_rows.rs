@@ -1,9 +1,9 @@
-//! Shared CL row parsing for the pure-CL replay harnesses
+//! Shared concentrated liquidity row parsing for the pure-concentrated-liquidity replay harnesses
 //! (`concentrated_liquidity_solve_replay`, `walkmemo_readout`): a captured `hops` array is an
-//! array of hops, each hop an array of CL ranges. The mixed replay's rows
+//! array of hops, each hop an array of concentrated liquidity ranges. The mixed replay's rows
 //! carry a per-hop V2/CL discriminant instead and keep their own parser.
 //!
-//! Included by each pure-CL example via
+//! Included by each pure-concentrated-liquidity example via
 //! `#[path = "common/concentrated_liquidity_rows.rs"] mod concentrated_liquidity_rows;`.
 
 use crate::common::range;

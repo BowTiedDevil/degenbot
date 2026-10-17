@@ -1,4 +1,4 @@
-//! The CL family's bitmap-word seeding and registration-coverage bookkeeping
+//! The concentrated liquidity family's bitmap-word seeding and registration-coverage bookkeeping
 //! (ADR-080 D1, step 2) — the state-side half of the family tree, beside the
 //! read door.
 //!

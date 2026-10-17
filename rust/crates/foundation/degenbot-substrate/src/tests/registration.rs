@@ -578,7 +578,7 @@ fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
 // of the existing `HookedPool` / `DynamicFee` / `AlreadyRegistered`
 // rejections. The four V4 spec validators (`validate_sqrt_price` /
 // `validate_tick` / `validate_v4_fee` / `validate_tick_spacing`) are the
-// same family-agnostic CL validators V3 uses (V4 shares TickMath); only
+// same family-agnostic concentrated liquidity validators V3 uses (V4 shares TickMath); only
 // `validate_v4_fee` is V4-specific (the `0x800000` high bit flags a
 // dynamic-fee pool, which `DynamicFee` rejects upstream as a more specific
 // typed variant).
@@ -1190,7 +1190,7 @@ fn register_aerodrome_pool_rejects_duplicate_address_as_already_registered() {
 // `register_v3_pool` is a typed `Result` that rejects (a) duplicate
 // address and (b) out-of-spec `sqrtPriceX96` / `tick` / `fee` /
 // `tickSpacing`, rather than `assert!`-panicking on (a) and silently
-// accepting impossible CL config on (b). Mirrors the V2 tests above.
+// accepting impossible concentrated liquidity config on (b). Mirrors the V2 tests above.
 // -----------------------------------------------------------------------
 /// Baseline in-spec V3 params at tick 0, `sqrt=1<<96`, `fee=3_000`,
 /// `tick_spacing=60`, undirectional tokens. Each spec-violation test below

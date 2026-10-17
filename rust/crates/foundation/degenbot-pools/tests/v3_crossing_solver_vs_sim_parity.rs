@@ -18,7 +18,7 @@
 //!
 //! 1. **Stale engine state** — the engine `V3PoolState` the solver read lags
 //!    the solve-block state the in-process revm sim reads.
-//! 2. **A residual in the solver's CL crossing accumulation** —
+//! 2. **A residual in the solver's concentrated liquidity crossing accumulation** —
 //!    `IntV3TickRangeSequence::compute_crossing` + `simulate_v3_range_swap`
 //!    diverges from V3's stepwise `compute_swap_step_v3` walk on a multi-tick
 //!    crossing.
@@ -28,7 +28,7 @@
 //!   sim's `actual` amount mirrors.
 //! - the solver's crossing path: `IntV3TickRangeSequence::compute_crossing`
 //!   + `simulate_v3_range_swap` for the ending partial step — exactly what the
-//!   solver assembles for a CL hop's `hop_outputs[i]`.
+//!   solver assembles for a concentrated liquidity hop's `hop_outputs[i]`.
 //!
 //! Because the input state is byte-identical, ANY divergence is pure solver
 //! math — hypothesis (2) — and stale state (1) is exonerated by construction.
@@ -160,8 +160,8 @@ fn build_multi_tick_v3_state(
     state
 }
 
-/// The solver's CL-hop output for `amount_in` against a pre-built sequence —
-/// the exact assembly the solver uses for a CL hop's `hop_outputs[i]`: find
+/// The solver's concentrated-liquidity-hop output for `amount_in` against a pre-built sequence —
+/// the exact assembly the solver uses for a concentrated liquidity hop's `hop_outputs[i]`: find
 /// the range `k` the input lands in (largest k with
 /// `crossing_gross_input(k) ≤ amount_in`), then sum the crossing output +
 /// the ending-range partial-step output.

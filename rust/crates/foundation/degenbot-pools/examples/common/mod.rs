@@ -27,7 +27,7 @@ pub fn str_field(v: &Value, k: &str) -> Result<String, String> {
         .map(String::from)
 }
 
-/// Parse one captured CL range into an [`IntV3TickRangeHop`] (decimal-string
+/// Parse one captured concentrated liquidity range into an [`IntV3TickRangeHop`] (decimal-string
 /// prices, `u128` liquidity, `u64` gamma/fee, word-boundary price list).
 pub fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
     let wbp = v

@@ -262,7 +262,7 @@ pub(crate) fn map_register_v2_err(err: &RegisterV2PoolError) -> PyErr {
 /// refusal mapper.
 ///
 /// - `HookedPool` → [`HookedPoolRejectedError`] (V4 amount-modifying-hook
-///   admission floor — the solver's CL math assumes no hook intervention).
+///   admission floor — the solver's concentrated liquidity math assumes no hook intervention).
 /// - `DynamicFee` → [`DynamicFeePoolRejectedError`] (V4 dynamic-fee
 ///   admission floor — the solver assumes a fixed fee).
 /// - `FeeExceedsEncoderLimit` → [`HighFeePoolRejectedError`] (V4 static-fee
@@ -417,7 +417,7 @@ pub(crate) fn exact_output_family_gap(op: &str, pool_id: u64, family: &str) -> P
     ))
 }
 
-/// `ValueError` for an override sim against a non-CL family (the family tag
+/// `ValueError` for an override sim against a non-concentrated-liquidity family (the family tag
 /// renders in its historical `Debug` form).
 pub(crate) fn override_family_gap(pool_id: u64, family: &str) -> PyErr {
     PyValueError::new_err(format!(

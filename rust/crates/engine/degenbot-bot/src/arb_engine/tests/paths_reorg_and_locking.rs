@@ -221,8 +221,8 @@ fn solve_3hop_v3_v3_v3_path() {
     assert!(resolved.hops[0].as_int_sequence().is_some());
     assert!(resolved.hops[1].as_int_sequence().is_some());
     assert!(resolved.hops[2].as_int_sequence().is_some());
-    // Solve the path — previously returned None for 3+ hop CL paths.
-    // Now the N-hop CL solver runs. With 3 pools at the same price but
+    // Solve the path — previously returned None for 3+ hop concentrated liquidity paths.
+    // Now the N-hop concentrated liquidity solver runs. With 3 pools at the same price but
     // different liquidity, the path is unlikely to be profitable after fees,
     // but the solver must not reject due to hop count.
     let result = ::degenbot_pools::solve::mixed::solve_path(

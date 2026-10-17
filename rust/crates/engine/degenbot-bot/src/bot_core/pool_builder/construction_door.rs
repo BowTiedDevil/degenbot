@@ -58,7 +58,7 @@ pub enum PoolConstruction<'a> {
         /// The lazy tick-word fetcher stored on the registered V3 pool for
         /// swap-time boundary detection.
         fetcher: Option<Arc<dyn TickWordFetcher>>,
-        /// An explicit CL slot-layout override (a non-JSON fork deployment
+        /// An explicit concentrated liquidity slot-layout override (a non-JSON fork deployment
         /// the caller resolved from the DB descriptor); `None` = the
         /// builder's deployment-table resolution wins.
         slot_layout: Option<ConcentratedLiquiditySlotLayout>,

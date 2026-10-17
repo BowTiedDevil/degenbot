@@ -4,7 +4,7 @@
 //! [`PoolEntry`] into one of three structural shapes:
 //!
 //! - [`Structure::ReservePair`] — two-token reserve pools (Uniswap V2, Aerodrome V2)
-//! - [`Structure::ConcentratedLiquidity`] — tick-based CL pools (Uniswap V3, Uniswap V4)
+//! - [`Structure::ConcentratedLiquidity`] — tick-based concentrated liquidity pools (Uniswap V3, Uniswap V4)
 //! - [`Structure::BalanceVector`] — N-token balance pools (Curve, Balancer weighted/stable)
 //! - [`Structure::BinnedLiquidity`] — discrete-bin liquidity (LFJ `LBPairs`); the
 //!   roadmap-only structure no tier admits yet

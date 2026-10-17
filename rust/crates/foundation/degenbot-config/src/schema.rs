@@ -441,11 +441,11 @@ crate::config_schema! {
         min_profit_wei [u128] = 0, env = "DEGENBOT_MIN_PROFIT_WEI", def = "0",
             doc = "Minimum path profit floor in wei (decimal text; TOML: quoted string).";
         clamp_margin_wei [u128] = 1, env = "DEGENBOT_CLAMP_MARGIN_WEI", def = "1",
-            doc = "CL-hop clamp margin in wei: the amount subtracted from a hop's committed input before the exact-in loop runs. Default 1 wei commits input - 1, so the loop converts nearly everything and stops at the last funded tick (maximum extraction). The margin must stay strictly greater than the worst solver-vs-engine over-prediction, which a parity sweep pins; raise it only when investigating a runaway swap.";
+            doc = "concentrated-liquidity-hop clamp margin in wei: the amount subtracted from a hop's committed input before the exact-in loop runs. Default 1 wei commits input - 1, so the loop converts nearly everything and stops at the last funded tick (maximum extraction). The margin must stay strictly greater than the worst solver-vs-engine over-prediction, which a parity sweep pins; raise it only when investigating a runaway swap.";
         walk_event_solver_legacy [bool_not] = false, env = "DEGENBOT_WALK_EVENT_SOLVER", def = "false",
             doc = "Legacy event-solver path is enabled by `DEGENBOT_WALK_EVENT_SOLVER=0` (inverted flag).";
         walk_event_census [bool] = false, env = "DEGENBOT_WALK_EVENT_CENSUS", def = "false",
-            doc = "Loop-15 nested event census counters in the CL walker (`1` enables).";
+            doc = "Loop-15 nested event census counters in the concentrated liquidity walker (`1` enables).";
         walk_anchor_sweep [enum AnchorSweep Off CenterOnly Full] = AnchorSweep::Full, env = "DEGENBOT_WALK_ANCHOR_SWEEP", def = "full",
             doc = "Walk anchor-sweep posture: `off` (0), `center-only` (2), or `full` (default/anything else).";
         envelope_max_tangent_lines [usize] = 32, env = "DEGENBOT_ENVELOPE_MAX_TANGENT_LINES", def = "32",
@@ -453,7 +453,7 @@ crate::config_schema! {
         envelope_sampled_compose_lines [usize] = 48, env = "DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES", def = "48",
             doc = "Profit-envelope sampled-compose lines cap.";
         solver_walk_memo [bool] = false, env = "DEGENBOT_SOLVER_WALK_MEMO", def = "false",
-            doc = "CL-solver walk memo (result caching) (`1` enables).";
+            doc = "concentrated-liquidity-solver walk memo (result caching) (`1` enables).";
         solver_walk_memo_stats [bool] = false, env = "DEGENBOT_SOLVER_WALK_MEMO_STATS", def = "false",
             doc = "Walk-memo recomposition census (`1` enables).";
         concentrated_liquidity_projection_cache [bool] = true, env = "DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE", def = "true",
@@ -497,7 +497,7 @@ crate::config_schema! {
         gate_capture_cap [usize] = 50, env = "DEGENBOT_GATE_CAPTURE_CAP", def = "50",
             doc = "Max paths captured per gate-capture run.";
         solver_capture [bool] = false, env = "DEGENBOT_SOLVER_CAPTURE", def = "false",
-            doc = "Heavy CL-path solve capture (presence gates; loader parses a bool).";
+            doc = "Heavy concentrated-liquidity-path solve capture (presence gates; loader parses a bool).";
         solver_capture_cap [usize] = 16, env = "DEGENBOT_SOLVER_CAPTURE_CAP", def = "16",
             doc = "Max captures per run (deduped by path id).";
         solver_capture_min_sims [u64] = 2000, env = "DEGENBOT_SOLVER_CAPTURE_MIN_SIMS", def = "2000",
@@ -675,15 +675,15 @@ crate::config_schema! {
 
     offline OfflineConfig {
         clcap_rpc [opt string] = None, env = "DEGENBOT_CLCAP_RPC", def = "(unset; required by the capture examples)",
-            doc = "RPC URL for the offline CL capture/boundary-scan examples (network-gated).";
+            doc = "RPC URL for the offline concentrated liquidity capture/boundary-scan examples (network-gated).";
         clcap_block [opt u64] = None, env = "DEGENBOT_CLCAP_BLOCK", def = "(unset)",
-            doc = "Pinned block for the CL capture generator.";
+            doc = "Pinned block for the concentrated liquidity capture generator.";
         clcap_max_fetches [usize] = 320, env = "DEGENBOT_CLCAP_MAX_FETCHES", def = "320",
-            doc = "Max active-set fetches backfilled by the CL capture generator.";
+            doc = "Max active-set fetches backfilled by the concentrated liquidity capture generator.";
         clcap_path_cap [usize] = 12, env = "DEGENBOT_CLCAP_PATH_CAP", def = "12",
-            doc = "Per-block path cap for the CL capture generator.";
+            doc = "Per-block path cap for the concentrated liquidity capture generator.";
         scan_block [opt u64] = None, env = "DEGENBOT_SCAN_BLOCK", def = "(unset)",
-            doc = "Block for the CL boundary-scan examples.";
+            doc = "Block for the concentrated liquidity boundary-scan examples.";
         fixture_db [opt path] = None, env = "DEGENBOT_FIXTURE_DB", def = "(unset)",
             doc = "Database path for the standalone-consumer fixture example.";
         v3_fixture_rpc [opt string] = None, env = "DEGENBOT_V3_FIXTURE_RPC", def = "(unset)",

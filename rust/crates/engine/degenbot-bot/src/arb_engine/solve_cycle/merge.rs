@@ -27,7 +27,7 @@ use degenbot_substrate::{BlockMetadata, BotState};
 use std::sync::Arc;
 
 // ===========================================================================
-// the CL-hop clamp and its profit recompute, moved off the
+// the concentrated-liquidity-hop clamp and its profit recompute, moved off the
 // deleted `ArbitrageEngine` twins onto their real owner. `SolveCycle::
 // clamp_concentrated_liquidity_hop_capacity` and the worker-side `lane_walk::clamp_result_in_
 // worker` both drive the same `clamp_result_with_state`; there is exactly
@@ -74,7 +74,7 @@ pub(crate) fn clamp_skip_kind(hop: HopType) -> Option<&'static str> {
 /// `margin > worst`, guarding the choice against regression. 1 wei is the
 /// smallest positive integer > 0, giving zero extraction loss (path-5000
 /// fixture: clamped output == solver output byte-identical).
-#[expect(clippy::too_many_lines)] // multi-hop CL twin loop + post-clamp profit recompute
+#[expect(clippy::too_many_lines)] // multi-hop concentrated liquidity twin loop + post-clamp profit recompute
 pub(crate) fn clamp_result_with_state(
     core: &BotState,
     path_id: u64,
@@ -91,7 +91,7 @@ pub(crate) fn clamp_result_with_state(
     for (i, pool_ref) in pools.iter().enumerate() {
         let requested = result.consumed_inputs[i];
         // Run the tier-3-validated twin once per clamped family so we can
-        // (a) clamp this hop's INPUT (CL marching empty-word EMPTY-HALT
+        // (a) clamp this hop's INPUT (concentrated liquidity marching empty-word EMPTY-HALT
         // class), (b) clamp this hop's FORWARD (`consumed_inputs[i+1]` =
         // the next hop's input, which the composer's V4 take/exchange
         // derives from this hop's OUTPUT) to the byte-exact twin output,
@@ -225,7 +225,7 @@ pub(crate) fn clamp_result_with_state(
                 continue;
             }
         };
-        // (a) Input clamp: cap this CL hop's committed input at
+        // (a) Input clamp: cap this concentrated liquidity hop's committed input at
         // `input_consumed - margin` when over-fed (the empty-march class).
         if let Some(clamped) = input_clamp {
             if clamped < requested {
@@ -289,7 +289,7 @@ pub(crate) fn clamp_result_with_state(
         }
     }
     // BUG-B FIX (path-142603 `no-profit` crash): the solver's `profit` is
-    // computed on its RAW (over-predicted) hop outputs; the CL clamp above
+    // computed on its RAW (over-predicted) hop outputs; the concentrated liquidity clamp above
     // realigns execution to the twin but was not feeding back a recomputed
     // profit, so an actually-unprofitable path stayed `> min_profit` and was
     // dispatched → executed to a loss → `no-profit` abort. Recompute the
@@ -317,7 +317,7 @@ pub(crate) fn clamp_result_with_state(
 /// over-prediction. A post-clamp loss saturates to `0`, which is dropped by
 /// the `profit > min_profit` delivery gate. Returns `None` for a degenerate
 /// path (no `hop_outputs` / `consumed_inputs`). Pure (no env, no `core`
-/// lock) so it is directly unit-testable independent of the CL-twin
+/// lock) so it is directly unit-testable independent of the concentrated-liquidity-twin
 /// machinery.
 #[must_use]
 pub(crate) fn recompute_clamped_profit(result: &SolvePathResult) -> Option<U256> {

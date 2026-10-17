@@ -418,7 +418,7 @@ fn u512_to_u2048(v: U512) -> U2048 {
 /// (e.g. a programmatically-instantiated V2 pool carrying reserves beyond
 /// `uint112::MAX`). The prior implementation silently saturated to
 /// `U256::MAX`, which would propagate garbage through downstream Möbius /
-/// CL computations; panicking here makes the contract invariant explicit.
+/// concentrated liquidity computations; panicking here makes the contract invariant explicit.
 /// The spec widths are enforced at `register_v2_pool` /
 /// `register_v3_pool` / `register_v4_pool` (see `spec_bounds.rs` and
 /// ADR-012), so on-chain-sourced pool state cannot reach this branch.

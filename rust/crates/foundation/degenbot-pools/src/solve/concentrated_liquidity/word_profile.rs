@@ -70,7 +70,7 @@ pub(super) fn word_profile_min_input_for_output(
     Some(base_c + g.min(full_gross))
 }
 
-/// One-time precomputed forward word-boundary profile of a single dense CL
+/// One-time precomputed forward word-boundary profile of a single dense concentrated liquidity
 /// `ending_range` for `simulate_v3_range_swap`. The active-set walk calls
 /// `simulate_v3_range_swap` ~`sims` times on the SAME ending range (fixed entry
 /// price, liquidity, fee, and word-boundary list — only `amount_in` varies), so

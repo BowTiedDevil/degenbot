@@ -7,7 +7,7 @@
     clippy::too_many_lines
 )]
 
-//! Offline heavy-CL-path replay harness with N-repeat stable timing.
+//! Offline heavy-concentrated-liquidity-path replay harness with N-repeat stable timing.
 //!
 //! Usage:
 //!   cargo run -p degenbot-pools --example `concentrated_liquidity_solve_replay` [-- <capture.jsonl>]
@@ -16,7 +16,7 @@
 //! Re-reads a capture JSONL produced by the live hook
 //! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`) or by `concentrated_liquidity_capture_gen`, rebuilds
 //! each Vec<IntV3TickRangeSequence> from the per-range fields, and re-runs
-//! `solve_concentrated_liquidity_piecewise` — the production all-CL solver (the exact call
+//! `solve_concentrated_liquidity_piecewise` — the production all-concentrated-liquidity solver (the exact call
 //! `mixed::solve_path` makes, initial input ONE) — OFFLINE, with no bot / RPC /
 //! DB. Each path is solved N times; the median / p95 / min of the per-run wall
 //! time is the stable A/B signal. As a bonus the N runs must agree — `int_solve`
@@ -380,7 +380,7 @@ fn main() {
     // floor, how many captured paths would the gate have skipped, and would
     // ANY skip have discarded a path whose golden profit clears the floor
     // (a false skip — must be zero by soundness)?
-    println!("---- gate floor analysis (heavy-CL capture):");
+    println!("---- gate floor analysis (heavy-concentrated-liquidity capture):");
     for &floor_wei in &[0u64, 1_000_000, 1_000_000_000, 1_000_000_000_000] {
         let floor = U256::from(floor_wei);
         let mut skipped = 0u32;

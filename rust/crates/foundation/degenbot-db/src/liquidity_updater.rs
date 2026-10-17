@@ -1,7 +1,7 @@
 //! V3/V4 DB-aware liquidity updater — the apply-and-persist core.
 //!
 //! Ports `cli/pool.py::apply_v3_liquidity_updates` / `apply_v4_liquidity_updates`
-//! (read pool row + positions → apply CL `apply_liquidity_mapping_update` per
+//! (read pool row + positions → apply concentrated liquidity `apply_liquidity_mapping_update` per
 //! event → upsert positions + init maps → stamp `liquidity_update_block`/
 //! `liquidity_update_log_index`) to a Rust core over [`DegenbotDb`] +
 //! [`degenbot_math::concentrated_liquidity::liquidity_mapping::apply_liquidity_mapping_update`].

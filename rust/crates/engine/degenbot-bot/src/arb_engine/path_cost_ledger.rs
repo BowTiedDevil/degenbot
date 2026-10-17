@@ -51,7 +51,7 @@ const SLOWEST_PATHS_K: usize = 5;
 pub(crate) struct PathTimeRecord {
     /// Measured per-path solve wall time (microseconds).
     pub(crate) micros: u128,
-    /// CL tick-range pieces visited by the monotone walk.
+    /// concentrated liquidity tick-range pieces visited by the monotone walk.
     pub(crate) pieces: u64,
     /// Full path simulations.
     pub(crate) sims: u64,
@@ -142,9 +142,9 @@ impl CostSnapshot {
 pub(crate) struct PathCostLedger {
     /// The solve block the cycle anchors to (the capture hooks' block stamp).
     solve_block: u64,
-    /// Optional offline all-CL heavy-path capture hook.
+    /// Optional offline all-concentrated-liquidity heavy-path capture hook.
     capture: Option<Arc<HeavyPathCapture>>,
-    /// Optional offline mixed V2+CL heavy-path capture hook.
+    /// Optional offline mixed V2+concentrated liquidity heavy-path capture hook.
     capture_mixed: Option<Arc<HeavyPathCapture>>,
     /// The K-slowest retention.
     path_times: parking_lot::Mutex<PathTimesHeap>,
@@ -203,7 +203,7 @@ impl PathCostLedger {
 
         let ws = outcome.stats;
 
-        // The Q3 dense one-shot alert: the first path whose CL walk crossed the
+        // The Q3 dense one-shot alert: the first path whose concentrated liquidity walk crossed the
         // dense-word threshold logs once per process (harvest a real capture).
         // Same latch + threshold as the retired walk-side check; the threshold
         // constant stays in the solver crate.
@@ -216,7 +216,7 @@ impl PathCostLedger {
                 max_dense_words = ws.max_dense_words,
                 threshold =
                     ::degenbot_pools::solve::concentrated_liquidity::DENSE_OBSERVE_THRESHOLD,
-                "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
+                "Q3-DENSE: a concentrated liquidity range crossed the dense-word threshold; harvest a real capture"
             );
         }
 
@@ -243,7 +243,7 @@ impl PathCostLedger {
         });
 
         // The two capture hooks keep their once-per-cycle snapshot order
-        // (all-CL first, mixed second).
+        // (all-concentrated-liquidity first, mixed second).
         for cap in [self.capture.as_ref(), self.capture_mixed.as_ref()]
             .into_iter()
             .flatten()

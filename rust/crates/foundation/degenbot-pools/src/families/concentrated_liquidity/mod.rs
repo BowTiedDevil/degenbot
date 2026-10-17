@@ -1,5 +1,5 @@
 //! The concentrated-liquidity family read module (ADR-073 D1/D4) — the
-//! foundation-layer home of everything the CL family (V3 + V4) contributes to
+//! foundation-layer home of everything the concentrated liquidity family (V3 + V4) contributes to
 //! being read and resolved.
 //!
 //! GLOSSARY.md "Family read module": this tree owns the state slices, the
@@ -302,7 +302,7 @@ pub fn read_swap(
     request: SwapReadRequest<'_>,
     mode: FetchMode<'_>,
 ) -> ReadOutcome {
-    // The CL family answers only its canonical variant; a request another
+    // The concentrated liquidity family answers only its canonical variant; a request another
     // family carries is a typed refusal (never a guessed mapping).
     let SwapReadRequest::ConcentratedLiquidity {
         zero_for_one,
@@ -312,7 +312,7 @@ pub fn read_swap(
     else {
         return ReadOutcome::NotComputable;
     };
-    // The effective walk limit: the caller's bound or the shared CL default.
+    // The effective walk limit: the caller's bound or the shared concentrated liquidity default.
     let limit =
         sqrt_price_limit.unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(zero_for_one));
     match source {

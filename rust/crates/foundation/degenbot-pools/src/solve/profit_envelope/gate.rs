@@ -300,9 +300,9 @@ pub struct GateStats {
     pub duration_ns: u128,
     /// Composed-boundary cache hits inside this path's envelope product.
     pub prefix_hits: u64,
-    /// Pool-static CL tangent-fan cache hits (per CL hop derivation).
+    /// Pool-static concentrated liquidity tangent-fan cache hits (per concentrated liquidity hop derivation).
     pub concentrated_liquidity_fan_hits: u64,
-    /// Pool-static CL tangent-fan cache misses (per CL hop derivation).
+    /// Pool-static concentrated liquidity tangent-fan cache misses (per concentrated liquidity hop derivation).
     pub concentrated_liquidity_fan_misses: u64,
     /// Composition boundaries actually executed for this path.
     pub boundaries_composed: u64,
@@ -564,7 +564,7 @@ impl GateDeps<'_> {
     /// The owner's prefix store + epoch as the chain-composition cache
     /// handle, or `None` when prefix reuse is out of stance for this solve.
     /// The gate verdict and the walk-side bound both derive their cache here,
-    /// so one solve shares one cache and the CL fans are derived once.
+    /// so one solve shares one cache and the concentrated liquidity fans are derived once.
     #[must_use]
     pub(crate) fn fan_cache(&self) -> Option<(&PrefixCache, u64)> {
         if self.prefix_cache {
@@ -634,7 +634,7 @@ impl<'a> GateDeps<'a> {
 
 /// The ONE gate entry: a rigorous upper bound on
 /// `max_x [path_output(x) − x]`, or a typed [`GateSkipCause`]. Crossings ride
-/// each CL hop's `ConcentratedLiquidityHop` descriptor; the prefix-composition cache is keyed
+/// each concentrated liquidity hop's `ConcentratedLiquidityHop` descriptor; the prefix-composition cache is keyed
 /// on full hop content and generationed by `GateDeps::epoch`.
 #[must_use]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>], deps: &GateDeps<'_>) -> Envelope {
@@ -714,11 +714,11 @@ pub(crate) struct PathBoundError {
 }
 
 /// The ONE chain-composition path. Derive every hop's line set — the
-/// pool-static CL tangent fans reused from `cache` when present — then chain
+/// pool-static concentrated liquidity tangent fans reused from `cache` when present — then chain
 /// the sets through the exact concave-envelope composition, reusing the
 /// owner's composed-prefix memo when present. The gate verdict and the
 /// walk-side bound are two queries against this: for identical inputs they
-/// yield the identical hull by construction, and the CL fans are derived
+/// yield the identical hull by construction, and the concentrated liquidity fans are derived
 /// once (the second query is all cache hits).
 #[expect(clippy::too_many_lines)]
 pub(crate) fn compose_path_bound(
@@ -761,7 +761,7 @@ pub(crate) fn compose_path_bound(
     let mut lines2 = vec![Line::IDENTITY];
     let domain = xmax;
     // Prefix-composition cache (loop-8): every chainable hop contributes a
-    // FULL-CONTENT key — the CL hop's whole crossing table hashed (a content
+    // FULL-CONTENT key — the concentrated liquidity hop's whole crossing table hashed (a content
     // hash, not an allocation pointer; the pointer key + endpoint-fingerprint
     // revalidation pair is retired), the Möbius hop a reserves+fee hash. A
     // 128-bit FNV hit is the only stale-serve risk — the same trust level
@@ -825,14 +825,14 @@ pub(crate) fn compose_path_bound(
         record_gate(stats, |t| t.boundaries_composed += 1);
         // Prune each hop's tangent lines BEFORE composition.
         //
-        // Soundness: CL swap output is monotonically increasing (more input
+        // Soundness: concentrated liquidity swap output is monotonically increasing (more input
         // → more output). If line A dominates line B within this hop
         // (A ≤ B at both x=0 and x=domain), then for any subsequent
         // increasing composition C, C∘A ≤ C∘B — the domination survives
         // composition. So dropping B before the product loop changes
         // nothing about the final envelope.
         //
-        // Effect: collapses a 3000-line CL hop to ~50 Pareto-front survivors
+        // Effect: collapses a 3000-line concentrated liquidity hop to ~50 Pareto-front survivors
         // BEFORE composition. That prune happens INSIDE
         // `compose_envelopes_exact` exactly once; the loop-head prune was
         // removed because the double-prune was unmeasured byte-identity
@@ -868,7 +868,7 @@ pub(crate) fn compose_path_bound(
         }
         // sampled_compose_lines() cap: the composing side is dropped to a
         // uniform Pareto-order sample across the lower envelope, bounding
-        // the next product at K². Sound by the same argument as the CL
+        // the next product at K². Sound by the same argument as the concentrated liquidity
         // tangent cap: min(fewer lines) ≥ min(all lines), so the bound can
         // only rise (skip less, never more). With the live min-profit floor
         // of zero the tightness loss does not affect skips.
@@ -885,7 +885,7 @@ pub(crate) fn compose_path_bound(
     record_gate(stats, |t| {
         t.compose_ns += phase_compose.elapsed().as_nanos();
     });
-    // Diagnostic: line explosion is the gate bottleneck on dense-CL paths.
+    // Diagnostic: line explosion is the gate bottleneck on dense-concentrated-liquidity paths.
     #[cfg(not(feature = "hotpath"))]
     if lines2.len() > 200 {
         let hop_counts: Vec<usize> = all_hops.iter().map(|(ls, _)| ls.len()).collect();
@@ -950,12 +950,12 @@ fn path_profit_bound_inner(
                 if let Some(hop) = hops.get(e.hop_index).and_then(Option::as_ref) {
                     // Degenerate diagnostic: log the hop family + the reject
                     // reason so the steady-state degenerate rate can be
-                    // classified as the expected shape (sparse CL with empty
+                    // classified as the expected shape (sparse concentrated liquidity with empty
                     // active range / zero reserves) vs a real coverage gap.
                     // Debug-level: opt-in via
                     // `RUST_LOG=crate::solve::profit_envelope=debug`.
                     // One label shape for the diagnostic and the capture row
-                    // ([`HopMath::family_label`]); the CL reason is the
+                    // ([`HopMath::family_label`]); the concentrated liquidity reason is the
                     // range-level classification, and every other family's
                     // reason is its own label.
                     let family = hop.family_label();
@@ -1310,7 +1310,7 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(seqs.len(), 3);
 
-        // --- Oracle: production-parity exact output for one CL hop at input x
+        // --- Oracle: production-parity exact output for one concentrated liquidity hop at input x
         // (each range via simulate_v3_range_swap; boundary crossings carry the
         // unconsumed remainder to the next range).
         let hop_truth = |seq: &IntV3TickRangeSequence, x: U256| -> U256 { chained_hop_out(seq, x) };
@@ -1439,7 +1439,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// Dense zero-for-one CL sequence: `n` contiguous 1-tick ranges below the
+    /// Dense zero-for-one concentrated liquidity sequence: `n` contiguous 1-tick ranges below the
     /// anchor with `liq` (a fat table that trips the tangent sample cap).
     fn fat_walk_seq(n: i32, liq: u128) -> IntV3TickRangeSequence {
         let sp_at =
@@ -1466,8 +1466,8 @@ pub(crate) mod tests {
     /// path as the gate verdict. For identical inputs both queries return the
     /// identical hull, so maximizing the walk-side lines with the gate's own
     /// arithmetic reproduces the gate's bound exactly — and the kill is
-    /// observable: the walk-side query records zero CL-fan misses (it reuses
-    /// the fans the gate derived) and one hit per CL hop, where before this
+    /// observable: the walk-side query records zero concentrated-liquidity-fan misses (it reuses
+    /// the fans the gate derived) and one hit per concentrated liquidity hop, where before this
     /// change it re-derived every fan uncached.
     #[test]
     #[expect(
@@ -1475,7 +1475,7 @@ pub(crate) mod tests {
         reason = "the test asserts a bounded gate and panics by design"
     )]
     fn walk_side_bound_equals_gate_bound_and_reuses_fans() {
-        // Two DISTINCT dense CL hops (distinct fan keys), so the fan cache is
+        // Two DISTINCT dense concentrated liquidity hops (distinct fan keys), so the fan cache is
         // exercised hop by hop.
         let seq_a = fat_walk_seq(120, 1_000_000_000_000);
         let seq_b = fat_walk_seq(95, 1_000_000_000_000);
@@ -1498,7 +1498,7 @@ pub(crate) mod tests {
         let store = PrefixCache::new();
         let deps = GateDeps::per_block(1, &store, None, None, cfg);
 
-        // Query 1 — the gate verdict, cold: each CL hop's pool-static fan is
+        // Query 1 — the gate verdict, cold: each concentrated liquidity hop's pool-static fan is
         // derived exactly once.
         let (gate_env, gs_gate) = path_profit_bound_with_stats(&views, &deps);
         let gate_bound = match gate_env {
@@ -1507,7 +1507,7 @@ pub(crate) mod tests {
         };
         assert_eq!(
             gs_gate.concentrated_liquidity_fan_misses, n_concentrated_liquidity,
-            "gate must derive each CL fan once, cold"
+            "gate must derive each concentrated liquidity fan once, cold"
         );
         assert_eq!(gs_gate.concentrated_liquidity_fan_hits, 0);
 
@@ -1519,7 +1519,7 @@ pub(crate) mod tests {
             .expect("walk bound derivable");
         assert_eq!(
             gs_walk.concentrated_liquidity_fan_misses, 0,
-            "walk side re-derived the CL fans (the kill failed)"
+            "walk side re-derived the concentrated liquidity fans (the kill failed)"
         );
         assert_eq!(
             gs_walk.concentrated_liquidity_fan_hits, n_concentrated_liquidity,

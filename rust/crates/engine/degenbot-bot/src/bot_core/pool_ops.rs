@@ -49,7 +49,7 @@ pub enum SwapOpError {
     },
 }
 
-/// The CL 5-tuple payload the staged fetch-sim seams surface — the legacy
+/// The concentrated liquidity 5-tuple payload the staged fetch-sim seams surface — the legacy
 /// `(amount0, amount1, sqrt_price_x96, liquidity, tick)` tuple fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConcentratedLiquiditySwapPayload {
@@ -83,10 +83,10 @@ pub enum StagedSwapOutcome {
         delivered: U256,
     },
     /// Staging failed, the walk was not computable, or the payload is a
-    /// constant-product family the CL 5-tuple seam cannot represent — the
+    /// constant-product family the concentrated liquidity 5-tuple seam cannot represent — the
     /// legacy bare-`None` contract.
     NotComputable,
-    /// A non-CL family was asked for the CL 5-tuple seam.
+    /// A non-concentrated-liquidity family was asked for the concentrated liquidity 5-tuple seam.
     UnsupportedFamily {
         /// The requested pool id.
         pool_id: u64,
@@ -116,7 +116,7 @@ pub fn curve_data_provider(
         .clone()
 }
 
-/// Stage the missing bitmap words a CL swap needs — the bounded 3-pass loop
+/// Stage the missing bitmap words a concentrated liquidity swap needs — the bounded 3-pass loop
 /// the fetch-sim callers run before entering the disarmed sim: discover (a
 /// collect-only transient walk under a READ guard), stage the batch under ONE
 /// short write, fetch lock-free (no state lock held; the stored fetcher
@@ -340,10 +340,10 @@ pub fn calculate_tokens_in_for_pair(
     )
 }
 
-/// Staged fetch+retry CL swap — the shared body of the shell's
+/// Staged fetch+retry concentrated liquidity swap — the shared body of the shell's
 /// `simulate_swap_with_fetch` / `simulate_exact_output_swap_with_fetch` (the
 /// exact-output sign convention rides in the caller-built request). Stages
-/// the missing words first, then runs the disarmed sim and maps the CL
+/// the missing words first, then runs the disarmed sim and maps the concentrated liquidity
 /// payload to the legacy 5-tuple fields.
 #[must_use]
 pub fn simulate_swap_with_fetch(
@@ -383,7 +383,7 @@ pub fn simulate_swap_with_fetch(
     })
 }
 
-/// THE mainline CL swap read (ADR-037): stages the missing bitmap words
+/// THE mainline concentrated liquidity swap read (ADR-037): stages the missing bitmap words
 /// (bounded pre-pass) then runs the disarmed sim, surfacing the full typed
 /// [`SwapRead`] so the shell can tell a compute miss from an exhausted fetch.
 /// `request.amount_specified` is signed user-perspective.
@@ -410,14 +410,14 @@ pub fn simulate_mainline(
         .swap_simulation_disarmed(block, pool_id, request)
 }
 
-/// Staged fetch+retry override (hypothetical CL state) sim — the bounded
+/// Staged fetch+retry override (hypothetical concentrated liquidity state) sim — the bounded
 /// 3-pass loop over [`BotState::override_missing_words`] + the stored fetcher
 /// (fetched ticks merge into the caller-owned TRANSIENT map, never
 /// registered state), then the disarmed override sim.
 ///
 /// # Errors
 /// [`UnsupportedOverrideFamily`] when the target pool is registered under a
-/// non-CL family (no transient CL state to build).
+/// non-concentrated-liquidity family (no transient concentrated liquidity state to build).
 pub fn simulate_override_with_fetch(
     state: &StateLock<BotState>,
     over: &mut OverrideSwap,
@@ -679,14 +679,14 @@ mod tests {
             100,
             &exact_in_request(true)
         ));
-        // Non-CL family: nothing to stage.
+        // Non-concentrated-liquidity family: nothing to stage.
         assert!(stage_missing_words(
             &state,
             V2_ID,
             100,
             &exact_in_request(true)
         ));
-        // CL pool with complete tracked coverage: nothing missing.
+        // concentrated liquidity pool with complete tracked coverage: nothing missing.
         assert!(stage_missing_words(
             &state,
             V3_ID,
@@ -723,7 +723,7 @@ mod tests {
         let outcome = simulate_swap_with_fetch(&state, V3_ID, &exact_in_request(true), 100);
         let payload = match outcome {
             StagedSwapOutcome::Computed(p) => p,
-            other => panic!("expected a computed CL payload, got {other:?}"),
+            other => panic!("expected a computed concentrated liquidity payload, got {other:?}"),
         };
         assert_eq!(payload.amount0, U256::from(100u64));
         assert!(payload.amount1 > U256::ZERO);
@@ -749,14 +749,14 @@ mod tests {
         let outcome = simulate_swap_with_fetch(&state, V3_ID, &request, 100);
         let payload = match outcome {
             StagedSwapOutcome::Computed(p) => p,
-            other => panic!("expected a computed CL payload, got {other:?}"),
+            other => panic!("expected a computed concentrated liquidity payload, got {other:?}"),
         };
         assert_eq!(payload.amount1, U256::from(100u64));
         assert!(payload.amount0 > U256::ZERO);
 
-        // A constant-product family has no CL 5-tuple: both seams collapse
-        // the non-CL payload to the legacy bare-`None` contract (V2 carries
-        // an exact-output path, so it computes a V2 payload the CL seam drops).
+        // A constant-product family has no concentrated liquidity 5-tuple: both seams collapse
+        // the non-concentrated-liquidity payload to the legacy bare-`None` contract (V2 carries
+        // an exact-output path, so it computes a V2 payload the concentrated liquidity seam drops).
         assert_eq!(
             simulate_swap_with_fetch(&state, V2_ID, &request, 100),
             StagedSwapOutcome::NotComputable
@@ -766,7 +766,7 @@ mod tests {
             simulate_swap_with_fetch(&state, V2_ID, &v2_in, 100),
             StagedSwapOutcome::NotComputable
         );
-        // The curve fixture pins the typed gap arm for a non-CL family.
+        // The curve fixture pins the typed gap arm for a non-concentrated-liquidity family.
         match simulate_swap_with_fetch(&state, CURVE_ID, &request, 100) {
             StagedSwapOutcome::UnsupportedFamily { pool_id, family } => {
                 assert_eq!(pool_id, CURVE_ID);
@@ -801,7 +801,7 @@ mod tests {
             tick_data: over_ticks,
         };
         let outcome = simulate_override_with_fetch(&state, &mut over, 100)
-            .expect("override sim over a CL family");
+            .expect("override sim over a concentrated liquidity family");
         let outcome = outcome.expect("complete hypothetical tick data computes");
         assert_eq!(outcome.liquidity, 1_000_000);
         assert!(
@@ -811,7 +811,7 @@ mod tests {
         );
         assert!(outcome.amount1 > U256::ZERO);
 
-        // A non-CL family has no transient CL state: the typed refusal.
+        // A non-concentrated-liquidity family has no transient concentrated liquidity state: the typed refusal.
         let mut over_v2 = OverrideSwap {
             pool_id: V2_ID,
             request: exact_in_request(true),
@@ -821,7 +821,7 @@ mod tests {
             tick_data: HashMap::new(),
         };
         let err = simulate_override_with_fetch(&state, &mut over_v2, 100)
-            .expect_err("non-CL family refuses the override seam");
+            .expect_err("non-concentrated-liquidity family refuses the override seam");
         assert_eq!(err.pool_id, V2_ID);
         assert_eq!(err.family, "v2");
     }

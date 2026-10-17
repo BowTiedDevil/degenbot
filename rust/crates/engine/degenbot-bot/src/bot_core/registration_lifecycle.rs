@@ -54,7 +54,7 @@ fn missing_tick_spacing() -> RefusalKind {
     RefusalKind::lifecycle_precondition(LifecyclePrecondition::MissingTickSpacing)
 }
 
-/// Drive a V3 CL pool through the registration verify-lifecycle, branching on
+/// Drive a V3 concentrated liquidity pool through the registration verify-lifecycle, branching on
 /// `coverage::` **Sparse → immediate no-op** (already `Live`, no
 /// verification deferral, no RPC); **Tracked → quarantine → (step-1 seed
 /// verify) → drain+pin → (step-2 post-drain verify) → `set_live`**.

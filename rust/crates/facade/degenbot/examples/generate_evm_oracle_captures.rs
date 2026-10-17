@@ -207,7 +207,7 @@ fn zero_mint_log_emitter(
 fn scenarios() -> Vec<Scenario> {
     vec![
         // (a) cross-chunk reorg window over the flip-flip-then-swap motif on a
-        // dense CL pool: PoolCreated + flip #1 in chunk 1, flip #2 + the swap
+        // dense concentrated liquidity pool: PoolCreated + flip #1 in chunk 1, flip #2 + the swap
         // crossing in chunk 2 — chunk 2's read pass + marker logic must
         // survive on chunk 1's committed map.
         Scenario {
@@ -538,7 +538,7 @@ fn execute_until(
     Ok(())
 }
 
-/// `(uint24 fee, int24 tickSpacing)` constructor args (the CL harness ABI).
+/// `(uint24 fee, int24 tickSpacing)` constructor args (the concentrated liquidity harness ABI).
 fn capture_harness_ctor_args(fee: u32, tick_spacing: i32) -> Vec<u8> {
     let mut args = Vec::with_capacity(64);
     let mut fee_word = [0u8; 32];

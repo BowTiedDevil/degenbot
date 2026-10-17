@@ -224,7 +224,7 @@ fn curve_stable_rejects_mixed_with_concentrated_liquidity() {
         )
         .result
         .is_none(),
-        "Curve + CL must not solve"
+        "Curve + concentrated liquidity must not solve"
     );
 }
 /// A minimal tracing capture layer: records (name, span id, parent id)

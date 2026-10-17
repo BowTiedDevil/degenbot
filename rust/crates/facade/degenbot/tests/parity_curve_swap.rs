@@ -3,7 +3,7 @@
 //! claim, the behavioral tier).
 //!
 //! The Curve StableSwap dy math has no simple closed form (`stableswap_get_y`
-//! is a Newton solve), so — like the V3/V4 CL tests — this asserts the direct
+//! is a Newton solve), so — like the V3/V4 concentrated liquidity tests — this asserts the direct
 //! **FFI-seam-lossless claim**: the **same** canonical fixture driven through
 //! the **Rust consumer** (`degenbot_math::curve::calculate_dy`, as a `cargo add
 //! degenbot` user) produces the **same** `dy` as the **Python consumer**

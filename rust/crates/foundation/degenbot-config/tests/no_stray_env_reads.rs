@@ -85,7 +85,7 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/engine/degenbot-bot/src/profiling.rs",
             &["HOTPATH_SHUTDOWN_MS"][..],
         );
-        // the CL-hop clamp margin now rides the typed config
+        // the concentrated-liquidity-hop clamp margin now rides the typed config
         // (`solve.clamp_margin_wei`), so the cycle source reads no
         // environment; the probe-fixture loader below is the remaining
         // offline entry.

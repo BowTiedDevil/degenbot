@@ -13,7 +13,7 @@
 //! [`SimulateSwapError::NotComputable`] at the family read door (the
 //! companion's Curve read path was verified to carry no zero-vs-error
 //! distinguishing consumer; those styles' `get_dy` math is the calculator
-//! path's). V2, V3/V4 CL, Balancer weighted+stable, Aerodrome V2 volatile
+//! path's). V2, V3/V4 concentrated liquidity, Balancer weighted+stable, Aerodrome V2 volatile
 //! **and** stable, and Curve standard stableswap are all ported — the Python companions
 //! for those delegate to this core rather than doing their own math. The
 //! per-family design arms live behind the family read modules' read doors
@@ -102,7 +102,7 @@ pub fn simulate_swap(
                 -spec,
             )
         }
-        // V4 concentrated-liquidity math. Same CL math as V3, one dispatch
+        // V4 concentrated-liquidity math. Same concentrated liquidity math as V3, one dispatch
         // row: the V4-native sign convention (`amountSpecified < 0` for
         // exact input) is the design mapping behind the door — the canonical
         // request is the SAME negative exact-input amount.

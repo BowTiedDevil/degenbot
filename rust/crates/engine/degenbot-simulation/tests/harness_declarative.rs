@@ -376,7 +376,7 @@ fn harness_encode_context_projects_deployed_addresses() {
 /// `cmd_executor` bytecode, which no earlier harness entry could do.
 ///
 /// **Over-feed clamp pair — parked with a note (per the plan's escape
-/// clause).** A V3 CL over-feed at runtime needs the pool's capacity bound
+/// clause).** A V3 concentrated liquidity over-feed at runtime needs the pool's capacity bound
 /// to sit mid-price-range. The stub `PoolV3` is closed-form (single active
 /// range, no tick bitmap): its capacity bound sits at the extreme
 /// `MIN`/`MAX` price limits, where the opposing token prices at ~1e38 per
@@ -386,14 +386,14 @@ fn harness_encode_context_projects_deployed_addresses() {
 /// pure clamp rule (`V3SwapOutcome::exact_input_clamp_bound`) is unit-green
 /// in `degenbot-pools`. The aligned-shape fixtures below exercise the
 /// intake's handling of exactly the amount shape the clamp produces:
-/// a V2→V3 chain whose CL-hop committed input is the previous hop's clamped,
+/// a V2→V3 chain whose concentrated-liquidity-hop committed input is the previous hop's clamped,
 /// re-aligned output (both sides clamped consistently). The amounts must
 /// still encode + execute with the measured delta matching the prediction.
 ///
-/// The aligned-shape fixture: a V2→V3 chain where the CL hop's committed
+/// The aligned-shape fixture: a V2→V3 chain where the concentrated liquidity hop's committed
 /// input is a fraction of the V2 hop's natural output — the shape
 /// `clamp_concentrated_liquidity_hop_capacity` engineers (the previous hop's output re-aligned
-/// to the committed CL input, both clamped consistently). The amounts must
+/// to the committed concentrated liquidity input, both clamped consistently). The amounts must
 /// still encode + execute with the measured delta matching the prediction.
 #[test]
 fn concentrated_liquidity_hop_aligned_clamp_shape_executes_with_consistent_delta() {
@@ -433,7 +433,7 @@ fn concentrated_liquidity_hop_aligned_clamp_shape_executes_with_consistent_delta
     let natural_in: u128 = 100_000;
     let natural_v2_out = v2_out(natural_in);
     // The clamped shape: the V2 hop commits enough for 70% of the natural
-    // output, and the CL hop's committed input equals that re-aligned
+    // output, and the concentrated liquidity hop's committed input equals that re-aligned
     // output (consumed_inputs[1] == hop_outputs[0] — the alignment
     // clamp_concentrated_liquidity_hop_capacity enforces, with both sides clamped).
     let clamped_v2_out = v2_out(natural_in * 70 / 100);

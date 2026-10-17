@@ -6,7 +6,7 @@
 //! Emits TWO files matching the offline harness schemas:
 //!   1. `concentrated_liquidity_solve_replay` format:  {"block":..,"golden":null,"hops":[[range,..],..]}
 //!   2. `mixed_solve_replay` / `gate_bench` format: {"`path_id":..,"block"`:..,
-//!      "`n_hops":3,"hop_order"`:[false,..],"hops":[{"kind":"CL","ranges":[...]},..]}
+//!      "`n_hops":3,"hop_order"`:[false,..],"hops":[{"kind":"concentrated liquidity","ranges":[...]},..]}
 //!
 //! Usage: cargo run --release -p degenbot-pools --example `synth_corpus_gen`
 //! Geometry replicates the deep-late-liquidity fixtures that the production
@@ -137,7 +137,7 @@ fn main() {
     let mix = |pid: u64, block: u64, hops: [&IntV3TickRangeSequence; 3]| -> Value {
         let hop_objs: Vec<Value> = hops
             .iter()
-            .map(|s| json!({ "kind": "CL", "ranges": concentrated_liquidity_json(s) }))
+            .map(|s| json!({ "kind": "concentrated liquidity", "ranges": concentrated_liquidity_json(s) }))
             .collect();
         json!({
             "path_id": pid,

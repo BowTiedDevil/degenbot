@@ -111,7 +111,7 @@ impl TickWordFetcher for BootstrapFetcher {
     }
 }
 
-/// The solver's CL-hop output for `amount_in` (mirrors
+/// The solver's concentrated-liquidity-hop output for `amount_in` (mirrors
 /// `v3_crossing_solver_vs_sim_parity::solver_crossing_output`).
 fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Option<U256> {
     let n = seq.ranges.len();

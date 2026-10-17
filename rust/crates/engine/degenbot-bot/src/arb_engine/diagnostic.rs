@@ -70,7 +70,7 @@ fn is_false(b: &bool) -> bool {
 ///
 /// Fields compared per family:
 /// - V2: `reserve_in`, `reserve_out`
-/// - V3/V4: `sqrt_price_x96`, `tick`, `liquidity` (identical for both CL
+/// - V3/V4: `sqrt_price_x96`, `tick`, `liquidity` (identical for both concentrated liquidity
 ///   families — merged with `|`)
 ///
 /// Only true divergences are returned (matching fields are omitted). A

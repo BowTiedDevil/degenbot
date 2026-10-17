@@ -333,7 +333,7 @@ mod tests {
         serde_json::from_str(line).expect("captured line is valid JSON")
     }
 
-    /// One well-formed single-range CL sequence: every solve of it folds the
+    /// One well-formed single-range concentrated liquidity sequence: every solve of it folds the
     /// same fingerprint, so consecutive epochs drive the memo's
     /// miss → commit → hit path deterministically.
     #[expect(
@@ -361,7 +361,7 @@ mod tests {
     fn solve_once(memo: &WalkMemo, prepared: &PreparedConcentratedLiquidityHop) {
         let cfg = SolveRuntimeConfig::default();
         // TWO hops: the unified entry's contract refuses paths shorter than
-        // two hops (the all-CL intake forwards that same contract), and one
+        // two hops (the all-concentrated-liquidity intake forwards that same contract), and one
         // call must stay exactly one probe + one cache consult + a commit.
         let two = [prepared.clone(), prepared.clone()];
         let _ = solve_concentrated_liquidity_piecewise(&two, Some(memo), None, &cfg, None);

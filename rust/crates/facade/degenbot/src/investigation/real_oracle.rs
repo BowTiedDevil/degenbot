@@ -23,7 +23,7 @@
 //! The deploy+seed+drive sequence lives in ONE place here — shared by the
 //! committed tier-3-path5000 regression test (`tests/tier3_path5000_v4_clamp.rs`;
 //! the `path5000_v4_gas_probe` example it was extracted from was deleted in the
-//! 2026-08-19 sweep). See that test for the full RED→GREEN narrative (the CL-hop
+//! 2026-08-19 sweep). See that test for the full RED→GREEN narrative (the concentrated-liquidity-hop
 //! input clamp turns a 20.7M-gas EMPTY-HALT into a ~190k clean fill under the
 //! 5M executor ceiling).
 

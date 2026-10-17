@@ -40,7 +40,7 @@ pub struct EngineRetune {
     /// Minimum result profit (in wei) for the delivery policy window (strict
     /// `>`).
     pub min_profit: U256,
-    /// The CL-hop clamp margin (wei) subtracted from a hop's committed input
+    /// The concentrated-liquidity-hop clamp margin (wei) subtracted from a hop's committed input
     /// before the exact-in loop runs. Packed from `solve.clamp_margin_wei`
     /// (default 1 wei, the maximum-extraction choice).
     pub clamp_margin: U256,

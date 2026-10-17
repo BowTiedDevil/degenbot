@@ -3,7 +3,7 @@
 //! (ADR-005 standalone claim, the behavioral tier).
 //!
 //! The V2 parity test (`parity_v2_swap.rs`) uses a hand-derived closed-form
-//! `getAmountOut` oracle. The V3 CL swap math has no comparably simple closed
+//! `getAmountOut` oracle. The V3 concentrated liquidity swap math has no comparably simple closed
 //! form — `v3_simulate_swap` routes through `compute_swap_step_v3` + the tick
 //! walk, and a non-circular re-derivation (`get_next_sqrt_price_from_input` +
 //! `get_amount1_delta` with manual fee/rounding handling) is fiddly enough to
@@ -119,13 +119,13 @@ fn load_shared_v3_fixture() -> V3FixtureFile {
 
 #[test]
 fn standalone_rust_consumer_v3_swap_matches_recorded_constant() {
-    // Tier-2 dual-driver gate — Rust consumer side (V3 CL path).
+    // Tier-2 dual-driver gate — Rust consumer side (V3 concentrated liquidity path).
     //
     // A `cargo add degenbot` standalone consumer, driving the canonical V3
     // fixture (loaded from the shared file), MUST reproduce the recorded
     // `amount_out_zfo`. The Python side drives the SAME file through `PyBot`
-    // and asserts the same constant. Divergence = a lossy FFI seam on the CL
-    // swap path — which the V2-only parity gate cannot catch (the CL
+    // and asserts the same constant. Divergence = a lossy FFI seam on the concentrated liquidity
+    // swap path — which the V2-only parity gate cannot catch (the concentrated liquidity
     // `simulate_swap` arm + `v3_simulate_swap` are V3-specific).
     let fx = load_shared_v3_fixture();
 

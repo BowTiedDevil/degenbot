@@ -1,7 +1,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 //! Spike (ADR-015 deferred hop-shape deepening): measure the
 //! cost of the two *candidate* hop digests (Balancer stable `D`, Curve `xp`)
-//! relative to their family's Phase B golden-section solve. CL is the
+//! relative to their family's Phase B golden-section solve. concentrated liquidity is the
 //! already-cached reference (not benched here — its O(N log N) tick walk is
 //! the existence proof, not a candidate).
 //!
@@ -101,7 +101,7 @@ fn balancer_stable_path() -> ResolvedMixedPath {
         ],
         valid: true,
         state_nonces: vec![],
-        max_update_block: 0, // no CL hops in this fixture; default write-stamp
+        max_update_block: 0, // no concentrated liquidity hops in this fixture; default write-stamp
     }
 }
 
@@ -174,7 +174,7 @@ fn curve_stable_path() -> ResolvedMixedPath {
         ],
         valid: true,
         state_nonces: vec![],
-        max_update_block: 0, // no CL hops in this fixture; default write-stamp
+        max_update_block: 0, // no concentrated liquidity hops in this fixture; default write-stamp
     }
 }
 

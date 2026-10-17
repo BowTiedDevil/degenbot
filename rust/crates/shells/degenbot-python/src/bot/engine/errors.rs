@@ -60,7 +60,7 @@ create_exception!(
 
 // V4 pool-admission refusals (Plan 102, slice 2). The Rust core refuses
 // amount-modifying-hook, dynamic-fee, and high-static-fee pools as a
-// *correctness floor* (the solver's V3-CL math assumes no hook
+// *correctness floor* (the solver's V3-concentrated-liquidity math assumes no hook
 // intervention + a fixed fee; the cmd_executor encodes fee as u16 so
 // fees > 65535 are un-encodable). Per ADR-005 that floor must protect a
 // standalone Rust consumer, so the refusal lives in
@@ -96,7 +96,7 @@ create_exception!(
     degenbot._ffi,
     HookedPoolRejectedError,
     crate::bot::engine::PoolRegistrationError,
-    "A V4 pool with an amount-modifying hook was rejected at registration: the solver's CL math assumes no hook intervention."
+    "A V4 pool with an amount-modifying hook was rejected at registration: the solver's concentrated liquidity math assumes no hook intervention."
 );
 create_exception!(
     degenbot._ffi,
@@ -124,7 +124,7 @@ create_exception!(
 );
 
 // ADR-037: hooked V4 pools are admitted but their simulations use
-// standard CL math that hooks may invalidate — ported from the archived
+// standard concentrated liquidity math that hooks may invalidate — ported from the archived
 // Python `PossibleInaccurateResult` (archive/main-20260721
 // src/degenbot/exceptions/liquidity_pool.py:94). Raised by the pool-handle
 // sim seams with the APPROXIMATE consumed/delivered magnitudes attached so

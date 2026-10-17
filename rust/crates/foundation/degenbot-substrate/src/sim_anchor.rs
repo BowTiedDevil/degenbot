@@ -407,7 +407,7 @@ mod tests {
     }
 
     /// A V3 registration's slot0/liquidity words are snapshotted too
-    /// (scalar CL coverage), and the snapshot is an OWNED value — no borrow
+    /// (scalar concentrated liquidity coverage), and the snapshot is an OWNED value — no borrow
     /// of the source state survives the call.
     #[test]
     #[expect(clippy::expect_used)]

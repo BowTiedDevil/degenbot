@@ -168,7 +168,7 @@ pub struct PipelineInstruments {
     fleet_profile: Gauge<f64>,
     /// Candidates entering the simulate fan-out (per-batch sizes summed).
     candidates_found: Counter<u64>,
-    /// Solver CL-hop self-corrections (input/forward clamp + output align).
+    /// Solver concentrated-liquidity-hop self-corrections (input/forward clamp + output align).
     clamps_applied: Counter<u64>,
     /// Distinct failures surfaced through [`crate::telemetry::record_exception`],
     /// labeled by the closed-set `kind` taxonomy.
@@ -527,7 +527,7 @@ impl PipelineInstruments {
                 .build(),
             clamps_applied: meter
                 .u64_counter("degenbot.solver.clamps")
-                .with_description("Solver CL-hop capacity/output alignment corrections")
+                .with_description("Solver concentrated-liquidity-hop capacity/output alignment corrections")
                 .build(),
             errors_total: meter
                 .u64_counter("degenbot.errors")
@@ -1017,7 +1017,7 @@ impl PipelineInstruments {
     pub fn count_candidates_found(&self, n: u64) {
         self.candidates_found.add(n, &[]);
     }
-    /// Count one solver CL-hop correction (input/forward clamp or output align).
+    /// Count one solver concentrated-liquidity-hop correction (input/forward clamp or output align).
     pub fn count_clamp(&self) {
         self.clamps_applied.add(1, &[]);
     }

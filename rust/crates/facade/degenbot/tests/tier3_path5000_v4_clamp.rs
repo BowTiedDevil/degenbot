@@ -1,6 +1,6 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Tier-3 path-5000 V4 CL-hop clamp regression  —
-//! RED→GREEN proof that the CL-hop input clamp turns the 20.7M-gas EMPTY-HALT
+//! Tier-3 path-5000 V4 concentrated-liquidity-hop clamp regression  —
+//! RED→GREEN proof that the concentrated-liquidity-hop input clamp turns the 20.7M-gas EMPTY-HALT
 //! into a clean byte-exact fill under the executor's 5M gas ceiling.
 //!
 //! ## Narrative
@@ -21,7 +21,7 @@
 //!
 //! The production solver clamp (`arb_engine`
 //! `clamp_concentrated_liquidity_hop_capacity`) re-reads the live pool state post-solve and caps
-//! the committed CL-hop input to `input_consumed − margin` (margin = 1 wei), so
+//! the committed concentrated-liquidity-hop input to `input_consumed − margin` (margin = 1 wei), so
 //! the loop exits on `amountRemaining == 0` at the last funded tick (~190k gas,
 //! well under 5M) with **byte-identical output** (`460882096151249`).
 //!

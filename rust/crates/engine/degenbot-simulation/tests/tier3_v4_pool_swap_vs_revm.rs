@@ -51,7 +51,7 @@
 #![expect(clippy::cast_possible_wrap)]
 #![expect(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, slot0…)
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-// Reuse the CL-family shared driver + the arbitrary-topology position type and
+// Reuse the concentrated-liquidity-family shared driver + the arbitrary-topology position type and
 // grid-snapping helpers from the V3/Pancake-V3 oracle's common module.
 mod tier3_v3_common;
 

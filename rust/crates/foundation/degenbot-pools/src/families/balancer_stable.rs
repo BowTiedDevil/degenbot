@@ -201,7 +201,7 @@ pub fn read_swap(
             override_scaling_factors,
         ),
         // A variant this family doesn't answer (an exact-output read over the
-        // token0/1 pair, the CL canonical request) is a typed refusal.
+        // token0/1 pair, the concentrated liquidity canonical request) is a typed refusal.
         _ => return ReadOutcome::NotComputable,
     };
     ReadOutcome::simple(read)

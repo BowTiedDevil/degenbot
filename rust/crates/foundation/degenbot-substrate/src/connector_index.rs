@@ -306,7 +306,7 @@ pub struct V2ConnectorIndex {
     by_pool: HashMap<u64, usize>,
     by_address: HashMap<Address, usize>,
     by_token: HashMap<u64, Vec<usize>>,
-    /// V3 edges + their adjacency (the CL connector lane, B2-CL).
+    /// V3 edges + their adjacency (the concentrated liquidity connector lane, B2-concentrated-liquidity).
     v3_edges: Vec<V3Edge>,
     v3_by_pool: HashMap<u64, usize>,
     v3_by_address: HashMap<Address, usize>,
@@ -553,7 +553,7 @@ impl V2ConnectorIndex {
         self.edges.is_empty()
     }
 
-    /// The loaded V3 edge count (the B2-CL lane surface).
+    /// The loaded V3 edge count (the B2-concentrated-liquidity lane surface).
     #[must_use]
     pub fn v3_len(&self) -> usize {
         self.v3_edges.len()
@@ -1583,7 +1583,7 @@ mod ranking_tests {
 
     #[tokio::test]
     async fn ranked_top_k_beats_row_order_v3() {
-        // The B2-CL lane truncates by the same depth order (in-range
+        // The B2-concentrated-liquidity lane truncates by the same depth order (in-range
         // liquidity scores), row order inverted again.
         let mut ix = V2ConnectorIndex::default();
         ix.push_v3_edge(v3_edge(11, 20, 10));

@@ -1,4 +1,4 @@
-//! Shared Tier-3 CL-family (V3 / Pancake-V3) byte-exact swap oracle driver.
+//! Shared Tier-3 concentrated-liquidity-family (V3 / Pancake-V3) byte-exact swap oracle driver.
 //!
 //! The Uniswap-V3 oracle (`tier3_v3_pool_swap_vs_revm.rs`) and the PancakeSwap
 //! V3 fork oracle (`tier3_pancake_v3_swap_vs_revm.rs`) drive the same pipeline
@@ -11,7 +11,7 @@
 //!
 //! The driver is parameterized only by the fork's harness artifact name and
 //! whether the fork harness exceeds EIP-170 ([`V3Fork`]) plus a fork-specific
-//! storage seeder, so a CL fork is a one-line declaration and the V3 and
+//! storage seeder, so a concentrated liquidity fork is a one-line declaration and the V3 and
 //! Pancake-V3 tests cannot drift (the HRT356 class). Fork-specific event-variant
 //! assertions are NOT here: the probe returns the collected swap-tx logs so
 //! each test owns its own decoder-level checks.
@@ -123,7 +123,7 @@ pub fn load_creation_bytecode(file: &str, contract: &str) -> Vec<u8> {
     hex::decode(hex_str.trim_start_matches("0x")).expect("hex creation bytecode")
 }
 
-/// Abi-encode the CL swap-harness constructor args `(uint24 fee, int24 tickSpacing)`.
+/// Abi-encode the concentrated liquidity swap-harness constructor args `(uint24 fee, int24 tickSpacing)`.
 pub fn harness_constructor_args(fee: u32, tick_spacing: i32) -> Vec<u8> {
     let mut args = Vec::with_capacity(64);
     args.extend_from_slice(&U256::from(fee).to_be_bytes::<32>());
@@ -194,7 +194,7 @@ pub fn decode_error_string(reason: &[u8]) -> Option<String> {
 /// indices). The probe calls this right after resolving the pool address.
 pub type PoolSeeder = fn(&mut CacheDB<EmptyDB>, Address, &V3PoolState, i32);
 
-/// Drive one on-chain CL `pool.swap` end-to-end against a fresh, self-contained
+/// Drive one on-chain concentrated liquidity `pool.swap` end-to-end against a fresh, self-contained
 /// revm `CacheDB`: deploy the harness + real pool, seed storage via `seeder`,
 /// call `harness.swap`, and read back the (absolute) flow tuple plus the
 /// post-swap `(sqrtPriceX96, tick, liquidity)` and the swap-tx logs. Each call
@@ -404,7 +404,7 @@ pub struct ArbV3Position {
 }
 
 /// Snap a tick boundary down to the `tick_spacing` grid (toward −inf). A real
-/// CL position's boundaries are always `tickSpacing` multiples — the on-chain
+/// concentrated liquidity position's boundaries are always `tickSpacing` multiples — the on-chain
 /// `tickBitmap` compresses via `tick / tickSpacing` (floored), so an off-grid
 /// boundary would floor to a different on-chain tick and the pool would walk
 /// past it without adjusting liquidity. Used by [`build_arbitrary_v3_state`]

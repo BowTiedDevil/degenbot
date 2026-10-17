@@ -8,7 +8,7 @@
 //! provably unprofitable and is skipped without a single simulation.
 //!
 //! **Soundness core** (see GLOSSARY.md "Profit envelope gate"):
-//! - A CL hop's output curve is concave; on ending-range piece `j` its slope
+//! - A concentrated liquidity hop's output curve is concave; on ending-range piece `j` its slope
 //!   never exceeds the marginal price at that piece's entry × (1−fee).
 //!   Extending that entry slope linearly from the piece's cumulative
 //!   `(gross_input, output)` anchor therefore dominates the curve on the whole
@@ -17,7 +17,7 @@
 //! - A Solidly/Aerodrome/Camelot STABLE hop's output curve is concave in the
 //!   input (its marginal rate is non-increasing as the input grows), so its
 //!   entry tangent dominates globally; the reserve cap stays beside it.
-//! - CL swaps are monotone non-decreasing, so bounds chain monotonically.
+//! - concentrated liquidity swaps are monotone non-decreasing, so bounds chain monotonically.
 //! - Every derived coefficient is computed exactly (I512); evaluation applies
 //!   CEIL division so each line can only round UP, never under-cut the curve.
 //!
@@ -38,7 +38,7 @@
 //!
 //! - `kernel` — the `Line`/I512 numeric kernel, the exact concave-envelope
 //!   composition (`compose_envelopes_exact`), and the discrete concave max.
-//! - `derive` — per-hop line derivation (Möbius rises, CL tangent fans,
+//! - `derive` — per-hop line derivation (Möbius rises, concentrated liquidity tangent fans,
 //!   `hop_lines_and_cap[_cached]`) plus the engine-owned prefix / fan cache.
 //! - `gate` — the gate entry (`path_profit_bound*`), the typed verdict, the
 //!   per-call dependency value, and the `GateStats` telemetry.
@@ -50,7 +50,7 @@ mod kernel;
 
 pub use capture::{CapturedHop, DegeneratePathEvent, DegeneratePathSink};
 pub use derive::{HopMath, PrefixCache};
-// The CL family's gate view, re-exported at its historical path (the family
+// The concentrated liquidity family's gate view, re-exported at its historical path (the family
 // module is its home; ADR-071 D1).
 pub use crate::families::concentrated_liquidity::solve::ConcentratedLiquidityHop;
 

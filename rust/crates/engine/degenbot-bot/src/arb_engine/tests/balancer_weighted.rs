@@ -310,7 +310,7 @@ fn balancer_weighted_mixed_with_v2_finds_arb() {
     )
     .unwrap();
     let results = engine.cycle.solve_all(&engine.registry);
-    // V2+Balancer-weighted is all-V2-or-weighted with no CL — should solve
+    // V2+Balancer-weighted is all-V2-or-weighted with no concentrated liquidity — should solve
     assert!(!results.is_empty(), "should find V2+Balancer-weighted arb");
 }
 #[test]
@@ -361,7 +361,7 @@ fn balancer_weighted_rejects_mixed_with_concentrated_liquidity() {
     )
     .expect("path registers (resolve succeeds per-arm)");
     let resolved = &engine.cycle.path_resolved[&path_id];
-    // Balancer weighted + CL is out of scope — solve_path returns None.
+    // Balancer weighted + concentrated liquidity is out of scope — solve_path returns None.
     assert!(
         ::degenbot_pools::solve::mixed::solve_path(
             resolved,
@@ -369,7 +369,7 @@ fn balancer_weighted_rejects_mixed_with_concentrated_liquidity() {
         )
         .result
         .is_none(),
-        "Balancer weighted + CL must not solve"
+        "Balancer weighted + concentrated liquidity must not solve"
     );
 }
 /// the core `ArbitrageEngine` OWNS the lifecycle phase — a

@@ -13,17 +13,17 @@
     clippy::unwrap_used
 )]
 
-//! Offline generator for the all-CL capture fixture.
+//! Offline generator for the all-concentrated-liquidity capture fixture.
 //!
 //! For a curated set of REAL, liquid UNI V3 pools (heavy tick maps,
 //! `tick_spacing` 1/5/10) at a pinned block, fetches on-chain slot0/liquidity,
 //! backfills the tick map via a giant bidirectional `v3_simulate_swap` (the
 //! production sparse-backfill pattern, pull real tick words from the archive
 //! node), builds each pool's `IntV3TickRangeSequence` via the same
-//! `build_int_v3_sequence` the bot uses, forms valid 2-hop all-CL paths by
+//! `build_int_v3_sequence` the bot uses, forms valid 2-hop all-concentrated-liquidity paths by
 //! shared token, runs `solve_concentrated_liquidity_piecewise` on each, and writes (input sequences
 //! + golden) to a JSONL consumed by `concentrated_liquidity_solve_replay`. Deterministic,
-//! network-gated source of real heavy-CL data, no full bot soak.
+//! network-gated source of real heavy-concentrated-liquidity data, no full bot soak.
 //!
 //!   `DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545`,
 //!   `DEGENBOT_CLCAP_BLOCK=<pinned block>`,

@@ -22,7 +22,7 @@ use super::word_profile::*;
 use super::{IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence};
 
 // ---------------------------------------------------------------------------
-// N-hop CL Path Simulation
+// N-hop concentrated liquidity Path Simulation
 // ---------------------------------------------------------------------------
 
 /// Simulate an N-hop concentrated-liquidity path with tick crossings.
@@ -220,14 +220,14 @@ fn int_simulate_v3_v3_path(
 // N-hop Mixed Path Solver
 // ---------------------------------------------------------------------------
 
-/// Simulate an N-hop mixed V2 + CL path with optional CL crossings.
+/// Simulate an N-hop mixed V2 + concentrated liquidity path with optional concentrated liquidity crossings.
 ///
 /// `v2_hops[i]` and `concentrated_liquidity_hops[i]` are set based on `hop_order`:
 /// - `hop_order[i] == true` → position `i` is a V2 hop (use `v2_hops[i]`)
-/// - `hop_order[i] == false` → position `i` is a CL hop (use `concentrated_liquidity_hops[i]`)
+/// - `hop_order[i] == false` → position `i` is a concentrated liquidity hop (use `concentrated_liquidity_hops[i]`)
 ///
-/// `concentrated_liquidity_crossings[i]` is `Some` when CL hop `i` crosses tick ranges.
-/// `concentrated_liquidity_base_ranges[i]` is the base (first) range for CL hop `i`.
+/// `concentrated_liquidity_crossings[i]` is `Some` when concentrated liquidity hop `i` crosses tick ranges.
+/// `concentrated_liquidity_base_ranges[i]` is the base (first) range for concentrated liquidity hop `i`.
 ///
 /// Returns a [`SimulationResult`] with per-hop output and consumed-input amounts.
 #[must_use]
@@ -245,7 +245,7 @@ fn int_simulate_mixed_path_n(
     v2_hops: &[Option<IntHopState>],
     concentrated_liquidity_base_ranges: &[Option<IntV3TickRangeHop>],
     concentrated_liquidity_crossings: &[Option<IntTickRangeCrossing>],
-    hop_order: &[bool], // true = V2, false = CL
+    hop_order: &[bool], // true = V2, false = concentrated liquidity
 ) -> SimulationResult {
     let n_hops = hop_order.len();
     if n_hops == 0 || amount_in.is_zero() {
@@ -307,7 +307,7 @@ fn int_simulate_mixed_path_n(
             });
             current_input = output;
         } else {
-            // CL hop — may have crossing
+            // concentrated liquidity hop — may have crossing
             let (consumed, output) = if let Some(crossing) =
                 concentrated_liquidity_crossings[i].as_ref()
             {
@@ -341,7 +341,7 @@ fn int_simulate_mixed_path_n(
                 (consumed, out)
             } else {
                 let Some(base_range) = concentrated_liquidity_base_ranges[i].as_ref() else {
-                    // Missing CL base range data
+                    // Missing concentrated liquidity base range data
                     for _ in i..n_hops {
                         steps.push(StepOutcome {
                             output: U256::ZERO,
@@ -583,7 +583,7 @@ fn test_solve_piecewise_v3_then_v2_no_panic() {
     let concentrated_liquidity_prepared =
         PreparedConcentratedLiquidityHop::derive(Arc::new(v3_seq));
 
-    // v3_first: the CL hop leads, then the V2 hop.
+    // v3_first: the concentrated liquidity hop leads, then the V2 hop.
     let result = solve_piecewise(
         &[
             MixedHopView::ConcentratedLiquidity(&concentrated_liquidity_prepared),
@@ -786,7 +786,7 @@ fn test_compute_crossing_matches_max_gross_input_k1() {
     );
 }
 
-// --- Slice 14: two-hop CL solve tests ---
+// --- Slice 14: two-hop concentrated liquidity solve tests ---
 
 #[test]
 fn test_solve_concentrated_liquidity_piecewise_two_hop_single_range_unprofitable() {
@@ -947,11 +947,11 @@ fn test_int_simulate_v3_v3_path_hop_outputs_zero_input() {
     assert!(result.steps.is_empty());
 }
 
-// ── N-hop CL solver tests ────────────────────────────────────
+// ── N-hop concentrated liquidity solver tests ────────────────────────────────────
 
 #[test]
 fn test_int_simulate_concentrated_liquidity_path_n_3hop() {
-    // 3-hop CL path: zfo → ofz → zfo at 1:1
+    // 3-hop concentrated liquidity path: zfo → ofz → zfo at 1:1
     let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
     let hop2 = make_v3_hop_at_1to1(8_000_000_000_000u128, false);
     let hop3 = make_v3_hop_at_1to1(9_000_000_000_000u128, true);
@@ -991,7 +991,7 @@ fn test_int_simulate_concentrated_liquidity_path_n_zero_input() {
 
 #[test]
 fn test_int_simulate_concentrated_liquidity_path_n_2hop_matches_v3_v3() {
-    // 2-hop CL path should produce the same result as int_simulate_v3_v3_path
+    // 2-hop concentrated liquidity path should produce the same result as int_simulate_v3_v3_path
     let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
     let hop2 = make_v3_hop_at_1to1(8_000_000_000_000u128, false);
 
@@ -1013,12 +1013,12 @@ fn test_int_simulate_concentrated_liquidity_path_n_2hop_matches_v3_v3() {
     assert_eq!(consumed_view(&result_n), consumed_view(&result_v3v3));
 }
 
-// ── Cross-block composition memo: mixed V2+CL compositions ──────────
+// ── Cross-block composition memo: mixed V2+concentrated liquidity compositions ──────────
 
-/// Mixed memo fixture (V2 → CL) the mixed memo tests pin as profitable:
+/// Mixed memo fixture (V2 → concentrated liquidity) the mixed memo tests pin as profitable:
 /// the proven `mixed_path_cached_crossings_match_offline_solve`
-/// composition (V2 entry pool at tick +750, deep-late-liquidity CL tail).
-/// `late_liq` parameterizes the CL tail's late liquidity so the CL-only
+/// composition (V2 entry pool at tick +750, deep-late-liquidity concentrated liquidity tail).
+/// `late_liq` parameterizes the concentrated liquidity tail's late liquidity so the concentrated-liquidity-only
 /// change in the key-completeness tests stays a one-field edit.
 fn mixed_memo_fixture_with_late_liq(late_liq: u128) -> (IntHopState, IntV3TickRangeSequence) {
     let v2 = IntHopState::new(
@@ -1125,7 +1125,7 @@ fn walk_mixed_fingerprint_separates_hop_order() {
 #[test]
 fn test_solve_concentrated_liquidity_piecewise_2hop_prepared_matches_derived() {
     // Prepared projection tables and per-call derivation must walk the same
-    // 2-hop CL path byte-identically.
+    // 2-hop concentrated liquidity path byte-identically.
     let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
     let hop2 = make_v3_hop_at_1to1(8_000_000_000_000u128, false);
 
@@ -1133,7 +1133,7 @@ fn test_solve_concentrated_liquidity_piecewise_2hop_prepared_matches_derived() {
     let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
 
     // Prepared projection hops and per-call derivation must walk the same
-    // 2-hop CL path byte-identically.
+    // 2-hop concentrated liquidity path byte-identically.
     let prepared = [
         PreparedConcentratedLiquidityHop::derive(Arc::new(seq1.clone())),
         PreparedConcentratedLiquidityHop::derive(Arc::new(seq2.clone())),
@@ -1157,7 +1157,7 @@ fn test_solve_concentrated_liquidity_piecewise_2hop_prepared_matches_derived() {
 
 #[test]
 fn test_solve_concentrated_liquidity_piecewise_3hop_single_range() {
-    // 3-hop CL path with single-range sequences (all at 1:1, different reserves)
+    // 3-hop concentrated liquidity path with single-range sequences (all at 1:1, different reserves)
     // zfo → ofz → zfo to form a cycle
 
     // Let's create a profitable cycle:
@@ -1314,7 +1314,7 @@ fn test_solve_piecewise_2hop_delegates() {
     let concentrated_liquidity_prepared =
         PreparedConcentratedLiquidityHop::derive(Arc::new(v3_seq));
 
-    // V2 first, then CL
+    // V2 first, then concentrated liquidity
     let result = solve_piecewise(
         &[
             MixedHopView::V2(&v2_hop),
@@ -1344,7 +1344,7 @@ fn concentrated_liquidity_path_cached_crossings_match_profile_only_solve() {
     let p2 = Arc::new(build_concentrated_liquidity_word_profiles(&seq2));
 
     // Carried tables must equal the per-call derived solve (byte-identical
-    // CL math).
+    // concentrated liquidity math).
     let prepared = [
         PreparedConcentratedLiquidityHop::from_parts(
             Arc::new(seq1.clone()),
@@ -1430,7 +1430,7 @@ fn mixed_path_cached_crossings_match_offline_solve() {
 
 #[test]
 fn test_solve_piecewise_3hop_v2_concentrated_liquidity_v2() {
-    // 3-hop mixed path: V2 → CL → V2
+    // 3-hop mixed path: V2 → concentrated liquidity → V2
     let v2_hop1 = IntHopState::new(
         U256::from(2_000_000_000_000u64),              // 2M USDC
         U256::from(1_000_000_000_000_000_000_000u128), // 1000 WETH
@@ -1478,8 +1478,8 @@ fn test_solve_piecewise_3hop_v2_concentrated_liquidity_v2() {
 
 #[test]
 fn mixed_path_cached_crossings_match_offline_solve_3hop() {
-    // 3-hop V2 -> CL -> V2 twin of the offline parity shape: cached
-    // tables for the CL middle hop must be byte-identical to the rebuild.
+    // 3-hop V2 -> concentrated liquidity -> V2 twin of the offline parity shape: cached
+    // tables for the concentrated liquidity middle hop must be byte-identical to the rebuild.
     let v2_hop1 = IntHopState::new(
         U256::from(2_000_000_000_000u64),
         U256::from(1_000_000_000_000_000_000_000u128),
@@ -1533,7 +1533,7 @@ fn mixed_path_cached_crossings_match_offline_solve_3hop() {
 
 #[test]
 fn test_int_simulate_mixed_path_n_3hop() {
-    // 3-hop mixed simulation: V2 → CL → V2
+    // 3-hop mixed simulation: V2 → concentrated liquidity → V2
     let v2_hop1 = IntHopState::new(
         U256::from(1_000_000u64),
         U256::from(2_000_000u64),
@@ -1557,7 +1557,7 @@ fn test_int_simulate_mixed_path_n_3hop() {
         &[Some(v2_hop1.clone()), None, Some(v2_hop2.clone())],
         &[None, Some(concentrated_liquidity_base), None],
         &[None, None, None],  // no crossings
-        &[true, false, true], // V2 → CL → V2
+        &[true, false, true], // V2 → concentrated liquidity → V2
     );
 
     // Should produce 3 hop_outputs
@@ -1569,7 +1569,7 @@ fn test_int_simulate_mixed_path_n_3hop() {
     assert_eq!(result.steps[0].output, expected_out1);
     assert_eq!(result.steps[0].consumed_input, amount_in);
 
-    // Hop 2 (CL): swap output through V3
+    // Hop 2 (concentrated liquidity): swap output through V3
     let expected_out2 = simulate_v3_range_swap(
         expected_out1,
         &concentrated_liquidity_hop,
@@ -1609,7 +1609,7 @@ fn test_int_simulate_mixed_path_n_3hop() {
 // (target = next tick boundary); the oracle's own branch logic decides
 // "not reached" and walks `get_next_sqrt_price_from_input` instead.
 
-/// Build a CL tick-range hop whose `sqrt_price_x96 = sqrtPriceAt(tick_cur)`,
+/// Build a concentrated liquidity tick-range hop whose `sqrt_price_x96 = sqrtPriceAt(tick_cur)`,
 /// `sqrt_price_lower_x96 = sqrtPriceAt(tick_cur - spacing)` and
 /// `sqrt_price_upper_x96 = sqrtPriceAt(tick_cur + spacing)`. Used to
 /// construct both zfo and ofz partial-step hops for the parity tests.
@@ -2109,7 +2109,7 @@ fn simulate_v3_range_swap_dust_amount_zfo_consumes_full_input_onchain_only() {
 // ── Active-set piecewise walk tests ────────────────────────────
 //
 // The legacy solver enumerated ending-range tuples up to
-// `max_candidates = 10` per CL hop — a silent accuracy cap: when the
+// `max_candidates = 10` per concentrated liquidity hop — a silent accuracy cap: when the
 // argmax piece sits beyond index 9 on any hop, the enumeration never
 // proposes a candidate there. The active-set piecewise Möbius walk
 // (docs/architecture/mobius_v3_ending_range_enumeration_evaluation.md)
@@ -2122,7 +2122,7 @@ fn sp_at(tick: i32) -> U256 {
     U256::from(get_sqrt_ratio_at_tick_internal(tick).unwrap())
 }
 
-/// Build a multi-range CL sequence in swap order around `anchor_tick`.
+/// Build a multi-range concentrated liquidity sequence in swap order around `anchor_tick`.
 /// Range 0 contains the anchor-tick price; later ranges step by `step`
 /// ticks in the swap direction (descending for zfo, ascending for ofz),
 /// each `liquidities[i]` wide. Matches `compute_crossing`'s convention
@@ -2210,7 +2210,7 @@ fn walk_event_first_above_predicted_is_exact_on_synthetic_paths() {
         h2,
         PieceView::constant_product(&v2_tail),
     ];
-    // Shape B: 3-level CL-CL-CL recursion (mixed directions, staggered
+    // Shape B: 3-level concentrated-liquidity recursion (mixed directions, staggered
     // liquidities so crossing grosses interleave across all hops).
     let seqb0 = multi_range_sequence(
         90,
@@ -2384,7 +2384,7 @@ fn word_profile_min_input_for_output_matches_bruteforce() {
     }
 }
 
-/// The legacy all-CL enumeration with NO `max_candidates` cap. This is
+/// The legacy all-concentrated-liquidity enumeration with NO `max_candidates` cap. This is
 /// the pre-cutover `solve_concentrated_liquidity_piecewise` general case verbatim except the
 /// radix is the full range count. Kept in-tree as the brute-force
 /// reference: the production solver must equal it (concavity ⇒ both find
@@ -2487,7 +2487,7 @@ fn reference_uncapped_concentrated_liquidity_solve(
     }
 }
 
-/// The legacy mixed V2+CL enumeration with NO `max_candidates` cap
+/// The legacy mixed V2+concentrated liquidity enumeration with NO `max_candidates` cap
 /// (uncapped twin of the pre-cutover `solve_piecewise`).
 #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
 fn reference_uncapped_mixed_solve(
@@ -2625,7 +2625,7 @@ fn reference_uncapped_mixed_solve(
     }
 }
 
-/// RED→GREEN : a 2-hop CL cycle whose argmax piece is at
+/// RED→GREEN : a 2-hop concentrated liquidity cycle whose argmax piece is at
 /// hop-2 range index 10 — strictly beyond the legacy
 /// `max_candidates = 10` enumeration prefix (indices 0..=9).
 ///
@@ -2637,7 +2637,7 @@ fn reference_uncapped_mixed_solve(
 /// *inside* range index 10. The capped enumeration only proposes ending
 /// ranges 0..=9 (tick-thin liquidity; near-zero capacity) and misses the
 /// profit concentrated in range 10.
-/// RED→GREEN : a 2-hop CL cycle whose argmax piece is at
+/// RED→GREEN : a 2-hop concentrated liquidity cycle whose argmax piece is at
 /// hop-2 range index 10 — strictly beyond the legacy
 /// `max_candidates = 10` enumeration prefix (indices 0..=9).
 ///
@@ -2706,8 +2706,8 @@ fn solve_concentrated_liquidity_piecewise_beyond_ten_range_prefix_finds_corner_p
     assert!(profit >= reference_profit);
 }
 
-/// RED→GREEN : mixed V2→CL 3-hop path with the same
-/// deep-late-liquidity CL construction; the CL hop's argmax piece sits
+/// RED→GREEN : mixed V2→concentrated liquidity 3-hop path with the same
+/// deep-late-liquidity concentrated liquidity construction; the concentrated liquidity hop's argmax piece sits
 /// beyond the legacy 10-tuple prefix.
 #[test]
 fn solve_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
@@ -3517,7 +3517,7 @@ fn v3_word_profile_matches_linear_walk_on_dense_hop() {
     );
 }
 
-/// F1 (adversarial review): a single-piece CL path whose **exact
+/// F1 (adversarial review): a single-piece concentrated liquidity path whose **exact
 /// unclamped smooth argmax overshoots the piece's saturation cliff**. The
 /// discrete profit peaks at the chain-saturation corner (a sharp kink), not
 /// at the anchor. The old single-piece fast path probed only `anchor ± 2`

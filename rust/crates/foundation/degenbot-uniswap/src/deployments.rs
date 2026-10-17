@@ -147,7 +147,7 @@ struct RawRecord {
     #[serde(default)]
     name: Option<String>,
     /// The JSON `pool_type` label (`"uniswap-v2"`, `"pancakeswap-v3"`,
-    /// …). Needed by the CL slot-layout discriminator (VERIFY2 T4): its
+    /// …). Needed by the concentrated liquidity slot-layout discriminator (VERIFY2 T4): its
     /// V2 rows collapse to `"uniswap-v2"`-style slugs, so the slug carries
     /// the V2-vs-V3 distinction the `name` label alone cannot.
     #[serde(default)]
@@ -370,7 +370,7 @@ pub fn resolve_dex_name(chain_id: u64, factory: Address) -> Option<DexName> {
 }
 
 /// Whether the `(chain, factory)` deployment row names a Pancakes V3
-/// deployment — the CL slot-layout discriminator.
+/// deployment — the concentrated liquidity slot-layout discriminator.
 /// Unknown deployments (not in the shipped JSON) return `false`; callers
 /// degrade to the canonical Uniswap layout unless the driver passes an
 /// explicit layout override. Only meaningful for V3 pools (the V2 pancake
@@ -731,7 +731,7 @@ mod tests {
         assert!(rec.init_hash.is_none());
     }
 
-    // --- CL slot-layout discriminator -----------------
+    // --- concentrated liquidity slot-layout discriminator -----------------
 
     #[test]
     fn pancake_v3_factories_discriminate_from_uniswap_and_unknown() {
@@ -904,7 +904,7 @@ mod tests {
     #[test]
     fn aerodrome_v3_slipstream_row_carries_implementation_address() {
         // The Aerodrome V3 (Slipstream) Base factory ships with the EIP-1167
-        // master implementation the CL factory clones.
+        // master implementation the concentrated liquidity factory clones.
         let rec = lookup(8453, AERODROME_V3_BASE_FACTORY).expect("Aerodrome V3 Base present");
         assert_eq!(rec.factory, AERODROME_V3_BASE_FACTORY);
         assert!(rec.init_hash.is_none());

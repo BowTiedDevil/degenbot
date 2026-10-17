@@ -396,7 +396,7 @@ impl Bot {
     /// The family-as-data reorg-journal guard (ADR-078 D4): whether
     /// `pool_id` serves the requested family's journal — the V2 reserve-pair
     /// slice for [`RegisteredPoolFamily::V2`], the concentrated-liquidity
-    /// trait-object slice for V3/V4 (the V3 verbs serve both CL families),
+    /// trait-object slice for V3/V4 (the V3 verbs serve both concentrated liquidity families),
     /// and `false` for every other family (the per-family no-op contract the
     /// `PyO3` wrappers pin: `0` / `Ok(())` / `Ok(None)`).
     fn journal_family_matches(
@@ -440,8 +440,8 @@ impl Bot {
         let state = self
             .state
             .read_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both CL
-        // families); 0 for non-CL (preserves the per-family contract).
+        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both concentrated liquidity
+        // families); 0 for non-concentrated-liquidity (preserves the per-family contract).
         if Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V3) {
             state.pool_journal_len(pool_id).unwrap_or(0)
         } else {
@@ -476,7 +476,7 @@ impl Bot {
     }
 
     /// Discard V3 reorg journal deltas earlier than `block` — the V3 twin of
-    /// [`Bot::v2_discard_before_block`]: non-CL ids are `Ok(())` no-ops.
+    /// [`Bot::v2_discard_before_block`]: non-concentrated-liquidity ids are `Ok(())` no-ops.
     ///
     /// # Errors
     /// [`JournalError`](degenbot_pools::state_history::JournalError) when `block` is past the newest delta.
@@ -488,8 +488,8 @@ impl Bot {
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both CL
-        // families); no-op for non-CL (V3's contract).
+        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both concentrated liquidity
+        // families); no-op for non-concentrated-liquidity (V3's contract).
         if !Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V3) {
             return Ok(());
         }
@@ -549,14 +549,14 @@ impl Bot {
     /// `block` (ADR-005 slice 4). Returns the post-restore
     /// `(sqrt_price_x96, liquidity, tick, update_block)` — the
     /// read-after-restore contract (ADR-016 D4). `Ok(None)` when the id is
-    /// unregistered or not a CL pool.
+    /// unregistered or not a concentrated liquidity pool.
     ///
     /// # Errors
     /// [`JournalError`](degenbot_pools::state_history::JournalError) when the target is at/before the
     /// registration delta.
     ///
     /// # Panics
-    /// The CL journal panics on an empty journal, so a caller must
+    /// The concentrated liquidity journal panics on an empty journal, so a caller must
     /// pre-check [`has_state_prior_to`](Self::has_state_prior_to) — same
     /// discipline as
     /// [`restore_pool_before_block`](Self::restore_pool_before_block).
@@ -571,8 +571,8 @@ impl Bot {
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
-        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both CL
-        // families); `Ok(None)` for non-CL (the PyO3 no-op contract).
+        // Family-as-data guard (ADR-078 D4): the V3 tag (serving both concentrated liquidity
+        // families); `Ok(None)` for non-concentrated-liquidity (the PyO3 no-op contract).
         if !Self::journal_family_matches(&state, pool_id, RegisteredPoolFamily::V3) {
             return Ok(None);
         }
@@ -816,7 +816,7 @@ mod tests {
     }
 
     /// A V3 registration fixture scoped to this cluster's tests (no genesis
-    /// journal delta — the CL family journals from the first event).
+    /// journal delta — the concentrated liquidity family journals from the first event).
     fn v3_fixture(address: Address) -> crate::bot_core::RegisterV3PoolParams {
         crate::bot_core::RegisterV3PoolParams {
             address,

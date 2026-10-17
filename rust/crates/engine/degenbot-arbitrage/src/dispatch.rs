@@ -209,7 +209,7 @@ pub fn filter_thin_margin_results(
 pub struct SolveStep {
     /// The solver's output after this hop (the former `hop_outputs[i]`).
     pub output: u128,
-    /// The executable input fed into this hop's pool (the solver's CL-hop
+    /// The executable input fed into this hop's pool (the solver's concentrated-liquidity-hop
     /// clamp) — the former `consumed_inputs[i]`. For V3/V4 hops this may be
     /// less than `output` of the prior hop when the range boundary is hit;
     /// the encoder must feed the clamped forward, not the full prior output.

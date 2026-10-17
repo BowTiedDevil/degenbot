@@ -1,9 +1,9 @@
 // Dev/example-only harness: a WalkMemoStats before/after readout over the captured
-// heavy-CL corpus. Pedantic + restriction lints that production code denies are
+// heavy-concentrated-liquidity corpus. Pedantic + restriction lints that production code denies are
 // relaxed here.
 #![expect(clippy::print_stderr, clippy::print_stdout, clippy::too_many_lines)]
 
-//! Offline `WalkMemo` cross-block A/B readout over the heavy-CL capture fixture.
+//! Offline `WalkMemo` cross-block A/B readout over the heavy-concentrated-liquidity capture fixture.
 //!
 //! Usage:
 //!   cargo run -p degenbot-pools --example `walkmemo_readout` [-- <capture.jsonl>]
@@ -46,7 +46,7 @@ mod concentrated_liquidity_rows;
 use common::capture_arg;
 use concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
 
-/// One parsed capture row: a path id plus its owned CL sequences.
+/// One parsed capture row: a path id plus its owned concentrated liquidity sequences.
 struct CapturedPath {
     pid: u64,
     seqs: Vec<IntV3TickRangeSequence>,
@@ -67,7 +67,7 @@ struct ArmBRow {
     wall_ms: f64,
 }
 
-/// Parse one capture row into its owned sequences (shared CL row parser via
+/// Parse one capture row into its owned sequences (shared concentrated liquidity row parser via
 /// `concentrated_liquidity_rows::parse_concentrated_liquidity_hops`; failures are reported, never swallowed).
 fn parse_path(doc: &Value) -> Result<CapturedPath, String> {
     let pid = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);

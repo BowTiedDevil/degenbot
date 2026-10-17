@@ -48,9 +48,9 @@ pub struct ComposerInputs<'a> {
     /// Per-hop output amounts. `hop_outputs[i]` = output after hop `i`
     /// (`[forward_out, final_output]` for a 2-hop path).
     pub hop_outputs: &'a [u128],
-    /// Per-hop consumed input amounts (the CL-clamp swap-in). For a
-    /// non-over-fed CL hop (and V2/Curve/Balancer/Solidly hops) this equals
-    /// `hop_outputs[i-1]`; for an over-fed CL hop the clamp reduces it to
+    /// Per-hop consumed input amounts (the concentrated-liquidity-clamp swap-in). For a
+    /// non-over-fed concentrated liquidity hop (and V2/Curve/Balancer/Solidly hops) this equals
+    /// `hop_outputs[i-1]`; for an over-fed concentrated liquidity hop the clamp reduces it to
     /// `input_consumed − 1` (path-5000 EMPTY-HALT).
     pub consumed_inputs: &'a [u128],
     /// Adapter-agnostic encode knobs (decoupled from `cmd_executor` opcodes).

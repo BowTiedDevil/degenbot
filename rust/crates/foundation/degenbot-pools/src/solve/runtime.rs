@@ -47,7 +47,7 @@ pub struct SolveRuntimeConfig {
     /// scale — see the `crate::solve::concentrated_liquidity::active_set` `REFINE_BRACKET_WEI` note),
     /// saving the ternary-narrowing probes.
     pub refine_model_anchor: bool,
-    /// Loop-20 EXPERIMENT (`tangent_sample_by_mass`): CL tangent sampling
+    /// Loop-20 EXPERIMENT (`tangent_sample_by_mass`): concentrated liquidity tangent sampling
     /// ranks ranges by input capacity (`max_gross_input_in_range`) instead
     /// of even index spacing, keeping the high-volume shelves.
     pub tangent_sample_by_mass: bool,

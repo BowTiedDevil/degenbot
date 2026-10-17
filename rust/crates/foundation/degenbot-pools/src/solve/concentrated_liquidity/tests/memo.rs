@@ -1,6 +1,6 @@
 //! WalkMemo behavioral tests: the three-state probe, negative/hit replay,
 //! census-scoped eviction across epochs, the monotone-epoch reorg-rewind
-//! contract, and the negative-entries gauge - plus the mixed V2+CL memo
+//! contract, and the negative-entries gauge - plus the mixed V2+concentrated liquidity memo
 //! twins and the `walk_concentrated_liquidity_path_fingerprint` separation tests that pin the
 //! memo key's content stability.
 
@@ -431,7 +431,7 @@ fn memo_negative_entries_gauge_mirrors_the_cache() {
 }
 
 /// The mixed twin of `memo_cached_hit_replays_the_solution_without_the_walk`:
-/// a recurring mixed composition (one V2 hop + one CL hop, pools unchanged)
+/// a recurring mixed composition (one V2 hop + one concentrated liquidity hop, pools unchanged)
 /// walks once and replays the identical result from the memo without the
 /// walk. Pure-V2 compositions route through the same entry, so the probe
 /// path here is theirs too.
@@ -488,7 +488,7 @@ fn memo_mixed_cached_hit_replays_the_solution_without_the_walk() {
 /// the cached `Negative` with the walk skipped.
 #[test]
 fn memo_mixed_cached_negative_skips_the_walk_on_replay() {
-    // Two same-price 1:1 pools (V2 then CL): fees dominate, always None.
+    // Two same-price 1:1 pools (V2 then concentrated liquidity): fees dominate, always None.
     let v2 = IntHopState::new(
         U256::from(1_000_000_000_000_000u128),
         U256::from(1_000_000_000_000_000u128),
@@ -552,7 +552,7 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
     let (v2, concentrated_liquidity_seq) = mixed_memo_fixture();
 
     // Only reserve_in changes (doubled); reserve_out, the fee params, and
-    // the CL sequence stay identical.
+    // the concentrated liquidity sequence stay identical.
     let v2_changed = IntHopState::new(v2.reserve_in * U256::from(2u64), v2.reserve_out, 997, 1000);
     assert_ne!(
         walk_mixed_path_fingerprint(
@@ -622,7 +622,7 @@ fn memo_mixed_changed_v2_reserve_misses_instead_of_replaying() {
     );
 }
 
-/// Key completeness, CL side: changing ONLY the CL sequence of a cached
+/// Key completeness, concentrated liquidity side: changing ONLY the concentrated liquidity sequence of a cached
 /// mixed composition must Miss too — mirrored argument to the V2 side.
 #[test]
 fn memo_mixed_changed_concentrated_liquidity_sequence_misses_instead_of_replaying() {
@@ -642,7 +642,7 @@ fn memo_mixed_changed_concentrated_liquidity_sequence_misses_instead_of_replayin
             &[None, Some(&concentrated_liquidity_seq_changed)],
             &[true, false]
         ),
-        "a CL sequence change must change the mixed key"
+        "a concentrated liquidity sequence change must change the mixed key"
     );
 
     let concentrated_liquidity_prepared =
@@ -702,7 +702,7 @@ fn memo_mixed_changed_concentrated_liquidity_sequence_misses_instead_of_replayin
     );
 }
 
-/// Unification pin: the all-CL intake (`solve_concentrated_liquidity_piecewise`) is a forwarding
+/// Unification pin: the all-concentrated-liquidity intake (`solve_concentrated_liquidity_piecewise`) is a forwarding
 /// convenience over the ONE solve body — its outcomes must be byte-equal to
 /// the unified entry's on the same prepared hops, in every memo stance.
 #[test]
@@ -792,7 +792,7 @@ fn key_front_doors_agree_for_concentrated_liquidity_only_compositions() {
 }
 
 /// Contract pin: both solve surfaces refuse paths shorter than two hops (the
-/// unified entry's `len < 2` guard; the all-CL intake forwards that contract).
+/// unified entry's `len < 2` guard; the all-concentrated-liquidity intake forwards that contract).
 #[test]
 fn both_solve_entries_refuse_paths_shorter_than_two_hops() {
     let hop = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
@@ -808,7 +808,7 @@ fn both_solve_entries_refuse_paths_shorter_than_two_hops() {
     assert_eq!(
         via_intake.refusal,
         Some(WalkRefusal::TooShort),
-        "the all-CL intake must name its single-hop refusal"
+        "the all-concentrated-liquidity intake must name its single-hop refusal"
     );
     assert_eq!(
         direct.refusal,

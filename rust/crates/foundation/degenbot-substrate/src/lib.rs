@@ -187,8 +187,8 @@ pub enum EncodeSwapError {
 
 /// Why a concentrated-liquidity state write refused a pool.
 ///
-/// Genesis seeding and liquidity updates only exist for CL families: a
-/// registered non-CL pool has no CL state to mutate. The typed refusal keeps
+/// Genesis seeding and liquidity updates only exist for concentrated liquidity families: a
+/// registered non-concentrated-liquidity pool has no concentrated liquidity state to mutate. The typed refusal keeps
 /// the family dispatch from silently routing such a pool into the V3 path.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ConcentratedLiquidityApplyError {
@@ -503,7 +503,7 @@ impl BotState {
 
     /// The pool's **liquidity** clock (`tick_data_block`, two-stamp rule) —
     /// the block its tick map reflects. See [`PoolEntry::tick_data_block`]. A
-    /// CL pool with `pool_tick_data_block` well behind `pool_update_block` is
+    /// concentrated liquidity pool with `pool_tick_data_block` well behind `pool_update_block` is
     /// the staged-clock desync class (`0x5653`): fresh price, stale tick map.
     /// Returns `0` for an unregistered id (the freshness gate treats 0 as
     /// stale, mirroring [`Self::pool_update_block`]).
@@ -722,7 +722,7 @@ impl BotState {
             // Peek the per-pool newest delta block without a mutable borrow
             // (ADR-016). Only pools with a delta at/after the reorg target
             // need rollback; untouched pools keep their current state
-            // (idempotent restore). The peek also guards the CL family's
+            // (idempotent restore). The peek also guards the concentrated liquidity family's
             // panic-on-empty journal: an empty journal reports `None` → skip.
             let needs_restore = self
                 .registry
@@ -771,7 +771,7 @@ impl BotState {
     /// # Errors
     ///
     /// `NoStatePriorToBlock` if the target is at/before the registration
-    /// (genesis) delta. The CL family's journal panics on empty instead —
+    /// (genesis) delta. The concentrated liquidity family's journal panics on empty instead —
     /// callers must pre-check [`has_state_prior_to`](Self::has_state_prior_to).
     pub fn restore_pool_before_block(
         &mut self,
@@ -991,13 +991,13 @@ impl BotState {
     /// either clock. The split-seed replacement for the builder's old
     /// `apply_swap` genesis, which would backward-panic `update_block` (price
     /// seeded at HEAD past the DB map block) and falsely advance
-    /// `tick_data_block`. A non-CL family has no CL journal to seed and is
+    /// `tick_data_block`. A non-concentrated-liquidity family has no concentrated liquidity journal to seed and is
     /// refused with [`ConcentratedLiquidityApplyError::UnsupportedFamily`].
     ///
     /// # Errors
     ///
     /// [`ConcentratedLiquidityApplyError::NotRegistered`] for an unknown pool id, or
-    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`] for a registered non-CL family.
+    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`] for a registered non-concentrated-liquidity family.
     pub fn seed_genesis_by_pool_id(
         &mut self,
         pool_id: u64,
@@ -1031,7 +1031,7 @@ impl BotState {
         }
     }
 
-    /// The CL dispatch bucket for `pool_id` — see [`ConcentratedLiquidityKind`].
+    /// The concentrated liquidity dispatch bucket for `pool_id` — see [`ConcentratedLiquidityKind`].
     fn concentrated_liquidity_kind(&self, pool_id: u64) -> ConcentratedLiquidityKind {
         match self.registry.pools.get(&pool_id) {
             Some(PoolEntry::V3(..)) => ConcentratedLiquidityKind::V3,
@@ -1042,16 +1042,16 @@ impl BotState {
     }
 
     /// Family-dispatching liquidity update. The single entry point
-    /// `PyLiquidityPool.apply_liquidity_update` calls — the CL dispatch
+    /// `PyLiquidityPool.apply_liquidity_update` calls — the concentrated liquidity dispatch
     /// bucket selects the design by the entry (ADR-073 D3: the surface name
-    /// is family-neutral). A non-CL family is refused
+    /// is family-neutral). A non-concentrated-liquidity family is refused
     /// with [`ConcentratedLiquidityApplyError::UnsupportedFamily`] instead of falling into the
     /// V3 path.
     ///
     /// # Errors
     ///
     /// [`ConcentratedLiquidityApplyError::NotRegistered`] for an unknown pool id, or
-    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`] for a registered non-CL family.
+    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`] for a registered non-concentrated-liquidity family.
     pub fn apply_liquidity_update_by_pool_id(
         &mut self,
         pool_id: u64,
@@ -1115,7 +1115,7 @@ impl BotState {
         for log in logs {
             // The chunk-end fallback stamps a malformed log (no `block_number`)
             // at `chunk_end`, never block 0. V2 Sync stays out
-            // of backfill scope (CL-only: scalar state arrives via snapshot).
+            // of backfill scope (concentrated-liquidity-only: scalar state arrives via snapshot).
             let Some(event) = dispatcher.try_decode_log_with_block(log, chunk_end) else {
                 continue;
             };

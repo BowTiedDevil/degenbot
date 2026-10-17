@@ -228,8 +228,8 @@ impl PoolEntry {
     }
 
     /// Project to `&mut dyn ConcentratedLiquidityPoolMut` (ADR-017) — the
-    /// mutable CL-family apply-twin of [`Self::as_reorg_state_mut`] (the
-    /// reorg projection from ADR-016). Used by `BotState`'s CL apply
+    /// mutable concentrated-liquidity-family apply-twin of [`Self::as_reorg_state_mut`] (the
+    /// reorg projection from ADR-016). Used by `BotState`'s concentrated liquidity apply
     /// dispatchers (`merge_tick_word`, and the future `apply_swap` /
     /// `apply_liquidity_update` slices) to reach the trait method without a
     /// per-family variant match at each call site.
@@ -304,7 +304,7 @@ impl PoolEntry {
     /// the `tick_data_block` twin of [`Self::update_block`]). Only
     /// the concentrated-liquidity families carry a tick map; the AMM/Curve/
     /// Balancer variants have no tick-data clock and fall back to their
-    /// `update_block`. A CL pool can have a FRESH price clock but a liquidity
+    /// `update_block`. A concentrated liquidity pool can have a FRESH price clock but a liquidity
     /// map that lags (the staged-clock `0x5653` class) — consumers that read
     /// the tick map MUST key on this clock, not `update_block`.
     #[must_use]
@@ -464,7 +464,7 @@ impl PoolEntry {
 
 /// `PoolEntry::as_concentrated_liquidity_mut` helper — one match over V3 | V4. Free-standing so
 /// `PoolEntry::as_concentrated_liquidity_mut` stays a one-liner (matches the `as_reorg_state`
-/// shape). Returns `None` for the five non-CL families.
+/// shape). Returns `None` for the five non-concentrated-liquidity families.
 fn some_concentrated_liquidity_mut(
     entry: &mut PoolEntry,
 ) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
@@ -576,8 +576,8 @@ impl ConcentratedLiquidityPool for V4PoolState {
     }
 }
 
-/// Mutable CL-family trait — the write twin of [`ConcentratedLiquidityPool`]
-/// (ADR-014 D2b). Carries the CL mutators previously inlined twice in
+/// Mutable concentrated-liquidity-family trait — the write twin of [`ConcentratedLiquidityPool`]
+/// (ADR-014 D2b). Carries the concentrated liquidity mutators previously inlined twice in
 /// `BotState` (one arm per family); the body lives once in the trait impl.
 ///
 /// `tick_spacing` is passed in (it lives on the identity slice, not the state
@@ -598,8 +598,8 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     /// semantics; the pump is the authority for event-derived ticks (mirrors
     /// `sync_v3_pool_state`).
     ///
-    /// Returns `true` (the CL mutator always succeeds; the dispatch site's
-    /// `false` return is reserved for V2 / non-CL / unregistered pools).
+    /// Returns `true` (the concentrated liquidity mutator always succeeds; the dispatch site's
+    /// `false` return is reserved for V2 / non-concentrated-liquidity / unregistered pools).
     fn replace_tick_data(
         &mut self,
         tick_data: HashMap<i32, TickInfo>,
@@ -618,8 +618,8 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     /// reorg rollback covers it via the surrounding event's delta, not a
     /// merge delta (mirrors the no-journal contract of [`Self::replace_tick_data`]).
     ///
-    /// Returns `true` (the CL mutator always succeeds; the dispatch site's
-    /// `false` return is reserved for non-CL / unregistered pools — same
+    /// Returns `true` (the concentrated liquidity mutator always succeeds; the dispatch site's
+    /// `false` return is reserved for non-concentrated-liquidity / unregistered pools — same
     /// convention as [`Self::replace_tick_data`]).
     fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool;
 

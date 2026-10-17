@@ -187,7 +187,7 @@ fn cp_seq_tables(
 
 #[expect(dead_code)]
 fn mix_views<'a>(
-    hops_mix: &[bool], // false => CL at this slot (index into env seqs)
+    hops_mix: &[bool], // false => concentrated liquidity at this slot (index into env seqs)
     seqs: &'a [&'a IntV3TickRangeSequence],
     tables: &'a [std::sync::Arc<Vec<crate::solve::concentrated_liquidity::IntTickRangeCrossing>>],
 ) -> Vec<Option<HopMath<'a>>> {
@@ -206,7 +206,7 @@ fn mix_views<'a>(
         .collect()
 }
 
-/// Deterministic pseudo-random corpus of 1-3 hop CL chains.
+/// Deterministic pseudo-random corpus of 1-3 hop concentrated liquidity chains.
 pub(super) fn concentrated_liquidity_corpus() -> Vec<(String, Vec<IntV3TickRangeSequence>)> {
     let mut state = 0x9e37_79b9_7f4a_7c15u64;
     let mut out = Vec::new();
@@ -269,7 +269,7 @@ fn dbg_loop6_and_mixed_bound() {
             let b_at = path_output_bound_at(&views, &x, &SolveRuntimeConfig::default());
             println!("  x={x} oracle={o:?} bound_at={b_at:?}");
         }
-        // mixed debug: V2 -> CL -> V2
+        // mixed debug: V2 -> concentrated liquidity -> V2
         let v2s = [v2_hop(1000, 2000), v2_hop(2000, 500)];
         let v2_mixed: Vec<Option<HopMath<'_>>> = vec![
             Some(HopMath::V2(&v2s[0])),
@@ -608,7 +608,7 @@ fn loop17_anchor_sweep_modes_agree() {
 
 #[test]
 fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
-    // V2 → CL → V2 with a rich middle pool
+    // V2 → concentrated liquidity → V2 with a rich middle pool
     let v2s = [v2_hop(1000, 2000), v2_hop(2000, 500)];
     let seqs = [local_seq(
         -2100,
@@ -627,8 +627,8 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
     let cfg = SolveRuntimeConfig::default();
     let env = path_bound_lines(&views, &cfg).expect("mixed bound derivable");
     let bounds = refine_bounds(&env.lines);
-    // ONE borrowed hop view: V2 borrows the states, CL borrows the
-    // projection's prepared value (V2 → CL → V2 order).
+    // ONE borrowed hop view: V2 borrows the states, concentrated liquidity borrows the
+    // projection's prepared value (V2 → concentrated liquidity → V2 order).
     let hops = [
         MixedHopView::V2(&v2s[0]),
         MixedHopView::ConcentratedLiquidity(&prep[0]),
@@ -646,7 +646,7 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
 
 #[test]
 fn loop19_and_21_stance_messages_are_quiet_on_single_piece_paths() {
-    // single-range CL hop: refine runs once with the corner guard; both
+    // single-range concentrated liquidity hop: refine runs once with the corner guard; both
     // stances must produce the identical iterate.
     let seqs = [local_seq(
         0,

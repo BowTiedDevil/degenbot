@@ -1998,7 +1998,7 @@ mod tests {
         assert!(min_at(&exact, &upper) <= min_at(&sampled, &upper));
     }
 
-    /// Corpus A/B over the committed captured CL pools: on every path the
+    /// Corpus A/B over the committed captured concentrated liquidity pools: on every path the
     /// exact hull is pointwise no looser than the product+sample reference and
     /// still dominates the recorded golden profit. Prints the xmax and
     /// hull-peak exact/sampled bound-ratio distributions and the compose-time
@@ -2178,7 +2178,7 @@ mod tests {
         }
     }
 
-    /// Fat-chain exactness: on the giant synthetic CL captures the full
+    /// Fat-chain exactness: on the giant synthetic concentrated liquidity captures the full
     /// product hull keeps redundant lines (its size can exceed K1+K2 because
     /// prune retains lines whose ceil-rounded take-over is inside the domain),
     /// while the exact composed hull stays additive. The two must be POINTWISE

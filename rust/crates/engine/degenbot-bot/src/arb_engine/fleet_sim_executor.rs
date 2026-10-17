@@ -388,7 +388,7 @@ mod fleet_sim_stance_tests {
     //! fleet (LW-T9: the legacy-arm half of the parity/identity matrix is
     //! deleted with the stance — every sim rides the `SimDriver` seats).
     //! Parity — `SimDriver` seats execute requests derived from the committed
-    //! heavy-CL capture corpus honestly (success AND failure payloads).
+    //! heavy-concentrated-liquidity capture corpus honestly (success AND failure payloads).
     //! Identity — the hosting family is the fleet `work-fleet-sim-{n}`
     //! `SimDriver` seats (census row included).
     use crate::arb_engine::executor_ab_probe::load_corpus_fixture;

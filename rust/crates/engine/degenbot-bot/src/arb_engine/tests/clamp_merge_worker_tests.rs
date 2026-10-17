@@ -10,7 +10,7 @@ use hashbrown::HashMap;
 use std::sync::Arc;
 
 /// The clamp-skip census must name every non-twin family exactly once, and
-/// leave the CL/V2 families unmapped (they own the twin arm).
+/// leave the concentrated liquidity/V2 families unmapped (they own the twin arm).
 #[test]
 fn clamp_skip_kind_names_every_non_twin_family() {
     use crate::arb_engine::solve_cycle::clamp_skip_kind;

@@ -214,6 +214,6 @@ fn balancer_stable_rejects_mixed_with_concentrated_liquidity() {
         )
         .result
         .is_none(),
-        "Balancer stable + CL must not solve"
+        "Balancer stable + concentrated liquidity must not solve"
     );
 }

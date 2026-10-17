@@ -293,7 +293,7 @@ fn liquidity_update_post_seed_in_range_adjusts_scalar_on_both_adapters() {
 }
 
 // ------------------------------------------------------------------
-// ReorgPoolState trait (ADR-016 D4 — CL family adopts the trait).
+// ReorgPoolState trait (ADR-016 D4 — concentrated liquidity family adopts the trait).
 // `restore_before_block` returns `()`; the landed-at state lives in the
 // struct's own fields (read-after-restore). The shared verb in this
 // module carries the whole restore contract; these probes run it on both

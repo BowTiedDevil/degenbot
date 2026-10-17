@@ -4,7 +4,7 @@
 //! behind `scipy.optimize.minimize_scalar(method='bounded')`.
 //!
 //! Role: a SciPy-1.17-parity REFERENCE, not a production solver — the solve
-//! path never calls it. It serves only as the CL refine-window oracle in
+//! path never calls it. It serves only as the concentrated liquidity refine-window oracle in
 //! tests (`concentrated_liquidity/tests/refine_undersample.rs`, `tests/bounded_brent.rs`).
 //!
 //! Transcribed expression-by-expression from `SciPy` 1.17

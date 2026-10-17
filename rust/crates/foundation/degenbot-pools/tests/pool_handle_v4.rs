@@ -70,7 +70,9 @@ fn v4_pool_handle_exposes_structure_identity_concentrated_liquidity_view_and_swa
         }
     ));
 
-    let concentrated_liquidity = pool.concentrated_liquidity().expect("CL view");
+    let concentrated_liquidity = pool
+        .concentrated_liquidity()
+        .expect("concentrated liquidity view");
     assert_eq!(concentrated_liquidity.fee(), 3000);
     assert_eq!(concentrated_liquidity.tick_spacing(), 60);
     assert_eq!(concentrated_liquidity.liquidity(), 1_000_000);
