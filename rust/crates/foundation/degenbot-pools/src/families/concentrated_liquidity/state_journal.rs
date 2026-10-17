@@ -118,3 +118,8 @@ pub(crate) fn journal_len<H: JournalHost>(host: &H) -> usize {
 pub(crate) fn newest_block<H: JournalHost>(host: &H) -> Option<u64> {
     host.journal().newest_block()
 }
+
+/// The merged journal-verb test suite (ADR-080 D4) — the former V3/V4 twin
+/// batteries, converged at this module's interface.
+#[cfg(test)]
+mod tests;

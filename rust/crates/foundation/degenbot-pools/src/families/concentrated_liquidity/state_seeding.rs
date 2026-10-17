@@ -136,3 +136,8 @@ pub(crate) fn snapshot_seed_for(
         None
     }
 }
+
+/// The merged seeding-verb test suite (ADR-080 D4) — the former V3/V4 twin
+/// batteries, converged at this module's interface.
+#[cfg(test)]
+mod tests;

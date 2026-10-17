@@ -61,6 +61,12 @@ pub(crate) mod state_seeding;
 /// state structs.
 pub(crate) mod state_walk;
 
+/// The merged state-module test suites' fixture seam (ADR-080 D4): the
+/// per-adapter construction + event-application probes the shared batteries
+/// drive. Test-only.
+#[cfg(test)]
+pub(crate) mod state_fixture;
+
 pub mod v3;
 pub mod v4;
 

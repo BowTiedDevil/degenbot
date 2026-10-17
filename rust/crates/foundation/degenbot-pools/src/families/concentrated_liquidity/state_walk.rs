@@ -506,3 +506,8 @@ fn word_boundary_prices(r: &V3TickRangeForSolver) -> Vec<U256> {
         .map(|&t| U256::from(get_sqrt_ratio_at_tick_internal(t).unwrap_or(U160::ZERO)))
         .collect()
 }
+
+/// The merged walk-verb test suite (ADR-080 D4) — the former V3/V4 twin
+/// batteries, converged at this module's interface.
+#[cfg(test)]
+mod tests;
