@@ -24,12 +24,12 @@ use pyo3::{create_exception, PyErr};
 //   caller can choose retry/backoff vs abort without re-introducing the
 //   swallowing bug.
 //
-// per-call RPC transport failures inside `liquidity_verifier` are now
-// `LiquidityVerifyError::Rpc`, mapped here to `VerifyError::Rpc` →
-// `VerificationRpcError` (NOT flattened to `Snapshot`). The distinction here
-// covers the `VerifyError::Provider` (provider-construction) category AND the
-// `VerifyError::Rpc` (per-call transport) category the seam now routes to the
-// retryable `VerificationRpcError`.
+// per-call RPC transport failures inside `liquidity_verifier` are now the
+// one refusal vocabulary's `VerifyOrigin::Transport` class, mapped to
+// `VerificationRpcError` (NOT flattened to a mismatch). The distinction here
+// covers the `VerifyOrigin::ProviderConstruction` category AND the
+// `VerifyOrigin::Transport` (per-call transport) category the seam routes to
+// the retryable `VerificationRpcError`.
 create_exception!(
     degenbot._ffi,
     VerificationMismatchError,
@@ -180,35 +180,6 @@ create_exception!(
     pyo3::exceptions::PyRuntimeError,
     "The fleet registration intake faulted: the sticky lane-death latch resolved held intake units terminally (they were never executed). Sticky until a fresh process."
 );
-
-/// Map the construction route's typed refusal onto the exception surface:
-/// the loud unsupported-family arm gets its own typed fatal; a skip rides
-/// the taxonomy-mapped existing exceptions so the use site's ledger
-/// classification (transient vs stable fact) is unchanged.
-pub(crate) fn map_construction_refusal(
-    err: degenbot_bot::bot_core::pool_builder::route::ConstructionRefusal,
-) -> PyErr {
-    use degenbot_bot::bot_core::pool_builder::route::ConstructionRefusal as Refusal;
-    match err {
-        Refusal::UnsupportedFamily { address, detail } => UnsupportedPoolFamilyError::new_err(
-            format!("construction route refused pool at {address}: {detail}"),
-        ),
-        Refusal::Skipped(degenbot_bot::bot_core::registration_ledger::BuildFailure::Transient(
-            detail,
-        )) => pyo3::exceptions::PyRuntimeError::new_err(detail),
-        Refusal::Skipped(degenbot_bot::bot_core::registration_ledger::BuildFailure::HighFee) => {
-            HighFeePoolRejectedError::new_err(
-                "pool refused: static fee exceeds the cmd_executor's 2-byte encoding limit",
-            )
-        }
-        Refusal::Skipped(degenbot_bot::bot_core::registration_ledger::BuildFailure::HookedPool) => {
-            HookedPoolRejectedError::new_err("pool refused: carries an amount-modifying hook")
-        }
-        Refusal::Skipped(degenbot_bot::bot_core::registration_ledger::BuildFailure::DynamicFee) => {
-            DynamicFeePoolRejectedError::new_err("pool refused: dynamic fee")
-        }
-    }
-}
 
 /// Map the bot-side typed `IntakeFault` onto the exception (ONE owner of the
 /// wording, mirroring `boot_refused`).

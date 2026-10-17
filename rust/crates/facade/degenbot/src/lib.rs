@@ -135,9 +135,10 @@ pub use degenbot_bot::bot_core::pool_builder::route::{
     construct_pool, BuiltIdentity, ConstructedPool, ConstructionRefusal, ConstructionRoute,
     RequestedPool, V3RouteInputs,
 };
+pub use degenbot_bot::bot_core::registration_ledger::RefusalKind;
 pub use degenbot_bot::bot_core::registration_lifecycle::{
     run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle,
-    run_v3_registration_lifecycle, run_v4_registration_lifecycle, RegistrationLifecycleError,
+    run_v3_registration_lifecycle, run_v4_registration_lifecycle,
 };
 pub use degenbot_bot::bot_core::{
     PoolEntry, RegisterAerodromeV2PoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,

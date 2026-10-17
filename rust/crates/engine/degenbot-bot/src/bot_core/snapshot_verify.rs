@@ -4,7 +4,7 @@
 //! `PyO3`. `py_binding.rs` (in `degenbot-python`) keeps the `PyO3` arg-parsing
 //! + I/O (the `AlloyProvider`-based verify pipeline, whose closures capture
 //!   on-chain RPC reads + `PyResult`) and delegates to this module, mapping
-//!   [`VerifyError`] to `PyRuntimeError`.
+//!   its [`RefusalKind`] refusals to the typed Python exceptions.
 //!
 //! ## ADR-006 D4 relocation (this module's home)
 //! These helpers were trapped in `solvers/arb_engine` for historical
@@ -30,88 +30,21 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use parking_lot::Mutex;
 
+use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase};
 use crate::bot_core::{TickInfo, V3PoolState, V4PoolState};
 
-/// Error from `Bot::load_snapshot_from_db` / non-DB snapshot-load paths
-/// — wraps the DB read failure or the per-pool hex/tick decode
-/// failure. The pyo3 seam maps this to `PyRuntimeError`.
-#[derive(Debug, thiserror::Error)]
-pub enum SnapshotLoadError {
-    /// A DB read failed (`fetch_*` / `stream_liquidity_maps`).
-    #[error("snapshot DB read failed: {0}")]
-    Db(#[from] degenbot_db::error::DbError),
-    /// A V4 `pool_hash` hex failed to decode to a 32-byte pool id.
-    #[error("snapshot pool-hash decode failed: {0}")]
-    Hex(#[from] degenbot_core::hex_utils::HexError),
-    /// A liquidity value exceeded the `U128`/`I256` range (the DB stores
-    /// `VARCHAR(78)`: valid on-chain liquidity always fits; this fires on
-    /// corrupt data).
-    #[error("snapshot liquidity value out of range: {0}")]
-    Range(String),
-}
-
-/// A verify-pipeline error — the non-pyo3 analogue of `PyRuntimeError`.
+/// Error from `Bot::load_snapshot_from_db` / non-DB snapshot-load paths — the
+/// DB read failure or the per-pool hex/tick decode failure. The refusal is
+/// [`RefusalKind::SnapshotLoadFailed`] at the snapshot phase, carrying the
+/// [`SnapshotLoadReason`] its consumer renders.
 ///
-/// `py_binding.rs` maps this to typed Python exceptions at the seam
-/// (`map_verify_err`):
-/// - `Snapshot` → `VerificationMismatchError` (genuine mismatch — fatal)
-/// - `Provider` → `VerificationRpcError` (verify-provider construction failure)
-/// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure)
-/// - `NoSnapshotStream` → `PyRuntimeError` (programmer error)
-/// - `Other` → `PyRuntimeError` (any other fatal classification failure)
-///
-/// `Rpc` and `Provider` both surface as `VerificationRpcError` but are kept
-/// distinct here so the *orchestrator* (`run_concentrated_liquidity_verification`) preserves the
-/// per-call-transport category through the pure layer. The bounded retry
-/// dance (`crate::bot_core::verification_retry`) branches on this split, and
-/// the Python seam folds both into the same retryable exception type.
-#[derive(Debug)]
-pub enum VerifyError {
-    /// `insert()` was called with no snapshot stream in progress.
-    NoSnapshotStream,
-    /// A verify-phase mismatch (snapshot block or backfill block). The message
-    /// carries the phase + pool label + mismatch detail (mirrors the on-chain
-    /// `VerificationMismatch` text the `py_binding` impl formats at the seam).
-    Snapshot(String),
-    /// A verify-provider construction failure (RPC init / connection error).
-    Provider(String),
-    /// A per-call RPC transport failure (an `eth_call` / `getTickBitmap` /
-    /// `getTickLiquidity` read failed to reach the node). Transient — a
-    /// retry/backoff candidate, NOT a genuine on-chain mismatch. Distinct from
-    /// `Snapshot` (fatal) so the seam routes it to `VerificationRpcError`
-    /// instead of `VerificationMismatchError`.
-    Rpc(String),
-    /// Verification was opted into (`verify_on_register = true`) for a
-    /// snapshot-built (`Tracked`) pool but a required precondition was never
-    /// set: the RPC URL (and, for V4 pools, the `StateView` address). This is a
-    /// fatal misconfiguration — the bot must NOT operate with an unverified
-    /// tick map, so `run_concentrated_liquidity_verification` raises `NotConfigured` instead of the
-    /// legacy silent `Ok(())` skip. The message names the missing call
-    /// (`set_verify_rpc_url()` / `set_verify_state_view()`).
-    NotConfigured(String),
-    /// A fatal verify-pipeline failure outside the specific categories above
-    /// (a driver failure surfacing through a lifecycle call site). Distinct
-    /// from `Rpc`/`Provider` — which are transient — so the retry dance never
-    /// re-attempts it.
-    Other(String),
-}
-
-impl std::fmt::Display for VerifyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NoSnapshotStream => {
-                write!(f, "insert() called with no snapshot stream in progress")
-            }
-            Self::Snapshot(message) => write!(f, "snapshot verify mismatch: {message}"),
-            Self::Provider(message) => write!(f, "verify provider failure: {message}"),
-            Self::Rpc(message) => write!(f, "verify RPC failure: {message}"),
-            Self::NotConfigured(message) => write!(f, "verify not configured: {message}"),
-            Self::Other(message) => write!(f, "{message}"),
-        }
-    }
-}
-
-impl std::error::Error for VerifyError {}
+/// The verify pipeline's refusals are [`RefusalKind::VerifyFailed`] (with the
+/// fatal-vs-transient classification riding `fatal` and the source on
+/// [`VerifyOrigin`]) and [`RefusalKind::VerifyNotConfigured`]. The
+/// [`VerifyRpc`] trait keeps the origins distinct so the bounded retry dance
+/// (`crate::bot_core::verification_retry`) can branch on the fatal split and
+/// the Python seam can fold the two transient origins into one retryable
+/// exception type.
 
 /// The minimal on-chain RPC surface the two-phase CL verification needs
 /// (ADR-006 slice-5 candidate-2 completion).
@@ -120,8 +53,8 @@ impl std::error::Error for VerifyError {}
 /// knowing `AlloyProvider`, `tokio`, or `PyResult`. The single concrete impl
 /// lives in `py_binding.rs`: it holds a cached `AlloyProvider`, lazily
 /// constructs it from the configured `rpc_url`, `block_on`s the underlying
-/// `crate::bot_core::liquidity_verifier` calls, and maps
-/// `VerificationMismatch` → [`VerifyError::Snapshot`].
+/// `crate::bot_core::liquidity_verifier` calls, and maps a map divergence
+/// → [`VerifyOrigin::Mismatch`].
 ///
 /// Methods are **sync** (the impl blocks internally) per the slice-5 decision:
 /// keeping `async` out of the pure layer keeps `snapshot_verify.rs` tokio-free
@@ -137,34 +70,34 @@ pub trait VerifyRpc {
     ///
     /// # Errors
     ///
-    /// Returns [`VerifyError::Snapshot`] when the fetched on-chain tick data
+    /// Returns [`VerifyOrigin::Mismatch`] when the fetched on-chain tick data
     /// disagrees with `tick_data`.
     fn verify_v3_snapshot(
         &self,
         pool_address: Address,
         tick_data: &HashMap<i32, TickInfo>,
         block: u64,
-    ) -> Result<(), VerifyError>;
+    ) -> Result<(), RefusalKind>;
 
     /// Backfill phase — verify a V3 pool's post-buffer state against on-chain
     /// at `block`.
     ///
     /// # Errors
     ///
-    /// Returns [`VerifyError::Snapshot`] when the fetched on-chain state
+    /// Returns [`VerifyOrigin::Mismatch`] when the fetched on-chain state
     /// disagrees with `pools`.
     fn verify_v3_backfill(
         &self,
         pools: &HashMap<u64, V3PoolState>,
         block: u64,
-    ) -> Result<(), VerifyError>;
+    ) -> Result<(), RefusalKind>;
 
     /// Snapshot phase — verify a V4 pool's raw tick data (pre-buffer) against
     /// on-chain at `block`.
     ///
     /// # Errors
     ///
-    /// Returns [`VerifyError::Snapshot`] when the fetched on-chain tick data
+    /// Returns [`VerifyOrigin::Mismatch`] when the fetched on-chain tick data
     /// disagrees with `tick_data`.
     fn verify_v4_snapshot(
         &self,
@@ -172,21 +105,21 @@ pub trait VerifyRpc {
         pool_id: [u8; 32],
         tick_data: &HashMap<i32, TickInfo>,
         block: u64,
-    ) -> Result<(), VerifyError>;
+    ) -> Result<(), RefusalKind>;
 
     /// Backfill phase — verify a V4 pool's post-buffer state against on-chain
     /// at `block`.
     ///
     /// # Errors
     ///
-    /// Returns [`VerifyError::Snapshot`] when the fetched on-chain state
+    /// Returns [`VerifyOrigin::Mismatch`] when the fetched on-chain state
     /// disagrees with `pools`.
     fn verify_v4_backfill(
         &self,
         state_view: Address,
         pools: &HashMap<u64, V4PoolState>,
         block: u64,
-    ) -> Result<(), VerifyError>;
+    ) -> Result<(), RefusalKind>;
 }
 
 /// Run the two-phase CL verification (snapshot block + backfill block) if
@@ -206,27 +139,30 @@ pub trait VerifyRpc {
 /// **Order is load-bearing**: the snapshot phase must run before the backfill
 /// phase (a snapshot mismatch short-circuits before touching the post-buffer
 /// state). Preserves the legacy `RuntimeError`-on-mismatch contract: a
-/// `VerifyError::Snapshot` from either phase propagates immediately.
+/// mismatch refusal from either phase propagates immediately.
 ///
 /// # Errors
 ///
 /// Returns `Ok(())` when `VerifyRpc::enabled` is `false` or both phases pass.
-/// Propagates [`VerifyError`] from `verify_snapshot` / `verify_backfill`
-/// (a snapshot mismatch short-circuits before the backfill phase runs).
+/// Propagates the [`RefusalKind`] from `verify_snapshot` / `verify_backfill`
+/// (a snapshot mismatch short-circuits before the backfill phase runs), or
+/// [`RefusalKind::VerifyNotConfigured`] when verification is opted into but
+/// never configured.
 pub fn run_concentrated_liquidity_verification<R, F1, F2>(
     rpc: &R,
     snapshot_block: Option<u64>,
     backfill_block: Option<u64>,
     verify_snapshot: F1,
     verify_backfill: F2,
-) -> Result<(), VerifyError>
+) -> Result<(), RefusalKind>
 where
     R: VerifyRpc,
-    F1: FnOnce(&R, u64) -> Result<(), VerifyError>,
-    F2: FnOnce(&R, u64) -> Result<(), VerifyError>,
+    F1: FnOnce(&R, u64) -> Result<(), RefusalKind>,
+    F2: FnOnce(&R, u64) -> Result<(), RefusalKind>,
 {
     if !rpc.enabled() {
-        return Err(VerifyError::NotConfigured(
+        return Err(RefusalKind::verify_not_configured(
+            RegistrationPhase::Verify,
             "verify_on_register is enabled but verification is not configured — \
              call set_verify_rpc_url() (and set_verify_state_view() for V4 pools) \
              before registering snapshot pools"
@@ -242,14 +178,6 @@ where
     Ok(())
 }
 
-/// Snapshot storage keyed by pool identifier (V3 address or V4 pool manager + pool ID).
-///
-/// Holds a one-way transfer of tick data: `load()` replaces the store, and
-/// `take()` removes a single pool's data at registration time. Streaming loads
-/// begin with `begin_load()` and are populated via `insert()`.
-///
-/// Lifted verbatim from `py_binding.rs` (ADR-006 slice 5b); the only change is
-/// `insert` returns [`VerifyError`] instead of `PyResult`.
 /// Helper that registers a CL pool, applies backfill/pump buffers, and captures
 /// a backfill-boundary snapshot while the engine lock is held.
 ///
@@ -285,6 +213,7 @@ pub fn register_with_concentrated_liquidity_buffers<E, Key, BackfillSnapshot>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bot_core::registration_ledger::VerifyOrigin;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A stand-in engine type — `register_with_concentrated_liquidity_buffers` is generic over `E`
@@ -379,10 +308,10 @@ mod tests {
         enabled: bool,
         snapshot_calls: Mutex<Vec<u64>>,
         backfill_calls: Mutex<Vec<u64>>,
-        /// `Some(err)` → the snapshot phase returns this error.
-        fail_snapshot: Option<VerifyError>,
-        /// `Some(err)` → the backfill phase returns this error.
-        fail_backfill: Option<VerifyError>,
+        /// `Some(refusal)` → the snapshot phase returns this refusal.
+        fail_snapshot: Option<RefusalKind>,
+        /// `Some(refusal)` → the backfill phase returns this refusal.
+        fail_backfill: Option<RefusalKind>,
     }
 
     impl FakeVerifyRpc {
@@ -407,10 +336,10 @@ mod tests {
             _pool_address: Address,
             _tick_data: &HashMap<i32, TickInfo>,
             block: u64,
-        ) -> Result<(), VerifyError> {
+        ) -> Result<(), RefusalKind> {
             self.snapshot_calls.lock().push(block);
             match &self.fail_snapshot {
-                Some(e) => Err(clone_err(e)),
+                Some(refusal) => Err(refusal.clone()),
                 None => Ok(()),
             }
         }
@@ -419,10 +348,10 @@ mod tests {
             &self,
             _pools: &HashMap<u64, V3PoolState>,
             block: u64,
-        ) -> Result<(), VerifyError> {
+        ) -> Result<(), RefusalKind> {
             self.backfill_calls.lock().push(block);
             match &self.fail_backfill {
-                Some(e) => Err(clone_err(e)),
+                Some(refusal) => Err(refusal.clone()),
                 None => Ok(()),
             }
         }
@@ -433,10 +362,10 @@ mod tests {
             _pool_id: [u8; 32],
             _tick_data: &HashMap<i32, TickInfo>,
             block: u64,
-        ) -> Result<(), VerifyError> {
+        ) -> Result<(), RefusalKind> {
             self.snapshot_calls.lock().push(block);
             match &self.fail_snapshot {
-                Some(e) => Err(clone_err(e)),
+                Some(refusal) => Err(refusal.clone()),
                 None => Ok(()),
             }
         }
@@ -446,25 +375,28 @@ mod tests {
             _state_view: Address,
             _pools: &HashMap<u64, V4PoolState>,
             block: u64,
-        ) -> Result<(), VerifyError> {
+        ) -> Result<(), RefusalKind> {
             self.backfill_calls.lock().push(block);
             match &self.fail_backfill {
-                Some(e) => Err(clone_err(e)),
+                Some(refusal) => Err(refusal.clone()),
                 None => Ok(()),
             }
         }
     }
 
-    /// `VerifyError` isn't `Clone`; the fakes need to replay a canned error.
-    fn clone_err(e: &VerifyError) -> VerifyError {
-        match e {
-            VerifyError::NoSnapshotStream => VerifyError::NoSnapshotStream,
-            VerifyError::Snapshot(m) => VerifyError::Snapshot(m.clone()),
-            VerifyError::Provider(m) => VerifyError::Provider(m.clone()),
-            VerifyError::Rpc(m) => VerifyError::Rpc(m.clone()),
-            VerifyError::NotConfigured(m) => VerifyError::NotConfigured(m.clone()),
-            VerifyError::Other(m) => VerifyError::Other(m.clone()),
-        }
+    /// A fatal verify mismatch at the verify phase.
+    fn mismatch(detail: &str) -> RefusalKind {
+        RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            true,
+            VerifyOrigin::Mismatch,
+            detail.to_owned(),
+        )
+    }
+
+    /// A transient verify failure at the verify phase.
+    fn transient(origin: VerifyOrigin, detail: &str) -> RefusalKind {
+        RefusalKind::verify_failed(RegistrationPhase::Verify, false, origin, detail.to_owned())
     }
 
     /// Opted-in-but-not-configured is a FATAL misconfiguration, not a silent
@@ -486,7 +418,7 @@ mod tests {
         };
         let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(
-            matches!(res, Err(VerifyError::NotConfigured(_))),
+            matches!(res, Err(RefusalKind::VerifyNotConfigured { .. })),
             "opted-in-but-no-url must raise NotConfigured, not return Ok"
         );
         assert!(rpc.snapshot_calls.lock().is_empty());
@@ -536,8 +468,8 @@ mod tests {
     #[test]
     fn run_concentrated_liquidity_verification_snapshot_mismatch_short_circuits() {
         let mut rpc = FakeVerifyRpc::new(true);
-        rpc.fail_snapshot = Some(VerifyError::Snapshot(
-            "V3 pool 0x.. at snapshot block 10: tick data mismatch: lg=1 vs 2".to_string(),
+        rpc.fail_snapshot = Some(mismatch(
+            "V3 pool 0x.. at snapshot block 10: tick data mismatch: lg=1 vs 2",
         ));
 
         let snap =
@@ -547,10 +479,11 @@ mod tests {
         };
 
         let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
-        assert!(matches!(
-            res,
-            Err(VerifyError::Snapshot(m)) if m.contains("snapshot block 10")
-        ));
+        let Err(RefusalKind::VerifyFailed { origin, detail, .. }) = res else {
+            panic!("a snapshot mismatch propagates: {res:?}");
+        };
+        assert_eq!(origin, VerifyOrigin::Mismatch);
+        assert!(detail.contains("snapshot block 10"));
         assert_eq!(*rpc.snapshot_calls.lock(), vec![10]);
         assert!(rpc.backfill_calls.lock().is_empty(), "backfill skipped");
     }
@@ -559,8 +492,8 @@ mod tests {
     #[test]
     fn run_concentrated_liquidity_verification_backfill_mismatch_propagates() {
         let mut rpc = FakeVerifyRpc::new(true);
-        rpc.fail_backfill = Some(VerifyError::Snapshot(
-            "V3 pool 0x.. at backfill block 20: tick data mismatch".to_string(),
+        rpc.fail_backfill = Some(mismatch(
+            "V3 pool 0x.. at backfill block 20: tick data mismatch",
         ));
 
         let snap =
@@ -568,21 +501,24 @@ mod tests {
         let back = |r: &FakeVerifyRpc, b: u64| r.verify_v3_backfill(&HashMap::new(), b);
 
         let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
-        assert!(matches!(
-            res,
-            Err(VerifyError::Snapshot(m)) if m.contains("backfill block 20")
-        ));
+        let Err(RefusalKind::VerifyFailed { origin, detail, .. }) = res else {
+            panic!("a backfill mismatch propagates: {res:?}");
+        };
+        assert_eq!(origin, VerifyOrigin::Mismatch);
+        assert!(detail.contains("backfill block 20"));
         assert_eq!(*rpc.snapshot_calls.lock(), vec![10]);
         assert_eq!(*rpc.backfill_calls.lock(), vec![20]);
     }
 
     /// A provider construction failure from the snapshot phase propagates as
-    /// `VerifyError::Provider` and still short-circuits the backfill phase.
+    /// a provider-construction refusal and still short-circuits the backfill
+    /// phase.
     #[test]
     fn run_concentrated_liquidity_verification_provider_error_short_circuits() {
         let mut rpc = FakeVerifyRpc::new(true);
-        rpc.fail_snapshot = Some(VerifyError::Provider(
-            "verify: 0x..: failed to create provider: connection refused".to_string(),
+        rpc.fail_snapshot = Some(transient(
+            VerifyOrigin::ProviderConstruction,
+            "verify: 0x..: failed to create provider: connection refused",
         ));
 
         let snap =
@@ -592,12 +528,18 @@ mod tests {
         };
 
         let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
-        assert!(matches!(res, Err(VerifyError::Provider(_))));
+        assert!(matches!(
+            res,
+            Err(RefusalKind::VerifyFailed {
+                origin: VerifyOrigin::ProviderConstruction,
+                ..
+            })
+        ));
         assert!(rpc.backfill_calls.lock().is_empty());
     }
 
     /// a per-call RPC transport failure from the snapshot phase
-    /// propagates as `VerifyError::Rpc` — NOT flattened to `Snapshot` (which
+    /// propagates as a transport refusal — NOT flattened to a mismatch (which
     /// would conflate a transient transport error with a genuine mismatch and
     /// surface as `VerificationMismatchError` at the Python seam). The
     /// orchestrator must preserve the variant so `map_verify_err` can route it
@@ -606,8 +548,9 @@ mod tests {
     #[test]
     fn run_concentrated_liquidity_verification_rpc_error_propagates_unflattened() {
         let mut rpc = FakeVerifyRpc::new(true);
-        rpc.fail_snapshot = Some(VerifyError::Rpc(
-            "V3 pool 0x.. at snapshot block 10: tickBitmap(0) RPC call failed: timeout".to_string(),
+        rpc.fail_snapshot = Some(transient(
+            VerifyOrigin::Transport,
+            "V3 pool 0x.. at snapshot block 10: tickBitmap(0) RPC call failed: timeout",
         ));
 
         let snap =
@@ -617,10 +560,15 @@ mod tests {
         };
 
         let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
-        assert!(
-            matches!(res, Err(VerifyError::Rpc(m)) if m.contains("RPC call failed")),
-            "per-call RPC transport failure must surface as VerifyError::Rpc, not Snapshot"
+        let Err(RefusalKind::VerifyFailed { origin, detail, .. }) = res else {
+            panic!("a per-call RPC transport failure propagates: {res:?}");
+        };
+        assert_eq!(
+            origin,
+            VerifyOrigin::Transport,
+            "per-call RPC transport failure must not flatten to a mismatch"
         );
+        assert!(detail.contains("RPC call failed"));
         assert_eq!(*rpc.snapshot_calls.lock(), vec![10]);
         assert!(
             rpc.backfill_calls.lock().is_empty(),
@@ -629,13 +577,13 @@ mod tests {
     }
 
     /// a per-call RPC transport failure from the backfill phase
-    /// propagates as `VerifyError::Rpc` (snapshot phase ran first + ok).
+    /// propagates as a transport refusal (snapshot phase ran first + ok).
     #[test]
     fn run_concentrated_liquidity_verification_backfill_rpc_error_propagates_unflattened() {
         let mut rpc = FakeVerifyRpc::new(true);
-        rpc.fail_backfill = Some(VerifyError::Rpc(
-            "V3 pool 0x.. at backfill block 20: ticks(100) RPC call failed: connection reset"
-                .to_string(),
+        rpc.fail_backfill = Some(transient(
+            VerifyOrigin::Transport,
+            "V3 pool 0x.. at backfill block 20: ticks(100) RPC call failed: connection reset",
         ));
 
         let snap =
@@ -643,10 +591,11 @@ mod tests {
         let back = |r: &FakeVerifyRpc, b: u64| r.verify_v3_backfill(&HashMap::new(), b);
 
         let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
-        assert!(
-            matches!(res, Err(VerifyError::Rpc(m)) if m.contains("backfill block 20") && m.contains("RPC call failed")),
-            "backfill-phase RPC failure must surface as VerifyError::Rpc, not Snapshot"
-        );
+        let Err(RefusalKind::VerifyFailed { origin, detail, .. }) = res else {
+            panic!("a backfill RPC transport failure propagates: {res:?}");
+        };
+        assert_eq!(origin, VerifyOrigin::Transport);
+        assert!(detail.contains("backfill block 20") && detail.contains("RPC call failed"));
         assert_eq!(*rpc.snapshot_calls.lock(), vec![10]);
         assert_eq!(*rpc.backfill_calls.lock(), vec![20]);
     }
@@ -675,7 +624,8 @@ mod tests {
     fn run_concentrated_liquidity_verification_propagates_not_configured_from_phase() {
         let rpc = FakeVerifyRpc::new(true);
         let snap = |_: &FakeVerifyRpc, _b: u64| {
-            Err(VerifyError::NotConfigured(
+            Err(RefusalKind::verify_not_configured(
+                RegistrationPhase::Verify,
                 "missing set_verify_state_view() for V4 pool".to_string(),
             ))
         };
@@ -684,9 +634,9 @@ mod tests {
         };
 
         let res = run_concentrated_liquidity_verification(&rpc, Some(10), Some(20), snap, back);
-        assert!(
-            matches!(res, Err(VerifyError::NotConfigured(m)) if m.contains("set_verify_state_view")),
-            "NotConfigured from a phase must propagate, not be swallowed"
-        );
+        let Err(RefusalKind::VerifyNotConfigured { detail, .. }) = res else {
+            panic!("NotConfigured from a phase must propagate: {res:?}");
+        };
+        assert!(detail.contains("set_verify_state_view"));
     }
 }

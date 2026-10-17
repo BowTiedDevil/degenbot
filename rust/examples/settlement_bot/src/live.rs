@@ -488,7 +488,13 @@ async fn verify_one(
 /// The human-readable detail for a build failure (log-only).
 fn build_failure_detail(failure: &BuildFailure) -> String {
     match failure {
-        BuildFailure::Transient(message) => message.clone(),
+        BuildFailure::Transient(message)
+        | BuildFailure::Rpc(message)
+        | BuildFailure::Decoding(message)
+        | BuildFailure::Db(message)
+        | BuildFailure::MissingIdentity(message)
+        | BuildFailure::TickAssembly(message) => message.clone(),
+        BuildFailure::Spec => "out-of-spec V2 reserve".to_string(),
         BuildFailure::HookedPool => "hook admission refusal".to_string(),
         BuildFailure::DynamicFee => "dynamic-fee admission refusal".to_string(),
         BuildFailure::HighFee => "fee exceeds the encoder limit".to_string(),

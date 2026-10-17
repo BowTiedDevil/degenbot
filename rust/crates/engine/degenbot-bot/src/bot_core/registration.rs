@@ -29,7 +29,8 @@ use degenbot_substrate::tick_assembly::TickMapAssemblyError;
 use degenbot_uniswap::dex_identity::DexVariant;
 
 use super::bot::Bot;
-use crate::bot_core::pool_builder::builder::{self, PoolBuilderError};
+use super::registration_ledger::{PoolFamilyTag, RefusalKind, RegistrationPhase};
+use crate::bot_core::pool_builder::builder::{self};
 use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterAerodromePoolError,
@@ -38,56 +39,6 @@ use crate::bot_core::{
     RegisterV2PoolParams, RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError,
     RegisterV4PoolParams, RegisteredPoolFamily, TickInfo,
 };
-
-/// Error from [`Bot::register_v2_pool`]: the identity-parity verdict
-/// (`Identity`) is distinguishable from the registration refusal (`Register`)
-/// so the `PyO3` shell preserves its two historical surfaces byte-identically
-/// (the bare-address-mismatch `ValueError` and the `PoolRegistrationError`
-/// hierarchy map). The verdict is the construction side's ONE
-/// [`parity::IdentityDivergence`] — the same type the build path consumes.
-#[derive(Debug)]
-pub enum V2RegistrationError {
-    /// The recomputed CREATE2 address differs from the declared address (a
-    /// shipped `(chain, factory)` row only — otherwise the check is skipped).
-    Identity(parity::IdentityDivergence),
-    /// `BotState::register_v2_pool` refused (already registered / spec).
-    Register(RegisterV2PoolError),
-}
-
-/// Error from [`Bot::register_v3_pool`] — the V3 twin of
-/// [`V2RegistrationError`] (the V3 salt includes the fee).
-#[derive(Debug)]
-pub enum V3RegistrationError {
-    /// The recomputed CREATE2 address differs from the declared address.
-    Identity(parity::IdentityDivergence),
-    /// `BotState::register_v3_pool` refused (already registered / spec).
-    Register(RegisterV3PoolError),
-}
-
-/// Error from [`Bot::register_aerodrome_pool`]: the EIP-1167
-/// deployer/implementation verification is distinguishable from the
-/// registration refusal so the `PyO3` shell preserves its historical bare
-/// `ValueError` surface for the former and maps the latter through the
-/// `PoolRegistrationError` hierarchy (the V2/`V3RegistrationError` shape).
-#[derive(Debug)]
-pub enum AerodromeRegistrationError {
-    /// The recomputed EIP-1167 address differs from the declared address.
-    Identity(parity::IdentityDivergence),
-    /// `BotState::register_aerodrome_pool` refused (already registered / spec).
-    Register(RegisterAerodromePoolError),
-}
-
-/// Error from [`Bot::resolve_v4_identity`].
-#[derive(Debug)]
-pub enum ResolveV4IdentityError {
-    /// No `ConstructionIo` was attached to the bot (the shell's
-    /// `"<method>: no ConstructionIo attached (requires an alloy provider)"`
-    /// `RuntimeError` — the shell owns the method-prefixed message).
-    NoConstructionIo,
-    /// The DB two-step / identity resolution failed (a builder RPC, decode,
-    /// DB, or `MissingIdentity` failure).
-    Builder(PoolBuilderError),
-}
 
 /// The PRG-3 stance refusal: the process's fleet stance is not `fleet`, so
 /// the registration intake is not hosted here and the Python driver must
@@ -105,39 +56,6 @@ impl fmt::Display for RegistrationIntakeNotHosted {
 }
 
 impl std::error::Error for RegistrationIntakeNotHosted {}
-
-/// A list entry was not a parseable address. `Display` carries the
-/// historical shell message (`Invalid address '<input>': <source>`)
-/// byte-identically.
-#[derive(Debug)]
-pub enum ParseAddressError {
-    /// The input string was rejected by the `Address` parser.
-    InvalidAddress {
-        /// The rejected input (verbatim, for the message).
-        input: String,
-        /// The underlying `Address` parse failure (the parser's own error
-        /// type, boxed so the vocabulary does not pin a hex-crate version).
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-}
-
-impl fmt::Display for ParseAddressError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidAddress { input, source } => {
-                write!(f, "Invalid address '{input}': {source}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ParseAddressError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidAddress { source, .. } => Some(source.as_ref()),
-        }
-    }
-}
 
 /// One normalized tick-map row: `(tick, liquidity_gross: u128,
 /// liquidity_net: i128, block: u64)` — the dict-entry shape the shell's
@@ -166,13 +84,13 @@ pub type V4RegisteredPayload = (
 /// Parse one address string with the shell's historical message vocabulary.
 ///
 /// # Errors
-/// [`ParseAddressError::InvalidAddress`] when `s` is not a parseable address.
-pub fn parse_address_str(s: &str) -> Result<Address, ParseAddressError> {
-    s.parse::<Address>()
-        .map_err(|source| ParseAddressError::InvalidAddress {
-            input: s.to_string(),
-            source: Box::new(source),
-        })
+/// [`RefusalKind::MalformedInput`] (the intake phase) when `s` is not a
+/// parseable address; its `detail` carries the historical
+/// `Invalid address '<input>': <source>` rendering.
+pub fn parse_address_str(s: &str) -> Result<Address, RefusalKind> {
+    s.parse::<Address>().map_err(|source| {
+        RefusalKind::malformed_input(s.to_string(), format!("Invalid address '{s}': {source}"))
+    })
 }
 
 /// Parse a list of address strings (the shell extracts the `Vec<String>`
@@ -180,8 +98,8 @@ pub fn parse_address_str(s: &str) -> Result<Address, ParseAddressError> {
 /// surface and per-item error precedence).
 ///
 /// # Errors
-/// [`ParseAddressError::InvalidAddress`] for the first unparseable entry.
-pub fn parse_address_list(items: &[String]) -> Result<Vec<Address>, ParseAddressError> {
+/// [`RefusalKind::MalformedInput`] for the first unparseable entry.
+pub fn parse_address_list(items: &[String]) -> Result<Vec<Address>, RefusalKind> {
     items.iter().map(|s| parse_address_str(s)).collect()
 }
 
@@ -252,8 +170,8 @@ impl Bot {
     /// under ONE core write guard.
     ///
     /// # Errors
-    /// [`V2RegistrationError::Identity`] on a verified CREATE2 mismatch,
-    /// [`V2RegistrationError::Register`] when the registry refuses (already
+    /// [`RefusalKind::IdentityMismatch`] on a verified CREATE2 mismatch,
+    /// [`RefusalKind::RegisterRefused`] when the registry refuses (already
     /// registered / spec violation).
     #[expect(clippy::too_many_arguments)]
     pub fn register_v2_pool(
@@ -270,7 +188,7 @@ impl Bot {
         variant: DexVariant,
         stable_swap: bool,
         fee_denominator: Option<u64>,
-    ) -> Result<u64, V2RegistrationError> {
+    ) -> Result<u64, RefusalKind> {
         // get-or-register, family-guarded: the same address + same family +
         // same identity answers the EXISTING pool id (the `route.rs`
         // `registered_address_pool` discipline lifted to the register entry);
@@ -291,13 +209,16 @@ impl Bot {
                 if hit {
                     return Ok(pool_id);
                 }
-                return Err(V2RegistrationError::Register(
-                    RegisterV2PoolError::AlreadyRegistered { address },
+                return Err(RefusalKind::from_register_v2_error(
+                    &RegisterV2PoolError::AlreadyRegistered { address },
                 ));
             }
         }
-        parity::verify_v2_create2(self.chain_id(), factory, address, token0, token1)
-            .map_err(V2RegistrationError::Identity)?;
+        parity::verify_v2_create2(self.chain_id(), factory, address, token0, token1).map_err(
+            |divergence| {
+                RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V2), &divergence)
+            },
+        )?;
         let deployer = degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), factory);
         let init_hash =
             degenbot_uniswap::deployments::resolve_v2_init_hash(self.chain_id(), factory);
@@ -320,7 +241,7 @@ impl Bot {
         self.state_arc()
             .write_at(LockSite::Orchestrator)
             .register_v2_pool(&params)
-            .map_err(V2RegistrationError::Register)
+            .map_err(|err| RefusalKind::from_register_v2_error(&err))
     }
 
     /// Register a V3 pool by contract address, with the seeded tick data
@@ -330,8 +251,8 @@ impl Bot {
     /// check), else the canonical Uniswap layout.
     ///
     /// # Errors
-    /// [`V3RegistrationError::Identity`] on a verified CREATE2 mismatch,
-    /// [`V3RegistrationError::Register`] when the registry refuses.
+    /// [`RefusalKind::IdentityMismatch`] on a verified CREATE2 mismatch,
+    /// [`RefusalKind::RegisterRefused`] when the registry refuses.
     #[expect(clippy::too_many_arguments)]
     pub fn register_v3_pool(
         &self,
@@ -350,7 +271,7 @@ impl Bot {
         fetcher: Option<Arc<dyn TickWordFetcher>>,
         tick_data_block: Option<u64>,
         slot_layout: Option<ConcentratedLiquiditySlotLayout>,
-    ) -> Result<u64, V3RegistrationError> {
+    ) -> Result<u64, RefusalKind> {
         // get-or-register, family-guarded (see `register_v2_pool`).
         {
             let core = self.state_arc();
@@ -369,8 +290,8 @@ impl Bot {
                 if hit {
                     return Ok(pool_id);
                 }
-                return Err(V3RegistrationError::Register(
-                    RegisterV3PoolError::AlreadyRegistered { address },
+                return Err(RefusalKind::from_register_v3_error(
+                    &RegisterV3PoolError::AlreadyRegistered { address },
                 ));
             }
         }
@@ -381,8 +302,11 @@ impl Bot {
                 ConcentratedLiquiditySlotLayout::UniswapV3
             }
         });
-        parity::verify_v3_create2(self.chain_id(), factory, address, token0, token1, fee)
-            .map_err(V3RegistrationError::Identity)?;
+        parity::verify_v3_create2(self.chain_id(), factory, address, token0, token1, fee).map_err(
+            |divergence| {
+                RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V3), &divergence)
+            },
+        )?;
         let deployer = degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), factory);
         let init_hash =
             degenbot_uniswap::deployments::resolve_v3_init_hash(self.chain_id(), factory);
@@ -408,7 +332,7 @@ impl Bot {
         self.state_arc()
             .write_at(LockSite::Orchestrator)
             .register_v3_pool(&params)
-            .map_err(V3RegistrationError::Register)
+            .map_err(|err| RefusalKind::from_register_v3_error(&err))
     }
 
     /// Register a V4 pool by `(pool_manager, pool_id)` — the params (with
@@ -538,7 +462,7 @@ impl Bot {
     /// write guard.
     ///
     /// # Errors
-    /// [`AerodromeRegistrationError::Identity`] on a verified mismatch.
+    /// [`RefusalKind::IdentityMismatch`] on a verified mismatch.
     #[expect(clippy::too_many_arguments)]
     pub fn register_aerodrome_pool(
         &self,
@@ -555,7 +479,7 @@ impl Bot {
         reserve0: U112,
         reserve1: U112,
         update_block: u64,
-    ) -> Result<u64, AerodromeRegistrationError> {
+    ) -> Result<u64, RefusalKind> {
         // get-or-register, family-guarded (see `register_v2_pool`).
         {
             let core = self.state_arc();
@@ -574,8 +498,8 @@ impl Bot {
                 if hit {
                     return Ok(pool_id);
                 }
-                return Err(AerodromeRegistrationError::Register(
-                    RegisterAerodromePoolError::AlreadyRegistered { address },
+                return Err(RefusalKind::from_register_aerodrome_error(
+                    &RegisterAerodromePoolError::AlreadyRegistered { address },
                 ));
             }
         }
@@ -587,7 +511,9 @@ impl Bot {
             token1,
             stable,
         )
-        .map_err(AerodromeRegistrationError::Identity)?;
+        .map_err(|divergence| {
+            RefusalKind::from_identity_divergence(Some(PoolFamilyTag::AerodromeV2), &divergence)
+        })?;
         let params = RegisterAerodromeV2PoolParams {
             address,
             token0,
@@ -605,7 +531,7 @@ impl Bot {
         self.state_arc()
             .write_at(LockSite::Orchestrator)
             .register_aerodrome_pool(&params)
-            .map_err(AerodromeRegistrationError::Register)
+            .map_err(|err| RefusalKind::from_register_aerodrome_error(&err))
     }
 
     /// Register a token (the pure-Rust insertion the shell released the GIL
@@ -785,19 +711,22 @@ impl Bot {
     /// runtime (the shell detaches the GIL around this call).
     ///
     /// # Errors
-    /// [`ResolveV4IdentityError::NoConstructionIo`] when no construction
-    /// I/O is attached, [`ResolveV4IdentityError::Builder`] on a builder
-    /// failure (a typed `MissingIdentity` when neither source is complete).
+    /// [`RefusalKind::MissingConstructionIo`] when no construction I/O is
+    /// attached, [`RefusalKind::BuildRefused`] on a builder failure (a typed
+    /// `MissingIdentity` when neither source is complete).
     pub fn resolve_v4_identity(
         &self,
         chain_id: u64,
         pool_manager: Address,
         pool_id: [u8; 32],
         overrides: &builder::V4PoolBuildOverrides,
-    ) -> Result<builder::V4PoolBuildIdentity, ResolveV4IdentityError> {
-        let io = self
-            .construction_io_arc()
-            .ok_or(ResolveV4IdentityError::NoConstructionIo)?;
+    ) -> Result<builder::V4PoolBuildIdentity, RefusalKind> {
+        let io = self.construction_io_arc().ok_or_else(|| {
+            RefusalKind::missing_construction_io(
+                Some(PoolFamilyTag::V4),
+                RegistrationPhase::Identity,
+            )
+        })?;
         degenbot_core::runtime::get_runtime()
             .block_on(builder::resolve_v4_identity(
                 chain_id,
@@ -806,7 +735,13 @@ impl Bot {
                 overrides,
                 &io,
             ))
-            .map_err(ResolveV4IdentityError::Builder)
+            .map_err(|err| {
+                RefusalKind::from_builder_error(
+                    &err,
+                    Some(PoolFamilyTag::V4),
+                    RegistrationPhase::Identity,
+                )
+            })
     }
 
     /// Assemble a V3 pool's tick map with the `Db → Chain` precedence
@@ -878,11 +813,7 @@ mod tests {
     /// Register a fixture V2 pool over `address` with `factory` (defaulting
     /// to a factory that is NOT in the shipped deployments JSON — the CREATE2
     /// verify is skipped, the manual/ad-hoc path).
-    fn register_v2(
-        bot: &Bot,
-        address: Address,
-        factory: Address,
-    ) -> Result<u64, V2RegistrationError> {
+    fn register_v2(bot: &Bot, address: Address, factory: Address) -> Result<u64, RefusalKind> {
         bot.register_v2_pool(
             address,
             Address::from([0x01u8; 20]),
@@ -929,7 +860,10 @@ mod tests {
             .unwrap();
         let err =
             register_v2(&bot, Address::from([0x99u8; 20]), factory).expect_err("CREATE2 mismatch");
-        assert!(matches!(err, V2RegistrationError::Identity(_)), "{err:?}");
+        assert!(
+            matches!(err, RefusalKind::IdentityMismatch { .. }),
+            "{err:?}"
+        );
         assert_eq!(bot.pool_count(), 0, "nothing registered on refusal");
     }
 
@@ -975,7 +909,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                V2RegistrationError::Register(RegisterV2PoolError::AlreadyRegistered { .. })
+                RefusalKind::RegisterRefused {
+                    reason: crate::bot_core::RegisterRefusal::AlreadyRegistered { .. },
+                    ..
+                }
             ),
             "{err:?}"
         );
@@ -1012,7 +949,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                V3RegistrationError::Register(RegisterV3PoolError::AlreadyRegistered { .. })
+                RefusalKind::RegisterRefused {
+                    reason: crate::bot_core::RegisterRefusal::AlreadyRegistered { .. },
+                    ..
+                }
             ),
             "{err:?}"
         );
@@ -1412,7 +1352,7 @@ mod tests {
             )
             .expect_err("no ConstructionIo attached");
         assert!(
-            matches!(err, ResolveV4IdentityError::NoConstructionIo),
+            matches!(err, RefusalKind::MissingConstructionIo { .. }),
             "{err:?}"
         );
     }
@@ -1500,6 +1440,14 @@ mod tests {
         }
     }
 
+    /// The intake rendering of an unparseable address.
+    fn malformed_detail(err: &RefusalKind) -> String {
+        match err {
+            RefusalKind::MalformedInput { detail, .. } => detail.clone(),
+            other => panic!("an unparseable entry is malformed input: {other:?}"),
+        }
+    }
+
     /// The string-list address parse keeps the shell's historical message
     /// vocabulary byte-identically (`Invalid address '<input>': <source>`).
     #[test]
@@ -1510,13 +1458,13 @@ mod tests {
         assert_eq!(parsed, vec![Address::from([0x01u8; 20])]);
 
         let err = super::parse_address_list(&["zz".to_string()]).expect_err("invalid entry");
-        let message = err.to_string();
+        let message = malformed_detail(&err);
         assert!(
             message.starts_with("Invalid address 'zz': "),
             "historical vocabulary preserved: {message}"
         );
         let single = super::parse_address_str("zz").expect_err("invalid single");
-        assert_eq!(single.to_string(), message);
+        assert_eq!(malformed_detail(&single), message);
     }
 
     /// The PRG-3 stance gate: the typed refusal carries the historical

@@ -29,85 +29,11 @@ use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 
 use super::bot::Bot;
 use super::construction_io::ConstructionIo;
-use super::pool_builder::builder::{self, PoolBuilderError};
+use super::pool_builder::builder;
 use super::pool_builder::parity;
 use super::pool_builder::route::{self, ConstructedPool};
-use super::{
-    ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterAerodromePoolError,
-    RegisterV2PoolError, RegisterV4PoolError,
-};
-
-/// The build refused before any registration: either no `ConstructionIo` is
-/// attached (the shell maps this to the pymethod-prefixed `RuntimeError`) or
-/// the core builder failed (the shell maps via its builder-error vocabulary).
-#[derive(Debug)]
-pub enum BuildError {
-    /// No `ConstructionIo` attached to the bot.
-    NoConstructionIo,
-    /// The core builder failed (RPC / decode / CREATE2 / spec).
-    Builder(PoolBuilderError),
-}
-
-/// The V2 build-and-register refusal: [`BuildError`] plus the registration
-/// insert (already registered / spec violation), distinguishable so the
-/// shell preserves its two historical surfaces (`map_builder_err` vs
-/// `map_register_v2_err`).
-#[derive(Debug)]
-pub enum V2BuildError {
-    /// No `ConstructionIo` attached to the bot.
-    NoConstructionIo,
-    /// The core builder failed.
-    Builder(PoolBuilderError),
-    /// `BotState::register_v2_pool` refused.
-    Register(RegisterV2PoolError),
-    /// The minted construction identity diverged from the registered one —
-    /// the core-side identity-parity guard.
-    IdentityDivergence(parity::IdentityDivergence),
-}
-
-/// The Aerodrome build-and-register refusal: the V2 [`V2BuildError`] twin —
-/// [`BuildError`] plus the registration insert (already registered / spec
-/// violation), distinguishable so the shell maps the builder failure and the
-/// admission refusal through their separate historical surfaces.
-#[derive(Debug)]
-pub enum AerodromeBuildError {
-    /// No `ConstructionIo` attached to the bot.
-    NoConstructionIo,
-    /// The core builder failed.
-    Builder(PoolBuilderError),
-    /// `BotState::register_aerodrome_pool` refused.
-    Register(RegisterAerodromePoolError),
-}
-
-/// The V4 twin of [`V2BuildError`] (the V4 registration carries its own
-/// admission/error vocabulary).
-#[derive(Debug)]
-pub enum V4BuildError {
-    /// No `ConstructionIo` attached to the bot.
-    NoConstructionIo,
-    /// The core builder failed.
-    Builder(PoolBuilderError),
-    /// `BotState::register_v4_pool` refused (admission floor / already
-    /// registered / spec violation).
-    Register(RegisterV4PoolError),
-    /// The minted construction identity diverged from the registered one —
-    /// the core-side identity-parity guard.
-    IdentityDivergence(parity::IdentityDivergence),
-}
-
-/// The V3 build-and-register refusal: the construction route's typed refusal
-/// (loud family abort or a taxonomy-classified skip), or the registry GET
-/// that answered an already-registered address with no readable V3 identity
-/// (the race-answer arm's legacy `RuntimeError`).
-#[derive(Debug)]
-pub enum V3BuildError {
-    /// `route::construct_pool` refused.
-    Refusal(route::ConstructionRefusal),
-    /// The registry GET answered `address` but its entry carried no
-    /// readable V3 identity (the shell's `build_v3_pool: registry GET
-    /// answered {addr} with no readable V3 identity`).
-    NoReadableIdentity { address: Address },
-}
+use super::registration_ledger::{PoolFamilyTag, RefusalKind, RegistrationPhase};
+use super::{ConcentratedLiquiditySlotLayout, PoolTickCoverage};
 
 /// The `calculate_tokens_out` refusal (the legacy Python surface: a
 /// `ValueError` for the overflow/on-chain-revert and unknown-pool classes,
@@ -143,11 +69,14 @@ pub enum CalcTokensInError {
 pub type PoolBuildPayload = (u64, (String, String, String, String));
 
 impl Bot {
-    /// The attached `ConstructionIo`, or the typed no-io refusal (the shell
-    /// formats the pymethod-prefixed message).
-    fn construction_io_required(&self) -> Result<Arc<ConstructionIo>, BuildError> {
+    /// The attached `ConstructionIo`, or the typed no-io refusal at the
+    /// named family (the shell formats the pymethod-prefixed message).
+    fn construction_io_required(
+        &self,
+        family: Option<PoolFamilyTag>,
+    ) -> Result<Arc<ConstructionIo>, RefusalKind> {
         self.construction_io_arc()
-            .ok_or(BuildError::NoConstructionIo)
+            .ok_or_else(|| RefusalKind::missing_construction_io(family, RegistrationPhase::Build))
     }
 
     /// Build + register a V2 pool: the core `builder::build_v2` choreography
@@ -159,21 +88,24 @@ impl Bot {
     /// surface, so a facade-free registration driver consumes it directly.
     ///
     /// # Errors
-    /// [`V2BuildError::NoConstructionIo`] when no construction I/O is
-    /// attached, [`V2BuildError::Builder`] on a builder failure,
-    /// [`V2BuildError::Register`] when the registry refuses.
+    /// [`RefusalKind::MissingConstructionIo`] when no construction I/O is
+    /// attached, [`RefusalKind::BuildRefused`] on a builder failure,
+    /// [`RefusalKind::RegisterRefused`] when the registry refuses.
     pub fn build_and_register_v2(
         &self,
         address: Address,
         block: Option<u64>,
-    ) -> Result<PoolBuildPayload, V2BuildError> {
-        let io = self.construction_io_required().map_err(|e| match e {
-            BuildError::NoConstructionIo => V2BuildError::NoConstructionIo,
-            BuildError::Builder(b) => V2BuildError::Builder(b),
-        })?;
+    ) -> Result<PoolBuildPayload, RefusalKind> {
+        let io = self.construction_io_required(Some(PoolFamilyTag::V2))?;
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_v2(self.chain_id(), address, &io, block))
-            .map_err(V2BuildError::Builder)?;
+            .map_err(|err| {
+                RefusalKind::from_builder_error(
+                    &err,
+                    Some(PoolFamilyTag::V2),
+                    RegistrationPhase::Build,
+                )
+            })?;
         let identity = (
             params.token0.to_checksum(None),
             params.token1.to_checksum(None),
@@ -184,7 +116,7 @@ impl Bot {
             .state_arc()
             .write_at(LockSite::Orchestrator)
             .register_v2_pool(&params)
-            .map_err(V2BuildError::Register)?;
+            .map_err(|err| RefusalKind::from_register_v2_error(&err))?;
         // Core-side identity-parity guard (at the mint site): the echo minted
         // from `params` must equal the identity the registry of record now
         // holds for `pool_id`. A divergence is a core/driver seam bug — refused
@@ -198,7 +130,9 @@ impl Bot {
                 },
                 registered,
             )
-            .map_err(V2BuildError::IdentityDivergence)?;
+            .map_err(|divergence| {
+                RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V2), &divergence)
+            })?;
         }
 
         // Telemetry: one Jaeger node per pool construction+registration
@@ -221,19 +155,15 @@ impl Bot {
     /// + CREATE2 choreography, registered into `PoolEntry::AerodromeV2`).
     ///
     /// # Errors
-    /// [`AerodromeBuildError::NoConstructionIo`] /
-    /// [`AerodromeBuildError::Builder`] / [`AerodromeBuildError::Register`]
-    /// (the duplicate-address / spec refusal — previously an `assert!` panic
-    /// that killed the process).
+    /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`]
+    /// / [`RefusalKind::RegisterRefused`] (the duplicate-address / spec
+    /// refusal — previously an `assert!` panic that killed the process).
     pub fn build_and_register_aerodrome_v2(
         &self,
         address: Address,
         block: Option<u64>,
-    ) -> Result<u64, AerodromeBuildError> {
-        let io = self.construction_io_required().map_err(|e| match e {
-            BuildError::NoConstructionIo => AerodromeBuildError::NoConstructionIo,
-            BuildError::Builder(b) => AerodromeBuildError::Builder(b),
-        })?;
+    ) -> Result<u64, RefusalKind> {
+        let io = self.construction_io_required(Some(PoolFamilyTag::AerodromeV2))?;
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_aerodrome_v2(
                 self.chain_id(),
@@ -241,11 +171,17 @@ impl Bot {
                 &io,
                 block,
             ))
-            .map_err(AerodromeBuildError::Builder)?;
+            .map_err(|err| {
+                RefusalKind::from_builder_error(
+                    &err,
+                    Some(PoolFamilyTag::AerodromeV2),
+                    RegistrationPhase::Build,
+                )
+            })?;
         self.state_arc()
             .write_at(LockSite::Orchestrator)
             .register_aerodrome_pool(&params)
-            .map_err(AerodromeBuildError::Register)
+            .map_err(|err| RefusalKind::from_register_aerodrome_error(&err))
     }
 
     /// Build + register a Balancer V2 **weighted** pool (the `getPoolId` +
@@ -255,17 +191,17 @@ impl Bot {
     /// `PoolEntry::BalancerWeighted`).
     ///
     /// # Errors
-    /// [`BuildError::NoConstructionIo`] / [`BuildError::Builder`].
+    /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`].
     pub fn build_and_register_balancer_weighted(
         &self,
         vault: Address,
         address: Address,
         block: Option<u64>,
-    ) -> Result<u64, BuildError> {
-        let io = self.construction_io_required()?;
+    ) -> Result<u64, RefusalKind> {
+        let io = self.construction_io_required(None)?;
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_balancer_weighted(vault, address, &io, block))
-            .map_err(BuildError::Builder)?;
+            .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
         Ok(self
             .state_arc()
             .write_at(LockSite::Orchestrator)
@@ -280,15 +216,15 @@ impl Bot {
     /// overrides the Vault-specialization heuristic.
     ///
     /// # Errors
-    /// [`BuildError::NoConstructionIo`] / [`BuildError::Builder`].
+    /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`].
     pub fn build_and_register_balancer_stable(
         &self,
         vault: Address,
         address: Address,
         block: Option<u64>,
         invariant_version: Option<u8>,
-    ) -> Result<u64, BuildError> {
-        let io = self.construction_io_required()?;
+    ) -> Result<u64, RefusalKind> {
+        let io = self.construction_io_required(None)?;
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_balancer_stable(
                 vault,
@@ -297,7 +233,7 @@ impl Bot {
                 block,
                 invariant_version,
             ))
-            .map_err(BuildError::Builder)?;
+            .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
         Ok(self
             .state_arc()
             .write_at(LockSite::Orchestrator)
@@ -311,14 +247,14 @@ impl Bot {
     /// `RpcCurveDataProvider`).
     ///
     /// # Errors
-    /// [`BuildError::NoConstructionIo`] / [`BuildError::Builder`].
+    /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`].
     pub fn build_and_register_curve_pool(
         &self,
         address: Address,
         registry_addresses: &[Address],
         block: Option<u64>,
-    ) -> Result<u64, BuildError> {
-        let io = self.construction_io_required()?;
+    ) -> Result<u64, RefusalKind> {
+        let io = self.construction_io_required(None)?;
         let params = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_curve_pool(
                 address,
@@ -326,7 +262,7 @@ impl Bot {
                 &io,
                 block,
             ))
-            .map_err(BuildError::Builder)?;
+            .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
         Ok(self
             .state_arc()
             .write_at(LockSite::Orchestrator)
@@ -341,14 +277,14 @@ impl Bot {
     /// the handle construction stays at the shell.
     ///
     /// # Errors
-    /// [`BuildError::NoConstructionIo`] / [`BuildError::Builder`].
+    /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`].
     pub fn build_and_register_erc20_token(
         &self,
         chain_id: u64,
         address: Address,
         block: Option<u64>,
-    ) -> Result<(String, String, u8), BuildError> {
-        let io = self.construction_io_required()?;
+    ) -> Result<(String, String, u8), RefusalKind> {
+        let io = self.construction_io_required(None)?;
         #[expect(clippy::cast_possible_wrap)] // ids are small; core signature is i64
         let (name, symbol, decimals) = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_erc20_metadata(
@@ -357,7 +293,7 @@ impl Bot {
                 address,
                 block,
             ))
-            .map_err(BuildError::Builder)?;
+            .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
         self.state_arc()
             .write_at(LockSite::Orchestrator)
             .register_token(address, name.clone(), symbol.clone(), decimals, chain_id);
@@ -375,8 +311,9 @@ impl Bot {
     /// layout ride [`route::V3RouteInputs`].
     ///
     /// # Errors
-    /// [`V3BuildError::Refusal`] from the construction route,
-    /// [`V3BuildError::NoReadableIdentity`] on the race-answer arm.
+    /// [`RefusalKind::BuildRefused`] (or [`RefusalKind::UnsupportedFamily`])
+    /// from the construction route, [`RefusalKind::UnreadableIdentity`] on
+    /// the race-answer arm.
     #[expect(clippy::too_many_arguments)]
     pub fn build_and_register_v3(
         &self,
@@ -387,7 +324,7 @@ impl Bot {
         slot_layout: Option<ConcentratedLiquiditySlotLayout>,
         address: Address,
         block: Option<u64>,
-    ) -> Result<PoolBuildPayload, V3BuildError> {
+    ) -> Result<PoolBuildPayload, RefusalKind> {
         let constructed = degenbot_core::runtime::get_runtime()
             .block_on(route::construct_pool(
                 self,
@@ -401,7 +338,9 @@ impl Bot {
                 },
                 block,
             ))
-            .map_err(V3BuildError::Refusal)?;
+            .map_err(|refusal| {
+                RefusalKind::from_construction_refusal(&refusal, Some(PoolFamilyTag::V3))
+            })?;
         self.finalize_v3_construct(constructed, address)
     }
 
@@ -414,13 +353,13 @@ impl Bot {
     /// span (one Jaeger node per V3 registration).
     ///
     /// # Errors
-    /// [`V3BuildError::NoReadableIdentity`] when the race answer's registry
+    /// [`RefusalKind::UnreadableIdentity`] when the race answer's registry
     /// entry carried no readable V3 identity.
     pub fn finalize_v3_construct(
         &self,
         constructed: ConstructedPool,
         address: Address,
-    ) -> Result<PoolBuildPayload, V3BuildError> {
+    ) -> Result<PoolBuildPayload, RefusalKind> {
         let (pool_id, identity) = if let Some(built) = constructed.built {
             let family = degenbot_uniswap::deployments::resolve_dex_name(
                 self.chain_id(),
@@ -439,7 +378,14 @@ impl Bot {
         } else {
             let payload = self
                 .registered_v3_payload(&address, self.chain_id())
-                .ok_or(V3BuildError::NoReadableIdentity { address })?;
+                .ok_or_else(|| {
+                    RefusalKind::unreadable_identity(
+                        Some(PoolFamilyTag::V3),
+                        RegistrationPhase::Register,
+                        address,
+                        format!("registry GET answered {address} with no readable V3 identity"),
+                    )
+                })?;
             (payload.0, (payload.1, payload.2, payload.3, payload.4))
         };
         let _reg = tracing::info_span!(
@@ -463,19 +409,16 @@ impl Bot {
     /// `identity` (the shell keeps shaping its own parsed values).
     ///
     /// # Errors
-    /// [`V4BuildError::NoConstructionIo`], [`V4BuildError::Builder`],
-    /// [`V4BuildError::Register`].
+    /// [`RefusalKind::MissingConstructionIo`], [`RefusalKind::BuildRefused`],
+    /// [`RefusalKind::RegisterRefused`].
     pub fn build_and_register_v4(
         &self,
         identity: builder::V4PoolBuildIdentity,
         db: Option<&dyn TickMapDb>,
         block: Option<u64>,
         fetcher: Option<Arc<dyn TickWordFetcher>>,
-    ) -> Result<(u64, String, u32, u32), V4BuildError> {
-        let io = self.construction_io_required().map_err(|e| match e {
-            BuildError::NoConstructionIo => V4BuildError::NoConstructionIo,
-            BuildError::Builder(b) => V4BuildError::Builder(b),
-        })?;
+    ) -> Result<(u64, String, u32, u32), RefusalKind> {
+        let io = self.construction_io_required(Some(PoolFamilyTag::V4))?;
         // Capture the span identity before `identity` moves into build_v4.
         let span_manager = identity.pool_manager;
         let span_pool_id = format!("0x{}", alloy::hex::encode(identity.pool_id));
@@ -490,7 +433,13 @@ impl Bot {
         };
         let result = degenbot_core::runtime::get_runtime()
             .block_on(builder::build_v4(identity, db, &io, block))
-            .map_err(V4BuildError::Builder)?;
+            .map_err(|err| {
+                RefusalKind::from_builder_error(
+                    &err,
+                    Some(PoolFamilyTag::V4),
+                    RegistrationPhase::Build,
+                )
+            })?;
         let mut params = result.params;
         // lp_fee + protocol_fee come from the SAME head-stamped slot0 read
         // inside build_v4 (no second fetch_v4_slot0_liquidity each pool).
@@ -508,7 +457,7 @@ impl Bot {
             .state_arc()
             .write_at(LockSite::Orchestrator)
             .register_v4_pool(&params)
-            .map_err(V4BuildError::Register)?;
+            .map_err(|err| RefusalKind::from_register_v4_error(&err))?;
         // Core-side identity-parity guard (at the mint site): the minted
         // pool-key identity must equal the registered identity's key. A
         // divergence is a core/driver seam bug — refused here rather than
@@ -524,8 +473,11 @@ impl Bot {
                 tick_spacing: i.pool_key.tick_spacing,
             })
         {
-            parity::verify_v4_identity(minted_identity, registered_identity)
-                .map_err(V4BuildError::IdentityDivergence)?;
+            parity::verify_v4_identity(minted_identity, registered_identity).map_err(
+                |divergence| {
+                    RefusalKind::from_identity_divergence(Some(PoolFamilyTag::V4), &divergence)
+                },
+            )?;
         }
 
         // Telemetry: one Jaeger node per V4 registration (pool.manager is
@@ -547,9 +499,9 @@ impl Bot {
     /// so the shell's error message keeps its pymethod prefix.
     ///
     /// # Errors
-    /// [`BuildError::NoConstructionIo`] when nothing is attached.
-    pub fn require_construction_io(&self) -> Result<Arc<ConstructionIo>, BuildError> {
-        self.construction_io_required()
+    /// [`RefusalKind::MissingConstructionIo`] when nothing is attached.
+    pub fn require_construction_io(&self) -> Result<Arc<ConstructionIo>, RefusalKind> {
+        self.construction_io_required(None)
     }
 
     /// Simulate an exact-input swap (`getAmountOut` semantics — the request
@@ -739,27 +691,27 @@ mod tests {
         let addr = Address::from([0x11u8; 20]);
         assert!(matches!(
             bot.build_and_register_v2(addr, None),
-            Err(V2BuildError::NoConstructionIo)
+            Err(RefusalKind::MissingConstructionIo { .. })
         ));
         assert!(matches!(
             bot.build_and_register_aerodrome_v2(addr, None),
-            Err(AerodromeBuildError::NoConstructionIo)
+            Err(RefusalKind::MissingConstructionIo { .. })
         ));
         assert!(matches!(
             bot.build_and_register_balancer_weighted(addr, addr, None),
-            Err(BuildError::NoConstructionIo)
+            Err(RefusalKind::MissingConstructionIo { .. })
         ));
         assert!(matches!(
             bot.build_and_register_balancer_stable(addr, addr, None, None),
-            Err(BuildError::NoConstructionIo)
+            Err(RefusalKind::MissingConstructionIo { .. })
         ));
         assert!(matches!(
             bot.build_and_register_curve_pool(addr, &[], None),
-            Err(BuildError::NoConstructionIo)
+            Err(RefusalKind::MissingConstructionIo { .. })
         ));
         assert!(matches!(
             bot.build_and_register_erc20_token(1, addr, None),
-            Err(BuildError::NoConstructionIo)
+            Err(RefusalKind::MissingConstructionIo { .. })
         ));
         assert!(matches!(
             bot.build_and_register_v4(
@@ -777,7 +729,7 @@ mod tests {
                 None,
                 None,
             ),
-            Err(V4BuildError::NoConstructionIo)
+            Err(RefusalKind::MissingConstructionIo { .. })
         ));
         assert_eq!(bot.pool_count(), 0, "nothing registered on refusal");
     }
@@ -994,7 +946,7 @@ mod tests {
                 Address::from([0xEE; 20]),
             )
             .expect_err("unregistered race answer refuses");
-        assert!(matches!(err, V3BuildError::NoReadableIdentity { .. }));
+        assert!(matches!(err, RefusalKind::UnreadableIdentity { .. }));
     }
 
     /// `update_v2_pool` lands the Sync reserves under the core write guard

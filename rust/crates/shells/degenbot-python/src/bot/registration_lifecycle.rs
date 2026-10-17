@@ -22,7 +22,7 @@ use alloy::primitives::Address;
 use pyo3::exceptions::PyValueError;
 
 use crate::bot::engine::{hex_string_to_pool_id, PyArbEngine};
-use crate::bot::errmap::{map_driver_lifecycle_err, map_verify_lifecycle_error};
+use crate::bot::errmap::{map_driver_lifecycle_err, map_refusal};
 use crate::bot::PyBot;
 use crate::config::RetryPolicy;
 use crate::prelude::*;
@@ -330,7 +330,7 @@ pub(crate) fn run_registration_lifecycle(
                                 snapshot_block,
                                 &policy,
                             )
-                            .map_err(map_verify_lifecycle_error)
+                            .map_err(map_refusal)
                     })?;
                     Ok(py.None())
                 }
@@ -373,7 +373,7 @@ pub(crate) fn run_registration_lifecycle(
                                 snapshot_block,
                                 &policy,
                             )
-                            .map_err(map_verify_lifecycle_error)
+                            .map_err(map_refusal)
                     })?;
                     Ok(py.None())
                 }

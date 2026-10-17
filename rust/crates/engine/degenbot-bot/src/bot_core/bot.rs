@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use crate::bot_core::snapshot_verify::SnapshotLoadError;
+use crate::bot_core::registration_ledger::{RefusalKind, SnapshotLoadReason};
 use degenbot_substrate::session_registry::SessionObjectRegistry;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::EpochDelta;
@@ -205,6 +205,20 @@ impl Bot {
         Arc::clone(&self.registry)
     }
 
+    /// The snapshot DB-read refusal (the historical rendering).
+    fn snapshot_db_read_failed(err: &degenbot_db::error::DbError) -> RefusalKind {
+        RefusalKind::snapshot_load_failed(SnapshotLoadReason::Db {
+            detail: format!("snapshot DB read failed: {err}"),
+        })
+    }
+
+    /// The snapshot out-of-range refusal (the historical rendering).
+    fn snapshot_out_of_range(detail: String) -> RefusalKind {
+        RefusalKind::snapshot_load_failed(SnapshotLoadReason::OutOfRange {
+            detail: format!("snapshot liquidity value out of range: {detail}"),
+        })
+    }
+
     /// Record the snapshot seed block `S` on `BotState` from a held-tx DB
     /// handle. The single entry point a standalone Rust
     /// consumer and the pyo3 `PyBot` constructor both call.
@@ -222,7 +236,7 @@ impl Bot {
     ///
     /// # Errors
     ///
-    /// Returns [`SnapshotLoadError::Db`] on a DB read failure.
+    /// Returns [`RefusalKind::SnapshotLoadFailed`] on a DB read failure.
     ///
     /// # Panics
     ///
@@ -233,18 +247,18 @@ impl Bot {
         &self,
         db: &dyn degenbot_db::snapshot::TickMapDb,
         chain_id: u64,
-    ) -> Result<(), SnapshotLoadError> {
+    ) -> Result<(), RefusalKind> {
         let chain = i64::try_from(chain_id)
-            .map_err(|_| SnapshotLoadError::Range(format!("chain_id {chain_id} exceeds i64")))?;
+            .map_err(|_| Self::snapshot_out_of_range(format!("chain_id {chain_id} exceeds i64")))?;
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
         let now_v3 = db
             .fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V3)
-            .map_err(SnapshotLoadError::from)?;
+            .map_err(|err| Self::snapshot_db_read_failed(&err))?;
         let now_v4 = db
             .fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V4)
-            .map_err(SnapshotLoadError::from)?;
+            .map_err(|err| Self::snapshot_db_read_failed(&err))?;
         // S = min(fetch_newest_update_block(V3), V4), ignoring None families.
         #[expect(clippy::expect_used)] // block numbers are non-negative (documented)
         let s = match (state.snapshot_seed_block(), now_v3, now_v4) {

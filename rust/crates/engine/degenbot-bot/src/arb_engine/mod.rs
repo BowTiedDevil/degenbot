@@ -115,7 +115,7 @@ mod retune;
 // typed-submit admission) is documented in the module doc.
 pub mod fleet_wake;
 mod seat_host;
-mod snapshot_verify;
+
 // the per-bin lane walk's home — `solve_one_path` (the per-path
 // solve + diagnostics body the Solver seats' bins execute) lives here; the
 // walk driver and Lane* policy types are later tasks' inhabitants.

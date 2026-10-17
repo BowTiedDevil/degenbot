@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::arb_engine::{DriverError, EngineDriver};
 use crate::bot_core::bot::Bot;
-use crate::bot_core::snapshot_verify::SnapshotLoadError;
+use crate::bot_core::registration_ledger::RefusalKind;
 
 /// Error from [`Bot::load_snapshot_from_db_path`]: the DB-open failure
 /// (`Open`) is distinguishable from the snapshot-load failure (`Load`) so the
@@ -22,8 +22,9 @@ use crate::bot_core::snapshot_verify::SnapshotLoadError;
 pub enum SnapshotOpenError {
     /// `SnapshotDb::open` failed (connection/PRAGMA/schema).
     Open(degenbot_db::DbError),
-    /// The seed-block read inside the held tx failed.
-    Load(SnapshotLoadError),
+    /// The seed-block read inside the held tx failed — the one
+    /// [`RefusalKind::SnapshotLoadFailed`] refusal.
+    Load(RefusalKind),
 }
 
 /// Error from [`Bot::close_snapshot_tx`].

@@ -36,50 +36,23 @@ use degenbot_substrate::state_lock::StateLock;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_rpc::provider::AlloyProvider;
 
-use super::liquidity_verifier::{
-    verify_v3_liquidity_map, verify_v4_liquidity_map, LiquidityVerifyError,
-};
+use super::liquidity_verifier::{verify_v3_liquidity_map, verify_v4_liquidity_map};
+use super::registration_ledger::{LifecyclePrecondition, RefusalKind, RegistrationPhase};
 use super::{PoolTickCoverage, TickInfo};
 use degenbot_substrate::BotState;
 
-/// Error from a concrete registration-lifecycle run.
-///
-/// - [`RegistrationLifecycleError::Verify`] wraps the underlying liquidity-verify
-///   error. A [`LiquidityVerifyError::Mismatch`] is the **fatal tripwire** that
-///   must block `Live` (never auto-repair); an [`LiquidityVerifyError::Rpc`] is
-///   a transient transport failure.
-#[derive(Debug, Clone)]
-pub enum RegistrationLifecycleError {
-    /// A seed or post-drain verify step failed (mismatch = fatal; rpc =
-    /// transient).
-    Verify(LiquidityVerifyError),
-    /// A **tracked** pool needs a verify provider but none was configured
-    /// (D-C fail-fast: no verify-disabled mode for tracked). Only fires when a
-    /// Tracked pool actually reaches a verify step — Sparse / unregistered /
-    /// no-pin no-op paths never need a provider.
-    MissingProvider,
-    /// A registered pool's immutable tick spacing was unavailable at a verify
-    /// step. This is state corruption, never a reason to assume unit spacing.
-    MissingTickSpacing,
+/// A **tracked** pool reached a verify step with no provider configured (the
+/// D-C fail-fast: no verify-disabled mode for tracked). Sparse / unregistered
+/// / no-pin no-op paths never need a provider.
+fn missing_verify_provider() -> RefusalKind {
+    RefusalKind::lifecycle_precondition(LifecyclePrecondition::MissingVerifyProvider)
 }
 
-impl std::fmt::Display for RegistrationLifecycleError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RegistrationLifecycleError::Verify(e) => write!(f, "registration verify failed: {e}"),
-            RegistrationLifecycleError::MissingProvider => write!(
-                f,
-                "registration verify requires an RPC provider for tracked pools — configure the bot's single provider"
-            ),
-            RegistrationLifecycleError::MissingTickSpacing => write!(
-                f,
-                "registration verify requires the registered pool's tick spacing"
-            ),
-        }
-    }
+/// A registered pool's immutable tick spacing was unavailable at a verify
+/// step. This is state corruption, never a reason to assume unit spacing.
+fn missing_tick_spacing() -> RefusalKind {
+    RefusalKind::lifecycle_precondition(LifecyclePrecondition::MissingTickSpacing)
 }
-
-impl std::error::Error for RegistrationLifecycleError {}
 
 /// Drive a V3 CL pool through the registration verify-lifecycle, branching on
 /// `coverage::` **Sparse → immediate no-op** (already `Live`, no
@@ -302,21 +275,22 @@ where
 /// `AlloyProvider` (ADR-022 D3 — one provider per bot/chain, passed-in). V3
 /// needs no `state_view` (the per-pool verify reads `pool.ticks()` directly).
 /// A `None` provider only matters for a **Tracked** pool (which reaches a
-/// verify step and fails fast with
-/// [`RegistrationLifecycleError::MissingProvider`] — D-C); Sparse /
-/// unregistered no-op paths never need one.
+/// verify step and fails fast with the missing-provider
+/// [`LifecyclePrecondition`] — D-C); Sparse / unregistered no-op paths never
+/// need one.
 ///
 /// # Errors
 ///
-/// Returns [`RegistrationLifecycleError`]: *Verify* wraps the liquidity-verify
-/// error (mismatch = fatal tripwire), `MissingProvider` when a tracked pool
-/// needs to verify with no provider configured.
+/// Returns a [`RefusalKind`] at the lifecycle phase: a verify failure
+/// (mismatch = fatal tripwire) or
+/// [`LifecyclePrecondition::MissingVerifyProvider`] when a tracked pool needs
+/// to verify with no provider configured.
 pub async fn run_v3_registration_lifecycle(
     core: &StateLock<BotState>,
     provider: Option<&AlloyProvider>,
     address: Address,
     snapshot_block: Option<u64>,
-) -> Result<(), RegistrationLifecycleError> {
+) -> Result<(), RefusalKind> {
     let provider = provider.cloned();
     run_concentrated_liquidity_v3_lifecycle(
         core,
@@ -325,25 +299,25 @@ pub async fn run_v3_registration_lifecycle(
         |seed, block| {
             let provider = provider.clone();
             async move {
-                let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
+                let p = provider.ok_or_else(missing_verify_provider)?;
                 let tick_spacing = core
                     .pool_tick_spacing_by_address(&address)
-                    .ok_or(RegistrationLifecycleError::MissingTickSpacing)?;
+                    .ok_or_else(missing_tick_spacing)?;
                 verify_v3_liquidity_map(&p, address, &seed, tick_spacing, block, "seed")
                     .await
-                    .map_err(RegistrationLifecycleError::Verify)
+                    .map_err(|kind| kind.at_phase(RegistrationPhase::Lifecycle))
             }
         },
         |tick_data, block| {
             let provider = provider.clone();
             async move {
-                let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
+                let p = provider.ok_or_else(missing_verify_provider)?;
                 let tick_spacing = core
                     .pool_tick_spacing_by_address(&address)
-                    .ok_or(RegistrationLifecycleError::MissingTickSpacing)?;
+                    .ok_or_else(missing_tick_spacing)?;
                 verify_v3_liquidity_map(&p, address, &tick_data, tick_spacing, block, "post-drain")
                     .await
-                    .map_err(RegistrationLifecycleError::Verify)
+                    .map_err(|kind| kind.at_phase(RegistrationPhase::Lifecycle))
             }
         },
     )
@@ -357,16 +331,17 @@ pub async fn run_v3_registration_lifecycle(
 ///
 /// # Errors
 ///
-/// Returns [`RegistrationLifecycleError`]: *Verify* wraps the liquidity-verify
-/// error (mismatch = fatal tripwire), or `MissingProvider` when a tracked pool
-/// has no verification provider.
+/// Returns a [`RefusalKind`] at the lifecycle phase: a verify failure
+/// (mismatch = fatal tripwire), or
+/// [`LifecyclePrecondition::MissingVerifyProvider`] when a tracked pool has no
+/// verification provider.
 pub async fn run_v4_registration_lifecycle(
     core: &StateLock<BotState>,
     provider: Option<&AlloyProvider>,
     pool_manager: Address,
     pool_id: V4PoolId,
     snapshot_block: Option<u64>,
-) -> Result<(), RegistrationLifecycleError> {
+) -> Result<(), RefusalKind> {
     let provider = provider.cloned();
     run_concentrated_liquidity_v4_lifecycle(
         core,
@@ -376,10 +351,10 @@ pub async fn run_v4_registration_lifecycle(
         |seed, block| {
             let provider = provider.clone();
             async move {
-                let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
+                let p = provider.ok_or_else(missing_verify_provider)?;
                 let tick_spacing = core
                     .pool_tick_spacing_by_v4_key(pool_manager, &pool_id)
-                    .ok_or(RegistrationLifecycleError::MissingTickSpacing)?;
+                    .ok_or_else(missing_tick_spacing)?;
                 verify_v4_liquidity_map(
                     &p,
                     pool_manager,
@@ -390,16 +365,16 @@ pub async fn run_v4_registration_lifecycle(
                     "seed",
                 )
                 .await
-                .map_err(RegistrationLifecycleError::Verify)
+                .map_err(|kind| kind.at_phase(RegistrationPhase::Lifecycle))
             }
         },
         |tick_data, block| {
             let provider = provider.clone();
             async move {
-                let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
+                let p = provider.ok_or_else(missing_verify_provider)?;
                 let tick_spacing = core
                     .pool_tick_spacing_by_v4_key(pool_manager, &pool_id)
-                    .ok_or(RegistrationLifecycleError::MissingTickSpacing)?;
+                    .ok_or_else(missing_tick_spacing)?;
                 verify_v4_liquidity_map(
                     &p,
                     pool_manager,
@@ -410,7 +385,7 @@ pub async fn run_v4_registration_lifecycle(
                     "post-drain",
                 )
                 .await
-                .map_err(RegistrationLifecycleError::Verify)
+                .map_err(|kind| kind.at_phase(RegistrationPhase::Lifecycle))
             }
         },
     )
@@ -429,13 +404,10 @@ mod tests {
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_pools::v4_state::V4PoolKey;
 
-    use super::{
-        run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle,
-        RegistrationLifecycleError,
-    };
+    use super::{run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle};
     use crate::bot_core::{
-        PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams, RegistrationLifecycle,
-        TickInfo,
+        LifecyclePrecondition, PoolTickCoverage, RefusalKind, RegisterV3PoolParams,
+        RegisterV4PoolParams, RegistrationLifecycle, TickInfo,
     };
     use degenbot_substrate::BotState;
 
@@ -804,7 +776,10 @@ mod tests {
             crate::bot_core::run_v4_registration_lifecycle(&core, None, pm, pid, Some(42)).await;
         assert!(matches!(
             result,
-            Err(RegistrationLifecycleError::MissingProvider)
+            Err(RefusalKind::LifecyclePrecondition {
+                reason: LifecyclePrecondition::MissingVerifyProvider,
+                ..
+            })
         ));
         let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         assert_eq!(

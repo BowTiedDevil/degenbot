@@ -1455,9 +1455,8 @@ class Bot:
 
         # Errors
 
-        As [`Self::register_v4_pool`] (builder RPC/decode errors map via
-        [`map_builder_err`]; admission/filtering errors via
-        [`map_register_v4_err`]).
+        As [`Self::register_v4_pool`] (builder RPC/decode errors and
+        admission/filtering errors both map through the one refusal mapper).
         """
     def resume(self, /) -> None:
         """

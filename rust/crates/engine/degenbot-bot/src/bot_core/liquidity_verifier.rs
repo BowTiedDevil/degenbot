@@ -16,45 +16,22 @@ use degenbot_rpc::liquidity_verifier::{
 use degenbot_rpc::provider::AlloyProvider;
 use hashbrown::HashMap;
 
+use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase, VerifyOrigin};
 use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState};
 
-/// A single bot verification mismatch.
-#[derive(Debug, Clone)]
-pub struct VerificationMismatch {
-    /// Human-readable mismatch description retained for bot error policy.
-    pub message: String,
-}
+/// The bot-facing classification between map evidence and inability to read
+/// it is the one [`RefusalKind`] vocabulary's verify arm: a typed map
+/// divergence is the fatal tripwire ([`VerifyOrigin::Mismatch`]); an
+/// RPC/read/decode failure is a transient transport refusal
+/// ([`VerifyOrigin::Transport`]).
 
-impl std::fmt::Display for VerificationMismatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-impl std::error::Error for VerificationMismatch {}
-
-/// Bot-facing classification between map evidence and inability to read it.
-#[derive(Debug, Clone)]
-pub enum LiquidityVerifyError {
-    /// A typed map divergence, fatal to bot operation.
-    Mismatch(VerificationMismatch),
-    /// An RPC/read/decode failure, retained as transient bot verification
-    /// policy input. The shared verifier keeps read versus decode distinct.
-    Rpc { message: String },
-}
-impl std::fmt::Display for LiquidityVerifyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Mismatch(error) => write!(f, "{error}"),
-            Self::Rpc { message } => write!(f, "{message}"),
-        }
-    }
-}
-impl std::error::Error for LiquidityVerifyError {}
-
-fn map_error(error: &LiquidityMapVerifyError) -> LiquidityVerifyError {
-    LiquidityVerifyError::Rpc {
-        message: error.to_string(),
-    }
+fn map_error(error: &LiquidityMapVerifyError) -> RefusalKind {
+    RefusalKind::verify_failed(
+        RegistrationPhase::Verify,
+        false,
+        VerifyOrigin::Transport,
+        error.to_string(),
+    )
 }
 
 fn mismatch_message(
@@ -85,13 +62,16 @@ fn first_mismatch(
     target: &str,
     phase: &str,
     block: Option<u64>,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     facts
         .first()
         .map(|fact| {
-            LiquidityVerifyError::Mismatch(VerificationMismatch {
-                message: mismatch_message(target, phase, block, *fact),
-            })
+            RefusalKind::verify_failed(
+                RegistrationPhase::Verify,
+                true,
+                VerifyOrigin::Mismatch,
+                mismatch_message(target, phase, block, *fact),
+            )
         })
         .map_or(Ok(()), Err)
 }
@@ -171,7 +151,7 @@ fn map_facts(
     target: &str,
     phase: &str,
     block: Option<u64>,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     report_snapshot_facts(facts, target, phase, block);
     first_mismatch(facts, target, phase, block)
 }
@@ -183,7 +163,7 @@ fn map_live_facts<T: TickMap + ?Sized>(
     phase: &str,
     block: Option<u64>,
     record_telemetry: bool,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     report_live_facts(facts, pool, target, block);
     if record_telemetry {
         if let Some(fact) = facts.iter().find(|fact| {
@@ -242,7 +222,7 @@ async fn verify_snapshot<S: std::hash::BuildHasher>(
     block: Option<u64>,
     phase: &str,
     label: String,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     // Snapshot lifecycle verifies the supplied tick rows only. It does not own a
     // separate bitmap-row map, so deriving words here would invent coverage and
     // issue reads the old snapshot lifecycle never made.
@@ -269,7 +249,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     tick_spacing: i32,
     block_number: u64,
     phase: &str,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     verify_snapshot(
         provider,
         LiquidityMapTarget::V3(pool_address),
@@ -296,7 +276,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
     tick_spacing: i32,
     block_number: u64,
     phase: &str,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     verify_snapshot(
         provider,
         LiquidityMapTarget::V4 {
@@ -322,7 +302,7 @@ pub async fn verify_v3_pools<S: std::hash::BuildHasher>(
     _pool_address: Address,
     pools: &HashMap<u64, (V3PoolIdentity, V3PoolState), S>,
     block_number: Option<u64>,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     for pool in pools.values() {
         verify_v3_pool(provider, pool, block_number).await?;
     }
@@ -338,7 +318,7 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
     provider: &AlloyProvider,
     pool: &T,
     block_number: Option<u64>,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     let facts = verify_liquidity_map(
         provider,
         LiquidityMapTarget::V3(pool.address()),
@@ -371,7 +351,7 @@ pub async fn verify_v4_pools<S: std::hash::BuildHasher>(
     pool_manager: Address,
     pools: &HashMap<u64, (V4PoolIdentity, V4PoolState), S>,
     block_number: Option<u64>,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     let mut seen = HashSet::new();
     for pool in pools.values() {
         if seen.insert(pool.0.pool_id) {
@@ -392,7 +372,7 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
     pool_id: [u8; 32],
     pool: &T,
     block_number: Option<u64>,
-) -> Result<(), LiquidityVerifyError> {
+) -> Result<(), RefusalKind> {
     let facts = verify_liquidity_map(
         provider,
         LiquidityMapTarget::V4 {
@@ -522,7 +502,14 @@ mod tests {
             .unwrap()
             .as_alloy_provider();
         let result = verify_v3_pool(&provider, &pool, Some(42)).await;
-        assert!(matches!(result, Err(LiquidityVerifyError::Mismatch(_))));
+        assert!(matches!(
+            result,
+            Err(RefusalKind::VerifyFailed {
+                fatal: true,
+                origin: VerifyOrigin::Mismatch,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
@@ -694,7 +681,14 @@ mod tests {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
         let result = verify_v3_pool(&provider, &pool, Some(42)).await;
-        assert!(matches!(result, Err(LiquidityVerifyError::Mismatch(_))));
+        assert!(matches!(
+            result,
+            Err(RefusalKind::VerifyFailed {
+                fatal: true,
+                origin: VerifyOrigin::Mismatch,
+                ..
+            })
+        ));
         let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert!(logs.contains("TICK-MAP DESYNC"));
         assert!(logs.contains("divergence_count=2"));

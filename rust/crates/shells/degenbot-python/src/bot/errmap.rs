@@ -6,6 +6,13 @@
 //! this module, and `build_paths`' exception classification rides the typed
 //! hierarchy these constructors produce.
 //!
+//! [`map_refusal`] is the ONE mapper over the one refusal vocabulary
+//! (ADR-077 D2): every registration-phase refusal — the register, build,
+//! identity, verify, lifecycle, and snapshot-load families — is a
+//! [`RefusalKind`] variant, and this module renders it. The typed
+//! `degenbot_pools` register errors keep a thin entry (`map_register_v*_err`)
+//! that delegates to it.
+//!
 //! Address parsing shares the same contract:
 //! [`degenbot_bot::bot_core::registration::parse_address_str`] owns the
 //! `Invalid address '<input>': <source>` vocabulary; the shell only wraps
@@ -18,15 +25,17 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use degenbot_bot::arb_engine::DriverError;
-use degenbot_bot::bot_core::liquidity_verifier::LiquidityVerifyError;
-use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
-use degenbot_bot::bot_core::snapshot_verify::VerifyError;
+use degenbot_bot::bot_core::registration_ledger::{
+    BuildFailure, IdentityMismatchShape, LifecyclePrecondition, PoolFamilyTag, RefusalKind,
+    RegisterRefusal, SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
+};
+use degenbot_bot::bot_core::{RegisterV2PoolError, RegisterV4PoolError};
 use degenbot_pools::state_history::JournalError;
 
 use crate::bot::engine::{
     DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
-    PathRegistryFullError, PoolAlreadyRegisteredError, PoolRegistrationError, SpecViolationError,
-    VerificationMismatchError, VerificationRpcError,
+    PathRegistryFullError, PoolAlreadyRegisteredError, SpecViolationError,
+    UnsupportedPoolFamilyError, VerificationMismatchError, VerificationRpcError,
 };
 
 // --- Driver lifecycle (`EngineDriver` seam) ---
@@ -50,140 +59,227 @@ pub(crate) fn map_driver_err(err: DriverError) -> PyErr {
 /// surface has always raised.
 pub(crate) fn map_driver_lifecycle_err(err: DriverError) -> PyErr {
     match err {
-        DriverError::Verify(e) => match e {
-            RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
-            RegistrationLifecycleError::MissingProvider => VerificationRpcError::new_err(
-                "registration verify requires an RPC provider for tracked pools — configure the bot's single provider"
-                    .to_string(),
+        DriverError::Verify(kind) => map_refusal(kind),
+        other => PyRuntimeError::new_err(other.to_string()),
+    }
+}
+
+/// The ONE mapper over the refusal vocabulary (ADR-077 D2).
+///
+/// Every registration-phase refusal — the register, build, identity, verify,
+/// lifecycle, and snapshot-load families — is a [`RefusalKind`] variant, and
+/// this function is the single home of the historical Python exception
+/// vocabulary each one surfaces as. The pymethod-prefixed no-`ConstructionIo`
+/// arm is supplied by [`map_build_refusal`] (the build entries own their
+/// method name).
+pub(crate) fn map_refusal(kind: RefusalKind) -> PyErr {
+    match kind {
+        RefusalKind::MalformedInput { detail, .. } => PyValueError::new_err(detail),
+        RefusalKind::IdentityMismatch { shape, .. } => match shape {
+            IdentityMismatchShape::Create2 { detail, .. }
+            | IdentityMismatchShape::MintedVsRegistered { detail, .. } => {
+                PyValueError::new_err(detail)
+            }
+        },
+        RefusalKind::MissingConstructionIo { .. } => {
+            PyRuntimeError::new_err("no ConstructionIo attached (requires an alloy provider)")
+        }
+        RefusalKind::UnsupportedFamily { subject, detail, .. } => match subject {
+            UnsupportedSubject::Pool { address } => UnsupportedPoolFamilyError::new_err(format!(
+                "construction route refused pool at {address}: {detail}"
+            )),
+            UnsupportedSubject::Factory { factory } => PyRuntimeError::new_err(format!(
+                "pool build unknown factory {factory} — no built-in DEX variant preset"
+            )),
+            UnsupportedSubject::UnknownIdentity { address } => PyValueError::new_err(format!(
+                "pool build unknown identity at {address}: no identity selector answered"
+            )),
+        },
+        RefusalKind::BuildRefused { failure, .. } => map_build_failure(failure),
+        RefusalKind::RegisterRefused { family, reason, .. } => {
+            map_register_refusal(family, reason)
+        }
+        RefusalKind::UnreadableIdentity { address, .. } => PyRuntimeError::new_err(format!(
+            "build_v3_pool: registry GET answered {address} with no readable V3 identity"
+        )),
+        RefusalKind::SnapshotLoadFailed { reason, .. } => PyRuntimeError::new_err(format!(
+            "load_snapshot_from_db failed: {}",
+            snapshot_reason_detail(&reason)
+        )),
+        RefusalKind::VerifyFailed { origin, detail, .. } => map_verify_failure(origin, detail),
+        RefusalKind::VerifyNotConfigured { detail, .. } => {
+            PyRuntimeError::new_err(format!("verify not configured: {detail}"))
+        }
+        RefusalKind::LifecyclePrecondition { reason, .. } => match reason {
+            LifecyclePrecondition::MissingVerifyProvider => VerificationRpcError::new_err(
+                "registration verify requires an RPC provider for tracked pools — configure the bot's single provider",
             ),
-            RegistrationLifecycleError::MissingTickSpacing => PyRuntimeError::new_err(
-                RegistrationLifecycleError::MissingTickSpacing.to_string(),
+            LifecyclePrecondition::MissingTickSpacing => PyRuntimeError::new_err(
+                "registration verify requires the registered pool's tick spacing",
             ),
         },
-        other => PyRuntimeError::new_err(other.to_string()),
     }
 }
 
-/// Map a classified [`VerifyError`] from a retry-wrapped lifecycle to the typed
-/// Python exception the verify surface has always raised.
-pub(crate) fn map_verify_lifecycle_error(err: VerifyError) -> PyErr {
-    match err {
-        VerifyError::Snapshot(message) => VerificationMismatchError::new_err(message),
-        VerifyError::Provider(message) | VerifyError::Rpc(message) => {
-            VerificationRpcError::new_err(message)
+/// The build-entry variant of [`map_refusal`]: the no-`ConstructionIo` arm's
+/// historical message carries the pymethod prefix, which only the build call
+/// sites own.
+pub(crate) fn map_build_refusal(method: &'static str, kind: RefusalKind) -> PyErr {
+    if matches!(kind, RefusalKind::MissingConstructionIo { .. }) {
+        return map_no_construction_io(method);
+    }
+    map_refusal(kind)
+}
+
+/// The typed builder-failure vocabulary (the historical `map_builder_err`
+/// rendering, plus the construction route's taxonomy arms).
+fn map_build_failure(failure: BuildFailure) -> PyErr {
+    match failure {
+        BuildFailure::HookedPool => {
+            HookedPoolRejectedError::new_err("pool refused: carries an amount-modifying hook")
         }
-        VerifyError::Other(message) => PyRuntimeError::new_err(message),
-        other => PyRuntimeError::new_err(other.to_string()),
+        BuildFailure::DynamicFee => {
+            DynamicFeePoolRejectedError::new_err("pool refused: dynamic fee")
+        }
+        BuildFailure::HighFee => HighFeePoolRejectedError::new_err(
+            "pool refused: static fee exceeds the cmd_executor's 2-byte encoding limit",
+        ),
+        BuildFailure::Rpc(detail) => {
+            PyRuntimeError::new_err(format!("pool build RPC error: {detail}"))
+        }
+        BuildFailure::Spec => PyRuntimeError::new_err("pool build out-of-spec V2 reserve"),
+        BuildFailure::Decoding(message) => {
+            PyRuntimeError::new_err(format!("pool build decode failure: {message}"))
+        }
+        BuildFailure::Db(detail) => {
+            PyRuntimeError::new_err(format!("pool build DB read failed: {detail}"))
+        }
+        BuildFailure::MissingIdentity(message) => {
+            PyValueError::new_err(format!("V4 identity incomplete: {message}"))
+        }
+        BuildFailure::TickAssembly(detail) => {
+            PyValueError::new_err(format!("Tracked tick map rejected at intake: {detail}"))
+        }
+        BuildFailure::Transient(detail) => PyRuntimeError::new_err(detail),
     }
 }
 
-/// Map a `LiquidityVerifyError` (from `liquidity_verifier::verify_v3/v4_pools`)
-/// to a typed Python exception, mirroring `engine::verify::map_verify_err`.
-///
-/// - `Mismatch` → `VerificationMismatchError` (fatal — on-chain tick data
-///   disagrees with the engine).
-/// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure — the
-///   caller may retry/backoff; NOT evidence of a mismatch).
-pub(crate) fn map_liquidity_verify_error(
-    err: degenbot_bot::bot_core::liquidity_verifier::LiquidityVerifyError,
-) -> PyErr {
-    match err {
-        LiquidityVerifyError::Mismatch(m) => VerificationMismatchError::new_err(m.to_string()),
-        LiquidityVerifyError::Rpc { message } => VerificationRpcError::new_err(message),
+/// The registry-insert refusal's Python surface (the historical
+/// `map_register_v*_err` rendering).
+fn map_register_refusal(family: Option<PoolFamilyTag>, reason: RegisterRefusal) -> PyErr {
+    match reason {
+        RegisterRefusal::AlreadyRegistered {
+            address, pool_key, ..
+        } => match (address, pool_key) {
+            (Some(address), _) => PoolAlreadyRegisteredError::new_err(format!(
+                "{} pool already registered: address={address}",
+                family_label(family)
+            )),
+            (None, Some((pool_manager, pool_id))) => PoolAlreadyRegisteredError::new_err(format!(
+                "V4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
+                alloy::hex::encode(pool_id)
+            )),
+            (None, None) => PoolAlreadyRegisteredError::new_err("pool already registered"),
+        },
+        RegisterRefusal::SpecViolation { detail } => SpecViolationError::new_err(format!(
+            "{} pool registration failed: {detail}",
+            family_label(family)
+        )),
+        RegisterRefusal::Admission {
+            failure,
+            hook_flags,
+            fee,
+        } => map_admission(failure, hook_flags, fee),
+    }
+}
+
+/// The V4 admission refusals' Python surface (the historical
+/// `map_register_v4_err` rendering).
+fn map_admission(failure: BuildFailure, hook_flags: Option<u16>, fee: Option<u32>) -> PyErr {
+    match failure {
+        BuildFailure::HookedPool => HookedPoolRejectedError::new_err(format!(
+            "V4 pool has amount-modifying hooks (flags=0x{:04X}, mask=0x{:04X}) — excluded from arbitrage",
+            hook_flags.unwrap_or_default(),
+            degenbot_bot::bot_core::AMOUNT_MODIFYING_HOOK_MASK
+        )),
+        BuildFailure::DynamicFee => DynamicFeePoolRejectedError::new_err(format!(
+            "V4 pool has dynamic fee (fee=0x{:06X}) — excluded from arbitrage",
+            fee.unwrap_or_default()
+        )),
+        BuildFailure::HighFee => HighFeePoolRejectedError::new_err(format!(
+            "V4 pool fee (fee={}) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage",
+            fee.unwrap_or_default()
+        )),
+        other => map_build_failure(other),
+    }
+}
+
+/// The family label the registration messages spell.
+fn family_label(family: Option<PoolFamilyTag>) -> &'static str {
+    match family {
+        Some(PoolFamilyTag::V3) => "V3",
+        Some(PoolFamilyTag::AerodromeV2) => "Aerodrome",
+        Some(PoolFamilyTag::V4) => "V4",
+        // The address-keyed families share the V2 rendering; only V2 reaches
+        // a register refusal today.
+        _ => "V2",
+    }
+}
+
+/// A verify failure's Python surface (the historical `map_verify_err` /
+/// `map_liquidity_verify_error` rendering): a mismatch is the fatal
+/// `VerificationMismatchError`; a transport or provider-construction refusal
+/// is the retryable `VerificationRpcError`; everything else is a
+/// `RuntimeError`.
+fn map_verify_failure(origin: VerifyOrigin, detail: String) -> PyErr {
+    match origin {
+        VerifyOrigin::Mismatch => VerificationMismatchError::new_err(detail),
+        VerifyOrigin::Transport | VerifyOrigin::ProviderConstruction => {
+            VerificationRpcError::new_err(detail)
+        }
+        VerifyOrigin::ProtocolViolation | VerifyOrigin::Other => PyRuntimeError::new_err(detail),
+    }
+}
+
+/// The snapshot-load reason's historical rendering.
+fn snapshot_reason_detail(reason: &SnapshotLoadReason) -> &str {
+    match reason {
+        SnapshotLoadReason::Db { detail }
+        | SnapshotLoadReason::Decode { detail }
+        | SnapshotLoadReason::OutOfRange { detail } => detail,
     }
 }
 
 // --- Pool registration (admission) ---
 
-/// Map a [`RegisterV2PoolError`] to a typed Python exception under the
-/// `PoolRegistrationError` hierarchy.
-///
-/// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`]
-/// - `SpecViolation` → [`SpecViolationError`] (the message names the
-///   offending field, its value, and the bound it violates, mirroring
-///   `spec_bounds::SpecViolation`'s `Display`)
-///
-/// These are subclasses of `PoolRegistrationError`, which is itself a
-/// subclass of `ValueError`, so a broad `except ValueError:` (or
-/// `except PoolRegistrationError:` to scope just admission refusals) keeps
-/// working.
-pub(crate) fn map_register_v2_err(err: degenbot_bot::bot_core::RegisterV2PoolError) -> pyo3::PyErr {
-    match err {
-        degenbot_bot::bot_core::RegisterV2PoolError::AlreadyRegistered { address } => {
-            PoolAlreadyRegisteredError::new_err(format!(
-                "V2 pool already registered: address={address}"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV2PoolError::SpecViolation(v) => {
-            SpecViolationError::new_err(format!("V2 pool registration failed: {v}"))
-        }
-    }
+/// Map a [`RegisterV2PoolError`] to its Python surface through the one
+/// refusal mapper (the V2 address-keyed insert refusal).
+pub(crate) fn map_register_v2_err(err: RegisterV2PoolError) -> PyErr {
+    map_refusal(RefusalKind::from_register_v2_error(&err))
 }
 
-/// Map a [`RegisterV3PoolError`] to a typed Python exception under the
-/// `PoolRegistrationError` hierarchy. Mirrors [`map_register_v2_err`].
-pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolError) -> pyo3::PyErr {
-    match err {
-        degenbot_bot::bot_core::RegisterV3PoolError::AlreadyRegistered { address } => {
-            PoolAlreadyRegisteredError::new_err(format!(
-                "V3 pool already registered: address={address}"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV3PoolError::SpecViolation(v) => {
-            SpecViolationError::new_err(format!("V3 pool registration failed: {v}"))
-        }
-    }
-}
-
-/// Map a [`RegisterV4PoolError`] to a typed Python exception.
+/// Map a [`RegisterV4PoolError`] to its Python surface through the one
+/// refusal mapper.
 ///
 /// - `HookedPool` → [`HookedPoolRejectedError`] (V4 amount-modifying-hook
 ///   admission floor — the solver's CL math assumes no hook intervention).
 /// - `DynamicFee` → [`DynamicFeePoolRejectedError`] (V4 dynamic-fee
 ///   admission floor — the solver assumes a fixed fee).
 /// - `FeeExceedsEncoderLimit` → [`HighFeePoolRejectedError`] (V4 static-fee
-///   exceeds the `cmd_executor`'s 2-byte encoding field; the
-///   fee is protocol-valid but un-encodable and unprofitable).
+///   exceeds the `cmd_executor`'s 2-byte encoding field; the fee is
+///   protocol-valid but un-encodable and unprofitable).
 /// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`] (duplicate
 ///   `(pool_manager, pool_id)` registration — a wiring/programming error
 ///   surfaced at admission time, unified with the V2/V3 twins under
 ///   `PoolRegistrationError`).
 /// - `SpecViolation` → [`SpecViolationError`] (out-of-spec
-///   sqrtPriceX96/tick/fee/tickSpacing, stop-gap upgraded to a typed
-///   exception).
+///   sqrtPriceX96/tick/fee/tickSpacing).
 ///
-/// The message text for the V4-specific variants is byte-for-byte unchanged
-/// from the legacy `Err(String)` formatting so `build_paths`'s classification
-/// (now `isinstance`, was substring) matches the same diagnostics.
-pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolError) -> pyo3::PyErr {
-    match err {
-        degenbot_bot::bot_core::RegisterV4PoolError::HookedPool { hook_flags } => {
-            HookedPoolRejectedError::new_err(format!(
-                "V4 pool has amount-modifying hooks (flags=0x{hook_flags:04X}, mask=0x{:04X}) — excluded from arbitrage",
-                degenbot_bot::bot_core::AMOUNT_MODIFYING_HOOK_MASK
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV4PoolError::DynamicFee { fee } => {
-            DynamicFeePoolRejectedError::new_err(format!(
-                "V4 pool has dynamic fee (fee=0x{fee:06X}) — excluded from arbitrage"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV4PoolError::FeeExceedsEncoderLimit { fee } => {
-            HighFeePoolRejectedError::new_err(format!(
-                "V4 pool fee (fee={fee}) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterV4PoolError::AlreadyRegistered {
-            pool_manager,
-            pool_id,
-        } => PoolAlreadyRegisteredError::new_err(format!(
-            "V4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
-            alloy::hex::encode(pool_id),
-        )),
-        degenbot_bot::bot_core::RegisterV4PoolError::SpecViolation(v) => {
-            SpecViolationError::new_err(format!("V4 pool registration failed: {v}"))
-        }
-    }
+/// The message text is byte-for-byte the legacy `Err(String)` formatting, so
+/// `build_paths`'s classification (now `isinstance`, was substring) matches
+/// the same diagnostics.
+pub(crate) fn map_register_v4_err(err: RegisterV4PoolError) -> PyErr {
+    map_refusal(RefusalKind::from_register_v4_error(&err))
 }
 
 /// Map the typed path-registration refusal: a full registry is the benign
@@ -207,137 +303,12 @@ pub(crate) fn map_path_registration_err(
 
 // --- Builder / build families ---
 
-/// Map the ONE identity-parity refusal (ADR-077 D3) to its Python surface.
-///
-/// The register path ([`map_v2_registration_err`] and its V3 / Aerodrome
-/// twins) and the build path ([`map_builder_err`]) both consume the same
-/// `parity::IdentityDivergence` verdict, so the same fact raises the same
-/// `ValueError` whichever door reached it. The rendering is the verdict's own
-/// `Display` — the historical CREATE2 mismatch text for a recomputation, so
-/// the register path's message is unchanged.
-fn map_identity_divergence(
-    err: &degenbot_bot::bot_core::pool_builder::parity::IdentityDivergence,
-) -> pyo3::PyErr {
-    PyValueError::new_err(err.to_string())
-}
-
-/// Map a Rust `PoolBuilder` error (the delegation adapter's builder stage) to
-/// its Python surface: a `RuntimeError` carrying the RPC/spec/DB failure
-/// cause, or the shared identity-parity `ValueError` for the `CREATE2`
-/// verdict — the SAME exception the register path raises for the same fact.
-/// Registration-stage errors are mapped by the `map_register_v*` fns above, so
-/// this covers only the pre-registration build stage.
-pub(crate) fn map_builder_err(
-    err: degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError;
-    match err {
-        PoolBuilderError::Rpc(e) => PyRuntimeError::new_err(format!("pool build RPC error: {e}")),
-        PoolBuilderError::UnknownVariant { factory } => PyRuntimeError::new_err(format!(
-            "pool build unknown factory {factory} — no built-in DEX variant preset"
-        )),
-        PoolBuilderError::UnknownPoolIdentity { address } => PyValueError::new_err(format!(
-            "pool build unknown identity at {address}: no identity selector answered"
-        )),
-        PoolBuilderError::Spec => PyRuntimeError::new_err("pool build out-of-spec V2 reserve"),
-        PoolBuilderError::Identity(e) => map_identity_divergence(&e),
-        PoolBuilderError::Db(e) => {
-            PyRuntimeError::new_err(format!("pool build DB read failed: {e}"))
-        }
-        PoolBuilderError::Decoding { message } => {
-            PyRuntimeError::new_err(format!("pool build decode failure: {message}"))
-        }
-        PoolBuilderError::MissingIdentity { message } => {
-            PyValueError::new_err(format!("V4 identity incomplete: {message}"))
-        }
-        PoolBuilderError::TickAssembly(e) => {
-            PyValueError::new_err(format!("Tracked tick map rejected at intake: {e}"))
-        }
-    }
-}
-
 /// Map the typed no-`ConstructionIo` refusal to the historical
 /// method-prefixed `RuntimeError` (each pymethod owns its prefix).
 pub(crate) fn map_no_construction_io(method: &'static str) -> pyo3::PyErr {
     PyRuntimeError::new_err(format!(
         "{method}: no ConstructionIo attached (requires an alloy provider)"
     ))
-}
-
-/// Map a core `BuildError` (the no-registration build families: Aerodrome /
-/// Balancer weighted + stable / Curve / ERC-20 token) to the shell's two
-/// historical surfaces: the method-prefixed no-io `RuntimeError` and the
-/// builder error map.
-pub(crate) fn map_build_err(
-    method: &'static str,
-    err: degenbot_bot::bot_core::build_register::BuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::BuildError;
-    match err {
-        BuildError::NoConstructionIo => map_no_construction_io(method),
-        BuildError::Builder(e) => map_builder_err(e),
-    }
-}
-
-/// Map a core `V2BuildError` to the shell's three historical surfaces: the
-/// method-prefixed no-io `RuntimeError`, the builder error map, and the V2
-/// registration hierarchy map.
-pub(crate) fn map_v2_build_err(
-    err: degenbot_bot::bot_core::build_register::V2BuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::V2BuildError;
-    match err {
-        V2BuildError::NoConstructionIo => map_no_construction_io("build_v2_pool"),
-        V2BuildError::Builder(e) => map_builder_err(e),
-        V2BuildError::Register(e) => map_register_v2_err(e),
-        V2BuildError::IdentityDivergence(e) => {
-            PoolRegistrationError::new_err(format!("build_v2_pool: {e}"))
-        }
-    }
-}
-
-/// The V4 twin of [`map_v2_build_err`].
-pub(crate) fn map_v4_build_err(
-    err: degenbot_bot::bot_core::build_register::V4BuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::V4BuildError;
-    match err {
-        V4BuildError::NoConstructionIo => map_no_construction_io("build_v4_pool"),
-        V4BuildError::Builder(e) => map_builder_err(e),
-        V4BuildError::Register(e) => map_register_v4_err(e),
-        V4BuildError::IdentityDivergence(e) => {
-            PoolRegistrationError::new_err(format!("build_v4_pool: {e}"))
-        }
-    }
-}
-
-/// Map a core `AerodromeBuildError` to the shell's historical surfaces: the
-/// method-prefixed no-io `RuntimeError`, the builder error map, and the
-/// Aerodrome registration hierarchy map. The [`map_v2_build_err`] twin.
-pub(crate) fn map_aerodrome_build_err(
-    err: degenbot_bot::bot_core::build_register::AerodromeBuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::AerodromeBuildError;
-    match err {
-        AerodromeBuildError::NoConstructionIo => map_no_construction_io("build_aerodrome_v2_pool"),
-        AerodromeBuildError::Builder(e) => map_builder_err(e),
-        AerodromeBuildError::Register(e) => map_register_aerodrome_err(e),
-    }
-}
-
-/// Map a core `V3BuildError` to the shell's historical surfaces: the
-/// construction-route refusal map (the LOUD `UnsupportedPoolFamilyError`
-/// among them) and the method-prefixed race-answer `RuntimeError`.
-pub(crate) fn map_v3_build_err(
-    err: degenbot_bot::bot_core::build_register::V3BuildError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::V3BuildError;
-    match err {
-        V3BuildError::Refusal(e) => crate::bot::engine::map_construction_refusal(e),
-        V3BuildError::NoReadableIdentity { address } => PyRuntimeError::new_err(format!(
-            "build_v3_pool: registry GET answered {address} with no readable V3 identity"
-        )),
-    }
 }
 
 // --- Swap calculation ---
@@ -388,85 +359,6 @@ pub(crate) fn map_calc_tokens_in_err(
 }
 
 // --- Registration wrappers (CREATE2 verify → admission) ---
-
-/// Map a core
-/// [`V2RegistrationError`](degenbot_bot::bot_core::registration::V2RegistrationError)
-/// to the shell's two historical surfaces: the bare CREATE2-mismatch
-/// `ValueError` and the `PoolRegistrationError` hierarchy map
-/// ([`map_register_v2_err`]).
-pub(crate) fn map_v2_registration_err(
-    err: degenbot_bot::bot_core::registration::V2RegistrationError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::registration::V2RegistrationError;
-    match err {
-        V2RegistrationError::Identity(e) => map_identity_divergence(&e),
-        V2RegistrationError::Register(e) => map_register_v2_err(e),
-    }
-}
-
-/// The V3 twin of [`map_v2_registration_err`].
-pub(crate) fn map_v3_registration_err(
-    err: degenbot_bot::bot_core::registration::V3RegistrationError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::registration::V3RegistrationError;
-    match err {
-        V3RegistrationError::Identity(e) => map_identity_divergence(&e),
-        V3RegistrationError::Register(e) => map_register_v3_err(e),
-    }
-}
-
-/// Map a core
-/// [`AerodromeRegistrationError`](degenbot_bot::bot_core::registration::AerodromeRegistrationError)
-/// to the shell's two historical surfaces: the bare CREATE2-mismatch
-/// `ValueError` and the `PoolRegistrationError` hierarchy map
-/// ([`map_register_aerodrome_err`]).
-pub(crate) fn map_aerodrome_registration_err(
-    err: degenbot_bot::bot_core::registration::AerodromeRegistrationError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::registration::AerodromeRegistrationError;
-    match err {
-        AerodromeRegistrationError::Identity(e) => map_identity_divergence(&e),
-        AerodromeRegistrationError::Register(e) => map_register_aerodrome_err(e),
-    }
-}
-
-/// Map a core
-/// [`RegisterAerodromePoolError`](degenbot_pools::aerodrome_v2_state::RegisterAerodromePoolError)
-/// to a typed Python exception under the `PoolRegistrationError` hierarchy.
-/// The V2 twin of [`map_register_v2_err`]: `AlreadyRegistered` →
-/// [`PoolAlreadyRegisteredError`], `SpecViolation` →
-/// [`SpecViolationError`] (belt-and-braces — the params layer is
-/// `U112`-typed, so this arm is unreachable through the current seam).
-pub(crate) fn map_register_aerodrome_err(
-    err: degenbot_bot::bot_core::RegisterAerodromePoolError,
-) -> pyo3::PyErr {
-    match err {
-        degenbot_bot::bot_core::RegisterAerodromePoolError::AlreadyRegistered { address } => {
-            PoolAlreadyRegisteredError::new_err(format!(
-                "Aerodrome pool already registered: address={address}"
-            ))
-        }
-        degenbot_bot::bot_core::RegisterAerodromePoolError::SpecViolation(v) => {
-            SpecViolationError::new_err(format!("Aerodrome pool registration failed: {v}"))
-        }
-    }
-}
-
-/// Map a core
-/// [`ResolveV4IdentityError`](degenbot_bot::bot_core::registration::ResolveV4IdentityError)
-/// to the shell's historical surfaces: the method-prefixed "no
-/// `ConstructionIo` attached" `RuntimeError` and the builder error map.
-pub(crate) fn map_resolve_v4_identity_err(
-    err: degenbot_bot::bot_core::registration::ResolveV4IdentityError,
-) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::registration::ResolveV4IdentityError;
-    match err {
-        ResolveV4IdentityError::NoConstructionIo => PyRuntimeError::new_err(
-            "resolve_v4_identity: no ConstructionIo attached (requires an alloy provider)",
-        ),
-        ResolveV4IdentityError::Builder(e) => map_builder_err(e),
-    }
-}
 
 // --- Journal ---
 
@@ -567,18 +459,27 @@ mod tests {
 
     use super::*;
     use alloy::primitives::{Address, B256, U256};
-    use degenbot_bot::bot_core::liquidity_verifier::VerificationMismatch;
+    use degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError;
     use degenbot_bot::bot_core::pool_builder::parity::IdentityDivergence;
-    use degenbot_bot::bot_core::registration::{
-        AerodromeRegistrationError, ResolveV4IdentityError, V2RegistrationError,
-    };
+    use degenbot_bot::bot_core::registration_ledger::RegistrationPhase;
     use degenbot_bot::bot_core::{
         RegisterAerodromePoolError, RegisterV2PoolError, RegisterV3PoolError, RegisterV4PoolError,
     };
+    use degenbot_core::errors::ProviderError;
     use degenbot_pools::spec_bounds::{SpecValue, SpecViolation};
 
     fn addr(s: &str) -> Address {
         s.parse().unwrap()
+    }
+
+    /// A fatal verify mismatch at the verify phase.
+    fn verify_mismatch(detail: &str) -> RefusalKind {
+        RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            true,
+            VerifyOrigin::Mismatch,
+            detail.to_owned(),
+        )
     }
 
     /// A `CREATE2` recomputation mismatch — the ONE fact the register path and
@@ -644,7 +545,7 @@ mod tests {
     #[test]
     fn driver_lifecycle_err_pins_the_verify_vocabulary() {
         let err = map_driver_lifecycle_err(DriverError::Verify(
-            RegistrationLifecycleError::MissingProvider,
+            RefusalKind::lifecycle_precondition(LifecyclePrecondition::MissingVerifyProvider),
         ));
         Python::attach(|py| {
             assert!(err.is_instance_of::<VerificationRpcError>(py));
@@ -655,48 +556,71 @@ mod tests {
         );
 
         let err = map_driver_lifecycle_err(DriverError::Verify(
-            RegistrationLifecycleError::MissingTickSpacing,
+            RefusalKind::lifecycle_precondition(LifecyclePrecondition::MissingTickSpacing),
         ));
         assert_eq!(
             runtime_error(&err),
-            RegistrationLifecycleError::MissingTickSpacing.to_string()
+            "registration verify requires the registered pool's tick spacing"
         );
     }
 
     #[test]
-    fn verify_lifecycle_err_pins_the_typed_vocabulary() {
-        let err = map_verify_lifecycle_error(VerifyError::Snapshot("tick drift".to_string()));
+    fn verify_lifecycle_refusals_pin_the_typed_vocabulary() {
+        let err = map_refusal(verify_mismatch("tick drift"));
         Python::attach(|py| {
             assert!(err.is_instance_of::<VerificationMismatchError>(py));
         });
         assert_eq!(message(&err), "tick drift");
 
-        let err = map_verify_lifecycle_error(VerifyError::Provider("http down".to_string()));
+        let err = map_refusal(RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            false,
+            VerifyOrigin::ProviderConstruction,
+            "http down".to_string(),
+        ));
         Python::attach(|py| {
             assert!(err.is_instance_of::<VerificationRpcError>(py));
         });
         assert_eq!(message(&err), "http down");
 
-        let err = map_verify_lifecycle_error(VerifyError::Rpc("timeout".to_string()));
+        let err = map_refusal(RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            false,
+            VerifyOrigin::Transport,
+            "timeout".to_string(),
+        ));
         Python::attach(|py| {
             assert!(err.is_instance_of::<VerificationRpcError>(py));
         });
         assert_eq!(message(&err), "timeout");
 
-        let err = map_verify_lifecycle_error(VerifyError::Other("boom".to_string()));
+        let err = map_refusal(RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            true,
+            VerifyOrigin::Other,
+            "boom".to_string(),
+        ));
         assert_eq!(runtime_error(&err), "boom");
+
+        let err = map_refusal(RefusalKind::verify_not_configured(
+            RegistrationPhase::Verify,
+            "set the rpc url".to_string(),
+        ));
+        assert_eq!(
+            runtime_error(&err),
+            "verify not configured: set the rpc url"
+        );
     }
 
     #[test]
-    fn liquidity_verify_err_pins_the_typed_vocabulary() {
-        let err =
-            map_liquidity_verify_error(LiquidityVerifyError::Mismatch(VerificationMismatch {
-                message: "V3 pool 0x.. block=1: tick 5 liquidityGross mismatch".to_string(),
-            }));
+    fn liquidity_verify_refusals_pin_the_typed_vocabulary() {
+        let err = map_refusal(verify_mismatch(
+            "V3 pool 0x.. block=1: tick 5 liquidityGross mismatch",
+        ));
         Python::attach(|py| {
             assert!(
                 err.is_instance_of::<VerificationMismatchError>(py),
-                "LiquidityVerifyError::Mismatch must surface as VerificationMismatchError (fatal), not PyRuntimeError"
+                "a map divergence must surface as VerificationMismatchError (fatal), not PyRuntimeError"
             );
             assert!(
                 !err.is_instance_of::<VerificationRpcError>(py),
@@ -708,13 +632,16 @@ mod tests {
             "V3 pool 0x.. block=1: tick 5 liquidityGross mismatch"
         );
 
-        let err = map_liquidity_verify_error(LiquidityVerifyError::Rpc {
-            message: "V3 pool 0x..: tickBitmap(0) RPC call failed: timeout".to_string(),
-        });
+        let err = map_refusal(RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            false,
+            VerifyOrigin::Transport,
+            "V3 pool 0x..: tickBitmap(0) RPC call failed: timeout".to_string(),
+        ));
         Python::attach(|py| {
             assert!(
                 err.is_instance_of::<VerificationRpcError>(py),
-                "LiquidityVerifyError::Rpc must surface as VerificationRpcError (retryable), not PyRuntimeError"
+                "a transport refusal must surface as VerificationRpcError (retryable), not PyRuntimeError"
             );
             assert!(
                 !err.is_instance_of::<VerificationMismatchError>(py),
@@ -749,20 +676,24 @@ mod tests {
     }
 
     #[test]
-    fn register_v3_err_pins_the_vocabulary() {
-        let err = map_register_v3_err(RegisterV3PoolError::AlreadyRegistered {
-            address: addr("0x0202020202020202020202020202020202020202"),
-        });
+    fn register_v3_refusals_pin_the_vocabulary() {
+        let err = map_refusal(RefusalKind::from_register_v3_error(
+            &RegisterV3PoolError::AlreadyRegistered {
+                address: addr("0x0202020202020202020202020202020202020202"),
+            },
+        ));
         assert_eq!(
             message(&err),
             "V3 pool already registered: address=0x0202020202020202020202020202020202020202"
         );
 
-        let err = map_register_v3_err(RegisterV3PoolError::SpecViolation(SpecViolation {
-            field: "tick",
-            value: SpecValue::I32(887_273),
-            bound: "|tick| ≤ 887272",
-        }));
+        let err = map_refusal(RefusalKind::from_register_v3_error(
+            &RegisterV3PoolError::SpecViolation(SpecViolation {
+                field: "tick",
+                value: SpecValue::I32(887_273),
+                bound: "|tick| ≤ 887272",
+            }),
+        ));
         assert_eq!(
             message(&err),
             "V3 pool registration failed: field `tick` value 887273 is out of bounds: |tick| ≤ 887272"
@@ -838,46 +769,54 @@ mod tests {
     }
 
     #[test]
-    fn builder_err_pins_the_vocabulary() {
-        use degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError;
+    fn builder_refusals_pin_the_vocabulary() {
+        let mapped = |err: &PoolBuilderError| {
+            map_refusal(RefusalKind::from_builder_error(
+                err,
+                None,
+                RegistrationPhase::Build,
+            ))
+        };
 
         assert_eq!(
-            message(&map_builder_err(PoolBuilderError::Spec)),
+            message(&mapped(&PoolBuilderError::Spec)),
             "pool build out-of-spec V2 reserve"
         );
         // The identity verdict is the ONE exception the register path and the
         // build path both raise: the deployment table's own mismatch text.
         let mismatch = address_mismatch(1);
         assert_eq!(
-            value_error(&map_builder_err(PoolBuilderError::Identity(
+            value_error(&mapped(&PoolBuilderError::Identity(
                 IdentityDivergence::Create2(mismatch),
             ))),
             mismatch.to_string()
         );
         assert_eq!(
-            message(&map_builder_err(PoolBuilderError::Decoding {
+            message(&mapped(&PoolBuilderError::Decoding {
                 message: "bad data".to_string(),
             })),
             "pool build decode failure: bad data"
         );
         assert_eq!(
-            message(&map_builder_err(PoolBuilderError::MissingIdentity {
+            message(&mapped(&PoolBuilderError::MissingIdentity {
                 message: "no ticks".to_string(),
             })),
             "V4 identity incomplete: no ticks"
         );
+        assert_eq!(
+            message(&mapped(&PoolBuilderError::Rpc(ProviderError::Timeout {
+                message: "blip".to_string(),
+            }))),
+            "pool build RPC error: Request timeout: blip"
+        );
         let factory = addr("0x0404040404040404040404040404040404040404");
         assert_eq!(
-            message(&map_builder_err(PoolBuilderError::UnknownVariant {
-                factory
-            })),
+            message(&mapped(&PoolBuilderError::UnknownVariant { factory })),
             format!("pool build unknown factory {factory} — no built-in DEX variant preset")
         );
         let address = addr("0x0505050505050505050505050505050505050505");
         assert_eq!(
-            message(&map_builder_err(PoolBuilderError::UnknownPoolIdentity {
-                address
-            })),
+            message(&mapped(&PoolBuilderError::UnknownPoolIdentity { address })),
             format!("pool build unknown identity at {address}: no identity selector answered")
         );
     }
@@ -891,19 +830,21 @@ mod tests {
     }
 
     #[test]
-    fn build_err_pins_the_no_io_prefix_and_builder_routing() {
+    fn build_refusals_pin_the_no_io_prefix_and_builder_routing() {
         assert_eq!(
-            message(&map_build_err(
+            message(&map_build_refusal(
                 "build_curve_pool",
-                degenbot_bot::bot_core::build_register::BuildError::NoConstructionIo,
+                RefusalKind::missing_construction_io(None, RegistrationPhase::Build),
             )),
             "build_curve_pool: no ConstructionIo attached (requires an alloy provider)"
         );
         assert_eq!(
-            message(&map_build_err(
+            message(&map_build_refusal(
                 "build_curve_pool",
-                degenbot_bot::bot_core::build_register::BuildError::Builder(
-                    degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Spec,
+                RefusalKind::from_builder_error(
+                    &PoolBuilderError::Spec,
+                    None,
+                    RegistrationPhase::Build,
                 ),
             )),
             "pool build out-of-spec V2 reserve"
@@ -911,33 +852,36 @@ mod tests {
     }
 
     #[test]
-    fn v2_build_err_pins_the_no_io_prefix_and_routing() {
+    fn v2_build_refusals_pin_the_no_io_prefix_and_routing() {
         assert_eq!(
-            message(&map_v2_build_err(
-                degenbot_bot::bot_core::build_register::V2BuildError::NoConstructionIo,
+            message(&map_build_refusal(
+                "build_v2_pool",
+                RefusalKind::missing_construction_io(
+                    Some(PoolFamilyTag::V2),
+                    RegistrationPhase::Build,
+                ),
             )),
             "build_v2_pool: no ConstructionIo attached (requires an alloy provider)"
         );
         assert_eq!(
-            message(&map_v2_build_err(
-                degenbot_bot::bot_core::build_register::V2BuildError::Register(
-                    RegisterV2PoolError::AlreadyRegistered {
-                        address: addr("0x0101010101010101010101010101010101010101"),
-                    },
-                ),
-            )),
+            message(&map_refusal(RefusalKind::from_register_v2_error(
+                &RegisterV2PoolError::AlreadyRegistered {
+                    address: addr("0x0101010101010101010101010101010101010101"),
+                },
+            ))),
             "V2 pool already registered: address=0x0101010101010101010101010101010101010101"
         );
     }
 
     #[test]
-    fn v3_build_err_pins_the_refusal_and_race_answer() {
+    fn v3_build_refusals_pin_the_race_answer() {
         assert_eq!(
-            message(&map_v3_build_err(
-                degenbot_bot::bot_core::build_register::V3BuildError::NoReadableIdentity {
-                    address: addr("0x0606060606060606060606060606060606060606"),
-                },
-            )),
+            message(&map_refusal(RefusalKind::unreadable_identity(
+                Some(PoolFamilyTag::V3),
+                RegistrationPhase::Register,
+                addr("0x0606060606060606060606060606060606060606"),
+                "registry GET answered 0x0606060606060606060606060606060606060606 with no readable V3 identity".to_string(),
+            ))),
             "build_v3_pool: registry GET answered 0x0606060606060606060606060606060606060606 with no readable V3 identity"
         );
     }
@@ -990,12 +934,13 @@ mod tests {
     }
 
     #[test]
-    fn v2_registration_err_pins_the_create2_and_admission_vocabulary() {
+    fn register_refusals_pin_the_create2_and_admission_vocabulary() {
         let mismatch = address_mismatch(1);
         let expected = mismatch.to_string();
         assert_eq!(
-            value_error(&map_v2_registration_err(V2RegistrationError::Identity(
-                IdentityDivergence::Create2(mismatch),
+            value_error(&map_refusal(RefusalKind::from_identity_divergence(
+                Some(PoolFamilyTag::V2),
+                &IdentityDivergence::Create2(mismatch),
             ))),
             expected
         );
@@ -1004,8 +949,8 @@ mod tests {
             "the mismatch vocabulary itself is pinned core-side: {expected}"
         );
 
-        let err = map_v2_registration_err(V2RegistrationError::Register(
-            RegisterV2PoolError::AlreadyRegistered {
+        let err = map_refusal(RefusalKind::from_register_v2_error(
+            &RegisterV2PoolError::AlreadyRegistered {
                 address: addr("0x0101010101010101010101010101010101010101"),
             },
         ));
@@ -1022,10 +967,15 @@ mod tests {
     fn identity_mismatch_raises_one_python_shape_for_both_paths() {
         let divergence = IdentityDivergence::Create2(address_mismatch(1));
 
-        let register = map_v2_registration_err(V2RegistrationError::Identity(divergence.clone()));
-        let build = map_builder_err(
-            degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Identity(divergence),
-        );
+        let register = map_refusal(RefusalKind::from_identity_divergence(
+            Some(PoolFamilyTag::V2),
+            &divergence,
+        ));
+        let build = map_refusal(RefusalKind::from_builder_error(
+            &PoolBuilderError::Identity(divergence),
+            Some(PoolFamilyTag::V2),
+            RegistrationPhase::Build,
+        ));
 
         assert_eq!(
             value_error(&register),
@@ -1035,21 +985,22 @@ mod tests {
     }
 
     #[test]
-    fn aerodrome_registration_err_pins_the_create2_and_admission_vocabulary() {
+    fn aerodrome_registration_refusals_pin_the_create2_and_admission_vocabulary() {
         let mismatch = address_mismatch(8453);
         let expected = mismatch.to_string();
         assert_eq!(
-            value_error(&map_aerodrome_registration_err(
-                AerodromeRegistrationError::Identity(IdentityDivergence::Create2(mismatch)),
-            )),
+            value_error(&map_refusal(RefusalKind::from_identity_divergence(
+                Some(PoolFamilyTag::AerodromeV2),
+                &IdentityDivergence::Create2(mismatch),
+            ))),
             expected
         );
 
         // The typed admission twin of the V2 arm: duplicate-address
         // refusals surface as PoolAlreadyRegisteredError (a
         // PoolRegistrationError subclass), not a bare ValueError.
-        let err = map_aerodrome_registration_err(AerodromeRegistrationError::Register(
-            RegisterAerodromePoolError::AlreadyRegistered {
+        let err = map_refusal(RefusalKind::from_register_aerodrome_error(
+            &RegisterAerodromePoolError::AlreadyRegistered {
                 address: addr("0x0505050505050505050505050505050505050505"),
             },
         ));
@@ -1066,10 +1017,14 @@ mod tests {
     }
 
     #[test]
-    fn resolve_v4_identity_err_pins_the_no_io_refusal() {
+    fn resolve_v4_identity_refusals_pin_the_no_io_refusal() {
         assert_eq!(
-            message(&map_resolve_v4_identity_err(
-                ResolveV4IdentityError::NoConstructionIo,
+            message(&map_build_refusal(
+                "resolve_v4_identity",
+                RefusalKind::missing_construction_io(
+                    Some(PoolFamilyTag::V4),
+                    RegistrationPhase::Identity,
+                ),
             )),
             "resolve_v4_identity: no ConstructionIo attached (requires an alloy provider)"
         );

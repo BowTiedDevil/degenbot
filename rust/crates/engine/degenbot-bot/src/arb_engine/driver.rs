@@ -49,8 +49,8 @@
 //! - **`DriverError`.** Closed enum below. Phase violations carry a typed
 //!   `PhaseError`; registration propagates the typed
 //!   `PathRegistrationError`; the verify lifecycle propagates the core
-//!   `RegistrationLifecycleError` so the adapter keeps its byte-identical
-//!   Python exception mapping.
+//!   `RefusalKind` so the adapter keeps its byte-identical Python exception
+//!   mapping.
 //! - **Verify provider.** Built by the driver (`set_verify_rpc_url` + an
 //!   internal async builder used by `start`) and stored on the driver.
 //! - **Lifecycle inputs are typed.** ADR-050 D4 sketches `&str` inputs; the
@@ -65,10 +65,8 @@ use crate::arb_engine::{
     BlockNotification, EngineRetune, EngineStages, InlineSimulator, PumpPhase, ResultBatch,
 };
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
-use crate::bot_core::liquidity_verifier::LiquidityVerifyError;
-use crate::bot_core::registration_lifecycle::RegistrationLifecycleError;
+use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase, VerifyOrigin};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
-use crate::bot_core::snapshot_verify::VerifyError;
 use crate::bot_core::verification_retry::{retry_verification_call, RetryPolicy};
 use crate::bot_core::verify_claims::PoolVerifications;
 use crate::bot_core::{Bot, PumpControl, StageHandlers};
@@ -201,10 +199,10 @@ pub enum DriverError {
     Resume(String),
     /// Typed path-registration refusal (propagated verbatim, ADR-050 D4).
     Registration(PathRegistrationError),
-    /// The registration verify lifecycle failed — the core
-    /// `RegistrationLifecycleError` (mismatch/RPC/missing config) propagated
-    /// verbatim so the adapter can keep its typed Python mapping.
-    Verify(RegistrationLifecycleError),
+    /// The registration verify lifecycle failed — the core [`RefusalKind`]
+    /// (mismatch/RPC/missing config) propagated verbatim so the adapter can
+    /// keep its typed Python mapping.
+    Verify(RefusalKind),
 }
 
 impl std::fmt::Display for DriverError {
@@ -276,7 +274,7 @@ pub struct EngineDriver {
     /// core registration ledger holds, shared by the async entry points, the
     /// blocking seat-thread twins, and every `PyO3` caller of the same
     /// driver. A driver is the session, so a driver holds one owner.
-    verifications: PoolVerifications<RegistrationLifecycleError>,
+    verifications: PoolVerifications<RefusalKind>,
     /// The engine host's process-lifetime event hub. The engine's
     /// `ResultBatch` + `BlockNotification` source channels are registered on
     /// it as named, typed `UnboundedFlagged` channels; the hub holds each
@@ -327,22 +325,16 @@ fn install_session_path_owner(bot: &Bot, stages: &EngineStages) {
 ///
 /// Only the verify arm is representable; every other driver failure is
 /// unreachable at a lifecycle call site and maps to the fatal
-/// [`VerifyError::Other`] so the retry never re-attempts it.
-fn verify_error_from_driver(err: DriverError) -> VerifyError {
+/// [`VerifyOrigin::Other`] refusal so the retry never re-attempts it.
+fn verify_refusal_from_driver(err: DriverError) -> RefusalKind {
     match err {
-        DriverError::Verify(RegistrationLifecycleError::Verify(
-            LiquidityVerifyError::Mismatch(mismatch),
-        )) => VerifyError::Snapshot(mismatch.message),
-        DriverError::Verify(RegistrationLifecycleError::Verify(LiquidityVerifyError::Rpc {
-            message,
-        })) => VerifyError::Rpc(message),
-        DriverError::Verify(RegistrationLifecycleError::MissingProvider) => {
-            VerifyError::Provider(RegistrationLifecycleError::MissingProvider.to_string())
-        }
-        DriverError::Verify(RegistrationLifecycleError::MissingTickSpacing) => {
-            VerifyError::NotConfigured(RegistrationLifecycleError::MissingTickSpacing.to_string())
-        }
-        other => VerifyError::Other(other.to_string()),
+        DriverError::Verify(kind) => kind,
+        other => RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            true,
+            VerifyOrigin::Other,
+            other.to_string(),
+        ),
     }
 }
 
@@ -1109,26 +1101,25 @@ impl EngineDriver {
     /// Run a V3 pool's registration verify lifecycle under the bounded retry
     /// dance.
     ///
-    /// A transient [`VerifyError::Rpc`] / [`VerifyError::Provider`] failure
-    /// releases the claim (the plain lifecycle owns that), so the next attempt
-    /// re-runs the whole lifecycle; a [`VerifyError::Snapshot`] mismatch is
-    /// fatal and is never retried. Returns the classified failure once the
-    /// policy is exhausted.
+    /// A transient verify failure (`fatal == false`) releases the claim (the
+    /// plain lifecycle owns that), so the next attempt re-runs the whole
+    /// lifecycle; a fatal mismatch is never retried. Returns the classified
+    /// failure once the policy is exhausted.
     ///
     /// # Errors
     ///
-    /// Returns the last transient [`VerifyError`] after exhausting `policy`,
+    /// Returns the last transient [`RefusalKind`] after exhausting `policy`,
     /// or the first fatal one.
     pub async fn run_v3_registration_lifecycle_with_retry(
         &self,
         address: Address,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
-    ) -> Result<(), VerifyError> {
+    ) -> Result<(), RefusalKind> {
         retry_verification_call(policy, |_attempt| async move {
             self.run_v3_registration_lifecycle(address, snapshot_block)
                 .await
-                .map_err(verify_error_from_driver)
+                .map_err(verify_refusal_from_driver)
         })
         .await
     }
@@ -1144,11 +1135,11 @@ impl EngineDriver {
         pool_id: V4PoolId,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
-    ) -> Result<(), VerifyError> {
+    ) -> Result<(), RefusalKind> {
         retry_verification_call(policy, |_attempt| async move {
             self.run_v4_registration_lifecycle(pool_manager, pool_id, snapshot_block)
                 .await
-                .map_err(verify_error_from_driver)
+                .map_err(verify_refusal_from_driver)
         })
         .await
     }
@@ -1167,7 +1158,7 @@ impl EngineDriver {
         address: Address,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
-    ) -> Result<(), VerifyError> {
+    ) -> Result<(), RefusalKind> {
         degenbot_core::runtime::get_runtime().block_on(
             self.run_v3_registration_lifecycle_with_retry(address, snapshot_block, policy),
         )
@@ -1188,7 +1179,7 @@ impl EngineDriver {
         pool_id: V4PoolId,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
-    ) -> Result<(), VerifyError> {
+    ) -> Result<(), RefusalKind> {
         degenbot_core::runtime::get_runtime().block_on(
             self.run_v4_registration_lifecycle_with_retry(
                 pool_manager,
@@ -1838,9 +1829,16 @@ mod tests {
 
     #[test]
     fn a_non_verify_driver_error_classifies_as_fatal_other() {
-        let classified = verify_error_from_driver(DriverError::NoResultReceiver);
+        let classified = verify_refusal_from_driver(DriverError::NoResultReceiver);
         assert!(
-            matches!(&classified, VerifyError::Other(_)),
+            matches!(
+                &classified,
+                RefusalKind::VerifyFailed {
+                    origin: VerifyOrigin::Other,
+                    fatal: true,
+                    ..
+                }
+            ),
             "a non-verify driver failure must classify as Other, got {classified:?}"
         );
         assert!(

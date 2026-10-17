@@ -1,11 +1,14 @@
 //! Bounded retry-with-backoff for transient registration-verify failures.
 //!
-//! The retry *classification* is the core verify taxonomy carried by
-//! [`VerifyError`]: a per-call RPC transport failure ([`VerifyError::Rpc`]) or
-//! a verify-provider construction failure ([`VerifyError::Provider`]) is
-//! transient; a snapshot mismatch ([`VerifyError::Snapshot`]) is genuine
-//! on-chain divergence and every other failure is fatal. The backoff *policy*
-//! is the caller's [`RetryPolicy`] — this module owns only the dance.
+//! The retry *classification* is the fatal-vs-transient split the one
+//! [`RefusalKind`] vocabulary carries: a verify failure with
+//! `fatal == false` (a per-call RPC transport failure or a verify-provider
+//! construction failure) is transient; a fatal verify failure (a genuine
+//! on-chain divergence) is never retried. The one retryable
+//! [`LifecyclePrecondition`] is a tracked pool that reached a verify step with
+//! no provider configured — the historical provider-construction class. The
+//! backoff *policy* is the caller's [`RetryPolicy`] — this module owns only
+//! the dance.
 //!
 //! After exhausting attempts the last transient failure is returned so the
 //! caller crashes loudly rather than continuing on unverified data.
@@ -15,16 +18,25 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub use degenbot_core::retry::RetryPolicy;
 
-use super::snapshot_verify::VerifyError;
+use super::registration_ledger::{LifecyclePrecondition, RefusalKind};
 
 /// Whether a core verify failure is transient and may be re-attempted.
 ///
-/// [`VerifyError::Rpc`] (per-call transport) and [`VerifyError::Provider`]
-/// (provider construction) are retriable; [`VerifyError::Snapshot`] is a
-/// genuine mismatch and the remaining variants are fatal.
+/// A non-fatal verify failure (a per-call transport or provider-construction
+/// refusal) is retriable; a fatal one is a genuine mismatch and is never
+/// re-attempted. A tracked pool that reached a verify step with no provider
+/// configured is the one retryable lifecycle precondition — the historical
+/// provider-construction class.
 #[must_use]
-pub fn is_retryable(err: &VerifyError) -> bool {
-    matches!(err, VerifyError::Rpc(_) | VerifyError::Provider(_))
+pub fn is_retryable(err: &RefusalKind) -> bool {
+    matches!(err, RefusalKind::VerifyFailed { fatal: false, .. })
+        || matches!(
+            err,
+            RefusalKind::LifecyclePrecondition {
+                reason: LifecyclePrecondition::MissingVerifyProvider,
+                ..
+            }
+        )
 }
 
 /// A pseudo-random fraction in `[0, 1)` derived from the clock and the attempt
@@ -60,10 +72,10 @@ fn jitter_fraction(attempt: u32) -> f64 {
 pub async fn retry_verification_call<F, Fut>(
     policy: &RetryPolicy,
     mut attempt_fn: F,
-) -> Result<(), VerifyError>
+) -> Result<(), RefusalKind>
 where
     F: FnMut(u32) -> Fut,
-    Fut: Future<Output = Result<(), VerifyError>>,
+    Fut: Future<Output = Result<(), RefusalKind>>,
 {
     let mut attempt: u32 = 0;
     loop {
@@ -85,8 +97,39 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bot_core::registration_ledger::{RegistrationPhase, VerifyOrigin};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+
+    /// A transient transport refusal.
+    fn rpc(detail: &str) -> RefusalKind {
+        RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            false,
+            VerifyOrigin::Transport,
+            detail.to_owned(),
+        )
+    }
+
+    /// A transient provider-construction refusal.
+    fn provider(detail: &str) -> RefusalKind {
+        RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            false,
+            VerifyOrigin::ProviderConstruction,
+            detail.to_owned(),
+        )
+    }
+
+    /// A fatal mismatch refusal.
+    fn mismatch(detail: &str) -> RefusalKind {
+        RefusalKind::verify_failed(
+            RegistrationPhase::Verify,
+            true,
+            VerifyOrigin::Mismatch,
+            detail.to_owned(),
+        )
+    }
 
     fn zero_policy(max_attempts: u32) -> RetryPolicy {
         RetryPolicy {
@@ -106,7 +149,7 @@ mod tests {
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
                 if n < 3 {
-                    Err(VerifyError::Rpc("transient".to_string()))
+                    Err(rpc("transient"))
                 } else {
                     Ok(())
                 }
@@ -126,7 +169,7 @@ mod tests {
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
                 if n < 2 {
-                    Err(VerifyError::Provider("provider init failed".to_string()))
+                    Err(provider("provider init failed"))
                 } else {
                     Ok(())
                 }
@@ -145,11 +188,14 @@ mod tests {
             let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
-                Err(VerifyError::Snapshot("diverged".to_string()))
+                Err(mismatch("diverged"))
             }
         })
         .await;
-        assert!(matches!(result, Err(VerifyError::Snapshot(m)) if m == "diverged"));
+        assert!(matches!(
+            result,
+            Err(RefusalKind::VerifyFailed { fatal: true, detail, .. }) if detail == "diverged"
+        ));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
@@ -161,11 +207,17 @@ mod tests {
             let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
-                Err(VerifyError::NotConfigured("missing url".to_string()))
+                Err(RefusalKind::verify_not_configured(
+                    RegistrationPhase::Verify,
+                    "missing url".to_string(),
+                ))
             }
         })
         .await;
-        assert!(matches!(result, Err(VerifyError::NotConfigured(_))));
+        assert!(matches!(
+            result,
+            Err(RefusalKind::VerifyNotConfigured { .. })
+        ));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
@@ -177,11 +229,20 @@ mod tests {
             let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
-                Err(VerifyError::Other("driver failure".to_string()))
+                Err(RefusalKind::verify_failed(
+                    RegistrationPhase::Verify,
+                    true,
+                    VerifyOrigin::Other,
+                    "driver failure".to_string(),
+                ))
             }
         })
         .await;
-        assert!(matches!(result, Err(VerifyError::Other(m)) if m == "driver failure"));
+        assert!(matches!(
+            result,
+            Err(RefusalKind::VerifyFailed { origin: VerifyOrigin::Other, detail, .. })
+                if detail == "driver failure"
+        ));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
@@ -193,11 +254,14 @@ mod tests {
             let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
-                Err(VerifyError::Rpc("down".to_string()))
+                Err(rpc("down"))
             }
         })
         .await;
-        assert!(matches!(result, Err(VerifyError::Rpc(m)) if m == "down"));
+        assert!(matches!(
+            result,
+            Err(RefusalKind::VerifyFailed { fatal: false, detail, .. }) if detail == "down"
+        ));
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 

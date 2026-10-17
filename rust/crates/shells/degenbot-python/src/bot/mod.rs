@@ -35,10 +35,8 @@ use alloy::primitives::Address;
 
 use crate::bot::engine::{hex_string_to_pool_id, SpecViolationError};
 use crate::bot::errmap::{
-    journal_err_to_py, map_aerodrome_build_err, map_aerodrome_registration_err, map_build_err,
-    map_calc_tokens_in_err, map_calc_tokens_out_err, map_driver_err, map_no_construction_io,
-    map_register_v2_err, map_register_v4_err, map_resolve_v4_identity_err, map_v2_build_err,
-    map_v2_registration_err, map_v3_build_err, map_v3_registration_err, map_v4_build_err,
+    journal_err_to_py, map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err,
+    map_driver_err, map_no_construction_io, map_refusal, map_register_v2_err, map_register_v4_err,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -422,9 +420,12 @@ impl PyBot {
             .detach(|| self.bot.load_snapshot_from_db_path(db_path, chain_id))
             .map_err(|e| match e {
                 SnapshotOpenError::Open(e) => crate::db::db_err_to_py(&e),
-                SnapshotOpenError::Load(e) => pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "load_snapshot_from_db failed: {e}"
-                )),
+                SnapshotOpenError::Load(kind) => {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "load_snapshot_from_db failed: {}",
+                        kind.detail().unwrap_or_default()
+                    ))
+                }
             })?;
         // Retain the `SnapshotDb` as a long-lived `Arc` so the registration-
         // path PyO3 functions (`assemble_v3_tick_map` etc.) clone it to feed
@@ -715,7 +716,7 @@ impl PyBot {
                     stable_swap,
                     fee_denominator,
                 )
-                .map_err(map_v2_registration_err)
+                .map_err(map_refusal)
         })?;
         // Telemetry: see build_v2_pool — one Jaeger node per V2 registration.
         let _reg = tracing::info_span!(
@@ -775,7 +776,7 @@ impl PyBot {
                 // on the runtime or the BotState write.
                 let (pool_id, identity) = py
                     .detach(|| self.bot.build_and_register_v2(addr, block))
-                    .map_err(map_v2_build_err)?;
+                    .map_err(|kind| map_build_refusal("build_v2_pool", kind))?;
                 Ok((
                     pool_id,
                     (pool_id, identity.0, identity.1, identity.2, identity.3),
@@ -815,7 +816,7 @@ impl PyBot {
                 // for the GIL note).
                 let pool_id = py
                     .detach(|| self.bot.build_and_register_aerodrome_v2(addr, block))
-                    .map_err(map_aerodrome_build_err)?;
+                    .map_err(|kind| map_build_refusal("build_aerodrome_v2_pool", kind))?;
                 Ok((pool_id, pool_id))
             },
         )
@@ -862,7 +863,7 @@ impl PyBot {
                         self.bot
                             .build_and_register_balancer_weighted(vault_addr, addr, block)
                     })
-                    .map_err(|e| map_build_err("build_balancer_weighted_pool", e))?;
+                    .map_err(|kind| map_build_refusal("build_balancer_weighted_pool", kind))?;
                 Ok((pool_id, pool_id))
             },
         )
@@ -911,7 +912,7 @@ impl PyBot {
                             invariant_version,
                         )
                     })
-                    .map_err(|e| map_build_err("build_balancer_stable_pool", e))?;
+                    .map_err(|kind| map_build_refusal("build_balancer_stable_pool", kind))?;
                 Ok((pool_id, pool_id))
             },
         )
@@ -1026,7 +1027,7 @@ impl PyBot {
                             self.bot
                                 .build_and_register_curve_pool(addr, &registry, block)
                         })
-                        .map_err(|e| map_build_err("construct_pool", e))?;
+                        .map_err(|kind| map_build_refusal("construct_pool", kind))?;
                     Ok(echo(pool_id, "stableswap"))
                 }
             }
@@ -1137,7 +1138,7 @@ impl PyBot {
                             block,
                         )
                     })
-                    .map_err(map_v3_build_err)?;
+                    .map_err(|kind| map_build_refusal("build_v3_pool", kind))?;
                 Ok((pool_id, (pool_id, identity.0, identity.1, identity.2, identity.3)))
             },
         )
@@ -1158,9 +1159,8 @@ impl PyBot {
     ///
     /// # Errors
     ///
-    /// As [`Self::register_v4_pool`] (builder RPC/decode errors map via
-    /// [`map_builder_err`]; admission/filtering errors via
-    /// [`map_register_v4_err`]).
+    /// As [`Self::register_v4_pool`] (builder RPC/decode errors and
+    /// admission/filtering errors both map through the one refusal mapper).
     #[pyo3(signature = (chain_id, pool_manager, pool_id_hex, currency0=None, currency1=None, fee=None, tick_spacing=None, hook_address=None, state_view_address=None))]
     #[expect(clippy::too_many_arguments)]
     fn resolve_v4_identity(
@@ -1215,7 +1215,7 @@ impl PyBot {
                 self.bot
                     .resolve_v4_identity(chain_id, pm, pool_id, &overrides)
             })
-            .map_err(map_resolve_v4_identity_err)?;
+            .map_err(|kind| map_build_refusal("resolve_v4_identity", kind))?;
         Ok((
             id.currency0.to_checksum(None),
             id.currency1.to_checksum(None),
@@ -1380,7 +1380,7 @@ impl PyBot {
                             fetcher,
                         )
                     })
-                    .map_err(map_v4_build_err)?;
+                    .map_err(|kind| map_build_refusal("build_v4_pool", kind))?;
                 // Return `(pool_id, coverage, identity..., protocol_fee, lp_fee)` so the
                 // Python driver can set the companion's `_sparse_liquidity_map` (from
                 // coverage), the normalized identity, and the fee overrides
@@ -1983,7 +1983,7 @@ impl PyBot {
                     tick_data_block,
                     slot_override,
                 )
-                .map_err(map_v3_registration_err)
+                .map_err(map_refusal)
         })
     }
 
@@ -2322,7 +2322,7 @@ impl PyBot {
             self.bot
                 .build_and_register_curve_pool(addr, &registry, block)
         })
-        .map_err(|e| map_build_err("build_curve_pool", e))
+        .map_err(|kind| map_build_refusal("build_curve_pool", kind))
     }
 
     /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
@@ -2535,7 +2535,7 @@ impl PyBot {
                     r1,
                     update_block,
                 )
-                .map_err(map_aerodrome_registration_err)
+                .map_err(map_refusal)
         })
     }
 
@@ -2706,7 +2706,7 @@ impl PyBot {
                 self.bot
                     .build_and_register_erc20_token(chain_id, addr, block)
             })
-            .map_err(|e| map_build_err("build_erc20_token", e))?;
+            .map_err(|kind| map_build_refusal("build_erc20_token", kind))?;
         Ok(PyErc20Token::new(self.bot.state_arc(), addr))
     }
 
@@ -2815,8 +2815,9 @@ impl PyBot {
 /// ([`degenbot_bot::bot_core::registration::parse_address_str`]); this
 /// adapter only crosses the error into Python.
 fn parse_address(s: &str) -> PyResult<Address> {
-    degenbot_bot::bot_core::registration::parse_address_str(s)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    degenbot_bot::bot_core::registration::parse_address_str(s).map_err(|kind| {
+        pyo3::exceptions::PyValueError::new_err(kind.detail().unwrap_or_default().to_string())
+    })
 }
 
 /// Serialize the core-normalized rows
@@ -2842,8 +2843,11 @@ fn parse_address_list(list: &Bound<'_, PyList>) -> PyResult<Vec<Address>> {
             let s: String = item.extract().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("token address must be a str: {e}"))
             })?;
-            degenbot_bot::bot_core::registration::parse_address_str(&s)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+            degenbot_bot::bot_core::registration::parse_address_str(&s).map_err(|kind| {
+                pyo3::exceptions::PyValueError::new_err(
+                    kind.detail().unwrap_or_default().to_string(),
+                )
+            })
         })
         .collect()
 }
