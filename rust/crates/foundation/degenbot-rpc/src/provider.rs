@@ -416,9 +416,9 @@ async fn connect_ws_with_retries(
     }
 }
 
-/// Name resolution of an endpoint host is deterministic: a name that does not
-/// resolve will not resolve after backoff either, so the retry budget must not
-/// be spent on it — fail fast and name the endpoint instead.
+/// The resolver's verdict at boot is final: a lookup failure will not heal
+/// after backoff, so the retry budget must not be spent on it — fail fast and
+/// name the endpoint instead.
 fn is_unresolvable_host<E: std::fmt::Display>(error: &E) -> bool {
     let text = error.to_string().to_ascii_lowercase();
     text.contains("failed to lookup address information")
@@ -1935,6 +1935,39 @@ impl LogFetcher {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    // ── Unresolvable-host classification (WS connect fail-fast) ────────
+
+    /// Every name-lookup failure text is terminal for the WS connect loop:
+    /// the resolver's verdict is final, so no retry budget may be spent on
+    /// it. Covers glibc's spellings (`EAI_NONAME` and `EAI_AGAIN` both arrive
+    /// prefixed "failed to lookup address information") and the
+    /// macOS/Windows wordings.
+    #[test]
+    fn lookup_failure_texts_classify_as_unresolvable_hosts() {
+        for text in [
+            "failed to lookup address information: Name or service not known",
+            "failed to lookup address information: Temporary failure in name resolution",
+            "Name or service not known",
+            "no such host is known",
+            "nodename nor servname provided, or not known",
+        ] {
+            assert!(is_unresolvable_host(&text), "expected terminal: {text}");
+        }
+    }
+
+    /// A name that RESOLVED but refused or hung is a connection failure —
+    /// retryable by design — so it must not classify as unresolvable.
+    #[test]
+    fn connection_failure_texts_stay_retryable() {
+        for text in [
+            "IO error: Connection refused (os error 111)",
+            "connection timed out",
+            "tcp connect error: Network is unreachable (os error 101)",
+        ] {
+            assert!(!is_unresolvable_host(&text), "expected retryable: {text}");
+        }
+    }
 
     // ── Revert classification ───────────────────────────────────────────
 
