@@ -20,6 +20,12 @@ from sybil.parsers.markdown.codeblock import PythonCodeBlockParser
 from sybil.parsers.markdown.lexers import DirectiveInHTMLCommentLexer
 from sybil.parsers.markdown.skip import SkipParser
 
+# The pin MUST precede the first degenbot import: the FFI module init resolves
+# the typed config from the process layers (first-wins), and the engine boot
+# re-resolves those layers at every construction — see tests/suite_env.py.
+# The unsorted physical order is the point, hence the I001 ignore.
+import tests.suite_env  # ruff:ignore[I001, F401]  # import-side-effect pin
+
 from degenbot.bot import _bot as _bot_module
 from degenbot.provider import OfflineProvider
 from tests.offline import is_offline

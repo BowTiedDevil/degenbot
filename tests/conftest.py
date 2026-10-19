@@ -8,11 +8,9 @@ factories. The README doctest harness lives in the root ``conftest.py``;
 offline detection lives in ``tests/offline.py``.
 """
 
-import atexit
 import logging
 import os
 import shutil
-import tempfile
 from collections.abc import Callable, Generator, Iterator, Mapping
 from pathlib import Path
 
@@ -22,39 +20,16 @@ from _pytest.nodes import Item
 from dotenv import dotenv_values
 from hypothesis import settings
 
-# THE SUITE ENVIRONMENT, DECLARED AS DATA. The FFI module init boots the
-# process-wide typed BotConfig from whatever the AMBIENT environment holds at
-# the first `degenbot` import — which the root conftest (imported before this
-# file, for the README harness) triggers. Instead of pinning `DEGENBOT_*` names
-# on `os.environ` (an ambient-shape race this suite has already lost twice),
-# the suite declares its environment HERE and installs it through the
-# config-holder test seam: the captured environment governs every construction
-# regardless of what the developer's shell exports. Fail-closed: if the
-# declared file does not load, collection errors here rather than tests
-# resolving against a bare-env snapshot.
-#
-# `tests/ambient_config.toml` activates the mevblocker backrun facet only —
-# every other schema key keeps its default.
-#
-# Hermetic state: the declared default database is the developer's real
-# ``~/.local/state/degenbot/db/degenbot.db`` (hundreds of MB). Booting an
-# engine reads it, so tests that only need an offline engine pay disk/CPU for
-# user state, and the connector-index load runs as a background thread that
-# can emit records after pytest closes its capture stream (a swallowed
-# ``ValueError: I/O operation on closed file``). The declared environment
-# points at an absent, per-session path so the connector lane takes its
-# discovery-shut branch; an operator who wants the real DB for an on-demand run
-# extends ``SUITE_ENV`` explicitly. The directory is removed at exit so
-# repeated runs leave no state behind.
-_pytest_state_dir_ctx = tempfile.TemporaryDirectory(prefix="degenbot-pytest-state-")
-atexit.register(_pytest_state_dir_ctx.cleanup)
-_pytest_state_dir = _pytest_state_dir_ctx.name
-
-SUITE_ENV: dict[str, str] = {
-    "DEGENBOT_CONFIG": str(Path(__file__).resolve().parent / "ambient_config.toml"),
-    "DEGENBOT_DB_PATH": str(Path(_pytest_state_dir) / "degenbot.db"),
-}
-
+# THE SUITE ENVIRONMENT, DECLARED AS DATA. The declaration and its os.environ
+# pin live in tests/suite_env.py, which the ROOT conftest imports before the
+# first `degenbot` import: the FFI module init boots the process-wide typed
+# BotConfig from the process layers (first-wins), and the engine boot
+# re-resolves those layers at every construction (backrun_boot_resources ->
+# load_process_config), so the captured-env seam below re-governs holder reads
+# but can never re-govern what a construction dials or reads. See
+# tests/suite_env.py for the full contract — including why the pin is
+# force-set rather than setdefault, and why the declared database path is an
+# absent per-session file.
 from degenbot._ffi import reinstall_config_holder_for_tests, shutdown_log_drainer
 from degenbot.bot import Bot
 from degenbot.fork import AnvilFork, ForkLaunchConfig
@@ -64,12 +39,13 @@ from tests.golden.recorded_pool import RecordedPool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.offline import is_offline
 from tests.standalone_anvil import seed as seed_catalog
+from tests.suite_env import SUITE_ENV
 
-# Install the declared environment through the sanctioned test seam: the
-# imports above booted the holder from the ambient process env (the first
-# `degenbot` import lives in the root conftest), so replace that snapshot with
-# the suite's declaration. From here on, every construction observes
-# `SUITE_ENV`.
+# Re-govern the holder through the sanctioned test seam. The root conftest
+# pinned SUITE_ENV onto os.environ BEFORE the first degenbot import, so the
+# module-init snapshot already IS the suite's declaration; this reinstall is
+# the same-value re-governance that fails collection loudly if the declared
+# file stops loading, and pairs with the per-test `governed_holder` fixture.
 reinstall_config_holder_for_tests(SUITE_ENV)
 
 
