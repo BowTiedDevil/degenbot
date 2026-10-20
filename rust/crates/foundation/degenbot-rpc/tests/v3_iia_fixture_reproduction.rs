@@ -35,8 +35,13 @@
 //! ```text
 //! DEGENBOT_V3_FIXTURE_RPC=http://host.containers.internal:8545/ \
 //! DEGENBOT_V3_FIXTURE_BLOCK=25647669 \
-//! cargo test -p degenbot-pools --test v3_iia_fixture_reproduction -- --nocapture
+//! cargo test -p degenbot-rpc --test v3_iia_fixture_reproduction -- --nocapture
 //! ```
+//!
+//! Lives in `degenbot-rpc`, not beside the kernel it exercises: this harness is
+//! an RPC fetch feeding the pools kernel, and `degenbot-rpc` depends on
+//! `degenbot-pools`, so a dev-dependency from pools would close a publish cycle
+//! (pools -> rpc -> pools) that no crates.io version can satisfy.
 
 #![expect(clippy::too_many_lines, clippy::doc_markdown)]
 

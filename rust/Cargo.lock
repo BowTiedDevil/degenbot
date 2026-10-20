@@ -2597,7 +2597,6 @@ dependencies = [
  "degenbot-core",
  "degenbot-decoders",
  "degenbot-math",
- "degenbot-rpc",
  "degenbot-uniswap",
  "hashbrown 0.17.1",
  "hex",

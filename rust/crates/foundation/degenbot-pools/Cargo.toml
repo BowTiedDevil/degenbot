@@ -49,10 +49,11 @@ proptest = "^1.12"
 rayon = { version = "^1.12" }
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
 tempfile = { version = "^3.27" }
-# Network-gated V3 mainnet-fixture reproduction (the live +13 V3-hop
-# over-prediction trap): these deps fetch the real pool state on demand; the
-# test is env-gated so CI never hits the net.
-degenbot-rpc.workspace = true
+# No `degenbot-rpc` here: the RPC-backed CL harnesses (the network-gated V3
+# mainnet-fixture reproduction and the capture generator) live in
+# `degenbot-rpc`. `degenbot-rpc` depends on this crate, so a dev-dependency
+# from here would close a publish cycle (pools -> rpc -> pools) that no
+# crates.io version can satisfy.
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
 serde_json = "^1.0"
 hex = "^0.4"

@@ -28,8 +28,13 @@
 //!   `DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545`,
 //!   `DEGENBOT_CLCAP_BLOCK=<pinned block>`,
 //!   `DEGENBOT_CLCAP_MAX_FETCHES=320`,
-//!   `cargo run -p degenbot-pools --example concentrated_liquidity_capture_gen [-- <out.jsonl>`
+//!   `cargo run -p degenbot-rpc --example concentrated_liquidity_capture_gen [-- <out.jsonl>`
 //!   `cargo run -p degenbot-pools --example concentrated_liquidity_solve_replay <capture.jsonl>`
+//!
+//! Lives in `degenbot-rpc`, not beside the kernel whose goldens it produces:
+//! the fetch is RPC-backed, and `degenbot-rpc` depends on `degenbot-pools`, so
+//! a dev-dependency from pools would close a publish cycle (pools -> rpc ->
+//! pools) that no crates.io version can satisfy.
 //!
 //! This generator is the ONLY sanctioned producer of exact-wei goldens
 //! (loop-18 T4): it writes sequences + the current solver's result from ONE
@@ -196,8 +201,15 @@ fn main() -> ExitCode {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(25_826_800);
+    // The fixture belongs to `degenbot-pools` (its offline replay gate reads
+    // it), so the default is anchored to that crate: a path relative to this
+    // crate's directory - or to the invocation's CWD - would write it elsewhere.
     let out = std::env::args().nth(1).unwrap_or_else(|| {
-        "tests/fixtures/concentrated_liquidity_capture_offline.jsonl".to_string()
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl"
+        )
+        .to_string()
     });
 
     // 1) Slot0+liquidity per pool on a throwaway runtime, then drop.
@@ -381,7 +393,7 @@ fn main() -> ExitCode {
     let _ = std::fs::write(
         format!("{out}.block"),
         format!(
-            "block={block}\nregen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK={block} DEGENBOT_CLCAP_MAX_FETCHES={max_fetches} cargo run -q -p degenbot-pools --example concentrated_liquidity_capture_gen [-- <out.jsonl>]\n"
+            "block={block}\nregen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK={block} DEGENBOT_CLCAP_MAX_FETCHES={max_fetches} cargo run -q -p degenbot-rpc --example concentrated_liquidity_capture_gen [-- <out.jsonl>]\n"
         ),
     );
     ExitCode::SUCCESS
