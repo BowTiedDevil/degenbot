@@ -61,6 +61,12 @@ Release workflows use the same 1.98.1 development channel rather than floating
 `stable`. Do not raise the MSRV without an explicit dependency-compatibility
 decision and an update to this policy.
 
+Gates certify tiers, not a toolchain identity (`scripts/toolchain_tier.sh`): any
+toolchain meeting the MSRV certifies the portable contract (build, tests,
+architecture gates, clippy's deny-by-default lints), while the strict layer
+(clippy `--deny warnings`, exact fmt) is the reference channel's verdict and
+runs in CI. A compliant toolchain never fails a gate on lint/format vintage.
+
 ## Rust workspace selection
 
 Cargo commands without a package selector use the workspace's two pure-Rust

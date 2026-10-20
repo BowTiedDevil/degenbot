@@ -172,6 +172,11 @@ hooks = [
   # Bypass with `git push --no-verify` (CI still runs), or re-run a subset
   # manually with `prek run --stage pre-push --skip rust-test` etc.
   # (add `--fail-fast` there to mirror the installed push behavior).
+  # Toolchain tier first: every gate below certifies the push contract only on
+  # a toolchain that meets the workspace floor (scripts/toolchain_tier.sh).
+  { id = "toolchain-tier", name = "Rust toolchain tier", language = "system", entry = "just check-toolchain", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+
+
   { id = "object-gc", name = "Object DB GC", language = "system", entry = "scripts/hooks/object-gc.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # ci-parity checks the ci.yml job matrix against the local entrypoints

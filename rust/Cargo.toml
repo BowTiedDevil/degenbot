@@ -33,8 +33,13 @@ authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
 # is a one-line edit here instead of a per-crate sweep. This is the in-tree
 # POLICY; the push gate's `cargo clippy -- --deny warnings` is what escalates
 # the warn-level groups to hard failure at push/CI time.
+#
+# The open-ended `warnings` group is deliberately NOT denied here: it would bind
+# every toolchain to the lint surface of whichever vintage compiled the tree, so
+# a lint the reference toolchain never had would fail compliant contributors.
+# Escalation belongs to the strict tier's verdict (the reference channel - see
+# scripts/toolchain_tier.sh); the named denies below stay hard everywhere.
 [workspace.lints.rust]
-warnings = "deny"
 # cargo-llvm-cov builds set --cfg coverage and the instrumented tests carry
 # #[cfg_attr(coverage, ignore)] for timing-sensitive pins; declare the name so
 # default (non-instrumented) builds accept the attribute instead of

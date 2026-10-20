@@ -91,6 +91,18 @@ toolchain:
     @rustc --version
     @cargo --version
 
+# Classify the active toolchain against the workspace contract and enforce its
+# floor. Tiers, not a hard pin: any toolchain meeting the MSRV certifies the
+# portable contract (build, tests, architecture gates, clippy's deny-by-default
+# lints), while the strict lint/format layer is the reference channel's verdict
+# and runs in CI — a compliant contributor's toolchain vintage must never fail a
+# gate. Classification lives in scripts/toolchain_tier.sh (one owner).
+check-toolchain:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier="$(scripts/toolchain_tier.sh)"
+    echo "toolchain: $tier tier certified"
+
 # Resolves the reth-vs-anvil ambiguity behind tests reporting an anvil
 # conclusion from a reth response. Ask the node; never infer from PATH.
 # Measured shape matrix and sim-gate implications: /skill:node-identity
@@ -138,7 +150,7 @@ pre-push:
 
 # Run only the Rust track (standalone smoke + cargo workspace). CI's rust-test
 # job and the pre-push hook call this subunit directly; humans use `just test`.
-test-rust: test-standalone
+test-rust: check-toolchain test-standalone
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -199,7 +211,7 @@ test-golden-replay:
 # --workspace precedence and silently runs every workspace member when both
 # selections are present, so the documented `-p <crate>` narrowing would never
 # narrow.
-test-rust-nextest *args:
+test-rust-nextest *args: check-toolchain
     #!/usr/bin/env bash
     set -euo pipefail
     python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
@@ -328,8 +340,19 @@ publish-dry-run *args:
 # variants cannot hide a default regression; it runs the architecture subset
 # first, matching CI exactly, and never edits the tree.
 # Run the non-mutating Rust Clippy check (CI-identical gate).
-lint-rust-check: check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics
-    cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml -- --deny warnings
+# Default Rust lint lane, tier-aware (scripts/toolchain_tier.sh): on the
+# reference toolchain this is CI-identical (`--deny warnings`); on any other
+# supported toolchain it runs clippy's deny-by-default floor only, because the
+# lint surface drifts with the toolchain and CI is the strict authority.
+lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier="$(scripts/toolchain_tier.sh)"
+    if [ "$tier" = "strict" ]; then
+        cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml -- --deny warnings
+    else
+        cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml
+    fi
 
 # Default Rust lint lane: a CI-identical, non-mutating alias of
 # `lint-rust-check`, so a green run here is exactly what CI will accept.
@@ -410,8 +433,15 @@ check-no-inner-allow:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_inner_allow_attributes --exact --nocapture
 
 # Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
-fmt-check:
-    cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+fmt-check: check-toolchain
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo fmt --manifest-path rust/Cargo.toml --all -- --check || {
+        echo "fmt-check: the diff above is this rustfmt's verdict. The reference formatter" >&2
+        echo "  is the pinned channel's rustfmt (rust-toolchain.toml). If 'just format'" >&2
+        echo "  under it produces no diff, this is a formatter-version artifact." >&2
+        exit 1
+    }
 
 # Enforce the no-pyo3-in-core invariant (Plan 103). Pure Rust core crates must
 # not depend on pyo3 under their default features. Add new core crates here.
@@ -1079,7 +1109,7 @@ lint-commits range="@{push}..HEAD":
 lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
 
 # Format all code
-format:
+format: check-toolchain
     uvx ruff format src/
     cargo fmt --manifest-path rust/Cargo.toml --all
 
