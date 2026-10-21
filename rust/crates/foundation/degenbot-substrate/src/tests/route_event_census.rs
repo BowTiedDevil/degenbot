@@ -17,10 +17,9 @@
 //! formatter splits after `.concentrated_liquidity`, which would hide the call
 //! from a line-literal needle while the dispatch is still there.
 //!
-//! Scope is the orchestration source alone. `log_dispatcher.rs` reaches the
-//! capability directly by ADR-082's decision (unifying it is a hot-path change
-//! that owes its own bench comparison, not a rider on a rename), so it is a
-//! deliberate exception this census must not read.
+//! Scope is the orchestration source alone: `log_dispatcher.rs` used to be the
+//! deliberate exception (the bench-gated hot path), and now that its arms go
+//! through the door too, no caller outside this file asks the capability pair.
 //!
 //! The gate is a pure function over source text so its failure mode is
 //! testable: a synthetic fixture with a second caller must go red (the

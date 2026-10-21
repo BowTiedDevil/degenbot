@@ -76,9 +76,13 @@ Concretely:
   `PoolLookup::resolve`: the Python shell and the standalone example hold
   `(manager, id)` without a lookup at hand, and wrapping one there would add a
   type without removing a name.
-- `log_dispatcher` keeps its own event enum and resolves through the capability
-  directly. Unifying it is a hot-path change that deserves its own commit and a
-  bench comparison, not a rider on a rename.
+- `log_dispatcher` was unified after a bench comparison: its four V3/V4 arms
+  build `(PoolLookup, BufferedPoolEvent)` and go through `route_event` like
+  every other caller (`V2Sync` keeps its own scalar door — V2 has no
+  `PoolLookup` and no table verdict). The route-event census in
+  `tests/route_event_census.rs` pins one asker per capability method, with
+  negative probes for a second caller, a formatter-split call, and a silent
+  door.
 - The two liquidity doors that were left suffixed here were unified once the
   contract bound was verified: `apply_liquidity_update(PoolLookup, PoolLiquidityUpdate)`
   and `buffer_backfill_liquidity_update(PoolLookup, PoolLiquidityUpdate)`, both
