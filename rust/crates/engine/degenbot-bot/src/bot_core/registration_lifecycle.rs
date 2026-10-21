@@ -4,6 +4,14 @@
 //! sequence that was previously orchestrated in Python
 //! (`src/degenbot/arbitrage/engine_registry.py::register_v3/v4_pool`).
 //!
+//! The sequence is ONE machine ([`run_verify_lifecycle`]) over one pool key
+//! ([`RegistrationKey`]): a V3 pool is addressed by contract address, a V4 pool
+//! by `(pool_manager, pool_id)`, and that is the only difference between the two
+//! families here. The two `run_concentrated_liquidity_*_lifecycle` entries are
+//! the key adapters over it, so a rule learned about this machine — the lock
+//! scope, the tripwire, the seed-consumed-once discipline — holds for both
+//! designs by construction rather than by a second copy agreeing (ADR-080 D2).
+//!
 //! Decision D4 (lifecycle), per ADR-022:
 //! - a **sparse** pool is `Live` immediately, receives **no verification
 //!   deferral and no RPC**;
@@ -54,12 +62,143 @@ fn missing_tick_spacing() -> RefusalKind {
     RefusalKind::lifecycle_precondition(LifecyclePrecondition::MissingTickSpacing)
 }
 
-/// Drive a V3 concentrated liquidity pool through the registration verify-lifecycle, branching on
-/// `coverage::` **Sparse → immediate no-op** (already `Live`, no
-/// verification deferral, no RPC); **Tracked → quarantine → (step-1 seed
-/// verify) → drain+pin → (step-2 post-drain verify) → `set_live`**.
+/// The pool key the verify lifecycle runs over.
 ///
-/// The two RPC-bound verify steps are supplied as async closures so the
+/// The lifecycle is one machine over one key. The two concentrated-liquidity
+/// designs differ only in how the state owner addresses a pool — a V3 pool by
+/// contract address, a V4 pool by `(pool_manager, pool_id)` — so the key is a
+/// value and the eight state verbs the machine needs hang off it. Both arms
+/// delegate to the state owner's own accessors: this is a join, not a second
+/// reading of pool state.
+#[derive(Clone, Copy, Debug)]
+pub enum RegistrationKey {
+    /// A V3 concentrated-liquidity pool, addressed by contract address.
+    Address(Address),
+    /// A V4 concentrated-liquidity pool, addressed by `(pool_manager, pool_id)`.
+    V4 {
+        /// The canonical `PoolManager`.
+        pool_manager: Address,
+        /// The pool's on-chain id.
+        pool_id: V4PoolId,
+    },
+}
+
+impl RegistrationKey {
+    /// The pool's tick coverage, or `None` when the pool is not registered
+    /// under this key (the machine's no-op arm).
+    fn coverage(&self, state: &BotState) -> Option<PoolTickCoverage> {
+        match self {
+            Self::Address(address) => state.pool_coverage(*address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.pool_coverage_by_key(*pool_manager, pool_id),
+        }
+    }
+
+    /// Defer the pool's live events to the pump buffer until verification ends.
+    fn quarantine(&self, state: &mut BotState) {
+        match self {
+            Self::Address(address) => state.set_pool_quarantined(*address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.set_pool_quarantined_by_key(*pool_manager, *pool_id),
+        }
+    }
+
+    /// Consume the pinned snapshot seed (exactly once, so memory is bounded).
+    fn take_seed(&self, state: &mut BotState) -> Option<HashMap<i32, TickInfo>> {
+        match self {
+            Self::Address(address) => state.take_snapshot_seed(*address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.take_snapshot_seed_by_key(*pool_manager, pool_id),
+        }
+    }
+
+    /// The pool's OWN liquidity clock (the block its tick data reflects); `0`
+    /// when unset.
+    ///
+    /// Takes the lock rather than a guard: the state owner's fused accessor
+    /// chains key → clock under ONE `read_at(Registration)`, so this must not
+    /// be recomposed from two single-step reads (nested reads are a
+    /// self-deadlock when a writer queues between them — soak-2026-08-22).
+    fn own_liquidity_clock(&self, core: &StateLock<BotState>) -> u64 {
+        match self {
+            Self::Address(address) => core.pool_tick_data_block_by_address(address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => core.pool_tick_data_block_by_v4_key(*pool_manager, pool_id),
+        }
+    }
+
+    /// Drain the buffered backfill and pump events onto the pool. Draining is
+    /// not verification: it preserves the permanent V2-V2-V3 apply-buffer
+    /// behaviour and runs for a Sparse pool too.
+    fn drain(&self, state: &mut BotState) {
+        match self {
+            Self::Address(address) => {
+                state.apply_backfill_buffer(address);
+                state.apply_pump_buffer(address);
+            }
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => {
+                state.apply_backfill_buffer_by_key(*pool_manager, *pool_id);
+                state.apply_pump_buffer_by_key(*pool_manager, *pool_id);
+            }
+        }
+    }
+
+    /// Freeze the post-drain `(tick_data, block)` pair atomically with the
+    /// drain.
+    fn pin_post_drain(&self, state: &mut BotState) {
+        match self {
+            Self::Address(address) => state.pin_post_drain_snapshot(*address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.pin_post_drain_snapshot_by_key(*pool_manager, pool_id),
+        }
+    }
+
+    /// Consume the pinned post-drain pair (exactly once).
+    fn take_post_drain(&self, state: &mut BotState) -> Option<(HashMap<i32, TickInfo>, u64)> {
+        match self {
+            Self::Address(address) => state.take_post_drain_snapshot(*address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.take_post_drain_snapshot_by_key(*pool_manager, pool_id),
+        }
+    }
+
+    /// The terminal transition: only reachable after a verified success.
+    fn set_live(&self, state: &mut BotState) {
+        match self {
+            Self::Address(address) => state.set_pool_live(*address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.set_pool_live_by_key(*pool_manager, *pool_id),
+        }
+    }
+}
+
+/// Drive one concentrated-liquidity pool through the registration
+/// verify-lifecycle, branching on `coverage`: **Sparse → immediate no-op**
+/// (already `Live`, no verification deferral, no RPC); **Tracked → quarantine →
+/// (step-1 seed verify) → drain+pin → (step-2 post-drain verify) → `set_live`**.
+///
+/// The key is a value ([`RegistrationKey`]), so the V3 and V4 designs share
+/// this one machine: a lifecycle rule learned here cannot hold for one design
+/// and lapse for the other.
+///
+/// The two RPC-bound verify steps are supplied as async closures, so the
 /// state-machine is testable without a live provider. Any `Err` from a verify
 /// closure aborts BEFORE `set_live` (the tripwire — never auto-repair); a
 /// Sparse pool never invokes either closure.
@@ -72,7 +211,7 @@ fn missing_tick_spacing() -> RefusalKind {
 ///
 /// No guard is held across the `verify_seed`/`verify_post_drain` `.await`s
 /// (each take runs under a short `core.write()` then drops it), and the drain
-/// (`apply_backfill_buffer_v3` → `apply_pump_buffer_v3`) + pin run under ONE
+/// (`apply_backfill_buffer` → `apply_pump_buffer`) + pin run under ONE
 /// `core.write()` hold — the step-2 rolling-start race fix.
 ///
 /// # Errors
@@ -81,6 +220,112 @@ fn missing_tick_spacing() -> RefusalKind {
 /// — a verification failure aborts BEFORE `set_live`, leaving the tracked pool
 /// `Quarantined` (the tripwire; never auto-repair). No error on the Sparse /
 /// no-op paths.
+pub async fn run_verify_lifecycle<F1, Fut1, F2, Fut2, E>(
+    core: &StateLock<BotState>,
+    key: RegistrationKey,
+    snapshot_block: Option<u64>,
+    verify_seed: F1,
+    verify_post_drain: F2,
+) -> Result<(), E>
+where
+    F1: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut1 + Send,
+    Fut1: Future<Output = Result<(), E>> + Send,
+    F2: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut2 + Send,
+    Fut2: Future<Output = Result<(), E>> + Send,
+{
+    // Coverage branch up-front. A Sparse pool stays `Live`, receives NO
+    // verification deferral and NO verify RPC, but its buffered backfill/pump
+    // events (buffered while the pool was still unregistered) must still be
+    // drained onto the pool — draining is not verification. An unregistered /
+    // non-matching pool → no-op Ok.
+    let coverage = {
+        let state = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
+        key.coverage(&state)
+    };
+    match coverage {
+        None => return Ok(()),
+        Some(PoolTickCoverage::Sparse) => {
+            let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
+            key.drain(&mut state);
+            return Ok(());
+        }
+        Some(PoolTickCoverage::Tracked) => {}
+    }
+
+    // Quarantine BEFORE the first RPC await: defers the pool's live
+    // Swap/Mint/Burn to the pump buffer so the pin's `update_block` cannot
+    // outrun `last_complete_block` during the drain+pin+verify window.
+    {
+        let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
+        key.quarantine(&mut state);
+    }
+
+    // Step-1: verify the pinned snapshot SEED @ snapshot block. Only when a
+    // snapshot block is supplied (the seam's gated-skip posture); the seed is
+    // consumed exactly once so memory is bounded. The comparison is
+    // seed-vs-on-chain@snapshot, NOT engine-current (which would false-mismatch
+    // every active pool under a rolling start).
+    //
+    // Anchored at the pool's OWN liquidity clock — the block its seed data
+    // reflects (a DB-seeded `Tracked` pool's `liquidity_update_block`) — rather
+    // than the aggregate snapshot-seed block `S`. The builder stamps a
+    // DB-seeded pool's `tick_data_block` at that block, so a
+    // stale-but-internally-consistent DB pool verifies against on-chain @ ITS
+    // block (passes) instead of @ `S` (a fabricated mismatch on any tick that
+    // moved in between). Falls back to `S` only when the pool clock is unset.
+    if let Some(snapshot_block) = snapshot_block {
+        let seed = {
+            let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
+            key.take_seed(&mut state)
+        };
+        if let Some(seed) = seed {
+            // Single acquisition by construction: the fused accessor chains
+            // key → liquidity clock under ONE `read_at(Registration)`. Never
+            // recompose the two single-step reads here — nested reads are a
+            // self-deadlock when a writer queues between them (soak-2026-08-22).
+            let own = key.own_liquidity_clock(core);
+            let seed_block = if own > 0 { own } else { snapshot_block };
+            verify_seed(seed, seed_block).await?;
+        }
+    }
+
+    // Drain + pin under a SINGLE `core.write()` hold: backfill buffer, then
+    // pump buffer, then capture the frozen post-drain `(tick_data, block)`
+    // pair atomically with the drain (the step-2 rolling-start race fix).
+    {
+        let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
+        key.drain(&mut state);
+        key.pin_post_drain(&mut state);
+    }
+
+    // Step-2: verify the pinned POST-DRAIN pair @ the pin's OWN captured block
+    // (the `tick_data_block` — liquidity clock, two-stamp rule). Comparing
+    // against a caller-supplied constant would fabricate a mismatch on active
+    // pools (the 2026-06-29 crash). The pin is consumed exactly once.
+    let pin = {
+        let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
+        key.take_post_drain(&mut state)
+    };
+    if let Some((tick_data, pinned_block)) = pin {
+        verify_post_drain(tick_data, pinned_block).await?;
+    }
+
+    // Tripwire passed (ADR-022 D2) — the final gate before `Live`. Reaching
+    // here means a Tracked pool's verification succeeded; `Live` is the last
+    // transition.
+    {
+        let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
+        key.set_live(&mut state);
+    }
+    Ok(())
+}
+
+/// Drive a V3 concentrated-liquidity pool's verify lifecycle — the
+/// address-keyed adapter over [`run_verify_lifecycle`].
+///
+/// # Errors
+///
+/// Returns the closure error type `E` (see [`run_verify_lifecycle`]).
 pub async fn run_concentrated_liquidity_v3_lifecycle<F1, Fut1, F2, Fut2, E>(
     core: &StateLock<BotState>,
     address: Address,
@@ -94,104 +339,22 @@ where
     F2: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut2 + Send,
     Fut2: Future<Output = Result<(), E>> + Send,
 {
-    // Coverage branch up-front:. A Sparse pool stays `Live`,
-    // receives NO verification deferral and NO verify RPC, but its buffered
-    // backfill/pump events (buffered while the pool was still unregistered)
-    // must still be drained onto the pool — draining is not verification and
-    // preserves the perm-V2-V2-V3 apply-buffer behavior. An unregistered /
-    // non-V3 pool → no-op Ok.
-    let coverage = core
-        .read_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .pool_coverage(address);
-    match coverage {
-        None => return Ok(()),
-        Some(PoolTickCoverage::Sparse) => {
-            let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            guard.apply_backfill_buffer(&address);
-            guard.apply_pump_buffer(&address);
-            return Ok(());
-        }
-        Some(PoolTickCoverage::Tracked) => {}
-    }
-
-    // Quarantine BEFORE the first RPC await: defers the pool's live
-    // Swap/Mint/Burn to the pump buffer so the pin's `update_block` cannot
-    // outrun `last_complete_block` during the drain+pin+verify window.
-    core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .set_pool_quarantined(address);
-
-    // Step-1: verify the pinned snapshot SEED @ snapshot block. Only
-    // when a snapshot block is supplied (the seam's gated-skip posture); the
-    // seed is consumed exactly once so memory is bounded. The comparison is
-    // seed-vs-on-chain@snapshot, NOT engine-current (which would
-    // false-mismatch every active pool under a rolling start).
-    //
-    // Reactivated wrong-block regression: anchor at
-    // the pool's OWN liquidity clock (the block its seed data reflects — a
-    // DB-seeded `Tracked` pool's `liquidity_update_block`) rather than the
-    // aggregate snapshot-seed block `S`. The builder stamps a DB-seeded pool's
-    // `tick_data_block` at that block; using it here means a stale-but-
-    // internally-consistent DB pool is verified against on-chain @ ITS block
-    // (passes), not @ `S` (fabricated mismatch on any tick that moved in
-    // between). Falls back to `S` only when the pool clock is unset (0).
-    if let Some(snapshot_block) = snapshot_block {
-        let seed = {
-            core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-                .take_snapshot_seed(address)
-        };
-        if let Some(seed) = seed {
-            // Single acquisition by construction: the fused accessor chains
-            // id → liquidity clock under ONE `read_at(Registration)`. Never
-            // recompose the two single-step reads here — nested reads are a
-            // self-deadlock when a writer queues between them
-            // (soak-2026-08-22).
-            let own = core.pool_tick_data_block_by_address(&address);
-            let seed_block = if own > 0 { own } else { snapshot_block };
-            verify_seed(seed, seed_block).await?;
-        }
-    }
-
-    // Drain + pin under a SINGLE `core.write()` hold: backfill buffer, then
-    // pump buffer, then capture the frozen post-drain `(tick_data, block)`
-    // pair atomically with the drain (the step-2 rolling-start race fix).
-    {
-        let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-        guard.apply_backfill_buffer(&address);
-        guard.apply_pump_buffer(&address);
-        guard.pin_post_drain_snapshot(address);
-    }
-
-    // Step-2: verify the pinned POST-DRAIN pair @ the pin's OWN captured block
-    // (the `tick_data_block` — liquidity clock, two-stamp rule). Comparing
-    // against a caller-supplied constant would fabricate a mismatch on active
-    // pools (the 2026-06-29 crash). The pin is consumed exactly once.
-    let pin = {
-        core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-            .take_post_drain_snapshot(address)
-    };
-    if let Some((tick_data, pinned_block)) = pin {
-        verify_post_drain(tick_data, pinned_block).await?;
-    }
-
-    // Tripwire passed (ADR-022 D2) — the final gate before `Live`. Reaching
-    // here means a Tracked pool's verification succeeded; `Live` is the last
-    // transition.
-    core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .set_pool_live(address);
-    Ok(())
+    run_verify_lifecycle(
+        core,
+        RegistrationKey::Address(address),
+        snapshot_block,
+        verify_seed,
+        verify_post_drain,
+    )
+    .await
 }
 
-/// V4 twin of [`run_concentrated_liquidity_v3_lifecycle`] — same D4 coverage branch + two-step
-/// verify + tripwire-gated `Live`, keyed by (`pool_manager`, `pool_id`).
-///
-/// Same lock-scope contract: no guard across the verify `.await`s; drain + pin
-/// under ONE `core.write()` hold.
+/// Drive a V4 concentrated-liquidity pool's verify lifecycle — the
+/// `(pool_manager, pool_id)`-keyed adapter over [`run_verify_lifecycle`].
 ///
 /// # Errors
 ///
-/// Returns the closure error type `E` if either verify closure returns `Err`
-/// — a verification failure aborts before `set_live`, leaving the tracked pool
-/// `Quarantined`.
+/// Returns the closure error type `E` (see [`run_verify_lifecycle`]).
 pub async fn run_concentrated_liquidity_v4_lifecycle<F1, Fut1, F2, Fut2, E>(
     core: &StateLock<BotState>,
     pool_manager: Address,
@@ -206,67 +369,17 @@ where
     F2: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut2 + Send,
     Fut2: Future<Output = Result<(), E>> + Send,
 {
-    // Coverage branch up-front. A Sparse V4 pool stays `Live`, no
-    // verification deferral / RPC, but its buffered events are still drained;
-    // unregistered / non-V4 → no-op Ok.
-    let coverage = core
-        .read_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .pool_coverage_by_key(pool_manager, &pool_id);
-    match coverage {
-        None => return Ok(()),
-        Some(PoolTickCoverage::Sparse) => {
-            let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            guard.apply_backfill_buffer_by_key(pool_manager, pool_id);
-            guard.apply_pump_buffer_by_key(pool_manager, pool_id);
-            return Ok(());
-        }
-        Some(PoolTickCoverage::Tracked) => {}
-    }
-
-    // Quarantine before the first RPC await.
-    core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .set_pool_quarantined_by_key(pool_manager, pool_id);
-
-    // Step-1: verify the pinned snapshot seed @ snapshot block.
-    // Anchored at the pool's OWN liquidity clock , falling back
-    // to the aggregate `S` only when the pool clock is unset — see the V3
-    // commentary above.
-    if let Some(snapshot_block) = snapshot_block {
-        let seed = {
-            core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-                .take_snapshot_seed_by_key(pool_manager, &pool_id)
-        };
-        if let Some(seed) = seed {
-            // Same single-acquisition invariant as the V3 site: the fused
-            // accessor takes ONE `read_at(Registration)` for the
-            // `(pool_manager, pool_id)` → clock chain (soak-2026-08-22).
-            let own = core.pool_tick_data_block_by_v4_key(pool_manager, &pool_id);
-            let seed_block = if own > 0 { own } else { snapshot_block };
-            verify_seed(seed, seed_block).await?;
-        }
-    }
-
-    // Drain + pin under a SINGLE `core.write()` hold (step-2 race fix).
-    {
-        let mut guard = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-        guard.apply_backfill_buffer_by_key(pool_manager, pool_id);
-        guard.apply_pump_buffer_by_key(pool_manager, pool_id);
-        guard.pin_post_drain_snapshot_by_key(pool_manager, &pool_id);
-    }
-
-    // Step-2: verify the pinned post-drain pair @ the pin's OWN block.
-    let pin = {
-        core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-            .take_post_drain_snapshot_by_key(pool_manager, &pool_id)
-    };
-    if let Some((tick_data, pinned_block)) = pin {
-        verify_post_drain(tick_data, pinned_block).await?;
-    }
-
-    // Tripwire passed → Live.
-    core.write_at(degenbot_substrate::state_lock::LockSite::Registration)
-        .set_pool_live_by_key(pool_manager, pool_id);
-    Ok(())
+    run_verify_lifecycle(
+        core,
+        RegistrationKey::V4 {
+            pool_manager,
+            pool_id,
+        },
+        snapshot_block,
+        verify_seed,
+        verify_post_drain,
+    )
+    .await
 }
 
 /// Concrete V3 registration-lifecycle: same choreography as
