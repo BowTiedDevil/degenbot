@@ -187,16 +187,20 @@ def test_memos_round_trip_through_the_core_ledger() -> None:
         "orientation is part of the signature"
     )
 
-    assert ledger.pool_verified("v3:0x1") is False
-    ledger.memoize_verified_pool("v3:0x1")
-    assert ledger.pool_verified("v3:0x1") is True
+    assert ledger.pool_verified("p:0x0000000000000000000000000000000000000001") is False
+    ledger.memoize_verified_pool("p:0x0000000000000000000000000000000000000001")
+    assert ledger.pool_verified("p:0x0000000000000000000000000000000000000001") is True
 
     assert ledger.path_rejected(hop_sig) is False
     ledger.memoize_rejected_path(hop_sig)
     assert ledger.path_rejected(hop_sig) is True
 
-    ledger.memoize_unregistrable("p:0x1", RegistrationOutcome.BUILD_V3_REFUSED, counts_as_skip=True)
-    record = ledger.unregistrable_record("p:0x1")
+    ledger.memoize_unregistrable(
+        "p:0x0000000000000000000000000000000000000001",
+        RegistrationOutcome.BUILD_V3_REFUSED,
+        counts_as_skip=True,
+    )
+    record = ledger.unregistrable_record("p:0x0000000000000000000000000000000000000001")
     assert record is not None
     assert record.outcome == RegistrationOutcome.BUILD_V3_REFUSED.value
     assert record.counts_as_skip is True
@@ -205,12 +209,18 @@ def test_memos_round_trip_through_the_core_ledger() -> None:
 
 def test_the_first_stable_refusal_wins() -> None:
     ledger = RegistrationLedger()
-    ledger.memoize_unregistrable("p:0x1", RegistrationOutcome.BUILD_V3_REFUSED, counts_as_skip=True)
     ledger.memoize_unregistrable(
-        "p:0x1", RegistrationOutcome.V4_HOOK_REJECTED, counts_as_skip=False
+        "p:0x0000000000000000000000000000000000000001",
+        RegistrationOutcome.BUILD_V3_REFUSED,
+        counts_as_skip=True,
+    )
+    ledger.memoize_unregistrable(
+        "p:0x0000000000000000000000000000000000000001",
+        RegistrationOutcome.V4_HOOK_REJECTED,
+        counts_as_skip=False,
     )
 
-    record = ledger.unregistrable_record("p:0x1")
+    record = ledger.unregistrable_record("p:0x0000000000000000000000000000000000000001")
     assert record is not None
     assert record.outcome == RegistrationOutcome.BUILD_V3_REFUSED.value, (
         "a later answer must not overwrite the pool fact"
@@ -293,7 +303,11 @@ def test_an_unknown_outcome_tag_is_a_loud_refusal() -> None:
     """A tag outside the closed set is a ValueError, never a silent default."""
     ledger = RegistrationLedger()
     with pytest.raises(ValueError, match="unknown registration outcome"):
-        ledger.memoize_unregistrable("p:0x1", "not-a-real-outcome", counts_as_skip=True)
+        ledger.memoize_unregistrable(
+            "p:0x0000000000000000000000000000000000000001",
+            "not-a-real-outcome",
+            counts_as_skip=True,
+        )
 
 
 def test_an_unrecognized_family_is_not_the_no_identity_answer() -> None:

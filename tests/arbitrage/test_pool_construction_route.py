@@ -91,7 +91,7 @@ def _step(*, pool_type: Any = PoolKind.V3, v4_hash: Any = None) -> Any:
 def _v4_step() -> Any:
     # A V4 hop carries its on-chain pool id pre-build (the DB edge), so a
     # stable admission refusal is recognizable without an RPC.
-    return _step(pool_type=PoolKind.V4, v4_hash=b"\\xab" * 32)
+    return _step(pool_type=PoolKind.V4, v4_hash=bytes([0xAB]) * 32)
 
 
 class TestConstructionContext:

@@ -172,7 +172,9 @@ async fn build_and_register(
                 emit_build_refusal_sample(node.kind, &node.identity, &refusal.outcome, &detail);
                 if refusal.stable {
                     pipeline.ledger.memoize_unregistrable(
-                        node.memo_key.as_deref(),
+                        node.memo_key
+                            .as_deref()
+                            .and_then(degenbot::MemoIdentity::parse),
                         refusal.outcome.clone(),
                         refusal.counts_as_skip,
                     );
@@ -455,10 +457,7 @@ async fn verify_one(
 ) -> Result<(), Box<RegistrationUnitOutcome>> {
     match row {
         DiscoveryPoolRow::V3(r) => {
-            let key = format!(
-                "v3:{}",
-                degenbot::core::address_utils::address_to_checksum_string(&r.pool.address)
-            );
+            let key = degenbot::MemoIdentity::Address(r.pool.address);
             if pipeline.ledger.pool_verified(&key) {
                 return Ok(());
             }
@@ -487,7 +486,7 @@ async fn verify_one(
             }
         }
         DiscoveryPoolRow::V4(r) => {
-            let key = format!("v4:{:#x}", r.pool_hash);
+            let key = degenbot::MemoIdentity::V4(r.pool_hash.0);
             if pipeline.ledger.pool_verified(&key) {
                 return Ok(());
             }

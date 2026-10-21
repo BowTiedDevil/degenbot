@@ -987,12 +987,91 @@ impl<K: Ord, V> Memo<K, V> {
     }
 }
 
+/// The identity a pool memo keys on — known BEFORE any build.
+///
+/// A contract-address family keys on its address; a V4 pool on its on-chain
+/// pool id, both of which the discovery edge carries pre-build, so a refused
+/// pool is recognizable without an RPC. Distinct from `PoolLookup`, which names
+/// a *registered* pool and addresses V4 by `(pool_manager, pool_id)`: the
+/// manager is not known until the build resolves it.
+///
+/// The wire form (`p:0x…` / `v4id:0x…`, lowercase hex) is `Display`/`FromStr`-
+/// symmetric, so the Python shell can carry the key as text without owning the
+/// format — the shape of the key is decided here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MemoIdentity {
+    /// A contract-address family (V2, V3, Aerodrome, Curve, Balancer).
+    Address(alloy::primitives::Address),
+    /// A V4 pool, by its on-chain id.
+    V4(degenbot_decoders::v4_swap_decoder::V4PoolId),
+}
+
+impl MemoIdentity {
+    fn hex(bytes: &[u8]) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            let _ = write!(out, "{byte:02x}");
+        }
+        out
+    }
+
+    /// Decode a hex identity field of an exact byte width.
+    fn parse_hex(text: &str, width: usize) -> Option<Vec<u8>> {
+        let hex = text.trim();
+        let hex = hex.strip_prefix("0x").unwrap_or(hex);
+        let bytes = alloy::hex::decode(hex).ok()?;
+        (bytes.len() == width).then_some(bytes)
+    }
+}
+
+impl std::fmt::Display for MemoIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Address(address) => write!(f, "p:0x{}", Self::hex(address.as_slice())),
+            Self::V4(pool_id) => write!(f, "v4id:0x{}", Self::hex(pool_id)),
+        }
+    }
+}
+
+impl MemoIdentity {
+    /// The wire form as a memo key, or `None` when `text` is not one.
+    ///
+    /// The claim-window and Python doors carry keys as text; this is where that
+    /// text becomes the typed key, once.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        text.parse().ok()
+    }
+}
+
+impl std::str::FromStr for MemoIdentity {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (kind, hex) = text
+            .split_once(':')
+            .ok_or_else(|| format!("memo key {text:?} has no kind prefix"))?;
+        match kind {
+            "p" => Self::parse_hex(hex, 20)
+                .and_then(|bytes| <[u8; 20]>::try_from(bytes.as_slice()).ok())
+                .map(|bytes| Self::Address(alloy::primitives::Address::from(bytes)))
+                .ok_or_else(|| format!("memo key {text:?} is not a 20-byte address")),
+            "v4id" => Self::parse_hex(hex, 32)
+                .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok())
+                .map(Self::V4)
+                .ok_or_else(|| format!("memo key {text:?} is not a 32-byte pool id")),
+            other => Err(format!("memo key {text:?} names an unknown kind {other:?}")),
+        }
+    }
+}
+
 /// The four registration memos plus the typed build-refusal classification.
 #[derive(Debug, Default)]
 pub struct RegistrationLedger {
     registered_paths: Memo<HopSignature>,
-    verified_pools: Memo<String>,
-    unregistrable_pools: Memo<String, UnregistrableRecord>,
+    verified_pools: Memo<MemoIdentity>,
+    unregistrable_pools: Memo<MemoIdentity, UnregistrableRecord>,
     rejected_paths: Memo<HopSignature>,
 }
 
@@ -1014,10 +1093,20 @@ impl RegistrationLedger {
         kind: PoolKind,
         address: Option<&str>,
         pool_hash: Option<&str>,
-    ) -> Option<String> {
+    ) -> Option<MemoIdentity> {
         match kind {
-            PoolKind::V4 => pool_hash.map(|hash| format!("v4id:{}", hash.to_lowercase())),
-            _ => address.map(|address| format!("p:{}", address.to_lowercase())),
+            PoolKind::V4 => pool_hash.and_then(|hash| {
+                let bytes = MemoIdentity::parse_hex(hash, 32)?;
+                Some(MemoIdentity::V4(
+                    <[u8; 32]>::try_from(bytes.as_slice()).ok()?,
+                ))
+            }),
+            _ => address.and_then(|address| {
+                let bytes = MemoIdentity::parse_hex(address, 20)?;
+                Some(MemoIdentity::Address(alloy::primitives::Address::from(
+                    <[u8; 20]>::try_from(bytes.as_slice()).ok()?,
+                )))
+            }),
         }
     }
 
@@ -1075,12 +1164,12 @@ impl RegistrationLedger {
 
     /// Whether this pool's verify lifecycle already completed.
     #[must_use]
-    pub fn pool_verified(&self, key: &str) -> bool {
+    pub fn pool_verified(&self, key: &MemoIdentity) -> bool {
         self.verified_pools.contains(key)
     }
 
     /// Record a COMPLETED verify lifecycle (a pool fact).
-    pub fn memoize_verified_pool(&mut self, key: String) {
+    pub fn memoize_verified_pool(&mut self, key: MemoIdentity) {
         self.verified_pools.insert(key, ());
     }
 
@@ -1093,7 +1182,7 @@ impl RegistrationLedger {
 
     /// The memoized stable refusal for a pool key, or `None`.
     #[must_use]
-    pub fn unregistrable_record(&self, key: Option<&str>) -> Option<&UnregistrableRecord> {
+    pub fn unregistrable_record(&self, key: Option<&MemoIdentity>) -> Option<&UnregistrableRecord> {
         key.and_then(|key| self.unregistrable_pools.get(key))
     }
 
@@ -1101,13 +1190,13 @@ impl RegistrationLedger {
     /// later transient answer cannot overwrite the pool fact).
     pub fn memoize_unregistrable(
         &mut self,
-        key: Option<&str>,
+        key: Option<MemoIdentity>,
         outcome: RegistrationOutcome,
         counts_as_skip: bool,
     ) {
         if let Some(key) = key {
             self.unregistrable_pools.insert_once(
-                key.to_string(),
+                key,
                 UnregistrableRecord {
                     outcome,
                     counts_as_skip,
@@ -1479,14 +1568,21 @@ mod tests {
 
     #[test]
     fn pool_memo_key_shapes() {
+        let address = "0xAbCdEf0000000000000000000000000000000001";
+        let hash = format!("0x{}", "aB".repeat(32));
+        let from_address =
+            RegistrationLedger::pool_memo_key(PoolKind::V3, Some(address), None).unwrap();
         assert_eq!(
-            RegistrationLedger::pool_memo_key(PoolKind::V3, Some("0xAbC"), None),
-            Some("p:0xabc".to_string())
+            from_address.to_string(),
+            "p:0xabcdef0000000000000000000000000000000001"
         );
         assert_eq!(
-            RegistrationLedger::pool_memo_key(PoolKind::V4, None, Some("0xDEAD")),
-            Some("v4id:0xdead".to_string())
+            MemoIdentity::parse(&from_address.to_string()),
+            Some(from_address)
         );
+        let from_hash = RegistrationLedger::pool_memo_key(PoolKind::V4, None, Some(&hash)).unwrap();
+        assert_eq!(from_hash.to_string(), format!("v4id:0x{}", "ab".repeat(32)));
+        assert_eq!(MemoIdentity::parse(&from_hash.to_string()), Some(from_hash));
         assert_eq!(
             RegistrationLedger::pool_memo_key(PoolKind::V4, None, None),
             None
@@ -1495,6 +1591,13 @@ mod tests {
             RegistrationLedger::pool_memo_key(PoolKind::V2, None, None),
             None
         );
+        // A malformed identity is not memoizable rather than silently keyed by
+        // its text.
+        assert_eq!(
+            RegistrationLedger::pool_memo_key(PoolKind::V3, Some("0xabc"), None),
+            None
+        );
+        assert_eq!(MemoIdentity::parse("v3:0x1"), None);
     }
 
     #[test]
@@ -1577,13 +1680,14 @@ mod tests {
             "orientation is part of the signature"
         );
 
-        assert!(!ledger.pool_verified("v3:0x1"));
-        ledger.memoize_verified_pool("v3:0x1".to_string());
-        assert!(ledger.pool_verified("v3:0x1"));
+        let key = MemoIdentity::Address(alloy::primitives::Address::from([0x01u8; 20]));
+        assert!(!ledger.pool_verified(&key));
+        ledger.memoize_verified_pool(key);
+        assert!(ledger.pool_verified(&key));
 
-        ledger.memoize_unregistrable(Some("p:0x1"), RegistrationOutcome::BuildV3Refused, true);
-        ledger.memoize_unregistrable(Some("p:0x1"), RegistrationOutcome::V4HookRejected, false);
-        let record = ledger.unregistrable_record(Some("p:0x1")).unwrap();
+        ledger.memoize_unregistrable(Some(key), RegistrationOutcome::BuildV3Refused, true);
+        ledger.memoize_unregistrable(Some(key), RegistrationOutcome::V4HookRejected, false);
+        let record = ledger.unregistrable_record(Some(&key)).unwrap();
         assert_eq!(record.outcome, RegistrationOutcome::BuildV3Refused);
         assert!(record.counts_as_skip);
         assert!(ledger.unregistrable_record(None).is_none());

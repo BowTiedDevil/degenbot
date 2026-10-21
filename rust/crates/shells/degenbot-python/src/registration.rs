@@ -13,8 +13,9 @@
 use crate::prelude::*;
 
 use degenbot_bot::bot_core::registration_ledger::{
-    BuildFailure, BuildRefusal, HopSignature, OutcomeLabel, PathAdmission, PipelineReport,
-    PolicyVerdict, RegistrationLedger, RegistrationOutcome, RegistrationUnitOutcome,
+    BuildFailure, BuildRefusal, HopSignature, MemoIdentity, OutcomeLabel, PathAdmission,
+    PipelineReport, PolicyVerdict, RegistrationLedger, RegistrationOutcome,
+    RegistrationUnitOutcome,
 };
 use degenbot_pathfinding::PoolKind;
 
@@ -23,6 +24,19 @@ use degenbot_pathfinding::PoolKind;
 pub struct PyUnregistrablePoolRecord {
     outcome: String,
     counts_as_skip: bool,
+}
+
+/// The typed memo key behind a Python-visible key string.
+///
+/// The core keys its memos on `MemoIdentity`; Python carries the `Display`
+/// form (`p:0x…` / `v4id:0x…`). Anything else is a caller bug, so it fails
+/// loudly instead of silently missing the memo.
+fn memo_identity(key: &str) -> PyResult<MemoIdentity> {
+    MemoIdentity::parse(key).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "not a pool memo key: {key:?} (use the value from registration_pool_memo_key)"
+        ))
+    })
 }
 
 #[pymethods]
@@ -137,14 +151,21 @@ impl PyRegistrationLedger {
 
     /// Whether this pool's verify lifecycle already completed.
     #[pyo3(signature = (key))]
-    fn pool_verified(&self, py: Python<'_>, key: &str) -> bool {
-        py.detach(|| self.lock().pool_verified(key))
+    fn pool_verified(&self, py: Python<'_>, key: &str) -> PyResult<bool> {
+        let key = memo_identity(key)?;
+        Ok(py.detach(|| self.lock().pool_verified(&key)))
     }
 
     /// Record a COMPLETED verify lifecycle (a pool fact).
     #[pyo3(signature = (key))]
-    fn memoize_verified_pool(&self, py: Python<'_>, key: String) {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "pyo3 extracts the key by value; there is no borrowed form"
+    )]
+    fn memoize_verified_pool(&self, py: Python<'_>, key: String) -> PyResult<()> {
+        let key = memo_identity(&key)?;
         py.detach(|| self.lock().memoize_verified_pool(key));
+        Ok(())
     }
 
     /// The memoized stable refusal for a pool key, or `None`.
@@ -153,15 +174,16 @@ impl PyRegistrationLedger {
         &self,
         py: Python<'_>,
         key: Option<&str>,
-    ) -> Option<PyUnregistrablePoolRecord> {
-        py.detach(|| {
+    ) -> PyResult<Option<PyUnregistrablePoolRecord>> {
+        let key = key.map(memo_identity).transpose()?;
+        Ok(py.detach(|| {
             self.lock()
-                .unregistrable_record(key)
+                .unregistrable_record(key.as_ref())
                 .map(|record| PyUnregistrablePoolRecord {
                     outcome: record.outcome.as_str().to_owned(),
                     counts_as_skip: record.counts_as_skip,
                 })
-        })
+        }))
     }
 
     /// Record a STABLE build refusal under its bounded tag.
@@ -174,6 +196,7 @@ impl PyRegistrationLedger {
         counts_as_skip: bool,
     ) -> PyResult<()> {
         let outcome = to_outcome(outcome)?;
+        let key = key.map(memo_identity).transpose()?;
         py.detach(|| {
             self.lock()
                 .memoize_unregistrable(key, outcome, counts_as_skip);
@@ -287,9 +310,7 @@ pub fn registration_pool_memo_key(
     pool_hash: Option<&str>,
 ) -> PyResult<Option<String>> {
     let pool_kind = to_pool_kind(pool_type)?;
-    Ok(RegistrationLedger::pool_memo_key(
-        pool_kind, address, pool_hash,
-    ))
+    Ok(RegistrationLedger::pool_memo_key(pool_kind, address, pool_hash).map(|key| key.to_string()))
 }
 
 /// Classify a hop-build failure. `failure_kind` is the TYPED refusal a Python

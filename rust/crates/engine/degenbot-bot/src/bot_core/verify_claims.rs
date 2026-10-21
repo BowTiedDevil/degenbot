@@ -50,7 +50,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
-use crate::bot_core::registration_ledger::RegistrationLedger;
+use crate::bot_core::registration_ledger::{MemoIdentity, RegistrationLedger};
 
 /// The shared claim table, held behind an `Arc` so a leader guard can evict
 /// its own entry without borrowing the table's owner.
@@ -287,13 +287,13 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
 
     /// Whether this pool's verify lifecycle already COMPLETED.
     #[must_use]
-    pub fn is_verified(&self, key: &str) -> bool {
+    pub fn is_verified(&self, key: &MemoIdentity) -> bool {
         self.ledger.lock().pool_verified(key)
     }
 
     /// Record a completed verify lifecycle (a pool fact).
-    pub fn mark_verified(&self, key: &str) {
-        self.ledger.lock().memoize_verified_pool(key.to_string());
+    pub fn mark_verified(&self, key: MemoIdentity) {
+        self.ledger.lock().memoize_verified_pool(key);
     }
 
     /// Run `run` for `key` at most once per live claim window, and never once
@@ -308,7 +308,7 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
     ///
     /// The leader's own error, or a re-issued copy of it when this caller was
     /// a peer. A failed window is released and stays retriable.
-    pub async fn run_exclusive<F, Fut>(&self, key: &str, run: F) -> Result<(), E>
+    pub async fn run_exclusive<F, Fut>(&self, key: &MemoIdentity, run: F) -> Result<(), E>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(), E>>,
@@ -316,9 +316,9 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
         if self.is_verified(key) {
             return Ok(());
         }
-        let outcome = self.claims.run_exclusive(key, run).await;
+        let outcome = self.claims.run_exclusive(&key.to_string(), run).await;
         if outcome.is_ok() {
-            self.mark_verified(key);
+            self.mark_verified(*key);
         }
         outcome
     }
@@ -567,6 +567,11 @@ mod tests {
         assert_eq!(claims.live_claim_count(), 0);
     }
 
+    /// The typed memo identity a pool-verification fact keys on.
+    fn v3_key(tag: u8) -> MemoIdentity {
+        MemoIdentity::Address(alloy::primitives::Address::from([tag; 20]))
+    }
+
     // ── PoolVerifications: the durable verified-pool fact ────────
 
     /// The registration entry the driver holds: a completed lifecycle records
@@ -578,7 +583,7 @@ mod tests {
         let runs = Arc::new(AtomicUsize::new(0));
 
         let first = verifications
-            .run_exclusive("v3:0xabc", || {
+            .run_exclusive(&v3_key(0xab), || {
                 let runs = Arc::clone(&runs);
                 async move {
                     runs.fetch_add(1, Ordering::SeqCst);
@@ -587,11 +592,11 @@ mod tests {
             })
             .await;
         assert_eq!(first, Ok(()));
-        assert!(verifications.is_verified("v3:0xabc"));
+        assert!(verifications.is_verified(&v3_key(0xab)));
         assert_eq!(verifications.verified_pool_count(), 1);
 
         let second = verifications
-            .run_exclusive("v3:0xabc", || {
+            .run_exclusive(&v3_key(0xab), || {
                 let runs = Arc::clone(&runs);
                 async move {
                     runs.fetch_add(1, Ordering::SeqCst);
@@ -611,19 +616,19 @@ mod tests {
         let verifications = PoolVerifications::<FakeVerifyError>::new();
 
         let first = verifications
-            .run_exclusive("v3:0xdef", || async {
+            .run_exclusive(&v3_key(0xde), || async {
                 Err(FakeVerifyError { kind: "rpc" })
             })
             .await;
         assert_eq!(first, Err(FakeVerifyError { kind: "rpc" }));
-        assert!(!verifications.is_verified("v3:0xdef"));
+        assert!(!verifications.is_verified(&v3_key(0xde)));
         assert_eq!(verifications.verified_pool_count(), 0);
 
         let second = verifications
-            .run_exclusive("v3:0xdef", || async { OK })
+            .run_exclusive(&v3_key(0xde), || async { OK })
             .await;
         assert_eq!(second, Ok(()), "a failed claim must stay retriable");
-        assert!(verifications.is_verified("v3:0xdef"));
+        assert!(verifications.is_verified(&v3_key(0xde)));
     }
 
     /// Concurrent peers still enter ONE live window: the durable fact does not
@@ -642,7 +647,7 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
                 verifications
-                    .run_exclusive("v4:0xM:0x1", || {
+                    .run_exclusive(&MemoIdentity::V4([0x01u8; 32]), || {
                         let runs = Arc::clone(&runs);
                         async move {
                             runs.fetch_add(1, Ordering::SeqCst);
@@ -663,32 +668,35 @@ mod tests {
 
     /// The fact is KEY-scoped: two families at one address and two V4 pools
     /// under one `PoolManager` are independent — a success on one never
-    /// verifies the other.
+    /// verifies the other. The identity is the address (one contract address
+    /// holds one pool, whatever its family) or the V4 pool id.
     #[tokio::test]
     async fn pool_verifications_facts_are_key_scoped_not_address_scoped() {
         let verifications = PoolVerifications::<FakeVerifyError>::new();
 
         verifications
-            .run_exclusive("v3:0xabc", || async { OK })
+            .run_exclusive(&v3_key(0xab), || async { OK })
             .await
             .unwrap();
-        assert!(verifications.is_verified("v3:0xabc"));
+        assert!(verifications.is_verified(&v3_key(0xab)));
         assert!(
-            !verifications.is_verified("v2:0xabc"),
-            "the family is part of the identity at one address"
+            !verifications.is_verified(&MemoIdentity::Address(alloy::primitives::Address::from(
+                [0xacu8; 20]
+            ))),
+            "a different address is a different identity"
         );
         assert!(
-            !verifications.is_verified("v4:0xabc:0x1"),
-            "a V4 pair is a different identity"
+            !verifications.is_verified(&MemoIdentity::V4([0x01u8; 32])),
+            "a V4 pool id is a different identity from an address"
         );
 
         verifications
-            .run_exclusive("v4:0xM:0x1", || async { OK })
+            .run_exclusive(&MemoIdentity::V4([0x01u8; 32]), || async { OK })
             .await
             .unwrap();
-        assert!(verifications.is_verified("v4:0xM:0x1"));
+        assert!(verifications.is_verified(&MemoIdentity::V4([0x01u8; 32])));
         assert!(
-            !verifications.is_verified("v4:0xM:0x2"),
+            !verifications.is_verified(&MemoIdentity::V4([0x02u8; 32])),
             "one PoolManager hosts many independently-verified pools"
         );
     }

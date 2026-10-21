@@ -629,8 +629,8 @@ def test_stable_build_refusal_memoizes_the_pool(tmp_path: Path) -> None:
     )
     pipeline, _ = _pipeline_with_bot(tmp_path / "unused.db", bot)
     steps = [
-        _OpaqueStep(type=PoolKind.V4, address=None, hash=0xDEAD),
-        _OpaqueStep(type=PoolKind.V4, address=None, hash=0xBEEF),
+        _OpaqueStep(type=PoolKind.V4, address=None, hash=bytes([0xDE]) * 32),
+        _OpaqueStep(type=PoolKind.V4, address=None, hash=bytes([0xBE]) * 32),
     ]
 
     first = pipeline._registration_unit(steps)
@@ -646,7 +646,7 @@ def test_stable_build_refusal_memoizes_the_pool(tmp_path: Path) -> None:
 
     # The refused pool's build is attempted exactly ONCE; the second sighting
     # is answered from the unregistrable-pool memo without any build.
-    assert build_calls == [0xDEAD]
+    assert build_calls == [bytes([0xDE]) * 32]
 
 
 def test_policy_gate_denial_memoizes_the_path(tmp_path: Path) -> None:
@@ -859,6 +859,7 @@ def test_registration_ledger_owns_the_four_memo_concepts(tmp_path: Path) -> None
     FALSIFICATION: any retired instance attribute still answering, or a
     concept the unit uses but the ledger does not own.
     """
+    from degenbot._ffi import registration_pool_memo_key
     from degenbot.runner._registration_ledger import RegistrationLedger
 
     pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", _FleetBot())
@@ -879,8 +880,10 @@ def test_registration_ledger_owns_the_four_memo_concepts(tmp_path: Path) -> None
     assert first.kind == "registered"
     hop_sig = ((101, True), (202, True))
     assert pipeline._ledger.path_registered(hop_sig), "registered-path memo"
-    assert pipeline._ledger.pool_verified(f"v3:{POOL_A}"), "verify-once memo"
-    assert pipeline._ledger.pool_verified(f"v3:{POOL_B}")
+    assert pipeline._ledger.pool_verified(registration_pool_memo_key("V3", POOL_A, None)), (
+        "verify-once memo"
+    )
+    assert pipeline._ledger.pool_verified(registration_pool_memo_key("V3", POOL_B, None))
 
     # Rejected-path concept (the deny memoizes per hop signature).
     denied = _RecordingRegistry()
@@ -895,7 +898,7 @@ def test_registration_ledger_owns_the_four_memo_concepts(tmp_path: Path) -> None
 
     bot = _ConstrBot(build_managed_pool=_build_managed_pool)
     pipeline3, _ = _pipeline_with_bot(tmp_path / "unused.db", bot)
-    v4_steps = [_OpaqueStep(type=PoolKind.V4, address=None, hash=0xDEAD)]
+    v4_steps = [_OpaqueStep(type=PoolKind.V4, address=None, hash=bytes([0xDE]) * 32)]
     assert pipeline3._registration_unit(v4_steps).tag == "v4-hook-rejected"
     key = pipeline3._ledger.pool_memo_key(v4_steps[0], PoolKind.V4)
     assert pipeline3._ledger.unregistrable_record(key) is not None, "unregistrable-pool memo"

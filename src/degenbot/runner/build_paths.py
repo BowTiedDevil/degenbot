@@ -836,8 +836,8 @@ class PathRegistrationPipeline:
         this ledger's verify-once memo turns a COMPLETED lifecycle into a pool
         fact so later units skip the call entirely.
         """
-        v3_key = f"v3:{pool.address}"
-        if self._ledger.pool_verified(v3_key):
+        v3_key = self._ledger.address_memo_key(pool.address)
+        if v3_key is not None and self._ledger.pool_verified(v3_key):
             return
         reg.run_registration_lifecycle(
             RegistrationLifecycle(
@@ -848,7 +848,8 @@ class PathRegistrationPipeline:
                 policy=self.retry_policy_obj,
             )
         )
-        self._ledger.memoize_verified_pool(v3_key)
+        if v3_key is not None:
+            self._ledger.memoize_verified_pool(v3_key)
 
     def _verify_v4_pool(self, pool: UniswapV4Pool, reg: EngineRegistry) -> None:
         """V4 twin of :meth:`_verify_v3_pool`, with the retry policy applied here.
@@ -858,8 +859,8 @@ class PathRegistrationPipeline:
         re-claims and re-runs the lifecycle — a failed verify stays
         retryable, and a fatal mismatch propagates immediately.
         """
-        v4_key = f"v4:{to_0x_hex(pool.pool_id)}"
-        if self._ledger.pool_verified(v4_key):
+        v4_key = self._ledger.pool_id_memo_key(to_0x_hex(pool.pool_id))
+        if v4_key is not None and self._ledger.pool_verified(v4_key):
             return
         reg.run_registration_lifecycle(
             RegistrationLifecycle(
@@ -871,7 +872,8 @@ class PathRegistrationPipeline:
                 policy=self.retry_policy_obj,
             )
         )
-        self._ledger.memoize_verified_pool(v4_key)
+        if v4_key is not None:
+            self._ledger.memoize_verified_pool(v4_key)
 
     def _register_path_outcome(
         self,

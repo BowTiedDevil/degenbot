@@ -65,7 +65,9 @@ use crate::arb_engine::{
     BlockNotification, EngineRetune, EngineStages, InlineSimulator, PumpPhase, ResultBatch,
 };
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
-use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase, VerifyOrigin};
+use crate::bot_core::registration_ledger::{
+    MemoIdentity, RefusalKind, RegistrationPhase, VerifyOrigin,
+};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verification_retry::{retry_verification_call, RetryPolicy};
 use crate::bot_core::verify_claims::PoolVerifications;
@@ -925,7 +927,7 @@ impl EngineDriver {
     /// do not consult it directly — they enter the lifecycle, which applies
     /// the fact itself.
     #[must_use]
-    pub fn is_pool_verified(&self, key: &str) -> bool {
+    pub fn is_pool_verified(&self, key: &MemoIdentity) -> bool {
         self.verifications.is_verified(key)
     }
 
@@ -954,21 +956,12 @@ impl EngineDriver {
         snapshot_block: Option<u64>,
     ) -> Result<(), DriverError> {
         let core = self.stages.core();
+        // The verify fact is keyed by the SAME identity the registration ledger
+        // memos on, so the driver's claim path and the pipeline's ledger share
+        // one fact instead of three private string formats.
         let claim_key = match key {
-            PoolLookup::Address(address) => {
-                verify_claim_key("v3", &alloy::hex::encode_prefixed(address))
-            }
-            PoolLookup::V4 {
-                pool_manager,
-                pool_id,
-            } => verify_claim_key(
-                "v4",
-                &format!(
-                    "{}:{}",
-                    alloy::hex::encode_prefixed(pool_manager),
-                    alloy::hex::encode_prefixed(pool_id)
-                ),
-            ),
+            PoolLookup::Address(address) => MemoIdentity::Address(address),
+            PoolLookup::V4 { pool_id, .. } => MemoIdentity::V4(pool_id),
         };
         if self.verifications.is_verified(&claim_key) {
             return Ok(());
@@ -1215,10 +1208,6 @@ impl Drop for EngineDriver {
 /// The claim key for one pool: the family plus the identity that names it, so
 /// two families at one address — or two pools under one `PoolManager` — never
 /// share a claim window.
-fn verify_claim_key(family: &str, identity: &str) -> String {
-    format!("{family}:{identity}")
-}
-
 #[expect(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
@@ -1902,7 +1891,7 @@ mod tests {
         let driver = driver_for_test();
         let address = Address::from([0x11u8; 20]);
         register_sparse_v3(&driver, address);
-        let key = verify_claim_key("v3", &alloy::hex::encode_prefixed(address));
+        let key = MemoIdentity::Address(address);
 
         driver
             .run_registration_lifecycle(PoolLookup::from_address(address), None)
@@ -1971,7 +1960,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: tracked V3 registration");
-        let key = verify_claim_key("v3", &alloy::hex::encode_prefixed(address));
+        let key = MemoIdentity::Address(address);
 
         for _ in 0..2 {
             assert!(
@@ -2002,15 +1991,8 @@ mod tests {
         register_sparse_v3(&driver, shared_address);
         register_sparse_v4(&driver, shared_address, sibling_id);
 
-        let v3_key = verify_claim_key("v3", &alloy::hex::encode_prefixed(shared_address));
-        let v4_key = verify_claim_key(
-            "v4",
-            &format!(
-                "{}:{}",
-                alloy::hex::encode_prefixed(shared_address),
-                alloy::hex::encode_prefixed(sibling_id)
-            ),
-        );
+        let v3_key = MemoIdentity::Address(shared_address);
+        let v4_key = MemoIdentity::V4(sibling_id);
 
         driver
             .run_registration_lifecycle(PoolLookup::from_address(shared_address), None)
