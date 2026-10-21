@@ -12,6 +12,7 @@ mod pool_lookup;
 mod quarantine;
 mod registration;
 mod registration_door;
+mod route_event_census;
 mod session_path;
 mod session_position;
 mod session_registry;

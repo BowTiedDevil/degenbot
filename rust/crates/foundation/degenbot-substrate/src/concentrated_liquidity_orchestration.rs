@@ -2499,10 +2499,10 @@ impl BotState {
 
     /// The address-keyed swap apply (the payload shape is the V3 scalar form —
     /// V4 swaps carry [`V4SwapUpdate`] through [`Self::apply_swap_update`]).
-    /// Routes through the capability's live-event router at `Phase::Live`: the
-    /// routing table decides apply-vs-buffer-vs-drop, and its verdict is
-    /// returned unflattened (`Applied` / `Buffered` / `NoOp`). `tick_priors`
-    /// overlay only on direct application.
+    /// Routes through [`Self::route_event`] at `Phase::Live`: the routing table
+    /// decides apply-vs-buffer-vs-drop, and its verdict is returned unflattened
+    /// (`Applied` / `Buffered` / `NoOp`). `tick_priors` overlay only on direct
+    /// application.
     ///
     /// # Errors
     ///
@@ -2519,25 +2519,24 @@ impl BotState {
         tick_priors: &[(i32, TickInfo)],
     ) -> Result<ApplyOutcome, PoolRefusal> {
         trace_apply_swap_v3(pool_address, sqrt_price_x96, liquidity, tick, block_number);
-        Ok(self.concentrated_liquidity.route_event(
-            &mut self.registry,
+        self.route_event(
             Phase::Live,
-            pool_address,
-            BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
+            PoolLookup::from_address(pool_address),
+            BufferedPoolEvent::V3(BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
                 sqrt_price_x96,
                 liquidity,
                 tick,
                 block_number,
-            }),
+            })),
             tick_priors,
-        ))
+        )
     }
 
     /// The update-payload swap apply (the update type carries the design).
-    /// Routes through the capability's key-registered live-event router at
-    /// `Phase::Live`; the verdict is returned unflattened (`Applied` /
-    /// `Buffered` / `NoOp`). `update.tick_priors` overlay only on direct
-    /// application (pump/backfill pass an empty slice).
+    /// Routes through [`Self::route_event`] at `Phase::Live`; the verdict is
+    /// returned unflattened (`Applied` / `Buffered` / `NoOp`).
+    /// `update.tick_priors` overlay only on direct application (pump/backfill
+    /// pass an empty slice).
     ///
     /// # Errors
     ///
@@ -2558,20 +2557,22 @@ impl BotState {
             update.tick,
             block_number,
         );
-        Ok(self.concentrated_liquidity.route_event_by_key(
-            &mut self.registry,
+        self.route_event(
             Phase::Live,
-            update.pool_manager,
-            update.pool_id,
-            BufferedV4PoolEvent::Swap(BufferedV4SwapEvent {
+            PoolLookup::V4 {
+                pool_manager: update.pool_manager,
+                pool_id: update.pool_id,
+            },
+            BufferedPoolEvent::V4(BufferedV4PoolEvent::Swap(BufferedV4SwapEvent {
                 sqrt_price_x96: update.sqrt_price_x96,
                 liquidity: update.liquidity,
                 tick: update.tick,
                 block_number,
-            }),
+            })),
             &update.tick_priors,
-        ))
+        )
     }
+
     /// Route one decoded concentrated-liquidity event through the apply path,
     /// for either key shape.
     ///
